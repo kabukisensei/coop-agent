@@ -9,7 +9,7 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $coop = Join-Path $root 'bin\coop.ps1'
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-teamai-' + [guid]::NewGuid().ToString('N'))
 
-$saved = Save-Env @('COOP_DIR', 'HOME', 'USERPROFILE', 'COOP_SKIP_AZ', 'TEAMAI_API_TOKEN')
+$saved = Save-Env @('COOP_DIR', 'HOME', 'USERPROFILE', 'COOP_SKIP_AZ', 'TEAMAI_API_TOKEN', 'PATH', 'COOP_AGENT_DIR', 'PI_CODING_AGENT_DIR', 'COOP_NO_ISOLATE', 'COOP_NO_ONBOARD', 'COOP_SKIP_UPDATE_CHECK')
 try {
   $cdir = Join-Path $t 'cdir'
   New-Item -ItemType Directory -Force -Path (Join-Path $cdir '.coop'), (Join-Path $t 'home') | Out-Null
@@ -55,6 +55,54 @@ try {
   $launcher = [System.IO.File]::ReadAllText($coop)
   $launchFn = [regex]::Match($launcher, 'function Invoke-LaunchPi[\s\S]*?\n}\r?\n').Value
   if ($launchFn -and -not ($launchFn -match 'teamai')) { Ok 'Invoke-LaunchPi never calls the TeamAI adapter' } else { Ko 'the launch path must not reference teamai' }
+
+  # --- K3: the team repo's skills load at launch only when knowledge.teamai.skills is on
+  # and state.json names the clone; subordinate rules (Cooptimize skills win) still apply.
+  # launch-spec --json reads the clone from state.json, never from the adapter.
+  function Write-Skill([string]$Dir, [string]$Body) {
+    New-Item -ItemType Directory -Force -Path $Dir | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $Dir 'SKILL.md'), $Body, (New-Object System.Text.UTF8Encoding($false)))
+  }
+  function Invoke-Spec {
+    $so = Join-Path $t 'spec.json'; $se = Join-Path $t 'spec.err'
+    $p = Start-Process -FilePath $psExe -ArgumentList @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $coop + '"'), 'launch-spec', '--json') -PassThru -NoNewWindow -WorkingDirectory $t -RedirectStandardOutput $so -RedirectStandardError $se
+    $null = $p.Handle
+    $p.WaitForExit()
+    $out = [System.IO.File]::ReadAllText($so)
+    $specArgs = @()
+    try { $spec = $out | ConvertFrom-Json; if ($spec -and $spec.args) { $specArgs = @($spec.args | ForEach-Object { ([string]$_) -replace '\\', '/' }) } } catch { }
+    return @{ Rc = $p.ExitCode; Out = $out; Err = [System.IO.File]::ReadAllText($se); Args = $specArgs }
+  }
+  function Test-HasArg([object]$Spec, [string]$Needle) { return [bool]@($Spec.Args | Where-Object { $_ -like "*$Needle*" }).Count }
+  function Write-TeamaiConfig([string]$Skills) {
+    [System.IO.File]::WriteAllText((Join-Path $cdir '.coop\config'), ('{"schema_version":1,"knowledge":{"enabled":false,"repos":[],"teamai":{"enabled":true,"team_repo":"https://example.invalid/team.git","skills":' + $Skills + '}}}'), (New-Object System.Text.UTF8Encoding($false)))
+  }
+  $env:COOP_AGENT_DIR = Join-Path $t 'agent'
+  New-Item -ItemType Directory -Force -Path $env:COOP_AGENT_DIR | Out-Null
+  Remove-Item Env:\PI_CODING_AGENT_DIR -ErrorAction SilentlyContinue
+  Remove-Item Env:\COOP_NO_ISOLATE -ErrorAction SilentlyContinue
+  $env:COOP_NO_ONBOARD = '1'; $env:COOP_SKIP_UPDATE_CHECK = '1'
+  $clone = Join-Path $t 'teamai-clone'
+  Write-Skill (Join-Path $clone 'skills\teamai-valid-skill') "---`nname: teamai-valid-skill`ndescription: A TeamAI team skill`n---`n# TeamAI valid`n"
+  Write-Skill (Join-Path $clone 'skills\dax-patterns-clone') "---`nname: dax-patterns`ndescription: Collides with a Cooptimize skill`n---`n# Colliding`n"
+  $stateDir = Join-Path $cdir '.coop\teamai'
+  New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $stateDir 'state.json'), ('{"installed_version":"0.0.0","clone_path":' + (ConvertTo-Json ([string]$clone)) + '}'), (New-Object System.Text.UTF8Encoding($false)))
+
+  Write-TeamaiConfig 'true'
+  $s = Invoke-Spec
+  if ($s.Rc -ne 0) { Ko "launch-spec exited $($s.Rc)" $s.Err }
+  if (Test-HasArg $s 'teamai-clone/skills/teamai-valid-skill') { Ok 'knowledge.teamai.skills true + state.json clone_path -> the clone skill is a --skill arg' } else { Ko 'TeamAI clone skill missing from launch-spec args' $s.Out }
+  if (Test-HasArg $s 'teamai-clone/skills/dax-patterns-clone') { Ko 'a TeamAI skill colliding with a Cooptimize skill name was loaded' $s.Out } else { Ok 'TeamAI clone skill colliding with a Cooptimize skill is skipped (subordinate)' }
+
+  Write-TeamaiConfig 'false'
+  $s = Invoke-Spec
+  if (Test-HasArg $s 'teamai-valid-skill') { Ko 'knowledge.teamai.skills false still loaded the clone skill' $s.Out } else { Ok 'knowledge.teamai.skills false -> no TeamAI skill at launch' }
+
+  Write-TeamaiConfig 'true'
+  Remove-Item -LiteralPath (Join-Path $stateDir 'state.json') -Force
+  $s = Invoke-Spec
+  if (Test-HasArg $s 'teamai-valid-skill') { Ko 'no state.json but the clone skill was loaded' $s.Out } else { Ok 'no state.json clone_path -> no TeamAI skill at launch' }
 }
 finally {
   Restore-Env $saved

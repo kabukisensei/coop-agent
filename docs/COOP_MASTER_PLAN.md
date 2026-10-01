@@ -874,6 +874,25 @@ the route when the user picks the trial repository. Defaults taken: a staged bra
 `coop/learning/`. Acceptance evidence is the VM run (K1 runbook, plus one staged
 branch on the sandbox team repository with a harmless marker note).
 
+**K3 as built (2026-10-01, in review, stacked on K2).** The broader lifecycle is
+three read-only views behind the same `coop teamai` entry. `skills` lists the team
+repository's `skills/*/SKILL.md`; a new `knowledge.teamai.skills` flag (off by
+default, asked by `coop onboard --config-only`) lets `launch-spec` load them through
+the existing subordinate team-skills slot, with the clone path read from
+`state.json` so the launcher still never runs the CLI and a Cooptimize skill wins
+every name or folder clash. `maintenance` reports stale learnings
+(`knowledge.teamai.stale_days`, default 180), proposals older than 90 days,
+malformed notes and duplicate titles and writes nothing; clean-up is a pull request
+on the team repository, never an automatic prune. `compare --query` runs the bundled
+local search and the isolated recall side by side and reports the overlap: that is
+the section 8.5 evidence, and the local search, `coop sync` knowledge clones and
+`/share-learning` all stay (nothing is removed by K3). Not adopted: the CLI's
+`digest`, codebase extraction, session sharing, `recall maintenance --prune` and
+multi-project mode, each a write path or a hook outside the isolation. Acceptance
+evidence is the VM run (K1 runbook: `skills`, `maintenance` and `compare` against
+the sandbox team repository, a launch with `knowledge.teamai.skills` true showing
+the clone skill in `coop launch-spec --json` and absent from a Cooptimize clash).
+
 **B1 is skipped (Aaron, 2026-09-30).** Revision 2.0's isolated beta channel is
 the right design for a fleet too large to reach by hand. Coop's fleet is seven
 people: release-tag updates (H5), the development VM as the qualification machine
@@ -1013,7 +1032,7 @@ tags. A stale row is never a reason to re-do work: check the PR list first.
 | 12 | FR1 | Common-workflows first run | SQ1 (menu items exist) | first launch shows the menu; onboarding no longer blocks | in review (PR), 2026-10-01: first interactive launch opens the seven-item `/start` menu once, the launch never runs the wizard, the name question moved into the project item |
 | 13 | PK1 | `pi-lovely-codex` versus `pi-better-openai`, diagnostics, simplify (naming moved to N1) | U1 + explicit start | one owner of usage stats; adopt/build/defer recorded per candidate | not started |
 | 14 | B1 | Minimal beta channel | — | — | **skipped** (Aaron, 2026-09-30: seven people update from tags; the VM qualifies upgrades) |
-| 15 | K1, K2, K3 | TeamAI shared knowledge: isolated CLI and read-only recall, reviewed contribution, broader lifecycle | FR1 + explicit start; VM isolation | revision 2.0 section 8 gates, one PR per row | K1 in review (PR #249), 2026-10-01: isolated `teamai-cli` adapter, `coop teamai`, VM acceptance pending; K2 in review (PR), 2026-10-01: `coop teamai contribute` preview and `--approve` staging on a `coop/learning/...` branch, stacked on K1; K3 not started |
+| 15 | K1, K2, K3 | TeamAI shared knowledge: isolated CLI and read-only recall, reviewed contribution, broader lifecycle | FR1 + explicit start; VM isolation | revision 2.0 section 8 gates, one PR per row | K1 in review (PR #249), 2026-10-01: isolated `teamai-cli` adapter, `coop teamai`, VM acceptance pending; K2 in review (PR), 2026-10-01: `coop teamai contribute` preview and `--approve` staging on a `coop/learning/...` branch, stacked on K1; K3 in review (PR), 2026-10-01: `coop teamai skills|maintenance|compare`, optional team-skills loading at launch, read-only maintenance report, local-vs-recall comparison, stacked on K2 |
 | 15b | J0–J3 | Jev shadow experiments | explicit start | revision 2.0 gates | waiting (Aaron, 2026-09-30) |
 | 16 | D1 | Electron desktop with packaged installer | 7–12 and 15 accepted | another user installs from the package alone | not started |
 

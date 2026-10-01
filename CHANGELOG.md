@@ -43,6 +43,22 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   repository; the `team-knowledge` skill points at it. Tests in
   `tests/teamai-adapter.test.py` (local bare team repo: one branch, one file, main
   untouched, five refused drafts).
+- `coop teamai skills|maintenance|compare --query <text>` (master plan Phase 7,
+  K3: broader knowledge lifecycle, read-only). `skills` lists the team
+  repository's `skills/*/SKILL.md`; with `knowledge.teamai.skills` true (asked by
+  `coop onboard --config-only`, off by default) `launch-spec` loads them through
+  the subordinate team-skills slot (`Get-CoopTeamaiSkillsRoot` in
+  `lib/common.ps1`: Cooptimize skills win every name or folder clash, the clone
+  path comes from `<profile dir>/teamai/state.json`, the launcher never runs the
+  CLI). `maintenance` reports stale learnings (`knowledge.teamai.stale_days`,
+  default 180), proposals older than 90 days, malformed notes and duplicate
+  titles without writing anything. `compare` runs the bundled local search and
+  the isolated recall side by side on one query and reports the overlap (the
+  section 8.5 evidence; the local search path stays). A failed `teamai init` is
+  now remembered in `state.json` and the `not_initialized` documents, `coop sync`
+  and `coop doctor` name the real next step; `coop onboard --config-only` clears
+  a saved TeamAI repo or role with `-`. Tests: `tests/teamai-adapter.test.py`
+  (K3 section) and `tests/fixtures/teamai.test.ps1` (launch-spec slot).
 - First run shows the common workflows, not a wizard (master plan FR1, Phase 6).
   The first interactive `coop` launch on a machine opens the Start Here menu once
   (`bin/coop.ps1` hands coop-tools `COOP_FIRST_RUN=1` and writes
