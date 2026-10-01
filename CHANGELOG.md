@@ -5,6 +5,28 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- The Azure sign-in preflight no longer reports `Azure token check failed ...
+  (not an auth error)` for a signed-in tenant on Linux and macOS. pwsh's
+  `Start-Process` writes `-RedirectStandardInput` into the child's stdin only
+  after the child has started, so an `az` that exited first (the fixture's fake
+  az in CI, about 1 run in 100) failed that write with `Broken pipe` and
+  `Invoke-CoopAz` lost the process (Rc 127). Off Windows the helper now starts
+  `az` through .NET directly, closes stdin at once and drains stdout and stderr
+  itself; Windows PowerShell keeps its `Start-Process` path unchanged.
+- A canonical standards refresh whose `git clone` fails once is retried once
+  before the source is marked degraded (a timeout is not retried), and the
+  failure detail now carries git's last stderr line, so a transient clone
+  failure on a loaded CI runner neither fails the live-sync test nor hides why.
+- `tests/standards-lock-simple.test.mjs` (extended lane) no longer fails on macOS
+  with `timed out waiting for .../serialized/A-entered`: its fixture root is now
+  resolved to its real path, as the other standards tests do, because macOS keeps
+  `tmpdir()` under the `/var -> /private/var` symlink that the standards
+  storage-root check rejects, so the lock worker exited at once and the marker
+  never appeared. The wait now also fails at once with the worker's stderr when
+  the worker exits first, instead of reporting a timeout.
+
 ## [0.26.0] — 2026-10-01
 
 ### Added
@@ -167,25 +189,6 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
-- The Azure sign-in preflight no longer reports `Azure token check failed ...
-  (not an auth error)` for a signed-in tenant on Linux and macOS. pwsh's
-  `Start-Process` writes `-RedirectStandardInput` into the child's stdin only
-  after the child has started, so an `az` that exited first (the fixture's fake
-  az in CI, about 1 run in 100) failed that write with `Broken pipe` and
-  `Invoke-CoopAz` lost the process (Rc 127). Off Windows the helper now starts
-  `az` through .NET directly, closes stdin at once and drains stdout and stderr
-  itself; Windows PowerShell keeps its `Start-Process` path unchanged.
-- A canonical standards refresh whose `git clone` fails once is retried once
-  before the source is marked degraded (a timeout is not retried), and the
-  failure detail now carries git's last stderr line, so a transient clone
-  failure on a loaded CI runner neither fails the live-sync test nor hides why.
-- `tests/standards-lock-simple.test.mjs` (extended lane) no longer fails on macOS
-  with `timed out waiting for .../serialized/A-entered`: its fixture root is now
-  resolved to its real path, as the other standards tests do, because macOS keeps
-  `tmpdir()` under the `/var -> /private/var` symlink that the standards
-  storage-root check rejects, so the lock worker exited at once and the marker
-  never appeared. The wait now also fails at once with the worker's stderr when
-  the worker exits first, instead of reporting a timeout.
 - Manual `/compact` and automatic compaction no longer time out over a WebSocket
   when Pi's Transport setting is `sse` (#236). Pi 0.87.1 builds its compaction
   request without the session's transport, so the OpenAI Codex provider fell back
@@ -639,7 +642,6 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   and the install says so), and `coop update` / `coop uninstall` look in the same
   folders. A normal install still uses the shell folders, so a OneDrive-redirected
   Desktop keeps working. Windows only; the bash installer never had the problem.
-
 
 ## [0.24.0] — 2026-09-30
 
