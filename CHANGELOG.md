@@ -20,6 +20,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   project* asks the name coop calls you by and saves `user.json` with the balanced
   preset (`coop onboard` still edits the full profile).
 
+### Changed
+
+- A plain `coop` launch never runs the onboarding wizard any more and nothing in
+  first-run setup can stop the launch (previously a missing or failed
+  `scripts/onboard.py` run stopped it); an incomplete profile gets one line that
+  names the menu item and `coop onboard`. `coop install` keeps its interactive
+  "Personalize Coop" step. The Fabric workspace review left the `/start` menu
+  (still `/fabric-architecture-review`).
+
+## [0.26.0] — 2026-10-01
+
+### Added
+
 - `sql-formatting` skill: coop lays out the T-SQL it writes, or is asked to
   reformat, in the Cooptimize style by default: the coop-standards *SQL Layout*
   article where it speaks (six-space select lists with the comma one column left
@@ -67,13 +80,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
-- A plain `coop` launch never runs the onboarding wizard any more and nothing in
-  first-run setup can stop the launch (previously a missing or failed
-  `scripts/onboard.py` run stopped it); an incomplete profile gets one line that
-  names the menu item and `coop onboard`. `coop install` keeps its interactive
-  "Personalize Coop" step. The Fabric workspace review left the `/start` menu
-  (still `/fabric-architecture-review`).
-
+- `data_doc` (master plan row 11a, DD4): the wrapper finds `coop-data-doc.yml`
+  the way the companion does (`COOP_DATA_DOC_CONFIG`, then the working folder
+  and its ancestors, symlinks resolved) and resolves wizard path pickers and the
+  output folder against that config's folder; the session-start lineage note
+  needs `graph.json` and mentions object pages only when `manifest.json`
+  exists; `lineage` reports the companion's evidence state and says that an
+  empty result never proves zero impact (older companions report `unknown`);
+  a failed scan/build or a read-only `check` no longer claims artifacts. The
+  JSONL setup child runs with `PYTHONIOENCODING=utf-8`.
 - `coop-data-doc` pin 1.2.0 -> 1.3.0 (`config/release-manifest.json`): the mixed-estate
   lineage release (coverage declarations, `lineage` evidence, source/output safety,
   identity collisions, UTF-8 JSONL pipes). `coop sync` installs it; `coop doctor`
