@@ -655,8 +655,17 @@ function Install-CoopExtensionsLock([string]$AgentDir, [string]$Npm, [string]$Pi
   if (-not (Test-Have 'node')) { return $false }
   $want = Coop-ManifestGet -Key 'pi.version'
   if (-not $want -or $PiVersion -ne $want) { return $false }
-  node (Join-Path $script:CoopRoot 'lib\extlock.js') matches $AgentDir $lock *> $null
-  if ($LASTEXITCODE -ne 0) { return $false }
+  # Native stderr (extlock's "tree declares X" line, npm warnings) is a
+  # NativeCommandError under Windows PowerShell 5.1 when redirected, and a
+  # terminating one in a caller running with $ErrorActionPreference = 'Stop';
+  # the exit code is the only signal these two commands carry.
+  $previousEap = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'Continue'
+    node (Join-Path $script:CoopRoot 'lib\extlock.js') matches $AgentDir $lock *> $null
+    $matchRc = $LASTEXITCODE
+  } finally { $ErrorActionPreference = $previousEap }
+  if ($matchRc -ne 0) { return $false }
   $npmDir = Join-Path $AgentDir 'npm'
   $treeLock = Join-Path $npmDir 'package-lock.json'
   # A lock this machine already failed to install is not retried (even on a
@@ -670,9 +679,10 @@ function Install-CoopExtensionsLock([string]$AgentDir, [string]$Npm, [string]$Pi
   # ran a bare `node-gyp rebuild` on the Windows VM and failed.
   Push-Location $npmDir
   try {
+    $ErrorActionPreference = 'Continue'
     & $Npm ci --no-audit --no-fund *> $null
     $rc = $LASTEXITCODE
-  } catch { $rc = 1 } finally { Pop-Location }
+  } catch { $rc = 1 } finally { $ErrorActionPreference = $previousEap; Pop-Location }
   if ($rc -eq 0) {
     Remove-Item -LiteralPath $failed -Force -ErrorAction SilentlyContinue
     return $true
