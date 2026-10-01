@@ -525,6 +525,7 @@ def run_config_questions(
         "team_repo": str(old_t.get("team_repo", "") or ""),
         "provider": str(old_t.get("provider", "") or "git"),
         "role": str(old_t.get("role", "") or ""),
+        "skills": bool(old_t.get("skills", False)),
     }
     if not quick_start:
         teamai["enabled"] = read_confirm(
@@ -540,6 +541,10 @@ def run_config_questions(
                 f"TeamAI role filter (optional) [{teamai['role'] or 'none'}]: ",
                 teamai["role"],
             ).strip()
+            teamai["skills"] = read_confirm(
+                "Load the team repository's skills into coop at launch? (subordinate: Cooptimize skills win)",
+                teamai["skills"],
+            )
     knowledge["teamai"] = teamai
 
     # Honest summary BEFORE anything is saved.

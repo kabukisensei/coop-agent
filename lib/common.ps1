@@ -2353,6 +2353,30 @@ function Get-CoopKnowledgeBlock {
   return $null
 }
 
+# K3: the TeamAI trial's team skills root for the subordinate team-skills launch
+# slot. Only when knowledge.teamai.enabled AND knowledge.teamai.skills are truthy
+# and lib/teamai.py recorded the isolated clone (state.json clone_path at init).
+# Returns the <clone>\skills path or '' (never throws: a malformed state file is
+# "no team skills", not a launcher abort).
+function Get-CoopTeamaiSkillsRoot {
+  $k = Get-CoopKnowledgeBlock
+  if (-not $k -or -not $k.teamai) { return '' }
+  $t = $k.teamai
+  $on = [string]$t.enabled; $sk = [string]$t.skills
+  if (@('1','true','yes','on') -notcontains $on.Trim().ToLowerInvariant()) { return '' }
+  if (@('1','true','yes','on') -notcontains $sk.Trim().ToLowerInvariant()) { return '' }
+  $stateFile = Join-Path (Join-Path (Get-CoopProfileDir) 'teamai') 'state.json'
+  if (-not (Test-Path -LiteralPath $stateFile -PathType Leaf)) { return '' }
+  try {
+    $st = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    $clone = [string]$st.clone_path
+  } catch { return '' }
+  if (-not $clone) { return '' }
+  $skills = Join-Path $clone 'skills'
+  if (Test-Path -LiteralPath $skills -PathType Container) { return $skills }
+  return ''
+}
+
 # True when knowledge.enabled is truthy in the fleet config.
 function Test-CoopKnowledgeEnabled {
   $k = Get-CoopKnowledgeBlock
