@@ -311,6 +311,43 @@ There is deliberately no data-doc `session_start` hook: missing or unbuilt docs
 stay silent, and users opt into setup later with `/setup-docs`, `/start`, or
 `coop data-doc setup`.
 
+### `sql_impact` (live impact tracing)
+
+Read-only live impact tracing for one SQL object (master plan section 8 item 4,
+row SQ4), implemented by `lib/sql_impact.py` over the same connection path as
+`fabric_sql_query` (`open_connection` in `lib/sql_query.py`: the contract's ready
+dev or test `sql_targets` default, or the managed Fabric target when the contract
+has no `sql_targets`; same identity pinning, driver, encryption and timeouts). The
+tool accepts exactly one field, `object` (`schema.name` or `name`, `dbo` assumed,
+brackets allowed, identifier characters only), and runs three fixed, parameterized
+catalog queries with the name bound through `OBJECT_ID(?)`, never spliced in:
+
+| Section | Query | Notes |
+| --- | --- | --- |
+| `downstream` | `sys.dm_sql_referencing_entities(?, 'OBJECT')` joined to `sys.objects` | who references the object, resolved at call time |
+| `upstream` | `sys.sql_expression_dependencies` for the object's referenced entities, joined to `sys.objects` | each item carries `resolved`; an unresolved or ambiguous one (dropped, cross-database) adds `mentioned_in_definition` from a `sys.sql_modules` `LIKE` check |
+| `columns` | `INFORMATION_SCHEMA.COLUMNS` | name, type, nullability, position, so a before/after comparison knows what to count |
+
+Each section is `{"state": "ok", "items": [...], "count", "truncated"}` or
+`{"state": "unavailable", "reason": ...}` when that catalog view is missing on the
+target (Synapse serverless never exposes `sys.dm_sql_referencing_entities`, so its
+`downstream` section says so without asking the server), so an empty list always
+means "no dependents" and never "could not look". Dependencies are capped at 500
+per section and columns at 1000. The result also carries the executor's `target`
+summary and the resolved `object` (schema, name, type); `object_not_found`,
+`object_invalid` and `input_invalid` are the tool's own states, every other state is
+the executor's. Driver error text, hosts and tokens never appear.
+
+Governance (`extensions/coop-guardrails`): `sql_impact` is a metadata read, so it
+runs without a prompt when the trusted contract snapshot resolves a dev or test
+target (the ready `sql_targets` default, or the managed Fabric entry's environment
+without `sql_targets`); a production or unresolved target asks once per call (and
+is blocked headlessly); a call carrying any field beyond `object` is blocked. The
+audit records a fixed label and the environment, never the object name. The tool's
+text output adds a `data_doc` lineage hint when built docs exist in the folder, and
+the `impact-analysis` prompt and the `coop-workflow` skill call `sql_impact` before
+any live SQL edit.
+
 ---
 
 ## Microsoft Fabric CLI (`fab`) and the Homebrew collision

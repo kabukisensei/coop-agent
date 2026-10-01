@@ -794,6 +794,7 @@ const PRODUCTION_WORD = /(^|[^a-z0-9])(prod|production)([^a-z0-9]|$)/i;
 const SQL_ENDPOINT_TOOL = /(^|[_\-.:/])(executeSQL|execute_query|fabric-sqlendpoint-execute_query|fabric_sqlendpoint_execute_query)([_\-.:/]|$)/i;
 const MANAGED_SQL_SERVER = "fabric-sqlendpoint";
 const FABRIC_SQL_FALLBACK_TOOL = "fabric_sql_query";
+const SQL_IMPACT_TOOL = "sql_impact";
 const SQL_MUTATION_VERB = /\b(ALTER|CREATE|DELETE|DENY|DROP|EXEC|EXECUTE|GRANT|INSERT|MERGE|RENAME|REPLACE|REVOKE|TRUNCATE|UPDATE|UPSERT)\b/i;
 const SQL_MUTATING_INTO = /\b(?:SELECT|COPY)\b[\s\S]*?\bINTO\b/i;
 
@@ -1385,6 +1386,35 @@ function contractLiveReadScope(event: any, contract: ContractSqlScope, deps: Liv
   };
 }
 
+export type SqlImpactDecision = { action: "allow" | "prompt" | "block"; environment: string; reason: string };
+
+/** sql_impact (SQ4) reads catalog metadata for one object on the executor's target.
+ *  Dev/test metadata is read-only by default (guardrail 5), so it runs without a
+ *  prompt when the trusted snapshot resolves a dev or test target: the contract's
+ *  ready default entry, or the managed Fabric entry's environment when the
+ *  contract has no sql_targets. Anything else asks once per call; a call that
+ *  carries any field beyond `object` is blocked outright. */
+export function decideSqlImpact(event: any, deps: LiveReadResolverDeps): SqlImpactDecision {
+  const input = event?.input;
+  if (!input || typeof input !== "object" || Array.isArray(input)
+      || Object.keys(input).join(",") !== "object" || typeof input.object !== "string") {
+    return { action: "block", environment: "", reason: "accepts exactly one field, object" };
+  }
+  const contract = deps.contract?.() ?? null;
+  if (contract?.configured) {
+    if (contract.target) return { action: "allow", environment: contract.target.environment, reason: "contract sql_targets default" };
+    return { action: "prompt", environment: "unresolved", reason: "the contract's sql_targets default is not a ready dev or test entry" };
+  }
+  let environment = "";
+  try {
+    const mcp = JSON.parse(deps.readText(join(deps.agentDir, "mcp-adapter.json")));
+    const managed = Array.isArray(mcp?._coop?.managed_servers) && mcp._coop.managed_servers.includes(MANAGED_SQL_SERVER);
+    environment = managed ? (strictResolvedText(mcp?.mcpServers?.[MANAGED_SQL_SERVER]?._coop_target?.environment)?.toLowerCase() || "") : "";
+  } catch { environment = ""; }
+  if (environment === "dev" || environment === "test") return { action: "allow", environment, reason: "managed Fabric target" };
+  return { action: "prompt", environment: environment || "unresolved", reason: environment === "production" ? "production target" : "no dev or test target resolved" };
+}
+
 export function createLiveReadGrant(scope: LiveReadScope, now = Date.now()): LiveReadGrant {
   return { scope: { ...scope, targets: [...scope.targets] }, grantedAt: now };
 }
@@ -1796,6 +1826,30 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       // 0b. Mutating MCP / Fabric / Power BI action → explicit approval. Proxied
       // calls use the adapter's server/tool identity; approval fails closed headlessly.
       if (tool !== "bash") {
+        // 0b'. sql_impact (SQ4): catalog metadata for one object on the executor's
+        // dev/test target runs without a prompt; anything else asks or is blocked.
+        if (tool === SQL_IMPACT_TOOL) {
+          const impact = decideSqlImpact(event, { ...liveReadDeps, contract: () => ensureSessionGovernance(ctx.cwd).sqlContract });
+          if (impact.action === "block") {
+            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-sql-impact", decision: "blocked", label: "live metadata read", detail: "input-invalid" });
+            return { block: true, reason: `coop guardrails: blocked sql_impact; it ${impact.reason}.` };
+          }
+          if (impact.action === "allow") {
+            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-sql-impact", decision: "allowed", label: "live metadata read", detail: impact.environment });
+            return;
+          }
+          if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
+            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-sql-impact", decision: "blocked-headless", label: "live metadata read", detail: impact.environment });
+            return { block: true, reason: `coop guardrails: blocked sql_impact (${impact.reason}); explicit approval is unavailable in headless mode.` };
+          }
+          const ok = await ctx.ui.confirm(
+            "coop live-data guardrail",
+            `Live catalog metadata read (sql_impact) on a target that is not a resolved dev/test entry:\n  environment: ${impact.environment} (${impact.reason})\nDev/test metadata is read-only by default; production and unresolved targets ask. Read it once?`,
+          );
+          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-sql-impact", decision: ok ? "allowed" : "declined", label: "live metadata read", detail: impact.environment });
+          if (!ok) return { block: true, reason: "coop guardrails: blocked sql_impact (you declined)." };
+          return;
+        }
         const target = effectiveMutationTarget(event);
         if (modelingConnectsProduction(event)) modelingProduction = true;
         const mcp = mcpEditLabel(event);

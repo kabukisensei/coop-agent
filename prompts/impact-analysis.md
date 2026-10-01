@@ -8,7 +8,7 @@ Proposed change: {{proposed_change}}
 Required steps:
 1. Read `.coop/project.yml` for project context and use COOP's resolved SQL, DAX, and documentation task authority, including any deliberate project override.
 2. Locate `{{object_or_file}}` and its repository; run `git status` and `git pull`.
-3. Run the `data_doc` tool (`coop-data-doc scan`) to refresh lineage, then trace upstream and downstream dependencies of `{{object_or_file}}` from `graph.json`.
+3. Trace the live blast radius first: call the `sql_impact` tool with `{{object_or_file}}` (its dependents, references and columns on the contract's default dev/test target; a section marked `unavailable` means the target could not be asked, not that nothing depends on it). Then run the `data_doc` tool (`coop-data-doc scan`) to refresh lineage and trace upstream and downstream dependencies of `{{object_or_file}}` from `graph.json` (`data_doc` with `command="lineage"`); compare the two and report drift between the live catalog and the docs instead of trusting either alone.
 4. Map the blast radius of `{{proposed_change}}`: affected warehouse/lakehouse objects, semantic model measures and relationships, Power BI reports, and any pipelines or notebooks.
 5. Where the change touches SQL or DAX, run `sql_review` / `dax_review` against the affected files to surface advisory risks.
 6. Classify each downstream impact (breaking / non-breaking / cosmetic) and note required follow-up changes and a rollback path.

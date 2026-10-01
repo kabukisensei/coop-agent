@@ -23,6 +23,8 @@ Cooptimize guardrails and the Cooptimize workflow:
   authority is authoritative. Read the nearest contract before doing file work.
 
 Native tools available: `sql_review`, `dax_review`, `data_doc` (advisory, read-only),
+`sql_impact` (read-only live catalog trace of one SQL object; call it before editing
+a live SQL object, then `data_doc lineage` for the same object),
 plus the Microsoft Fabric CLI (`fab` = ms-fabric-cli) and `fabric_cicd` (a validate-only
 Python **library**, not a CLI — `import fabric_cicd` in deployment scripts), and
 read-only Fabric / Power BI / Microsoft Learn MCP servers. Persistent memory is provided

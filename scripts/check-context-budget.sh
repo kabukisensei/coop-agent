@@ -11,7 +11,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 
 GUARDRAILS_LIMIT_BYTES=6500
-TOTAL_LIMIT_TOKENS=7000
+# 7000 -> 7200 on 2026-10-01 (master plan row SQ4): one new native tool,
+# sql_impact, plus its one-line AGENTS.md mention. Its metadata is kept compact.
+TOTAL_LIMIT_TOKENS=7200
 
 py="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"
 if [ -z "$py" ]; then

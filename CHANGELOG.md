@@ -30,6 +30,20 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   resolve no scope, so every such read asks; mid-session contract edits never
   change the scope.
 
+- `sql_impact`, read-only live impact tracing (master plan section 8 item 4, row
+  SQ4). For one SQL object on the contract's default dev or test target it runs
+  three fixed, parameterized catalog queries (dependents via
+  `sys.dm_sql_referencing_entities`, references via `sys.sql_expression_dependencies`
+  with a `sys.sql_modules` text check for unresolved ones, columns via
+  `INFORMATION_SCHEMA.COLUMNS`) and reports each section as `ok` or `unavailable`
+  with a reason, so an empty list never means "could not look". It shares
+  `fabric_sql_query`'s connection path (`lib/sql_query.py` `open_connection`), runs
+  without a prompt on a resolved dev/test target, asks on production or unresolved
+  targets, and rejects any field beyond `object`. The `impact-analysis` prompt and
+  the `coop-workflow` skill call it before any live SQL edit, then `data_doc` lineage
+  for the same object. The fixed-context budget gate moves from 7000 to 7200
+  estimated tokens for the new tool's compact metadata (`scripts/check-context-budget.*`).
+
 - The SQL executor reads `sql_targets:` (master plan section 8 item 1, row SQ2).
   `lib/fabric_sql_query.py` is now `lib/sql_query.py` (the in-agent tool keeps its
   `fabric_sql_query` name and contract). With a contract `sql_targets:` section it

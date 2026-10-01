@@ -299,6 +299,75 @@ def _discover_server(target: wmcp.SqlEndpointTarget, token: str) -> tuple[str, s
     return server, "ok"
 
 
+def open_connection(*, cwd: Path | None = None) -> tuple[Any, ResolvedTarget | None, str, dict[str, Any] | None]:
+    """Resolve the contract target, mint the pinned tokens and connect.
+
+    Returns (connection, target, driver, error): `error` is a result dict when
+    anything before the connection failed (then the first two are None). Shared
+    by execute() and lib/sql_impact.py so both reach exactly the same target
+    with the same identity rules.
+    """
+    project_path = wmcp.find_project_yml(cwd or Path.cwd())
+    if not project_path:
+        return None, None, "", result("project_unavailable")
+    project = wmcp.load_project(project_path)
+    if targets_lib.parse_sql_targets(project).configured:
+        target, state = _contract_target(project)
+    else:
+        target, state = _legacy_target(project_path)
+    if state != "ok" or target is None:
+        return None, None, "", result(state)
+    try:
+        import pyodbc  # type: ignore[import-not-found]
+    except (ImportError, OSError):
+        return None, None, "", result("pyodbc_unavailable", stage="driver_import")
+    driver = select_driver(list(pyodbc.drivers()))
+    if not driver:
+        return None, None, "", result("odbc_driver_unavailable", minimum_version=18)
+    # Every mint is pinned to the launch token's tenant (its tid), not to
+    # whichever account az treats as the default; no launch identity, no mint.
+    launch_identity = _jwt_identity(os.environ.get(wmcp.FABRIC_TOKEN_ENV, ""))
+    if not launch_identity:
+        return None, None, "", result("identity_mismatch")
+    tenant = launch_identity[0]
+    if target.fabric is not None:
+        fabric_token, state = wmcp.az_access_token(
+            resource=wmcp.FABRIC_RESOURCE, tenant=tenant
+        )
+        if state != "ok":
+            return None, None, "", result(state, stage="fabric_rest_token")
+        if _jwt_identity(fabric_token) != launch_identity:
+            return None, None, "", result("identity_mismatch")
+        server, state = _discover_server(target.fabric, fabric_token)
+        if state != "ok":
+            return None, None, "", result(state, stage="endpoint_discovery")
+    else:
+        # A host the contract named: it already matched its kind's pattern in
+        # lib/sql_targets.py, so a production or Fabric host cannot hide here.
+        server = target.server
+    sql_token, state = wmcp.az_access_token(resource=SQL_RESOURCE, tenant=tenant)
+    if state != "ok":
+        return None, None, "", result(state, stage="database_token")
+    if _jwt_identity(sql_token) != launch_identity:
+        return None, None, "", result("identity_mismatch")
+    connection_string = (
+        f"DRIVER={{{driver}}};SERVER={server},1433;DATABASE={{{target.database.replace('}', '}}')}}};"
+        "Encrypt=yes;TrustServerCertificate=no;"
+    )
+    if target.read_only_intent:
+        connection_string += "ApplicationIntent=ReadOnly;"
+    try:
+        connection = pyodbc.connect(
+            connection_string,
+            attrs_before={SQL_COPT_SS_ACCESS_TOKEN: pack_access_token(sql_token)},
+            timeout=target.connect_timeout,
+            autocommit=True,
+        )
+    except Exception:
+        return None, None, "", result("connection_failed")
+    return connection, target, driver, None
+
+
 def execute(payload: Any, *, cwd: Path | None = None) -> dict[str, Any]:
     if not isinstance(payload, dict) or set(payload) - {"query", "maximum_rows"}:
         return result("input_invalid")
@@ -314,64 +383,9 @@ def execute(payload: Any, *, cwd: Path | None = None) -> dict[str, Any]:
     ):
         return result("query_rejected")
     row_limit = min(limit, maximum_rows)
-    project_path = wmcp.find_project_yml(cwd or Path.cwd())
-    if not project_path:
-        return result("project_unavailable")
-    project = wmcp.load_project(project_path)
-    if targets_lib.parse_sql_targets(project).configured:
-        target, state = _contract_target(project)
-    else:
-        target, state = _legacy_target(project_path)
-    if state != "ok" or target is None:
-        return result(state)
-    try:
-        import pyodbc  # type: ignore[import-not-found]
-    except (ImportError, OSError):
-        return result("pyodbc_unavailable", stage="driver_import")
-    driver = select_driver(list(pyodbc.drivers()))
-    if not driver:
-        return result("odbc_driver_unavailable", minimum_version=18)
-    # Every mint is pinned to the launch token's tenant (its tid), not to
-    # whichever account az treats as the default; no launch identity, no mint.
-    launch_identity = _jwt_identity(os.environ.get(wmcp.FABRIC_TOKEN_ENV, ""))
-    if not launch_identity:
-        return result("identity_mismatch")
-    tenant = launch_identity[0]
-    if target.fabric is not None:
-        fabric_token, state = wmcp.az_access_token(
-            resource=wmcp.FABRIC_RESOURCE, tenant=tenant
-        )
-        if state != "ok":
-            return result(state, stage="fabric_rest_token")
-        if _jwt_identity(fabric_token) != launch_identity:
-            return result("identity_mismatch")
-        server, state = _discover_server(target.fabric, fabric_token)
-        if state != "ok":
-            return result(state, stage="endpoint_discovery")
-    else:
-        # A host the contract named: it already matched its kind's pattern in
-        # lib/sql_targets.py, so a production or Fabric host cannot hide here.
-        server = target.server
-    sql_token, state = wmcp.az_access_token(resource=SQL_RESOURCE, tenant=tenant)
-    if state != "ok":
-        return result(state, stage="database_token")
-    if _jwt_identity(sql_token) != launch_identity:
-        return result("identity_mismatch")
-    connection_string = (
-        f"DRIVER={{{driver}}};SERVER={server},1433;DATABASE={{{target.database.replace('}', '}}')}}};"
-        "Encrypt=yes;TrustServerCertificate=no;"
-    )
-    if target.read_only_intent:
-        connection_string += "ApplicationIntent=ReadOnly;"
-    try:
-        connection = pyodbc.connect(
-            connection_string,
-            attrs_before={SQL_COPT_SS_ACCESS_TOKEN: pack_access_token(sql_token)},
-            timeout=target.connect_timeout,
-            autocommit=True,
-        )
-    except Exception:
-        return result("connection_failed")
+    connection, target, driver, error = open_connection(cwd=cwd)
+    if error is not None or connection is None or target is None:
+        return error or result("connection_failed")
     try:
         # pyodbc applies the connection's query timeout to new cursors.
         connection.timeout = QUERY_TIMEOUT

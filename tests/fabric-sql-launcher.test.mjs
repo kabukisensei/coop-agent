@@ -26,6 +26,11 @@ assert.deepEqual(direct, {
   args: [join("/tmp/Coop Root", "lib", "sql_query.py")],
 });
 
+assert.deepEqual(mod.fabricSqlHelperInvocation("/usr/bin/python3", "/tmp/Coop Root", "sql_impact.py"), {
+  bin: "/usr/bin/python3",
+  args: [join("/tmp/Coop Root", "lib", "sql_impact.py")],
+});
+
 const root = mkdtempSync(join(tmpdir(), "coop sql launcher spaces "));
 const fakePython = join(root, "Python Runtime", "python3");
 const helperPath = join(root, "lib", "sql_query.py");
@@ -73,6 +78,11 @@ const pi = {
   exec() { throw new Error("unexpected pi.exec"); },
 };
 mod.default(pi);
+const impactTool = tools.get("sql_impact");
+assert.ok(impactTool, "sql_impact must be publicly registered (SQ4)");
+assert.match(impactTool.description, /three fixed, parameterized catalog queries/);
+assert.match(impactTool.description, /never 'could not look'/);
+assert.match(impactTool.promptGuidelines.join(" "), /data_doc lineage for the same object/);
 const tool = tools.get("fabric_sql_query");
 assert.ok(tool, "fabric_sql_query must be publicly registered");
 assert.match(tool.description, /When a managed fabric-sqlendpoint MCP tool exists, attempt it first/);

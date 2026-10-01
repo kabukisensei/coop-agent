@@ -80,6 +80,10 @@ const DATADOC_PARAMS = Type.Object({
   ),
 });
 
+const SQL_IMPACT_PARAMS = Type.Object({
+  object: Type.String({ description: "One SQL object: `schema.name` or `name` (dbo assumed); brackets allowed. Bound as a parameter, never spliced into SQL." }),
+});
+
 const FABRIC_SQL_QUERY_PARAMS = Type.Object({
   query: Type.String({ description: "One plain SELECT with a literal TOP bound. Sent to the helper over stdin, never argv." }),
   maximum_rows: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000, description: "Optional result cap at or below the query's TOP bound." })),
@@ -103,11 +107,14 @@ export function fabricSqlPythonResolverInvocation(
   };
 }
 
+export type SqlHelper = "sql_query.py" | "sql_impact.py";
+
 export function fabricSqlHelperInvocation(
   python: string,
   root = process.env.COOP_ROOT || resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."),
+  helper: SqlHelper = "sql_query.py",
 ): FabricSqlInvocation {
-  return { bin: python, args: [join(root, "lib", "sql_query.py")] };
+  return { bin: python, args: [join(root, "lib", helper)] };
 }
 
 async function resolveFabricSqlPython(signal: AbortSignal | undefined): Promise<{ python?: string; state?: string }> {
@@ -162,12 +169,12 @@ async function resolveFabricSqlPython(signal: AbortSignal | undefined): Promise<
   });
 }
 
-async function runFabricSqlHelper(params: any, signal: AbortSignal | undefined, cwd: string): Promise<any> {
+async function runFabricSqlHelper(params: any, signal: AbortSignal | undefined, cwd: string, helper: SqlHelper = "sql_query.py"): Promise<any> {
   if (signal?.aborted) return { ok: false, state: "aborted" };
   const selected = await resolveFabricSqlPython(signal);
   if (!selected.python) return { ok: false, state: selected.state || "selected_python_unavailable" };
   if (signal?.aborted) return { ok: false, state: "aborted" };
-  const invocation = fabricSqlHelperInvocation(selected.python);
+  const invocation = fabricSqlHelperInvocation(selected.python, undefined, helper);
   return await new Promise((done) => {
     const child = spawn(invocation.bin, invocation.args, { cwd, stdio: ["pipe", "pipe", "ignore"], shell: false });
     let stdout = "", finished = false, stopState = "";
@@ -308,6 +315,18 @@ function dirExists(p: string): boolean {
 /** Markdown output dir holds built docs (mirrors what `coop-data-doc build` writes). */
 function isBuilt(outAbs: string): boolean {
   return existsSync(join(outAbs, "manifest.json")) || existsSync(join(outAbs, "index.md"));
+}
+
+/** Built lineage docs exist for this folder (same detection as the session-start note). */
+function hasBuiltDocs(cwd: string): boolean {
+  try {
+    const ymlPath = join(cwd, DATADOC_CONFIG);
+    if (!existsSync(ymlPath)) return false;
+    const cfg = parseExisting(safeRead(ymlPath));
+    return isBuilt(resolveRel(cwd, cfg.outputDir || DEFAULT_OUTPUT_DIR));
+  } catch {
+    return false;
+  }
 }
 
 function withinOrEqual(inner: string, outer: string): boolean {
@@ -2479,12 +2498,37 @@ export default function coopTools(pi: ExtensionAPI) {
   };
 
   pi.registerTool({
+    name: "sql_impact",
+    label: "SQL impact (live catalog trace)",
+    description: "Read-only live impact trace of ONE SQL object on the contract's default dev/test sql_targets entry: three fixed, parameterized catalog queries (never free text) for downstream dependents, upstream references and columns. A section marked unavailable means the target could not be asked; an empty list means 'no dependents', never 'could not look'. Accepts only `object`.",
+    promptSnippet: "Live catalog trace of one SQL object's dependents, references and columns",
+    promptGuidelines: [
+      "Before planning or editing a live SQL object, call sql_impact with its name, then data_doc lineage for the same object when built docs exist, and report drift between them. Metadata only: use fabric_sql_query for rows.",
+    ],
+    parameters: SQL_IMPACT_PARAMS,
+    executionMode: "sequential",
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      const details = await runFabricSqlHelper(params, signal, ctx.cwd, "sql_impact.py");
+      const docsHint = hasBuiltDocs(ctx.cwd) ? " Built lineage docs exist here: call data_doc (command=\"lineage\") for the same object to cover the rest of the estate." : "";
+      const section = (name: string) => {
+        const part = details?.[name];
+        if (!part || typeof part !== "object") return `${name}: ?`;
+        return part.state === "ok" ? `${name}: ${part.count}${part.truncated ? "+" : ""}` : `${name}: unavailable`;
+      };
+      const text = details?.ok
+        ? `sql_impact: ${details.object?.schema}.${details.object?.name} (${details.object?.type}) on ${details.target?.kind} ${details.target?.environment}: ${["downstream", "upstream", "columns"].map(section).join(", ")}. Structured items are in details.${docsHint}`
+        : `sql_impact unavailable: ${String(details?.state || "internal_error")}.`;
+      return { content: [{ type: "text" as const, text }], details };
+    },
+  });
+
+  pi.registerTool({
     name: "fabric_sql_query",
     label: "Fabric SQL Query (pyodbc fallback)",
-    description: "Separate governed pyodbc read for one bounded SELECT against the contract's default sql_targets entry (Azure SQL, Fabric SQL database, Synapse serverless, or a Fabric Warehouse/Lakehouse), or the canonical Fabric SQL target when the contract has no sql_targets. When a managed fabric-sqlendpoint MCP tool exists, attempt it first and call fabric_sql_query only after that actual attempt fails because the MCP server/tool is unavailable or missing, or because of authentication, timeout, connection, or transport failure. Never use it for SQL/business/query rejection. Accepts no target, server, credential, or token fields.",
+    description: "Governed pyodbc read of one bounded SELECT against the contract's default sql_targets entry (Azure SQL, Fabric SQL database, Synapse serverless, Fabric Warehouse/Lakehouse), or the canonical Fabric SQL target without sql_targets. When a managed fabric-sqlendpoint MCP tool exists, attempt it first and call fabric_sql_query only after that actual attempt fails (unavailable/missing, authentication, timeout, connection, transport). Never use it for SQL/business/query rejection. Accepts no target, server, credential, or token fields.",
     promptSnippet: "Post-MCP-failure pyodbc fallback for one approval-gated bounded Fabric SELECT TOP read",
     promptGuidelines: [
-      "When a managed fabric-sqlendpoint MCP server is registered, attempt it first. Only after an actual unavailable/authentication/timeout/connection/transport/tool-missing failure may you issue a separate fabric_sql_query call; never fallback before MCP or for SQL/business/query rejection, and never cascade automatically. On an Azure SQL, Fabric SQL database or Synapse serverless target from sql_targets there is no MCP server: fabric_sql_query is the one live read route.",
+      "With a managed fabric-sqlendpoint MCP server, attempt it first; only after an actual unavailable/authentication/timeout/connection/transport/tool-missing failure may you call fabric_sql_query; never fallback before MCP or for SQL/business/query rejection, and never cascade automatically. Direct sql_targets kinds (Azure SQL, Fabric SQL database, Synapse) have no MCP server: fabric_sql_query is the live read route.",
       "Use only one plain SELECT with a literal TOP bound; mutations, batches, cross-database names, and unbounded reads are rejected before authentication or connection.",
     ],
     parameters: FABRIC_SQL_QUERY_PARAMS,

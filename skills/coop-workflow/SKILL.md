@@ -54,7 +54,10 @@ partial, or connected project without requiring the user to edit YAML.
    impact. Run `git status` and `git pull` for the relevant repo.
 3. **Read the target + lineage.** Read the available file(s) and related documentation
    and lineage — call the `data_doc` tool (`coop-data-doc`) instead of guessing at
-   relationships. If local source is missing or partial, use read-only dev/test live
+   relationships. Before planning or editing a live SQL object (view, table, procedure,
+   function), call `sql_impact` with its name for the live dependents, references and
+   columns on the contract's default dev/test target, then `data_doc` lineage for the
+   same object when built docs exist; report drift between the two. If local source is missing or partial, use read-only dev/test live
    metadata/schema/code to fill gaps. Mark each fact's provenance (repo or live
    environment) and report drift. Use **Microsoft Learn** for current Microsoft docs.
 4. **Plan the first slice + get approval.** For multi-step work, write a short PLAN

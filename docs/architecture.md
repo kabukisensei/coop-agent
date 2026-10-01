@@ -76,7 +76,9 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
      (uniform-padded, width-robust; `assets/splash.ansi`).
    - **`coop-tools` extension** — `extensions/coop-tools/`: registers the native
      LLM-callable tools `sql_review`, `dax_review`, `data_doc` that shell out to
-     the standalone CLIs and return JSON the model reasons over. `data_doc` takes
+     the standalone CLIs and return JSON the model reasons over, plus `sql_impact`
+     (`lib/sql_impact.py`: three fixed catalog queries for one object's dependents,
+     references and columns on the contract's dev/test SQL target). `data_doc` takes
      a `command` (`scan` / `build` / `check` / `lineage`); `lineage <object>
      [depth]` returns one object's upstream/downstream + relationships as JSON
      from the built graph, so the agent grounds a change in real lineage instead

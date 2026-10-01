@@ -179,7 +179,7 @@ shows anything still missing.
 | --- | --- |
 | **Pi** | installed globally via `npm` |
 | **Pi extensions** — `pi-mcp-adapter` (MCP), `pi-hermes-memory` (memory), `pi-better-openai` (plan usage limits), `pi-web-access` (web search/fetch — read-only), `@juicesharp/rpiv-ask-user-question` (structured questions) | installed via `pi install` into coop's isolated agent dir (`~/.coop/agent`) |
-| **Coop companion extensions** — `coop-powerline` (footer/splash/vibes), `coop-tools` (native `sql_review`/`dax_review`/`data_doc`/`bpa_review` + workflow prompts), `coop-profile`, `coop-guardrails` (policy enforcement) | shipped in this repo, loaded at launch via `pi -e` (nothing to install) |
+| **Coop companion extensions** — `coop-powerline` (footer/splash/vibes), `coop-tools` (native `sql_review`/`dax_review`/`data_doc`/`sql_impact`/`bpa_review` + workflow prompts), `coop-profile`, `coop-guardrails` (policy enforcement) | shipped in this repo, loaded at launch via `pi -e` (nothing to install) |
 | **Standalone tools** — `coop-data-doc`, `coop-sql-review`, `coop-dax-review` | installed via `pipx` from PyPI |
 | **`fabric-cicd`** (deployment validation) | a Python **library** (no CLI), injected into the Fabric CLI's env via `pipx inject ms-fabric-cli fabric-cicd` |
 | **Microsoft Fabric CLI** (`ms-fabric-cli` → `fab`) | installed via `pipx` |
@@ -567,9 +567,11 @@ A project override is one Markdown file per domain in `.coop/project.yml`
 
 ## Standalone tools
 
-coop wraps three standalone pipx tools and exposes four native LLM tools:
-`sql_review`, `dax_review`, `data_doc`, and optional/config-driven `bpa_review`.
-The review tools are read-only; `data_doc build` writes generated documentation.
+coop wraps three standalone pipx tools and exposes five native LLM tools:
+`sql_review`, `dax_review`, `data_doc`, `sql_impact` (live catalog impact trace of one
+SQL object on the contract's dev/test `sql_targets` entry), and optional/config-driven
+`bpa_review`. The review and impact tools are read-only; `data_doc build` writes
+generated documentation.
 
 - **`coop-data-doc`** — progressive SQL and/or Power BI documentation, lineage, and machine-readable
   output. `scan` → `graph.json`; `build` → `manifest.json` + Markdown docs + a
