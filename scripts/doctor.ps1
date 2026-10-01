@@ -96,10 +96,14 @@ if (Test-Have 'pi') {
   $piProbe = Get-CoopPiVersion
   if ($piProbe) {
     $piv = [version]$piProbe
-    if ($piv -lt [version]'0.79.0') { D-Warn "pi $piv is older than the tested minimum (0.79.0)" 'coop update' }
-    # Ceiling: warn (never fail) when the installed Pi is a newer MINOR than coop's tested
-    # version. `coop update` gates the jump; doctor just flags it.
-    $testedPi = Get-CoopYamlValue (Join-Path $script:CoopRoot 'config/defaults.yml') 'tested_with.pi' ''
+    # Floor: config/defaults.yml tested_with.pi_min (the extension API coop relies on);
+    # 0.79.0 only if that key is missing.
+    $piMin = Get-CoopYamlValue (Join-Path $script:CoopRoot 'config/defaults.yml') 'tested_with.pi_min' '0.79.0'
+    if ($piMin -notmatch '^\d+\.\d+(\.\d+)?$') { $piMin = '0.79.0' }
+    if ($piv -lt [version]$piMin) { D-Warn "pi $piv is older than the tested minimum ($piMin)" 'coop update' }
+    # Ceiling: warn (never fail) when the installed Pi is a newer MINOR than the
+    # manifest's Pi (what `coop update` pins to); doctor just flags the drift.
+    $testedPi = Coop-ManifestGet -Key 'pi.version'
     if ($testedPi -match '(\d+)\.(\d+)') {
       $testedMinor = [version]("{0}.{1}" -f $matches[1], $matches[2])
       $piMinor = [version]("{0}.{1}" -f $piv.Major, $piv.Minor)
@@ -239,8 +243,6 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
   }
 }
 Check-PipxDist 'coop-data-doc' 'coop-data-doc'
-Check-PipxDist 'coop-sql-review' 'coop-sql-review'
-Check-PipxDist 'coop-dax-review' 'coop-dax-review'
 Check-PipxDist 'ms-fabric-cli' 'fab'
 
 # The Node minimum (manifest node.min) is prerequisite row 2 above.
@@ -266,12 +268,17 @@ if (Test-Have 'pi') {
   }
 }
 
+# The client tenant, resolved once through the one predicate (Get-CoopTenant:
+# Rc 0 resolved, 1 none, 2 not a GUID or domain name). The Azure sign-in row, the
+# Warehouse MCP row and the project contract row all read this result; no row
+# re-validates a tenant with its own regex.
+$azTenant = Get-CoopTenant
+
 # Azure sign-in for the client tenant (H2). Probe only: doctor never signs in and
 # never touches the launch cache (.az-ok). Same tenant chain and token check as
-# the launch (Get-CoopTenant / Get-CoopAzTokenRc). A missing az is prerequisite
-# row 5.
+# the launch (Get-CoopTenant / Get-CoopAzTokenRc) and the same hint pair
+# (Get-CoopAzLoginHint / Get-CoopAzTokenHint). A missing az is prerequisite row 5.
 if ($env:COOP_SKIP_AZ -ne '1' -and (Test-Have 'az')) {
-  $azTenant = Get-CoopTenant
   if ($azTenant.Rc -eq 2) {
     D-Warn 'Azure sign-in: tenant id is not a GUID or domain name' 'fix fabric.tenant_id in .coop/project.yml or run: coop onboard --config-only'
   } elseif (-not $azTenant.Tenant) {
@@ -280,20 +287,24 @@ if ($env:COOP_SKIP_AZ -ne '1' -and (Test-Have 'az')) {
     $azT = $azTenant.Tenant
     $azRc = Get-CoopAzTokenRc -Tenant $azT
     if ($azRc -eq 0) { D-Ok "Azure sign-in: signed in to tenant $azT" }
-    elseif ($azRc -eq 124) { D-Warn "Azure sign-in: check timed out for tenant $azT" "run: az account get-access-token --tenant $azT --resource https://api.fabric.microsoft.com" }
-    elseif ($azRc -eq 1) { D-Warn "Azure sign-in: not signed in to tenant $azT" "run: az login --tenant $azT --allow-no-subscriptions" }
-    else { D-Warn "Azure sign-in: token check failed for tenant $azT (not an auth error)" "run: az account get-access-token --tenant $azT --resource https://api.fabric.microsoft.com" }
+    elseif ($azRc -eq 124) { D-Warn "Azure sign-in: check timed out for tenant $azT" (Get-CoopAzTokenHint $azT) }
+    elseif ($azRc -eq 1) { D-Warn "Azure sign-in: not signed in to tenant $azT" (Get-CoopAzLoginHint $azT) }
+    else { D-Warn "Azure sign-in: token check failed for tenant $azT (not an auth error)" (Get-CoopAzTokenHint $azT) }
   }
 }
 
 D-Head 'Microsoft Fabric CLI'
-if (Test-Have 'fab') {
+# An Azure SQL-only client (client.platform in ~/.coop/config, master plan section
+# 8 item 7) does not need the Fabric CLI: a missing fab is reported, never red.
+if (-not (Test-Have 'fab') -and (Test-CoopAzureSqlOnly)) {
+  D-Ok 'fab not installed (Azure SQL client; the Fabric CLI is optional here)'
+} elseif (Test-Have 'fab') {
   $fabver = ((& fab --version 2>&1 | Select-Object -First 3) -join ' ')
   if ($fabver -match '(?i)paramiko|invoke') {
     D-Bad 'fab is the WRONG tool' "this 'fab' is Python Fabric (SSH automation), not the Microsoft Fabric CLI"
     if (-not $script:JSON) {
-      Coop-Say "      Fix: pipx install $(Coop-ManifestPythonSpec 'ms-fabric-cli')   and ensure ~/.local/bin precedes Homebrew on PATH"
-      Coop-Say '           (or: brew uninstall fabric). Verify with: fab --version'
+      Coop-Say "      Fix: pipx install $(Coop-ManifestPythonSpec 'ms-fabric-cli')   and put pipx's bin dir first on PATH (pipx ensurepath)"
+      Coop-Say '           or uninstall the Python fabric package. Verify with: fab --version'
     }
   } else {
     $fv = (& fab --version 2>$null | Select-Object -First 1)
@@ -314,8 +325,6 @@ function Check-PipxTool([string]$Bin) {
   }
 }
 Check-PipxTool 'coop-data-doc'
-Check-PipxTool 'coop-sql-review'
-Check-PipxTool 'coop-dax-review'
 
 D-Head 'Fabric / semantic-model tooling'
 
@@ -550,19 +559,30 @@ if ($mcpFound) {
     $sqlState = 'unavailable'
     $sqlScope = 'unknown'
     $sqlTenant = ''
+    $sqlProbe = 'not_probed'
+    $sqlUsable = $false
     if ($sqlJson) {
       try {
         $sqlDoc = $sqlJson | ConvertFrom-Json
         if ($sqlDoc.state) { $sqlState = [string]$sqlDoc.state }
         if ($sqlDoc.target -and $sqlDoc.target.scope) { $sqlScope = [string]$sqlDoc.target.scope }
         # The tenant the probe minted for (H2b); empty means az's default account.
-        if ($sqlDoc.tenant -is [string] -and $sqlDoc.tenant -match '^[A-Za-z0-9.-]+$') { $sqlTenant = $sqlDoc.tenant }
+        # Named only when it is the tenant the one chain resolves (Get-CoopTenant,
+        # above), so a value that chain rejects is never printed.
+        if ($sqlDoc.tenant -is [string] -and $azTenant.Rc -eq 0 -and $sqlDoc.tenant -ceq $azTenant.Tenant) { $sqlTenant = $azTenant.Tenant }
+        if ($sqlDoc.probe_state -is [string] -and $sqlDoc.probe_state) { $sqlProbe = [string]$sqlDoc.probe_state }
+        if ($sqlDoc.usable -eq $true) { $sqlUsable = $true }
       } catch { $sqlState = 'unavailable' }
     }
     $sqlFor = if ($sqlTenant) { "$sqlScope target, tenant $sqlTenant" } else { "$sqlScope target" }
     $sqlTenantFlag = if ($sqlTenant) { " --tenant $sqlTenant" } else { '' }
+    # Observational and honest: what the row proves. 'usable' means the probe ran,
+    # the target validated and a compatible SQL tool was listed; a registered
+    # config alone is 'configured (not probed)'; otherwise the probe's own state.
+    $sqlHow = if ($sqlUsable) { 'usable' } elseif ($sqlProbe -ne 'not_probed') { "probed: $sqlProbe" } elseif ($sqlState -eq 'registered') { 'configured (not probed)' } else { 'not probed' }
+    $sqlTail = if ($sqlProbe -eq $sqlState) { '' } else { "; $sqlHow" }
     switch ($sqlState) {
-      'registered'            { D-Ok "  • fabric-sqlendpoint registered ($sqlFor; direct HTTP, Azure CLI bearer token)" }
+      'registered'            { D-Ok "  • fabric-sqlendpoint registered ($sqlFor; direct HTTP, Azure CLI bearer token; $sqlHow)" }
       'auth_required'         { D-Warn "  • fabric-sqlendpoint auth_required ($sqlFor)" 'sign in with Azure CLI/tenant access; doctor never triggers login' }
       'azure_cli_unavailable' { D-Warn "  • fabric-sqlendpoint azure_cli_unavailable ($sqlFor)" 'install/repair Azure CLI and ensure az is on PATH; this is not an authentication diagnosis' }
       'token_launch_failed'   { D-Warn "  • fabric-sqlendpoint token_launch_failed ($sqlFor)" 'Azure CLI was found but could not be launched; this is not an authentication diagnosis' }
@@ -570,9 +590,9 @@ if ($mcpFound) {
       'token_command_failed'  { D-Warn "  • fabric-sqlendpoint token_command_failed ($sqlFor)" "Azure CLI launched but token acquisition failed; run: az account get-access-token --resource https://api.fabric.microsoft.com --output json$sqlTenantFlag" }
       'token_output_invalid'  { D-Warn "  • fabric-sqlendpoint token_output_invalid ($sqlFor)" 'Azure CLI returned no usable accessToken JSON; verify the Fabric token command output' }
       'tool_missing'          { D-Warn "  • fabric-sqlendpoint tool_missing ($sqlFor)" 'managed MCP did not advertise executeSQL/execute_query' }
-      'target_invalid'{ D-Warn '  • fabric-sqlendpoint target_invalid' 'run: coop sync after fixing fabric.default_sql_endpoint / registered URL' }
-      'unavailable'   { D-Warn '  • fabric-sqlendpoint unavailable' 'run: coop sync; if already configured, retry when network/auth is available' }
-      default         { D-Warn "  • fabric-sqlendpoint $sqlState" 'run: coop sync' }
+      'target_invalid'{ D-Warn "  • fabric-sqlendpoint target_invalid$sqlTail" 'run: coop sync after fixing fabric.default_sql_endpoint / registered URL' }
+      'unavailable'   { D-Warn "  • fabric-sqlendpoint unavailable$sqlTail" 'run: coop sync; if already configured, retry when network/auth is available' }
+      default         { D-Warn "  • fabric-sqlendpoint $sqlState$sqlTail" 'run: coop sync' }
     }
   } else {
     D-Warn '  fabric-sqlendpoint status unavailable' 'Python is required'
@@ -616,11 +636,12 @@ if (Test-Have 'node') {
       if ($syncFailed) { D-Warn "$kind ${name}: $state" $hint }
       else { D-Ok "$kind ${name}: last known good @ $(($detail -split '\|')[0]) (verified at the last check; the next coop launch or coop sync refreshes it)" }
     }
-    elseif ($state -match 'unavailable|auth_required|dirty_preserved|invalid_preserved|wiki_warning|PENDING_OWNER_PROVISIONING') { D-Warn "$kind ${name}: $state" $hint }
+    elseif ($state -match 'bundled') { D-Warn "$kind ${name}: $state (the copy shipped with coop; $(($detail -split '\|')[0]))" 'the coop-standards wiki has not been reached from this machine; run coop sync when online' }
+    elseif ($state -match 'unavailable|auth_required|dirty_preserved|wiki_warning') { D-Warn "$kind ${name}: $state" $hint }
     else { D-Ok "$kind ${name}: $state$(if ($detail) { " @ $detail" } else { '' })" }
   }
 } else {
-  D-Warn 'standards status unavailable' 'Node is required to discover and verify any SQL/DAX bundled fallback'
+  D-Warn 'standards status unavailable' 'Node is required to verify the standards wiki cache and the bundled copy'
 }
 
 D-Head 'Optional'
@@ -642,8 +663,11 @@ if ($proj) {
   if ($repoPaths.Count -eq 0 -and $estateMode -ne 'discovery') { D-Warn 'no repositories configured' 'run /setup-project in Coop, or set estate.mode: discovery' }
 
   if ((Test-CoopToolEnabled $proj 'fabric_cli') -or (Test-CoopToolEnabled $proj 'fabric_cicd')) {
+    # The one tenant predicate (Get-CoopTenant, above): a TODO placeholder is
+    # unset and a value that is not a GUID or domain name is invalid, never "set".
     $tenant = Get-CoopYamlValue $proj 'fabric.tenant_id' ''
-    if ([string]::IsNullOrWhiteSpace($tenant)) { D-Warn 'Fabric tools enabled but fabric.tenant_id is empty' 'set it in .coop/project.yml' }
+    if ([string]::IsNullOrWhiteSpace($tenant) -or $tenant.Trim().StartsWith('todo', [System.StringComparison]::OrdinalIgnoreCase)) { D-Warn 'Fabric tools enabled but fabric.tenant_id is empty' 'set it in .coop/project.yml' }
+    elseif ($azTenant.Rc -eq 2) { D-Warn 'Fabric tools enabled but fabric.tenant_id is not a GUID or domain name' 'fix it in .coop/project.yml' }
   }
 
   if (Test-CoopToolEnabled $proj 'tabular_editor_cli') {
@@ -652,6 +676,19 @@ if ($proj) {
   }
 
   D-Ok 'Microsoft skills project policy is covered by the pinned catalog doctor section'
+
+  # SQL connection targets (sql_targets:, master plan SQ1): kinds, host patterns,
+  # and the rule that production is never the default. Shared with Bash.
+  if ($pyBin) {
+    foreach ($line in @(& $pyBin (Join-Path $script:CoopRoot 'lib\sql_targets.py') --project $proj doctor-lines 2>$null)) {
+      $parts = @(([string]$line) -split "`t", 3)
+      if ($parts.Count -lt 2 -or -not $parts[0]) { continue }
+      $hint = if ($parts.Count -ge 3) { $parts[2] } else { '' }
+      if ($parts[0] -ceq 'ok') { D-Ok $parts[1] }
+      elseif ($parts[0] -ceq 'bad') { D-Bad $parts[1] $hint }
+      else { D-Warn $parts[1] $hint }
+    }
+  }
 
   # Read-only bounded legacy-project diagnostics, shared with Bash and migration.
   if ($pyBin) {
@@ -686,6 +723,21 @@ if ((Test-CoopGitCheckout $script:CoopRoot) -and (Test-Have 'git')) {
 D-Head 'Powerline / splash assets'
 if (Test-Path -LiteralPath (Join-Path $script:CoopRoot 'extensions\coop-powerline\assets\splash.ansi') -PathType Leaf) { D-Ok 'brand splash present' } else { D-Warn 'splash.ansi missing' 'run: coop sync' }
 if (Test-Path -LiteralPath (Join-Path $script:CoopRoot 'themes\cooptimize.json') -PathType Leaf) { D-Ok 'Cooptimize theme present' } else { D-Warn 'theme missing' }
+
+# A machine that predates the client platform setting is asked once (--fix,
+# interactive, never in --json): the answer is saved to ~/.coop/config and the
+# rows above read it on the next run.
+if ($script:FIX -and -not $script:JSON -and -not [Console]::IsInputRedirected -and (Test-Path -LiteralPath (Get-CoopConfigFile) -PathType Leaf) -and -not (Get-CoopClientPlatform)) {
+  D-Head 'Client platform (--fix)'
+  $fixPy = Get-CoopPython
+  $platFixed = $false
+  if ($fixPy) {
+    & $fixPy (Join-Path $script:CoopRoot 'scripts\onboard.py') platform | Out-Null
+    $platFixed = ($LASTEXITCODE -eq 0)
+  }
+  if ($platFixed) { Coop-Ok 'client platform saved; rerun: coop doctor' }
+  else { Coop-Warn 'client platform not saved; run: coop onboard --platform fabric|azure_sql|both' }
+}
 
 if ($script:FIX -and ($script:FAIL -gt 0 -or $script:WARN -gt 0)) {
   D-Head 'Applying fixes (--fix)'

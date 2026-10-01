@@ -1,9 +1,27 @@
 #!/usr/bin/env python3
-"""Governed stdin/stdout pyodbc fallback for one bounded Fabric SQL read."""
+"""Governed stdin/stdout pyodbc executor for one bounded SQL read.
+
+The target comes from the project contract, never from the caller:
+
+- with a `sql_targets:` section (lib/sql_targets.py, master plan SQ1) the ready
+  default environment (dev or test, never prod) is the target. Azure SQL
+  Database, Fabric SQL database and Synapse serverless entries name their host
+  in the contract; Fabric Warehouse / Lakehouse entries carry workspace and item
+  ids and the host is still discovered through the Fabric REST API;
+- without one, today's path: `fabric.default_sql_endpoint` plus the managed
+  `fabric-sqlendpoint` MCP entry coop generated, which must agree.
+
+Every kind authenticates with Entra ID tokens for the `https://database.windows.net/`
+audience, pinned to the launch identity's tenant (no launch identity, no mint),
+over ODBC Driver 18+, encrypted, with the same query filter, row and byte caps.
+`ApplicationIntent=ReadOnly` is added only for an `azure_sql` entry that declares
+`read_scale_replicas: true`; elsewhere the read-only guarantee stays the query
+filter plus autocommit with no transaction. No credential, connection string,
+SQL text or server name appears in a result.
+"""
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import re
@@ -15,9 +33,10 @@ from pathlib import Path
 from typing import Any
 
 import coop_paths
+import sql_targets as targets_lib
 import warehouse_mcp as wmcp
 
-SQL_RESOURCE = "https://database.windows.net/"
+SQL_RESOURCE = wmcp.SQL_RESOURCE
 SQL_COPT_SS_ACCESS_TOKEN = 1256
 MAX_ROWS = 1000
 CONNECT_TIMEOUT = 15
@@ -90,23 +109,11 @@ def select_driver(drivers: list[str]) -> str | None:
     return max(supported, default=(0, ""))[1] or None
 
 
-def _jwt_identity(token: str) -> tuple[str, str] | None:
-    try:
-        payload = token.split(".")[1]
-        payload += "=" * (-len(payload) % 4)
-        claims = json.loads(base64.urlsafe_b64decode(payload).decode("utf-8"))
-        tenant = str(claims.get("tid", "")).lower()
-        principal = str(claims.get("oid") or claims.get("sub") or "")
-    except (ValueError, IndexError, UnicodeDecodeError, json.JSONDecodeError):
-        return None
-    return (tenant, principal) if wmcp.is_uuid(tenant) and principal else None
-
-
 def _canonical_target(
     project_path: Path,
 ) -> tuple[wmcp.SqlEndpointTarget | None, str, str]:
     project = wmcp.load_project(project_path)
-    target = wmcp.select_target(project)
+    target = wmcp.project_target(project)
     raw_default = project.get("fabric", {}).get("default_sql_endpoint", {})
     database = raw_default.get("item_name", "") if isinstance(raw_default, dict) else ""
     if (
@@ -122,13 +129,12 @@ def _canonical_target(
         config = json.loads(
             (agent_dir / "mcp-adapter.json").read_text(encoding="utf-8-sig")
         )
-        entry = config["mcpServers"]["fabric-sqlendpoint"]
-        managed = config["_coop"]["managed_servers"]
-    except (OSError, KeyError, TypeError, json.JSONDecodeError):
+    except (OSError, ValueError):
         return None, "", "managed_config_unavailable"
-    registered = (
-        wmcp.registered_target(entry) if "fabric-sqlendpoint" in managed else None
-    )
+    entry = wmcp.managed_sqlendpoint_entry(config)
+    if entry is None:
+        return None, "", "managed_config_unavailable"
+    registered = wmcp.registered_target(entry)
     metadata = entry.get("_coop_target", {}) if isinstance(entry, dict) else {}
     if (
         not wmcp.same_target(registered, target)
@@ -136,6 +142,75 @@ def _canonical_target(
     ):
         return None, "", "target_mismatch"
     return target, database, "ok"
+
+
+class ResolvedTarget:
+    """What execute() connects to: a host (direct kinds) or Fabric ids (discovered)."""
+
+    __slots__ = ("kind", "environment", "database", "server", "fabric", "connect_timeout", "read_only_intent")
+
+    def __init__(
+        self,
+        kind: str,
+        environment: str,
+        database: str,
+        *,
+        server: str = "",
+        fabric: wmcp.SqlEndpointTarget | None = None,
+        connect_timeout: int = CONNECT_TIMEOUT,
+        read_only_intent: bool = False,
+    ) -> None:
+        self.kind = kind
+        self.environment = environment
+        self.database = database
+        self.server = server
+        self.fabric = fabric
+        self.connect_timeout = connect_timeout
+        self.read_only_intent = read_only_intent
+
+    def summary(self) -> dict[str, str]:
+        return {"environment": self.environment, "kind": self.kind, "database": self.database}
+
+
+def _contract_target(project: dict[str, Any]) -> tuple[ResolvedTarget | None, str]:
+    """The ready default `sql_targets` entry as a ResolvedTarget, or a state."""
+    parsed = targets_lib.parse_sql_targets(project)
+    target = parsed.default
+    if target is None:
+        return None, "target_invalid"
+    if target.production:
+        return None, "target_invalid"
+    if target.discovered:
+        item_type = targets_lib.FABRIC_ITEM_KINDS[target.kind]
+        endpoint_id = target.sql_endpoint_id if target.kind == "fabric_lakehouse" else target.item_id
+        fabric = wmcp.SqlEndpointTarget(
+            url=f"{wmcp.FABRIC_RESOURCE}/v1/mcp/dataPlane/workspaces/{target.workspace_id}/items/{endpoint_id}/sqlEndpoint",
+            scope="item",
+            workspace_id=target.workspace_id,
+            item_id=endpoint_id,
+            validation_item_id=target.item_id,
+            item_type=item_type,
+            reason="sql_targets",
+        )
+        return ResolvedTarget(
+            target.kind, target.environment, target.database, fabric=fabric, connect_timeout=target.connect_timeout
+        ), "ok"
+    return ResolvedTarget(
+        target.kind,
+        target.environment,
+        target.database,
+        server=target.server,
+        connect_timeout=target.connect_timeout,
+        read_only_intent=target.kind == "azure_sql" and target.read_scale_replicas,
+    ), "ok"
+
+
+def _legacy_target(project_path: Path) -> tuple[ResolvedTarget | None, str]:
+    fabric, database, state = _canonical_target(project_path)
+    if state != "ok" or fabric is None:
+        return None, state
+    kind = "fabric_warehouse" if fabric.item_type == "Warehouse" else "fabric_lakehouse"
+    return ResolvedTarget(kind, "", database, fabric=fabric), "ok"
 
 
 class ResultTooLarge(Exception):
@@ -211,6 +286,75 @@ def _discover_server(target: wmcp.SqlEndpointTarget, token: str) -> tuple[str, s
     return server, "ok"
 
 
+def open_connection(*, cwd: Path | None = None) -> tuple[Any, ResolvedTarget | None, str, dict[str, Any] | None]:
+    """Resolve the contract target, mint the pinned tokens and connect.
+
+    Returns (connection, target, driver, error): `error` is a result dict when
+    anything before the connection failed (then the first two are None). Shared
+    by execute() and lib/sql_impact.py so both reach exactly the same target
+    with the same identity rules.
+    """
+    project_path = wmcp.find_project_yml(cwd or Path.cwd())
+    if not project_path:
+        return None, None, "", result("project_unavailable")
+    project = wmcp.load_project(project_path)
+    if targets_lib.parse_sql_targets(project).configured:
+        target, state = _contract_target(project)
+    else:
+        target, state = _legacy_target(project_path)
+    if state != "ok" or target is None:
+        return None, None, "", result(state)
+    try:
+        import pyodbc  # type: ignore[import-not-found]
+    except (ImportError, OSError):
+        return None, None, "", result("pyodbc_unavailable", stage="driver_import")
+    driver = select_driver(list(pyodbc.drivers()))
+    if not driver:
+        return None, None, "", result("odbc_driver_unavailable", minimum_version=18)
+    # Every mint is pinned to the launch token's tenant (its tid), not to
+    # whichever account az treats as the default; no launch identity, no mint.
+    launch_identity = wmcp.jwt_identity(os.environ.get(wmcp.FABRIC_TOKEN_ENV, ""))
+    if not launch_identity:
+        return None, None, "", result("identity_mismatch")
+    tenant = launch_identity[0]
+    if target.fabric is not None:
+        fabric_token, state = wmcp.az_access_token(
+            resource=wmcp.FABRIC_RESOURCE, tenant=tenant
+        )
+        if state != "ok":
+            return None, None, "", result(state, stage="fabric_rest_token")
+        if wmcp.jwt_identity(fabric_token) != launch_identity:
+            return None, None, "", result("identity_mismatch")
+        server, state = _discover_server(target.fabric, fabric_token)
+        if state != "ok":
+            return None, None, "", result(state, stage="endpoint_discovery")
+    else:
+        # A host the contract named: it already matched its kind's pattern in
+        # lib/sql_targets.py, so a production or Fabric host cannot hide here.
+        server = target.server
+    sql_token, state = wmcp.az_access_token(resource=SQL_RESOURCE, tenant=tenant)
+    if state != "ok":
+        return None, None, "", result(state, stage="database_token")
+    if wmcp.jwt_identity(sql_token) != launch_identity:
+        return None, None, "", result("identity_mismatch")
+    connection_string = (
+        f"DRIVER={{{driver}}};SERVER={server},1433;DATABASE={{{target.database.replace('}', '}}')}}};"
+        "Encrypt=yes;TrustServerCertificate=no;"
+    )
+    if target.read_only_intent:
+        connection_string += "ApplicationIntent=ReadOnly;"
+    try:
+        connection = pyodbc.connect(
+            connection_string,
+            attrs_before={SQL_COPT_SS_ACCESS_TOKEN: pack_access_token(sql_token)},
+            timeout=target.connect_timeout,
+            autocommit=True,
+        )
+    except Exception:
+        return None, None, "", result("connection_failed")
+    return connection, target, driver, None
+
+
 def execute(payload: Any, *, cwd: Path | None = None) -> dict[str, Any]:
     if not isinstance(payload, dict) or set(payload) - {"query", "maximum_rows"}:
         return result("input_invalid")
@@ -226,54 +370,9 @@ def execute(payload: Any, *, cwd: Path | None = None) -> dict[str, Any]:
     ):
         return result("query_rejected")
     row_limit = min(limit, maximum_rows)
-    project_path = wmcp.find_project_yml(cwd or Path.cwd())
-    if not project_path:
-        return result("project_unavailable")
-    target, database, state = _canonical_target(project_path)
-    if state != "ok" or target is None:
-        return result(state)
-    try:
-        import pyodbc  # type: ignore[import-not-found]
-    except (ImportError, OSError):
-        return result("pyodbc_unavailable", stage="driver_import")
-    driver = select_driver(list(pyodbc.drivers()))
-    if not driver:
-        return result("odbc_driver_unavailable", minimum_version=18)
-    # Both mints are pinned to the launch token's tenant (its tid), not to
-    # whichever account az treats as the default; no launch identity, no mint.
-    launch_identity = _jwt_identity(os.environ.get(wmcp.FABRIC_TOKEN_ENV, ""))
-    if not launch_identity:
-        return result("identity_mismatch")
-    tenant = launch_identity[0]
-    fabric_token, state = wmcp.az_access_token(
-        resource=wmcp.FABRIC_RESOURCE, tenant=tenant
-    )
-    if state != "ok":
-        return result(state, stage="fabric_rest_token")
-    server, state = _discover_server(target, fabric_token)
-    if state != "ok":
-        return result(state, stage="endpoint_discovery")
-    sql_token, state = wmcp.az_access_token(resource=SQL_RESOURCE, tenant=tenant)
-    if state != "ok":
-        return result(state, stage="database_token")
-    if (
-        _jwt_identity(fabric_token) != launch_identity
-        or _jwt_identity(sql_token) != launch_identity
-    ):
-        return result("identity_mismatch")
-    connection_string = (
-        f"DRIVER={{{driver}}};SERVER={server},1433;DATABASE={{{database.replace('}', '}}')}}};"
-        "Encrypt=yes;TrustServerCertificate=no;"
-    )
-    try:
-        connection = pyodbc.connect(
-            connection_string,
-            attrs_before={SQL_COPT_SS_ACCESS_TOKEN: pack_access_token(sql_token)},
-            timeout=CONNECT_TIMEOUT,
-            autocommit=True,
-        )
-    except Exception:
-        return result("connection_failed")
+    connection, target, driver, error = open_connection(cwd=cwd)
+    if error is not None or connection is None or target is None:
+        return error or result("connection_failed")
     try:
         # pyodbc applies the connection's query timeout to new cursors.
         connection.timeout = QUERY_TIMEOUT
@@ -311,6 +410,7 @@ def execute(payload: Any, *, cwd: Path | None = None) -> dict[str, Any]:
             row_count=len(values),
             truncated=truncated,
             driver=driver,
+            target=target.summary(),
         )
         if (
             len(json.dumps(response, ensure_ascii=False).encode("utf-8"))

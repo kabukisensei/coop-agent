@@ -14,25 +14,18 @@
 # No waits. Assertions stay ASCII (Windows PowerShell 5.1 re-encodes child output)
 # and ignore whitespace.
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '_common.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $coop = Join-Path (Join-Path $root 'bin') 'coop.ps1'
-$psExe = try { (Get-Process -Id $PID).Path } catch { 'pwsh' }
-$isWindowsHost = ($env:OS -eq 'Windows_NT')
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-seeddocs-ps-' + [guid]::NewGuid().ToString('N'))
-$fail = 0
-function Ok([string]$m) { Write-Host "  ok $m" }
-function Ko([string]$m, [string]$out = '') { Write-Host "  x $m"; if ($out) { Write-Host $out }; $script:fail = 1 }
 
 $bin = Join-Path $t 'bin'
 $proj = Join-Path $t 'proj'
 $sandboxHome = Join-Path $t 'home'
-$utf8 = New-Object System.Text.UTF8Encoding($false)
-$saved = @{}
-$names = @('PATH','HOME','USERPROFILE','COOP_DIR','COOP_AGENT_DIR','PI_CODING_AGENT_DIR','COOP_SKIP_AZ',
-           'NO_COLOR','COOP_ASSUME_YES','SEED_STATUS','SEED_ARGS_LOG','SEED_STDIN')
+$saved = Save-Env @('PATH','HOME','USERPROFILE','COOP_DIR','COOP_AGENT_DIR','PI_CODING_AGENT_DIR','COOP_SKIP_AZ',
+                    'NO_COLOR','COOP_ASSUME_YES','SEED_STATUS','SEED_ARGS_LOG','SEED_STDIN')
 $argsLog = Join-Path $t 'dd-args.log'
 $stdinFile = Join-Path $t 'dd-stdin.json'
-foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
 try {
   $empty = Join-Path $t 'empty'
   New-Item -ItemType Directory -Force -Path $bin, (Join-Path $proj '.coop'), (Join-Path $proj 'pbirepo'),
@@ -161,10 +154,7 @@ try {
   elseif (Test-Path -LiteralPath $stdinFile) { Ko 'TODO-only contract must not invoke config-set' $r.Out }
   else { Ko 'TODO-only contract should warn that there is nothing to seed yet' $r.Out }
 } finally {
-  foreach ($n in $names) {
-    if ($null -eq $saved[$n]) { Remove-Item -LiteralPath "Env:\$n" -ErrorAction SilentlyContinue }
-    else { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }
-  }
+  Restore-Env $saved
   Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue
 }
 if ($fail -ne 0) { exit 1 }

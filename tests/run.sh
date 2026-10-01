@@ -140,13 +140,13 @@ unset COOP_DIR COOP_AGENT_DIR PI_CODING_AGENT_DIR \
 echo "→ Revision 9 standards registry/resolver and automatic application tests"
 node "$ROOT/tests/standards-rev9.test.mjs"
 node "$ROOT/tests/standards-live-sync.test.mjs"
-node "$ROOT/tests/standards-review-generations.test.mjs"
 node "$ROOT/tests/standards-golden.test.mjs"
+node "$ROOT/tests/standards-bundle.test.mjs"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/standards-runtime.test.mjs"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/bpa-review.test.mjs"
 
-echo "→ data-doc config tests"
-COOP_TEST_DIST="$TMP" node "$ROOT/tests/datadoc.test.mjs"
+echo "→ data-doc config reader and contract review-scope tests"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/review-scope.test.mjs"
 echo "→ coop-guardrails enforcement tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/guardrails.test.mjs"
 echo "→ start-here menu tests"
@@ -159,8 +159,6 @@ echo "→ team knowledge recall note tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/team-knowledge-recall.test.mjs"
 echo "→ contract-driven Fabric target note tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/fabric-target-note.test.mjs"
-# The .ps1 UTF-8 BOM check (exactly one BOM; launch-critical first line) lives in
-# scripts/check-bom.sh only.
 echo "→ share-learning prompt and friction nudge tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/share-learning.test.mjs"
 echo "→ learning-nudge runtime (registered handler) tests"
@@ -168,12 +166,17 @@ COOP_TEST_DIST="$TMP" node "$ROOT/tests/learning-nudge-runtime.test.mjs"
 
 echo "→ setup-docs JSONL bridge (renderPrompt / askCheckbox) tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/setupbridge.test.mjs"
+echo "→ data_doc lineage branch and session lineage note tests"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/lineage.test.mjs"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/setupbridge-integration.test.mjs"
 
 echo "→ workflow slice tests"
 node "$ROOT/tests/workflow.test.mjs"
 echo "→ sql-formatting skill tests"
 node "$ROOT/tests/sql-formatting.test.mjs"
+
+echo "→ compaction over the configured transport (#236) tests"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/compaction-transport.test.mjs"
 
 echo "→ coop-profile tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/coop-profile.test.mjs"
@@ -214,33 +217,20 @@ else
   echo "  ✗ forwarder with a missing coop.ps1: rc=$FWD_RC out=$FWD_OUT"; exit 1
 fi
 
-echo "→ --no-launch dry-run (must NOT start pi; prints the spec)"
-# --no-launch is a dry-run: it runs the preflights (no-op without pi) and prints the
-# resolved launch spec, then exits 0 — the opposite of its old behavior (it launched).
-# Keep its repair-capable preflight away from the developer's real ~/.coop tree.
+echo "→ bin/coop forwards --no-launch to coop.ps1 (one smoke; tests/run.ps1 owns the spec)"
+# The forwarder is only a Git Bash shim: one dry-run through it proves the hand-off
+# to bin/coop.ps1. What the spec contains (--json, PI_SKIP_VERSION_CHECK,
+# PI_MCP_CONFIG_MODE=exclusive) is tests/run.ps1 section 2. Keep the
+# repair-capable preflight away from the developer's real ~/.coop tree.
 LAUNCH_AGENT="$TMP/launch-agent"; LAUNCH_COOP="$TMP/launch-coop"
 mkdir -p "$LAUNCH_AGENT" "$LAUNCH_COOP"
 NL_RC=0
 NL_OUT="$(COOP_AGENT_DIR="$LAUNCH_AGENT" PI_CODING_AGENT_DIR="$LAUNCH_AGENT" COOP_DIR="$LAUNCH_COOP" COOP_NO_ONBOARD=1 bash "$ROOT/bin/coop" --no-launch | tr '\\' '/')" || NL_RC=$?
 [ "$NL_RC" -eq 0 ] || { echo "  ✗ coop --no-launch exited $NL_RC (expected 0)"; exit 1; }
 case "$NL_OUT" in
-  *"docs/guardrails.md"*) ;;
+  *"docs/guardrails.md"*) echo "  ✓ the forwarder reaches coop.ps1 --no-launch (spec printed, exit 0)" ;;
   *) echo "  ✗ coop --no-launch did not print the launch spec (no docs/guardrails.md)"; exit 1 ;;
 esac
-# --json delegates to the launch-spec JSON path.
-JSON_SPEC="$(COOP_AGENT_DIR="$LAUNCH_AGENT" PI_CODING_AGENT_DIR="$LAUNCH_AGENT" COOP_DIR="$LAUNCH_COOP" COOP_NO_ONBOARD=1 bash "$ROOT/bin/coop" --no-launch --json)"
-case "$JSON_SPEC" in
-  *'"bin"'*'"args"'*) ;;
-  *) echo "  ✗ coop --no-launch --json did not emit the JSON spec"; exit 1 ;;
-esac
-JSON_SPEC="$JSON_SPEC" node -e 'const s=JSON.parse(process.env.JSON_SPEC); if(s.env.PI_SKIP_VERSION_CHECK!=="1") process.exit(1)'
-echo "  ✓ --no-launch prints the spec and exits 0 (no pi launched)"
-# #165: MCP comes only from coop's agent-dir mcp-adapter.json, never a repo's .mcp.json.
-if JSON_SPEC="$JSON_SPEC" node -e 'const s=JSON.parse(process.env.JSON_SPEC); process.exit(s.env.PI_MCP_CONFIG_MODE==="exclusive"?0:1)'; then
-  echo "  ✓ launch spec pins MCP config to coop's agent dir (PI_MCP_CONFIG_MODE=exclusive)"
-else
-  echo "  ✗ launch spec does not set PI_MCP_CONFIG_MODE=exclusive"; exit 1
-fi
 
 echo "→ fleet health digest rendering (HTML/Markdown escaping, UTF-8 output)"
 bash "$ROOT/tests/fleet-digest.test.sh"
@@ -256,7 +246,10 @@ echo "→ extension lockfile pins the tree's transitive dependencies (#152)"
 bash "$ROOT/tests/extensions-lock.test.sh"
 bash "$ROOT/tests/mcp-config.test.sh"
 python3 "$ROOT/tests/warehouse-mcp.test.py"
-python3 "$ROOT/tests/fabric-sql-query.test.py"
+python3 "$ROOT/tests/sql-query.test.py"
+python3 "$ROOT/tests/sql-impact.test.py"
+echo "→ sql_targets contract section (SQ1: kinds, host patterns, production never default)"
+python3 "$ROOT/tests/sql-targets.test.py"
 python3 "$ROOT/tests/microsoft-skills.test.py"
 echo "→ one profile root: COOP_DIR is the parent of .coop; one agent-dir chain (S3, #220)"
 python3 "$ROOT/tests/coop-paths.test.py"
@@ -330,8 +323,9 @@ COOP_TEST_DIST="$TMP" node "$ROOT/tests/paths.test.mjs"
 # ============================================================================
 if [ "${COOP_TEST_EXTENDED:-0}" = "1" ]; then
   echo "→ extended lane"
-  # The extended fixtures keep the gate lane's temp home (#135), except
-  # home-guard below, which checks the real home on purpose.
+  # The extended fixtures keep the gate lane's temp home (#135);
+  # tests/fixtures/home-guard.test.ps1 (run by tests/run.ps1) is the one that
+  # checks the real home on purpose.
 
   echo "→ standards lock (simple lock; waitFor polls and a fixed sleep)"
   node "$ROOT/tests/standards-lock-simple.test.mjs"

@@ -1,5 +1,5 @@
 ﻿#!/usr/bin/env pwsh
-# Port of tests/doctor-project.test.sh (master plan S1): scripts/doctor.ps1 --json
+# scripts/doctor.ps1 --json
 # Project-contract rows. A valid minimal contract (Fabric disabled) is clean; the
 # legacy project findings (legacy_project_standard_override,
 # missing_project_standard, legacy_pi_instruction, project_skill_collision) are
@@ -12,22 +12,16 @@
 # of the tree for the same reason). No waits, no network.
 # Assertions stay ASCII: Windows PowerShell 5.1 re-encodes child output.
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '_common.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$psExe = try { (Get-Process -Id $PID).Path } catch { 'pwsh' }
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-doctor-project-' + [guid]::NewGuid().ToString('N'))
-$fail = 0
-function Ok([string]$m) { Write-Host "  ok $m" }
-function Ko([string]$m, [string]$out = '') { Write-Host "  x $m"; if ($out) { Write-Host $out }; $script:fail = 1 }
 
 $sandboxHome = Join-Path $t 'home'
 $agent = Join-Path $t 'agent'
 $doctor = Join-Path $root 'scripts\doctor.ps1'
-$utf8 = New-Object System.Text.UTF8Encoding($false)
 
-$saved = @{}
-$names = @('HOME','USERPROFILE','COOP_DIR','COOP_AGENT_DIR','PI_CODING_AGENT_DIR','COOP_NO_ISOLATE','COOP_SKIP_AZ','NO_COLOR',
+$saved = Save-Env @('HOME','USERPROFILE','COOP_DIR','COOP_AGENT_DIR','PI_CODING_AGENT_DIR','COOP_NO_ISOLATE','COOP_SKIP_AZ','NO_COLOR',
            'COOP_STANDARDS_ROOT','COOP_STANDARDS_STATE','COOP_STANDARDS_SNAPSHOT_ROOT','PSModuleAnalysisCachePath')
-foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
 $savedLocation = Get-Location
 try {
   New-Item -ItemType Directory -Force -Path $sandboxHome, (Join-Path $t 'coop\.coop'), $agent | Out-Null
@@ -54,21 +48,11 @@ try {
     [System.IO.File]::WriteAllText((Join-Path $Dir '.coop\project.yml'), (($Lines -join "`n") + "`n"), $utf8)
   }
   # doctor.ps1 --json rows for the project at $Dir (its cwd).
-  function Get-DoctorRows([string]$Dir) {
+  function Get-ProjectDoctorRows([string]$Dir) {
     Set-Location -LiteralPath $Dir
-    $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-    try {
-      $raw = (& $psExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $doctor --json 2>$null | Out-String)
-    } finally {
-      $ErrorActionPreference = $eap
-      Set-Location -LiteralPath $savedLocation
-    }
-    $doc = @($raw -split "`r?`n" | Where-Object { $_.StartsWith('{"checks"') }) | Select-Object -Last 1
-    if (-not $doc) { throw "doctor.ps1 --json printed no document: $raw" }
-    return @(($doc | ConvertFrom-Json).checks)
+    try { return (Get-DoctorRows) } finally { Set-Location -LiteralPath $savedLocation }
   }
   function Get-ProjectRows($Rows) { @($Rows | Where-Object { [string]$_.section -eq 'Project contract' }) }
-  function Show-Rows($Rows) { (@($Rows | ForEach-Object { "$($_.status) | $($_.name) | $($_.hint)" }) -join "`n") }
   function Test-RowContains($Rows, [string]$Needle) { (@($Rows | Where-Object { ([string]$_.name).Contains($Needle) })).Count -gt 0 }
   function Get-TreeDigest([string]$Dir) {
     (@(Get-ChildItem -LiteralPath $Dir -Recurse -File -Force | Sort-Object FullName | ForEach-Object {
@@ -81,7 +65,7 @@ try {
   $good = Join-Path $t 'good'
   Write-Contract $good (@('profile:', '  organization: Cooptimize', '  default_branch: main', 'repositories:', '  good:',
     "    local_path: $(($good -replace '\\', '/'))", '    default_branch: main') + $off)
-  $proj = Get-ProjectRows (Get-DoctorRows $good)
+  $proj = Get-ProjectRows (Get-ProjectDoctorRows $good)
   $found = @($proj | Where-Object { ([string]$_.name).Contains('project.yml found') -and $_.status -eq 'ok' })
   $warns = @($proj | Where-Object { $_.status -eq 'warn' })
   if ($proj.Count -ge 1 -and $found.Count -ge 1 -and $warns.Count -eq 0) { Ok 'Project contract section present and clean' }
@@ -95,7 +79,7 @@ try {
   [System.IO.File]::WriteAllText((Join-Path $legacy '.pi\AGENTS.md'), "Read docs/standards/sql-standards.md`n", $utf8)
   [System.IO.File]::WriteAllText((Join-Path $legacy '.pi\skills\daily-logger\SKILL.md'), "---`nname: daily-logger`n---`n", $utf8)
   $before = Get-TreeDigest $legacy
-  $proj = Get-ProjectRows (Get-DoctorRows $legacy)
+  $proj = Get-ProjectRows (Get-ProjectDoctorRows $legacy)
   $missing = @()
   foreach ($code in @('legacy_project_standard_override', 'missing_project_standard', 'legacy_pi_instruction', 'project_skill_collision')) {
     if (-not (Test-RowContains $proj "${code}:")) { $missing += $code }
@@ -108,7 +92,7 @@ try {
   # --- missing organization / branch / repo -------------------------------------
   $bad = Join-Path $t 'bad'
   Write-Contract $bad @('profile:', '  organization: ""', 'tools:', '  fabric_cli:', '    enabled: false', '  tabular_editor_cli:', '    enabled: false')
-  $proj = Get-ProjectRows (Get-DoctorRows $bad)
+  $proj = Get-ProjectRows (Get-ProjectDoctorRows $bad)
   if (Test-RowContains $proj 'organization is empty') { Ok 'flags empty organization' } else { Ko 'did not flag empty organization' (Show-Rows $proj) }
   if (Test-RowContains $proj 'default_branch is empty') { Ok 'flags empty default_branch' } else { Ko 'did not flag empty default_branch' (Show-Rows $proj) }
   if (Test-RowContains $proj 'no repositories configured') { Ok 'flags missing repositories' } else { Ko 'did not flag missing repositories' (Show-Rows $proj) }
@@ -116,7 +100,7 @@ try {
   # --- explicit discovery mode needs no local repository -----------------------
   $discovery = Join-Path $t 'discovery'
   Write-Contract $discovery (@('profile:', '  organization: Cooptimize', '  default_branch: main', 'estate:', '  mode: discovery', 'repositories: {}') + $off)
-  $proj = Get-ProjectRows (Get-DoctorRows $discovery)
+  $proj = Get-ProjectRows (Get-ProjectDoctorRows $discovery)
   if (Test-RowContains $proj 'no repositories configured') { Ko 'warned about repositories in discovery mode' (Show-Rows $proj) }
   else { Ok 'accepts repository-free discovery mode' }
 
@@ -125,26 +109,68 @@ try {
   Write-Contract $fabric @('profile:', '  organization: Cooptimize', '  default_branch: main', 'repositories:', '  fab:',
     "    local_path: $(($fabric -replace '\\', '/'))", '    default_branch: main', 'tools:', '  fabric_cli:', '    enabled: true',
     '  tabular_editor_cli:', '    enabled: false')
-  $proj = Get-ProjectRows (Get-DoctorRows $fabric)
+  $proj = Get-ProjectRows (Get-ProjectDoctorRows $fabric)
   if (Test-RowContains $proj 'tenant_id is empty') { Ok 'flags missing fabric tenant_id when Fabric enabled' } else { Ko 'did not flag missing tenant_id' (Show-Rows $proj) }
 
   # --- Tabular Editor enabled but path missing ----------------------------------
   $te = Join-Path $t 'te'
   Write-Contract $te @('profile:', '  organization: Cooptimize', '  default_branch: main', 'repositories:', '  t:',
     "    local_path: $(($te -replace '\\', '/'))", '    default_branch: main', 'tools:', '  tabular_editor_cli:', '    enabled: true')
-  $proj = Get-ProjectRows (Get-DoctorRows $te)
+  $proj = Get-ProjectRows (Get-ProjectDoctorRows $te)
   if (Test-RowContains $proj 'executable_path not set') { Ok 'flags missing TE path when Tabular Editor enabled' } else { Ko 'did not flag missing TE path' (Show-Rows $proj) }
+
+  # --- sql_targets (SQ1): rows per entry, production never default ---------------
+  $targets = Join-Path $t 'targets'
+  Write-Contract $targets (@('profile:', '  organization: Cooptimize', '  default_branch: main', 'estate:', '  mode: discovery') + $off + @(
+    'sql_targets:', '  default_environment: prod', '  dev:', '    kind: azure_sql', '    server: contoso-dev.database.windows.net', '    database: ContosoDW',
+    '  prod:', '    kind: azure_sql', '    server: contoso.datawarehouse.fabric.microsoft.com', '    database: ContosoDW'))
+  $proj = Get-ProjectRows (Get-ProjectDoctorRows $targets)
+  $names = @($proj | ForEach-Object { [string]$_.name })
+  if ((@($names | Where-Object { $_.Contains('never be prod') })).Count -gt 0 -and
+      (@($names | Where-Object { $_.Contains('sql_targets.prod: server') -and $_.Contains('host pattern') })).Count -gt 0 -and
+      (@($names | Where-Object { $_.StartsWith('sql_targets.dev:') -and $_.Contains('contoso-dev.database.windows.net') })).Count -gt 0 -and
+      (@($proj | Where-Object { [string]$_.status -eq 'bad' })).Count -eq 0) {
+    Ok 'sql_targets: doctor names a prod default and a host that does not match its kind'
+  } else { Ko 'sql_targets doctor rows missing' (Show-Rows $proj) }
+  if (Test-RowContains $proj 'sql_targets not configured') { Ko 'configured sql_targets reported as absent' (Show-Rows $proj) } else { Ok 'sql_targets rows replace the not-configured row' }
+  $proj = Get-ProjectRows (Get-ProjectDoctorRows $good)
+  if (Test-RowContains $proj 'sql_targets not configured') { Ok 'a contract without sql_targets gets one informational row' } else { Ko 'missing sql_targets row' (Show-Rows $proj) }
+
+  # --- Azure SQL-only client: a missing Fabric CLI is optional, never red --------
+  # (master plan section 8 item 7). The row reads client.platform from the sandbox
+  # profile's config; fab is hidden from PATH so the "missing" branch runs whether
+  # or not the machine has it.
+  $configFile = Join-Path $env:COOP_DIR '.coop\config'
+  $savedPath = $env:PATH
+  try {
+    $noFab = @()
+    foreach ($d in ($env:PATH -split [System.IO.Path]::PathSeparator)) {
+      if (-not $d) { continue }
+      if ((Test-Path -LiteralPath (Join-Path $d 'fab')) -or (Test-Path -LiteralPath (Join-Path $d 'fab.exe')) -or (Test-Path -LiteralPath (Join-Path $d 'fab.cmd'))) { continue }
+      $noFab += $d
+    }
+    $env:PATH = ($noFab -join [System.IO.Path]::PathSeparator)
+    [System.IO.File]::WriteAllText($configFile, '{"schema_version":1,"client":{"platform":"azure_sql"},"integrations":{"fabric":false,"fabric_sql_endpoint":false}}', $utf8)
+    $fabRows = @((Get-ProjectDoctorRows $good) | Where-Object { [string]$_.section -eq 'Microsoft Fabric CLI' })
+    if ($fabRows.Count -eq 0) { Ko 'Fabric CLI section missing' }
+    elseif (@($fabRows | Where-Object { [string]$_.status -eq 'bad' }).Count -gt 0) { Ko 'Azure SQL client still gets a red Fabric CLI row' (Show-Rows $fabRows) }
+    elseif (-not (Test-RowContains $fabRows 'Azure SQL client')) { Ko 'optional-fab row missing' (Show-Rows $fabRows) }
+    else { Ok 'Azure SQL client: missing fab is reported as optional, not red' }
+    [System.IO.File]::WriteAllText($configFile, '{"schema_version":1,"client":{"platform":"fabric"},"integrations":{}}', $utf8)
+    $fabRows = @((Get-ProjectDoctorRows $good) | Where-Object { [string]$_.section -eq 'Microsoft Fabric CLI' })
+    if (Test-RowContains $fabRows 'fab missing') { Ok 'Fabric client: missing fab stays red' } else { Ko 'Fabric client lost the red fab row' (Show-Rows $fabRows) }
+  } finally {
+    $env:PATH = $savedPath
+    Remove-Item -LiteralPath $configFile -Force -ErrorAction SilentlyContinue
+  }
 } catch {
   Ko "fixture error: $($_.Exception.Message)" ($_.ScriptStackTrace)
 } finally {
   Set-Location -LiteralPath $savedLocation
-  foreach ($n in $names) {
-    if ($null -eq $saved[$n]) { Remove-Item -LiteralPath "Env:\$n" -ErrorAction SilentlyContinue }
-    else { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }
-  }
+  Restore-Env $saved
   Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-if ($fail -ne 0) { Write-Host '  x doctor.ps1 project contract (PowerShell) tests FAILED'; exit 1 }
+if ($fail -ne 0) { Write-Host "  $G_CROSS doctor.ps1 project contract (PowerShell) tests FAILED"; exit 1 }
 Write-Host '  doctor.ps1 project contract (PowerShell) tests passed'
 exit 0

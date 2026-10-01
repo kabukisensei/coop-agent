@@ -1,5 +1,5 @@
 ﻿#!/usr/bin/env pwsh
-# H2: the PowerShell twin of tests/azcache.test.sh. Invoke-CoopAzPreflight and
+# H2: Azure sign-in preflight. Invoke-CoopAzPreflight and
 # Get-CoopAzTokenRc (lib/common.ps1) against the shared fake az
 # (tests/fixtures/fake-az.mjs): tenant chain, Fabric then Power BI check, the
 # ~30-min .az-ok cache, automatic bounded sign-in, one-line failures, and the
@@ -12,13 +12,9 @@
 # (COOP_TEST_EXTENDED=1, #96), like cases 10, 13c and 13d of the bash twin.
 # Assertions stay ASCII: Windows PowerShell 5.1 re-encodes child stderr.
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '_common.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$psExe = try { (Get-Process -Id $PID).Path } catch { 'pwsh' }
-$isWindowsHost = ($env:OS -eq 'Windows_NT')
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-azcache-' + [guid]::NewGuid().ToString('N'))
-$fail = 0
-function Ok([string]$m) { Write-Host "  ok $m" }
-function Ko([string]$m, [string]$out = '') { Write-Host "  x $m"; if ($out) { Write-Host $out }; $script:fail = 1 }
 $extendedLane = ($env:COOP_TEST_EXTENDED -eq '1')
 function Skipped([string]$m) { Write-Host "  - skipped in the gate lane: $m (COOP_TEST_EXTENDED=1 runs it)" }
 
@@ -33,12 +29,9 @@ $coopDir = Join-Path $t 'coop'
 $agent = Join-Path $t 'agent'
 $marker = Join-Path $agent '.az-ok'
 $bin = if ($isWindowsHost) { Join-Path $t 'Program Files (x86)\Azure\wbin' } else { Join-Path $t 'bin' }
-$utf8 = New-Object System.Text.UTF8Encoding($false)
 
-$saved = @{}
-$names = @('PATH','HOME','USERPROFILE','COOP_DIR','COOP_AGENT_DIR','PI_CODING_AGENT_DIR','COOP_NO_ISOLATE',
+$saved = Save-Env @('PATH','HOME','USERPROFILE','COOP_DIR','COOP_AGENT_DIR','PI_CODING_AGENT_DIR','COOP_NO_ISOLATE',
            'COOP_SKIP_AZ','COOP_ASSUME_YES','COOP_TEST_AZ_STATE','NO_COLOR','AZURE_CORE_LOGIN_EXPERIENCE_V2')
-foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
 $savedLocation = Get-Location
 try {
   New-Item -ItemType Directory -Force -Path $bin, (Join-Path $t 'home'), (Join-Path $coopDir '.coop'), (Join-Path $proj '.coop'), $noContract | Out-Null
@@ -85,13 +78,13 @@ try {
   }
   function Get-WarnCount([string]$Out) { @($Out -split "`r?`n" | Where-Object { $_.StartsWith('! ') }).Count }
   function Probe-Line([string]$Tenant, [string]$Resource) { "account get-access-token --tenant $Tenant --resource $Resource --output none" }
-  function Invoke-Preflight([switch]$AssumeYes, [switch]$NewWindow) {
+  function Invoke-Preflight([switch]$AssumeYes) {
     $writer = New-Object System.IO.StringWriter
     $previous = [Console]::Error
     if ($AssumeYes) { $env:COOP_ASSUME_YES = '1' }
     try {
       [Console]::SetError($writer)
-      Invoke-CoopAzPreflight -NewWindow:$NewWindow
+      Invoke-CoopAzPreflight
     } finally {
       [Console]::SetError($previous)
       Remove-Item Env:\COOP_ASSUME_YES -ErrorAction SilentlyContinue
@@ -273,9 +266,9 @@ try {
   if ($extendedLane) {
     $realInvokeCoopAz = ${function:Invoke-CoopAz}
     function Invoke-CoopAz {
-      param([int]$Seconds, [string[]]$AzArgs, [switch]$Quiet, [switch]$NewWindow)
+      param([int]$Seconds, [string[]]$AzArgs, [switch]$Quiet)
       if ($Seconds -eq 300) { $Seconds = 3 }
-      & $realInvokeCoopAz -Seconds $Seconds -AzArgs $AzArgs -Quiet:$Quiet -NewWindow:$NewWindow
+      & $realInvokeCoopAz -Seconds $Seconds -AzArgs $AzArgs -Quiet:$Quiet
     }
     try {
       Set-Project $T2; Reset-Az; Set-AzState 'login-rc' 'hang'
@@ -325,18 +318,6 @@ try {
     Skipped '13d a stopped probe also ends the az wrapper child (a hanging az, 3 s limit)'
   }
 
-  # 13e. `coop web` (-NewWindow): on Windows the sign-in runs in its own window;
-  #      a success is re-checked and stamped like the in-console sign-in.
-  Set-Project $T2; Reset-Az @("$T2 $Pbi")
-  Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
-  $out = Invoke-Preflight -AssumeYes -NewWindow
-  $login = @(Get-AzLines | Where-Object { $_.StartsWith('login ') })
-  if ($login.Count -ne 1 -or $login[0] -ne "login --tenant $T2 --allow-no-subscriptions --output none LXV2=off") { Ko '-NewWindow: one sign-in with LXV2=off expected' ((Get-AzLines) -join "`n") }
-  elseif ((Get-Probes) -ne 3) { Ko '-NewWindow: the sign-in must re-check both tokens' ((Get-AzLines) -join "`n") }
-  elseif (-not (Test-Path -LiteralPath $marker) -or ([System.IO.File]::ReadAllText($marker)) -ne $T2) { Ko '-NewWindow: a verified sign-in stamps the marker' }
-  elseif (-not $out.Contains("Signed in to Azure for tenant $T2") -or (Get-WarnCount $out) -ne 0) { Ko '-NewWindow: success should be reported with no warning' $out }
-  else { Ok '-NewWindow sign-in (coop web): one sign-in (LXV2=off), both tokens re-checked, marker stamped' }
-
   # 13f. Ctrl-C during an in-console sign-in cancels it: one line, and the launch
   #      goes on. Needs a terminal, so POSIX legs drive pwsh through a Python pty.
   #      Extended lane: a hanging sign-in, a pty and a fixed wait.
@@ -384,7 +365,7 @@ sys.stdout.write(buf.decode("utf-8", "replace"))
   }
 
   # 14. doctor.ps1's Azure sign-in row: probe only, never a sign-in, never the
-  #     launch cache, same tenant chain (mirror of tests/doctor.test.sh).
+  #     launch cache, same tenant chain.
   $doctor = Join-Path $root 'scripts\doctor.ps1'
   # Read the Azure row from `doctor.ps1 --json` (stdout, one document). Captured
   # human output is stderr, which Windows PowerShell 5.1 wraps at the console
@@ -433,13 +414,10 @@ sys.stdout.write(buf.decode("utf-8", "replace"))
   Ko "fixture error: $($_.Exception.Message)" ($_.ScriptStackTrace)
 } finally {
   Set-Location -LiteralPath $savedLocation
-  foreach ($n in $names) {
-    if ($null -eq $saved[$n]) { Remove-Item -LiteralPath "Env:\$n" -ErrorAction SilentlyContinue }
-    else { [Environment]::SetEnvironmentVariable($n, $saved[$n]) }
-  }
+  Restore-Env $saved
   Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-if ($fail -ne 0) { Write-Host '  x az sign-in preflight (PowerShell) tests FAILED'; exit 1 }
+if ($fail -ne 0) { Write-Host "  $G_CROSS az sign-in preflight (PowerShell) tests FAILED"; exit 1 }
 Write-Host '  az sign-in preflight (PowerShell) tests passed'
 exit 0

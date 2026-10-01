@@ -1013,6 +1013,40 @@ with tempfile.TemporaryDirectory() as tmp:
     assert launch_token() == HOME_TENANT
     assert az_calls(az_state)[-1] == FABRIC_ARGV
 
+    # SQ2: no managed Warehouse server at all (an Azure SQL-only install). With a
+    # contract whose default sql_targets entry names its host, the launcher mints
+    # the SQL audience for the same tenant chain; without one it stays silent.
+    unmanaged_path = tmp_path / "mcp-unmanaged.json"
+    unmanaged_path.write_text(json.dumps({"mcpServers": {}, "_coop": {"managed_servers": []}}), encoding="utf-8")
+    SQL_ARGV = "account get-access-token --resource https://database.windows.net/ --output json"
+
+    def launch_token_raw(path):
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "lib" / "warehouse_mcp.py"), "launch-token", str(path)],
+            cwd=repo, env=env, capture_output=True, timeout=60,
+        )
+        assert result.returncode == 0 and result.stderr == b"", result
+        return result.stdout.decode("ascii")
+
+    (repo / ".coop" / "project.yml").write_text(f"fabric:\n  tenant_id: {CLIENT_TENANT}\n", encoding="utf-8")
+    assert launch_token_raw(unmanaged_path) == ""
+    (repo / ".coop" / "project.yml").write_text(
+        f"fabric:\n  tenant_id: {CLIENT_TENANT}\n"
+        "sql_targets:\n  default_environment: dev\n  dev:\n    kind: azure_sql\n    server: contoso-dev.database.windows.net\n    database: ContosoDW\n",
+        encoding="utf-8",
+    )
+    frame = launch_token_raw(unmanaged_path)
+    assert frame.startswith("token\t") and frame.endswith("\tend"), frame
+    assert tid_of(frame[len("token\t") : -len("\tend")]) == CLIENT_TENANT
+    assert az_calls(az_state)[-1] == f"{SQL_ARGV} --tenant {CLIENT_TENANT}"
+    # A discovered kind (Fabric Warehouse by ids) is the managed server's job, not this path's.
+    (repo / ".coop" / "project.yml").write_text(
+        f"fabric:\n  tenant_id: {CLIENT_TENANT}\n"
+        f"sql_targets:\n  default_environment: dev\n  dev:\n    kind: fabric_warehouse\n    workspace_id: {CLIENT_TENANT}\n    item_id: {HOME_TENANT}\n    database: W\n",
+        encoding="utf-8",
+    )
+    assert launch_token_raw(unmanaged_path) == ""
+
     # doctor-json reports the tenant it mints for, from the same contract and chain.
     def doctor_json(*extra):
         result = subprocess.run(
@@ -1055,4 +1089,147 @@ with tempfile.TemporaryDirectory() as tmp:
 
 print(
     "  OK  launch token and doctor probe mint for the client tenant; no tenant keeps the az argv unchanged"
+)
+
+# --- S4: one copy each of the token/MCP predicates (issue #224) ---------------
+# 1. The launch-frame validator (lib/fabric_token_runner.mjs) accepts exactly the
+#    warning states `launch-token` can print: WARNING_STATES is the one list.
+runner_text = (ROOT / "lib" / "fabric_token_runner.mjs").read_text(encoding="utf-8")
+runner_enum = wmcp.re.search(r"\^warning\\t\(([a-z_|]+)\)\\tend\$", runner_text)
+assert runner_enum, "runner warning frame regex not found"
+assert tuple(runner_enum.group(1).split("|")) == wmcp.WARNING_STATES
+assert "config_invalid" in wmcp.WARNING_STATES
+# Every state az_access_token can return is in the list (the token helper's exit
+# codes map onto it), so the runner never rejects a real warning.
+assert {
+    "azure_cli_unavailable",
+    "token_launch_failed",
+    "token_timeout",
+    "token_output_invalid",
+    "auth_required",
+    "token_command_failed",
+} <= set(wmcp.WARNING_STATES)
+
+# 2. The PowerShell preflight's auth-failure markers equal the Node helper's.
+common_text = (ROOT / "lib" / "common.ps1").read_text(encoding="utf-8-sig")
+ps_block = wmcp.re.search(
+    r"\$script:CoopAzAuthMarkers = @\((.*?)\)\n", common_text, wmcp.re.S
+)
+assert ps_block, "Test-CoopAzAuthError marker list not found"
+ps_markers = wmcp.re.findall(r"'([^']+)'", ps_block.group(1))
+headers_text = (ROOT / "lib" / "fabric_request_headers.mjs").read_text(encoding="utf-8")
+mjs_block = wmcp.re.search(r"return \[(\"[^\]]+)\]\.some\(\(marker\)", headers_text)
+assert mjs_block, "fabric_request_headers.mjs authError marker list not found"
+mjs_markers = wmcp.re.findall(r'"([^"]+)"', mjs_block.group(1))
+assert ps_markers == mjs_markers and len(ps_markers) == 12, (ps_markers, mjs_markers)
+
+# 3. managed_sqlendpoint_entry is the one ownership rule.
+assert wmcp.managed_sqlendpoint_entry(managed_config()) == entry()
+assert wmcp.managed_sqlendpoint_entry({"mcpServers": {"fabric-sqlendpoint": entry()}}) is None
+assert (
+    wmcp.managed_sqlendpoint_entry(
+        {"mcpServers": {}, "_coop": {"managed_servers": ["fabric-sqlendpoint"]}}
+    )
+    is None
+)
+assert wmcp.managed_sqlendpoint_entry({"_coop": {"managed_servers": "fabric-sqlendpoint"}}) is None
+assert wmcp.managed_sqlendpoint_entry(None) is None
+assert wmcp.managed_sqlendpoint_entry([]) is None
+
+# 4. select_target is project_target; the item-URL regex is one compiled object.
+assert wmcp.select_target is wmcp.project_target
+assert wmcp.ITEM_URL_RE.match(entry(item_url)["url"]).group(2) == item
+assert wmcp.ITEM_URL_RE.match(wmcp.GLOBAL_SQL_ENDPOINT_URL) is None
+assert wmcp.registered_target(entry(item_url)).item_id == item
+
+# 5. The integrations flag rule: only the boolean true opts in.
+assert wmcp.integration_enabled({"integrations": {"fabric": True}}, "fabric") is True
+assert wmcp.integration_enabled({"integrations": {"fabric": "true"}}, "fabric") is False
+assert wmcp.integration_enabled({"integrations": {"fabric": 1}}, "fabric") is False
+assert wmcp.integration_enabled({"integrations": {}}, "fabric") is True
+assert wmcp.integration_enabled({"integrations": {}}, "fabric", default=False) is False
+assert wmcp.integration_enabled({"integrations": "x"}, "fabric") is True
+assert wmcp.integration_enabled(None, "fabric") is True
+
+# 6. jwt_identity mirrors fabric_request_headers.mjs jwtIdentity: canonical
+#    base64url, visible ASCII, size cap, oid before sub, lowercased claims.
+TID = "11111111-1111-4111-8111-111111111111"
+
+
+def seg(value) -> str:
+    raw = value if isinstance(value, bytes) else json.dumps(value).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def token_of(claims, header=None, signature=b"sig") -> str:
+    return ".".join((seg(header or {"alg": "none"}), seg(claims), seg(signature)))
+
+
+assert wmcp.jwt_identity(token_of({"tid": TID.upper(), "oid": "ABC-Def"})) == (TID, "oid", "abc-def")
+assert wmcp.jwt_identity(token_of({"tid": TID, "sub": "User@Example"})) == (TID, "sub", "user@example")
+assert wmcp.jwt_identity(token_of({"tid": TID, "oid": "o", "sub": "s"})) == (TID, "oid", "o")
+for bad in (
+    None,
+    "",
+    token_of({"oid": "x"}),  # no tid
+    token_of({"tid": "not-a-guid", "oid": "x"}),
+    token_of({"tid": TID}),  # no principal
+    token_of({"tid": TID, "oid": 7}),  # principal not a string
+    token_of({"tid": TID, "oid": ""}),  # principal empty
+    token_of({"tid": TID, "oid": "a b"}),  # principal not visible ASCII
+    token_of({"tid": TID, "oid": "x"}) + ".extra",  # four segments
+    seg({"tid": TID, "oid": "x"}),  # one segment
+    "a.b c.d",  # whitespace in the token
+    "x" * (wmcp.MAX_JWT_CHARS + 1),
+    seg({"alg": "none"}) + "." + seg({"tid": TID, "oid": "x"}) + "=.sig",  # padding
+    seg({"alg": "none"}) + "." + seg({"tid": TID, "oid": "x"})[:-1] + "B.sig",  # non-canonical
+    seg({"alg": "none"}) + "." + seg(b"[1,2]") + ".sig",  # payload not an object
+    seg({"alg": "none"}) + "." + seg(b"\xff\xfe") + ".sig",  # payload not UTF-8
+    seg({"alg": "none"}) + "..sig",  # empty segment
+):
+    assert wmcp.jwt_identity(bad) is None, bad
+
+# 7. doctor_status is observational and honest: config alone is registered but
+#    never usable; the probe's own state is reported separately.
+offline = wmcp.doctor_status(cfg)
+assert (offline["state"], offline["config_state"], offline["probe_state"], offline["usable"]) == (
+    "registered", "registered", "not_probed", False,
+)
+supplied = wmcp.doctor_status(cfg, [{"name": "executeSQL"}])
+assert (supplied["state"], supplied["probe_state"], supplied["usable"]) == ("registered", "not_probed", False)
+missing_cfg = wmcp.doctor_status({})
+assert (missing_cfg["state"], missing_cfg["config_state"], missing_cfg["probe_state"], missing_cfg["usable"]) == (
+    "unavailable", "unavailable", "not_probed", False,
+)
+bad_target = wmcp.doctor_status({}, project=malformed_project)
+assert (bad_target["config_state"], bad_target["probe_state"], bad_target["usable"]) == (
+    "target_invalid", "not_probed", False,
+)
+with (
+    mock.patch.object(wmcp, "az_access_token", return_value=("secret-fixture-token", "ok")),
+    mock.patch.object(wmcp, "mcp_tools_list", return_value=([{"name": "executeSQL"}], "ok")),
+):
+    good = wmcp.doctor_status(cfg, project={}, probe=True)
+assert (good["state"], good["config_state"], good["probe_state"], good["usable"]) == (
+    "registered", "registered", "ok", True,
+)
+with mock.patch.object(wmcp, "az_access_token", return_value=("", "auth_required")):
+    denied = wmcp.doctor_status(cfg, project={}, probe=True)
+assert (denied["state"], denied["config_state"], denied["probe_state"], denied["usable"]) == (
+    "auth_required", "registered", "auth_required", False,
+)
+with (
+    mock.patch.object(wmcp, "az_access_token", return_value=("secret-fixture-token", "ok")),
+    mock.patch.object(wmcp, "mcp_tools_list", return_value=([{"name": "listSchemas"}], "ok")),
+):
+    no_tool = wmcp.doctor_status(cfg, project={}, probe=True)
+assert (no_tool["state"], no_tool["probe_state"], no_tool["usable"]) == ("tool_missing", "tool_missing", False)
+# A probe is never attempted when the config alone already fails.
+with mock.patch.object(wmcp, "az_access_token", side_effect=AssertionError("probed an invalid target")):
+    skipped = wmcp.doctor_status({}, project=malformed_project, probe=True)
+assert (skipped["state"], skipped["probe_state"], skipped["usable"]) == ("target_invalid", "not_probed", False)
+assert "secret-fixture-token" not in json.dumps(good) + json.dumps(denied) + json.dumps(no_tool)
+
+print(
+    "  OK  S4: one launch-frame enum, one auth-marker list, one ownership/flag/identity predicate, honest doctor fields"
 )

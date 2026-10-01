@@ -18,8 +18,9 @@
  *   3. Secret files — confirm before read/edit/write of `.env`, private keys, or
  *      credential files, AND before a bash command that touches one (`cat .env`
  *      etc.). The agent must never expose secrets.
- *   4. Live data reads — dev/test metadata is allowed read-only; row-level reads
- *      and any production access require explicit approval.
+ *   4. Live data reads — dev/test metadata is allowed read-only; one plain bounded
+ *      SELECT against the resolved dev target runs unprompted; other row-level
+ *      reads and any production access require explicit approval.
  *   5. Mutating MCP actions — confirm before Fabric/Power BI/MCP tool calls whose
  *      names look like create/update/delete/deploy/publish (best-effort; MCP tool
  *      names vary, so this complements — not replaces — Pi's tool approval).
@@ -61,46 +62,6 @@ function findProjectYml(cwd: string, exists: (path: string) => boolean = existsS
   return null;
 }
 
-/** Parse the `agent_allowed_to_commit` globs out of project.yml text — handling BOTH
- *  YAML flow form (`agent_allowed_to_commit: ["docs/**", ...]`) AND block form
- *
- *      agent_allowed_to_commit:
- *        - "docs/**"
- *        - reports/generated/**
- *
- *  across every occurrence (project.yml defines the key per-repository). The shipped
- *  .coop/project.example.yml uses block form, so a flow-only regex silently ignored a
- *  user's customizations — and diverged from the bash side (lib/_yaml.py reads both). */
-export function parseAllowedGlobs(text: string): string[] {
-  const globs: string[] = [];
-  const add = (raw: string) => {
-    const g = raw.trim().replace(/\s+#.*$/, "").trim().replace(/^["']|["']$/g, "");
-    if (g) globs.push(g);
-  };
-  // Flow form (all occurrences).
-  const flow = /agent_allowed_to_commit\s*:\s*\[([^\]]*)\]/g;
-  let m: RegExpExecArray | null;
-  while ((m = flow.exec(text))) {
-    for (const raw of m[1].split(",")) add(raw);
-  }
-  // Block form: the key on its own line, then more-indented `- item` entries.
-  const lines = text.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const head = /^(\s*)agent_allowed_to_commit\s*:\s*(#.*)?$/.exec(lines[i]);
-    if (!head) continue;
-    const baseIndent = head[1].length;
-    for (let j = i + 1; j < lines.length; j++) {
-      const body = lines[j].trim();
-      if (!body || body.startsWith("#")) continue;
-      const indent = lines[j].length - lines[j].trimStart().length;
-      const item = /^-\s+(.*)$/.exec(body);
-      if (indent > baseIndent && item) add(item[1]);
-      else break; // dedent / non-list sibling → end of this block
-    }
-  }
-  return globs;
-}
-
 /** A committed path is allowed only after explicit deny rules have been checked. */
 function isAllowedCommitPath(file: string, allowedGlobs: string[], deniedGlobs: string[]): boolean {
   if (deniedGlobs.some((g) => matchGlob(file, g))) return false;
@@ -134,8 +95,8 @@ function globToRegex(glob: string): RegExp {
 
 export type RepoCommitPolicy = { allowed: string[]; denied: string[] };
 
-/** Parse the `repositories` section of project.yml and find the entry whose
- *  `local_path` resolves to `repoDir`. Returns null if no matching entry. */
+/** One `repositories:` entry of project.yml with its `local_path` resolved
+ *  against the contract's project dir and its commit globs. */
 export type RepoPolicyEntry = { name: string; path: string; allowed: string[]; denied: string[] };
 
 /** Parse EVERY repositories: entry into resolved policy entries. This is the input
@@ -219,7 +180,8 @@ export function parseRepoEntries(text: string, projectDir: string): RepoPolicyEn
       const item = /^-\s+(.*)$/.exec(trimmed);
       if (item && indent > currentBaseIndent + 2) {
         const parentKey = findParentKey(lines, i, currentBaseIndent + 2);
-        const g = item[1].trim().replace(/^["']|["']$/g, "");
+        // Same cleanup as the scalar branch: a trailing `  # note` is a comment, not part of the glob.
+        const g = item[1].trim().replace(/\s+#.*$/, "").replace(/^["']|["']$/g, "");
         if (g) {
           if (parentKey === "agent_allowed_to_commit") currentAllowed.push(g);
           else if (parentKey === "agent_never_commit") currentDenied.push(g);
@@ -229,12 +191,6 @@ export function parseRepoEntries(text: string, projectDir: string): RepoPolicyEn
   }
   if (inRepos) flush();
   return entries;
-}
-
-/** Back-compat wrapper: policy for exactly the repository whose local_path matches. */
-export function parseRepoCommitPolicy(text: string, projectDir: string, repoDir: string): RepoCommitPolicy | null {
-  const hit = parseRepoEntries(text, projectDir).find((e) => e.path === resolve(repoDir));
-  return hit ? { allowed: hit.allowed, denied: hit.denied } : null;
 }
 
 function findParentKey(lines: string[], idx: number, parentIndent: number): string | null {
@@ -252,30 +208,147 @@ function findParentKey(lines: string[], idx: number, parentIndent: number): stri
   return null;
 }
 
-export type SessionGovernance = { loaded: boolean; entries: RepoPolicyEntry[] };
+export type SessionGovernance = { loaded: boolean; entries: RepoPolicyEntry[]; sqlContract: ContractSqlScope | null };
 
 // The TRUSTED policy snapshot: read once per session, then frozen. Editing
 // .coop/project.yml mid-session can never weaken the active guardrails.
-let sessionGovernance: SessionGovernance = { loaded: false, entries: [] };
+let sessionGovernance: SessionGovernance = { loaded: false, entries: [], sqlContract: null };
 
 /** Read the session's project contract once into an immutable governance snapshot. */
 export function buildSessionGovernance(sessionCwd: string): SessionGovernance {
   const entries: RepoPolicyEntry[] = [];
+  let sqlContract: ContractSqlScope | null = null;
   try {
     const proj = findProjectYml(sessionCwd);
     if (proj) {
       const projectRoot = dirname(dirname(proj));
-      entries.push(...parseRepoEntries(readFileSync(proj, "utf8"), projectRoot));
+      const text = readFileSync(proj, "utf8");
+      entries.push(...parseRepoEntries(text, projectRoot));
+      sqlContract = parseContractSqlScope(text);
     }
   } catch {
     /* conservative defaults are fine */
   }
-  return { loaded: true, entries };
+  return { loaded: true, entries, sqlContract };
 }
 
 /** Forget the snapshot so the next governed call re-reads the contract (new session / tests). */
 export function resetSessionGovernance(): void {
-  sessionGovernance = { loaded: false, entries: [] };
+  sessionGovernance = { loaded: false, entries: [], sqlContract: null };
+}
+
+// --- sql_targets: the contract's SQL scope (SQ3) ------------------------------------
+// lib/sql_targets.py is the authority on the section; this is the same validation
+// ported to the trusted snapshot so the live-read prompt describes exactly what
+// lib/sql_query.py will connect to. Anything the port cannot vouch for resolves to
+// null, which means "ask on every call" (never a grant).
+export type ContractSqlTarget = {
+  environment: "dev" | "test";
+  kind: string;
+  database: string;
+  server: string;
+  workspaceId: string;
+  itemId: string;
+  sqlEndpointId: string;
+};
+/** `configured` mirrors lib/sql_query.py: once the section exists, the executor
+ *  uses it (or fails closed) and never falls back to the managed Fabric target. */
+export type ContractSqlScope = { configured: boolean; client: string; tenant: string; target: ContractSqlTarget | null };
+
+const SQL_HOST_LABEL = "[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?";
+const SQL_TARGET_KINDS: Record<string, { host: RegExp; discovered: boolean }> = {
+  fabric_warehouse: { host: new RegExp(`^${SQL_HOST_LABEL}(?:\\.${SQL_HOST_LABEL})*\\.datawarehouse\\.fabric\\.microsoft\\.com$`), discovered: true },
+  fabric_lakehouse: { host: new RegExp(`^${SQL_HOST_LABEL}(?:\\.${SQL_HOST_LABEL})*\\.datawarehouse\\.fabric\\.microsoft\\.com$`), discovered: true },
+  fabric_sql_database: { host: new RegExp(`^${SQL_HOST_LABEL}(?:\\.${SQL_HOST_LABEL})*\\.database\\.fabric\\.microsoft\\.com$`), discovered: false },
+  azure_sql: { host: new RegExp(`^${SQL_HOST_LABEL}(?:\\.${SQL_HOST_LABEL})*\\.database\\.windows\\.net$`), discovered: false },
+  synapse_serverless: { host: new RegExp(`^${SQL_HOST_LABEL}-ondemand(?:\\.${SQL_HOST_LABEL})*\\.sql\\.azuresynapse\\.net$`), discovered: false },
+};
+const SQL_TARGET_KEYS = new Set(["kind", "server", "database", "workspace_id", "item_id", "sql_endpoint_id", "read_scale_replicas"]);
+const SQL_SAFE_DATABASE = /^[A-Za-z0-9][A-Za-z0-9 ._@&'()+-]{0,159}$/;
+const SQL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A YAML scalar as lib/_yaml.py reads it: quotes stripped, trailing comment dropped. */
+function yamlScalar(raw: string): string {
+  const v = raw.trim();
+  const quoted = /^"((?:[^"\\]|\\.)*)"\s*(?:#.*)?$|^'((?:[^']|'')*)'\s*(?:#.*)?$/.exec(v);
+  if (quoted) return quoted[1] !== undefined ? quoted[1].replace(/\\(.)/g, "$1") : quoted[2].replace(/''/g, "'");
+  return v.replace(/\s+#.*$/, "").trim();
+}
+
+/** The top-level `section:` block of a contract as nested string maps (two levels:
+ *  `section.key: scalar` and `section.key.subkey: scalar`). Deeper nesting, lists
+ *  and flow collections are not what sql_targets uses, so they read as "". */
+function yamlSection(text: string, section: string): Record<string, string | Record<string, string>> | null {
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
+  const start = lines.findIndex((line) => new RegExp(`^${section}\\s*:\\s*(?:#.*)?$`).test(line));
+  if (start < 0) return null;
+  const out: Record<string, string | Record<string, string>> = {};
+  let current: string | null = null;
+  let currentIndent = 0;
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = lines[i];
+    const body = line.trim();
+    if (!body || body.startsWith("#")) continue;
+    const indent = line.length - line.trimStart().length;
+    if (indent === 0) break;
+    const kv = /^([A-Za-z0-9_]+)\s*:(?:\s+(.*))?$/.exec(body);
+    if (!kv) { current = null; continue; }
+    const [, key, rawValue] = kv;
+    if (current !== null && indent > currentIndent) {
+      const nested = out[current];
+      if (typeof nested === "object") nested[key] = rawValue === undefined ? "" : yamlScalar(rawValue);
+      continue;
+    }
+    currentIndent = indent;
+    if (rawValue === undefined || rawValue.trim() === "" || rawValue.trim().startsWith("#")) { out[key] = {}; current = key; }
+    else { out[key] = yamlScalar(rawValue); current = null; }
+  }
+  return out;
+}
+
+function sqlPlaceholder(value: string): boolean { return !value || value.toUpperCase().startsWith("TODO"); }
+
+/** One `sql_targets` entry, or null unless it is exactly ready (lib/sql_targets.py's
+ *  "ready" state): placeholders, unknown or credential keys, a host that does not
+ *  match its kind, ids for a direct kind, a hand-written host for a discovered kind. */
+function readySqlTarget(environment: "dev" | "test", raw: unknown): ContractSqlTarget | null {
+  if (!raw || typeof raw !== "object") return null;
+  const entry = raw as Record<string, string>;
+  if (Object.keys(entry).some((key) => !SQL_TARGET_KEYS.has(key))) return null;
+  const kind = (entry.kind || "").trim().toLowerCase();
+  const spec = SQL_TARGET_KINDS[kind];
+  const database = (entry.database || "").trim();
+  if (!spec || sqlPlaceholder(database) || !SQL_SAFE_DATABASE.test(database)) return null;
+  const server = (entry.server || "").trim().toLowerCase();
+  const workspaceId = (entry.workspace_id || "").trim().toLowerCase();
+  const itemId = (entry.item_id || "").trim().toLowerCase();
+  const sqlEndpointId = (entry.sql_endpoint_id || "").trim().toLowerCase();
+  if (entry.read_scale_replicas !== undefined && (kind !== "azure_sql" || !/^(true|false)$/i.test(entry.read_scale_replicas.trim()))) return null;
+  if (spec.discovered) {
+    if (server || !SQL_UUID.test(workspaceId) || !SQL_UUID.test(itemId)) return null;
+    if (kind === "fabric_lakehouse" ? !SQL_UUID.test(sqlEndpointId) : sqlEndpointId) return null;
+    return { environment, kind, database, server: "", workspaceId, itemId, sqlEndpointId };
+  }
+  if (workspaceId || itemId || sqlEndpointId || sqlPlaceholder(server) || !spec.host.test(server)) return null;
+  return { environment, kind, database, server, workspaceId: "", itemId: "", sqlEndpointId: "" };
+}
+
+/** The contract's SQL scope source: profile.client, fabric.tenant_id and the ready
+ *  default `sql_targets` entry. `target` is null when the default is prod, missing,
+ *  unconfigured or invalid, so a contract-driven read then asks on every call. */
+export function parseContractSqlScope(text: string): ContractSqlScope | null {
+  const section = yamlSection(text, "sql_targets");
+  if (section === null) return null;
+  const profile = yamlSection(text, "profile") || {};
+  const fabric = yamlSection(text, "fabric") || {};
+  const client = typeof profile.client === "string" ? profile.client : "";
+  const tenant = typeof fabric.tenant_id === "string" ? fabric.tenant_id.trim().toLowerCase() : "";
+  const envs = ["dev", "test", "prod"];
+  if (Object.keys(section).some((key) => key !== "default_environment" && !envs.includes(key))) return { configured: true, client, tenant, target: null };
+  const rawDefault = typeof section.default_environment === "string" ? section.default_environment.trim().toLowerCase() : "";
+  const environment = rawDefault === "" ? "dev" : rawDefault;
+  if (environment !== "dev" && environment !== "test") return { configured: true, client, tenant, target: null };
+  return { configured: true, client, tenant, target: readySqlTarget(environment, section[environment]) };
 }
 
 function ensureSessionGovernance(sessionCwd: string): SessionGovernance {
@@ -540,32 +613,11 @@ export function parseGitCommand(cmd: string): ParsedGitCommand | null {
   return parseGitCommands(cmd)[0] ?? null;
 }
 
-/** `git`, optionally followed by global options (`-C <dir>`, `-c k=v`, `--no-pager`),
- *  as a regex-source fragment shared by every git detector so `git -C <dir> <subcmd>`
- *  and interspersed flags match consistently. Kept for backwards compatibility with
- *  any external callers; new code should use {@link parseGitCommand}. */
-const GIT_PREFIX = String.raw`\bgit\b(?:\s+-{1,2}[A-Za-z][\w-]*(?:[=\s]\S+)?)*`;
-
-/** A `git commit` invocation, tolerant of global options between `git` and `commit`
- *  (`git -C <dir> commit`, `git -c k=v commit`, `git --no-pager commit`). */
-export const GIT_COMMIT_RE = new RegExp(GIT_PREFIX + String.raw`\s+commit\b`, "i");
-
 /** Explicit pathspec arguments of `git commit <pathspec>` — the files it commits
  *  straight from the WORKING TREE, ignoring the index. */
 export function explicitCommitPathspecs(cmd: string, parsed: ParsedGitCommand | null = parseGitCommand(cmd)): string[] {
   if (!parsed || parsed.subcommand !== "commit") return [];
   return parsed.pathspecs;
-}
-
-/** The shell segment (top-level, split on ; && || | &) that contains string index
- *  `idx`, plus everything before it — positions are on the ORIGINAL string so callers
- *  can slice exactly. Kept for leading-cd logic. */
-function segmentAround(cmd: string, idx: number): { segment: string; before: string } {
-  for (const { segment, start } of splitShellSegments(cmd)) {
-    const end = start + segment.length;
-    if (idx >= start && idx < end) return { segment, before: cmd.slice(0, start) };
-  }
-  return { segment: cmd, before: "" };
 }
 
 /** The directory of the LAST `cd <dir>` / `pushd <dir>` in a command prefix, or null.
@@ -677,6 +729,7 @@ const PRODUCTION_WORD = /(^|[^a-z0-9])(prod|production)([^a-z0-9]|$)/i;
 const SQL_ENDPOINT_TOOL = /(^|[_\-.:/])(executeSQL|execute_query|fabric-sqlendpoint-execute_query|fabric_sqlendpoint_execute_query)([_\-.:/]|$)/i;
 const MANAGED_SQL_SERVER = "fabric-sqlendpoint";
 const FABRIC_SQL_FALLBACK_TOOL = "fabric_sql_query";
+const SQL_IMPACT_TOOL = "sql_impact";
 const SQL_MUTATION_VERB = /\b(ALTER|CREATE|DELETE|DENY|DROP|EXEC|EXECUTE|GRANT|INSERT|MERGE|RENAME|REPLACE|REVOKE|TRUNCATE|UPDATE|UPSERT)\b/i;
 const SQL_MUTATING_INTO = /\b(?:SELECT|COPY)\b[\s\S]*?\bINTO\b/i;
 
@@ -1095,6 +1148,8 @@ export type LiveReadScope = {
   operationClass: string;
   resultLimit: number;
   timeoutMs: number;
+  /** Prompt label when the scope came from the contract's sql_targets (SQ3). */
+  label?: string;
 };
 
 export type LiveReadGrant = { scope: LiveReadScope; grantedAt: number };
@@ -1152,6 +1207,8 @@ export type LiveReadResolverDeps = {
   readText: (path: string) => string;
   agentDir: string;
   token: () => string | undefined;
+  /** The trusted snapshot's `sql_targets` scope source (SQ3); absent means no section. */
+  contract?: () => ContractSqlScope | null;
 };
 
 function launchIdentity(token: string | undefined): { tenant: string; principal: string } | null {
@@ -1173,7 +1230,11 @@ export function resolveLiveReadScope(event: any, deps: LiveReadResolverDeps): Li
   if (!reusableSqlSurface(event)) return null;
   if (event?.toolName === FABRIC_SQL_FALLBACK_TOOL) {
     const root = process.env.COOP_ROOT;
-    if (!root || !existsSync(join(root, "lib", "fabric_sql_query.py"))) return null;
+    if (!root || !existsSync(join(root, "lib", "sql_query.py"))) return null;
+    // A contract with sql_targets drives lib/sql_query.py (SQ2), so its scope
+    // comes from the trusted snapshot, never from the managed Fabric entry.
+    const contract = deps.contract?.() ?? null;
+    if (contract?.configured) return contractLiveReadScope(event, contract, deps);
   }
   let mcp: any;
   try { mcp = JSON.parse(deps.readText(join(deps.agentDir, "mcp-adapter.json"))); } catch { return null; }
@@ -1229,6 +1290,66 @@ export function resolveLiveReadScope(event: any, deps: LiveReadResolverDeps): Li
   };
 }
 
+/** Scope for a contract-driven read: the ready dev/test default entry, the
+ *  contract's client, and the launch identity (whose tenant the contract's
+ *  fabric.tenant_id must match when it names one). Targets are
+ *  `kind/host/database` for direct kinds and `workspace/item/database` for
+ *  discovered ones, so a Warehouse named both ways shares one grant. */
+function contractLiveReadScope(event: any, contract: ContractSqlScope, deps: LiveReadResolverDeps): LiveReadScope | null {
+  const target = contract.target;
+  const client = strictResolvedText(contract.client);
+  const identity = launchIdentity(deps.token());
+  if (!target || !client || !identity) return null;
+  if (contract.tenant && (!UUID.test(contract.tenant) || contract.tenant !== identity.tenant)) return null;
+  const database = strictResolvedText(target.database);
+  if (!database) return null;
+  let resultLimit = boundedSelectLimit(callSqlText(event));
+  if (!resultLimit) return null;
+  if (Number.isInteger(event?.input?.maximum_rows)) resultLimit = Math.min(resultLimit, event.input.maximum_rows);
+  const discovered = SQL_TARGET_KINDS[target.kind]?.discovered;
+  const endpointId = target.kind === "fabric_lakehouse" ? target.sqlEndpointId : target.itemId;
+  return {
+    client,
+    tenant: identity.tenant,
+    principal: identity.principal,
+    environment: target.environment,
+    targets: [discovered ? `${target.workspaceId}/${endpointId}/${database}` : `${target.kind}/${target.server}/${database}`],
+    operationClass: "sql-read",
+    resultLimit,
+    timeoutMs: PINNED_MCP_REQUEST_TIMEOUT_MS,
+    label: `COOP contract SQL target (${target.kind}, ${target.environment})`,
+  };
+}
+
+export type SqlImpactDecision = { action: "allow" | "prompt" | "block"; environment: string; reason: string };
+
+/** sql_impact (SQ4) reads catalog metadata for one object on the executor's target.
+ *  Dev/test metadata is read-only by default (guardrail 5), so it runs without a
+ *  prompt when the trusted snapshot resolves a dev or test target: the contract's
+ *  ready default entry, or the managed Fabric entry's environment when the
+ *  contract has no sql_targets. Anything else asks once per call; a call that
+ *  carries any field beyond `object` is blocked outright. */
+export function decideSqlImpact(event: any, deps: LiveReadResolverDeps): SqlImpactDecision {
+  const input = event?.input;
+  if (!input || typeof input !== "object" || Array.isArray(input)
+      || Object.keys(input).join(",") !== "object" || typeof input.object !== "string") {
+    return { action: "block", environment: "", reason: "accepts exactly one field, object" };
+  }
+  const contract = deps.contract?.() ?? null;
+  if (contract?.configured) {
+    if (contract.target) return { action: "allow", environment: contract.target.environment, reason: "contract sql_targets default" };
+    return { action: "prompt", environment: "unresolved", reason: "the contract's sql_targets default is not a ready dev or test entry" };
+  }
+  let environment = "";
+  try {
+    const mcp = JSON.parse(deps.readText(join(deps.agentDir, "mcp-adapter.json")));
+    const managed = Array.isArray(mcp?._coop?.managed_servers) && mcp._coop.managed_servers.includes(MANAGED_SQL_SERVER);
+    environment = managed ? (strictResolvedText(mcp?.mcpServers?.[MANAGED_SQL_SERVER]?._coop_target?.environment)?.toLowerCase() || "") : "";
+  } catch { environment = ""; }
+  if (environment === "dev" || environment === "test") return { action: "allow", environment, reason: "managed Fabric target" };
+  return { action: "prompt", environment: environment || "unresolved", reason: environment === "production" ? "production target" : "no dev or test target resolved" };
+}
+
 export function createLiveReadGrant(scope: LiveReadScope, now = Date.now()): LiveReadGrant {
   return { scope: { ...scope, targets: [...scope.targets] }, grantedAt: now };
 }
@@ -1248,7 +1369,7 @@ export function liveReadGrantMatches(grant: LiveReadGrant | null, requested: Liv
 }
 
 export type LiveReadDecision = {
-  action: "none" | "allow-grant" | "prompt-once" | "prompt-and-grant" | "separate-gate";
+  action: "none" | "allow-grant" | "allow-dev" | "prompt-once" | "prompt-and-grant" | "separate-gate";
   label?: string;
   kind?: SqlMcpRisk["kind"] | LiveReadRisk["kind"];
   environment?: string;
@@ -1260,13 +1381,18 @@ export function decideLiveRead(event: any, grant: LiveReadGrant | null, resolved
   const sql = sqlMcpRisk(event);
   const read = mcpLiveReadRisk(event);
   if (!sql && !read) return { action: "none" };
-  const label = sql?.label || read!.label;
+  const label = (sql?.kind === "row-data" && resolvedScope?.label) || sql?.label || read!.label;
   const kind = sql?.kind || read!.kind;
   const environment = resolvedScope?.environment || read?.environment;
   const targetName = (effectiveMutationTarget(event).innerTool || effectiveMutationTarget(event).outerTool).toLowerCase();
   if (sql && sql.kind !== "row-data") return { action: "separate-gate", label, kind, environment };
   if (/export|download/.test(targetName)) return { action: "separate-gate", label, kind, environment };
   if (!resolvedScope || resolvedScope.operationClass !== "sql-read") return { action: "prompt-once", label, kind, environment };
+  // A provably read-only call (one plain SELECT with a literal TOP, the only shape
+  // that resolves a scope) against a target the trusted config says is dev needs
+  // no approval. Test and production, unbounded or ambiguous SQL, and every
+  // mutation keep their gates.
+  if (resolvedScope.environment === "dev") return { action: "allow-dev", label, kind, environment, scope: resolvedScope };
   if (liveReadGrantMatches(grant, resolvedScope)) return { action: "allow-grant", label, kind, environment, scope: resolvedScope };
   return { action: "prompt-and-grant", label, kind, environment, scope: resolvedScope };
 }
@@ -1641,6 +1767,30 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       // 0b. Mutating MCP / Fabric / Power BI action → explicit approval. Proxied
       // calls use the adapter's server/tool identity; approval fails closed headlessly.
       if (tool !== "bash") {
+        // 0b'. sql_impact (SQ4): catalog metadata for one object on the executor's
+        // dev/test target runs without a prompt; anything else asks or is blocked.
+        if (tool === SQL_IMPACT_TOOL) {
+          const impact = decideSqlImpact(event, { ...liveReadDeps, contract: () => ensureSessionGovernance(ctx.cwd).sqlContract });
+          if (impact.action === "block") {
+            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-sql-impact", decision: "blocked", label: "live metadata read", detail: "input-invalid" });
+            return { block: true, reason: `coop guardrails: blocked sql_impact; it ${impact.reason}.` };
+          }
+          if (impact.action === "allow") {
+            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-sql-impact", decision: "allowed", label: "live metadata read", detail: impact.environment });
+            return;
+          }
+          if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
+            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-sql-impact", decision: "blocked-headless", label: "live metadata read", detail: impact.environment });
+            return { block: true, reason: `coop guardrails: blocked sql_impact (${impact.reason}); explicit approval is unavailable in headless mode.` };
+          }
+          const ok = await ctx.ui.confirm(
+            "coop live-data guardrail",
+            `Live catalog metadata read (sql_impact) on a target that is not a resolved dev/test entry:\n  environment: ${impact.environment} (${impact.reason})\nDev/test metadata is read-only by default; production and unresolved targets ask. Read it once?`,
+          );
+          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-sql-impact", decision: ok ? "allowed" : "declined", label: "live metadata read", detail: impact.environment });
+          if (!ok) return { block: true, reason: "coop guardrails: blocked sql_impact (you declined)." };
+          return;
+        }
         const target = effectiveMutationTarget(event);
         if (modelingConnectsProduction(event)) modelingProduction = true;
         const mcp = mcpEditLabel(event);
@@ -1665,8 +1815,12 @@ export default function coopGuardrails(pi: ExtensionAPI) {
             return { block: true, reason: `coop guardrails: blocked the MCP action ${mcp} (you declined). MCP is read-only by default — list / read / inspect only; make changes with explicit approval or in the Fabric / Power BI UX.` };
           }
         }
-        const resolvedScope = resolveLiveReadScope(event, liveReadDeps);
+        const resolvedScope = resolveLiveReadScope(event, { ...liveReadDeps, contract: () => ensureSessionGovernance(ctx.cwd).sqlContract });
         const decision = decideLiveRead(event, liveReadGrant, resolvedScope);
+        if (decision.action === "allow-dev") {
+          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: "allowed", label: "live read", detail: "dev-read-only" });
+          return;
+        }
         if (decision.action !== "none" && decision.action !== "allow-grant") {
           // A single dev/test Warehouse INSERT/UPDATE/CREATE/ALTER can ride a session
           // approval (#156); destructive SQL, batches and production always ask.
@@ -1881,7 +2035,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         "  • never commit source — blocks `git commit` (incl. -a/-am, `git -C`, `git commit <path>`, and `cd <dir> && git commit`) of anything outside docs/logs/site",
         "  • destructive commands — confirms rm -rf / git push --force (incl. +refspec) / reset --hard / git clean -f / DROP·TRUNCATE",
         "  • secret files — confirms read/edit/write AND bash access (cat .env etc.) of .env / keys / credentials",
-        `  • live data — allows dev/test metadata; bounded matching reads may reuse one session grant (${liveReadGrant ? "active" : "none"}; /coop-live-read status|revoke)`,
+        `  • live data — allows dev/test metadata and one plain bounded SELECT on the dev target; elsewhere bounded matching reads may reuse one session grant (${liveReadGrant ? "active" : "none"}; /coop-live-read status|revoke)`,
         "  • mutating MCP actions — confirms create/update/delete/deploy/publish-looking Fabric/Power BI/MCP tool calls (best-effort)",
         `  • edit approvals — approving an edit can cover that server for the session; deletes, drops and production still ask (${editApprovals.size ? `${editApprovals.size} active` : "none"}; /coop-approvals status|revoke)`,
         "  • managed updates — blocks ctx_upgrade so the manifest-pinned fleet moves together",

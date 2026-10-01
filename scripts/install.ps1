@@ -65,14 +65,23 @@ function Add-CoopNpmPath {
 
 # --- Parse flags -------------------------------------------------------------
 $FORCE = $false; $NO_FABRIC = $false; $NO_PREREQS = $false; $EDGE = $false; $PREREQS_AUTO = $false
+# --platform <fabric|azure_sql|both> answers the client platform question (master
+# plan section 8 item 7) without a prompt: onboarding reads COOP_CLIENT_PLATFORM,
+# and step 8 saves it even when onboarding does not run (non-interactive install).
+function Set-CoopInstallPlatform([string]$Value) {
+  if ($Value -cin @('fabric', 'azure_sql', 'both')) { $env:COOP_CLIENT_PLATFORM = $Value }
+  else { Coop-Warn "install: --platform takes one value: fabric, azure_sql or both (got '$Value')" }
+}
 for ($ai = 0; $ai -lt $args.Count; $ai++) {
   $a = $args[$ai]
+  if ($a -is [string] -and $a.StartsWith('--platform=')) { Set-CoopInstallPlatform $a.Substring(11); continue }
   switch -CaseSensitive ($a) {
     '--force'      { $FORCE = $true }
     '--no-fabric'  { $NO_FABRIC = $true }
     '--no-prereqs' { $NO_PREREQS = $true }
     '--prereqs=auto' { $PREREQS_AUTO = $true }
     '--prereqs'    { $ai++; if ($ai -lt $args.Count -and $args[$ai] -eq 'auto') { $PREREQS_AUTO = $true } else { Coop-Warn "install: --prereqs takes one value: auto" } }
+    '--platform'   { $ai++; if ($ai -lt $args.Count) { Set-CoopInstallPlatform ([string]$args[$ai]) } else { Coop-Warn "install: --platform takes one value: fabric, azure_sql or both" } }
     '--edge'       { $EDGE = $true }
     '--yes'        { $env:COOP_ASSUME_YES = '1' }
     '-y'          { $env:COOP_ASSUME_YES = '1' }
@@ -89,7 +98,7 @@ for ($ai = 0; $ai -lt $args.Count; $ai++) {
 # footer/splash via extensions/coop-powerline — no third-party powerline footer.
 $PLAN = Get-CoopFleetPlan -Edge:$EDGE -NoFabric:$NO_FABRIC
 
-# Install/operate against coop's ISOLATED Pi agent dir (mirror of coop_pi_agent_dir).
+# Install/operate against coop's ISOLATED Pi agent dir (Get-CoopPiAgentDir).
 $env:PI_CODING_AGENT_DIR = Get-CoopPiAgentDir
 New-Item -ItemType Directory -Force -Path $env:PI_CODING_AGENT_DIR | Out-Null
 
@@ -266,12 +275,6 @@ finally {
   Coop-ProgEnd
 }
 
-# Offline fleet fixtures exercise the real install units but must stop before
-# launcher/PATH/onboarding/Doctor work.
-if ($env:COOP_FLEET_TEST_MODE -eq '1') {
-  if ($script:InstallFailures -eq 0) { exit 0 } else { exit 1 }
-}
-
 # --- 6. Put `coop` on PATH ---------------------------------------------------
 Coop-Head "6/8  Link 'coop' onto your PATH"
 $LOCALBIN = Join-Path $env:LOCALAPPDATA 'coop\bin'
@@ -367,6 +370,18 @@ try {
 if (-not [Console]::IsInputRedirected -and $env:COOP_NO_ONBOARD -ne '1') {
   Coop-Head '7/8  Personalize Coop'
   Invoke-CoopMaybeOnboard
+}
+# --platform is kept even when onboarding did not run (non-interactive or
+# COOP_NO_ONBOARD): the first interactive launch then skips that question.
+if ($env:COOP_CLIENT_PLATFORM -and ((Get-CoopClientPlatform) -cne $env:COOP_CLIENT_PLATFORM)) {
+  $platPy = Get-CoopPython
+  $platSaved = $false
+  if ($platPy) {
+    & $platPy (Join-Path $script:CoopRoot 'scripts\onboard.py') platform --set $env:COOP_CLIENT_PLATFORM | Out-Null
+    $platSaved = ($LASTEXITCODE -eq 0)
+  }
+  if ($platSaved) { Coop-Ok "client platform saved: $($env:COOP_CLIENT_PLATFORM)" }
+  else { Coop-Warn "could not save the client platform; run: coop onboard --platform $($env:COOP_CLIENT_PLATFORM)" }
 }
 
 # --- 8. Sync (extensions), model sign-in, and doctor ---------------------------------------

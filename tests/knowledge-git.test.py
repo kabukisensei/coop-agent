@@ -1662,8 +1662,8 @@ class ProcessInspectorTests(unittest.TestCase):
 
 
 class KnowledgeGitRunnerContractTests(unittest.TestCase):
-    """Subprocess contracts of scripts/knowledge-git.py (ported from the retired
-    tests/sync-knowledge.test.sh cases E, F and G1-G3): exit codes pass through,
+    """Subprocess contracts of scripts/knowledge-git.py (cases E, F and G1-G3 of
+    the former bash suite, now owned here): exit codes pass through,
     the child gets an unattended environment that never leaks into the parent,
     and the EFFECTIVE SSH transport is honored (env transports untouched,
     core.sshCommand preserved with BatchMode appended only to a plain `ssh`,

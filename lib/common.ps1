@@ -7,7 +7,7 @@
 #
 # Defines helpers only; never calls `exit` except via Coop-Die. Dot-sourcing runs
 # this file in the CALLER's script scope, so every $script:* variable and function
-# here lands in (and binds to) the calling script. scripts/check-bom.sh gates this
+# here lands in (and binds to) the calling script. scripts/check-bom.ps1 gates this
 # file's UTF-8 BOM (Windows PowerShell 5.1 reads a BOM-less file as ANSI).
 
 # --- Resolve COOP_ROOT (the directory that contains bin/, lib/, scripts/) -----
@@ -389,15 +389,33 @@ print("ready\t"+v+"\t"+str(max(majors)))
   return [pscustomobject]@{ state = $(if ($parts.Count) { $parts[0] } else { 'pyodbc_unloadable' }); version = $(if ($parts.Count -gt 1) { $parts[1] } else { '' }); driver = $(if ($parts.Count -gt 2) { [int]$parts[2] } else { 0 }) }
 }
 
+# Converge the runtime libraries inside the Fabric CLI venv. A library whose
+# installed version already equals its manifest pin is left alone, so a sync
+# with everything present makes no pipx inject call and needs no network; only a
+# missing or drifted library (or fabric-cicd under -Edge, which means upstream
+# latest) is re-injected, with --force so a drifted one is replaced (#186). When
+# pip fails, its last ERROR line rides on the warning so the cause is visible.
 function Sync-CoopFabricPythonPackages([bool]$Edge = $false) {
   if (-not $env:COOP_FABRIC_PYTHON) {
     $pipx = Get-CoopPipxCmd
-    foreach ($pkg in @('fabric-cicd', 'pyodbc')) {
+    foreach ($pkg in $script:CoopFabricRuntimeLibraries) {
       $pin = Coop-ManifestGet -Key "python_tools.$pkg"
       if (-not $pin) { return $false }
-      $spec = if ($Edge -and $pkg -eq 'fabric-cicd') { $pkg } else { "$pkg==$pin" }
-      & $pipx inject ms-fabric-cli $spec --force *> $null
-      if ($LASTEXITCODE -ne 0) { Coop-Warn "failed to install $spec in the ms-fabric-cli environment"; return $false }
+      $wantLatest = ($Edge -and $pkg -eq 'fabric-cicd')
+      if (-not $wantLatest) {
+        $installed = Get-CoopVenvDistVersion 'ms-fabric-cli' $pkg
+        if ($installed -eq $pin) { continue }
+      }
+      $spec = if ($wantLatest) { $pkg } else { "$pkg==$pin" }
+      # pip's errors arrive on stderr; keep them as text rather than letting a
+      # caller's $ErrorActionPreference = 'Stop' turn the first line terminating.
+      $previousEap = $ErrorActionPreference
+      try {
+        $ErrorActionPreference = 'Continue'
+        $out = (& $pipx inject ms-fabric-cli $spec --force 2>&1 | Out-String)
+        $rc = $LASTEXITCODE
+      } finally { $ErrorActionPreference = $previousEap }
+      if ($rc -ne 0) { Coop-Warn "failed to install $spec in the ms-fabric-cli environment" (Coop-PipErrorTail $out); return $false }
     }
   }
   $status = Get-CoopFabricSqlRuntimeStatus
@@ -607,7 +625,7 @@ function Get-CoopWorkingNpm {
 }
 
 # Converge the isolated tree's recorded extension dependencies to EXACT
-# versions and reinstall (twin of coop_converge_extension_pins). PRODUCTION
+# versions and reinstall. PRODUCTION
 # convergence: the compatibility matrix relies on this same path.
 function Sync-CoopExtensionPins([string]$AgentDir, [string[]]$Specs) {
   # NOTE: forward slashes throughout — backslashes leak into node/npm argv on
@@ -687,7 +705,7 @@ function Get-CoopFileSha256([string]$Path) {
 # True when the shipped lock applies to this install (lock present, installed Pi
 # is the manifest's Pi) but the tree does not carry it yet: no package-lock.json
 # beside the tree's package.json, or one that differs from
-# config\extensions-lock.json. Mirror of coop_extensions_lock_pending.
+# config\extensions-lock.json.
 function Test-CoopExtensionsLockPending([string]$AgentDir, [string]$PiVersion) {
   $lock = Join-Path $script:CoopRoot 'config\extensions-lock.json'
   if (-not (Test-Path -LiteralPath $lock)) { return $false }
@@ -900,8 +918,7 @@ function Coop-Emit {
   #   2. the replaced TextWriter via the [Console]::Error property (same
   #      contract, avoids the method that fails to JIT on those hosts)
   #   3. the PowerShell host API (redirectable; last resort)
-  # TTY redraw branch below is unchanged. POSIX twin: printf >&2 in
-  # lib/common.sh (already redirectable — parity preserved).
+  # TTY redraw branch below is unchanged.
   if ($script:ProgActive -and (Test-ProgTty)) {
     Coop-ProgLift
     [Console]::Error.WriteLine($Line)
@@ -920,14 +937,14 @@ function Coop-Emit {
 function Coop-Say  { param([string]$m) Coop-Emit $m }
 function Coop-Info { param([string]$m) Coop-Emit "$($script:C_LIME)$($script:G_BULLET)$($script:C_RST) $m" }
 function Coop-Ok   { param([string]$m) Coop-Emit "$($script:C_FOREST)$($script:G_CHECK)$($script:C_RST) $m" }
-# Optional second argument is the "how to fix" hint (mirror of coop_warn "$1" "$2").
+# Optional second argument is the "how to fix" hint.
 function Coop-Warn { param([string]$m, [string]$Hint = '') Coop-Emit ("$($script:C_OLIVE)!$($script:C_RST) $m" + $(if ($Hint) { " — $Hint" } else { '' })) }
 function Coop-Err  { param([string]$m) Coop-Emit "$($script:C_RED)$($script:G_CROSS)$($script:C_RST) $m" }
 function Coop-Die  { param([string]$m) Coop-Err $m; exit 1 }
 function Coop-Head { param([string]$m) Coop-Emit "`n$($script:C_BOLD)$($script:C_NAVY)$m$($script:C_RST)" }
 
 # --- Small utilities ----------------------------------------------------------
-# Is a command available on PATH? (mirror of have())
+# Is a command available on PATH?
 function Test-Have { param([string]$Name) [bool](Get-Command $Name -ErrorAction SilentlyContinue) }
 
 # Pick a usable python interpreter that ACTUALLY runs — not the Windows Store
@@ -935,7 +952,7 @@ function Test-Have { param([string]$Name) [bool](Get-Command $Name -ErrorAction 
 # on stock Windows `python3` resolves ONLY to the Store stub under
 # ...\WindowsApps\: Get-Command succeeds while `--version` prints nothing.
 # Prefer python3, fall back to python; $null when neither is real.
-# (mirror of coop_python — THE one python resolver; don't re-add per-script copies)
+# THE one python resolver; don't re-add per-script copies.
 function Get-CoopPython {
   foreach ($name in @('python3', 'python')) {
     $c = Get-Command $name -ErrorAction SilentlyContinue
@@ -967,7 +984,6 @@ function Test-CoopOdbcDriver18 {
 # Rows are in dependency order. Each row: Order, Name, Required, Ok, Detail, Fix.
 # Fix is the exact command to print; ' then ' separates two steps. Install stops
 # when a Required row is not Ok; doctor reports the same rows with the same text.
-# (mirror of coop_prereq_rows)
 function Get-CoopPrereqs([bool]$NoFabric = $false) {
   $win = ($env:OS -eq 'Windows_NT')
   $mac = (-not $win) -and ([string](& uname -s 2>$null) -eq 'Darwin')
@@ -1094,12 +1110,12 @@ function Get-CoopPersonalPiAgentDir { return (Join-Path (Join-Path $HOME '.pi') 
 
 # coop runs Pi against an ISOLATED agent dir so coop's extensions/settings/theme
 # never mix with the user's personal `pi`. Override with COOP_AGENT_DIR.
-# (mirror of coop_paths.coop_agent_dir / paths.mjs coopAgentDir)
+# (the same chain as lib/coop_paths.py coop_agent_dir and lib/paths.mjs coopAgentDir)
 function Get-CoopPiAgentDir { if ($env:COOP_AGENT_DIR) { $env:COOP_AGENT_DIR } else { Join-Path (Get-CoopProfileDir) 'agent' } }
 
 # The agent dir Pi will ACTUALLY load: PI_CODING_AGENT_DIR when set; with
 # COOP_NO_ISOLATE truthy Pi falls back to the personal ~/.pi/agent.
-# (mirror of coop_paths.agent_dir / paths.mjs agentDir)
+# (the same chain as lib/coop_paths.py agent_dir and lib/paths.mjs agentDir)
 function Get-CoopEffectiveAgentDir {
   if ($env:PI_CODING_AGENT_DIR) { return $env:PI_CODING_AGENT_DIR }
   if (Test-CoopNoIsolate) { return (Get-CoopPersonalPiAgentDir) }
@@ -1117,7 +1133,6 @@ function Test-CoopPiLoginPresent {
 
 # True when the given auth.json holds a stored provider credential (#167). Pi
 # writes `{}` on startup, so a non-empty file alone is not a login.
-# (mirror of coop_auth_has_credential)
 function Test-CoopAuthHasCredential {
   param([string]$authPath)
   if (-not $authPath -or -not (Test-Path -LiteralPath $authPath -PathType Leaf)) { return $false }
@@ -1343,20 +1358,19 @@ function Sync-CoopExtensionFleet {
 # When az reports an authentication failure and the launch runs in an
 # interactive console (stdin and stderr not redirected, or COOP_ASSUME_YES=1),
 # coop runs `az login --tenant <id>` itself: no question, bounded to 5 minutes,
-# and Ctrl-C cancels it (read as a key, so it does not stop the launch). With
-# -NewWindow (the retired `coop web`, which the old 'coop' shortcut ran in a minimized
-# console) the sign-in opens in its own visible window, and a failed, cancelled
-# or timed-out sign-in also shows its line in a window until Enter. A timeout or
-# a non-authentication error never opens a sign-in. Any failure prints ONE line
-# naming the command to run, and the launch continues.
+# and Ctrl-C cancels it (read as a key, so it does not stop the launch). A
+# timeout or a non-authentication error never opens a sign-in. Any failure
+# prints ONE line naming the command to run (Get-CoopAzLoginHint /
+# Get-CoopAzTokenHint, the same pair `coop doctor` prints), and the launch
+# continues.
 #
 # Cached: a verified check stamps the tenant id into <agent-dir>/.az-ok. Tokens
 # live ~60 minutes and `az` cold-starts in ~1-3s, so within 30 minutes of a
 # success for the SAME tenant no az call is made. A failed check (or a stale,
 # missing or mismatched marker) re-checks; marker I/O is best-effort and never
-# fails the launch. (mirror of coop_az_preflight)
+# fails the launch.
 
-# Resolve the client Azure tenant (mirror of coop_tenant). The chain and its
+# Resolve the client Azure tenant. The chain and its
 # rules live in one place, `lib/warehouse_mcp.py tenant`. Returns
 # [pscustomobject]@{ Rc; Tenant }: Rc 0 resolved, 1 none set, 2 not a GUID or a
 # domain name (a rejected value is never returned). The contract is the one
@@ -1402,22 +1416,7 @@ function Stop-CoopAzTree {
   }
 }
 
-# A PowerShell single-quoted literal for -Text.
-function ConvertTo-CoopPsLiteral {
-  param([string]$Text)
-  "'" + $Text.Replace("'", "''") + "'"
-}
-
-# Run -Script in a new visible PowerShell console window and return the process
-# (not waited for). -EncodedCommand: no native-argument quoting.
-function Start-CoopPsWindow {
-  param([string]$Script)
-  $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($Script))
-  $psExe = (Get-Process -Id $PID).Path
-  Start-Process -FilePath $psExe -ArgumentList @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded) -PassThru -ErrorAction Stop
-}
-
-# Run az with a hard time limit (mirror of coop_az_run). Returns
+# Run az with a hard time limit. Returns
 # [pscustomobject]@{ Rc; Err }: az's exit code, 124 when az was stopped (the
 # timeout, or any code above 128 as in bash), 127 when az is missing or its path
 # has cmd.exe metacharacters. The child sees AZURE_CORE_LOGIN_EXPERIENCE_V2=off,
@@ -1430,10 +1429,8 @@ function Start-CoopPsWindow {
 #               WAM and device-code text. Ctrl-C is read as a key while az
 #               runs, so it cancels the sign-in (az is ended, Rc 124) instead
 #               of stopping coop, as the bash twin's INT trap does.
-#   -NewWindow  Windows sign-in in its own visible console window, which
-#               closes when az exits (the caller reports any failure)
 function Invoke-CoopAz {
-  param([int]$Seconds, [string[]]$AzArgs, [switch]$Quiet, [switch]$NewWindow)
+  param([int]$Seconds, [string[]]$AzArgs, [switch]$Quiet)
   $result = [pscustomobject]@{ Rc = 127; Err = '' }
   # Application only: PowerShell never runs az from the current folder.
   $cmd = Get-Command az -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -1449,38 +1446,26 @@ function Invoke-CoopAz {
     $ErrorActionPreference = 'Continue'
     # Start-Process on Windows PowerShell 5.1 cannot set a child-only variable.
     $env:AZURE_CORE_LOGIN_EXPERIENCE_V2 = 'off'
-    if ($NewWindow) {
-      # A new PowerShell window runs az. The script is passed with
-      # -EncodedCommand: no native-argument quoting.
-      $azLine = '& ' + (ConvertTo-CoopPsLiteral $az) + ' ' + (@($AzArgs | ForEach-Object { ConvertTo-CoopPsLiteral $_ }) -join ' ')
-      $windowScript = @(
-        "`$env:AZURE_CORE_LOGIN_EXPERIENCE_V2 = 'off'",
-        $azLine,
-        "exit `$LASTEXITCODE"
-      ) -join "`n"
-      $p = Start-CoopPsWindow $windowScript
-    } else {
-      $inFile = [System.IO.Path]::GetTempFileName()
-      $outFile = [System.IO.Path]::GetTempFileName()
-      $temps += $inFile, $outFile
-      $start = @{
-        FilePath = $az; ArgumentList = $AzArgs; NoNewWindow = $true; PassThru = $true
-        RedirectStandardInput = $inFile; RedirectStandardOutput = $outFile; ErrorAction = 'Stop'
-      }
-      if ($Quiet) {
-        $errFile = [System.IO.Path]::GetTempFileName()
-        $temps += $errFile
-        $start['RedirectStandardError'] = $errFile
-      } else {
-        # Throws when there is no console input (redirected, CI): Ctrl-C then
-        # keeps its default and stops coop, and the finally block ends az.
-        try {
-          $previousCtrlC = [Console]::TreatControlCAsInput
-          [Console]::TreatControlCAsInput = $true
-        } catch { $previousCtrlC = $null }
-      }
-      $p = Start-Process @start
+    $inFile = [System.IO.Path]::GetTempFileName()
+    $outFile = [System.IO.Path]::GetTempFileName()
+    $temps += $inFile, $outFile
+    $start = @{
+      FilePath = $az; ArgumentList = $AzArgs; NoNewWindow = $true; PassThru = $true
+      RedirectStandardInput = $inFile; RedirectStandardOutput = $outFile; ErrorAction = 'Stop'
     }
+    if ($Quiet) {
+      $errFile = [System.IO.Path]::GetTempFileName()
+      $temps += $errFile
+      $start['RedirectStandardError'] = $errFile
+    } else {
+      # Throws when there is no console input (redirected, CI): Ctrl-C then
+      # keeps its default and stops coop, and the finally block ends az.
+      try {
+        $previousCtrlC = [Console]::TreatControlCAsInput
+        [Console]::TreatControlCAsInput = $true
+      } catch { $previousCtrlC = $null }
+    }
+    $p = Start-Process @start
     $null = $p.Handle   # Windows PowerShell 5.1: keeps ExitCode readable after exit
     # Short waits, so a Ctrl-C is noticed promptly: as a key during an
     # in-console sign-in, else it stops this script and the finally block
@@ -1523,27 +1508,50 @@ function Invoke-CoopAz {
   return $result
 }
 
+# The az stderr markers that mean "a sign-in is needed". The one other copy is
+# the `authError` list in lib/fabric_request_headers.mjs (the Node token helper
+# cannot load this file); tests/warehouse-mcp.test.py asserts the two are equal.
+$script:CoopAzAuthMarkers = @('az login', 'not logged in', 'login required', 'authentication required',
+                              'interaction_required', 'interactionrequired', 'invalid_grant',
+                              'aadsts50058', 'aadsts50076', 'aadsts50078', 'aadsts50079', 'aadsts50158')
+
 # True when az's stderr reports an authentication failure (a sign-in is needed).
-# The same markers as lib/fabric_request_headers.mjs (mirror of coop_az_auth_error).
 function Test-CoopAzAuthError {
   param([string]$Text)
   if (-not $Text) { return $false }
   $lower = $Text.ToLowerInvariant()
-  foreach ($marker in @('az login', 'not logged in', 'login required', 'authentication required',
-                        'interaction_required', 'interactionrequired', 'invalid_grant',
-                        'aadsts50058', 'aadsts50076', 'aadsts50078', 'aadsts50079', 'aadsts50158')) {
+  foreach ($marker in $script:CoopAzAuthMarkers) {
     if ($lower.Contains($marker)) { return $true }
   }
   return $false
 }
 
+# The one pair of "what to run" hints for a client tenant, printed by the launch
+# preflight and by `coop doctor`'s Azure sign-in row.
+function Get-CoopAzLoginHint([string]$Tenant) {
+  "run: az login --tenant $Tenant --allow-no-subscriptions"
+}
+function Get-CoopAzTokenHint([string]$Tenant) {
+  # The platform's first audience: Fabric REST, or SQL on an Azure SQL-only machine.
+  $resource = @(Get-CoopAzTokenResources)[0]
+  "run: az account get-access-token --tenant $Tenant --resource $resource"
+}
+
 # Check that az can mint the Fabric token, then the Power BI token, for -Tenant
-# (mirror of coop_az_tokens_ok). 15 seconds each; stops at the first failure.
+#. 15 seconds each; stops at the first failure.
 # Returns 0 when both mint, 1 when az reports an authentication failure, 2 for
 # any other failure, 124 on timeout.
+# The token audiences the client platform needs (mirror of coop_az_token_resources):
+# Fabric REST then Power BI for a Fabric client, the SQL audience alone for an
+# Azure SQL-only client. An unset platform means Fabric (today's behavior).
+function Get-CoopAzTokenResources {
+  if ((Get-CoopClientPlatform) -ceq 'azure_sql') { return @('https://database.windows.net/') }
+  return @('https://api.fabric.microsoft.com', 'https://analysis.windows.net/powerbi/api')
+}
+
 function Get-CoopAzTokenRc {
   param([string]$Tenant)
-  foreach ($resource in @('https://api.fabric.microsoft.com', 'https://analysis.windows.net/powerbi/api')) {
+  foreach ($resource in (Get-CoopAzTokenResources)) {
     $r = Invoke-CoopAz -Seconds 15 -Quiet -AzArgs @('account', 'get-access-token', '--tenant', $Tenant, '--resource', $resource, '--output', 'none')
     if ($r.Rc -eq 0) { continue }
     if ($r.Rc -eq 124) { return 124 }
@@ -1554,7 +1562,6 @@ function Get-CoopAzTokenRc {
 }
 
 function Invoke-CoopAzPreflight {
-  param([switch]$NewWindow)
   if ($env:COOP_SKIP_AZ -eq '1') { return }
   if (-not (Test-Have 'az')) { return }
   $resolved = Get-CoopTenant
@@ -1577,16 +1584,10 @@ function Invoke-CoopAzPreflight {
   $tried = $false
   $interactive = $false
   try { $interactive = (-not [Console]::IsInputRedirected) -and (-not [Console]::IsErrorRedirected) } catch { }
-  $inWindow = $NewWindow -and $env:OS -eq 'Windows_NT'
   if ($rc -eq 1 -and ($interactive -or $env:COOP_ASSUME_YES -eq '1')) {
     $tried = $true
     Coop-Info "Opening Azure sign-in for tenant $tenant..."
-    $loginArgs = @('login', '--tenant', $tenant, '--allow-no-subscriptions', '--output', 'none')
-    if ($inWindow) {
-      $login = Invoke-CoopAz -Seconds 300 -AzArgs $loginArgs -NewWindow
-    } else {
-      $login = Invoke-CoopAz -Seconds 300 -AzArgs $loginArgs
-    }
+    $login = Invoke-CoopAz -Seconds 300 -AzArgs @('login', '--tenant', $tenant, '--allow-no-subscriptions', '--output', 'none')
     $rc = $login.Rc
     # A zero login exit is not enough: tenant-only and conditional-access flows
     # can finish without the tokens coop needs, so check both again.
@@ -1602,20 +1603,13 @@ function Invoke-CoopAzPreflight {
   }
   Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
   if ($tried) {
-    Coop-Warn "Azure sign-in for tenant $tenant is not verified; continuing." "run: az login --tenant $tenant --allow-no-subscriptions"
-    if ($inWindow) {
-      # The launching console is minimized (the 'coop' shortcut), so a failed,
-      # cancelled or timed-out sign-in also shows this line in its own window
-      # until Enter. The launch does not wait for it.
-      $notice = "Write-Host " + (ConvertTo-CoopPsLiteral "Azure sign-in for tenant $tenant is not verified. Run: az login --tenant $tenant --allow-no-subscriptions") + "`n[void](Read-Host 'Press Enter to close')"
-      try { $null = Start-CoopPsWindow $notice } catch { }
-    }
+    Coop-Warn "Azure sign-in for tenant $tenant is not verified; continuing." (Get-CoopAzLoginHint $tenant)
   } elseif ($rc -eq 124) {
-    Coop-Warn "Azure token check timed out for tenant $tenant (network or VPN?); continuing." "run: az account get-access-token --tenant $tenant --resource https://api.fabric.microsoft.com"
+    Coop-Warn "Azure token check timed out for tenant $tenant (network or VPN?); continuing." (Get-CoopAzTokenHint $tenant)
   } elseif ($rc -eq 1) {
-    Coop-Warn "Azure: not signed in to tenant $tenant; continuing." "run: az login --tenant $tenant --allow-no-subscriptions"
+    Coop-Warn "Azure: not signed in to tenant $tenant; continuing." (Get-CoopAzLoginHint $tenant)
   } else {
-    Coop-Warn "Azure token check failed for tenant $tenant (not an auth error); continuing." "run: az account get-access-token --tenant $tenant --resource https://api.fabric.microsoft.com"
+    Coop-Warn "Azure token check failed for tenant $tenant (not an auth error); continuing." (Get-CoopAzTokenHint $tenant)
   }
 }
 
@@ -1629,7 +1623,6 @@ function Invoke-CoopAzPreflight {
 # submodule (.git file naming its gitdir). Both twins use this one rule (#106), so
 # bash and PowerShell agree on a worktree; a plain copy, or a .git file that names
 # no gitdir, is not a checkout. No git process is started.
-# (mirror of coop_is_git_checkout)
 function Test-CoopGitCheckout([string]$Dir) {
   $g = Join-Path $Dir '.git'
   if (Test-Path -LiteralPath $g -PathType Container) { return $true }
@@ -1643,7 +1636,7 @@ function Test-CoopGitCheckout([string]$Dir) {
 # stall doctor or a launch. Stamps BEFORE fetching, so an offline machine pays
 # the wait at most once a day. Returns $true when THIS call attempted the (daily)
 # fetch; $false when throttled or not applicable (non-git copy / no git / no
-# origin remote). (mirror of coop_repo_fetch_throttled)
+# origin remote).
 function Invoke-CoopRepoFetchThrottled {
   if (-not (Test-Have 'git')) { return $false }
   if (-not (Test-CoopGitCheckout $script:CoopRoot)) { return $false }
@@ -1682,7 +1675,6 @@ function Invoke-CoopRepoFetchThrottled {
 # network). 0 when there is no newer release, this is not a git checkout, git is
 # missing, or the count is unknowable, so a checkout that is ahead, diverged or
 # held is never told to run an update that would not move it.
-# (mirror of coop_repo_behind_count)
 function Get-CoopRepoBehindCount {
   $ErrorActionPreference = 'Continue'
   $tag = Get-CoopRepoNextRelease
@@ -1696,7 +1688,6 @@ function Get-CoopRepoBehindCount {
 # performed the daily fetch), warn when a newer release is waiting for this
 # checkout. Never blocks or fails the launch; silent offline / non-git / current.
 # Stranded checkouts stay quiet here; step 1 and doctor name them.
-# (mirror of coop_update_nudge)
 function Invoke-CoopUpdateNudge {
   if (-not (Invoke-CoopRepoFetchThrottled)) { return }
   $tag = Get-CoopRepoNextRelease
@@ -1720,7 +1711,6 @@ function Get-CoopRepoGitLine {
 # The checked-out branch name; '' when HEAD is detached. Strips refs/heads/ from
 # the full ref, not --short: a tag named like the branch (a stray 'main' tag,
 # which every fetch auto-follows) turns --short into 'heads/main'.
-# (mirror of _coop_repo_branch)
 function Get-CoopRepoBranch {
   $ErrorActionPreference = 'Continue'
   $ref = Get-CoopRepoGitLine @('symbolic-ref', '-q', 'HEAD')
@@ -1730,7 +1720,7 @@ function Get-CoopRepoBranch {
 
 # True when HEAD follows release tags: a detached HEAD, or a branch whose upstream
 # is origin/main (main, or a renamed branch that tracks it). Any other branch,
-# including one with no upstream, is a hold. (mirror of _coop_repo_follows_releases)
+# including one with no upstream, is a hold.
 function Test-CoopRepoFollowsReleases {
   $ErrorActionPreference = 'Continue'
   $branch = Get-CoopRepoBranch
@@ -1742,7 +1732,6 @@ function Test-CoopRepoFollowsReleases {
 # The newest strict vX.Y.Z tag merged into the last-fetched origin/main, with any
 # extra for-each-ref filters (e.g. --contains HEAD). rc tags, tags off main and
 # junk output are skipped; lstrip=2 so a same-named branch cannot hide a tag.
-# (mirror of _coop_repo_newest_release)
 function Get-CoopRepoNewestRelease {
   param([string[]]$Filter = @())
   $ErrorActionPreference = 'Continue'
@@ -1761,7 +1750,6 @@ function Get-CoopRepoNewestRelease {
 # tag merged into the last-fetched origin/main that contains HEAD, unless HEAD is
 # already on it. Read-only and local. '' for a non-git copy, missing git, a hold,
 # or no newer release, so nothing is ever moved backwards.
-# (mirror of coop_repo_next_release)
 function Get-CoopRepoNextRelease {
   $ErrorActionPreference = 'Continue'
   if (-not (Test-Have 'git')) { return '' }
@@ -1777,7 +1765,6 @@ function Get-CoopRepoNextRelease {
 # shaped vX.Y.Z, such as v1 or v0.10.0.1, skipped; a bare short SHA when no
 # release is reachable) for the doctor row and step 1. No --dirty, so the index
 # is never touched. '' for a non-git copy or unexpected output.
-# (mirror of coop_repo_describe)
 function Get-CoopRepoDescribe {
   $ErrorActionPreference = 'Continue'
   if (-not (Test-Have 'git')) { return '' }
@@ -1791,7 +1778,7 @@ function Get-CoopRepoDescribe {
 # the checked-out branch's remote, unless a different remote points at the
 # canonical repo; else the one remote that points at the canonical repo. Never
 # the first name `git remote` lists: it is sorted, so a fork added next to a
-# renamed origin would come first. (mirror of _coop_repo_origin_candidate)
+# renamed origin would come first.
 function Get-CoopRepoOriginCandidate {
   $ErrorActionPreference = 'Continue'
   $root = $script:CoopRoot
@@ -1824,7 +1811,7 @@ function Get-CoopRepoOriginCandidate {
 # A state in which `coop update` cannot move this checkout, as
 # @{ Message; Hint } (what is wrong, then the command that fixes it); $null when
 # the checkout follows releases normally. Local only. Step 1 and doctor use it so
-# a stranded machine is never silent. (mirror of coop_repo_stranded)
+# a stranded machine is never silent.
 function Get-CoopRepoStranded {
   $ErrorActionPreference = 'Continue'
   if (-not (Test-Have 'git')) { return $null }
@@ -1864,7 +1851,6 @@ function Get-CoopRepoStranded {
 }
 
 # Coop-Warn the Get-CoopRepoStranded state; $false when there is none.
-# (mirror of _coop_repo_warn_stranded)
 function Write-CoopRepoStranded {
   $s = Get-CoopRepoStranded
   if ($null -eq $s) { return $false }
@@ -1874,7 +1860,7 @@ function Write-CoopRepoStranded {
 
 # The repo line of `coop update --check` (#107), as @{ Line; Hint } (Hint '' when
 # none): what step 1 would do to this checkout. Local only, no fetch, so --check
-# still changes nothing. (mirror of coop_repo_check_line)
+# still changes nothing.
 function Get-CoopRepoCheckLine {
   $ErrorActionPreference = 'Continue'
   if (-not (Test-Have 'git') -or -not (Test-CoopGitCheckout $script:CoopRoot)) {
@@ -1892,7 +1878,6 @@ function Get-CoopRepoCheckLine {
 # @{ Level; Message; Hint } (Level 'ok' or 'warn'; Hint '' for ok). Local only
 # (no network; doctor refreshes origin first). A newer release to move to comes
 # first; else a stranded state is named with its fix; else the checkout is ok.
-# (mirror of coop_repo_doctor_row)
 function Get-CoopRepoDoctorRow {
   $ErrorActionPreference = 'Continue'
   $next = Get-CoopRepoNextRelease
@@ -1912,7 +1897,7 @@ function Get-CoopRepoDoctorRow {
 # head of main, via today's `git pull --ff-only` on a branch, or a guarded
 # re-attach of a detached HEAD to main. Tracked-file changes skip the move; a hold
 # is not fetched or moved. Warn-and-continue: never touches the update's failure
-# count. (mirror of coop_repo_follow_release)
+# count.
 function Invoke-CoopRepoFollowRelease {
   param([bool]$Edge = $false)
   $ErrorActionPreference = 'Continue'
@@ -1986,7 +1971,6 @@ function Invoke-CoopRepoFollowRelease {
 }
 
 # The Pi agent's own semver, e.g. '0.80.2' (from `pi --version`). '' if unknown.
-# (mirror of coop_pi_version)
 function Get-CoopPiVersion {
   if (-not (Test-Have 'pi')) { return '' }
   $raw = (& pi --version 2>$null | Select-Object -First 1)
@@ -2271,7 +2255,6 @@ function Invoke-CoopNpmToolsConverge {
 }
 
 # True if version $A's MAJOR.MINOR is strictly newer than $B's (patch ignored).
-# (mirror of coop_minor_newer)
 function Test-CoopMinorNewer {
   param([string]$A, [string]$B)
   $ma = [regex]::Match([string]$A, '^(\d+)\.(\d+)'); $mb = [regex]::Match([string]$B, '^(\d+)\.(\d+)')
@@ -2280,7 +2263,7 @@ function Test-CoopMinorNewer {
 }
 
 # Read a dotted scalar key from a YAML file via lib/_yaml.py (PyYAML when present,
-# else a dependency-free fallback parser). (mirror of coop_yaml_get)
+# else a dependency-free fallback parser).
 function Get-CoopYamlValue {
   param([string]$File, [string]$Key, [string]$Default = '')
   if (-not $File -or -not (Test-Path -LiteralPath $File -PathType Leaf)) { return $Default }
@@ -2297,7 +2280,6 @@ function Get-CoopYamlValue {
 }
 
 # Read a dotted key that is a YAML list of scalars, returning a string array.
-# (mirror of coop_yaml_list)
 function Get-CoopYamlList {
   param([string]$File, [string]$Key)
   if (-not $File -or -not (Test-Path -LiteralPath $File -PathType Leaf)) { return @() }
@@ -2316,6 +2298,26 @@ function Get-CoopYamlList {
 # an OPTIONAL "knowledge" block: { "enabled": bool, "repos": [{url, local_path}] }.
 # Absent/disabled/unreadable is a clean no-op everywhere. The file is
 # Get-CoopConfigFile (<profile dir>\config; COOP_DIR is the parent of .coop).
+
+# The machine's client platform from the fleet config (client.platform, written
+# by scripts/onboard.py): 'fabric', 'azure_sql' or 'both'. Empty when the config
+# or the key is absent or malformed; every caller treats empty as Fabric, which
+# is what a machine that predates the setting ran as.
+function Get-CoopClientPlatform {
+  $f = Get-CoopConfigFile
+  if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return '' }
+  try {
+    $cfg = Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json
+    $v = [string]$cfg.client.platform
+    if ($v -cin @('fabric', 'azure_sql', 'both')) { return $v }
+  } catch { return '' }
+  return ''
+}
+
+# True when this machine is an Azure SQL-only client, so Fabric-only rows and
+# defaults step aside (master plan section 8 item 7).
+function Test-CoopAzureSqlOnly { return ((Get-CoopClientPlatform) -ceq 'azure_sql') }
+
 function Get-CoopKnowledgeBlock {
   $f = Get-CoopConfigFile
   if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return $null }
@@ -2350,7 +2352,6 @@ function Get-CoopKnowledgeRepos {
 }
 
 # Extract the YAML frontmatter `name:` from a SKILL.md (first match), or '' if none.
-# (mirror of coop_skill_name)
 function Get-CoopSkillName {
   param([string]$File)
   if (-not (Test-Path -LiteralPath $File -PathType Leaf)) { return '' }
@@ -2389,7 +2390,7 @@ function Test-CoopToolEnabled {
 }
 
 # Locate the active project contract: nearest .coop/project.yml walking up from
-# $PWD, else the bundled one at COOP_ROOT/.coop/project.yml. (mirror of coop_find_project_yml)
+# $PWD, else the bundled one at COOP_ROOT/.coop/project.yml.
 function Find-CoopProjectYml {
   param([string]$StartDir = (Get-Location).Path)
   $dir = $StartDir
@@ -2406,7 +2407,6 @@ function Find-CoopProjectYml {
 }
 
 # Confirm a potentially-destructive action unless --yes / COOP_ASSUME_YES is set.
-# (mirror of coop_confirm)
 function Coop-Confirm {
   param([string]$Prompt = 'Proceed?')
   if ($env:COOP_ASSUME_YES -eq '1') { return $true }
@@ -2459,7 +2459,7 @@ function Start-CoopJob {
 #   While it runs, the active-item line animates under the overall bar; on completion
 #   the bar advances by one and a permanent ✓/! line is printed. NB: the scriptblock
 #   runs in a FRESH runspace — it sees none of these functions/variables, so units
-#   must be self-contained and take their inputs as arguments. (mirror of coop_unit)
+#   must be self-contained and take their inputs as arguments.
 function Coop-Unit {
   param([string]$Label, [scriptblock]$Work, [object[]]$WorkArgs = @())
   $sw  = [System.Diagnostics.Stopwatch]::StartNew()

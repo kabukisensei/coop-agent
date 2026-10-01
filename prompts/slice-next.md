@@ -10,6 +10,7 @@ State:
 - **Failing check before** — the slice-specific test, SQL/DAX query, measure, linter,
   or review that demonstrates the current problem. Run it before the change to capture a baseline.
 - **Smallest safe change** — the exact file(s) and lines.
+- **Verify with data** (SQL slices): the `sql_impact` dependents and the exact `fabric_sql_query` count and sample queries I will run before and after on the default dev target, and the difference I expect
 - **Passing check after** — the same slice-specific test/query/measure/review that will
   prove the fix. State the exact data condition or output that changes.
 - **Why this slice now** — dependency order, blast radius, rollback safety.

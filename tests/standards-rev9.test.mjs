@@ -1,13 +1,13 @@
 import { strict as assert } from "node:assert";
+import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   AUTHORITY_CLASSES, CANONICAL_REMOTE_STATE, activeCanonicalGeneration, buildStandardsContext, identifyTaskDomains,
-  bindReviewerProvenance, projectStandardPaths, promoteReviewRun, refreshCanonical, resolveAcceptedReviewRun, resolveStandard, reviewStandardsArgs, sourceStatus,
-  verifyReviewerProvenance,
+  RESOLUTION_STATES, projectStandardPaths, refreshCanonical, resolveStandard, sourceStatus,
 } from "../lib/standards.mjs";
 
 // Revision 9 authority resolution, exercised against a fixture shaped like the real
@@ -43,11 +43,6 @@ const gitInit = (root, message = "fixture", autocrlf = false) => {
   git(root, ["add", "."]); git(root, ["commit", "-q", "-m", message]);
   return git(root, ["rev-parse", "HEAD"]);
 };
-const makeReviewer = (domain, standardPath, version) => {
-  const script = join(tmp, `${domain}-reviewer.mjs`);
-  writeFileSync(script, `import {createHash} from "node:crypto"; import {readFileSync} from "node:fs"; import {resolve} from "node:path";\nconst a=process.argv.slice(2), i=a.indexOf("--standards"), p=resolve(i>=0?a[i+1]:${JSON.stringify(standardPath)}), h=createHash("sha256").update(readFileSync(p)).digest("hex"), count=${JSON.stringify(domain === "sql" ? "files_checked" : "models_checked")}; process.stdout.write(JSON.stringify({tool:${JSON.stringify(`coop-${domain}-review`)},schema_version:${domain === "sql" ? 4 : 3},version:${JSON.stringify(version)},[count]:0,standards:{path:p,sha256:h},findings:[],diagnostics:[],agent_review:[],summary:{error:0,warning:0,info:0},verdict:{clean:true,highest_severity:null}}));\n`);
-  return { command: process.execPath, args: [script], script };
-};
 // `scripts/doctor.ps1` (the one doctor since master plan S1; run through pwsh) runs
 // hermetic (#96): a temp HOME, USERPROFILE and agent dir, so it never reads a real
 // mcp.json, `pi` state or ~/.coop, and a fresh fetch stamp in that agent dir, so its
@@ -58,29 +53,14 @@ const doctorEnv = (env, name) => {
   mkdirSync(agent, { recursive: true }); writeFileSync(join(agent, ".coop-fetch-stamp"), "");
   return { ...env, HOME: home, USERPROFILE: home, COOP_AGENT_DIR: agent, PI_CODING_AGENT_DIR: agent };
 };
+const sha256 = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
 const PWSH = "pwsh";
 const runDoctor = (cwd, env) => spawnSync(PWSH, ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", join(ROOT, "scripts", "doctor.ps1")], { cwd, encoding: "utf8", env });
-const REVIEWER_NAMES = ["sql", "dax"].flatMap((domain) => ["", ".exe", ".cmd", ".bat", ".ps1"].map((ext) => `coop-${domain}-review${ext}`));
-const reviewerFreePath = () => (process.env.PATH || "").split(delimiter)
-  .filter((dir) => dir && !REVIEWER_NAMES.some((name) => existsSync(join(dir, name))))
-  .join(delimiter);
-const reviewerReport = (reviewer, resolution) => JSON.parse(execFileSync(
-  process.execPath,
-  [reviewer.script, "check", tmp, "--format", "json", ...reviewStandardsArgs(resolution)],
-  { encoding: "utf8" },
-));
 
 try {
-  const bundledDir = join(tmp, "reviewer-bundles"); mkdirSync(bundledDir);
-  const sqlBundled = join(bundledDir, "sql.md"), daxBundled = join(bundledDir, "dax.md");
-  writeFileSync(sqlBundled, "# SQL reviewer standard\n## Stored procedures\nUse schema-qualified names and parameterized inputs.\n");
-  writeFileSync(daxBundled, "# DAX reviewer standard\n## Measures\nUse explicit measures and variables.\n");
-  const sqlReviewer = makeReviewer("sql", sqlBundled, "0.15.2");
-  const daxReviewer = makeReviewer("dax", daxBundled, "0.22.0");
-  const reviewerBins = { sql: sqlReviewer, dax: daxReviewer };
   // The cache is the canonical storage (`canonicalRoot` names its legacy leaf, the
   // parent is the base). `canonicalRoot: <missing>` means "no cached canonical".
-  const opts = (more = {}) => ({ canonicalRoot: cache, statePath: state, snapshotRoot: snapshots, registryPath, fixtureRegistry: true, remote, now: () => now, refresh: false, reviewerBins, ...more });
+  const opts = (more = {}) => ({ canonicalRoot: cache, statePath: state, snapshotRoot: snapshots, registryPath, fixtureRegistry: true, remote, now: () => now, refresh: false, ...more });
   const none = (more = {}) => opts({ canonicalRoot: join(tmp, "none", "canonical"), statePath: join(tmp, "none", "status.json"), ...more });
 
   writeWiki(remote, "r1");
@@ -97,13 +77,12 @@ try {
     assert.equal(JSON.parse(readFileSync(active.index)).domains.sql.sha256, r.sha256);
   });
 
-  test("STD-02", "SQL context and reviewer-returned provenance use one immutable snapshot", () => {
+  test("STD-02", "SQL context resolves to one immutable content-addressed snapshot", () => {
     const operation = buildStandardsContext("Write a stored procedure for customer sales", opts({ cwd: tmp }));
     const record = operation.records[0];
     assert.deepEqual(operation.domains, ["sql"]); assert.match(record.sections.map((x) => x.heading).join(" "), /Gold Stored Procedures/);
     assert.equal(record.resolution.immutable, true); assert.match(record.resolution.path, /snapshots/);
-    const report = reviewerReport(sqlReviewer, record.resolution);
-    assert.deepEqual(verifyReviewerProvenance(record.resolution, report), { ok: true });
+    assert.equal(sha256(record.resolution.path), record.resolution.sha256);
   });
 
   test("STD-02W", "content-addressed snapshots are reusable across fresh processes", () => {
@@ -115,28 +94,6 @@ try {
     assert.equal(first.path, second.path);
     assert.match(first.headings.join(" "), /Gold Stored Procedures/);
     assert.match(second.headings.join(" "), /Gold Stored Procedures/);
-  });
-
-  test("STD-03", "DAX provenance mismatch is rejected", () => {
-    const operation = buildStandardsContext("Repair this DAX measure expression", opts({ cwd: tmp }));
-    const r = operation.records[0].resolution;
-    assert.equal(r.domain, "dax"); assert.equal(r.state, "canonical");
-    const report = reviewerReport(daxReviewer, r);
-    assert.deepEqual(verifyReviewerProvenance(r, report), { ok: true });
-    report.standards.sha256 = "0".repeat(64);
-    assert.match(verifyReviewerProvenance(r, report).error, /hash mismatch/);
-    report.standards.sha256 = r.sha256;
-    report.standards.revision = "reviewer-owned-revision";
-    assert.match(verifyReviewerProvenance(r, report).error, /provenance schema is invalid/);
-    report.standards.revision = 7;
-    assert.match(verifyReviewerProvenance(r, report).error, /revision claim is malformed|provenance schema is invalid/);
-    delete report.standards.revision;
-    const bound = bindReviewerProvenance(r, report);
-    assert.equal(bound.binding.owner, "coop"); assert.equal(bound.binding.revision, r.revision);
-    assert.match(verifyReviewerProvenance(r, report, { ...bound.binding, revision: "tampered" }).error, /binding mismatch/);
-    delete report.standards;
-    assert.match(verifyReviewerProvenance(r, report).error, /provenance is missing|unknown or missing fields/);
-    assert.match(verifyReviewerProvenance(r, null).error, /envelope is missing|provenance is missing/);
   });
 
   test("STD-04", "semantic model, DAX, documentation and selective Incremental BI stay separate", () => {
@@ -162,95 +119,28 @@ try {
     assert.equal(r.state, "project_override"); assert.equal(r.source_path, resolve(project, "client", "sql.md")); assert.match(r.path, /snapshots/);
   });
 
-  test("STD-06", "unavailable canonical uses verified stale, bundled, unavailable, and auth states", () => {
+  test("STD-06", "unavailable canonical uses verified stale, unavailable, and auth states (a bundle for another repository is ignored)", () => {
     const stale = resolveStandard("sql", opts({ now: () => now + 901_000 }));
     assert.equal(stale.state, "stale_last_known_good"); assert.equal(stale.revision, r1);
-    assert.equal(resolveStandard("dax", none({ cwd: tmp })).state, "bundled_fallback");
-    assert.equal(resolveStandard("semantic_model", none({ cwd: tmp })).state, "unavailable");
-    assert.equal(resolveStandard("semantic_model", none({ cwd: tmp, authRequired: true })).state, "auth_required");
+    // The fixture registry names a temp remote; the real config/standards-bundle is
+    // bound to cooptimize/coop-standards, so it never answers for this registry.
+    for (const domain of ["sql", "dax", "semantic_model"]) {
+      const r = resolveStandard(domain, none({ cwd: tmp }));
+      assert.equal(r.state, "unavailable"); assert.equal(r.path, null); assert.equal(r.revision, null); assert.equal(r.sha256, null);
+      assert.equal(resolveStandard(domain, none({ cwd: tmp, authRequired: true })).state, "auth_required");
+    }
+    assert.equal(RESOLUTION_STATES.includes("bundled_fallback"), false);
+    assert.equal(RESOLUTION_STATES.includes("bundled"), true);
   });
 
-  test("STD-07", "bundled SQL and DAX fixtures provide real bounded guidance and reviewer provenance", () => {
-    for (const [domain, prompt, expected, reviewer] of [["sql", "Implement a SQL stored procedure", /schema-qualified/, sqlReviewer], ["dax", "Validate a DAX measure", /explicit measures/, daxReviewer]]) {
-      const operation = buildStandardsContext(prompt, none({ cwd: tmp }));
-      const record = operation.records.find((x) => x.resolution.domain === domain);
-      assert.equal(record.resolution.state, "bundled_fallback"); assert.match(record.sections.map((x) => x.content).join("\n"), expected);
-      const report = reviewerReport(reviewer, record.resolution);
-      assert.deepEqual(verifyReviewerProvenance(record.resolution, report), { ok: true });
-    }
-  });
-
-  test("STD-07P", "accepted bundled provenance is re-derived from each reviewer contract", () => {
-    const outdir = join(tmp, "bundled-reviews"), entries = []; mkdirSync(outdir);
-    for (const [domain, reviewer] of [["sql", sqlReviewer], ["dax", daxReviewer]]) {
-      const resolution = resolveStandard(domain, none({ cwd: tmp }));
-      const report = reviewerReport(reviewer, resolution), resolutionPath = join(tmp, `bundled-${domain}-resolution.json`), reportPath = join(tmp, `bundled-${domain}-report.json`);
-      writeFileSync(resolutionPath, JSON.stringify(resolution)); writeFileSync(reportPath, JSON.stringify(report)); entries.push({ domain, resolutionPath, reportPath });
-    }
-    assert.equal(promoteReviewRun(outdir, entries, { reviewerBins }).ok, true);
-    assert.equal(resolveAcceptedReviewRun(outdir, { reviewerBins }).ok, true);
-    writeFileSync(daxBundled, readFileSync(sqlBundled));
-    assert.equal(resolveAcceptedReviewRun(outdir, { reviewerBins }).ok, false);
-    writeFileSync(daxBundled, "# DAX reviewer standard\n## Measures\nUse explicit measures and variables.\n");
-  });
-
-  test("STD-07F", "failed bundled discovery is truthful", () => {
-    const reviewerScript = (name, body) => {
-      const script = join(tmp, `${name}.mjs`);
-      writeFileSync(script, body);
-      return { command: process.execPath, args: [script], script };
-    };
-    const missing = { command: join(tmp, "does-not-exist") };
-    const malformed = reviewerScript("malformed-reviewer", 'process.stdout.write("not-json")');
-    const absent = reviewerScript("absent-provenance-reviewer", 'process.stdout.write(JSON.stringify({version:"1.0.0",findings:[]}))');
-    const badHash = reviewerScript("bad-hash-reviewer", `process.stdout.write(JSON.stringify({version:"1.0.0",standards:{path:${JSON.stringify(sqlBundled)},sha256:"${"0".repeat(64)}"}}))`);
-    for (const reviewer of [missing, malformed, absent, badHash]) {
-      const r = resolveStandard("sql", none({ cwd: tmp, reviewerBins: { sql: reviewer } }));
-      assert.equal(r.state, "unavailable");
-      assert.equal(r.path, null); assert.equal(r.revision, null); assert.equal(r.sha256, null);
-    }
-    const auth = resolveStandard("sql", none({ cwd: tmp, reviewerBins: { sql: missing }, authRequired: true }));
-    assert.equal(auth.state, "auth_required");
-
-    const explicitRevision = reviewerScript("explicit-revision-reviewer", `import {createHash} from "node:crypto"; import {readFileSync} from "node:fs"; import {resolve} from "node:path"; const a=process.argv.slice(2), i=a.indexOf("--standards"), p=resolve(i>=0?a[i+1]:${JSON.stringify(sqlBundled)}), sha256=createHash("sha256").update(readFileSync(p)).digest("hex"); process.stdout.write(JSON.stringify({tool:"coop-sql-review",schema_version:4,version:"test",files_checked:0,standards:{path:p,sha256,revision:"standard-r7"},findings:[],diagnostics:[],agent_review:[],summary:{error:0,warning:0,info:0},verdict:{clean:true,highest_severity:null}}));`);
-    const explicit = resolveStandard("sql", none({ cwd: tmp, reviewerBins: { sql: explicitRevision } }));
-    assert.equal(explicit.state, "unavailable");
-
-    const malformedRevision = reviewerScript("malformed-revision-reviewer", `import {createHash} from "node:crypto"; import {readFileSync} from "node:fs"; const p=${JSON.stringify(sqlBundled)}, sha256=createHash("sha256").update(readFileSync(p)).digest("hex"); process.stdout.write(JSON.stringify({standards:{path:p,sha256,revision:7},findings:[]}));`);
-    assert.equal(resolveStandard("sql", none({ cwd: tmp, reviewerBins: { sql: malformedRevision } })).state, "unavailable");
-
-    const discoveryOnly = reviewerScript("discovery-only-reviewer", `import {createHash} from "node:crypto"; import {readFileSync} from "node:fs"; const a=process.argv.slice(2), p=${JSON.stringify(sqlBundled)}, sha256=a.includes("--standards")?"${"0".repeat(64)}":createHash("sha256").update(readFileSync(p)).digest("hex"); process.stdout.write(JSON.stringify({version:"1.0.0",standards:{path:p,sha256},findings:[]}));`);
-    const incompatibleOptions = none({ cwd: tmp, reviewerBins: { sql: discoveryOnly } });
-    assert.equal(resolveStandard("sql", incompatibleOptions).state, "unavailable");
-    assert.equal(sourceStatus(incompatibleOptions).domains.sql.state, "unavailable");
-
-    const badBin = join(tmp, "bad-reviewer-bin"); mkdirSync(badBin);
-    const badReviewers = [];
-    for (const [name, standardPath] of [["coop-sql-review", sqlBundled], ["coop-dax-review", daxBundled]]) {
-      const script = join(badBin, process.platform === "win32" ? `${name}.mjs` : name);
-      const receipt = join(badBin, `${name}.calls`);
-      writeFileSync(script, `#!/usr/bin/env node\nimport {createHash} from "node:crypto"; import {appendFileSync,readFileSync} from "node:fs"; appendFileSync(${JSON.stringify(receipt)}, "called\\n"); const a=process.argv.slice(2), i=a.indexOf("--standards"), p=i>=0?a[i+1]:${JSON.stringify(standardPath)}, sha256=i>=0?"${"0".repeat(64)}":createHash("sha256").update(readFileSync(p)).digest("hex"); process.stdout.write(JSON.stringify({version:"1.0.0",standards:{path:p,sha256},findings:[]}));\n`);
-      chmodSync(script, 0o755);
-      badReviewers.push({ domain: name === "coop-sql-review" ? "sql" : "dax", script, receipt });
-    }
-    // A .cmd shim cannot run through the resolver's shell-free spawnSync on
-    // Windows. Use its existing reviewerBins seam to exercise malformed output
-    // there too; the receipt distinguishes rejection from failure to launch.
-    for (const { domain, script, receipt } of badReviewers) {
-      const reviewer = { command: process.execPath, args: [script] };
-      assert.equal(resolveStandard(domain, none({ cwd: tmp, reviewerBins: { [domain]: reviewer } })).state, "unavailable");
-      assert.equal(readFileSync(receipt, "utf8"), "called\n", `${domain} malformed reviewer must execute`);
-      rmSync(receipt);
-    }
-    const env = { ...process.env, PATH: `${badBin}${delimiter}${reviewerFreePath()}`, COOP_STANDARDS_ROOT: join(tmp, "none", "canonical"), COOP_STANDARDS_STATE: join(tmp, "none", "status.json"), COOP_STANDARDS_SNAPSHOT_ROOT: snapshots, COOP_DIR: join(tmp, "failed-support-home"), NO_COLOR: "1" };
+  test("STD-07", "unavailable standards are reported truthfully by the CLI, Doctor and Support", () => {
+    // Without the bundled copy as well (COOP_STANDARDS_BUNDLE names an empty dir); the
+    // shipped copy's own reporting is tests/standards-bundle.test.mjs.
+    const env = { ...process.env, COOP_STANDARDS_ROOT: join(tmp, "none", "canonical"), COOP_STANDARDS_STATE: join(tmp, "none", "status.json"), COOP_STANDARDS_SNAPSHOT_ROOT: snapshots, COOP_STANDARDS_BUNDLE: join(tmp, "none", "bundle"), COOP_DIR: join(tmp, "failed-support-home"), NO_COLOR: "1" };
     const lines = execFileSync(process.execPath, [join(ROOT, "lib", "standards-cli.mjs"), "doctor-lines", "", tmp], { encoding: "utf8", env });
     assert.match(lines, /domain\tsql\tformal_standard\/unavailable/);
     assert.match(lines, /domain\tdax\tformal_standard\/unavailable/);
-    if (process.platform !== "win32") {
-      for (const { domain, receipt } of badReviewers) {
-        assert.equal(readFileSync(receipt, "utf8"), "called\n", `${domain} malformed reviewer must execute through PATH`);
-      }
-    }
+    assert.match(lines, /source\tbundled-copy\tunavailable\t/);
     const doctor = runDoctor(tmp, doctorEnv(env, "failed-doctor-home"));
     assert.match(`${doctor.stdout}\n${doctor.stderr}`, /domain sql: formal_standard\/unavailable/);
     const support = JSON.parse(execFileSync(process.execPath, [join(ROOT, "lib", "support-center-cli.mjs"), "--json"], { encoding: "utf8", env }));
@@ -297,18 +187,17 @@ try {
     const status = sourceStatus(opts({ cwd: tmp }));
     assert.equal(status.canonical_remote, CANONICAL_REMOTE_STATE); assert.equal(status.sources[0].revision, r1); assert.equal(status.sources[0].state, "available");
     // The CLI, doctor and Support use the committed production registry, which names
-    // the private GitHub remote: this fixture's cache is not its authority.
-    // They also discover bundled reviewers through PATH, so a developer machine with
-    // coop-sql-review / coop-dax-review installed (pipx shims in ~/.local/bin) would
-    // report bundled_fallback here. The hermetic expectation, as on a CI runner, is
-    // that no reviewer is installed: drop every PATH entry that carries one.
-    const env = { ...process.env, PATH: reviewerFreePath(), COOP_STANDARDS_ROOT: cache, COOP_STANDARDS_STATE: state, COOP_STANDARDS_SNAPSHOT_ROOT: snapshots, COOP_DIR: join(tmp, "support-home"), NO_COLOR: "1" };
+    // the GitHub remote: this fixture's cache is not its authority, so the shipped
+    // bundled copy answers for the domains it carries, and doctor warns about it.
+    const env = { ...process.env, COOP_STANDARDS_ROOT: cache, COOP_STANDARDS_STATE: state, COOP_STANDARDS_SNAPSHOT_ROOT: snapshots, COOP_DIR: join(tmp, "support-home"), NO_COLOR: "1" };
     const lines = execFileSync(process.execPath, [join(ROOT, "lib", "standards-cli.mjs"), "doctor-lines", "", tmp], { encoding: "utf8", env });
     assert.match(lines, /canonical-remote\tconfigured\thttps:\/\/github\.com\/cooptimize\/coop-standards\.git\|main/);
-    for (const domain of ["sql", "dax", "semantic_model"]) assert.match(lines, new RegExp(`domain\\t${domain}\\tformal_standard/unavailable`));
+    for (const domain of ["sql", "dax", "semantic_model"]) assert.match(lines, new RegExp(`domain\\t${domain}\\tformal_standard/bundled\\t[0-9a-f]{40}\\|[0-9a-f]{64}\\|.*\\|fallback`));
+    assert.match(lines, /domain\tdocumentation\tformal_standard\/unavailable/);
     const doctor = runDoctor(tmp, doctorEnv(env, "doctor-home"));
     assert.match(`${doctor.stdout}\n${doctor.stderr}`, /source canonical-remote: configured/);
-    assert.match(`${doctor.stdout}\n${doctor.stderr}`, /domain sql: formal_standard\/unavailable/);
+    assert.match(`${doctor.stdout}\n${doctor.stderr}`, /! domain sql: formal_standard\/bundled \(the copy shipped with coop; [0-9a-f]{40}\)/);
+    assert.match(`${doctor.stdout}\n${doctor.stderr}`, /run coop sync when online/);
     const support = JSON.parse(execFileSync(process.execPath, [join(ROOT, "lib", "support-center-cli.mjs"), "--json"], { encoding: "utf8", env }));
     assert.equal(support.manifest.components.find((x) => x.component === "standards").status, "degraded");
     assert.equal(support.standards.canonical_remote, CANONICAL_REMOTE_STATE);
@@ -318,7 +207,7 @@ try {
     // Doctor never refreshes. An install last launched longer ago than freshness_seconds
     // has a stale window but a healthy last attempt; only a failed attempt is a warning.
     const saved = readFileSync(state, "utf8");
-    const env = { ...process.env, PATH: reviewerFreePath(), COOP_STANDARDS_ROOT: cache, COOP_STANDARDS_STATE: state, COOP_STANDARDS_SNAPSHOT_ROOT: snapshots, COOP_DIR: join(tmp, "support-home"), NO_COLOR: "1" };
+    const env = { ...process.env, COOP_STANDARDS_ROOT: cache, COOP_STANDARDS_STATE: state, COOP_STANDARDS_SNAPSHOT_ROOT: snapshots, COOP_DIR: join(tmp, "support-home"), NO_COLOR: "1" };
     const doctorLines = () => execFileSync(process.execPath, [join(ROOT, "lib", "standards-cli.mjs"), "doctor-lines", "", tmp], { encoding: "utf8", env });
     const doctorOut = (name) => { const d = runDoctor(tmp, doctorEnv(env, name)); return `${d.stdout}\n${d.stderr}`; };
     try {
@@ -346,15 +235,14 @@ try {
     }
   });
 
-  test("IMMUTABLE", "source mutation after context resolution cannot change reviewer bytes", () => {
+  test("IMMUTABLE", "source mutation after context resolution cannot change the pinned bytes", () => {
     const project = join(tmp, "mutation-project"); mkdirSync(join(project, ".coop"), { recursive: true });
     writeFileSync(join(project, "sql.md"), "# ORIGINAL\n## Security\nParameterize.");
     writeFileSync(join(project, ".coop", "project.yml"), "standards:\n  sql: sql.md\n");
     const record = buildStandardsContext("Inspect this SQL", opts({ cwd: project })).records[0];
     writeFileSync(record.resolution.source_path, "# MUTATED SECRET");
     assert.match(record.sections.map((x) => x.content).join("\n"), /Parameterize/); assert.equal(readFileSync(record.resolution.path, "utf8").includes("MUTATED"), false);
-    const report = reviewerReport(sqlReviewer, record.resolution);
-    assert.deepEqual(verifyReviewerProvenance(record.resolution, report), { ok: true });
+    assert.equal(sha256(record.resolution.path), record.resolution.sha256);
   });
 
   test("IMMUTABLE", "snapshot mutation fails closed", () => {
@@ -362,7 +250,12 @@ try {
     writeFileSync(join(project, "sql.md"), "# UNIQUE SNAPSHOT ATTACK"); writeFileSync(join(project, ".coop", "project.yml"), "standards:\n  sql: sql.md\n");
     const r = resolveStandard("sql", opts({ cwd: project }));
     chmodSync(r.path, 0o600); writeFileSync(r.path, "changed");
-    assert.match(verifyReviewerProvenance(r, {}).error, /snapshot hash mismatch/);
+    // A tampered snapshot no longer matches its content address, and resolving the
+    // same override again refuses to reuse the altered file: the override fails
+    // closed and resolution falls through to canonical instead of serving it.
+    assert.notEqual(sha256(r.path), r.sha256);
+    const again = resolveStandard("sql", opts({ cwd: project }));
+    assert.notEqual(again.state, "project_override"); assert.notEqual(again.path, r.path);
   });
 
   test("CANONICAL", "a checkout without active articles, and a dirty checkout, never resolve as current authority", () => {

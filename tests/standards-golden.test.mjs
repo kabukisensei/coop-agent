@@ -44,7 +44,7 @@ const registryPath = join(tmp, "registry.json");
 const options = (more = {}) => ({
   canonicalRoot: join(tmp, "cache", "canonical"), statePath: join(tmp, "cache", "status.json"), snapshotRoot: join(tmp, "snapshots"),
   registryPath, fixtureRegistry: true, remote: wiki, cwd: tmp, now: () => 1_000_000,
-  reviewerBins: { sql: join(tmp, "none-sql"), dax: join(tmp, "none-dax") }, ...more,
+  ...more,
 });
 const git = (args) => execFileSync("git", ["-C", wiki, ...args], { encoding: "utf8" }).trim();
 const WIKI_DOMAINS = ["sql", "dax", "semantic_model"];

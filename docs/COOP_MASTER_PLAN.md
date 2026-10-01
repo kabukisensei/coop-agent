@@ -81,8 +81,8 @@ mutation, no update overwriting user configuration):
 - A test is written for a boundary or a bug, not for coverage. A test that needs a
   sleep, a PTY, a marker file, or a load-dependent wait is an integration test and
   does not belong in the PR gate.
-- Paired scripts, bash 3.2, and the `.ps1` BOM rules in `AGENTS.md` still apply until
-  the simplification phase retires them in the same PR that retires the surface.
+- The `.ps1` BOM and Windows PowerShell 5.1 rules in `AGENTS.md` apply; the paired
+  scripts and bash 3.2 rules were retired with the bash product path (S1-S7).
 - No new behavior on a surface this plan retires (`coop web`, the macOS/Linux
   product path, `mcp-remote`). A hotfix touches such a surface only to keep it
   from breaking; it does not improve it.
@@ -153,8 +153,8 @@ prerequisite behaves as today.
 **Observed:** three places can sign in, and none of them works by default on the
 rollout machines.
 
-- The launch preflight (`coop_az_preflight` in `lib/common.sh`,
-  `Invoke-CoopAzPreflight` in `lib/common.ps1`) returns before doing anything when
+- The launch preflight (`Invoke-CoopAzPreflight` in `lib/common.ps1`) returns
+  before doing anything when
   there is no `.coop/project.yml` under the working directory **or** when
   `fabric.tenant_id` is empty or starts with `TODO`. The bundled fallback contract
   ships `TODO`, so from the desktop shortcut (home folder) or any repo without a
@@ -338,7 +338,7 @@ duplicated gates, not in the logic tests users depend on.
 web phases inside `fabric-mcp-launch.test.sh` (legacy web); the macOS-specific
 cases in `knowledge-git`, `inventory`, `install-python-prereq`, `coop-profile` and
 the macOS bash 3.2 job once the bash product path is retired; the
-`COOP_UPDATE_GATE_DRYRUN` / `COOP_FLEET_TEST_MODE` test modes per revision 2.0 S7.
+update and install test modes per revision 2.0 S7 (retired in S7, issue #228).
 `fleet-*` and `ado-*` fixtures stay unless Aaron retires those features.
 
 **Wire or delete now (Phase 1):** the ten orphaned test files above either join the
@@ -487,9 +487,9 @@ and cross-checked against Pi's 0.84.3 and 0.87.1 sources. Result:
   now `/mcp-adapter`. Nothing else in the entry format changed: `url`, `auth: false`,
   `requestHeadersCommand`, `lifecycle`, `requestTimeoutMs`, and coop's private
   `_coop`/`_coop_target` keys all pass through 3.x unchanged.
-- **Also in that PR:** `config/defaults.yml` `tested_with.pi_mcp_adapter` says
-  `2.10.0` while the manifest says `2.34.0`; fix it and the doctor fixtures that
-  assume it. Consider `settings.allowInstall: false` (the agent may not install
+- **Also in that PR:** the manifest's `pi-mcp-adapter` pin is the only copy
+  (S7 removed `config/defaults.yml`'s `tested_with` versions); fix the doctor
+  fixtures that assume an older one. Consider `settings.allowInstall: false` (the agent may not install
   remote servers) and the new project-trust rule for a work repo's `.mcp.json`.
 - **`mcp-remote` removal, exact change:** the Microsoft Learn entry becomes
   `{"url": "https://learn.microsoft.com/api/mcp", "auth": false, "lifecycle": "lazy",
@@ -851,8 +851,6 @@ Not requested, offered for Aaron's decision. None is scheduled.
   `rule_id`, and the `details` shape is missing four fields. Fix in Phase 4.
 - **`config/standards-registry.schema.json` validated the legacy fixture manifest**,
   not the registry it was named after. Deleted with the fixture seam in #83.
-- **The `PENDING_OWNER_PROVISIONING` doctor state** is defined and never emitted.
-  Delete in S6.
 - **Open [PR 72](https://github.com/kabukisensei/coop-agent/pull/72)** (B0 receipt,
   B1 proposal, PK1 fit review) should merge as documentation once its plan-diff is
   rebased on this revision, so the B0 evidence is not lost. It removed the `y0usaf/pi-jev` rows that `main` still carries; keep
@@ -882,11 +880,11 @@ tags. A stale row is never a reason to re-do work: check the PR list first.
 | 5 | H3 | Coop reads the coop-standards wiki directly; contract override shape | local clones of both repos | `coop sync` verifies the real `coop-standards` head; new contract round-trips through `/setup-project` | merged ([#85](https://github.com/kabukisensei/coop-agent/pull/85), 2026-09-28); no VM step; close [#80](https://github.com/kabukisensei/coop-agent/issues/80) at the tag |
 | 6 | T1 | CI gate/extended split; fixture rules | H1–H3 merged | gate under five minutes, both OS, no weakened assertion | merged ([#132](https://github.com/kabukisensei/coop-agent/pull/132), 2026-09-29) |
 | 7 | S1, S5 | Retire POSIX product path and legacy web | T1 (Aaron started it on 2026-09-30: Mac, Linux and the web are dropped) | one Windows implementation, forwarder kept, tests removed with their surface | S5 merged ([#161](https://github.com/kabukisensei/coop-agent/pull/161), 2026-09-30, shipped in v0.24.0); S1 in review (PR), issue [#205](https://github.com/kabukisensei/coop-agent/issues/205), 2026-10-01 |
-| 8 | S3, S2, S4, S6, S7 | Profile root, lifecycle, token/MCP, dead helpers, docs | S1/S5 | duplication removed; `AGENTS.md` and `CONTRIBUTING.md` no longer require parity/BOM | S3 in review ([#221](https://github.com/kabukisensei/coop-agent/pull/221)), S2 in review (PR), issue [#222](https://github.com/kabukisensei/coop-agent/issues/222), 2026-10-01; S4/S6/S7 not started |
+| 8 | S3, S2, S4, S6, S7 | Profile root, lifecycle, token/MCP, dead helpers, docs | S1/S5 | duplication removed; `AGENTS.md` and `CONTRIBUTING.md` no longer require parity/BOM | S3 in review ([#221](https://github.com/kabukisensei/coop-agent/pull/221)), S2 in review (PR), issue [#222](https://github.com/kabukisensei/coop-agent/issues/222), 2026-10-01; S4 in review (PR), issue [#224](https://github.com/kabukisensei/coop-agent/issues/224), 2026-10-01; S6 in review (PR), issue [#226](https://github.com/kabukisensei/coop-agent/issues/226), 2026-10-01; S7 in review (PR), issue [#228](https://github.com/kabukisensei/coop-agent/issues/228), 2026-10-01 |
 | 9 | U1 | Dependency reconciliation per section 6, one row per PR, qualified on the VM | S-lane (Aaron started U1 ahead of it on 2026-09-30) | exact versions, tests, rollback per PR; keep/drop list closed | in progress: Pi 0.87.1 + `pi-mcp-adapter` 3.3.0 **done (tag v0.24.0, 2026-09-30)**: merged in [#162](https://github.com/kabukisensei/coop-agent/pull/162), VM run passed (matrix 20/20, sync, doctor, `mcp-adapter.json` migration, console checks), Warehouse approval prompt verified live on the released build; Pi 0.99 stays blocked on the adapter's peer range (section 6.3; [#170](https://github.com/kabukisensei/coop-agent/pull/170) is a held draft). Merged 2026-09-30 (unreleased): `pi-hermes-memory` 0.9.9 ([#181](https://github.com/kabukisensei/coop-agent/pull/181)), Fabric skills catalog v0.3.18 ([#175](https://github.com/kabukisensei/coop-agent/pull/175)), shell-issued Fabric REST write approvals ([#176](https://github.com/kabukisensei/coop-agent/pull/176)). Also merged 2026-09-30/10-01 (unreleased, VM steps pending): `@juicesharp/rpiv-ask-user-question` 2.12.0 ([#188](https://github.com/kabukisensei/coop-agent/pull/188)), `@microsoft/fabric-mcp` 1.4.0 ([#189](https://github.com/kabukisensei/coop-agent/pull/189)), `mcp-remote` drop ([#190](https://github.com/kabukisensei/coop-agent/pull/190)), `@azure-devops/mcp` 2.10.0 ([#191](https://github.com/kabukisensei/coop-agent/pull/191)). Power BI pair merged 2026-10-01 (unreleased): `@microsoft/powerbi-report-authoring-cli` 0.4.0 + `@microsoft/powerbi-desktop-bridge-cli` 1.0.0 ([#199](https://github.com/kabukisensei/coop-agent/pull/199); one PR because 0.4.0 depends on Bridge ^1.0.0; its VM step needs Power BI Desktop on the VM, Aaron's). Lockfile merged 2026-10-01 (unreleased, [#200](https://github.com/kabukisensei/coop-agent/pull/200), closes [#152](https://github.com/kabukisensei/coop-agent/issues/152)): `config/extensions-lock.json` pins the isolated tree's transitive dependencies and `coop sync` installs it with `npm ci`; VM run passed (two clean syncs give the same `npm ls --all` output; lock entries carry `gypfile: false` so npm never compiles better-sqlite3 13 on Windows). U1 rows complete except the Power BI pair's Desktop check |
 | 9b | N1 | Automatic session naming after a few turns (`@xl0/pi-lovely-rename` trial first, coop-owned fallback; section 10) | U1 rows merged (Aaron scheduled it 2026-09-30) | names appear in footer and title on the VM without breaking manual `/name`; acceptance list in section 10 | merged 2026-10-01 (unreleased, [#198](https://github.com/kabukisensei/coop-agent/pull/198)): upstream `@xl0/pi-lovely-rename` 0.1.5 pinned, three-turn trigger kept (Aaron, 2026-10-01); VM trial passed (generated names show in the resume list and footer, manual `/name` survives, `/rename` regenerates). Coop's own footer is replaced by Pi's on the VM ([#203](https://github.com/kabukisensei/coop-agent/issues/203), pre-existing). Coop-owned namer not needed unless long sessions name badly |
 | 10 | ST1 | Standards alignment and reviewer decision | H3 + U1 | resolver data-driven; reviewers retired from coop (decided 2026-09-28), self-check in place | not started |
-| 11 | SQ1–SQ7 | Azure SQL targets, dev default, live impact, data verification, install-time Fabric/Azure SQL client choice (section 8 item 7) | ST1 | section 8 acceptance | not started |
+| 11 | SQ1–SQ7 | Azure SQL targets, dev default, live impact, data verification, install-time Fabric/Azure SQL client choice (section 8 item 7) | ST1 | section 8 acceptance | in review: SQ7 install-time client choice ([#208](https://github.com/kabukisensei/coop-agent/pull/208)) and SQ1 `sql_targets` contract section ([#209](https://github.com/kabukisensei/coop-agent/pull/209)) and SQ2 executor targets ([#212](https://github.com/kabukisensei/coop-agent/pull/212)) and SQ3 guardrail scope ([#214](https://github.com/kabukisensei/coop-agent/pull/214)) and SQ4 `sql_impact` ([#215](https://github.com/kabukisensei/coop-agent/pull/215)) and SQ5 verify-with-data text ([#216](https://github.com/kabukisensei/coop-agent/pull/216)) and SQ6 skill mapping text (PR), all drafted 2026-10-01 ahead of ST1; live acceptance (dev Azure SQL database + Fabric Warehouse) is Aaron's |
 | 12 | FR1 | Common-workflows first run | SQ1 (menu items exist) | first launch shows the menu; onboarding no longer blocks | not started |
 | 13 | PK1 | `pi-lovely-codex` versus `pi-better-openai`, diagnostics, simplify (naming moved to N1) | U1 + explicit start | one owner of usage stats; adopt/build/defer recorded per candidate | not started |
 | 14 | B1 | Minimal beta channel | — | — | **skipped** (Aaron, 2026-09-30: seven people update from tags; the VM qualifies upgrades) |
