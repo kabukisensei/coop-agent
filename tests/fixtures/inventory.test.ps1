@@ -55,7 +55,7 @@ try {
   New-Item -ItemType Directory -Force -Path $sandboxHome, (Join-Path $t 'coop\.coop'), $agent, $cwd, $fakeBin, $fixtures, $fabVenvBin, $dddVenvBin | Out-Null
   [System.IO.File]::WriteAllText((Join-Path $agent '.coop-fetch-stamp'), '')
   $manifest = Join-Path $t 'manifest.json'
-  [System.IO.File]::WriteAllText($manifest, ('{"schema_version":1,"python_tools":{"coop-data-doc":"' + $PinDdd + '","coop-sql-review":"0.15.2","coop-dax-review":"0.22.0","ms-fabric-cli":"' + $PinFab + '","fabric-cicd":"1.3.0","pyodbc":"5.3.0"}}'), $utf8)
+  [System.IO.File]::WriteAllText($manifest, ('{"schema_version":1,"python_tools":{"coop-data-doc":"' + $PinDdd + '","ms-fabric-cli":"' + $PinFab + '","fabric-cicd":"1.3.0","pyodbc":"5.3.0"}}'), $utf8)
 
   $env:HOME = $sandboxHome
   $env:USERPROFILE = $sandboxHome

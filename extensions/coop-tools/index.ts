@@ -1653,7 +1653,7 @@ export function renderProjectWizardSettings(settings: ProjectWizardSettings): st
     "    - 'read files'",
     "    - 'git status / git diff / git pull'",
     "    - 'create backups'",
-    "    - 'run advisory Coop review and documentation tools'",
+    "    - 'run the advisory data_doc / bpa_review tools'",
     "    - 'MCP dev/test metadata / schema / artifact-code list / read / inspect'",
     "    - 'update markdown docs, html site, logs'",
     "  ask_first:",

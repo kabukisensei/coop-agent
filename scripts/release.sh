@@ -80,7 +80,7 @@ coop_release_check_pins() {
     return 0
   fi
   local tool pin rel mismatch=0
-  for tool in coop-data-doc coop-sql-review coop-dax-review; do
+  for tool in coop-data-doc; do
     # Both files keep a one-`"key": "value"`-per-line layout (the manifest is
     # pretty-printed JSON; versions.json's is enforced by coop-website's own
     # checker), so sed is safe — and python-free — here.
