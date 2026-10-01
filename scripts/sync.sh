@@ -17,7 +17,7 @@ export COOP_ROOT
 # shellcheck source=../lib/common.sh
 . "$COOP_ROOT/lib/common.sh"
 
-CORE_EXTENSIONS=( pi-mcp-adapter pi-hermes-memory pi-better-openai pi-web-access @juicesharp/rpiv-ask-user-question context-mode )
+CORE_EXTENSIONS=( pi-mcp-adapter pi-hermes-memory pi-better-openai pi-web-access @juicesharp/rpiv-ask-user-question @xl0/pi-lovely-rename context-mode )
 PI_AGENT="$(coop_pi_agent_dir)"
 GLOBAL_AGENT="$(coop_global_pi_agent_dir)"
 

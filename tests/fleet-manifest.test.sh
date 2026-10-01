@@ -24,6 +24,7 @@ ko()  { printf '  ✗ %s\n' "$1"; fail=1; }
 [ -z "$(coop_manifest_get missing.key)" ] && ok "coop_manifest_get missing key returns empty" || ko "missing key should return empty"
 [ "$(coop_manifest_extension_spec pi-mcp-adapter)" = "npm:pi-mcp-adapter@3.3.0" ] && ok "literal extension spec: pi-mcp-adapter" || ko "extension spec mismatch"
 [ "$(coop_manifest_extension_spec @juicesharp/rpiv-ask-user-question)" = "npm:@juicesharp/rpiv-ask-user-question@2.12.0" ] && ok "literal scoped extension spec" || ko "scoped extension spec mismatch"
+[ "$(coop_manifest_extension_spec @xl0/pi-lovely-rename)" = "npm:@xl0/pi-lovely-rename@0.1.5" ] && ok "literal session-naming extension spec (N1)" || ko "session-naming extension spec mismatch"
 "$(command -v python3 2>/dev/null || command -v python)" - "$ROOT" <<'PY' || fail=1
 import json, pathlib, sys
 r=pathlib.Path(sys.argv[1]); m=json.load(open(r/'config/release-manifest.json'))
@@ -37,7 +38,7 @@ assert 'powerbi-mcp-server' not in json.dumps(m)
 assert '@microsoft/powerbi-modeling-mcp' in m['npm_tools']
 # 0.0.1 was never published; Windows installs must use the first supported line.
 assert m['npm_tools']['@microsoft/powerbi-desktop-bridge-cli'] == '0.1.2'
-for p in ['pi-mcp-adapter','pi-hermes-memory','pi-better-openai','pi-web-access','@juicesharp/rpiv-ask-user-question','context-mode']:
+for p in ['pi-mcp-adapter','pi-hermes-memory','pi-better-openai','pi-web-access','@juicesharp/rpiv-ask-user-question','@xl0/pi-lovely-rename','context-mode']:
     assert p in m['extensions']
 # Manifest is authoritative: every manifest fleet member must be referenced by its
 # runtime consumers, and every generated MCP package must resolve from the manifest.

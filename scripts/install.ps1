@@ -90,6 +90,7 @@ $PI_EXTENSIONS = @(
   'npm:pi-better-openai',     # plan usage limits (5h/7d) — shown in coop's footer
   'npm:pi-web-access',        # web search / URL fetch / GitHub clone / PDF / video (read-only)
   'npm:@juicesharp/rpiv-ask-user-question', # structured questions the model can ask (consent rounds)
+  'npm:@xl0/pi-lovely-rename', # names an unnamed session after a few turns (+ /rename); master plan N1
   'npm:context-mode'
 )
 $PY_TOOLS = @('coop-data-doc', 'coop-sql-review', 'coop-dax-review')

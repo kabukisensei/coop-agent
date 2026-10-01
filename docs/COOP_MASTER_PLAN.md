@@ -775,6 +775,14 @@ per the review: manual names win, switching or forking a session while a naming
 response is pending never renames the wrong session, cancellation, offline and
 auth failure, repeated triggers, Unicode titles, profile isolation, model changes;
 the footer and terminal title pick up the new name without a restart.
+Read on 2026-10-01 from the published 0.1.5 source before pinning it: the naming
+request goes to the session's current model and provider with the session's own
+auth, so it adds no new recipient; what it adds is a second copy of the last
+60,000 characters (user text, assistant text, tool names with their JSON
+arguments) in one request per unnamed session. Manual names win (it only names
+sessions with no name), the settings file lives in the isolated agent dir
+(`~/.coop/agent/xl0-pi-lovely-rename.json`), and the extension depends only on
+`@xl0/pi-lovely-config`. The VM trial decides whether that scope stays.
 
 **Then, each only when Aaron asks, each independently revertible:**
 
@@ -876,7 +884,7 @@ tags. A stale row is never a reason to re-do work: check the PR list first.
 | 7 | S1, S5 | Retire POSIX product path and legacy web | T1 (Aaron started it on 2026-09-30: Mac, Linux and the web are dropped) | one Windows implementation, forwarder kept, tests removed with their surface | in progress: S5 merged ([#161](https://github.com/kabukisensei/coop-agent/pull/161), 2026-09-30, shipped in v0.24.0); S1 next |
 | 8 | S3, S2, S4, S6, S7 | Profile root, lifecycle, token/MCP, dead helpers, docs | S1/S5 | duplication removed; `AGENTS.md` and `CONTRIBUTING.md` no longer require parity/BOM | not started |
 | 9 | U1 | Dependency reconciliation per section 6, one row per PR, qualified on the VM | S-lane (Aaron started U1 ahead of it on 2026-09-30) | exact versions, tests, rollback per PR; keep/drop list closed | in progress: Pi 0.87.1 + `pi-mcp-adapter` 3.3.0 **done (tag v0.24.0, 2026-09-30)**: merged in [#162](https://github.com/kabukisensei/coop-agent/pull/162), VM run passed (matrix 20/20, sync, doctor, `mcp-adapter.json` migration, console checks), Warehouse approval prompt verified live on the released build; Pi 0.99 stays blocked on the adapter's peer range (section 6.3; [#170](https://github.com/kabukisensei/coop-agent/pull/170) is a held draft). Merged 2026-09-30 (unreleased): `pi-hermes-memory` 0.9.9 ([#181](https://github.com/kabukisensei/coop-agent/pull/181)), Fabric skills catalog v0.3.18 ([#175](https://github.com/kabukisensei/coop-agent/pull/175)), shell-issued Fabric REST write approvals ([#176](https://github.com/kabukisensei/coop-agent/pull/176)). Also merged 2026-09-30/10-01 (unreleased, VM steps pending): `@juicesharp/rpiv-ask-user-question` 2.12.0 ([#188](https://github.com/kabukisensei/coop-agent/pull/188)), `@microsoft/fabric-mcp` 1.4.0 ([#189](https://github.com/kabukisensei/coop-agent/pull/189)), `mcp-remote` drop ([#190](https://github.com/kabukisensei/coop-agent/pull/190)), `@azure-devops/mcp` 2.10.0 ([#191](https://github.com/kabukisensei/coop-agent/pull/191)); Report Authoring CLI and Desktop Bridge rows next |
-| 9b | N1 | Automatic session naming after a few turns (`@xl0/pi-lovely-rename` trial first, coop-owned fallback; section 10) | U1 rows merged (Aaron scheduled it 2026-09-30) | names appear in footer and title on the VM without breaking manual `/name`; acceptance list in section 10 | not started (scheduled, revision 3.8) |
+| 9b | N1 | Automatic session naming after a few turns (`@xl0/pi-lovely-rename` trial first, coop-owned fallback; section 10) | U1 rows merged (Aaron scheduled it 2026-09-30) | names appear in footer and title on the VM without breaking manual `/name`; acceptance list in section 10 | in progress: upstream `@xl0/pi-lovely-rename` 0.1.5 pinned and the footer shows the session name (PR N1, 2026-10-01); VM trial pending, coop-owned fallback only if the trial fails the section 10 acceptance |
 | 10 | ST1 | Standards alignment and reviewer decision | H3 + U1 | resolver data-driven; reviewers retired from coop (decided 2026-09-28), self-check in place | not started |
 | 11 | SQ1–SQ7 | Azure SQL targets, dev default, live impact, data verification, install-time Fabric/Azure SQL client choice (section 8 item 7) | ST1 | section 8 acceptance | not started |
 | 12 | FR1 | Common-workflows first run | SQ1 (menu items exist) | first launch shows the menu; onboarding no longer blocks | not started |

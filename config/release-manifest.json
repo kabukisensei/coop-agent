@@ -14,6 +14,7 @@
     "pi-better-openai": "0.1.22",
     "pi-web-access": "0.10.7",
     "@juicesharp/rpiv-ask-user-question": "2.12.0",
+    "@xl0/pi-lovely-rename": "0.1.5",
     "context-mode": "1.0.169"
   },
   "python_tools": {
