@@ -29,6 +29,12 @@ import coop_paths  # noqa: E402
 LOCATION_VARS = ("COOP_DIR", "COOP_AGENT_DIR", "PI_CODING_AGENT_DIR", "COOP_NO_ISOLATE")
 passed = 0
 
+# Windows runners default stdout to cp1252, which cannot encode the check mark.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, ValueError):
+    pass
+
 
 def ok(label: str) -> None:
     global passed
