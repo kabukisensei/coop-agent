@@ -49,7 +49,13 @@ $names = @('PATH','HOME','USERPROFILE','COOP_DIR','COOP_AGENT_DIR','PI_CODING_AG
            'COOP_FABRIC_PYTHON','COOP_SKIP_FABRIC_SYNC','COOP_TEST_FAKE_PI_OK','COOP_TEST_FAKE_PI_WRONG','COOP_TEST_FAKE_PI_SKIP',
            'COOP_TEST_FAKE_PI_INSTALL_VERSION','COOP_FAKE_EXTDEPS_RC','COOP_FAKE_LOCAL_VENVS')
 foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n) }
-$basePath = $env:PATH
+# The machine PATH minus any folder that already resolves fab or coop-data-doc
+# (a workstation with the real pipx launchers installed), so only the
+# fixture's copies answer.
+$sep0 = [System.IO.Path]::PathSeparator
+$basePath = (@($env:PATH -split [regex]::Escape($sep0) | Where-Object {
+  $_ -and -not (@(Get-ChildItem -LiteralPath $_ -Include 'fab*', 'coop-data-doc*' -File -ErrorAction SilentlyContinue).Count)
+}) -join $sep0)
 $savedLocation = Get-Location
 try {
   New-Item -ItemType Directory -Force -Path $sandboxHome, (Join-Path $t 'coop\.coop'), $agent, $cwd, $fakeBin, $fixtures, $fabVenvBin, $dddVenvBin | Out-Null
@@ -212,20 +218,20 @@ sys.exit(1)
   $null = New-VersionStub $fabVenvBin 'fab' $PinFab
   Set-VenvPython 'ms-fabric-cli' '3.13.1' '<3.14,>=3.10'
   $rows = Get-DoctorRows
-  if ((Find-Rows $rows "ms-fabric-cli $PinFab matches manifest").Count -gt 0) { Ok 'exact match reported against the fab executable' } else { Ko 'exact match not recognized' (Show-Rows $rows 'ms-fabric-cli') }
-  if ((Find-Rows $rows 'ms-fabric-cli not installed').Count -eq 0) { Ok "no false 'not installed' warning when only fab exists" } else { Ko "false 'ms-fabric-cli not installed' warning persists" (Show-Rows $rows 'ms-fabric-cli') }
+  if (@(Find-Rows $rows "ms-fabric-cli $PinFab matches manifest").Count -gt 0) { Ok 'exact match reported against the fab executable' } else { Ko 'exact match not recognized' (Show-Rows $rows 'ms-fabric-cli') }
+  if (@(Find-Rows $rows 'ms-fabric-cli not installed').Count -eq 0) { Ok "no false 'not installed' warning when only fab exists" } else { Ko "false 'ms-fabric-cli not installed' warning persists" (Show-Rows $rows 'ms-fabric-cli') }
   if ($isWindowsHost) { Skipped 'Fabric SQL runtime rows' } else {
-    if ((Find-Rows $rows 'Fabric SQL fallback ready (pyodbc 5.3.0, ODBC Driver 18)').Count -gt 0) { Ok 'doctor verifies pyodbc pin and Driver 18 with the selected runtime' } else { Ko 'doctor did not report the selected Fabric SQL runtime ready' (Show-Rows $rows 'Fabric SQL') }
+    if (@(Find-Rows $rows 'Fabric SQL fallback ready (pyodbc 5.3.0, ODBC Driver 18)').Count -gt 0) { Ok 'doctor verifies pyodbc pin and Driver 18 with the selected runtime' } else { Ko 'doctor did not report the selected Fabric SQL runtime ready' (Show-Rows $rows 'Fabric SQL') }
     Set-VenvPython 'ms-fabric-cli' '3.13.1' '<3.14,>=3.10' 'driver_missing'
     $rows = Get-DoctorRows
-    if ((Find-Rows $rows 'Fabric SQL fallback: ODBC Driver 18+ for SQL Server is missing').Count -gt 0) { Ok 'doctor hard-fails a selected runtime with no Driver 18+' } else { Ko 'doctor did not report missing ODBC Driver 18+' (Show-Rows $rows 'Fabric SQL') }
+    if (@(Find-Rows $rows 'Fabric SQL fallback: ODBC Driver 18+ for SQL Server is missing').Count -gt 0) { Ok 'doctor hard-fails a selected runtime with no Driver 18+' } else { Ko 'doctor did not report missing ODBC Driver 18+' (Show-Rows $rows 'Fabric SQL') }
     Set-VenvPython 'ms-fabric-cli' '3.13.1' '<3.14,>=3.10'
   }
 
   # F2: missing package: no venv metadata and no fab anywhere.
   Remove-Stub $fabVenvBin 'fab'; Set-Meta 'ms-fabric-cli' 'ms-fabric-cli' ''
   $rows = Get-DoctorRows
-  if ((Find-Rows $rows 'ms-fabric-cli not installed').Count -gt 0) { Ok 'missing distribution reported' } else { Ko 'missing ms-fabric-cli not reported' (Show-Rows $rows 'ms-fabric-cli') }
+  if (@(Find-Rows $rows 'ms-fabric-cli not installed').Count -gt 0) { Ok 'missing distribution reported' } else { Ko 'missing ms-fabric-cli not reported' (Show-Rows $rows 'ms-fabric-cli') }
 
   # F2b: doctor --fix installs the exact CLI spec, then delegates the injected
   # libraries and Driver readiness to the managed convergence helpers.
@@ -240,7 +246,7 @@ sys.exit(1)
     if ($exact.Count -gt 0 -and $loose.Count -eq 0 -and ($callLines -contains 'PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force') -and ($callLines -contains 'PIPX inject ms-fabric-cli pyodbc==5.3.0 --force')) {
       Ok 'doctor --fix converges the exact managed Fabric runtime'
     } else { Ko 'doctor --fix did not use exact managed Fabric specs' ($callLines -join "`n") }
-    if ((Find-Rows $rows 'Fabric SQL fallback ready (pyodbc 5.3.0, ODBC Driver 18)').Count -gt 0) { Ok 'doctor --fix re-check sees Fabric SQL readiness' } else { Ko "doctor --fix re-check did not see Fabric SQL readiness (rc=$fixRc)" (Show-Rows $rows 'Fabric SQL') }
+    if (@(Find-Rows $rows 'Fabric SQL fallback ready (pyodbc 5.3.0, ODBC Driver 18)').Count -gt 0) { Ok 'doctor --fix re-check sees Fabric SQL readiness' } else { Ko "doctor --fix re-check did not see Fabric SQL readiness (rc=$fixRc)" (Show-Rows $rows 'Fabric SQL') }
     Remove-Stub $fabVenvBin 'fab'; Remove-Item -LiteralPath (Join-Path $fabVenvBin 'fab') -Force -ErrorAction SilentlyContinue
     Set-Meta 'ms-fabric-cli' 'ms-fabric-cli' ''
     $env:COOP_TEST_PIPX_FAIL = 'pyodbc==5.3.0'
@@ -266,7 +272,7 @@ sys.exit(1)
   Set-Meta 'coop-data-doc' 'coop-data-doc' ''
   $null = New-VersionStub $dddVenvBin 'coop-data-doc' 'coop-data-doc, version 1.0.0'
   $rows = Get-DoctorRows
-  if ((Find-Rows $rows 'coop-data-doc 1.0.0 differs from manifest per coop-data-doc (pipx metadata unreadable)').Count -gt 0) { Ok 'unreadable pipx metadata reported alongside the CLI classification' }
+  if (@(Find-Rows $rows 'coop-data-doc 1.0.0 differs from manifest per coop-data-doc (pipx metadata unreadable)').Count -gt 0) { Ok 'unreadable pipx metadata reported alongside the CLI classification' }
   else { Ko 'metadata-unavailable fallback not handled' (Show-Rows $rows 'coop-data-doc') }
   Set-Meta 'coop-data-doc' 'coop-data-doc' $PinDdd
   $null = New-VersionStub $dddVenvBin 'coop-data-doc' "coop-data-doc, version $PinDdd"
@@ -277,8 +283,8 @@ sys.exit(1)
   $wrongDir = Join-Path $fakeBin 'wrongfab'
   $null = New-VersionStub $wrongDir 'fab' 'Fabric 2.7.4 (paramiko)'
   $rows = Get-DoctorRows "$wrongDir$sep"
-  if ((Find-Rows $rows 'WRONG').Count -gt 0) { Ok 'Paramiko fab still rejected as the wrong tool' } else { Ko 'paramiko fab not rejected' (Show-Rows $rows 'fab') }
-  if ((Find-Rows $rows "ms-fabric-cli $PinFab matches manifest").Count -eq 0) { Ok 'paramiko fab not credited as ms-fabric-cli' } else { Ko 'paramiko fab was accepted as ms-fabric-cli' (Show-Rows $rows 'ms-fabric-cli') }
+  if (@(Find-Rows $rows 'WRONG').Count -gt 0) { Ok 'Paramiko fab still rejected as the wrong tool' } else { Ko 'paramiko fab not rejected' (Show-Rows $rows 'fab') }
+  if (@(Find-Rows $rows "ms-fabric-cli $PinFab matches manifest").Count -eq 0) { Ok 'paramiko fab not credited as ms-fabric-cli' } else { Ko 'paramiko fab was accepted as ms-fabric-cli' (Show-Rows $rows 'ms-fabric-cli') }
   Remove-Item -LiteralPath $wrongDir -Recurse -Force
 
   if ($isWindowsHost) { Skipped 'venv Python Requires-Python rows (F6, F7, F7b)' } else {
@@ -287,20 +293,20 @@ sys.exit(1)
     Set-VenvPython 'ms-fabric-cli' '3.14.5' '<3.14,>=3.10'
     $rows = Get-DoctorRows
     $envRows = @($rows | Where-Object { ([string]$_.name).Contains('ms-fabric-cli environment') })
-    if ((Find-Rows $envRows '3.14').Count -gt 0) { Ok 'venv Python 3.14 reported for ms-fabric-cli' } else { Ko 'venv interpreter version not reported' (Show-Rows $rows 'ms-fabric-cli') }
-    if ((Find-Rows $envRows "violates its own requires-python '<3.14,>=3.10'").Count -gt 0) { Ok '3.14 venv flagged against installed Requires-Python metadata' } else { Ko 'Requires-Python violation not flagged' (Show-Rows $rows 'ms-fabric-cli') }
-    if ((Find-Rows $envRows '--python 3.12').Count -gt 0 -or (Find-Rows $envRows '--python 3.13').Count -gt 0) { Ok 'repair suggests recreating with a supported Python' } else { Ko 'repair does not suggest a supported --python' (Show-Rows $rows 'ms-fabric-cli') }
+    if (@(Find-Rows $envRows '3.14').Count -gt 0) { Ok 'venv Python 3.14 reported for ms-fabric-cli' } else { Ko 'venv interpreter version not reported' (Show-Rows $rows 'ms-fabric-cli') }
+    if (@(Find-Rows $envRows "violates its own requires-python '<3.14,>=3.10'").Count -gt 0) { Ok '3.14 venv flagged against installed Requires-Python metadata' } else { Ko 'Requires-Python violation not flagged' (Show-Rows $rows 'ms-fabric-cli') }
+    if (@(Find-Rows $envRows '--python 3.12').Count -gt 0 -or @(Find-Rows $envRows '--python 3.13').Count -gt 0) { Ok 'repair suggests recreating with a supported Python' } else { Ko 'repair does not suggest a supported --python' (Show-Rows $rows 'ms-fabric-cli') }
 
     # F7: a supported venv Python passes quietly, citing the metadata.
     Set-VenvPython 'ms-fabric-cli' '3.12.7' '<3.14,>=3.10'
     $rows = Get-DoctorRows
-    if ((Find-Rows $rows 'violates').Count -eq 0) { Ok 'Python 3.12 venv accepted without a violation warning' } else { Ko 'supported venv Python falsely flagged' (Show-Rows $rows 'violates') }
-    if ((Find-Rows $rows 'ms-fabric-cli environment uses Python 3.12.7 (requires-python: <3.14,>=3.10)').Count -gt 0) { Ok 'interpreter reported with its Requires-Python metadata' } else { Ko 'interpreter+metadata line absent' (Show-Rows $rows 'ms-fabric-cli') }
+    if (@(Find-Rows $rows 'violates').Count -eq 0) { Ok 'Python 3.12 venv accepted without a violation warning' } else { Ko 'supported venv Python falsely flagged' (Show-Rows $rows 'violates') }
+    if (@(Find-Rows $rows 'ms-fabric-cli environment uses Python 3.12.7 (requires-python: <3.14,>=3.10)').Count -gt 0) { Ok 'interpreter reported with its Requires-Python metadata' } else { Ko 'interpreter+metadata line absent' (Show-Rows $rows 'ms-fabric-cli') }
 
     # F7b: no hardcoded <3.14: a distribution whose own metadata allows 3.14 passes.
     Set-VenvPython 'coop-data-doc' '3.14.0' '>=3.9'
     $rows = Get-DoctorRows
-    if ((Find-Rows $rows 'coop-data-doc environment uses Python 3.14.0 (requires-python: >=3.9)').Count -gt 0) { Ok "3.14 venv accepted where the distribution's own metadata allows it" } else { Ko 'uncapped distribution falsely restricted to <3.14' (Show-Rows $rows 'coop-data-doc') }
+    if (@(Find-Rows $rows 'coop-data-doc environment uses Python 3.14.0 (requires-python: >=3.9)').Count -gt 0) { Ok "3.14 venv accepted where the distribution's own metadata allows it" } else { Ko 'uncapped distribution falsely restricted to <3.14' (Show-Rows $rows 'coop-data-doc') }
   }
 
   Write-Host '  -> sync: extension postconditions verified after installation'
