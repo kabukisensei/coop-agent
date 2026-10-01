@@ -454,7 +454,7 @@ command text and should not be shared as sanitized exports.
 3. Read the target file(s) + look up the object's upstream/downstream via the `data_doc` tool (`command="lineage"`) before touching it; use the Microsoft Learn MCP for current docs.
 4. Write a short **PLAN** and get explicit approval **before** any edit.
 5. Create a timestamped backup of every file to be changed.
-6. Make the smallest safe edit.
+6. Make the smallest safe edit; T-SQL coop writes or reformats follows the `sql-formatting` skill (the Cooptimize layout).
 7. Self-check: before presenting SQL, DAX, or model changes, check the diff against the same standards articles used to write them; fix what does not meet them, and deviate only on a user exception or a stated reason (plus Tabular Editor BPA / `fabric-cicd` validate where relevant).
 8. Show `git diff` and summarize the change.
 9. Update Markdown docs / glossary / lineage; regenerate the site if docs changed.

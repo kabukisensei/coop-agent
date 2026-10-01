@@ -5,6 +5,26 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- `sql-formatting` skill: coop lays out the T-SQL it writes, or is asked to
+  reformat, in the Cooptimize style by default: the coop-standards *SQL Layout*
+  article where it speaks (six-space select lists with the comma one column left
+  and no space after it, five-space CTE names, `JOIN` aligned with `FROM`, `ON`
+  four spaces under the join, `AND`/`OR` four under `WHERE`/`ON`, one `WHEN` per
+  line, unnecessary brackets removed on a full reformat), and Aaron's SQL Prompt 11
+  style for everything else (uppercase keywords, functions and types with
+  object-definition casing kept, aligned aliases and comments, expanded statement
+  parentheses, the 75/78-character collapse thresholds, `=` on its own line in
+  assignments, DDL alignment, terminal semicolons). The style export
+  (`skills/sql-formatting/sql-prompt-cooptimize-style.json`) and the format-action
+  settings (`sql-prompt-layout-options.xml`) ship unchanged next to the skill, which
+  states the contract, what formatting never does (no wildcard expansion,
+  qualification, `AS` or alias changes; presentation only, unrelated lines
+  untouched) and the six points where the export and the wiki differ (wiki wins).
+  `examples/formatted.sql` is the worked example and
+  `tests/sql-formatting.test.mjs` (gate lane) checks the export, the contract text
+  and the example. The `coop-workflow` skill points at it from step 6.
 ### Removed
 
 - Test modes and override seams (master plan S7, row 8, issue #228):

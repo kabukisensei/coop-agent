@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<LayoutOptions version="1" type="LayoutOptions">
+  <IndentationAmount>4</IndentationAmount>
+  <TabIndentingBehaviour>0</TabIndentingBehaviour>
+  <FormatActionLayout>true</FormatActionLayout>
+  <FormatActionApplyCasing>true</FormatActionApplyCasing>
+  <FormatActionInsertSemicolons>true</FormatActionInsertSemicolons>
+  <FormatActionExpandWildCards>false</FormatActionExpandWildCards>
+  <FormatActionQualifyObjectNames>false</FormatActionQualifyObjectNames>
+  <FormatActionRemoveSquareBrackets>false</FormatActionRemoveSquareBrackets>
+  <FormatActionAddRemoveAsFromTableAlias>false</FormatActionAddRemoveAsFromTableAlias>
+  <FormatActionNormaliseColumnAlias>false</FormatActionNormaliseColumnAlias>
+  <FormatActionNUnicodeStrings>true</FormatActionNUnicodeStrings>
+  <ColumnAliasBehaviour>0</ColumnAliasBehaviour>
+</LayoutOptions>

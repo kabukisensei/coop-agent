@@ -172,6 +172,8 @@ COOP_TEST_DIST="$TMP" node "$ROOT/tests/setupbridge-integration.test.mjs"
 
 echo "→ workflow slice tests"
 node "$ROOT/tests/workflow.test.mjs"
+echo "→ sql-formatting skill tests"
+node "$ROOT/tests/sql-formatting.test.mjs"
 
 echo "→ compaction over the configured transport (#236) tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/compaction-transport.test.mjs"

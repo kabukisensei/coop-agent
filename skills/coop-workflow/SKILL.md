@@ -68,6 +68,8 @@ partial, or connected project without requiring the user to edit YAML.
 5. **Back up.** Create a timestamped backup of every file you will change, under
    `.backups/...` using `backup.timestamp_format` from the contract.
 6. **Smallest safe edit.** Make the minimal change that satisfies the request.
+   Lay out any T-SQL you write, or are asked to reformat, with the `sql-formatting`
+   skill (the Cooptimize layout); leave unrelated lines as they are.
 7. **Self-check.** Before presenting SQL, DAX, or model changes, check your own diff
    against the same standards articles you used to write them, rule by rule. The
    standards are the rule, not advice: fix anything that does not meet them before
