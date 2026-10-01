@@ -8,8 +8,8 @@
 # dir's entry on the persistent USER PATH (registry, ExpandString-safe, with the
 # WM_SETTINGCHANGE broadcast), the Start Menu + Desktop shortcuts, coop's
 # isolated Pi agent dir (~/.coop/agent), and the tool layer: the npm-global Pi
-# agent plus the pipx venvs (coop-data-doc / coop-sql-review / coop-dax-review /
-# ms-fabric-cli).
+# agent plus the pipx venvs (coop-data-doc / ms-fabric-cli, plus the retired
+# coop-sql-review / coop-dax-review venvs when an older coop left them behind).
 #
 # NEVER touches: this repo clone, any work repo's .coop\project.yml, the rest of
 # ~/.coop (private config dirs live there), or your personal ~/.pi/agent (and

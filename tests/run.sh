@@ -133,7 +133,6 @@ unset COOP_DIR COOP_AGENT_DIR PI_CODING_AGENT_DIR \
 echo "→ Revision 9 standards registry/resolver and automatic application tests"
 node "$ROOT/tests/standards-rev9.test.mjs"
 node "$ROOT/tests/standards-live-sync.test.mjs"
-node "$ROOT/tests/standards-review-generations.test.mjs"
 node "$ROOT/tests/standards-golden.test.mjs"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/standards-runtime.test.mjs"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/bpa-review.test.mjs"
@@ -370,9 +369,6 @@ if [ "${COOP_TEST_EXTENDED:-0}" = "1" ]; then
 
   echo "→ repo staleness nudge (throttled fetch + behind-count) tests"
   bash "$ROOT/tests/staleness.test.sh"
-
-  echo "→ coop review (composite linters + docs compose) tests"
-  bash "$ROOT/tests/review.test.sh"
 
   echo "→ doctor MCP mode reporting tests"
   bash "$ROOT/tests/doctor.test.sh"

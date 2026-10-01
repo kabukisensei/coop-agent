@@ -329,16 +329,6 @@ def build_project_yml(answers: dict) -> str:
     lines.append("    enabled: true")
     lines.append("    default_command: build")
     lines.append('    machine_outputs: ["graph.json", "manifest.json"]')
-    lines.append("  coop_sql_review:")
-    lines.append("    command: coop-sql-review")
-    lines.append("    enabled: true")
-    lines.append('    invoke: "check {paths} --format json"')
-    lines.append("    advisory_only: true")
-    lines.append("  coop_dax_review:")
-    lines.append("    command: coop-dax-review")
-    lines.append("    enabled: true")
-    lines.append('    invoke: "check {paths} --format json"')
-    lines.append("    advisory_only: true")
     lines.append("")
 
     lines.append("mcp:")
@@ -422,7 +412,7 @@ def build_project_yml(answers: dict) -> str:
     lines.append('    - "Create a timestamped backup of every file to be changed"')
     lines.append('    - "Make the smallest safe edit"')
     lines.append(
-        '    - "Run the applicable review (coop-sql-review / coop-dax-review; Tabular Editor BPA / fabric-cicd validate where relevant)"'
+        '- "Self-check the change against the standards articles used to write it (name any rule it could not meet); Tabular Editor BPA / fabric-cicd validate where relevant"'
     )
     lines.append('    - "Show git diff + summarize the change"')
     lines.append(
@@ -440,7 +430,7 @@ def build_project_yml(answers: dict) -> str:
     lines.append('    - "git status / git diff / git pull"')
     lines.append('    - "create backups"')
     lines.append(
-        '    - "run coop-sql-review / coop-dax-review / coop-data-doc (advisory)"'
+        '    - "run coop-data-doc / Tabular Editor BPA (advisory)"'
     )
     lines.append(
         '    - "MCP dev/test metadata / schema / artifact-code list / read / inspect"'

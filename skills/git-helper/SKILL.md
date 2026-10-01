@@ -15,8 +15,8 @@ rule 4) — a human does — so the job here is to make the human's commit effor
 2. `git diff` for the files that matter; use `git diff -- <paths>` to separate
    source changes from docs/logs/site changes.
 3. If SQL / DAX / semantic-model objects changed, note the lineage impact
-   (`data_doc` tool, `command="lineage"`) and any `sql_review` / `dax_review`
-   findings from this session.
+   (`data_doc` tool, `command="lineage"`) and any standards self-check findings
+   (rules the change could not meet) from this session.
 
 ## Commit message (Conventional Commits)
 
@@ -33,8 +33,8 @@ Output a draft with these sections:
 - **Summary** — what changed and why, in plain language.
 - **Changes** — a bullet per file/object.
 - **Lineage impact** — upstream/downstream objects affected (from `data_doc`).
-- **Standards & validation** — `sql_review` / `dax_review` / Tabular Editor BPA /
-  `fabric-cicd` validate results and any tests run.
+- **Standards & validation** — standards self-check outcome (rules not met, if any),
+  Tabular Editor BPA / `fabric-cicd` validate results and any tests run.
 - **Rollback** — how to revert safely (backups, `git checkout` of uncommitted edits).
 
 ## Hard rules

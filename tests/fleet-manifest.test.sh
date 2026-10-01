@@ -60,7 +60,7 @@ assert json.load(open(r/'config/mcp.example.json'))['mcpServers']=={}
 # Any retained tested_with documentation must equal manifest, never own a second value.
 spec=importlib.util.spec_from_file_location('coop_yaml',r/'lib/_yaml.py'); y=importlib.util.module_from_spec(spec); spec.loader.exec_module(y)
 d=y._load_fallback((r/'config/defaults.yml').read_text()).get('tested_with',{})
-for key,pkg in [('pi',None),('coop_data_doc','coop-data-doc'),('coop_sql_review','coop-sql-review'),('coop_dax_review','coop-dax-review'),('ms_fabric_cli','ms-fabric-cli'),('fabric_cicd','fabric-cicd')]:
+for key,pkg in [('pi',None),('coop_data_doc','coop-data-doc'),('ms_fabric_cli','ms-fabric-cli'),('fabric_cicd','fabric-cicd')]:
     expected=m['pi']['version'] if pkg is None else m['python_tools'][pkg]
     if key in d: assert str(d[key])==expected, (key,d[key],expected)
 PY

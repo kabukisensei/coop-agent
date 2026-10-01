@@ -243,8 +243,6 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
   }
 }
 Check-PipxDist 'coop-data-doc' 'coop-data-doc'
-Check-PipxDist 'coop-sql-review' 'coop-sql-review'
-Check-PipxDist 'coop-dax-review' 'coop-dax-review'
 Check-PipxDist 'ms-fabric-cli' 'fab'
 
 # The Node minimum (manifest node.min) is prerequisite row 2 above.
@@ -318,8 +316,6 @@ function Check-PipxTool([string]$Bin) {
   }
 }
 Check-PipxTool 'coop-data-doc'
-Check-PipxTool 'coop-sql-review'
-Check-PipxTool 'coop-dax-review'
 
 D-Head 'Fabric / semantic-model tooling'
 
@@ -743,7 +739,7 @@ if ($script:FIX -and ($script:FAIL -gt 0 -or $script:WARN -gt 0)) {
         }
       }
     }
-    foreach ($t in @('coop-data-doc', 'coop-sql-review', 'coop-dax-review')) {
+    foreach ($t in @('coop-data-doc')) {
       if (-not (Test-Have $t)) {
         $tSpec = Coop-ManifestPythonSpec $t
         if (-not $tSpec) {

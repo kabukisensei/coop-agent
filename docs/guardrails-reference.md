@@ -122,7 +122,7 @@ The `/spec-first`, `/annotate`, `/slice-next`, `/explain`, and `/handoff` prompt
 4. Write a short **PLAN** and get explicit review/approval before any edit.
 5. Create a timestamped backup of every file to be changed.
 6. Make the smallest safe edit.
-7. Run the applicable review — `coop-sql-review` / `coop-dax-review` (and Tabular Editor BPA / `fabric-cicd` validate where relevant).
+7. Self-check: before presenting SQL, DAX, or model changes, check the diff against the same standards articles used to write them and name any rule it could not meet (plus Tabular Editor BPA / `fabric-cicd` validate where relevant).
 8. Show `git diff` and summarize the change.
 9. Update Markdown docs / glossary / lineage; regenerate the site if docs changed.
 10. Append to the daily log.
@@ -135,9 +135,9 @@ You have these tools. Know they exist and reach for the right one.
 - **`data_doc`** → `coop-data-doc`. Use it **first** when you need to understand an estate: relationships, lineage, and existing object documentation. `scan` builds the lineage graph (`graph.json`); `build` also writes **Markdown documentation** (per-object docs + lineage) and a searchable portal, indexed by `manifest.json`. **Read that generated Markdown** — it's the canonical, human-and-agent-readable documentation for the SQL + Power BI estate. When existing docs are present, read the relevant `.md` files instead of re-deriving relationships by hand; use `manifest.json` to find which doc covers which object.
   - **First run:** if this folder has no `coop-data-doc.yml`, the docs don't exist yet — continue without them. If lineage would help, suggest **`/setup-docs`** or `coop data-doc setup`; both drive the same authoritative questionnaire. Setup is never automatic.
   - **Before** analyzing or changing any SQL object, DAX measure, or semantic model, consult the built docs for up/downstream impact (the object's `<slug>.md` + its immediate neighbors). The quickest grounding is the **`data_doc` tool with `command="lineage"`, `object="<name>"`** (or `coop-data-doc lineage <object> --depth 1`) → JSON of that object's upstream/downstream + relationships + its doc path, in one call. coop **auto-detects** built docs at the start of a session and tells you when they're available. When a folder has **no** built docs, proceed normally: the lineage is an **aid, not a gate**.
-- **`sql_review`** → `coop-sql-review`. Use when reviewing or before changing T-SQL / Fabric Warehouse SQL — advisory standards check, never edits or blocks.
-- **`dax_review`** → `coop-dax-review`. Use when reviewing or before changing DAX / semantic-model code — advisory, never edits or blocks.
-- **`fab`** (Microsoft Fabric CLI = ms-fabric-cli) — list/inspect Fabric workspaces and artifacts (read-only first). **`fabric-cicd`** is a Python **library** (no CLI): `import fabric_cicd` inside deployment scripts for deployment **validation** (validate-only by default; never deploy without explicit approval) — it is not a `fabric-cicd` command. **Tabular Editor CLI** (if configured) — semantic-model BPA.
+- **Standards in context** (no tool call). The active coop-standards articles for SQL, DAX and semantic models are placed in your context for every such task. Write to them, then **self-check** your diff against them before presenting it and name any rule you could not meet. There is no separate rule engine.
+- **`bpa_review`** → Tabular Editor BPA (when `tools.tabular_editor_cli` is configured in the contract). The deterministic semantic-model check — advisory, never edits or blocks.
+- **`fab`** (Microsoft Fabric CLI = ms-fabric-cli) — list/inspect Fabric workspaces and artifacts (read-only first). **`fabric-cicd`** is a Python **library** (no CLI): `import fabric_cicd` inside deployment scripts for deployment **validation** (validate-only by default; never deploy without explicit approval) — it is not a `fabric-cicd` command. **Tabular Editor CLI** (if configured) — semantic-model BPA, reached through `bpa_review`.
 - **MCP (read-only):** **Microsoft Learn** when you need *current* Microsoft documentation rather than memory; **Fabric** / **Power BI** to list/read/inspect live artifacts; **context-mode** for intent-driven search and sandboxed code execution over the docs/graph. Never call write/deploy/publish MCP actions without approval.
 - **Memory** (pi-hermes-memory) — durable facts, preferences, and corrections across sessions; never store secrets.
 - **Web access** (`pi-web-access`) — search the web, fetch URLs, clone a GitHub repo, extract PDFs/videos. Read-only, so it fits read-only-first. Prefer the **Microsoft Learn MCP** for Microsoft/Fabric/Power BI docs; use web access for everything else.
@@ -151,7 +151,7 @@ Documentation can be large. **Do not ingest the whole doc set.** When you work o
 - Prefer **context-mode** (intent-driven search + sandboxed execution) to query the graph/docs for just the relevant slice instead of loading whole files.
 - Widen the lineage radius (2+ hops) only when the change's blast radius requires it, and say why.
 
-Rule of thumb: **read the focused docs `data_doc` produces before changing anything** (the object + its up/downstream neighbors, not the whole tree), review with `sql_review`/`dax_review` after, and prefer Microsoft Learn over memory for Microsoft specifics.
+Rule of thumb: **read the focused docs `data_doc` produces before changing anything** (the object + its up/downstream neighbors, not the whole tree), self-check the diff against the standards articles in context after, and prefer Microsoft Learn over memory for Microsoft specifics.
 
 ## How you communicate
 

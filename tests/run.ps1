@@ -10,7 +10,7 @@
 #      (the same seams tests/update-guard.test.sh drives against update.sh)
 #   4. update.ps1 --check is a dry-run that reports current/expected and exits 0
 #   5. coop.ps1 forwards a single trailing --check argument intact to update.ps1
-#   6. coop.ps1 review --help exits 0; an unknown review flag dies non-zero
+#   6. (retired with ST1: coop review no longer exists)
 #
 # No network: the fleet-mode decision stops before any install via
 # COOP_UPDATE_GATE_DRYRUN. Runs under Windows PowerShell 5.1
@@ -552,22 +552,6 @@ print("resume verdict contract OK")
   } else {
     Ko "version-describe fixture failed: $($describeOut | Out-String)"
   }
-
-  # --- 6. review --help exits 0; an unknown review flag dies -----------------
-  Head 'coop review arg parsing (--help ok; unknown flag dies)'
-  & $coop review --help *> $null
-  if ($LASTEXITCODE -eq 0) { Ok 'review --help exits 0' } else { Ko "review --help exit was $LASTEXITCODE" }
-  & $coop review --bogus-flag *> $null
-  if ($LASTEXITCODE -ne 0) { Ok 'review with an unknown flag dies non-zero' } else { Ko 'review --bogus-flag did not die' }
-
-  Head 'review transaction asymmetric mutation'
-  $oldErrorAction = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  $reviewTxnOut = & $psExe -NoProfile -File (Join-Path $root 'tests\fixtures\review-transaction.test.ps1') 2>&1
-  $reviewTxnRc = $LASTEXITCODE
-  $ErrorActionPreference = $oldErrorAction
-  if ($reviewTxnRc -eq 0) { $reviewTxnOut | ForEach-Object { Write-Host $_ }; Ok 'asymmetric review transaction preserved all artifacts' }
-  else { Ko "PowerShell asymmetric review transaction failed: $($reviewTxnOut | Out-String)" }
 
   # --- 7. pipx launcher ownership (Windows .exe metadata fallback) ----------
   Head 'pipx executable ownership'

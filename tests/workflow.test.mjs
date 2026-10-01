@@ -77,8 +77,6 @@ for (const [name, text] of [["example", example], ["fallback", fallback]]) {
 const agentDocs = [
   "AGENTS.md",
   "docs/architecture.md",
-  "skills/sql-review/SKILL.md",
-  "skills/dax-review/SKILL.md",
   "skills/fabric-workspace-review/SKILL.md",
 ].map((path) => [path, readFileSync(join(ROOT, path), "utf8")]);
 for (const [path, content] of agentDocs) {

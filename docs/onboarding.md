@@ -164,14 +164,12 @@ coop                      # launch the agent (run it inside your work repo)
 ```
 
 coop follows the Cooptimize workflow: read context → plan → **ask before editing** →
-back up → review with the tools → never commit source. You stay in control.
+back up → self-check against the standards → never commit source. You stay in control.
 
 Handy commands:
 
 ```bash
-coop sql-review check path/to.sql      # advisory SQL standards check
-coop dax-review check path/to/model    # advisory DAX standards check
-coop data-doc                          # build lineage + Markdown docs
+coop data-doc                    # build lineage + Markdown docs
 coop list / coop config          # manage Pi extensions
 ```
 
@@ -202,25 +200,25 @@ Enable it during `coop onboard` (or `coop onboard --config-only`):
 
 ## Try it — a safe first task (nothing gets changed)
 
-**1. See an advisory review on a throwaway file.**
+**1. Make a throwaway file.**
 
 ```bash
 printf 'SELECT * FROM dbo.Orders o JOIN dbo.Customer c ON o.CustomerId = c.Id;\n' > /tmp/sample.sql
-coop sql-review check /tmp/sample.sql
-#   Windows (PowerShell): Set-Content "$env:TEMP\sample.sql" 'SELECT * FROM dbo.Orders;'; coop sql-review check "$env:TEMP\sample.sql"
+#   Windows (PowerShell): Set-Content "$env:TEMP\sample.sql" 'SELECT * FROM dbo.Orders;'
 ```
 
-You'll get a severity summary (errors / warnings / info). `coop sql-review` is
-**advisory** — it reports against our SQL standards and **never edits or blocks**.
-
-**2. Now work *with* the agent.**
+**2. Ask the agent to check it against the standards.**
 
 ```bash
-coop @/tmp/sample.sql "Review this against our SQL standards and explain what you'd change — don't edit anything yet."
+coop @/tmp/sample.sql "Check this against our SQL standards and explain what you'd change — don't edit anything yet."
 ```
 
-Watch the loop: it reads context → runs `sql_review` → **proposes a plan and asks
-before changing anything**. Reply "looks good" to proceed, or steer it. That
+The Cooptimize SQL standards are already in coop's context, so it checks the file
+against them directly and names every rule it does not meet. It is **advisory** —
+it reports and **never edits or blocks**.
+
+Watch the loop: it reads context → checks against the standards → **proposes a plan
+and asks before changing anything**. Reply "looks good" to proceed, or steer it. That
 plan-and-approve loop — you always in control — is the whole point.
 
 **3. In a real work repo, try a focused lineage read.**

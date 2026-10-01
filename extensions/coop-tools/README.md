@@ -2,16 +2,24 @@
 
 Native, LLM-callable Cooptimize tools for Pi. This **companion** extension —
 loaded via `pi -e` (or automatically by `bin/coop`) — registers three tools the
-agent can call directly instead of asking you to run a CLI:
+agent can call directly instead of asking you to run a CLI: `data_doc`
+(coop-data-doc), `bpa_review` (Tabular Editor BPA, the deterministic model check)
+and the governed `fabric_sql_query` fallback:
 
 ```sh
 pi -e extensions/coop-tools
 ```
 
-Each tool shells out to a standalone Coop CLI with `--format json`, parses the
-result, and returns it as structured `details` on the tool result so the model
-can reason over it. All three are **advisory / read-only**: they report
-findings or build documentation, but they never edit source.
+Each tool shells out, parses the result, and returns it as structured `details`
+on the tool result so the model can reason over it. All three are **advisory /
+read-only**: they report findings, build documentation or run one bounded read,
+but they never edit source.
+
+SQL and DAX standards are **not** a tool here. The former `sql_review` /
+`dax_review` wrappers were retired (master plan ST1): the extension's
+`before_agent_start` hook feeds the active coop-standards wiki articles into every
+SQL / DAX / semantic-model task, and the agent self-checks its diff against them
+before presenting a change, naming any rule it could not meet.
 
 It also adds an on-demand **Start Here menu** (the `/start` command), a native
 **project contract wizard** (`/setup-project`), and setup for `coop-data-doc`
@@ -46,8 +54,9 @@ A guided, on-demand menu of common Cooptimize tasks. Each choice sends a friendl
 first-person request **as you** (the menu just pre-writes the prompt a newcomer
 would otherwise have to compose); the agent then asks for specifics. The
 *Document my data* choice routes into the `/setup-docs` wizard (or a build) when
-needed. Choices are wired to the tools/skills coop already ships: SQL review, DAX
-review, impact/lineage, Fabric workspace/architecture review, and work logs.
+needed. Choices are wired to the tools/skills coop already ships: checking SQL, DAX or a
+model against the standards, impact/lineage, Fabric workspace/architecture review,
+and work logs.
 
 **Strictly on demand — normal startup goes straight to the prompt:**
 
@@ -62,27 +71,22 @@ dialogs aren't available, and is wrapped so it can never break a session.
 
 ## Tools
 
-### `sql_review`
+### `bpa_review`
 
-Runs `coop-sql-review check <paths> --format json` against T-SQL / Fabric
-Warehouse SQL. Advisory only — it reports deviations from Cooptimize SQL
-standards and never edits or blocks. Executes in **parallel**.
+Runs Tabular Editor BPA (`te bpa run --model <model> --output-format json
+--non-interactive`) against semantic models when `tools.tabular_editor_cli` is
+enabled in `.coop/project.yml`. Advisory only — it reports findings by severity
+and never edits model files. Executes in **parallel**. Called without `paths`, it
+checks the contract's `power_bi.semantic_models[].path` entries. Parameters,
+rule-path handling and the result shape are in
+[docs/tool-contract.md](../../docs/tool-contract.md).
 
-| Param | Type | Default | Notes |
-| --- | --- | --- | --- |
-| `paths` | `string[]` | `["."]` | Files or directories to check. |
-| `min_severity` | `error` \| `warning` \| `info` | — | Adds `--min-severity`. |
-| `strict` | `boolean` | `false` | Adds `--strict` (exit non-zero if findings remain — CI gate). |
+### `fabric_sql_query`
 
-The text result summarizes findings by severity (error / warning / info) and
-exit code; the full structured report is in the tool result's `details.report`.
-
-### `dax_review`
-
-Runs `coop-dax-review check <paths> --format json` against DAX / semantic-model
-files. Same parameters, output shape, and parallel execution as `sql_review`;
-same advisory, never-edits guarantee — measured against Cooptimize DAX
-standards.
+Governed pyodbc fallback for one bounded `SELECT TOP` read against the
+contract's Fabric SQL target, used only after the managed `fabric-sqlendpoint` MCP
+actually failed. Executes **sequentially**. Contract in
+[docs/tool-contract.md](../../docs/tool-contract.md).
 
 ### `data_doc`
 
@@ -187,5 +191,4 @@ is what makes the agent perform the log step, while the warning exposes a miss.
   it does not break the conversation.
 - Tools run in the session's working directory (`ctx.cwd`) and honor the
   abort signal.
-- These mirror the CLI contracts exactly; there are no extra flags. The
-  parameters above are the whole surface.
+- These mirror the CLI contracts exactly; there are no extra flags.

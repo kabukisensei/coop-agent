@@ -92,7 +92,7 @@ $PI_EXTENSIONS = @(
   'npm:@juicesharp/rpiv-ask-user-question', # structured questions the model can ask (consent rounds)
   'npm:context-mode'
 )
-$PY_TOOLS = @('coop-data-doc', 'coop-sql-review', 'coop-dax-review')
+$PY_TOOLS = @('coop-data-doc')
 $FABRIC_PKG = 'ms-fabric-cli'
 # Microsoft Fabric/Power BI authoring CLI packages (npm). powerbi-desktop-bridge
 # requires Power BI Desktop on Windows, so it is installed only there.

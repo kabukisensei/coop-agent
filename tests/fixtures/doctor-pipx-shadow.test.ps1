@@ -57,7 +57,7 @@ try {
 
   # Fixture manifest: only the python tools matter here.
   $manifest = Join-Path $t 'manifest.json'
-  [System.IO.File]::WriteAllText($manifest, ('{"schema_version":1,"python_tools":{"coop-data-doc":"' + $Pin + '","coop-sql-review":"0.15.2","coop-dax-review":"0.22.0","ms-fabric-cli":"1.7.0","fabric-cicd":"1.3.0","pyodbc":"5.3.0"}}'), $utf8)
+  [System.IO.File]::WriteAllText($manifest, ('{"schema_version":1,"python_tools":{"coop-data-doc":"' + $Pin + '","ms-fabric-cli":"1.7.0","fabric-cicd":"1.3.0","pyodbc":"5.3.0"}}'), $utf8)
 
   # Fake pipx: `runpip coop-data-doc show coop-data-doc` answers the venv's
   # metadata (1.2.0); `environment --value` answers the fixture dirs; anything

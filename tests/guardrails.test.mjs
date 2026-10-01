@@ -565,7 +565,7 @@ await t("mcpMutationLabel flags mutating MCP/Fabric actions, not reads or safe t
   for (const name of ["fabric_create_workspace", "powerbi_delete_dataset", "mcp__fabric__deploy_pipeline", "fabric_publishReport", "powerbi_refresh_dataset", "fabric_semanticmodel_refresh"]) {
     assert.ok(mcpMutationLabel(name), `${name} should be flagged`);
   }
-  for (const name of ["fabric_list_workspaces", "powerbi_get_dataset", "read", "bash", "sql_review", "data_doc"]) {
+  for (const name of ["fabric_list_workspaces", "powerbi_get_dataset", "read", "bash", "bpa_review", "data_doc"]) {
     assert.equal(mcpMutationLabel(name), null, `${name} should NOT be flagged`);
   }
 });

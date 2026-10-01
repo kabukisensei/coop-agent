@@ -36,8 +36,6 @@ cat > "$TMP/manifest.json" <<EOF
   "schema_version": 1,
   "python_tools": {
     "coop-data-doc": "$PIN_DDD",
-    "coop-sql-review": "0.15.2",
-    "coop-dax-review": "0.22.0",
     "ms-fabric-cli": "$PIN_FAB",
     "fabric-cicd": "1.3.0",
     "pyodbc": "5.3.0"

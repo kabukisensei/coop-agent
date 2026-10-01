@@ -5,6 +5,33 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Removed
+
+- The SQL and DAX review wrappers (master plan ST1, decided by Aaron on
+  2026-09-28 and 2026-09-30: no client pipeline runs them). The in-agent
+  `sql_review` / `dax_review` tools, the `coop review`, `coop sql-review` and
+  `coop dax-review` commands, the `coop-sql-review` / `coop-dax-review` pipx
+  installs (install, update, doctor rows, `tested_with` pins, release-manifest
+  pins), the two skills, their vibe pools, the CI scaffold's SQL and DAX jobs
+  (`coop init --ci` now generates only the coop-data-doc lineage-docs gate and
+  needs a `coop-data-doc.yml`), and the contract template's `coop_sql_review` /
+  `coop_dax_review` entries are gone. Standards are enforced while coop writes:
+  every SQL, DAX or semantic-model task already receives the active
+  coop-standards wiki articles, and the workflow's review step becomes a
+  self-check against those same articles that names any rule the change could
+  not meet. `bpa_review` (Tabular Editor BPA) stays as the deterministic model
+  check. `coop uninstall` still removes the two retired venvs when an older coop
+  left them behind. The two CLI repositories are archived separately.
+- The bundled-fallback standards resolution. It discovered a standard by
+  running a reviewer CLI and binding its provenance, so it leaves with the
+  reviewers: without the coop-standards wiki or a project override a domain now
+  reports `unavailable` (or `auth_required`) instead of `bundled_fallback`, and
+  the `.coop/reviews` accepted-generation store, reviewer report validation and
+  the `verify-report` / `promote-run` / `accepted-run` CLI subcommands are
+  removed. The per-domain snapshot file keeps its role as the resolution's
+  content address; its header now reads "coop standards snapshot" instead of
+  "reviewer-input cache".
+
 ### Added
 
 - The isolated extension tree is reproducible (issue #152, master plan U1).

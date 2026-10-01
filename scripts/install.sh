@@ -54,7 +54,7 @@ PI_EXTENSIONS=(
   "npm:@juicesharp/rpiv-ask-user-question"  # structured questions the model can ask (consent rounds)
   "npm:context-mode"        # context compaction MCP/extension
 )
-PY_TOOLS=( coop-data-doc coop-sql-review coop-dax-review )
+PY_TOOLS=( coop-data-doc )
 FABRIC_PKG="ms-fabric-cli"
 # Microsoft Fabric/Power BI authoring CLI packages (npm). powerbi-desktop-bridge
 # requires Power BI Desktop on Windows, so it is installed only there.
@@ -400,7 +400,7 @@ else
 fi
 
 # --- 5. Standalone Coop tools ------------------------------------------------
-coop_head "5/9  Coop tools (coop-data-doc / coop-sql-review / coop-dax-review)"
+coop_head "5/9  Coop tools (coop-data-doc)"
 for pkg in "${PY_TOOLS[@]}"; do
   coop_unit "$pkg" _unit_pytool "$pkg" || INSTALL_FAILURES=$((INSTALL_FAILURES + 1))
 done

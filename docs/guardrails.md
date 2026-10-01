@@ -33,7 +33,7 @@ or when the user explicitly opts out for that task.
 
 ## Tool summary
 
-Native read-only/advisory tools: `data_doc`, `sql_review`, `dax_review`. A missing or partial repo is not a blocker: use local sources, then fill gaps with approved live metadata discovery. Also read-only MCP (Fabric, Power BI, Microsoft Learn), memory, web access, and ask-user. See `docs/guardrails-reference.md` and the `coop-workflow` skill.
+Native read-only/advisory tools: `data_doc` and `bpa_review` (Tabular Editor BPA, when configured). Standards apply while you write: before presenting SQL/DAX/model changes, self-check the diff against the standards articles in context and name any rule not met. A missing or partial repo is not a blocker: use local sources, then fill gaps with approved live metadata discovery. Also read-only MCP (Fabric, Power BI, Microsoft Learn), memory, web access, and ask-user. See `docs/guardrails-reference.md` and the `coop-workflow` skill.
 
 ## Read focused
 

@@ -71,7 +71,7 @@ foreach ($a in $args) {
 # The Coop tools to upgrade. Fabric CLI is included unless --no-fabric (matching
 # `coop install --no-fabric`), so a fabric-less machine doesn't report a perpetual
 # failed item on every update.
-$PY_TOOLS = @('coop-data-doc', 'coop-sql-review', 'coop-dax-review')
+$PY_TOOLS = @('coop-data-doc')
 if (-not $NO_FABRIC) { $PY_TOOLS += 'ms-fabric-cli' }
 # Microsoft Fabric/Power BI authoring CLI packages (npm) — kept current by update.
 $PBIH_NPM_TOOLS = @('@microsoft/powerbi-report-authoring-cli', '@microsoft/powerbi-modeling-mcp')

@@ -45,8 +45,6 @@ function readPool(filePath) {
 const POOL_NAMES = [
   "professional.txt",
   "data-doc.txt",
-  "sql-review.txt",
-  "dax-review.txt",
   "fabric.txt",
   "coop-internal.txt",
   "tips.txt",

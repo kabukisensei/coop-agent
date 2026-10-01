@@ -39,14 +39,12 @@ pi_extensions:
 # coop's own companion extensions (loaded from this repo via `pi -e`).
 coop_extensions:
   - extensions/coop-powerline   # splash + footer segments + rotating feature tips
-  - extensions/coop-tools       # native LLM tools: sql_review / dax_review / data_doc
+  - extensions/coop-tools       # native LLM tools: data_doc / bpa_review + the setup wizards
   - extensions/coop-guardrails  # ENFORCES governance: never-commit-source + destructive-command confirm
 
 # Standalone tools installed via pipx (all on PyPI).
 python_tools:
   - coop-data-doc        # SQL + Power BI documentation, lineage, manifest.json
-  - coop-sql-review      # advisory T-SQL standards linter (--format json)
-  - coop-dax-review      # advisory DAX standards linter (--format json)
 
 # Microsoft Fabric CLI. NOTE: installing this makes `fab` the Microsoft Fabric CLI.
 # A Homebrew formula named `fabric` ships a DIFFERENT `fab` (Python SSH automation);
@@ -129,12 +127,10 @@ tested_with:
   context_mode: "1.0.169"
   ms_fabric_cli: "1.7.0"
   fabric_cicd: "1.3.0"
-  # The three coop-tool pins below must match the sibling coop-website checkout's
+  # The coop-tool pin below must match the sibling coop-website checkout's
   # versions.json (the suite's single source of truth for released version strings).
-  # `coop release` verifies this before tagging; refresh these when the tools release.
+  # `coop release` verifies this before tagging; refresh it when the tool releases.
   coop_data_doc: "1.2.0"
-  coop_sql_review: "0.15.2"
-  coop_dax_review: "0.22.0"
 
 # Cooptimize brand palette (sampled from the color logo).
 brand_colors:

@@ -219,8 +219,7 @@ check_pipx_dist() { # <dist> <exe>
       "$repair --python 3.12   (or --python 3.13)${cicd_pin:+, then: pipx inject $dist fabric-cicd==$cicd_pin}${cicd_pin:+   (or: coop doctor --fix)}"
   fi
 }
-for pair in "coop-data-doc coop-data-doc" "coop-sql-review coop-sql-review" \
-            "coop-dax-review coop-dax-review" "ms-fabric-cli fab"; do
+for pair in "coop-data-doc coop-data-doc" "ms-fabric-cli fab"; do
   # shellcheck disable=SC2086  # deliberate word splitting into two args
   check_pipx_dist $pair
 done
@@ -294,8 +293,6 @@ check_pipx_tool() { # <bin>
   esac
 }
 check_pipx_tool coop-data-doc
-check_pipx_tool coop-sql-review
-check_pipx_tool coop-dax-review
 
 section "Fabric / semantic-model tooling"
 
@@ -696,7 +693,7 @@ EOF_PLAN
         fi
       fi
     fi
-    for t in coop-data-doc coop-sql-review coop-dax-review; do
+    for t in coop-data-doc; do
       if ! have "$t"; then
         t_spec="$(coop_manifest_python_spec "$t")"
         if [ -z "$t_spec" ]; then

@@ -365,7 +365,7 @@ unset COOP_FABRIC_PYTHON
 : > "$MARKER6"
 COOP_FLEET_TEST_MODE=1 COOP_PI_LATEST_OVERRIDE=0.87.1 COOP_PYPI_LATEST_OVERRIDE=0.1.0 \
   bash "$ROOT/scripts/update.sh" >/dev/null 2>&1
-for spec in 'coop-data-doc==1.2.0' 'coop-sql-review==0.15.2' 'coop-dax-review==0.22.0' 'ms-fabric-cli==1.7.0'; do
+for spec in 'coop-data-doc==1.2.0' 'ms-fabric-cli==1.7.0'; do
   grep -F "$spec" "$MARKER6" >/dev/null || { echo "update did not install missing $spec"; cat "$MARKER6"; exit 1; }
 done
 echo '  ✓ update installs missing manifest-pinned pipx tools'
