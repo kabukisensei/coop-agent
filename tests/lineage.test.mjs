@@ -77,7 +77,7 @@ await t("lineage runs `coop-data-doc lineage [--depth N] -- <object>` in the ses
   const { tools, execs } = boot(() => ({ code: 0, stdout: JSON.stringify(SLICE), stderr: "" }));
   const r = await lineage(tools, { command: "lineage", object: " dbo.fact_sales ", depth: 2.7 }, "/work/estate");
   assert.deepEqual(execs, [{ bin: "coop-data-doc", args: ["lineage", "--depth", "2", "--", "dbo.fact_sales"], cwd: "/work/estate" }]);
-  assert.equal(r.content[0].text, "Lineage for dbo.fact_sales: 2 upstream, 1 downstream, 1 relationship(s). Full slice + doc path in details.");
+  assert.equal(r.content[0].text, "Observed lineage for dbo.fact_sales: 2 upstream, 1 downstream, 1 relationship(s). Evidence confidence: unknown; states: unknown. Empty results do not prove zero impact. Coverage, trust, provenance, full slice and doc path in details.");
   assert.equal(r.details.tool, "coop-data-doc");
   assert.equal(r.details.command, "lineage");
   assert.equal(r.details.exitCode, 0);
@@ -131,6 +131,7 @@ function estate(built, outputDir = "./data-docs") {
   if (built) {
     mkdirSync(join(root, outputDir), { recursive: true });
     writeFileSync(join(root, outputDir, "manifest.json"), "{}");
+    writeFileSync(join(root, outputDir, "graph.json"), "{}");
   }
   return root;
 }
@@ -145,8 +146,8 @@ await t("built docs inject one hidden lineage note per folder that points at dat
   const note = lineageNote(first);
   assert.ok(note, `expected a coop-lineage message, got ${JSON.stringify(first)}`);
   assert.equal(note.display, false, "agent-visible, human-hidden");
-  assert.match(note.content, /^Cooptimize lineage docs ARE available for this estate/);
-  assert.ok(note.content.includes(`outputs under ${join("docs", "lineage")}:`), "names the output dir relative to cwd");
+  assert.match(note.content, /^An observed lineage graph is available/);
+  assert.ok(note.content.includes(`under ${join("docs", "lineage")}:`), "names the output dir relative to cwd");
   assert.match(note.content, /data_doc tool \(command="lineage", object="<name>"\)/);
   assert.match(note.content, /BEFORE analyzing or changing any SQL object, DAX measure, or semantic model/);
   assert.deepEqual(note.details, { outputDir: join("docs", "lineage") });
@@ -167,8 +168,11 @@ await t("a config without built docs, or no config at all, injects no lineage no
   // The same folder is retried: once docs are built, the note appears.
   mkdirSync(join(unbuilt, "data-docs"), { recursive: true });
   writeFileSync(join(unbuilt, "data-docs", "index.md"), "# docs");
+  assert.equal(lineageNote(await before(handlers, unbuilt)), null, "index-only output never claims graph availability");
+  writeFileSync(join(unbuilt, "data-docs", "graph.json"), "{}");
   const r = await before(handlers, unbuilt);
   const note = lineageNote(r);
+  assert.doesNotMatch(note.content, /manifest.json/);
   assert.ok(note, "an unbuilt folder is not marked as announced");
   assert.deepEqual(note.details, { outputDir: "data-docs" });
 });

@@ -1,6 +1,6 @@
 # Coop master plan — ordered execution roadmap
 
-**Document revision 3.8 · September 30, 2026** (scope decisions, no reordering of the client-facing phases: TeamAI shared knowledge becomes a scheduled phase, the beta channel is skipped, Jev waits, and the review CLIs retire with ST1; section 1.1)
+**Document revision 3.9 · October 1, 2026** (mixed-estate documentation repair authorized by Aaron; section 8.1. Existing phase ordering and the revision 3.8 scope decisions remain.)
 **Product scope: Coop Windows terminal first; an installable Electron desktop returns after the terminal is simplified.**
 
 **Canonical repository location:** `docs/COOP_MASTER_PLAN.md`. This revision keeps the
@@ -26,7 +26,7 @@ execution trigger, and `agent:ready` is still added by hand. Releases follow
 | Standards | Canonical `cooptimize/coop-standards` sealed to one manifest shape | Coop **reads the format the standards repo ships** (and `cooptimize/incremental-bi`), instead of locking a copy of it. Default project contract is regenerated from that format. |
 | SQL and DAX reviewers | Keep `coop-sql-review` / `coop-dax-review` as deterministic gates | Decide keep-or-retire after standards alignment (section 7). Default recommendation: retire the in-agent wrappers; keep the CLIs only where a client CI pipeline actually uses them. |
 | SQL platforms | Fabric Warehouse / Lakehouse SQL endpoint only | Fabric stays. Add **Azure SQL Database and Azure SQL serverless** as first-class targets with the same guardrails. |
-| Editing SQL objects | Local files plus `coop-data-doc` lineage | SQL is not source-controlled today, so coop **defaults to the dev environment**, traces impact from **live metadata**, and verifies an edit with **actual data** before and after. |
+| Editing SQL objects | Local files plus `coop-data-doc` lineage | Power BI is source-controlled; SQL coverage varies by client. Coop **defaults to dev**, combines scoped offline lineage with **live metadata** through SQ, and verifies edits with **actual data** before and after. Missing SQL sources never imply zero impact (section 8.1). |
 | First run | Onboarding wizard, then `/start` menu on demand | **Common workflows menu on first run**; the wizard becomes one entry in it. |
 | Desktop | Removed; native Windows Coop 2.0 last, no Electron | **Electron desktop returns, last**, gated on a packaged installer that other users can run. The native rewrite is dropped from the roadmap. |
 | TeamAI / Jev / PK1 | Early beta experiments after B1 | **Revision 3.8:** TeamAI shared knowledge (K1–K3) is a scheduled phase after the first-run work, isolated on the development VM instead of a beta channel; Jev waits for an explicit start; automatic session naming leaves PK1 and becomes its own small row (N1) right after U1; the rest of PK1 stays optional. PK1 evaluates `@xl0/pi-lovely-codex` for tool-call handling and a usage-stats owner for the footer (revision 3.5: the Codex extension shows no usage stats; section 10). |
@@ -633,8 +633,9 @@ Depends on H3 having access to the two repositories.
 API; the managed MCP route is the Fabric SQL-endpoint data-plane URL; the target
 model is Fabric workspace and item GUIDs; the environment is inferred by matching
 workspace names. No code queries `sys.*` metadata; impact analysis comes only from
-the `coop-data-doc` graph built from local files, which does not exist when SQL is
-not source-controlled.
+the `coop-data-doc` graph built from local files. Power BI docs can exist without
+SQL sources; the graph cannot establish full SQL impact when SQL coverage is
+partial or absent (section 8.1). SQ4 adds the existing live metadata route.
 
 **Work, in order:**
 
@@ -711,6 +712,93 @@ session traces a view's dependents, edits it with approval, and shows before/aft
 counts. A production target configured in the same contract is never selected
 without the explicit approval path. No credential or connection string ever
 appears in a tool result or audit record.
+
+## 8.1. Mixed-estate documentation repair — DD1–DD4
+
+**Authorized:** Aaron asked on October 1 to begin fixing `coop-data-doc` and
+update this canonical plan. All Power BI code is source-controlled; SQL varies
+by client, from established repositories to partial scripts to no local sources.
+This is a focused companion repair lane alongside the existing SQ work, not a
+second roadmap or a mandate to onboard every client's SQL estate first.
+
+**Reverified baseline:** `coop-data-doc` main `cef94a5` (v1.2.0); Coop main
+`f29bd50`, reconciled through ST1 [#211](https://github.com/kabukisensei/coop-agent/pull/211) and [#232](https://github.com/kabukisensei/coop-agent/pull/232), which includes S7 [#229](https://github.com/kabukisensei/coop-agent/pull/229), S6 [#227](https://github.com/kabukisensei/coop-agent/pull/227),
+S4 [#225](https://github.com/kabukisensei/coop-agent/pull/225), S2
+[#223](https://github.com/kabukisensei/coop-agent/pull/223) and S3
+[#221](https://github.com/kabukisensei/coop-agent/pull/221). The earlier Coop static
+baseline `bb80b18` is superseded. ST1 is merged; its reviewer retirement and bundled wiki fallback are retained. SQ1–SQ7 remain open coordination work, including SQ4
+[#215](https://github.com/kabukisensei/coop-agent/pull/215), SQ5
+[#216](https://github.com/kabukisensei/coop-agent/pull/216), and SQ6
+[#217](https://github.com/kabukisensei/coop-agent/pull/217). Recheck main and those
+branches before wrapper changes; do not duplicate their live SQL executor,
+authentication, approvals, or standards work. Dev read policy
+[#230](https://github.com/kabukisensei/coop-agent/pull/230), and SQL formatting
+[#231](https://github.com/kabukisensei/coop-agent/pull/231) are also active; [#232](https://github.com/kabukisensei/coop-agent/pull/232) owns injection drift and is unrelated to DD.
+
+**Pinned-version compatibility:** `config/release-manifest.json` still pins
+`coop-data-doc` 1.2.0; no version or release changes are included here. The wrapper
+accepts that version's existing JSONL setup protocol and preserves its legacy
+lineage slice, labeling absent evidence **unknown** and qualifying empty results.
+An exact 1.2.0 temporary install was exercised against synthetic lineage and the
+wrapper. The companion fixes in draft #66 become available to normal installs
+only after a separately authorized, qualified release and manifest pin update;
+the wrapper cannot retroactively repair lineage produced by 1.2.0. Native Windows
+workstation/pipe acceptance remains separate from Ubuntu/Windows CI unit tests.
+
+**Architecture:** `coop-data-doc` remains offline and deterministic, using the
+single existing wizard and explicit local files. SQL repositories are optional.
+Clients may document only selected roots, folders, or schemas; coverage must
+state that scope. A successful parse of the selected files is not proof of full
+estate coverage. Live discovery and verification belong to Coop's existing SQ
+integration; no new live SQL, auth, MCP server, or alternate wizard is added to
+the companion.
+
+**Evidence contract to implement:** carry declared source coverage separately
+from observed scan/parse completeness. Distinguish `complete` (within an explicit
+declared scope), `partial`, `missing`, and `unknown`; omitted declarations default
+to `unknown`. Keep outside-estate `external` and unresolved/skipped links explicit.
+Report evidence origin, source scope, resolution method and parser limitations.
+An empty upstream/downstream list means no *observed* links within that evidence,
+never a verified zero-impact estate when coverage is partial, unknown, missing,
+opaque, or unresolved. Never generate SQL lineage by guessing from a Power BI
+object name or by selecting the first candidate. Local and live evidence retain
+their own scope and availability; report drift rather than silently replacing
+one with the other. SQL-less builds remain useful for Power BI dependencies.
+
+| Step | Depends on | Focus and acceptance | Current evidence/status |
+| --- | --- | --- | --- |
+| DD1 | authorized now | Protect source trees from output cleanup; neutralize SVG, tooltip and diagnostics injection; retain Business Intent through layer/page changes and uncertain identities; reject incomplete crawls and strict failures before graph publication | Implemented locally on isolated data-doc branch; 18 synthetic regressions and full 646-test suite pass, Ruff/format pass; real fixture HTML build passes (35 objects, 49 edges). Independent code review passed. Data-doc commit `fee3f42` on `dd1/source-output-safety`, published in draft [#66](https://github.com/kabukisensei/coop-data-doc/pull/66); not merged or released. Scoped table-layer intent migration only; unmatched authored pages retained for reconciliation. DD2 now closes strict cache deferral and file-level omission publication gaps. |
+| DD2 | DD1 | Declare mixed-estate scope and completeness in the existing config/wizard; machine and human coverage/trust/provenance; Power BI-only and partial SQL builds; lineage and impact qualify empty results; semantic-definition changes seed impact; prevent incomplete evidence from pruning saved decisions | Implemented in data-doc commit `e95cee1`, published in draft #66; 656 tests, Ruff/format, synthetic HTML build and independent review pass. Optional source/repo and layer declarations default unknown; wizard, graph, index, lineage and `impact --evidence` retain scoped confidence/provenance. Strict cache writes defer until validation; file omissions reject publication; stale human decisions are retained. Not released. Coordinate atomic decision persistence with existing data-doc [#63](https://github.com/kabukisensei/coop-data-doc/issues/63); do not duplicate its implementation. |
+| DD3 | DD2, migration review | Same-name models across roots and nested paths; exact report path binding; cache invalidation when source changes while target survives; preserve every partition source; SQL UNION/EXCEPT/INTERSECT and CTAS dependencies; preserve SQL multi-part source names | Implemented in data-doc `4b022f8`, published in draft #66: 16 integrity regressions, full 672 tests, Ruff/format and independent review pass. All SQL/M, composite and calculated partition dependencies are accumulated; source signatures preserve changed human decisions for explicit re-review. SQL/BIM/TMDL definition hashes seed impact. Duplicate semantic identities stop publication; exact path bindings never fall back to unrelated basenames. Scope-qualified IDs require explicit backward compatibility for existing intent and cache; emit collision/migration diagnostics first wherever identity needs user choice. Never silently merge estates or rewrite committed decisions. |
+| DD4 | DD2/DD3 contract; S6 main; ST1/SQ branch reconciliation | Coop config discovery agrees with companion ancestor/environment rules and picker paths resolve against config base; wrapper claims only actual successful artifacts; lineage retains coverage/trust/provenance; UTF-8 JSONL stdin/stdout works through Windows pipes; formula-safe CSV; contract/docs alignment | Implemented and independently reviewed in draft #233 (`9437ea1`, reconciled merge `6924292`); companion `32490dc` in draft #66: wrapper follows ancestor/environment/symlink config discovery and config-base picker paths, retains scoped evidence and claims artifacts only on successful publishing commands or existing files. Companion UTF-8 bidirectional pipe and formula-safe CSV regressions pass; full data-doc suite is 674 tests with Ruff/format. Coop full gate suite and shell/BOM checks pass; standalone PowerShell gate passes with canonical macOS temporary paths. Data-doc exact-head CI passes Python 3.10–3.13 on Ubuntu and Windows; Coop pre-ST1-reconciliation head `2611914` passed full CI and the Pi compatibility matrix. The latest-main reconciliation is independently reviewed; its new final-head checks are pending. Keep the existing wizard/protocol. Coordinate data-doc installation/cache docs with [#65](https://github.com/kabukisensei/coop-data-doc/issues/65). Windows acceptance remains unverified by macOS fixtures. |
+
+**Deferred package qualification:** the original dependency finding concerns
+resolved Python package versions and broad dependency ranges, not SQL object-name
+qualification. No Python lockfile, exact transitive resolution, or multi-version
+package qualification was implemented in DD1–DD4. These remain a separate release
+reproducibility task; successful CI on the versions resolved by its run does not
+qualify every version admitted by the dependency ranges. No dependency or release
+pins are changed by these drafts.
+
+**Mixed-estate acceptance matrix (synthetic fixtures, no client access):**
+
+| Power BI coverage | SQL coverage | Required result |
+| --- | --- | --- |
+| Complete source-controlled models/reports | Complete within declared client scope | Separate estate identities, every partition retained, known SQL-to-model-to-report edges and qualified evidence; deterministic cold/warm/parallel output. |
+| Complete | Partial roots/folders/schemas | Full available Power BI docs, known SQL links only, explicit uncovered SQL scope and unresolved sources. No full-estate impact or zero-impact conclusion. |
+| Complete | Missing/no SQL repository | Existing Power BI-only wizard and build succeed; Power BI lineage remains useful; SQL source/impact unknown or explicitly external, with no invented SQL nodes or links. |
+| Complete | Unknown | Unknown coverage survives a successful scan; warnings and evidence explain why absence of a link proves nothing outside the observed scope. |
+| Opaque/partial model or broken source | Any | Degraded/unknown evidence and actionable diagnostics; incomplete scans do not replace the previous generation or prune human intent/cache decisions. |
+| Duplicate model/object names across estates | Any | Keep scopes distinct or require a mapping choice; exact declared paths win only in their own root. Old IDs/intent/cache are preserved or explicitly migrated. |
+| Available local graph plus SQ live metadata | Partial/missing SQL | SQ reports availability per section; Coop compares evidence and reports drift. Offline graph absence and unavailable live metadata never become empty verified impact. |
+
+Run each repo's defined checks, plus security/preservation/migration regressions
+and a real HTML build from synthetic fixtures. Review independently before
+publication. Windows pipe encoding and PowerShell 5.1 runtime acceptance need a
+Windows runner/VM; no client databases, repositories, credentials, or destructive
+source operations are used. Publish tested/reviewed chunks as draft PRs (Aaron authorized October 1) so agents
+can coordinate ownership. Keep unfinished work local. Merge, release and deployment
+still await Aaron's separate instruction.
 
 ## 9. Phase 6 — First run shows common workflows, not a wizard
 
@@ -880,11 +968,12 @@ tags. A stale row is never a reason to re-do work: check the PR list first.
 | 5 | H3 | Coop reads the coop-standards wiki directly; contract override shape | local clones of both repos | `coop sync` verifies the real `coop-standards` head; new contract round-trips through `/setup-project` | merged ([#85](https://github.com/kabukisensei/coop-agent/pull/85), 2026-09-28); no VM step; close [#80](https://github.com/kabukisensei/coop-agent/issues/80) at the tag |
 | 6 | T1 | CI gate/extended split; fixture rules | H1–H3 merged | gate under five minutes, both OS, no weakened assertion | merged ([#132](https://github.com/kabukisensei/coop-agent/pull/132), 2026-09-29) |
 | 7 | S1, S5 | Retire POSIX product path and legacy web | T1 (Aaron started it on 2026-09-30: Mac, Linux and the web are dropped) | one Windows implementation, forwarder kept, tests removed with their surface | S5 merged ([#161](https://github.com/kabukisensei/coop-agent/pull/161), 2026-09-30, shipped in v0.24.0); S1 in review (PR), issue [#205](https://github.com/kabukisensei/coop-agent/issues/205), 2026-10-01 |
-| 8 | S3, S2, S4, S6, S7 | Profile root, lifecycle, token/MCP, dead helpers, docs | S1/S5 | duplication removed; `AGENTS.md` and `CONTRIBUTING.md` no longer require parity/BOM | S3 in review ([#221](https://github.com/kabukisensei/coop-agent/pull/221)), S2 in review (PR), issue [#222](https://github.com/kabukisensei/coop-agent/issues/222), 2026-10-01; S4 in review (PR), issue [#224](https://github.com/kabukisensei/coop-agent/issues/224), 2026-10-01; S6 in review (PR), issue [#226](https://github.com/kabukisensei/coop-agent/issues/226), 2026-10-01; S7 in review (PR), issue [#228](https://github.com/kabukisensei/coop-agent/issues/228), 2026-10-01 |
+| 8 | S3, S2, S4, S6, S7 | Profile root, lifecycle, token/MCP, dead helpers, docs | S1/S5 | duplication removed; `AGENTS.md` and `CONTRIBUTING.md` no longer require parity/BOM | S3 #221, S2 #223, S4 #225 and S6 #227 merged on main by 2026-10-01; S7 #229 also merged on main. Publication/VM evidence remains per each package. |
 | 9 | U1 | Dependency reconciliation per section 6, one row per PR, qualified on the VM | S-lane (Aaron started U1 ahead of it on 2026-09-30) | exact versions, tests, rollback per PR; keep/drop list closed | in progress: Pi 0.87.1 + `pi-mcp-adapter` 3.3.0 **done (tag v0.24.0, 2026-09-30)**: merged in [#162](https://github.com/kabukisensei/coop-agent/pull/162), VM run passed (matrix 20/20, sync, doctor, `mcp-adapter.json` migration, console checks), Warehouse approval prompt verified live on the released build; Pi 0.99 stays blocked on the adapter's peer range (section 6.3; [#170](https://github.com/kabukisensei/coop-agent/pull/170) is a held draft). Merged 2026-09-30 (unreleased): `pi-hermes-memory` 0.9.9 ([#181](https://github.com/kabukisensei/coop-agent/pull/181)), Fabric skills catalog v0.3.18 ([#175](https://github.com/kabukisensei/coop-agent/pull/175)), shell-issued Fabric REST write approvals ([#176](https://github.com/kabukisensei/coop-agent/pull/176)). Also merged 2026-09-30/10-01 (unreleased, VM steps pending): `@juicesharp/rpiv-ask-user-question` 2.12.0 ([#188](https://github.com/kabukisensei/coop-agent/pull/188)), `@microsoft/fabric-mcp` 1.4.0 ([#189](https://github.com/kabukisensei/coop-agent/pull/189)), `mcp-remote` drop ([#190](https://github.com/kabukisensei/coop-agent/pull/190)), `@azure-devops/mcp` 2.10.0 ([#191](https://github.com/kabukisensei/coop-agent/pull/191)). Power BI pair merged 2026-10-01 (unreleased): `@microsoft/powerbi-report-authoring-cli` 0.4.0 + `@microsoft/powerbi-desktop-bridge-cli` 1.0.0 ([#199](https://github.com/kabukisensei/coop-agent/pull/199); one PR because 0.4.0 depends on Bridge ^1.0.0; its VM step needs Power BI Desktop on the VM, Aaron's). Lockfile merged 2026-10-01 (unreleased, [#200](https://github.com/kabukisensei/coop-agent/pull/200), closes [#152](https://github.com/kabukisensei/coop-agent/issues/152)): `config/extensions-lock.json` pins the isolated tree's transitive dependencies and `coop sync` installs it with `npm ci`; VM run passed (two clean syncs give the same `npm ls --all` output; lock entries carry `gypfile: false` so npm never compiles better-sqlite3 13 on Windows). U1 rows complete except the Power BI pair's Desktop check |
 | 9b | N1 | Automatic session naming after a few turns (`@xl0/pi-lovely-rename` trial first, coop-owned fallback; section 10) | U1 rows merged (Aaron scheduled it 2026-09-30) | names appear in footer and title on the VM without breaking manual `/name`; acceptance list in section 10 | merged 2026-10-01 (unreleased, [#198](https://github.com/kabukisensei/coop-agent/pull/198)): upstream `@xl0/pi-lovely-rename` 0.1.5 pinned, three-turn trigger kept (Aaron, 2026-10-01); VM trial passed (generated names show in the resume list and footer, manual `/name` survives, `/rename` regenerates). Coop's own footer is replaced by Pi's on the VM ([#203](https://github.com/kabukisensei/coop-agent/issues/203), pre-existing). Coop-owned namer not needed unless long sessions name badly |
-| 10 | ST1 | Standards alignment and reviewer decision | H3 + U1 | resolver data-driven; reviewers retired from coop (decided 2026-09-28), self-check in place | in review ([#211](https://github.com/kabukisensei/coop-agent/pull/211)): wrappers, `coop review`, reviewer-discovered fallback and CI jobs removed; self-check in the workflow with the standards rule (deviate only on a user exception or a stated reason); a bundled copy of the wiki ships in coop as the offline/first-run fallback (Aaron, 2026-10-01); CLI repos archived by Aaron |
+| 10 | ST1 | Standards alignment and reviewer decision | H3 + U1 | resolver data-driven; reviewers retired from coop (decided 2026-09-28), self-check in place | merged on main 2026-10-01 ([#211](https://github.com/kabukisensei/coop-agent/pull/211)): wrappers, `coop review`, reviewer-discovered fallback and CI jobs removed; self-check in the workflow with the standards rule (deviate only on a user exception or a stated reason); a bundled copy of the wiki ships in coop as the offline/first-run fallback (Aaron, 2026-10-01); CLI repos archived by Aaron |
 | 11 | SQ1–SQ7 | Azure SQL targets, dev default, live impact, data verification, install-time Fabric/Azure SQL client choice (section 8 item 7) | ST1 | section 8 acceptance | not started |
+| 11a | DD1–DD4 | Mixed-estate offline documentation and Coop evidence contract (section 8.1) | DD1 authorized now; later steps follow dependencies in section 8.1 | acceptance matrix, preserved intent/cache, honest scoped impact, Windows contract verification | DD1–DD3 published in data-doc draft #66; DD4 tested/reviewed locally. Coop draft [#233](https://github.com/kabukisensei/coop-agent/pull/233) owns the canonical plan and wrapper contract. Native Windows and scope-ID migration acceptance pending; no merge/release |
 | 12 | FR1 | Common-workflows first run | SQ1 (menu items exist) | first launch shows the menu; onboarding no longer blocks | not started |
 | 13 | PK1 | `pi-lovely-codex` versus `pi-better-openai`, diagnostics, simplify (naming moved to N1) | U1 + explicit start | one owner of usage stats; adopt/build/defer recorded per candidate | not started |
 | 14 | B1 | Minimal beta channel | — | — | **skipped** (Aaron, 2026-09-30: seven people update from tags; the VM qualifies upgrades) |
