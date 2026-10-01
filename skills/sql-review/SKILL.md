@@ -15,6 +15,12 @@ blocks. Applying a fix is a separate, plan-and-approve step.
 Run inside the `coop-workflow` skill. `sql_review` is the review tool the
 workflow calls at step 7 for SQL; this skill covers running it and reading results.
 
+This skill is the standards authority for every SQL target kind coop reaches
+(`sql_targets:` in the contract). On Fabric Warehouse, Lakehouse SQL and Fabric SQL
+database the Microsoft `sqldw-cli` / `sqldb-cli` skills may add platform guidance
+when the contract enables them; on Azure SQL Database and Synapse serverless no
+Microsoft skill applies, so this skill and `coop-workflow` stand alone.
+
 ## Review checklist
 
 - **Scope the paths.** Identify the SQL files to check (use `sql_root` from
