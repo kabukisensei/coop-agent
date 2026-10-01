@@ -32,6 +32,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   printed `✓ sync complete.` (seen on the development VM, 2026-10-01). The lock
   hashes now go through .NET (`Get-CoopFileSha256`), and `coop.cmd` clears
   `PSModulePath` so 5.1 rebuilds its own module path.
+- `coop install` convergence on Windows (#213). The Pi and pipx install units run
+  in a background job that sees none of the installer's variables, so a drifted
+  Pi was reported `pi present — no manifest pin` and never converged, pipx tools
+  installed without their `==pin`, and `--edge` never upgraded an existing Pi or
+  tool. The units now receive the edge flag, package and pinned spec as
+  arguments, and a Fabric CLI unit that did not converge no longer gets the
+  Python runtime injected into the wrong venv.
 
 ### Removed
 
