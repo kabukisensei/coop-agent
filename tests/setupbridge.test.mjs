@@ -320,7 +320,7 @@ async function withHome(home, fn) {
   }
 }
 
-const documentItem = () => buildStartMenu().find((item) => item.label.includes("Document the data sources"));
+const documentItem = () => buildStartMenu().find((item) => item.label.includes("Document a warehouse or semantic model"));
 
 function assertHomeStop(notices, home) {
   const stop = notices.find((n) => n.type === "warning" && n.message.includes(home));
