@@ -7,6 +7,7 @@
       "name": "pi-extensions",
       "dependencies": {
         "@juicesharp/rpiv-ask-user-question": "2.12.0",
+        "@xl0/pi-lovely-rename": "0.1.5",
         "context-mode": "1.0.169",
         "pi-better-openai": "0.1.22",
         "pi-hermes-memory": "0.9.9",
@@ -3620,6 +3621,30 @@
       "license": "MIT",
       "engines": {
         "node": ">=20"
+      }
+    },
+    "node_modules/@xl0/pi-lovely-config": {
+      "version": "0.1.4",
+      "resolved": "https://registry.npmjs.org/@xl0/pi-lovely-config/-/pi-lovely-config-0.1.4.tgz",
+      "integrity": "sha512-IKnSPwC9SKfDcYkXbM8YMa8QpFiDOptwcdOUOv2oLH9uyBgD0V7w9yT40AOWO559qczs93HPvLgf6KWvRY1ieA==",
+      "license": "MIT",
+      "peerDependencies": {
+        "@earendil-works/pi-coding-agent": "*",
+        "@earendil-works/pi-tui": "*"
+      }
+    },
+    "node_modules/@xl0/pi-lovely-rename": {
+      "version": "0.1.5",
+      "resolved": "https://registry.npmjs.org/@xl0/pi-lovely-rename/-/pi-lovely-rename-0.1.5.tgz",
+      "integrity": "sha512-ms7bKMt8VP/O5PJ1fnlvQWNITWv4K+7HxcQdbah3NkCQYnc99+lN2q3ec3/f0mdfpqxoa2jZQQgl07MPPPTm7Q==",
+      "license": "MIT",
+      "dependencies": {
+        "@xl0/pi-lovely-config": "^0.1.1"
+      },
+      "peerDependencies": {
+        "@earendil-works/pi-ai": "*",
+        "@earendil-works/pi-coding-agent": "*",
+        "@earendil-works/pi-tui": "*"
       }
     },
     "node_modules/accepts": {
