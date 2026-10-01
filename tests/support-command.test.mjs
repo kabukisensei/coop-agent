@@ -1,9 +1,10 @@
 // Tests for the installed Support Center workflow (lib/support-center-cli.mjs,
 // which `coop support` runs through scripts/support-center.ps1; the retired bash
 // twin was `exec node lib/support-center-cli.mjs "$@"`, so the CLI is driven
-// directly here). Uses a disposable COOP_DIR profile with
-// synthetic events incl. planted credentials — they must never reach the
-// exported bundle unredacted.
+// directly here). Uses a disposable COOP_DIR profile (COOP_DIR is the PARENT
+// of .coop, as everywhere else in coop; master plan S3) with synthetic events
+// incl. planted credentials — they must never reach the exported bundle
+// unredacted.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, realpathSync } from "node:fs";
@@ -20,11 +21,12 @@ const supportEnv = (env) => ({ ...process.env, COOP_ROOT: ROOT, ...env });
 // Fixture roots are resolved to their real path: macOS keeps tmpdir() under the
 // /var -> /private/var symlink, which the standards storage-root check rejects.
 const profile = realpathSync(mkdtempSync(join(tmpdir(), "support-test-")));
-const coopDir = join(profile, "coop");
+const coopDir = join(profile, "coop");          // $COOP_DIR
+const profileDir = join(coopDir, ".coop");      // the profile dir the CLI reads
 
-mkdirSync(join(coopDir, "support"), { recursive: true });
+mkdirSync(join(profileDir, "support"), { recursive: true });
 // synthetic host events: one benign, one with planted credentials
-writeFileSync(join(coopDir, "support", "events.jsonl"), [
+writeFileSync(join(profileDir, "support", "events.jsonl"), [
   JSON.stringify({ event: "sync", detail: "knowledge repos synced" }),
   JSON.stringify({ event: "api-call", config: { endpoint: "https://example.invalid", api_key: "PLANTED-SECRET-123", note: "fine" } }),
 ].join("\n") + "\n");
@@ -65,7 +67,7 @@ await t("default export under the profile prunes to bounded retention", async ()
   for (let i = 0; i < 12; i++) {
     spawnSync(process.execPath, [CLI], { env: supportEnv({ COOP_DIR: coopDir }), encoding: "utf8" });
   }
-  const bundles = readdirSync(join(coopDir, "support", "bundles"));
+  const bundles = readdirSync(join(profileDir, "support", "bundles"));
   assert.ok(bundles.length <= 10, `retention bound (got ${bundles.length})`);
   assert.ok(bundles.length >= 5, "recent bundles retained");
 });
@@ -73,29 +75,29 @@ await t("default export under the profile prunes to bounded retention", async ()
 await t("event log is trimmed to the bounded length including the new run record", async () => {
   // seed the log AT the bound so one more run must enforce 200 exactly (F2)
   const seed = Array.from({ length: 200 }, (_, i) => JSON.stringify({ event: `seed-${i}`, detail: "x" }));
-  writeFileSync(join(coopDir, "support", "events.jsonl"), seed.join("\n") + "\n");
+  writeFileSync(join(profileDir, "support", "events.jsonl"), seed.join("\n") + "\n");
   spawnSync(process.execPath, [CLI], { env: supportEnv({ COOP_DIR: coopDir }), encoding: "utf8" });
-  const lines = readFileSync(join(coopDir, "support", "events.jsonl"), "utf8").trim().split("\n");
+  const lines = readFileSync(join(profileDir, "support", "events.jsonl"), "utf8").trim().split("\n");
   assert.ok(lines.length <= 200, `event log bounded (got ${lines.length})`);
   assert.ok(lines.some((l) => l.includes("support-run")), "new run record retained within the bound");
 });
 
 await t("malformed event lines persist no raw content (F1 round 2)", async () => {
-  writeFileSync(join(coopDir, "support", "events.jsonl"), 'not json at all token=hunter2-secret\n' + JSON.stringify({ event: "ok", note: "fine" }) + "\n");
+  writeFileSync(join(profileDir, "support", "events.jsonl"), 'not json at all token=hunter2-secret\n' + JSON.stringify({ event: "ok", note: "fine" }) + "\n");
   spawnSync(process.execPath, [CLI], { env: supportEnv({ COOP_DIR: coopDir }), encoding: "utf8" });
-  const log = readFileSync(join(coopDir, "support", "events.jsonl"), "utf8");
+  const log = readFileSync(join(profileDir, "support", "events.jsonl"), "utf8");
   assert.equal(log.includes("hunter2-secret"), false, "malformed line content must not persist");
   assert.ok(log.includes("unparseable_event"));
 });
 
 await t("host event log is rewritten sanitized — planted credential never persists (F1)", async () => {
   // self-seeding: earlier tests overwrite the shared log
-  writeFileSync(join(coopDir, "support", "events.jsonl"), [
+  writeFileSync(join(profileDir, "support", "events.jsonl"), [
     JSON.stringify({ event: "sync", detail: "knowledge repos synced" }),
     JSON.stringify({ event: "api-call", config: { endpoint: "https://example.invalid", api_key: "PLANTED-SECRET-123", note: "fine" } }),
   ].join("\n") + "\n");
   spawnSync(process.execPath, [CLI], { env: supportEnv({ COOP_DIR: coopDir }), encoding: "utf8" });
-  const log = readFileSync(join(coopDir, "support", "events.jsonl"), "utf8");
+  const log = readFileSync(join(profileDir, "support", "events.jsonl"), "utf8");
   assert.equal(log.includes("PLANTED-SECRET-123"), false, "raw log must be redacted too");
   const api = log.trim().split("\n").map((l) => JSON.parse(l)).find((e) => e.event === "api-call");
   assert.equal(api.config.api_key, "[REDACTED]");

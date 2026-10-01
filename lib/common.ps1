@@ -1011,17 +1011,44 @@ function Get-CoopPrereqs([bool]$NoFabric = $false) {
   return $rows
 }
 
+# --- One profile root (master plan S3) ----------------------------------------
+# The ONE meaning of the location variables, mirrored by lib/coop_paths.py and
+# lib/paths.mjs:
+#   COOP_DIR is the PARENT of .coop: the profile dir is $COOP_DIR\.coop, default
+#   $HOME\.coop (config, user.json, agent\, support\, standards\, devops\).
+#   The agent dir Pi ACTUALLY loads is one chain everywhere: PI_CODING_AGENT_DIR
+#   -> COOP_NO_ISOLATE truthy (1|true|yes|on, any case) -> $HOME\.pi\agent
+#   -> COOP_AGENT_DIR -> <profile dir>\agent.
+# With no variables set every helper yields the historical ~/.coop/... path.
+function Get-CoopProfileDir {
+  $base = if ($env:COOP_DIR) { $env:COOP_DIR } else { $HOME }
+  return (Join-Path $base '.coop')
+}
+
+# The fleet/integration config written by scripts/onboard.py.
+function Get-CoopConfigFile { return (Join-Path (Get-CoopProfileDir) 'config') }
+
+# The local user profile written by scripts/onboard.py.
+function Get-CoopUserProfileFile { return (Join-Path (Get-CoopProfileDir) 'user.json') }
+
+# True when COOP_NO_ISOLATE asks for the personal ~/.pi/agent (1|true|yes|on).
+function Test-CoopNoIsolate { return ([string]$env:COOP_NO_ISOLATE).Trim() -match '^(1|true|yes|on)$' }
+
+# The user's own Pi agent dir: the one Pi loads with COOP_NO_ISOLATE, and the
+# one coop shares the login (auth/models) in from.
+function Get-CoopPersonalPiAgentDir { return (Join-Path (Join-Path $HOME '.pi') 'agent') }
+
 # coop runs Pi against an ISOLATED agent dir so coop's extensions/settings/theme
 # never mix with the user's personal `pi`. Override with COOP_AGENT_DIR.
-# (mirror of coop_pi_agent_dir)
-function Get-CoopPiAgentDir { if ($env:COOP_AGENT_DIR) { $env:COOP_AGENT_DIR } else { Join-Path $HOME '.coop\agent' } }
+# (mirror of coop_paths.coop_agent_dir / paths.mjs coopAgentDir)
+function Get-CoopPiAgentDir { if ($env:COOP_AGENT_DIR) { $env:COOP_AGENT_DIR } else { Join-Path (Get-CoopProfileDir) 'agent' } }
 
 # The agent dir Pi will ACTUALLY load: PI_CODING_AGENT_DIR when set; with
-# COOP_NO_ISOLATE=1 Pi falls back to the personal ~/.pi/agent.
-# (mirror of coop_effective_agent_dir)
+# COOP_NO_ISOLATE truthy Pi falls back to the personal ~/.pi/agent.
+# (mirror of coop_paths.agent_dir / paths.mjs agentDir)
 function Get-CoopEffectiveAgentDir {
   if ($env:PI_CODING_AGENT_DIR) { return $env:PI_CODING_AGENT_DIR }
-  if ($env:COOP_NO_ISOLATE -eq '1') { return (Join-Path $HOME '.pi\agent') }
+  if (Test-CoopNoIsolate) { return (Get-CoopPersonalPiAgentDir) }
   return (Get-CoopPiAgentDir)
 }
 
@@ -1850,14 +1877,8 @@ function Get-CoopYamlList {
 # --- Team knowledge config (~/.coop/config "knowledge" block) -----------------
 # The fleet config JSON (schema_version 1, written by scripts/onboard.py) carries
 # an OPTIONAL "knowledge" block: { "enabled": bool, "repos": [{url, local_path}] }.
-# Absent/disabled/unreadable is a clean no-op everywhere. COOP_DIR overrides the
-# parent of .coop (same convention as onboard.py and the test suite).
-# (mirrors of coop_config_file / coop_knowledge_enabled / coop_knowledge_repos)
-function Get-CoopConfigFile {
-  $base = if ($env:COOP_DIR) { $env:COOP_DIR } else { $HOME }
-  return (Join-Path $base '.coop\config')
-}
-
+# Absent/disabled/unreadable is a clean no-op everywhere. The file is
+# Get-CoopConfigFile (<profile dir>\config; COOP_DIR is the parent of .coop).
 function Get-CoopKnowledgeBlock {
   $f = Get-CoopConfigFile
   if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return $null }
@@ -1958,13 +1979,14 @@ function Coop-Confirm {
   if ($ans -match '^(y|yes)$') { return $true } else { return $false }
 }
 
-# Test whether the local COOP user profile exists.
+# Test whether the local COOP user profile exists (in the profile dir onboarding
+# writes to, so COOP_DIR is honoured).
 function Test-CoopUserProfileMissing {
-  return -not (Test-Path -LiteralPath (Join-Path $HOME '.coop\user.json') -PathType Leaf)
+  return -not (Test-Path -LiteralPath (Get-CoopUserProfileFile) -PathType Leaf)
 }
 
 function Test-CoopOnboardingMissing {
-  return (Test-CoopUserProfileMissing) -or -not (Test-Path -LiteralPath (Join-Path $HOME '.coop\config') -PathType Leaf)
+  return (Test-CoopUserProfileMissing) -or -not (Test-Path -LiteralPath (Get-CoopConfigFile) -PathType Leaf)
 }
 
 # First-run onboarding: run when either the profile or integration config is missing.

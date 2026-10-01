@@ -62,8 +62,8 @@ if (-not (Test-Path -LiteralPath $CoopCommonPs1)) {
 
 # Isolate coop's Pi config (extensions, settings, themes, MCP) from the user's personal
 # `pi` — for launching AND the coop add/remove/list/config/pi management aliases.
-# Disable with COOP_NO_ISOLATE=1.
-if ($env:COOP_NO_ISOLATE -ne '1') {
+# Disable with COOP_NO_ISOLATE=1 (or true/yes/on).
+if (-not (Test-CoopNoIsolate)) {
   $coopAgentDir = Get-CoopPiAgentDir
   $env:PI_CODING_AGENT_DIR = $coopAgentDir
   New-Item -ItemType Directory -Force -Path $coopAgentDir -ErrorAction SilentlyContinue | Out-Null
@@ -208,12 +208,9 @@ function Invoke-CoopLaunchPreflight {
   if ($env:COOP_SKIP_EXT_CHECK -eq '1') { return }
   if (-not (Test-Have 'pi')) { return }
   $py = Get-CoopPython; if (-not $py) { return }
-  # The dir Pi will ACTUALLY load: PI_CODING_AGENT_DIR when set; with COOP_NO_ISOLATE=1
-  # Pi uses the personal ~/.pi/agent, so guarding coop's isolated dir would be wrong.
-  $agentDir = if ($env:PI_CODING_AGENT_DIR) { $env:PI_CODING_AGENT_DIR }
-              elseif ($env:COOP_NO_ISOLATE -eq '1') { Join-Path $HOME '.pi\agent' }
-              elseif ($env:COOP_AGENT_DIR) { $env:COOP_AGENT_DIR }
-              else { Join-Path $HOME '.coop\agent' }
+  # The dir Pi will ACTUALLY load (with COOP_NO_ISOLATE Pi uses the personal
+  # ~/.pi/agent, so guarding coop's isolated dir would be wrong).
+  $agentDir = Get-CoopEffectiveAgentDir
   if (-not (Test-Path -LiteralPath (Join-Path $agentDir 'npm\package.json') -PathType Leaf)) { return }
   $verRaw = (& pi --version 2>$null | Select-Object -First 1)
   if (-not $verRaw) { return }
@@ -276,7 +273,7 @@ function Build-CoopPiArgs {
     }
     $catPy = Get-CoopPython
     if ($catPy) {
-      $effectiveAgentDir = if ($env:PI_CODING_AGENT_DIR) { $env:PI_CODING_AGENT_DIR } elseif ($env:COOP_NO_ISOLATE -match '^(1|true|yes|on)$') { Join-Path $HOME '.pi\agent' } else { Join-Path $HOME '.coop\agent' }
+      $effectiveAgentDir = Get-CoopEffectiveAgentDir
       $catArgs = @((Join-Path $script:CoopRoot 'lib\microsoft_skills.py'))
       $proj = Find-CoopProjectYml
       if ($proj) { $catArgs += @('--project', $proj) }
@@ -357,7 +354,7 @@ function Build-CoopPiArgs {
 function Get-CoopFabricMcpToken {
   $py = Get-CoopPython
   if (-not $py) { return '' }
-  $agentDir = if ($env:PI_CODING_AGENT_DIR) { $env:PI_CODING_AGENT_DIR } else { Get-CoopPiAgentDir }
+  $agentDir = Get-CoopEffectiveAgentDir
   $config = Join-Path $agentDir 'mcp-adapter.json'
   if (-not (Test-Have 'node')) {
     Coop-Warn 'Fabric Warehouse MCP unavailable: token helper supervisor is unavailable'

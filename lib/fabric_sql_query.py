@@ -14,6 +14,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import coop_paths
 import warehouse_mcp as wmcp
 
 SQL_RESOURCE = "https://database.windows.net/"
@@ -114,12 +115,12 @@ def _canonical_target(
         or not SAFE_DATABASE.fullmatch(database)
     ):
         return None, "", "target_invalid"
-    agent_dir = os.environ.get("PI_CODING_AGENT_DIR", "")
-    if not agent_dir:
-        return None, "", "managed_config_unavailable"
+    # The managed adapter config lives in the agent dir Pi actually loads (the
+    # one chain in lib/coop_paths.py); a missing or foreign file is unavailable.
+    agent_dir = coop_paths.agent_dir()
     try:
         config = json.loads(
-            (Path(agent_dir) / "mcp-adapter.json").read_text(encoding="utf-8-sig")
+            (agent_dir / "mcp-adapter.json").read_text(encoding="utf-8-sig")
         )
         entry = config["mcpServers"]["fabric-sqlendpoint"]
         managed = config["_coop"]["managed_servers"]

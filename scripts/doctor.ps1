@@ -262,7 +262,7 @@ if (Test-Have 'npm') {
 # Only a stored provider credential counts: Pi writes `{}` on startup (#167).
 if (Test-Have 'pi') {
   $authA = Join-Path (Get-CoopPiAgentDir) 'auth.json'
-  $authB = Join-Path (Join-Path $HOME '.pi\agent') 'auth.json'
+  $authB = Join-Path (Get-CoopPersonalPiAgentDir) 'auth.json'
   if ((Test-CoopAuthHasCredential $authA) -or (Test-CoopAuthHasCredential $authB)) {
     D-Ok 'Pi login present'
   } else {
@@ -792,7 +792,8 @@ if ($script:JSON) {
     $pubDir = ''
     $pyCmd = Get-CoopPython
     if ($pyCmd) {
-      $pubDir = (& $pyCmd -c "import os, sys; sys.path.insert(0, os.path.join(r'$script:CoopRoot', 'lib')); import _yaml; d = _yaml.load(os.path.expanduser('~/.coop/config')) if os.path.exists(os.path.expanduser('~/.coop/config')) else {}; p = _yaml.dig(d, 'fleet.publish_dir'); print(p or _yaml.dig(_yaml.load(os.path.join(r'$script:CoopRoot', 'config/defaults.yml')), 'fleet.publish_dir') or '')" 2>$null | Out-String).Trim()
+      $cfgFile = Get-CoopConfigFile
+      $pubDir = (& $pyCmd -c "import os, sys; sys.path.insert(0, os.path.join(r'$script:CoopRoot', 'lib')); import _yaml; cfg = r'$cfgFile'; d = _yaml.load(cfg) if os.path.exists(cfg) else {}; p = _yaml.dig(d, 'fleet.publish_dir'); print(p or _yaml.dig(_yaml.load(os.path.join(r'$script:CoopRoot', 'config/defaults.yml')), 'fleet.publish_dir') or '')" 2>$null | Out-String).Trim()
     }
     if ($pubDir) {
       if (-not (Test-Path -LiteralPath $pubDir)) { New-Item -ItemType Directory -Force -Path $pubDir | Out-Null }

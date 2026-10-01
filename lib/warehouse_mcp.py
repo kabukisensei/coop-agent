@@ -31,6 +31,11 @@ try:
 except Exception:  # pragma: no cover - import fallback for direct embedding
     load_yaml = None
 
+_LIB_DIR = str(Path(__file__).resolve().parent)
+if _LIB_DIR not in sys.path:
+    sys.path.insert(0, _LIB_DIR)
+import coop_paths  # noqa: E402
+
 FABRIC_RESOURCE = "https://api.fabric.microsoft.com"
 SQL_RESOURCE = "https://database.windows.net/"
 TOKEN_RESOURCES = {FABRIC_RESOURCE, SQL_RESOURCE}
@@ -139,7 +144,7 @@ def tenant_value(value: Any) -> tuple[str, str]:
 
 def coop_config_path() -> Path:
     """~/.coop/config, honouring COOP_DIR exactly as scripts/onboard.py does."""
-    return Path(os.environ.get("COOP_DIR") or Path.home()) / ".coop" / "config"
+    return coop_paths.config_path()
 
 
 def tenant_from_sources(project: Any, config: Any) -> tuple[str, str]:

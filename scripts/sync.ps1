@@ -21,7 +21,7 @@ $ErrorActionPreference = 'Continue'
 # coop renders its own footer/splash — no third-party powerline footer.
 $CORE_EXTENSIONS = @('pi-mcp-adapter', 'pi-hermes-memory', 'pi-better-openai', 'pi-web-access', '@juicesharp/rpiv-ask-user-question', '@xl0/pi-lovely-rename', 'context-mode')
 $PI_AGENT = Get-CoopPiAgentDir
-$GLOBAL_AGENT = Join-Path $HOME '.pi\agent'
+$GLOBAL_AGENT = Get-CoopPersonalPiAgentDir
 
 Coop-Head "coop sync (v$($script:CoopVersion))"
 
@@ -187,7 +187,7 @@ finally {
 $MCP_DST = Join-Path $PI_AGENT 'mcp-adapter.json'
 $mcpPy = Get-CoopPython
 if ($mcpPy) {
-  & $mcpPy (Join-Path $script:CoopRoot 'lib\mcp_config.py') --output $MCP_DST
+  & $mcpPy (Join-Path $script:CoopRoot 'lib\mcp_config.py') --config (Get-CoopConfigFile) --output $MCP_DST
   if ($LASTEXITCODE -eq 0) { Coop-Ok "generated manifest-pinned MCP config -> $MCP_DST" }
   else { Coop-Warn 'could not generate MCP config — run: coop onboard --edit, then coop sync' }
 } else {
