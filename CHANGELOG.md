@@ -67,6 +67,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   consolidation fails, and adds `/memory-pin` for rules the agent must not rewrite.
   Existing memory files are read as before (same storage root under
   `~/.coop/agent`). VM qualification pending.
+- `@azure-devops/mcp` moves to **2.10.0** (master plan U1, section 6 row). Read-only
+  check of both published packages: the same 37 tool names, the same domains (coop
+  still passes `core work work-items search`), and `--authentication azcli`
+  unchanged, so the generated `azure-devops` entry is the same apart from the pin.
+  2.10.0 updates `@azure/identity` and `@azure/msal-node` and adds
+  `@azure/msal-node-extensions` and `open` for its own interactive sign-in, which
+  coop does not use. `coop sync` regenerates the entry. VM qualification pending
+  (one work-item query through the MCP).
 - `mcp-remote` is gone (master plan U1, section 6.2). It only bridged the Microsoft
   Learn MCP, and `learn.microsoft.com/api/mcp` is unauthenticated Streamable HTTP
   that `pi-mcp-adapter` speaks directly. The generated `microsoft-learn` entry is now
