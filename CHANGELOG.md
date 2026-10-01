@@ -10,20 +10,21 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 - The isolated extension tree is reproducible (issue #152, master plan U1).
   `config/extensions-lock.json` is npm's lockfile for the release's pinned
   extension set, resolved with pi-ai, pi-tui and the agent peer at the manifest's
-  Pi. `coop sync` copies it next to the tree's `package.json`, installs with
-  `npm ci --ignore-scripts` and then runs `npm rebuild` (so native packages such
-  as better-sqlite3 use their own package metadata; `npm ci` alone would compile
-  them from source on Windows), so two machines on the same release get the same
-  transitive dependency versions instead of "latest in range" on the day each
-  one synced, and a bad upstream patch release no longer reaches the fleet
-  without a coop release. The lock applies only when it can hold (the manifest's
-  Pi is installed and the tree declares exactly the manifest's extensions);
-  `--edge`, the Pi matrix and a tree carrying a personal extension still resolve
-  live as before. A machine where the lock fails to install falls back to the
-  live install once and remembers that lock, so sync does not retry it until a
-  release ships a new one. Maintainers regenerate it with
-  `node lib/extlock.js generate` whenever a pin moves; the gate lane fails when
-  the lock and the manifest disagree. VM: the lock path verified on the sandbox.
+  Pi. `coop sync` copies it next to the tree's `package.json` and installs with
+  `npm ci`, so two machines on the same release get the same transitive
+  dependency versions instead of "latest in range" on the day each one synced,
+  and a bad upstream patch release no longer reaches the fleet without a coop
+  release. The lock applies only when it can hold (the manifest's Pi is
+  installed and the tree declares exactly the manifest's extensions); `--edge`,
+  the Pi matrix and a tree carrying a personal extension still resolve live as
+  before. Packages that ship their binary and declare `gypfile: false`
+  (better-sqlite3 13 under pi-hermes-memory) carry that flag in their lock entry,
+  because npm builds the nodes it installs from the lock and would otherwise run
+  a bare `node-gyp rebuild` (it failed on the Windows VM, which has no compiler).
+  A machine where the lock still fails to install falls back to the live install
+  once and remembers that lock, so sync does not retry it until a release ships a
+  new one. Maintainers regenerate it with `node lib/extlock.js generate` whenever
+  a pin moves; the gate lane fails when the lock and the manifest disagree.
 
 ### Changed
 

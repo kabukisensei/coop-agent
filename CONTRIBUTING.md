@@ -130,13 +130,15 @@ node lib/extlock.js check         # expect: "extlock: lock matches the manifest"
 ```
 
 `config/extensions-lock.json` is npm's lockfile for coop's isolated extension
-tree (`~/.coop/agent/npm`); `coop sync` installs the tree from it with
-`npm ci --ignore-scripts` followed by `npm rebuild` (plain `npm ci` compiles
-better-sqlite3 13 from source on Windows because it reads the lock's metadata,
-not the package's `gypfile: false`), so every machine on a release runs the same
-transitive dependency versions (issue #152). A machine where the lock fails to
-install keeps a copy in `npm/.coop-lock-failed.json` and resolves live until a
-new lock ships. The gate lane fails when the lock and the manifest disagree.
+tree (`~/.coop/agent/npm`); `coop sync` installs the tree from it with `npm ci`,
+so every machine on a release runs the same transitive dependency versions
+(issue #152). `generate` installs the resolved tree once (scripts off) and copies
+`gypfile: false` into the lock entry of every package that declares it: npm
+builds the nodes it installs from the lock entries, and without the flag it
+compiles better-sqlite3 13 from source on Windows. A machine where the lock
+fails to install keeps a copy in `npm/.coop-lock-failed.json` and resolves live
+until a new lock ships. The gate lane fails when the lock and the manifest
+disagree.
 
 If you are on a headless dev box without the coop stack installed (no `pi`,
 pipx tools, or `fab`), **skip `coop doctor`** and say so in the PR — the four

@@ -5169,7 +5169,8 @@
       "license": "MIT",
       "engines": {
         "node": "^18 || ^20 || >= 21"
-      }
+      },
+      "gypfile": false
     },
     "node_modules/node-domexception": {
       "version": "1.0.0",
@@ -5407,7 +5408,8 @@
       },
       "engines": {
         "node": ">=22"
-      }
+      },
+      "gypfile": false
     },
     "node_modules/pi-mcp-adapter": {
       "version": "3.3.0",

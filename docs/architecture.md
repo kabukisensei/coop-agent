@@ -108,8 +108,8 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
 4. **Pi extensions installed from npm** into coop's isolated agent dir
    (`config/defaults.yml`; exact pins in `config/release-manifest.json`, and
    their transitive dependencies in `config/extensions-lock.json`, which
-   `coop sync` installs with `npm ci --ignore-scripts` plus `npm rebuild` so
-   every machine on a release runs the same tree):
+   `coop sync` installs with `npm ci` so every machine on a release runs the same
+   tree):
    - `pi-mcp-adapter` — wires the read-only MCP servers.
    - `pi-hermes-memory` — persistent memory, session search, secret scanning.
    - `pi-better-openai` — plan usage limits (5h / 7d windows), surfaced in

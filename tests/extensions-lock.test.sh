@@ -27,6 +27,19 @@ else
   ko "lock drifted from the manifest: $(node "$ROOT/lib/extlock.js" check "$MANIFEST" "$LOCK" 2>&1 | head -3 | tr '\n' ' ')"
 fi
 
+# 1b. Packages that ship their binary and declare `gypfile: false` carry that
+#     flag in their lock entry (lib/extlock.js generate); npm builds nodes from
+#     the lock entries, and without the flag `npm ci` ran `node-gyp rebuild` for
+#     the nested better-sqlite3 and failed on the Windows VM (2026-10-01).
+if "$PY" - "$LOCK" <<'PYGYP'
+import json, sys
+p = json.load(open(sys.argv[1]))["packages"]
+nested = [k for k, v in p.items() if k.endswith("/node_modules/better-sqlite3") and v.get("version", "").startswith("13.")]
+sys.exit(0 if nested and all(p[k].get("gypfile") is False for k in nested) else 1)
+PYGYP
+then ok "lock entries for better-sqlite3 13 carry gypfile: false (no node-gyp rebuild from the lock)"
+else ko "the nested better-sqlite3 13 lock entry lacks gypfile: false (regenerate with node lib/extlock.js generate)"; fi
+
 # 2. A bumped pin without a regenerated lock fails the check (this is the gate).
 "$PY" - "$MANIFEST" "$TMP/bumped.json" <<'PY'
 import json, sys
@@ -79,13 +92,11 @@ node "$ROOT/lib/extlock.js" matches "$TMP/otherpi" "$LOCK" >/dev/null 2>&1 \
 # 4. The convergence twins consult the lock before their live npm install, and
 #    the lock path is the one that runs `npm ci`.
 grep -q 'coop_apply_extensions_lock "$agent_dir" "$npm_bin" "$pi_ver"' "$ROOT/lib/common.sh" \
-  && grep -q '"$npm_bin" ci --ignore-scripts --no-audit --no-fund' "$ROOT/lib/common.sh" \
-  && grep -q '"$npm_bin" rebuild --no-audit --no-fund' "$ROOT/lib/common.sh" \
+  && grep -q '"$npm_bin" ci --no-audit --no-fund' "$ROOT/lib/common.sh" \
   && ok "coop_converge_extension_pins installs from the lock (npm ci) before a live resolution" \
   || ko "lib/common.sh convergence no longer tries the lockfile first"
 grep -q 'Install-CoopExtensionsLock -AgentDir $AgentDir -Npm $npm -PiVersion $piVer' "$ROOT/lib/common.ps1" \
-  && grep -q '& $Npm ci --ignore-scripts --no-audit --no-fund' "$ROOT/lib/common.ps1" \
-  && grep -q '& $Npm rebuild --no-audit --no-fund' "$ROOT/lib/common.ps1" \
+  && grep -q '& $Npm ci --no-audit --no-fund' "$ROOT/lib/common.ps1" \
   && ok "Sync-CoopExtensionPins installs from the lock (npm ci) before a live resolution" \
   || ko "lib/common.ps1 convergence no longer tries the lockfile first"
 
@@ -108,11 +119,10 @@ run_helper() { # <agent-dir>
   )
 }
 : > "$TMP/npm.log"
-if run_helper "$TMP/exact" && [ -f "$TMP/exact/npm/package-lock.json" ] && grep -q '^NPM ci --ignore-scripts ' "$TMP/npm.log" \
-   && grep -q '^NPM rebuild ' "$TMP/npm.log"; then
-  ok "sync copies the lock next to package.json, runs npm ci with scripts off, then npm rebuild on an exact tree"
+if run_helper "$TMP/exact" && [ -f "$TMP/exact/npm/package-lock.json" ] && grep -q '^NPM ci ' "$TMP/npm.log"; then
+  ok "sync copies the lock next to package.json and runs npm ci on an exact tree"
 else
-  ko "lock path did not run npm ci --ignore-scripts + npm rebuild on an exact tree ($(cat "$TMP/npm.log" 2>/dev/null | tr '\n' ' '))"
+  ko "lock path did not run npm ci on an exact tree ($(cat "$TMP/npm.log" 2>/dev/null | tr '\n' ' '))"
 fi
 cmp -s "$LOCK" "$TMP/exact/npm/package-lock.json" && ok "the tree's package-lock.json is byte-identical to the shipped lock" || ko "the copied lock differs from config/extensions-lock.json"
 : > "$TMP/npm.log"
@@ -215,6 +225,14 @@ if run_converge_failing "$TMP/nolock" && [ ! -s "$TMP/npm.log" ]; then
 else
   ko "a known-failed lock was retried ($(tr '\n' ' ' < "$TMP/npm.log"))"
 fi
+rm -rf "$TMP/nolock/npm/node_modules"
+: > "$TMP/npm.log"
+if run_converge_failing "$TMP/nolock" && ! grep -q '^NPM ci ' "$TMP/npm.log" && grep -q '^NPM install ' "$TMP/npm.log"; then
+  ok "a wiped tree with a known-failed lock goes straight to the live install (VM step 5)"
+else
+  ko "a wiped tree retried a known-failed lock ($(tr '\n' ' ' < "$TMP/npm.log"))"
+fi
+mk_installed "$TMP/nolock"
 printf '{"stale": true}\n' > "$TMP/nolock/npm/.coop-lock-failed.json"
 : > "$TMP/npm.log"
 if run_converge_failing "$TMP/nolock" && grep -q '^NPM ci ' "$TMP/npm.log"; then

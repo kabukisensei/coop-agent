@@ -516,9 +516,8 @@ coop_converge_extension_pins() { # <agent-dir> <name@ver>...
 # dependencies (`npm ci` refuses anything else). Returns 0 when the tree was
 # installed from the lock; 1 when the lock does not apply (caller resolves live)
 # or `npm ci` failed (the caller's install then repairs the tree). Mirror of
-# Install-CoopExtensionsLock. Lifecycle scripts run through `npm rebuild` after
-# the scripts-off `npm ci`, as they do for a plain install (better-sqlite3,
-# context-mode and sharp build or fetch their binaries).
+# Install-CoopExtensionsLock. Lifecycle scripts run as they do for a plain
+# install (better-sqlite3, context-mode and sharp build or fetch their binaries).
 # True (0) when the shipped lock applies to this install (lock present, installed
 # Pi is the manifest's Pi) but the tree does not carry it yet: no
 # package-lock.json beside the tree's package.json, or one that differs from
@@ -543,15 +542,15 @@ coop_apply_extensions_lock() { # <agent-dir> <npm-bin> <installed-pi-version>
   want="$(coop_manifest_get pi.version)"
   [ -n "$want" ] && [ "$pi_ver" = "$want" ] || return 1
   node "$COOP_ROOT/lib/extlock.js" matches "$agent_dir" "$lock" >/dev/null 2>&1 || return 1
+  # A lock this machine already failed to install is not retried (even on a
+  # wiped tree) until a new lock ships; the caller's plain install converges.
+  [ -f "$agent_dir/npm/.coop-lock-failed.json" ] && cmp -s "$lock" "$agent_dir/npm/.coop-lock-failed.json" && return 1
   cp "$lock" "$agent_dir/npm/package-lock.json" 2>/dev/null || return 1
-  # `npm ci` runs lifecycle scripts from the lock's metadata, not the installed
-  # package.json, so a package that ships its binary and sets `gypfile: false`
-  # (better-sqlite3 13) still gets a bare `node-gyp rebuild` and fails without a
-  # compiler (seen on the Windows VM). Install with scripts off, then `npm
-  # rebuild`, which reads each installed package.json and runs the same scripts a
-  # plain install would (prebuild-install for better-sqlite3 12, sharp, esbuild).
-  if ( cd "$agent_dir/npm" && "$npm_bin" ci --ignore-scripts --no-audit --no-fund >/dev/null 2>&1 ) \
-     && ( cd "$agent_dir/npm" && "$npm_bin" rebuild --no-audit --no-fund >/dev/null 2>&1 ); then
+  # Lifecycle scripts run as in a plain install. npm builds the nodes it installs
+  # from the lock entries, so lib/extlock.js carries `gypfile: false` into the
+  # lock for packages that ship their binary (better-sqlite3 13); without it npm
+  # ran a bare `node-gyp rebuild` on the Windows VM and failed.
+  if ( cd "$agent_dir/npm" && "$npm_bin" ci --no-audit --no-fund >/dev/null 2>&1 ); then
     rm -f "$agent_dir/npm/.coop-lock-failed.json" 2>/dev/null || true
     return 0
   fi
