@@ -412,7 +412,7 @@ def build_project_yml(answers: dict) -> str:
     lines.append('    - "Create a timestamped backup of every file to be changed"')
     lines.append('    - "Make the smallest safe edit"')
     lines.append(
-        '- "Self-check the change against the standards articles used to write it (name any rule it could not meet); Tabular Editor BPA / fabric-cicd validate where relevant"'
+        '    - "Self-check the change against the standards articles used to write it (name any rule it could not meet); Tabular Editor BPA / fabric-cicd validate where relevant"'
     )
     lines.append('    - "Show git diff + summarize the change"')
     lines.append(
