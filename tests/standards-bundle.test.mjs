@@ -101,6 +101,11 @@ try {
     const bundled = resolveStandard("sql", none());
     assert.equal(bundled.state, "bundled"); assert.equal(bundled.revision, r1); assert.equal(bundled.sha256, canonical.sha256); assert.equal(bundled.path, canonical.path);
     assert.deepEqual(bundled.articles.map((a) => a.file), canonical.articles.map((a) => a.file));
+    // A CRLF checkout (Git for Windows core.autocrlf) is the same standard: same article hashes, same snapshot.
+    for (const a of bundled.articles) writeFileSync(a.path, readFileSync(a.path, "utf8").replace(/\r?\n/g, "\r\n"));
+    const crlf = resolveStandard("sql", none());
+    assert.equal(crlf.state, "bundled"); assert.equal(crlf.sha256, canonical.sha256);
+    assert.deepEqual(crlf.articles.map((a) => a.sha256), canonical.articles.map((a) => a.sha256));
     assert.equal(resolveStandard("documentation", none()).state, "unavailable", "a domain the bundle lacks stays unavailable");
     const project = join(tmp, "project"); mkdirSync(join(project, ".coop"), { recursive: true }); mkdirSync(join(project, "client"));
     writeFileSync(join(project, "client", "sql.md"), "# Client SQL\nClient rule.");
