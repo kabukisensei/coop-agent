@@ -405,13 +405,26 @@ def base_doc(command: str, block: dict, package: str, pin: str) -> dict:
     }
 
 
+def not_initialized_detail(doc: dict) -> str:
+    """The real next step when the isolated home is not initialized yet."""
+    repo = str(doc.get("team_repo") or "").strip()
+    if not repo:
+        return "set knowledge.teamai.team_repo (coop onboard --config-only), then run: coop teamai init"
+    last = str(read_state().get("last_init_error") or "").strip()
+    if last:
+        return f"the last init failed: {redact_url(last)}; fix the team repo access, then run: coop teamai init"
+    return "run: coop teamai init"
+
+
 def gate(doc: dict, package: str, need_init: bool = True) -> str | None:
-    """The state that stops a command before the CLI runs, or None."""
+    """The state that stops a command before the CLI runs, or None.
+    A not_initialized stop carries a detail naming the real next step."""
     if not doc["enabled"]:
         return "disabled"
     if not doc["installed_version"] or not cli_entry(package).is_file():
         return "not_installed"
     if need_init and not initialized():
+        doc["detail"] = not_initialized_detail(doc)
         return "not_initialized"
     return None
 
@@ -507,9 +520,11 @@ def cmd_init(block: dict, package: str, pin: str) -> dict:
     r = run_cli(args, package, timeout=max(timeout_seconds(), 180))
     if r["timed_out"] or r["error"] or r["rc"] != 0 or not initialized():
         doc["state"] = "unavailable"
-        doc["warnings"].append(summarize_failure("teamai init", r))
+        failure = summarize_failure("teamai init", r)
+        doc["warnings"].append(failure)
+        write_state({"last_init_error": failure, "last_init_at": now_iso()})
         return doc
-    write_state({"initialized_at": now_iso(), "clone_path": str(team_repo_local_path() or "")})
+    write_state({"initialized_at": now_iso(), "clone_path": str(team_repo_local_path() or ""), "last_init_error": "", "last_init_at": now_iso()})
     doc["state"] = "ok"
     doc["revision"] = team_repo_revision()
     doc["detail"] = "initialized in the isolated home against the configured team repo"
@@ -1082,7 +1097,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # the adapter itself failed: say so, never a traceback on stdout
         print(f"error: teamai adapter failed: {exc}", file=sys.stderr)
         return EXIT_FAILURE
-    sys.stdout.write(json.dumps(doc, ensure_ascii=False, indent=2) + "\n")
+    # ASCII-only JSON: safe on a cp1252 Windows console and for every PowerShell caller.
+    sys.stdout.write(json.dumps(doc, indent=2) + "\n")
     return EXIT_OK
 
 

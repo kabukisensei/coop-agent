@@ -128,6 +128,12 @@ def read_input(prompt: str, default: str = "") -> str:
     return line.strip() or default
 
 
+def read_input_clearable(prompt: str, default: str = "") -> str:
+    """read_input where a lone "-" clears a saved value instead of keeping it."""
+    value = read_input(prompt, default).strip()
+    return "" if value == "-" else value
+
+
 def read_line_bounded(prompt: str, default: str) -> tuple[str, bool]:
     """Read a line for a re-prompting loop. Returns (value, eof).
 
@@ -533,14 +539,15 @@ def run_config_questions(
             teamai["enabled"],
         )
         if teamai["enabled"]:
-            teamai["team_repo"] = read_input(
-                f"TeamAI sandbox team repository (https or ssh URL) [{teamai['team_repo'] or 'none'}]: ",
+            # Enter keeps the saved value; "-" clears it.
+            teamai["team_repo"] = read_input_clearable(
+                f"TeamAI sandbox team repository (https or ssh URL; - to clear) [{teamai['team_repo'] or 'none'}]: ",
                 teamai["team_repo"],
-            ).strip()
-            teamai["role"] = read_input(
-                f"TeamAI role filter (optional) [{teamai['role'] or 'none'}]: ",
+            )
+            teamai["role"] = read_input_clearable(
+                f"TeamAI role filter (optional; - to clear) [{teamai['role'] or 'none'}]: ",
                 teamai["role"],
-            ).strip()
+            )
             teamai["skills"] = read_confirm(
                 "Load the team repository's skills into coop at launch? (subordinate: Cooptimize skills win)",
                 teamai["skills"],

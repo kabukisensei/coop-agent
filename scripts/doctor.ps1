@@ -655,7 +655,10 @@ if ($pyBin) {
     switch ($tState) {
       'disabled'        { D-Ok 'TeamAI trial: disabled (knowledge.teamai.enabled is false; the local knowledge search is unaffected)' }
       'not_installed'   { D-Warn 'TeamAI trial: enabled but the isolated CLI is not installed' 'run: coop sync (or: coop teamai install)' }
-      'not_initialized' { D-Warn "TeamAI trial: $($teamaiDoc.package) $($teamaiDoc.installed_version) installed in the isolated prefix, not initialized" 'set knowledge.teamai.team_repo, then run: coop teamai init' }
+      'not_initialized' {
+        $tHint = if ($teamaiDoc.detail) { [string]$teamaiDoc.detail } else { 'run: coop teamai init' }
+        D-Warn "TeamAI trial: $($teamaiDoc.package) $($teamaiDoc.installed_version) installed in the isolated prefix, not initialized" $tHint
+      }
       'ok' {
         $age = if ($teamaiDoc.last_pull_at) { "last pull $($teamaiDoc.last_pull_at)" } else { 'never pulled' }
         $rev = if ($teamaiDoc.revision) { " @ $($teamaiDoc.revision)" } else { '' }
