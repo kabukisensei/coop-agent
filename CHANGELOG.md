@@ -221,6 +221,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- `sql_targets:` in the project contract (master plan section 8 item 1, row SQ1):
+  one entry per environment (`dev`, `test`, `prod`) with a `kind`
+  (`fabric_warehouse`, `fabric_lakehouse`, `fabric_sql_database`, `azure_sql`,
+  `synapse_serverless`), a `server` + `database` for the kinds coop connects to
+  by host, or the Fabric ids for the kinds whose host coop discovers, and a
+  `default_environment` that is dev or test, never prod. `lib/sql_targets.py`
+  reads and validates it (host pattern per kind, production never default,
+  placeholders tolerated, credential keys rejected); `coop doctor` shows one
+  Project-contract row per entry; `/setup-project` proposes the dev entry's kind
+  from the machine's client platform and writes it; `.coop/project.example.yml`
+  carries the shape. Nothing executes against these targets yet: the SQL
+  executor (SQ2) and the guardrails' resolved scope (SQ3) adopt them next.
+
 - Install-time client platform choice (master plan section 8 item 7, row SQ7;
   Aaron, 2026-09-30). `coop install --platform fabric|azure_sql|both` (or the
   first onboarding, which now asks once) saves the answer as `client.platform` in
