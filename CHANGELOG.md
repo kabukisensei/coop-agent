@@ -131,6 +131,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   installed `coop-sql-review` / `coop-dax-review`, so a machine with the reviewers
   installed no longer reports `bundled_fallback` where CI expects `unavailable`.
   Tests only; no runtime change.
+- Docs: master plan revision 3.7 is a status update only. Row 9 (U1) records
+  Pi 0.87.1 + `pi-mcp-adapter` 3.3.0 as done at tag v0.24.0 (VM run passed,
+  Warehouse approval prompt verified live) with #175 and #176 in review as
+  drafts and #170 held; row 7 records S5 merged (#161). No scope or order change.
 
 ### Fixed
 

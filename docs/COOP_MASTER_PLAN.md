@@ -1,6 +1,6 @@
 # Coop master plan — ordered execution roadmap
 
-**Document revision 3.6 · September 29, 2026**
+**Document revision 3.8 · September 30, 2026** (scope decisions, no reordering of the client-facing phases: TeamAI shared knowledge becomes a scheduled phase, the beta channel is skipped, Jev waits, and the review CLIs retire with ST1; section 1.1)
 **Product scope: Coop Windows terminal first; an installable Electron desktop returns after the terminal is simplified.**
 
 **Canonical repository location:** `docs/COOP_MASTER_PLAN.md`. This revision keeps the
@@ -8,7 +8,7 @@ intention of the [Windows terminal plan, revision 2.0](history/COOP_WINDOWS_TERM
 (Windows-first, stable and beta kept separate, bounded simplification, qualified
 upgrades, TeamAI and Jev as optional experiments) and **replaces its execution
 order**. Revision 2.0 stays in the tree as the detailed reference for each package
-(S1–S7, U1, SK1, K1–K3, J0–J3, PK1); where the two documents disagree on order,
+(S1–S7, U1, SK1, K1–K3, J0–J3, PK1; N1 is new in revision 3.8, section 10); where the two documents disagree on order,
 scope, or the Desktop direction, this document wins.
 
 **Authority and status:** a plan, not a receipt. Nothing here is implemented by
@@ -29,10 +29,36 @@ execution trigger, and `agent:ready` is still added by hand. Releases follow
 | Editing SQL objects | Local files plus `coop-data-doc` lineage | SQL is not source-controlled today, so coop **defaults to the dev environment**, traces impact from **live metadata**, and verifies an edit with **actual data** before and after. |
 | First run | Onboarding wizard, then `/start` menu on demand | **Common workflows menu on first run**; the wizard becomes one entry in it. |
 | Desktop | Removed; native Windows Coop 2.0 last, no Electron | **Electron desktop returns, last**, gated on a packaged installer that other users can run. The native rewrite is dropped from the roadmap. |
-| TeamAI / Jev / PK1 | Early beta experiments after B1 | Unchanged intention, but they wait for the beta channel and run after the client-facing phases. PK1 now evaluates `@xl0/pi-lovely-codex` for tool-call handling and a usage-stats owner for the footer (revision 3.5: the Codex extension shows no usage stats; section 10). |
+| TeamAI / Jev / PK1 | Early beta experiments after B1 | **Revision 3.8:** TeamAI shared knowledge (K1–K3) is a scheduled phase after the first-run work, isolated on the development VM instead of a beta channel; Jev waits for an explicit start; automatic session naming leaves PK1 and becomes its own small row (N1) right after U1; the rest of PK1 stays optional. PK1 evaluates `@xl0/pi-lovely-codex` for tool-call handling and a usage-stats owner for the footer (revision 3.5: the Codex extension shows no usage stats; section 10). |
 | Update channel | `coop update` fast-forwards `main` | `coop update` moves to the **latest release tag**; `--edge` keeps head-of-main for maintainers. |
-| Qualification machine | Isolated beta channel (B1) before any upgrade | The team is **seven people**. A **fresh Windows development VM** plus a second clone with `COOP_AGENT_DIR` qualifies upgrades, and a tagged release reaches all seven the same day. B1 is built only if the fleet outgrows that. |
+| Qualification machine | Isolated beta channel (B1) before any upgrade | The team is **seven people**. A **fresh Windows development VM** plus a second clone with `COOP_AGENT_DIR` qualifies upgrades, and a tagged release reaches all seven the same day. **Revision 3.8:** B1 is skipped; the fleet is too small to need it (Aaron, 2026-09-30). |
 | Agent working model | Implicit | Section 14 sets how agents pick up work so several sessions stay coherent. |
+
+### 1.1 Decisions on September 30, 2026 (revision 3.8)
+
+Aaron decided these in the project thread on the evening of September 30; they
+change scope, not the order of the client-facing phases (0 through 6):
+
+- **TeamAI shared knowledge is in.** K1–K3 leave "optional experiments" and become
+  Phase 7, scheduled after the first-run work (FR1) and before the desktop. The
+  package detail stays in revision 2.0 section 8; isolation uses the development VM
+  and a sandbox team repository, not a beta channel.
+- **The beta channel (B1) is skipped.** Seven people update from release tags the
+  same day; the VM qualifies upgrades. The B1 proposal in [PR 72](https://github.com/kabukisensei/coop-agent/pull/72)
+  stays as documentation only.
+- **Jev waits.** J0–J3 keep their revision 2.0 gates and start only when Aaron asks.
+- **Automatic session naming is scheduled (N1).** Aaron asked whether the
+  extension that names a session after about three turns is in the plan. It was
+  only inside the optional PK1 trial; it now has its own row right after U1
+  (section 10), because it does not depend on the Codex or usage-stats question.
+- **Install asks Fabric or Azure SQL.** When the Azure SQL breadth work lands,
+  `coop install` asks once whether the client is a Fabric or an Azure SQL client (or
+  both) and the answer seeds the contract, doctor and skill defaults (section 8,
+  item 7). Aaron asked for this on 2026-09-30; it rides the SQ rows, not a new phase.
+- **No client pipeline runs `coop-sql-review` or `coop-dax-review`.** They predate
+  the coop-standards repository the team now maintains. This closes section 15's
+  open question: ST1 retires the in-agent wrappers and the bundled-fallback path,
+  and archives the two CLIs rather than keeping them as optional CI gates.
 
 ## 2. Ordering principle and the "not over-engineered" rule
 
@@ -42,7 +68,8 @@ Order is by who is hurt when it is missing:
 2. Every later change is slower while CI is heavy → right-size tests.
 3. Every later change is bigger while two platforms and legacy web exist → simplify.
 4. Then change what is inside: dependencies, standards, SQL breadth, first run.
-5. Then experiments (beta channel, PK1, TeamAI, Jev) and the desktop.
+5. Then shared knowledge (TeamAI), the optional PK1 trial, and the desktop. The
+   beta channel is skipped and Jev waits (section 1.1).
 
 Rules for every package, in addition to the hard gates in revision 2.0 (no source
 loss, no credential leakage, no approval bypass, no accidental Fabric or database
@@ -368,24 +395,24 @@ is `config/release-manifest.json` at v0.23.5.
 
 | Component | Pinned | Latest | Needed? | Notes |
 | --- | --- | --- | --- | --- |
-| `@earendil-works/pi-coding-agent` | 0.84.3 | 0.99.1 (Sep 29); **target stays 0.87.1** | **Yes, qualify 0.87.1** | Pre-qualified read-only on Sep 29 (section 6.1): none of the four extensions or the runner test uses a removed or changed API; the pin move is one manifest line plus fixture versions. Still Node ≥ 22.19. 0.99 is out of reach until the adapter supports it (section 6.3). |
-| `pi-mcp-adapter` | 2.34.0 | 3.3.0 (Sep 29) | **Yes, same PR as Pi** | 2.34.0's peer range excludes pi-ai 0.87, so it must move with Pi. 3.0 **stopped reading `mcp.json`** (that file now belongs to Pi's built-in MCP); coop's generated file must become `mcp-adapter.json` (section 6.2). |
-| `pi-hermes-memory` | 0.7.17 | 0.9.9 | **Yes, in review** | Was "Maybe" until 2026-09-30, when Aaron's `/memory-consolidate` on the client VM failed for every store (`exited with code 1: unknown error`). Cause, from the installed code: 0.7.17 launches its consolidation, background-review, correction-save and session-flush child as `pi.exec("pi", ...)`; Pi's `exec` spawns with `shell: false`, and on Windows `pi` exists only as an npm `.cmd`/`.ps1` shim, so the spawn fails and every full memory store rejects new saves. 0.9.9 resolves `pi.cmd` and launches `node` + Pi's `cli.js` directly, runs those jobs in-process first, lets policy-only writes exceed the Markdown cap, raises the consolidation timeout to 180 s, warns on failed auto-consolidation, and adds `/memory-pin` (`STANDING.md`). Peer floor Pi >= 0.80.6 (met by 0.87.1); `better-sqlite3` was already a dependency in 0.7.17. Still to check on the VM: existing `MEMORY.md`/`USER.md`/`projects-memory` content intact after `coop update`, secret scanning still blocks, `/memory-consolidate` succeeds for every target. |
+| `@earendil-works/pi-coding-agent` | 0.84.3 → **0.87.1** (shipped in v0.24.0, 2026-09-30) | 0.99.1 (Sep 29); **target stays 0.87.1** | **Done** ([#162](https://github.com/kabukisensei/coop-agent/pull/162)) | Pre-qualified read-only on Sep 29 (section 6.1): none of the four extensions or the runner test uses a removed or changed API; the pin move is one manifest line plus fixture versions. Still Node ≥ 22.19. 0.99 is out of reach until the adapter supports it (section 6.3). |
+| `pi-mcp-adapter` | 2.34.0 → **3.3.0** (shipped in v0.24.0, 2026-09-30) | 3.3.0 (Sep 29) | **Done** (same PR as Pi, [#162](https://github.com/kabukisensei/coop-agent/pull/162)) | 2.34.0's peer range excludes pi-ai 0.87, so it must move with Pi. 3.0 **stopped reading `mcp.json`** (that file now belongs to Pi's built-in MCP); coop's generated file must become `mcp-adapter.json` (section 6.2). |
+| `pi-hermes-memory` | 0.7.17 | 0.9.9 | **Merged** ([#181](https://github.com/kabukisensei/coop-agent/pull/181), 2026-09-30, unreleased; VM qualification pending) | Was "Maybe" until 2026-09-30, when Aaron's `/memory-consolidate` on the client VM failed for every store (`exited with code 1: unknown error`). Cause, from the installed code: 0.7.17 launches its consolidation, background-review, correction-save and session-flush child as `pi.exec("pi", ...)`; Pi's `exec` spawns with `shell: false`, and on Windows `pi` exists only as an npm `.cmd`/`.ps1` shim, so the spawn fails and every full memory store rejects new saves. 0.9.9 resolves `pi.cmd` and launches `node` + Pi's `cli.js` directly, runs those jobs in-process first, lets policy-only writes exceed the Markdown cap, raises the consolidation timeout to 180 s, warns on failed auto-consolidation, and adds `/memory-pin` (`STANDING.md`). Peer floor Pi >= 0.80.6 (met by 0.87.1); `better-sqlite3` was already a dependency in 0.7.17. Still to check on the VM: existing `MEMORY.md`/`USER.md`/`projects-memory` content intact after `coop update`, secret scanning still blocks, `/memory-consolidate` succeeds for every target. |
 | `pi-web-access` | 0.10.7 | 0.33.0 | Maybe | research only; qualify Windows and security changes. |
-| `@juicesharp/rpiv-ask-user-question` | 1.20.0 | 2.12.0 (Sep 30) | **Yes, in review** (draft, 2026-09-30) | major bump; the setup wizards depend on its dialogs and cancellation. The draft takes 2.12.0, not the 2.11.0 named here: 2.12.0 is 2.11.0 with `typebox` declared as a peer again, so the extension shares Pi's own copy. Read-only check of both packages: the tool is still `ask_user_question` with the same parameters and result envelope, and cancelling still returns the one decline line; gone is the "Chat about this" row (`kind: "chat"`); new are the always-appended `Type something.` row, per-question and global notes, a `Ctrl+]` collapse key (`collapseKey` in `~/.config/rpiv-ask-user-question/config.json`, `"off"` disables), native-dialog fallback in RPC hosts, removal of the tool from the model's list in non-interactive runs, and `session_load_failed` / `stale_module_cache` envelopes that tell the model to ask in chat instead of counting as a decline. Peers unchanged (`pi-coding-agent`, `pi-tui`, optional `rpiv-i18n`), no native code. VM step: `/setup-project` and `/setup-docs` dialogs, `Esc` cancellation, Windows Terminal rendering. |
+| `@juicesharp/rpiv-ask-user-question` | 1.20.0 | 2.12.0 (Sep 30) | **Merged** ([#188](https://github.com/kabukisensei/coop-agent/pull/188), 2026-09-30, unreleased; VM step pending) | major bump; the setup wizards depend on its dialogs and cancellation. The draft takes 2.12.0, not the 2.11.0 named here: 2.12.0 is 2.11.0 with `typebox` declared as a peer again, so the extension shares Pi's own copy. Read-only check of both packages: the tool is still `ask_user_question` with the same parameters and result envelope, and cancelling still returns the one decline line; gone is the "Chat about this" row (`kind: "chat"`); new are the always-appended `Type something.` row, per-question and global notes, a `Ctrl+]` collapse key (`collapseKey` in `~/.config/rpiv-ask-user-question/config.json`, `"off"` disables), native-dialog fallback in RPC hosts, removal of the tool from the model's list in non-interactive runs, and `session_load_failed` / `stale_module_cache` envelopes that tell the model to ask in chat instead of counting as a decline. Peers unchanged (`pi-coding-agent`, `pi-tui`, optional `rpiv-i18n`), no native code. VM step: `/setup-project` and `/setup-docs` dialogs, `Esc` cancellation, Windows Terminal rendering. |
 | `pi-better-openai` | 0.1.22 | 0.1.22 | Test on the VM | a custom provider; Pi 0.86 changed how providers read the system prompt and tools, and no release since July 11. If it fails on 0.87.1, PK1 (section 10) picks the replacement for the usage stats. |
 | `context-mode` | 1.0.169 | 1.0.169 | No | candidate to drop (section 5). |
 | `@microsoft/powerbi-modeling-mcp` | 0.5.0-beta.12 | **1.0.0** (Sep 25) | **Yes** | first GA; read-only invocation and connection scope must be re-checked. |
 | `@microsoft/powerbi-report-authoring-cli` | 0.1.4 | 0.4.0 | **Yes** | the report skills call it; validate output contracts. |
 | `@microsoft/powerbi-desktop-bridge-cli` | 0.1.2 | 1.0.0 | Yes | re-test the reload/save source-loss report (S31 in revision 2.0) on disposable PBIP files. |
-| `@microsoft/fabric-mcp` | 1.3.0 | 1.4.0 | **Yes, in review** (draft, 2026-09-30) | B0 found 1.0.0 installed and 1.2.0 cached; pin exactly, never `@latest`. Offline check of both Linux binaries on 2026-09-30: with coop's `--mode namespace`, 1.4.0 returns an **empty** tool list unless each namespace is named (`--namespace docs --namespace onelake --namespace core --namespace datafactory`), while 1.3.0 lists all four routers by default; with the namespaces named, both versions expose the same four routers and the same commands (1.4.0 in kebab-case, which the guardrails already accept). Tool names in `--mode all` are renamed (`docs_workloads` → `docs_list-item-types`, `docs_workload-api-spec` → `docs_item-api-spec`, `onelake_*` to kebab-case). VM step: `coop sync`, then a live `docs` and `onelake` router call. |
-| `@azure-devops/mcp` | 2.9.0 | 2.10.0 | **Yes, in review** (draft, 2026-09-30) | B0 found 2.10.0 already at the executable path. Read-only check of both published packages on 2026-09-30: the same 37 tool names, the same domain list (coop passes `core work work-items search`), and `--authentication azcli` unchanged; 2.10.0 raises `@azure/identity` and `@azure/msal-node` and adds `@azure/msal-node-extensions` and `open` for its interactive sign-in path, which coop does not use. The README's tool-rename warning refers to the consolidation before 2.9.0. VM step: `coop sync`, then one work-item query through the MCP. |
-| `mcp-remote` | 0.1.38 | 0.14.3 | **Drop, in review** (draft, 2026-09-30) | only the Microsoft Learn entry used it; the exact replacement entry and proof test are in section 6.2. The draft generates the direct entry, replaces a managed `command`/`args` Learn entry wholesale on regeneration, and removes the package from the manifest and the skills manifest. VM step: live tools-list against learn.microsoft.com through the adapter. |
+| `@microsoft/fabric-mcp` | 1.3.0 | 1.4.0 | **Merged** ([#189](https://github.com/kabukisensei/coop-agent/pull/189), 2026-09-30, unreleased; VM step pending) | B0 found 1.0.0 installed and 1.2.0 cached; pin exactly, never `@latest`. Offline check of both Linux binaries on 2026-09-30: with coop's `--mode namespace`, 1.4.0 returns an **empty** tool list unless each namespace is named (`--namespace docs --namespace onelake --namespace core --namespace datafactory`), while 1.3.0 lists all four routers by default; with the namespaces named, both versions expose the same four routers and the same commands (1.4.0 in kebab-case, which the guardrails already accept). Tool names in `--mode all` are renamed (`docs_workloads` → `docs_list-item-types`, `docs_workload-api-spec` → `docs_item-api-spec`, `onelake_*` to kebab-case). VM step: `coop sync`, then a live `docs` and `onelake` router call. |
+| `@azure-devops/mcp` | 2.9.0 | 2.10.0 | **Merged** ([#191](https://github.com/kabukisensei/coop-agent/pull/191), 2026-10-01, unreleased; VM step pending) | B0 found 2.10.0 already at the executable path. Read-only check of both published packages on 2026-09-30: the same 37 tool names, the same domain list (coop passes `core work work-items search`), and `--authentication azcli` unchanged; 2.10.0 raises `@azure/identity` and `@azure/msal-node` and adds `@azure/msal-node-extensions` and `open` for its interactive sign-in path, which coop does not use. The README's tool-rename warning refers to the consolidation before 2.9.0. VM step: `coop sync`, then one work-item query through the MCP. |
+| `mcp-remote` | 0.1.38 | 0.14.3 | **Dropped** ([#190](https://github.com/kabukisensei/coop-agent/pull/190), 2026-10-01, unreleased; VM step pending) | only the Microsoft Learn entry used it; the exact replacement entry and proof test are in section 6.2. The draft generates the direct entry, replaces a managed `command`/`args` Learn entry wholesale on regeneration, and removes the package from the manifest and the skills manifest. VM step: live tools-list against learn.microsoft.com through the adapter. |
 | `powerbi-mcp-server` | 0.1.0 | 0.1.0 | **Dropped** ([#116](https://github.com/kabukisensei/coop-agent/pull/116)) | `--readonly` is silently ignored and `refresh_dataset` (a write) is exposed while coop documents it as read-only: [#93](https://github.com/kabukisensei/coop-agent/issues/93). Official `@microsoft/powerbi-modeling-mcp` 1.0.0 replaces it. |
 | `coop-data-doc` / `coop-sql-review` / `coop-dax-review` | 1.2.0 / 0.15.2 / 0.22.0 | same | No | unchanged since the freeze; the reviewer decision is in section 7. |
 | `ms-fabric-cli` / `fabric-cicd` / `pyodbc` | 1.7.0 / 1.3.0 / 5.3.0 | same | No | unchanged. |
-| `microsoft/skills-for-fabric` catalog | v0.3.10 | v0.3.18 (Sep 25) | **Yes** — draft PR open (2026-09-30) | v0.3.12 merged the two pinned `sqldw-*` skills into `sqldw-cli`; v0.3.17 unified `powerbi-report-cli`; new `sqldb-cli` targets Fabric SQL database. Aaron widened the row on 2026-09-30 to the **full** skill set (Eventhouses are in use). The draft pins v0.3.18, enables all 25 skills as baseline, and ships the shared `common/` tree the skills link (the reference-closure prerequisite in section 6.4). |
-| `microsoft/skills` (`kql`, `microsoft-docs`) | commit 903dc62 | 3495f50 (Sep 29) | Low — in the same draft | `kql` and `microsoft-docs` are byte-identical between the two commits. |
+| `microsoft/skills-for-fabric` catalog | v0.3.10 | v0.3.18 (Sep 25) | **Merged** ([#175](https://github.com/kabukisensei/coop-agent/pull/175), 2026-09-30, unreleased) | v0.3.12 merged the two pinned `sqldw-*` skills into `sqldw-cli`; v0.3.17 unified `powerbi-report-cli`; new `sqldb-cli` targets Fabric SQL database. Aaron widened the row on 2026-09-30 to the **full** skill set (Eventhouses are in use). The merged PR pins v0.3.18, enables all 25 skills as baseline, and ships the shared `common/` tree the skills link (the reference-closure prerequisite in section 6.4). |
+| `microsoft/skills` (`kql`, `microsoft-docs`) | commit 903dc62 | 3495f50 (Sep 29) | Low — merged with it | `kql` and `microsoft-docs` are byte-identical between the two commits. |
 
 Order inside the phase: Pi → adapter → ask-user-question → Microsoft npm tools →
 Fabric skills catalog → the "maybe" rows. One PR per row, each with the exact
@@ -589,10 +616,13 @@ Depends on H3 having access to the two repositories.
    enforced while writing, from the wiki articles. The replacement is a short
    self-check: before presenting SQL, DAX, or model changes, coop checks its own
    diff against the same articles it used to write them and names any rule it could
-   not meet. No separate rule engine. The CLIs survive only as optional CI gates for
-   a client whose pipeline runs them today (section 15's open question). Answer
-   that question before ST1 starts. Until ST1 retires them, the reviewers are fed
-   from the wiki so they never contradict what coop just wrote.
+   not meet. No separate rule engine. **Answered 2026-09-30 (Aaron):** no client
+   pipeline runs the CLIs; they were built before the team's coop-standards
+   repository existed. So ST1 retires the wrappers and archives `coop-sql-review`
+   and `coop-dax-review` (their repositories and the coop-website pages that
+   document them) instead of keeping them as optional CI gates. Until ST1 lands,
+   the reviewers are fed from the wiki so they never contradict what coop just
+   wrote.
 4. **Tabular Editor BPA** stays as the deterministic model check; it is vendor-owned
    and not tied to the standards format.
 
@@ -665,6 +695,16 @@ not source-controlled.
    (Fabric SQL database, OLTP) from the v0.3.18 catalog; neither covers Azure SQL
    outside Fabric, so Coop's own `sql-review`/workflow guidance stays the authority
    for Azure SQL.
+7. **Client platform choice at install time (Aaron, 2026-09-30).** `coop install`
+   (and `coop doctor --fix` on an existing machine) asks once whether this client
+   runs on **Fabric**, **Azure SQL**, or **both**, and stores the answer as a
+   machine default in the Coop profile. `/setup-project` proposes it as the
+   `sql_targets` kind for a new contract (the contract still wins per repository,
+   since one teammate can serve two clients), `coop doctor` skips the Fabric CLI
+   and Fabric token rows on an Azure-only machine instead of showing them red, and
+   the Fabric skill baseline stays off there unless a contract turns it on.
+   Nothing else branches on the answer: guardrails, approvals and the SQL executor
+   read the contract, never the install choice.
 
 **Acceptance:** on a dev Azure SQL database and on a Fabric Warehouse, the same
 session traces a view's dependents, edits it with approval, and shows before/after
@@ -695,25 +735,51 @@ Onboarding questions that are still needed (name, tenant) move into item 5 or in
 the first workflow that needs them; nothing blocks the launch. The menu is the
 existing `/start` code in `extensions/coop-tools`, not a new UI.
 
-## 10. Phase 7 — Beta channel and optional experiments
+## 10. Phase 7 — TeamAI shared knowledge; the beta channel is skipped
 
-**B1, minimal and conditional.** Revision 2.0's isolated beta channel is the
-right design for a fleet too large to reach by hand. Coop's fleet is seven
-people: with release-tag updates (H5), the development VM as the qualification
-machine (Phase 3), and a rollback that is "check out the previous tag", B1 may
-never be needed. Build it only when a concrete case appears
-(for example a teammate who must run a beta feature daily while keeping stable),
-and then after simplification so it isolates one platform, not two. Scope stays what the
-B1 proposal in [PR 72](https://github.com/kabukisensei/coop-agent/pull/72) bounds: a separate clone,
-`COOP_PROFILE_ROOT` meaning the profile directory itself, a private npm prefix and
-pipx home, a `coop-beta` shim, and the same lifecycle code fed an installation
-context. No copied installer, no second manifest schema. Version reporting shows
-channel, version, SHA, and safe paths.
+**K1–K3 TeamAI shared knowledge (scheduled, revision 3.8).** Starts after FR1 on
+Aaron's explicit start, in the revision 2.0 order: **K1** isolated CLI, read-only
+recall and sources; **K2** reviewed contribution and promotion; **K3** the broader
+knowledge lifecycle, each deliberately enabled. Revision 2.0 section 8 is the
+package detail and its gates hold unchanged: the exact TeamAI artifact installed
+only in an isolated package root, a sandbox team repository and disposable
+workspace, verified data-home and resource destinations, no hooks, rules, MCP
+definitions or packages injected into stable coop, private Hermes memory kept
+separate from shared knowledge, and the old local search/sync path removed only
+after TeamAI covers its supported workflows. Isolation is the development VM (or
+a separate Windows account), since there is no beta channel. Each K row is its
+own PR with its own acceptance evidence.
+
+**B1 is skipped (Aaron, 2026-09-30).** Revision 2.0's isolated beta channel is
+the right design for a fleet too large to reach by hand. Coop's fleet is seven
+people: release-tag updates (H5), the development VM as the qualification machine
+(Phase 3), and a rollback that is "check out the previous tag" cover it. The B1
+proposal in [PR 72](https://github.com/kabukisensei/coop-agent/pull/72) stays as
+documentation; nothing from it is built unless the fleet outgrows this.
+
+**N1 — automatic session naming (scheduled, revision 3.8).** Coop today shows a
+session name in the footer and terminal title only when the user sets one with
+Pi's `/name`. `@xl0/pi-lovely-rename` (0.1.5 at the September 19 review) names an
+unnamed session after a configurable number of user turns (default three), keeps a
+manual `/rename`, and uses the current model and provider, so it needs no separate
+key. The [package-fit review](history/COOP_PACKAGE_FIT_REVIEW.md) flagged that its
+naming prompt sends user and assistant text plus serialized tool-call arguments
+(up to 60,000 characters), a larger surface than a title needs on client data.
+Aaron scheduled it on 2026-09-30 as its own row after U1. One PR: trial the
+upstream package first, pinned in `config/release-manifest.json` like every other
+extension, on the development VM; build the minimal coop-owned version in
+`extensions/coop-powerline` only if the upstream package misbehaves or its prompt
+scope is unacceptable (then: a short summary without raw tool arguments or
+secrets, manual names kept, quiet failure when naming is unavailable). Acceptance
+per the review: manual names win, switching or forking a session while a naming
+response is pending never renames the wrong session, cancellation, offline and
+auth failure, repeated triggers, Unicode titles, profile isolation, model changes;
+the footer and terminal title pick up the new name without a restart.
 
 **Then, each only when Aaron asks, each independently revertible:**
 
-- **PK1** package-fit trials (session naming, redacted diagnostics, scoped
-  simplify, and `pi-lovely-codex`) per the package-fit review in
+- **PK1** package-fit trials (redacted diagnostics, scoped simplify, and
+  `pi-lovely-codex`; session naming moved to N1) per the package-fit review in
   [PR 72](https://github.com/kabukisensei/coop-agent/pull/72), GPT subscription
   only. **Scope change:** evaluate `pi-lovely-codex` as a whole, not `apply_patch`
   alone, because Aaron wants the usage stats `pi-better-openai` provides and the
@@ -734,8 +800,8 @@ channel, version, SHA, and safe paths.
   reaches the child process; patch text is not exposed in process arguments; it
   works on the team's Codex subscription without a separate key. Whichever wins
   becomes the one owner of usage stats; the other is removed.
-- **K1–K3 TeamAI** shared knowledge, starting with isolated CLI and read-only recall.
-- **J0–J3 Jev** shadow experiments on synthetic material, advisory only.
+- **J0–J3 Jev** shadow experiments on synthetic material, advisory only. Waits
+  (Aaron, 2026-09-30); its revision 2.0 gates are unchanged.
 
 The controls in revision 2.0 sections 8 and 9 (data approval, secrets, authority,
 cost caps, stop conditions) are unchanged.
@@ -807,16 +873,18 @@ tags. A stale row is never a reason to re-do work: check the PR list first.
 | 4 | H6 | One-page Windows install doc matching the H1 checklist | H1 | a teammate installs from the page alone | merged ([#113](https://github.com/kabukisensei/coop-agent/pull/113), 2026-09-29), VM pending: [#79](https://github.com/kabukisensei/coop-agent/issues/79) |
 | 5 | H3 | Coop reads the coop-standards wiki directly; contract override shape | local clones of both repos | `coop sync` verifies the real `coop-standards` head; new contract round-trips through `/setup-project` | merged ([#85](https://github.com/kabukisensei/coop-agent/pull/85), 2026-09-28); no VM step; close [#80](https://github.com/kabukisensei/coop-agent/issues/80) at the tag |
 | 6 | T1 | CI gate/extended split; fixture rules | H1–H3 merged | gate under five minutes, both OS, no weakened assertion | merged ([#132](https://github.com/kabukisensei/coop-agent/pull/132), 2026-09-29) |
-| 7 | S1, S5 | Retire POSIX product path and legacy web | T1 (Aaron started it on 2026-09-30: Mac, Linux and the web are dropped) | one Windows implementation, forwarder kept, tests removed with their surface | in progress: S5 in review; S1 next |
+| 7 | S1, S5 | Retire POSIX product path and legacy web | T1 (Aaron started it on 2026-09-30: Mac, Linux and the web are dropped) | one Windows implementation, forwarder kept, tests removed with their surface | in progress: S5 merged ([#161](https://github.com/kabukisensei/coop-agent/pull/161), 2026-09-30, shipped in v0.24.0); S1 next |
 | 8 | S3, S2, S4, S6, S7 | Profile root, lifecycle, token/MCP, dead helpers, docs | S1/S5 | duplication removed; `AGENTS.md` and `CONTRIBUTING.md` no longer require parity/BOM | not started |
-| 9 | U1 | Dependency reconciliation per section 6, one row per PR, qualified on the VM | S-lane (Aaron started U1 ahead of it on 2026-09-30) | exact versions, tests, rollback per PR; keep/drop list closed | in progress: Pi 0.87.1 + `pi-mcp-adapter` 3.3.0 merged ([#162](https://github.com/kabukisensei/coop-agent/pull/162), 2026-09-30, VM run done; Warehouse approval gate untested there); `pi-hermes-memory` 0.9.9 ([#181](https://github.com/kabukisensei/coop-agent/pull/181)), the Fabric skills catalog v0.3.18 ([#175](https://github.com/kabukisensei/coop-agent/pull/175)) and shell-issued Fabric write approvals ([#176](https://github.com/kabukisensei/coop-agent/pull/176)) merged 2026-09-30 (unreleased); `@juicesharp/rpiv-ask-user-question` 2.12.0 ([#188](https://github.com/kabukisensei/coop-agent/pull/188)) merged 2026-09-30 (unreleased); `@microsoft/fabric-mcp` 1.4.0 ([#189](https://github.com/kabukisensei/coop-agent/pull/189)) merged 2026-09-30 (unreleased); `mcp-remote` drop ([#190](https://github.com/kabukisensei/coop-agent/pull/190)) merged 2026-09-30 (unreleased); `@azure-devops/mcp` 2.10.0 in review as a draft (2026-09-30); remaining section 6 rows next |
+| 9 | U1 | Dependency reconciliation per section 6, one row per PR, qualified on the VM | S-lane (Aaron started U1 ahead of it on 2026-09-30) | exact versions, tests, rollback per PR; keep/drop list closed | in progress: Pi 0.87.1 + `pi-mcp-adapter` 3.3.0 **done (tag v0.24.0, 2026-09-30)**: merged in [#162](https://github.com/kabukisensei/coop-agent/pull/162), VM run passed (matrix 20/20, sync, doctor, `mcp-adapter.json` migration, console checks), Warehouse approval prompt verified live on the released build; Pi 0.99 stays blocked on the adapter's peer range (section 6.3; [#170](https://github.com/kabukisensei/coop-agent/pull/170) is a held draft). Merged 2026-09-30 (unreleased): `pi-hermes-memory` 0.9.9 ([#181](https://github.com/kabukisensei/coop-agent/pull/181)), Fabric skills catalog v0.3.18 ([#175](https://github.com/kabukisensei/coop-agent/pull/175)), shell-issued Fabric REST write approvals ([#176](https://github.com/kabukisensei/coop-agent/pull/176)). Also merged 2026-09-30/10-01 (unreleased, VM steps pending): `@juicesharp/rpiv-ask-user-question` 2.12.0 ([#188](https://github.com/kabukisensei/coop-agent/pull/188)), `@microsoft/fabric-mcp` 1.4.0 ([#189](https://github.com/kabukisensei/coop-agent/pull/189)), `mcp-remote` drop ([#190](https://github.com/kabukisensei/coop-agent/pull/190)), `@azure-devops/mcp` 2.10.0 ([#191](https://github.com/kabukisensei/coop-agent/pull/191)); Report Authoring CLI and Desktop Bridge rows next |
+| 9b | N1 | Automatic session naming after a few turns (`@xl0/pi-lovely-rename` trial first, coop-owned fallback; section 10) | U1 rows merged (Aaron scheduled it 2026-09-30) | names appear in footer and title on the VM without breaking manual `/name`; acceptance list in section 10 | not started (scheduled, revision 3.8) |
 | 10 | ST1 | Standards alignment and reviewer decision | H3 + U1 | resolver data-driven; reviewers retired from coop (decided 2026-09-28), self-check in place | not started |
-| 11 | SQ1–SQ6 | Azure SQL targets, dev default, live impact, data verification | ST1 | section 8 acceptance | not started |
+| 11 | SQ1–SQ7 | Azure SQL targets, dev default, live impact, data verification, install-time Fabric/Azure SQL client choice (section 8 item 7) | ST1 | section 8 acceptance | not started |
 | 12 | FR1 | Common-workflows first run | SQ1 (menu items exist) | first launch shows the menu; onboarding no longer blocks | not started |
-| 13 | PK1 | `pi-lovely-codex` versus `pi-better-openai`, naming, diagnostics, simplify | U1 + explicit start | one owner of usage stats; adopt/build/defer recorded per candidate | not started |
-| 14 | B1 | Minimal beta channel, only if a concrete need appears | S-lane + explicit need | B1 proposal acceptance table, one platform | not started (conditional) |
-| 15 | K1–K3, J0–J3 | Optional experiments | B1 or VM isolation + explicit start | revision 2.0 gates | not started |
-| 16 | D1 | Electron desktop with packaged installer | 7–12 accepted | another user installs from the package alone | not started |
+| 13 | PK1 | `pi-lovely-codex` versus `pi-better-openai`, diagnostics, simplify (naming moved to N1) | U1 + explicit start | one owner of usage stats; adopt/build/defer recorded per candidate | not started |
+| 14 | B1 | Minimal beta channel | — | — | **skipped** (Aaron, 2026-09-30: seven people update from tags; the VM qualifies upgrades) |
+| 15 | K1, K2, K3 | TeamAI shared knowledge: isolated CLI and read-only recall, reviewed contribution, broader lifecycle | FR1 + explicit start; VM isolation | revision 2.0 section 8 gates, one PR per row | not started (scheduled, revision 3.8) |
+| 15b | J0–J3 | Jev shadow experiments | explicit start | revision 2.0 gates | waiting (Aaron, 2026-09-30) |
+| 16 | D1 | Electron desktop with packaged installer | 7–12 and 15 accepted | another user installs from the package alone | not started |
 
 Phase 0 rows can each be released as a patch. Later phases are minor versions.
 Rows become `agent:ready` only when Aaron says so. On September 28 he marked the
@@ -891,6 +959,5 @@ merged or blocked only on the standards repositories.
   from the scripts, the README, the v0.23.4/v0.23.5 changelog, and the B0 receipt.
 - Dependency "latest" values were rechecked against npm/PyPI on September 29,
   2026 (section 6.4); no candidate was installed or run.
-- Whether any client CI pipeline runs `coop-sql-review` or `coop-dax-review` today
-  is still unknown. Section 7's decision to retire them from coop is taken; this
-  question only decides whether the CLIs stay alive as optional gates.
+- (Resolved 2026-09-30.) No client CI pipeline runs `coop-sql-review` or
+  `coop-dax-review`; ST1 archives the CLIs (section 7).
