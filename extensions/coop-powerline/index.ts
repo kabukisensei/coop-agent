@@ -3,7 +3,7 @@
  *
  * coop renders its OWN footer and splash (NOT a third-party powerline; pi-powerline-footer
  * was removed). It adds:
- *   • its OWN footer via ctx.ui.setFooter — left "⬢ Cooptimize · <branch>", right
+ *   • its OWN footer via ctx.ui.setFooter — left "⬢ Cooptimize · <session> · <branch>", right
  *     "<model> · ctx% · tokens · $cost · <ext statuses>", surfacing other extensions'
  *     status text (e.g. pi-better-openai's plan usage limits) via getExtensionStatuses();
  *     plain text + common Unicode (no Nerd Font glyphs)
@@ -44,6 +44,16 @@ const GRAD = [NAVY, FOREST, OLIVE, LIME];
 
 const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
 const visWidth = (s: string) => stripAnsi(s).length;
+// Session names come from the user (`/name`) or the naming model (`/rename`,
+// automatic naming): fold whitespace and control characters and cap the length
+// so one odd title cannot break the single-line footer.
+export function formatSessionName(name: unknown, max = 40): string {
+  if (typeof name !== "string") return "";
+  const clean = name.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!clean) return "";
+  return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
+}
+
 export function formatCoopTitle(cwd: string, session?: string): string {
   const folder = basename(cwd) || "coop";
   return session ? `coop - ${session} - ${folder}` : `coop - ${folder}`;
@@ -231,6 +241,17 @@ export default function coopPowerline(pi: ExtensionAPI) {
 
   const pickVibe = (): string => fillVibe(vibes[Math.floor(Math.random() * vibes.length)] || FALLBACK_VIBES[0]);
 
+  // The footer's TUI handle, kept so a session rename (Pi's /name, or the
+  // automatic naming extension) re-renders the bar without waiting for a turn.
+  let footerTui: any;
+  const requestFooterRender = () => {
+    try {
+      footerTui?.requestRender?.();
+    } catch {
+      /* ignore */
+    }
+  };
+
   const HEX_FRAMES = [NAVY("⬢"), FOREST("⬢"), OLIVE("⬢"), LIME("⬢"), RED("⬢")];
 
   const showSplash = (theme: Theme) => {
@@ -278,16 +299,21 @@ export default function coopPowerline(pi: ExtensionAPI) {
       // glyphs, no welcome overlay, no duplication). Plain text + common Unicode.
       if (typeof ctx.ui.setFooter === "function") {
         ctx.ui.setFooter((tui: any, theme: Theme, footerData: any) => {
+          footerTui = tui;
           const unsub =
             typeof footerData?.onBranchChange === "function"
               ? footerData.onBranchChange(() => tui?.requestRender?.())
               : () => {};
           return {
-            dispose: unsub,
+            dispose: () => {
+              if (footerTui === tui) footerTui = undefined;
+              unsub();
+            },
             invalidate() {},
             render(width: number): string[] {
               try {
                 const branch = typeof footerData?.getGitBranch === "function" ? footerData.getGitBranch() : "";
+                const session = formatSessionName(ctx.sessionManager?.getSessionName?.());
                 const model = ctx.model?.id || "";
                 const usage = formatUsage(ctx);
                 // Surface other extensions' status text (e.g. pi-better-openai's plan
@@ -302,7 +328,10 @@ export default function coopPowerline(pi: ExtensionAPI) {
                 } catch {
                   /* ignore */
                 }
-                const left = `${NAVY("⬢")}${LIME(" Cooptimize")}` + (branch ? theme.fg("dim", `  ${branch}`) : "");
+                const left =
+                  `${NAVY("⬢")}${LIME(" Cooptimize")}` +
+                  (session ? theme.fg("muted", `  ${session}`) : "") +
+                  (branch ? theme.fg("dim", `  ${branch}`) : "");
                 const meta = theme.fg("dim", [model, usage].filter(Boolean).join("  ·  "));
                 const right = [meta, ...extTexts].filter((s) => s && stripAnsi(s).trim()).join(theme.fg("dim", "  ·  "));
                 const gap = Math.max(1, width - visWidth(left) - visWidth(right));
@@ -341,6 +370,7 @@ export default function coopPowerline(pi: ExtensionAPI) {
 
   pi.on("session_info_changed", async (_event, ctx) => {
     setCoopTitle(ctx);
+    requestFooterRender();
   });
 
   pi.on("agent_start", async (_event, ctx) => {

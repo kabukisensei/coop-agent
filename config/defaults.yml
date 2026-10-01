@@ -22,6 +22,7 @@ pi_extensions:
     - pi-better-openai      # plan usage limits (5h / 7d windows) — surfaced in coop's footer
     - pi-web-access         # web search / URL fetch / GitHub clone / PDF / video understanding (read-only)
     - "@juicesharp/rpiv-ask-user-question"  # structured questions the model can put to you (consent rounds)
+    - "@xl0/pi-lovely-rename"  # names an unnamed session after 3 user turns (+ /rename); manual /name wins (master plan N1)
     # NOTE: coop renders its OWN footer + splash via extensions/coop-powerline — it does
     # NOT use a third-party powerline footer (pi-powerline-footer was removed: its welcome
     # overlay couldn't be disabled, Nerd Font glyphs showed as `?`, and it duplicated the

@@ -34,6 +34,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- Sessions name themselves (master plan N1, row 9b). `@xl0/pi-lovely-rename`
+  **0.1.5** joins the pinned extension set: after three user turns an unnamed
+  session gets a short name from the session's own model (no extra key), `/rename`
+  regenerates it, `/rename settings` changes the trigger, and a manual `/name`
+  always wins (the extension never renames a named session). Coop's footer now
+  shows the session name next to the branch, and the footer and terminal title
+  pick up a rename without a restart. The naming request sends the last 60,000
+  characters of the conversation, including tool-call arguments, to the same
+  provider the session already uses; the trial on the development VM decides
+  whether that scope stays or a coop-owned summary-only namer replaces it.
+  Settings live in `~/.coop/agent/xl0-pi-lovely-rename.json`. Verified on the
+  development VM: generated names show in `coop -r`'s resume list.
 - The isolated extension tree is reproducible (issue #152, master plan U1).
   `config/extensions-lock.json` is npm's lockfile for the release's pinned
   extension set, resolved with pi-ai, pi-tui and the agent peer at the manifest's
