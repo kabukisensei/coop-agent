@@ -5,8 +5,6 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
-## [0.25.0] — 2026-10-01
-
 ### Added
 
 - Sessions name themselves (master plan N1, row 9b). `@xl0/pi-lovely-rename`
@@ -19,16 +17,26 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   characters of the conversation, including tool-call arguments, to the same
   provider the session already uses; the trial on the development VM decides
   whether that scope stays or a coop-owned summary-only namer replaces it.
-  Settings live in `~/.coop/agent/xl0-pi-lovely-rename.json`. VM qualification
-  pending.
-- Guardrails: Fabric and Azure REST writes issued from the shell now ask for
-  approval like a mutating MCP call. `az rest` with a non-GET `--method`,
-  `fab api -X post|patch|put|delete`, and the Fabric CLI's mutating subcommands
-  (`fab deploy`, `mkdir`, `rm`, `cp`, `mv`, `set`, `import`, `assign`,
-  `unassign`, `job`, `acl`, `label`, `start`, `stop`, `ln`) confirm before they
-  run and fail closed headlessly. The official Microsoft Fabric skills drive item
-  create/update/deploy/delete this way, outside the MCP gate. Reads
-  (`--method get`, `fab api <path>`, `fab ls`/`get`/`export`) are unchanged.
+  Settings live in `~/.coop/agent/xl0-pi-lovely-rename.json`. Verified on the
+  development VM: generated names show in `coop -r`'s resume list.
+- The isolated extension tree is reproducible (issue #152, master plan U1).
+  `config/extensions-lock.json` is npm's lockfile for the release's pinned
+  extension set, resolved with pi-ai, pi-tui and the agent peer at the manifest's
+  Pi. `coop sync` copies it next to the tree's `package.json` and installs with
+  `npm ci`, so two machines on the same release get the same transitive
+  dependency versions instead of "latest in range" on the day each one synced,
+  and a bad upstream patch release no longer reaches the fleet without a coop
+  release. The lock applies only when it can hold (the manifest's Pi is
+  installed and the tree declares exactly the manifest's extensions); `--edge`,
+  the Pi matrix and a tree carrying a personal extension still resolve live as
+  before. Packages that ship their binary and declare `gypfile: false`
+  (better-sqlite3 13 under pi-hermes-memory) carry that flag in their lock entry,
+  because npm builds the nodes it installs from the lock and would otherwise run
+  a bare `node-gyp rebuild` (it failed on the Windows VM, which has no compiler).
+  A machine where the lock still fails to install falls back to the live install
+  once and remembers that lock, so sync does not retry it until a release ships a
+  new one. Maintainers regenerate it with `node lib/extlock.js generate` whenever
+  a pin moves; the gate lane fails when the lock and the manifest disagree.
 
 ### Changed
 
@@ -49,6 +57,22 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   so the skills' status-first preflight stays. `coop update` and `coop install`
   install the new pins from the manifest. VM qualification (needs Power BI
   Desktop) pending.
+
+## [0.25.0] — 2026-10-01
+
+### Added
+
+- Guardrails: Fabric and Azure REST writes issued from the shell now ask for
+  approval like a mutating MCP call. `az rest` with a non-GET `--method`,
+  `fab api -X post|patch|put|delete`, and the Fabric CLI's mutating subcommands
+  (`fab deploy`, `mkdir`, `rm`, `cp`, `mv`, `set`, `import`, `assign`,
+  `unassign`, `job`, `acl`, `label`, `start`, `stop`, `ln`) confirm before they
+  run and fail closed headlessly. The official Microsoft Fabric skills drive item
+  create/update/deploy/delete this way, outside the MCP gate. Reads
+  (`--method get`, `fab api <path>`, `fab ls`/`get`/`export`) are unchanged.
+
+### Changed
+
 - Standards: a prompt that says PBIX, PBIP or PBIR now reaches the Power BI File
   Types article ("Convert the Sales report PBIX to a PBIP project"), the one
   coop-standards article no realistic prompt reached before. The classifier treats
