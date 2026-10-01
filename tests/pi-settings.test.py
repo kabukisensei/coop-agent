@@ -60,4 +60,48 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     assert invalid.read_bytes() == before
     print("  PASS invalid settings fail without overwriting the original")
 
-print("  4 Pi settings tests passed")
+    # ensure-coop-footer: pi-better-openai's footer.mode must not replace coop's footer (#203)
+    def footer(path: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(HELPER), "ensure-coop-footer", str(path)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    fresh_footer = tmp / "fresh" / "extensions" / "pi-better-openai.json"
+    result = footer(fresh_footer)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(fresh_footer.read_text()) == {"footer": {"mode": "status"}}
+    print("  PASS creates pi-better-openai config in status footer mode")
+
+    replace = tmp / "replace.json"
+    original = {
+        "persistState": True,
+        "active": False,
+        "footer": {"mode": "replace"},
+        "pets": {"enabled": False, "slug": ""},
+        "futureKey": [1, 2],
+    }
+    replace.write_text(json.dumps(original), encoding="utf-8")
+    result = footer(replace)
+    assert result.returncode == 0, result.stderr
+    merged = json.loads(replace.read_text())
+    assert merged == {**original, "footer": {"mode": "status"}}
+    print("  PASS replace mode becomes status while every other key is preserved")
+
+    before = replace.read_bytes()
+    result = footer(replace)
+    assert result.returncode == 0, result.stderr
+    assert replace.read_bytes() == before
+    print("  PASS status mode is left byte-for-byte unchanged")
+
+    off = tmp / "off.json"
+    off.write_text(json.dumps({"footer": {"mode": "off"}}), encoding="utf-8")
+    before = off.read_bytes()
+    result = footer(off)
+    assert result.returncode == 0, result.stderr
+    assert off.read_bytes() == before
+    print("  PASS a deliberate off mode is respected")
+
+print("  8 Pi settings tests passed")
