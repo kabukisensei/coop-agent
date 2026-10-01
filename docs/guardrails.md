@@ -33,7 +33,7 @@ or when the user explicitly opts out for that task.
 
 ## Tool summary
 
-Native advisory tools: `data_doc`, `bpa_review`. Self-check SQL/DAX/model changes against the standards articles in context; name unmet rules. A missing or partial repo is not a blocker: use local sources, then approved live metadata discovery. Also read-only MCP (Fabric, Power BI, Microsoft Learn), memory, web access, and ask-user. See `docs/guardrails-reference.md` and the `coop-workflow` skill.
+Native advisory tools: `data_doc`, `bpa_review`. Self-check SQL/DAX/model changes against the standards articles in context and name unmet rules. A missing or partial repo is not a blocker: use local sources, then approved live metadata discovery. Read-only MCP (Fabric, Power BI, Microsoft Learn), memory, web access, and ask-user. See `docs/guardrails-reference.md` and the `coop-workflow` skill.
 
 ## Read focused
 
