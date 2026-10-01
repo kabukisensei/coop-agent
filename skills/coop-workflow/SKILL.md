@@ -167,6 +167,26 @@ a production row request must state the target, columns, filters, and small limi
 before running the command unless the user already approved that specific validation
 or an explicitly named Dev/test validation pattern as part of the current slice.
 
+### Verify with data (SQL slices)
+
+For a slice that changes a SQL object, make the failing and passing checks concrete
+with live data on the contract's default `sql_targets` entry (dev; never prod):
+
+1. **Before the edit**, call `sql_impact` for the object to list its dependents and
+   columns, then capture a baseline for the object and each dependent with
+   `fabric_sql_query`: a row count (`SELECT TOP (1) COUNT(*) AS row_count FROM
+   <object>`) and a bounded sample (`SELECT TOP (20) <key columns> FROM <object>
+   ORDER BY <key>`). State the exact data condition the edit must change.
+2. **Apply the edit on dev** after the slice is approved; writes go only to the
+   default dev target.
+3. **After the edit**, re-run exactly the same queries and show the difference
+   (counts before and after, rows that changed) as the passing check. A difference
+   you did not predict is a stop-and-ask trigger, not a footnote.
+
+Test targets ask first; production is explicit-approval only and never a verify
+target. Row reads reuse the session's bounded live-read grant; the baseline and
+the re-run must stay within the same approved scope.
+
 ## Other working habits
 
 These sharpen the principles above; reach for them on non-trivial or multi-step work.
