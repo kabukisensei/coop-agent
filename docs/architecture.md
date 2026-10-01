@@ -44,7 +44,7 @@ for the Node tools and extensions; no script builds these paths inline.
    `COOP_SKIP_AZ=1` skips it), then `exec pi …` with the branded resources
    attached. It also dispatches the
    subcommands (`doctor`, `update`, `install`/`bootstrap`, `sync`, `data-doc`,
-   `sql-review`, `dax-review`, `fabric`, `version`, `help`) and aliases Pi
+   `fabric`, `version`, `help`) and aliases Pi
    management (`coop list/config/add/remove/pi`) so `coop` is the only command a
    user types. Any unknown subcommand or flag is passed straight through to `pi`.
 
@@ -59,8 +59,7 @@ for the Node tools and extensions; no script builds these paths inline.
      replacing Pi's prompt): read-only-first, plan-and-approve, never commit
      source, MCP read-only, never expose secrets.
    - **Skills** — `skills/`, including `coop-workflow` (the principles-first
-     Cooptimize workflow) that the task skills run inside: `sql-review`,
-     `dax-review`, `data-doc-analysis`, `power-bi-impact-analysis`,
+     Cooptimize workflow) that the task skills run inside: `data-doc-analysis`, `power-bi-impact-analysis`,
      `fabric-workspace-review`, `daily-logger`, `setup-docs` (the in-agent
      coop-data-doc wizard driven via `ask-user-question` + coop-data-doc's
      non-interactive commands), and `git-helper` (drafts Conventional-Commits
@@ -86,8 +85,14 @@ for the Node tools and extensions; no script builds these paths inline.
      one clean bar. The splash is the truecolor block-art Cooptimize logo
      (uniform-padded, width-robust; `assets/splash.ansi`).
    - **`coop-tools` extension** — `extensions/coop-tools/`: registers the native
-     LLM-callable tools `sql_review`, `dax_review`, `data_doc` that shell out to
-     the standalone CLIs and return JSON the model reasons over. `data_doc` takes
+     LLM-callable tools `data_doc`, `bpa_review` (Tabular Editor BPA), the
+     governed `fabric_sql_query` fallback and `sql_impact` (`lib/sql_impact.py`:
+     three fixed catalog queries for one object's dependents, references and
+     columns on the contract's dev/test SQL target), which shell out and return
+     JSON the model reasons over. SQL/DAX/semantic-model standards need no tool: at launch
+     `lib/standards.mjs` resolves the active coop-standards wiki articles and the
+     extension feeds them into every such task, and the agent self-checks its diff
+     against them before presenting a change. `data_doc` takes
      a `command` (`scan` / `build` / `check` / `lineage`); `lineage <object>
      [depth]` returns one object's upstream/downstream + relationships as JSON
      from the built graph, so the agent grounds a change in real lineage instead
@@ -169,9 +174,8 @@ for the Node tools and extensions; no script builds these paths inline.
      prompting — and exposes non-interactive twins of its wizard for agents/CI
      (`folders` / `set-folders`, `show-config` / `config-set`, `resolve` /
      `resolve-apply`).
-   - `coop-sql-review` — advisory T-SQL standards linter
-     (`check <paths> --format json`). Never edits or blocks.
-   - `coop-dax-review` — advisory DAX standards linter (same shape).
+   (`coop-sql-review` and `coop-dax-review` were retired in ST1: their rules now
+   live in the coop-standards wiki articles coop writes against.)
 
 6. **Microsoft platform tooling:**
    - **`fab`** — the Microsoft Fabric CLI (`ms-fabric-cli`). `coop fabric …` is a
@@ -214,7 +218,7 @@ for the Node tools and extensions; no script builds these paths inline.
 flowchart TD
     user([User]) --> coop["coop (bin/coop.ps1)\nbranded layer / orchestrator — never a fork"]
 
-    coop -- "subcommands:\ndoctor · update · install · sync\ndata-doc · sql-review · dax-review · fabric" --> subs[[coop subcommands]]
+    coop -- "subcommands:\ndoctor · update · install · sync\ndata-doc · fabric" --> subs[[coop subcommands]]
     coop -- "exec pi --append-system-prompt --skill\n--prompt-template --theme -e …" --> pi["Pi\n@earendil-works/pi-coding-agent"]
 
     subgraph LAYER["Cooptimize layer (this repo)"]
@@ -223,7 +227,7 @@ flowchart TD
       prompts["prompts/"]
       theme["themes/cooptimize.json"]
       ext_pl["ext: coop-powerline\nfooter · splash · rotating feature tips\n(no pi-powerline-footer)"]
-      ext_tools["ext: coop-tools\nsql_review · dax_review · data_doc (scan/build/check/lineage)\n+ /setup-docs wizard · before_agent_start lineage note"]
+      ext_tools["ext: coop-tools\ndata_doc (scan/build/check/lineage) · bpa_review\n+ standards articles in context · /setup-docs wizard · lineage note"]
       ext_profile["ext: coop-profile\nhidden user-profile instruction"]
       ext_guard["ext: coop-guardrails\ntool_call hook · policy enforcement"]
     end
@@ -251,19 +255,14 @@ flowchart TD
 
     subgraph TOOLS["Standalone tools (pipx) — CLIs + the fabric-cicd library"]
       datadoc["coop-data-doc\nscan→graph.json\nbuild→manifest.json + docs + portal\nlineage <object>→up/downstream JSON"]
-      sqlrev["coop-sql-review\ncheck --format json (advisory)"]
-      daxrev["coop-dax-review\ncheck --format json (advisory)"]
       fab["fab (Microsoft Fabric CLI)\n⚠ Python Fabric 'fab' collision → doctor"]
       cicd["fabric-cicd (LIBRARY, no CLI)\npipx inject ms-fabric-cli fabric-cicd\nimport fabric_cicd · validate-only"]
       te["Tabular Editor CLI\noptional · path-configured"]
     end
     subs --> datadoc
-    subs --> sqlrev
-    subs --> daxrev
     subs --> fab
     ext_tools --> datadoc
-    ext_tools --> sqlrev
-    ext_tools --> daxrev
+    ext_tools --> te
 
     subgraph MCP["Approval-gated MCP (optional)"]
       fmcp["fabric"]
@@ -284,9 +283,11 @@ or lineage runs through the **`coop-workflow` skill** (principles-first), enforc
 `guardrails.md` system prompt: read project context plus COOP's resolved standards
 task authority (including any deliberate project override) →
 scope and impact → read target + lineage (`data_doc`) → **PLAN + explicit
-approval** → timestamped backup → smallest safe edit → review
-(`sql_review` / `dax_review`, plus Tabular Editor BPA / `fabric-cicd` validate
-where relevant) → diff + summarize → update docs/glossary/lineage and regenerate
+approval** → timestamped backup → smallest safe edit → self-check
+(the diff against the same standards articles used to write it: fix what does not
+meet them, deviate only on a user exception or a stated reason; plus Tabular Editor
+BPA / `fabric-cicd` validate where relevant) →
+diff + summarize → update docs/glossary/lineage and regenerate
 the site → append to the daily log → **commit docs/logs/site only with approval;
 never commit source**.
 

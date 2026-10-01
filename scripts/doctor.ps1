@@ -243,8 +243,6 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
   }
 }
 Check-PipxDist 'coop-data-doc' 'coop-data-doc'
-Check-PipxDist 'coop-sql-review' 'coop-sql-review'
-Check-PipxDist 'coop-dax-review' 'coop-dax-review'
 Check-PipxDist 'ms-fabric-cli' 'fab'
 
 # The Node minimum (manifest node.min) is prerequisite row 2 above.
@@ -296,7 +294,11 @@ if ($env:COOP_SKIP_AZ -ne '1' -and (Test-Have 'az')) {
 }
 
 D-Head 'Microsoft Fabric CLI'
-if (Test-Have 'fab') {
+# An Azure SQL-only client (client.platform in ~/.coop/config, master plan section
+# 8 item 7) does not need the Fabric CLI: a missing fab is reported, never red.
+if (-not (Test-Have 'fab') -and (Test-CoopAzureSqlOnly)) {
+  D-Ok 'fab not installed (Azure SQL client; the Fabric CLI is optional here)'
+} elseif (Test-Have 'fab') {
   $fabver = ((& fab --version 2>&1 | Select-Object -First 3) -join ' ')
   if ($fabver -match '(?i)paramiko|invoke') {
     D-Bad 'fab is the WRONG tool' "this 'fab' is Python Fabric (SSH automation), not the Microsoft Fabric CLI"
@@ -323,8 +325,6 @@ function Check-PipxTool([string]$Bin) {
   }
 }
 Check-PipxTool 'coop-data-doc'
-Check-PipxTool 'coop-sql-review'
-Check-PipxTool 'coop-dax-review'
 
 D-Head 'Fabric / semantic-model tooling'
 
@@ -636,11 +636,12 @@ if (Test-Have 'node') {
       if ($syncFailed) { D-Warn "$kind ${name}: $state" $hint }
       else { D-Ok "$kind ${name}: last known good @ $(($detail -split '\|')[0]) (verified at the last check; the next coop launch or coop sync refreshes it)" }
     }
+    elseif ($state -match 'bundled') { D-Warn "$kind ${name}: $state (the copy shipped with coop; $(($detail -split '\|')[0]))" 'the coop-standards wiki has not been reached from this machine; run coop sync when online' }
     elseif ($state -match 'unavailable|auth_required|dirty_preserved|wiki_warning') { D-Warn "$kind ${name}: $state" $hint }
     else { D-Ok "$kind ${name}: $state$(if ($detail) { " @ $detail" } else { '' })" }
   }
 } else {
-  D-Warn 'standards status unavailable' 'Node is required to discover and verify any SQL/DAX bundled fallback'
+  D-Warn 'standards status unavailable' 'Node is required to verify the standards wiki cache and the bundled copy'
 }
 
 D-Head 'Optional'
@@ -676,6 +677,19 @@ if ($proj) {
 
   D-Ok 'Microsoft skills project policy is covered by the pinned catalog doctor section'
 
+  # SQL connection targets (sql_targets:, master plan SQ1): kinds, host patterns,
+  # and the rule that production is never the default. Shared with Bash.
+  if ($pyBin) {
+    foreach ($line in @(& $pyBin (Join-Path $script:CoopRoot 'lib\sql_targets.py') --project $proj doctor-lines 2>$null)) {
+      $parts = @(([string]$line) -split "`t", 3)
+      if ($parts.Count -lt 2 -or -not $parts[0]) { continue }
+      $hint = if ($parts.Count -ge 3) { $parts[2] } else { '' }
+      if ($parts[0] -ceq 'ok') { D-Ok $parts[1] }
+      elseif ($parts[0] -ceq 'bad') { D-Bad $parts[1] $hint }
+      else { D-Warn $parts[1] $hint }
+    }
+  }
+
   # Read-only bounded legacy-project diagnostics, shared with Bash and migration.
   if ($pyBin) {
     $projectRoot = Split-Path -Parent (Split-Path -Parent $proj)
@@ -709,6 +723,21 @@ if ((Test-CoopGitCheckout $script:CoopRoot) -and (Test-Have 'git')) {
 D-Head 'Powerline / splash assets'
 if (Test-Path -LiteralPath (Join-Path $script:CoopRoot 'extensions\coop-powerline\assets\splash.ansi') -PathType Leaf) { D-Ok 'brand splash present' } else { D-Warn 'splash.ansi missing' 'run: coop sync' }
 if (Test-Path -LiteralPath (Join-Path $script:CoopRoot 'themes\cooptimize.json') -PathType Leaf) { D-Ok 'Cooptimize theme present' } else { D-Warn 'theme missing' }
+
+# A machine that predates the client platform setting is asked once (--fix,
+# interactive, never in --json): the answer is saved to ~/.coop/config and the
+# rows above read it on the next run.
+if ($script:FIX -and -not $script:JSON -and -not [Console]::IsInputRedirected -and (Test-Path -LiteralPath (Get-CoopConfigFile) -PathType Leaf) -and -not (Get-CoopClientPlatform)) {
+  D-Head 'Client platform (--fix)'
+  $fixPy = Get-CoopPython
+  $platFixed = $false
+  if ($fixPy) {
+    & $fixPy (Join-Path $script:CoopRoot 'scripts\onboard.py') platform | Out-Null
+    $platFixed = ($LASTEXITCODE -eq 0)
+  }
+  if ($platFixed) { Coop-Ok 'client platform saved; rerun: coop doctor' }
+  else { Coop-Warn 'client platform not saved; run: coop onboard --platform fabric|azure_sql|both' }
+}
 
 if ($script:FIX -and ($script:FAIL -gt 0 -or $script:WARN -gt 0)) {
   D-Head 'Applying fixes (--fix)'

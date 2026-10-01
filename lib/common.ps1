@@ -389,15 +389,33 @@ print("ready\t"+v+"\t"+str(max(majors)))
   return [pscustomobject]@{ state = $(if ($parts.Count) { $parts[0] } else { 'pyodbc_unloadable' }); version = $(if ($parts.Count -gt 1) { $parts[1] } else { '' }); driver = $(if ($parts.Count -gt 2) { [int]$parts[2] } else { 0 }) }
 }
 
+# Converge the runtime libraries inside the Fabric CLI venv. A library whose
+# installed version already equals its manifest pin is left alone, so a sync
+# with everything present makes no pipx inject call and needs no network; only a
+# missing or drifted library (or fabric-cicd under -Edge, which means upstream
+# latest) is re-injected, with --force so a drifted one is replaced (#186). When
+# pip fails, its last ERROR line rides on the warning so the cause is visible.
 function Sync-CoopFabricPythonPackages([bool]$Edge = $false) {
   if (-not $env:COOP_FABRIC_PYTHON) {
     $pipx = Get-CoopPipxCmd
-    foreach ($pkg in @('fabric-cicd', 'pyodbc')) {
+    foreach ($pkg in $script:CoopFabricRuntimeLibraries) {
       $pin = Coop-ManifestGet -Key "python_tools.$pkg"
       if (-not $pin) { return $false }
-      $spec = if ($Edge -and $pkg -eq 'fabric-cicd') { $pkg } else { "$pkg==$pin" }
-      & $pipx inject ms-fabric-cli $spec --force *> $null
-      if ($LASTEXITCODE -ne 0) { Coop-Warn "failed to install $spec in the ms-fabric-cli environment"; return $false }
+      $wantLatest = ($Edge -and $pkg -eq 'fabric-cicd')
+      if (-not $wantLatest) {
+        $installed = Get-CoopVenvDistVersion 'ms-fabric-cli' $pkg
+        if ($installed -eq $pin) { continue }
+      }
+      $spec = if ($wantLatest) { $pkg } else { "$pkg==$pin" }
+      # pip's errors arrive on stderr; keep them as text rather than letting a
+      # caller's $ErrorActionPreference = 'Stop' turn the first line terminating.
+      $previousEap = $ErrorActionPreference
+      try {
+        $ErrorActionPreference = 'Continue'
+        $out = (& $pipx inject ms-fabric-cli $spec --force 2>&1 | Out-String)
+        $rc = $LASTEXITCODE
+      } finally { $ErrorActionPreference = $previousEap }
+      if ($rc -ne 0) { Coop-Warn "failed to install $spec in the ms-fabric-cli environment" (Coop-PipErrorTail $out); return $false }
     }
   }
   $status = Get-CoopFabricSqlRuntimeStatus
@@ -1514,16 +1532,26 @@ function Get-CoopAzLoginHint([string]$Tenant) {
   "run: az login --tenant $Tenant --allow-no-subscriptions"
 }
 function Get-CoopAzTokenHint([string]$Tenant) {
-  "run: az account get-access-token --tenant $Tenant --resource https://api.fabric.microsoft.com"
+  # The platform's first audience: Fabric REST, or SQL on an Azure SQL-only machine.
+  $resource = @(Get-CoopAzTokenResources)[0]
+  "run: az account get-access-token --tenant $Tenant --resource $resource"
 }
 
 # Check that az can mint the Fabric token, then the Power BI token, for -Tenant
 #. 15 seconds each; stops at the first failure.
 # Returns 0 when both mint, 1 when az reports an authentication failure, 2 for
 # any other failure, 124 on timeout.
+# The token audiences the client platform needs (mirror of coop_az_token_resources):
+# Fabric REST then Power BI for a Fabric client, the SQL audience alone for an
+# Azure SQL-only client. An unset platform means Fabric (today's behavior).
+function Get-CoopAzTokenResources {
+  if ((Get-CoopClientPlatform) -ceq 'azure_sql') { return @('https://database.windows.net/') }
+  return @('https://api.fabric.microsoft.com', 'https://analysis.windows.net/powerbi/api')
+}
+
 function Get-CoopAzTokenRc {
   param([string]$Tenant)
-  foreach ($resource in @('https://api.fabric.microsoft.com', 'https://analysis.windows.net/powerbi/api')) {
+  foreach ($resource in (Get-CoopAzTokenResources)) {
     $r = Invoke-CoopAz -Seconds 15 -Quiet -AzArgs @('account', 'get-access-token', '--tenant', $Tenant, '--resource', $resource, '--output', 'none')
     if ($r.Rc -eq 0) { continue }
     if ($r.Rc -eq 124) { return 124 }
@@ -2270,6 +2298,26 @@ function Get-CoopYamlList {
 # an OPTIONAL "knowledge" block: { "enabled": bool, "repos": [{url, local_path}] }.
 # Absent/disabled/unreadable is a clean no-op everywhere. The file is
 # Get-CoopConfigFile (<profile dir>\config; COOP_DIR is the parent of .coop).
+
+# The machine's client platform from the fleet config (client.platform, written
+# by scripts/onboard.py): 'fabric', 'azure_sql' or 'both'. Empty when the config
+# or the key is absent or malformed; every caller treats empty as Fabric, which
+# is what a machine that predates the setting ran as.
+function Get-CoopClientPlatform {
+  $f = Get-CoopConfigFile
+  if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return '' }
+  try {
+    $cfg = Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json
+    $v = [string]$cfg.client.platform
+    if ($v -cin @('fabric', 'azure_sql', 'both')) { return $v }
+  } catch { return '' }
+  return ''
+}
+
+# True when this machine is an Azure SQL-only client, so Fabric-only rows and
+# defaults step aside (master plan section 8 item 7).
+function Test-CoopAzureSqlOnly { return ((Get-CoopClientPlatform) -ceq 'azure_sql') }
+
 function Get-CoopKnowledgeBlock {
   $f = Get-CoopConfigFile
   if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return $null }

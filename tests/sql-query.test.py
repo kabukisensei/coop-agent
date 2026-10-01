@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline tests for the governed Fabric pyodbc fallback."""
+"""Offline tests for the governed pyodbc executor (Fabric fallback + contract sql_targets)."""
 
 from __future__ import annotations
 
@@ -18,10 +18,10 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "lib"))
 spec = importlib.util.spec_from_file_location(
-    "fabric_sql_query", ROOT / "lib" / "fabric_sql_query.py"
+    "sql_query", ROOT / "lib" / "sql_query.py"
 )
 fsq = importlib.util.module_from_spec(spec)
-sys.modules["fabric_sql_query"] = fsq
+sys.modules["sql_query"] = fsq
 spec.loader.exec_module(fsq)
 
 WORKSPACE = "22222222-2222-4222-8222-222222222222"
@@ -229,6 +229,7 @@ assert output == {
     "row_count": 1,
     "truncated": True,
     "driver": "ODBC Driver 19 for SQL Server",
+    "target": {"environment": "", "kind": "fabric_warehouse", "database": "CustomerWarehouse"},
 }
 # Both mints are pinned to the launch token's tenant.
 assert resources == [(fsq.wmcp.FABRIC_RESOURCE, TENANT), (fsq.SQL_RESOURCE, TENANT)]
@@ -440,6 +441,153 @@ with (
     os.environ.pop(fsq.wmcp.FABRIC_TOKEN_ENV, None)
     assert fsq.execute({"query": QUERY}, cwd=project2) == {"ok": False, "state": "identity_mismatch"}
 
+# SQ2: a contract `sql_targets:` section drives the executor instead of the
+# managed Fabric target. Azure SQL connects straight to the named host: no
+# Fabric REST token, no discovery, the kind's 60 s connect timeout, and
+# ApplicationIntent only when the entry opts into read-scale replicas.
+AZ_SERVER = "contoso-dev.database.windows.net"
+
+
+def contract_fixture(block: str) -> tuple[tempfile.TemporaryDirectory, Path]:
+    temp = tempfile.TemporaryDirectory()
+    project = Path(temp.name) / "project"
+    (project / ".coop").mkdir(parents=True)
+    (project / ".coop" / "project.yml").write_text(block, encoding="utf-8")
+    return temp, project
+
+
+AZURE_BLOCK = f"""sql_targets:
+  default_environment: dev
+  dev:
+    kind: azure_sql
+    server: {AZ_SERVER}
+    database: ContosoDW
+  prod:
+    kind: azure_sql
+    server: contoso.database.windows.net
+    database: ContosoDW
+"""
+az_temp, az_project = contract_fixture(AZURE_BLOCK)
+az_pyodbc = FakePyodbc()
+az_resources = []
+
+
+def fake_sql_only_token(*, timeout=8, resource=fsq.wmcp.FABRIC_RESOURCE, tenant=""):
+    az_resources.append((resource, tenant))
+    assert resource == fsq.SQL_RESOURCE, "a direct kind never mints a Fabric token"
+    return SQL_TOKEN, "ok"
+
+
+with (
+    mock.patch.dict(os.environ, {fsq.wmcp.FABRIC_TOKEN_ENV: FABRIC_TOKEN}, clear=False),
+    mock.patch.dict(sys.modules, {"pyodbc": az_pyodbc}),
+    mock.patch.object(fsq.wmcp, "az_access_token", side_effect=fake_sql_only_token),
+    mock.patch.object(
+        fsq.wmcp, "fabric_get_json", side_effect=AssertionError("no discovery for azure_sql")
+    ),
+):
+    az_output = fsq.execute({"query": QUERY, "maximum_rows": 1}, cwd=az_project)
+assert az_output["state"] == "ok", az_output
+assert az_output["target"] == {"environment": "dev", "kind": "azure_sql", "database": "ContosoDW"}
+assert az_resources == [(fsq.SQL_RESOURCE, TENANT)]
+az_connection_string, az_kwargs = az_pyodbc.call
+assert f"SERVER={AZ_SERVER},1433" in az_connection_string
+assert "contoso.database.windows.net" not in az_connection_string, "prod is never selected"
+assert "DATABASE={ContosoDW}" in az_connection_string
+assert "ApplicationIntent" not in az_connection_string
+assert az_kwargs["timeout"] == 60 and az_kwargs["autocommit"] is True
+
+# read_scale_replicas: true adds the read-only intent, and only for azure_sql.
+ro_temp, ro_project = contract_fixture(AZURE_BLOCK.replace("    database: ContosoDW\n  prod:", "    database: ContosoDW\n    read_scale_replicas: true\n  prod:"))
+ro_pyodbc = FakePyodbc()
+with (
+    mock.patch.dict(os.environ, {fsq.wmcp.FABRIC_TOKEN_ENV: FABRIC_TOKEN}, clear=False),
+    mock.patch.dict(sys.modules, {"pyodbc": ro_pyodbc}),
+    mock.patch.object(fsq.wmcp, "az_access_token", side_effect=fake_sql_only_token),
+):
+    ro_output = fsq.execute({"query": QUERY}, cwd=ro_project)
+assert ro_output["state"] == "ok", ro_output
+assert "ApplicationIntent=ReadOnly;" in ro_pyodbc.call[0]
+
+# Without PyYAML (fresh Windows machines, the Windows CI leg) lib/_yaml.py keeps
+# `true` as text; the entry still resolves and still carries the read-only intent.
+ro_text_pyodbc = FakePyodbc()
+with (
+    mock.patch.dict(os.environ, {fsq.wmcp.FABRIC_TOKEN_ENV: FABRIC_TOKEN}, clear=False),
+    mock.patch.dict(sys.modules, {"pyodbc": ro_text_pyodbc, "yaml": None}),
+    mock.patch.object(fsq.wmcp, "az_access_token", side_effect=fake_sql_only_token),
+):
+    ro_text_output = fsq.execute({"query": QUERY}, cwd=ro_project)
+assert ro_text_output["state"] == "ok", ro_text_output
+assert "ApplicationIntent=ReadOnly;" in ro_text_pyodbc.call[0]
+
+# Synapse serverless and Fabric SQL database are direct kinds too (15 s timeout).
+for kind, host in (
+    ("synapse_serverless", "contoso-ondemand.sql.azuresynapse.net"),
+    ("fabric_sql_database", "abc-xyz.database.fabric.microsoft.com"),
+):
+    kind_temp, kind_project = contract_fixture(
+        f"sql_targets:\n  default_environment: dev\n  dev:\n    kind: {kind}\n    server: {host}\n    database: Sales\n"
+    )
+    kind_pyodbc = FakePyodbc()
+    with (
+        mock.patch.dict(os.environ, {fsq.wmcp.FABRIC_TOKEN_ENV: FABRIC_TOKEN}, clear=False),
+        mock.patch.dict(sys.modules, {"pyodbc": kind_pyodbc}),
+        mock.patch.object(fsq.wmcp, "az_access_token", side_effect=fake_sql_only_token),
+    ):
+        kind_output = fsq.execute({"query": QUERY}, cwd=kind_project)
+    assert kind_output["target"]["kind"] == kind, kind_output
+    assert f"SERVER={host},1433" in kind_pyodbc.call[0]
+    assert kind_pyodbc.call[1]["timeout"] == fsq.CONNECT_TIMEOUT
+
+# A discovered contract kind (Fabric Warehouse by ids) goes through REST discovery
+# exactly like the managed target, without needing mcp-adapter.json at all.
+fw_temp, fw_project = contract_fixture(
+    f"sql_targets:\n  default_environment: test\n  dev:\n    kind: azure_sql\n    server: TODO\n    database: TODO\n"
+    f"  test:\n    kind: fabric_warehouse\n    workspace_id: {WORKSPACE}\n    item_id: {ITEM}\n    database: CustomerWarehouse\n"
+)
+fw_calls = []
+
+
+def fake_fw_rest(url, token, timeout=8):
+    fw_calls.append(url)
+    return fake_rest(url, token, timeout)
+
+
+with (
+    mock.patch.dict(os.environ, {fsq.wmcp.FABRIC_TOKEN_ENV: FABRIC_TOKEN}, clear=False),
+    mock.patch.dict(sys.modules, {"pyodbc": FakePyodbc()}),
+    mock.patch.object(fsq.wmcp, "az_access_token", side_effect=fake_token),
+    mock.patch.object(fsq.wmcp, "fabric_get_json", side_effect=fake_fw_rest),
+):
+    fw_output = fsq.execute({"query": QUERY}, cwd=fw_project)
+assert fw_output["target"] == {"environment": "test", "kind": "fabric_warehouse", "database": "CustomerWarehouse"}
+assert fw_calls == [f"{fsq.wmcp.FABRIC_RESOURCE}/v1/workspaces/{WORKSPACE}/warehouses/{ITEM}"]
+
+# A contract whose only ready entry is prod, or whose default is a placeholder,
+# fails closed with target_invalid: the executor never picks prod for the caller.
+for block in (
+    f"sql_targets:\n  default_environment: dev\n  dev:\n    kind: azure_sql\n    server: TODO\n    database: TODO\n  prod:\n    kind: azure_sql\n    server: contoso.database.windows.net\n    database: ContosoDW\n",
+    f"sql_targets:\n  default_environment: prod\n  prod:\n    kind: azure_sql\n    server: contoso.database.windows.net\n    database: ContosoDW\n",
+):
+    bad_temp, bad_project = contract_fixture(block)
+    with (
+        mock.patch.dict(os.environ, {fsq.wmcp.FABRIC_TOKEN_ENV: FABRIC_TOKEN}, clear=False),
+        mock.patch.dict(sys.modules, {"pyodbc": FakePyodbc()}),
+        mock.patch.object(fsq.wmcp, "az_access_token", side_effect=AssertionError("no mint for an invalid target")),
+    ):
+        assert fsq.execute({"query": QUERY}, cwd=bad_project) == {"ok": False, "state": "target_invalid"}
+
+# Connection failures on a direct kind still never leak the host or the token.
+leak_temp, leak_project = contract_fixture(AZURE_BLOCK)
+with (
+    mock.patch.dict(os.environ, {fsq.wmcp.FABRIC_TOKEN_ENV: FABRIC_TOKEN}, clear=False),
+    mock.patch.dict(sys.modules, {"pyodbc": FakePyodbc(connect_error=RuntimeError(f"{SQL_TOKEN} {AZ_SERVER}"))}),
+    mock.patch.object(fsq.wmcp, "az_access_token", side_effect=fake_sql_only_token),
+):
+    leak = json.dumps(fsq.execute({"query": QUERY}, cwd=leak_project))
+assert '"connection_failed"' in leak and AZ_SERVER not in leak and SQL_TOKEN not in leak
+
 # H2b end to end: a guest whose az default account is the home tenant. The shared
 # fake az (tests/fixtures/fake-az.mjs) mints for --tenant, else for that default
 # account, and the real token helper runs. Unpinned mints would come back for the
@@ -506,4 +654,4 @@ with tempfile.TemporaryDirectory() as az_tmp:
 
 temp.cleanup()
 lake_temp.cleanup()
-print("fabric-sql-query tests passed")
+print("sql-query tests passed")

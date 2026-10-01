@@ -203,7 +203,8 @@ the Microsoft skills catalog section in `coop doctor`.
 - **`power-bi-report-review`** — read-only audit of a report.
 - **`report-themes`** — theme authoring on top of these mechanics.
 - **`custom-visuals`** — Deneb and SVG visuals on top of these mechanics.
-- **`dax-review`** / **`coop-dax-review`** — DAX and model standards.
+- **`dax-patterns`** / **`tabular-editor-bpa`** — DAX and model standards (applied
+  while writing, self-checked before presenting) and the deterministic model check.
 - **`coop-workflow`** — plan-and-approve, backups, diff, never commit source.
 
 ## Fetching current docs

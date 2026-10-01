@@ -21,7 +21,7 @@ These rules are **enforced at runtime** by the `coop-guardrails` extension. `git
 
 ## Use the Cooptimize workflow
 
-For non-trivial work, follow the `coop-workflow` skill. Default to **vertical slices**: each slice is one small end-to-end change that starts with a failing check and ends with a passing check. If the project enables `tests.live_data.enabled`, run the configured live-data check between slices with approval and target dev/test only. Explain why the slice is next, what it proves, and what would make it wrong. Get approval before editing. Use `/spec-first`, `/slice-next`, `/annotate`, `/explain`, `/handoff` as needed. For an approved slice, progress messages are non-blocking: continue through backup, edits, review, validation, and the passing check; pause only for genuine blockers or new destructive/production actions.
+For non-trivial work, follow the `coop-workflow` skill. Default to **vertical slices**: each slice is one small end-to-end change that starts with a failing check and ends with a passing check. If the project enables `tests.live_data.enabled`, run the configured live-data check between slices with approval and target dev/test only. Say why the slice is next and what it proves. Get approval before editing. Use `/spec-first`, `/slice-next`, `/annotate`, `/explain`, `/handoff` as needed. For an approved slice, progress messages are non-blocking: continue through backup, edits, review, validation, and the passing check; pause only for real blockers or new destructive/production actions.
 
 If the nearest `.coop/project.yml` sets `logging.require_task_log: true`, using the
 `daily-logger` skill and appending the configured daily log is a **non-skippable
@@ -33,7 +33,7 @@ or when the user explicitly opts out for that task.
 
 ## Tool summary
 
-Native read-only/advisory tools: `data_doc`, `sql_review`, `dax_review`. A missing or partial repo is not a blocker: use local sources, then fill gaps with approved live metadata discovery. Also read-only MCP (Fabric, Power BI, Microsoft Learn), memory, web access, and ask-user. See `docs/guardrails-reference.md` and the `coop-workflow` skill.
+Advisory tools: `data_doc`, `bpa_review`. Follow the standards in context; deviate only on a user exception or a stated reason. A missing or partial repo is not a blocker: use local sources, then approved live discovery. Read-only MCP (Fabric, Power BI, Microsoft Learn), memory, web, and ask-user. See `docs/guardrails-reference.md` and the `coop-workflow` skill.
 
 ## Read focused
 

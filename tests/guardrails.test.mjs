@@ -584,7 +584,7 @@ await t("mcpMutationLabel flags mutating MCP/Fabric actions, not reads or safe t
   for (const name of ["fabric_create_workspace", "powerbi_delete_dataset", "mcp__fabric__deploy_pipeline", "fabric_publishReport", "powerbi_refresh_dataset", "fabric_semanticmodel_refresh"]) {
     assert.ok(mcpMutationLabel(name), `${name} should be flagged`);
   }
-  for (const name of ["fabric_list_workspaces", "powerbi_get_dataset", "read", "bash", "sql_review", "data_doc"]) {
+  for (const name of ["fabric_list_workspaces", "powerbi_get_dataset", "read", "bash", "bpa_review", "data_doc"]) {
     assert.equal(mcpMutationLabel(name), null, `${name} should NOT be flagged`);
   }
 });
@@ -1147,6 +1147,157 @@ await t("the exact pyodbc fallback shares the MCP grant; forged fallback shapes 
     { toolName: "fabric_sql_query", input: { ...fallback.input, tool: "execute_query" } },
     { toolName: "fabric_sql_query_other", input: fallback.input },
   ]) assert.equal(blocked(await handle(event, liveCtx)), true, JSON.stringify(event));
+});
+
+// --- SQ3: a contract sql_targets section drives the native executor's scope -----
+const CONTRACT_DIR = join(LIVE_ROOT, ".coop");
+const AZ_HOST = "contoso-dev.database.windows.net";
+const contractText = (targets, tenant = TENANT_ID) => [
+  "profile:",
+  "  client: Contoso",
+  "fabric:",
+  `  tenant_id: "${tenant}"`,
+  "sql_targets:",
+  ...targets,
+  "",
+].join("\n");
+const AZURE_CONTRACT = contractText([
+  "  default_environment: dev",
+  "  dev:",
+  "    kind: azure_sql",
+  `    server: "${AZ_HOST}"   # dev only`,
+  "    database: ContosoDW",
+  "  prod:",
+  "    kind: azure_sql",
+  "    server: contoso.database.windows.net",
+  "    database: ContosoDW",
+]);
+const writeContract = (text) => { mkdirSync(CONTRACT_DIR, { recursive: true }); writeFileSync(join(CONTRACT_DIR, "project.yml"), text); };
+const removeContract = () => rmSync(CONTRACT_DIR, { recursive: true, force: true });
+const nativeRead = (query = "SELECT TOP (25) customer_id FROM dbo.Customer", maximum_rows = 10) => ({ toolName: "fabric_sql_query", input: { query, maximum_rows } });
+
+await t("parseContractSqlScope ports lib/sql_targets.py: ready default only, prod never, placeholders and credentials never", () => {
+  assert.equal(cg.parseContractSqlScope("profile:\n  client: Contoso\n"), null, "no section: the managed path");
+  const scope = cg.parseContractSqlScope(AZURE_CONTRACT);
+  assert.deepEqual(scope, { configured: true, client: "Contoso", tenant: TENANT_ID, target: { environment: "dev", kind: "azure_sql", database: "ContosoDW", server: AZ_HOST, workspaceId: "", itemId: "", sqlEndpointId: "" } });
+  const warehouse = cg.parseContractSqlScope(contractText(["  default_environment: test", "  test:", "    kind: fabric_warehouse", `    workspace_id: ${WORKSPACE_ID.toUpperCase()}`, `    item_id: ${ITEM_ID}`, "    database: CustomerWarehouse"]));
+  assert.deepEqual(warehouse.target, { environment: "test", kind: "fabric_warehouse", database: "CustomerWarehouse", server: "", workspaceId: WORKSPACE_ID, itemId: ITEM_ID, sqlEndpointId: "" });
+  for (const [why, lines] of Object.entries({
+    "prod default": ["  default_environment: prod", "  prod:", "    kind: azure_sql", "    server: contoso.database.windows.net", "    database: ContosoDW"],
+    "placeholder": ["  default_environment: dev", "  dev:", "    kind: azure_sql", '    server: "TODO: host"', "    database: ContosoDW"],
+    "host does not match kind": ["  default_environment: dev", "  dev:", "    kind: azure_sql", "    server: x.datawarehouse.fabric.microsoft.com", "    database: ContosoDW"],
+    "port in host": ["  default_environment: dev", "  dev:", "    kind: azure_sql", `    server: ${AZ_HOST},1433`, "    database: ContosoDW"],
+    "credential key": ["  default_environment: dev", "  dev:", "    kind: azure_sql", `    server: ${AZ_HOST}`, "    database: ContosoDW", "    password: hunter2"],
+    "ids on a direct kind": ["  default_environment: dev", "  dev:", "    kind: azure_sql", `    server: ${AZ_HOST}`, "    database: ContosoDW", `    workspace_id: ${WORKSPACE_ID}`],
+    "host on a discovered kind": ["  default_environment: dev", "  dev:", "    kind: fabric_warehouse", `    workspace_id: ${WORKSPACE_ID}`, `    item_id: ${ITEM_ID}`, "    server: x.datawarehouse.fabric.microsoft.com", "    database: W"],
+    "lakehouse without its endpoint id": ["  default_environment: dev", "  dev:", "    kind: fabric_lakehouse", `    workspace_id: ${WORKSPACE_ID}`, `    item_id: ${ITEM_ID}`, "    database: L"],
+    "unknown environment": ["  default_environment: dev", "  dev:", "    kind: azure_sql", `    server: ${AZ_HOST}`, "    database: ContosoDW", "  staging:", "    kind: azure_sql"],
+    "missing default entry": ["  default_environment: test", "  dev:", "    kind: azure_sql", `    server: ${AZ_HOST}`, "    database: ContosoDW"],
+    "unsafe database": ["  default_environment: dev", "  dev:", "    kind: azure_sql", `    server: ${AZ_HOST}`, "    database: bad;name"],
+  })) {
+    const parsed = cg.parseContractSqlScope(contractText(lines));
+    assert.equal(parsed?.configured, true, why);
+    assert.equal(parsed?.target, null, why);
+  }
+  // An omitted default_environment assumes dev, as lib/sql_targets.py does.
+  assert.equal(cg.parseContractSqlScope(contractText(["  dev:", "    kind: synapse_serverless", "    server: ws-ondemand.sql.azuresynapse.net", "    database: Lake"])).target.kind, "synapse_serverless");
+});
+
+await t("contract sql_targets scope: the native read asks once per contract target and the prompt names it", async () => {
+  writeManagedTarget();
+  writeContract(AZURE_CONTRACT);
+  process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmAnswer = true; confirmCount = 0; lastConfirm = "";
+  assert.equal(blocked(await handle(nativeRead(), liveCtx)), false);
+  assert.equal(confirmCount, 1);
+  for (const value of ["COOP contract SQL target (azure_sql, dev)", "Contoso", TENANT_ID, "environment: dev", `azure_sql/${AZ_HOST}/ContosoDW`, "sql-read", "row limit: 10"]) assert.ok(lastConfirm.includes(value), value);
+  assert.equal(lastConfirm.includes("contoso.database.windows.net/"), false, "prod never appears");
+  assert.equal(lastConfirm.includes("Warehouse"), false, "a contract target is not described as the managed Warehouse");
+  confirmAnswer = false;
+  assert.equal(blocked(await handle(nativeRead("SELECT TOP (5) name FROM dbo.Account", 5), liveCtx)), false, "same contract target reuses the grant");
+  assert.equal(blocked(await handle(nativeRead("SELECT TOP (50) name FROM dbo.Account", 50), liveCtx)), true, "a larger row bound asks again");
+  // The managed MCP proxy is a different target: the contract grant does not cover it.
+  assert.equal(blocked(await handle(sqlRead(), liveCtx)), true, "managed Warehouse scope differs from the contract target");
+  // Mid-session edits to the contract never change the trusted snapshot.
+  writeContract(contractText(["  default_environment: dev", "  dev:", "    kind: azure_sql", "    server: other.database.windows.net", "    database: ContosoDW"]));
+  assert.equal(blocked(await handle(nativeRead("SELECT TOP (5) name FROM dbo.Account", 5), liveCtx)), false, "snapshot still the approved target");
+  removeContract();
+});
+
+await t("contract sql_targets scope: prod, placeholder, tenant mismatch or a missing client ask on every call", async () => {
+  writeManagedTarget();
+  process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+  for (const [why, text] of Object.entries({
+    "prod default": contractText(["  default_environment: prod", "  prod:", "    kind: azure_sql", "    server: contoso.database.windows.net", "    database: ContosoDW"]),
+    "placeholder": contractText(["  default_environment: dev", "  dev:", "    kind: azure_sql", '    server: "TODO: host"', '    database: "TODO: db"']),
+    "tenant mismatch": contractText(["  default_environment: dev", "  dev:", "    kind: azure_sql", `    server: ${AZ_HOST}`, "    database: ContosoDW"], "99999999-9999-4999-8999-999999999999"),
+    "missing client": AZURE_CONTRACT.replace("  client: Contoso\n", ""),
+  })) {
+    writeContract(text);
+    await handleSessionStart({ reason: "new" }, liveCtx);
+    confirmAnswer = true; confirmCount = 0;
+    await handle(nativeRead(), liveCtx);
+    await handle(nativeRead(), liveCtx);
+    assert.equal(confirmCount, 2, why);
+  }
+  // A Warehouse named by ids in the contract shares the managed MCP grant for the same item.
+  writeContract(contractText(["  default_environment: test", "  test:", "    kind: fabric_warehouse", `    workspace_id: ${WORKSPACE_ID}`, `    item_id: ${ITEM_ID}`, "    database: CustomerWarehouse"]));
+  writeManagedTarget({ environment: "test" });
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmAnswer = true; confirmCount = 0;
+  await handle(sqlRead(), liveCtx);
+  confirmAnswer = false;
+  assert.equal(blocked(await handle(nativeRead(), liveCtx)), false, "same Warehouse, same grant");
+  assert.equal(confirmCount, 1);
+  removeContract();
+  writeManagedTarget();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+});
+
+await t("sql_impact (SQ4): dev/test metadata runs without a prompt; prod, unresolved and forged inputs do not", async () => {
+  clearAudit();
+  writeManagedTarget();
+  writeContract(AZURE_CONTRACT);
+  process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmAnswer = false; confirmCount = 0;
+  const impact = (object = "dbo.vw_Sales") => ({ toolName: "sql_impact", input: { object } });
+  assert.equal(blocked(await handle(impact(), liveCtx)), false, "contract dev target: no prompt");
+  assert.equal(confirmCount, 0);
+  const allowed = readAudit().filter((x) => x.tool === "governed-sql-impact");
+  assert.equal(allowed.length, 1);
+  assert.deepEqual([allowed[0].decision, allowed[0].label, allowed[0].detail], ["allowed", "live metadata read", "dev"]);
+  assert.equal(JSON.stringify(allowed).includes("vw_Sales"), false, "the object name never enters the audit");
+  for (const input of [{ object: "dbo.vw_Sales", query: "SELECT 1" }, { object: "dbo.vw_Sales", server: "x" }, { object: 5 }, {}, { target: "dbo.x" }]) {
+    assert.equal(blocked(await handle({ toolName: "sql_impact", input }, liveCtx)), true, JSON.stringify(input));
+  }
+  assert.equal(confirmCount, 0, "forged shapes are blocked, never prompted");
+  // A contract whose default is prod or a placeholder: asks once per call; headless blocks.
+  writeContract(contractText(["  default_environment: prod", "  prod:", "    kind: azure_sql", "    server: contoso.database.windows.net", "    database: ContosoDW"]));
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmAnswer = true; confirmCount = 0; lastConfirm = "";
+  assert.equal(blocked(await handle(impact(), liveCtx)), false);
+  assert.equal(confirmCount, 1);
+  assert.match(lastConfirm, /sql_impact/);
+  assert.match(lastConfirm, /unresolved/);
+  confirmAnswer = false;
+  assert.equal(blocked(await handle(impact(), liveCtx)), true, "declined");
+  assert.equal(blocked(await handle(impact(), { ...liveCtx, hasUI: false, ui: {} })), true, "headless");
+  // No sql_targets: the managed Fabric entry's environment decides.
+  removeContract();
+  writeManagedTarget({ environment: "test" });
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmCount = 0;
+  assert.equal(blocked(await handle(impact(), liveCtx)), false, "managed test target: no prompt");
+  assert.equal(confirmCount, 0);
+  writeManagedTarget();  // production
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmAnswer = true; confirmCount = 0;
+  assert.equal(blocked(await handle(impact(), liveCtx)), false);
+  assert.equal(confirmCount, 1, "production managed target asks");
+  assert.match(lastConfirm, /production/);
+  await handleSessionStart({ reason: "new" }, liveCtx);
 });
 
 await t("changed managed target, launch identity, or environment reprompts", async () => {

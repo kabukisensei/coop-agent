@@ -154,14 +154,14 @@ with tempfile.TemporaryDirectory(prefix="coop-paths-") as tmp:
             assert coop_paths.agent_dir() == agent, value
     ok("COOP_NO_ISOLATE=true/yes/on (any case) -> ~/.pi/agent; anything else keeps isolation")
 
-    # --- fabric_sql_query reads the managed config from the chain, not only
+    # --- sql_query reads the managed config from the chain, not only
     #     PI_CODING_AGENT_DIR ---------------------------------------------------
-    import fabric_sql_query  # noqa: E402
+    import sql_query  # noqa: E402
 
-    assert fabric_sql_query.coop_paths is coop_paths
-    src = (ROOT / "lib" / "fabric_sql_query.py").read_text(encoding="utf-8")
+    assert sql_query.coop_paths is coop_paths
+    src = (ROOT / "lib" / "sql_query.py").read_text(encoding="utf-8")
     assert 'os.environ.get("PI_CODING_AGENT_DIR"' not in src
     assert "coop_paths.agent_dir()" in src
-    ok("fabric_sql_query locates mcp-adapter.json through coop_paths.agent_dir()")
+    ok("sql_query locates mcp-adapter.json through coop_paths.agent_dir()")
 
 print(f"  coop-paths tests passed ({passed} checks)")

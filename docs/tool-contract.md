@@ -7,53 +7,19 @@ listed here.
 
 ---
 
-## `coop sql-review` / `coop dax-review`
+## SQL / DAX standards — applied while writing, no review CLI
 
-Both wrap the standalone advisory linters. They are **advisory only** — they
-never edit files and never block.
-
-**CLI contract (the tool binaries):**
-
-```
-coop-sql-review check <paths...> --format json [--min-severity error|warning|info] [--strict]
-coop-dax-review check <paths...> --format json [--min-severity error|warning|info] [--strict]
-```
-
-**How `coop` invokes them** (`bin/coop.ps1` → `Invoke-Tool`):
-
-The CLI wrappers **flow straight through** — `coop sql-review <args>` runs
-`coop-sql-review <args>` verbatim (`exec`), and likewise for dax. Every subcommand
-works and the exit code propagates:
-
-```
-coop sql-review check sql/gold --format text     # human-readable report
-coop sql-review check sql/gold --format json     # raw JSON
-coop sql-review rules                            # list the rules
-coop sql-review upgrade                          # update the tool
-coop sql-review check sql/                        # directory -> interactive subfolder picker (TTY)
-```
-
-There is **no capture and no summary** in the CLI path (so the tools' own
-interactive prompts work). The tools have **no setup wizard** — they ship bundled
-standards, configurable per run with `--standards` / `--config`.
-
-**For the AI agent**, structured JSON comes from the native `sql_review` / `dax_review`
-tools in `extensions/coop-tools/index.ts`, which run `check … --format json` and
-return the parsed report in the tool result's `details`. Report shape:
-
-```json
-{ "findings": [ { "severity": "error", "rule": "TSQL-NO-SELECT-STAR",
-                  "message": "Avoid SELECT * in gold layer views.",
-                  "file": "sql/gold/v_sales.sql", "line": 12 } ] }
-```
-
-The native tool counts the `severity` field (`error` / `warning` / `info`) for its
-one-line summary and passes the full report through in `details`.
-
-Pinned SQL schema 4 and DAX schema 3 reports use 12 lowercase hexadecimal
-characters for finding and agent-review fingerprints. These are stable finding
-identities; `standards.sha256` remains a separate 64-character SHA-256 digest.
-Native validation checks both formats and preserves the standards binding.
+There is no `coop sql-review`, `coop dax-review` or `coop review` command and no
+`sql_review` / `dax_review` native tool (retired in ST1; the `coop-sql-review` and
+`coop-dax-review` repos are archived). Standards reach the agent as **content, not
+a tool call**: at launch `lib/standards.mjs` resolves the active
+`cooptimize/coop-standards` wiki articles (see
+[Revision 9 standards resolution](#revision-9-standards-resolution)), and the
+`coop-tools` `before_agent_start` hook feeds the relevant articles into every SQL,
+DAX and semantic-model task. Before presenting such a change the agent
+**self-checks** its own diff against the same articles and names any rule it could
+not meet. The deterministic checks that remain are `bpa_review` (Tabular Editor
+BPA, semantic models) and `fabric-cicd` validate.
 
 ---
 
@@ -102,9 +68,7 @@ coop data-doc init      # or: write a starter coop-data-doc.yml to edit by hand
 
 Until a config exists, doc-building commands flow through and the tool reports
 `error: Config file not found: coop-data-doc.yml` — and the native `data_doc` tool
-appends a `/setup-docs` hint when it sees that. The review tools (`sql_review` /
-`dax_review`) have **no** wizard — they use bundled standards, configurable per-run
-with `--standards` / `--config`.
+appends a `/setup-docs` hint when it sees that.
 
 **How `coop` invokes it** (`bin/coop.ps1` → `Invoke-DataDoc`):
 
@@ -153,8 +117,18 @@ the independent states/revisions of formal standards, the Incremental BI
 `approved_pattern`, and governed TeamAI `team_knowledge`.
 
 Resolution precedence is project/client override, verified canonical checkout,
-verified stale last-known-good, SQL/DAX reviewer bundled fallback, then truthful
-unavailable/auth-required. Existing relative `standards.sql` and `standards.dax`
+verified stale last-known-good, the bundled copy, then truthful
+unavailable/auth-required. The resolution states are `canonical`,
+`project_override`, `stale_last_known_good`, `bundled`, `auth_required` and
+`unavailable`. The bundled copy is `config/standards-bundle/`: the wiki's active
+articles at their wiki paths plus `bundle.json` (repository, branch, revision,
+capture time, every article's sha256), written from a verified clone by
+`node lib/standards-cli.mjs bundle-update <clone>` before each release and
+checked by `bundle-check`. It is used only when it names the registry's own
+repository and branch and every listed article is present unchanged; a domain
+resolved from it carries `state=bundled`, `degraded: true` and the capture date,
+the agent is told the wiki was unreachable, and `coop doctor` warns. Its
+snapshot hash equals the canonical one for the same article bytes. Existing relative `standards.sql` and `standards.dax`
 paths in v0.23.1 project contracts remain project-local overrides without rewriting
 the contract. Project-controlled paths must resolve to regular files whose real
 paths stay inside the project root; traversal, absolute POSIX/Windows paths, and
@@ -164,23 +138,14 @@ is retrieved only for relevant semantic-model tasks and never becomes mandatory
 authority.
 
 At task start, resolved bytes are copied once into a read-only, content-addressed
-snapshot. The context reads that snapshot and the SQL/DAX reviewer receives the
-same snapshot through `--standards`; the original authority path remains in
-`source_path` for provenance. Reviewer-returned path/hash provenance is mandatory,
-and the snapshot path, realpath, and hash are rechecked before output is accepted.
-The reviewer report remains unchanged: any reviewer-owned revision claim is retained
-as a claim, while COOP records the trusted resolver's revision separately in a
-wrapper-owned `standardsBinding` after path/hash verification. A mismatch fails
-closed. Aggregate review writes into per-run files and atomically promotes only
-accepted reports; rejected output is quarantined away from canonical configured
-review paths and cannot enter docs, suite summaries, comparison baselines, or HTML.
-Bundled fallback is discovered through the installed reviewer's own JSON provenance;
-legacy top-level-version and explicit standards-revision envelopes use the same
-path/hash compatibility rule as actual review and are snapshotted the same way, so
-its real, bounded guidance is available before work rather than only after review.
-Pinned reviewer source references used to verify this contract are
-`/tmp/std-ref-sql` at `cd9bf347548375801df0abf86b13f72781e1d360` and
-`/tmp/std-ref-dax` at `fe39270168c08a6360c99aadcb51a9ad73678a65`.
+**domain snapshot**: one file per domain, the concatenation of that domain's
+articles (path order, front matter stripped) under a header that says it is not the
+standard. Its SHA-256 is the domain's resolution identity (task pins, provenance);
+the original authority path remains in `source_path`. The snapshot path, realpath
+and hash are rechecked when it is read, and a mismatch fails closed. The agent
+receives the articles themselves, not the snapshot, and its self-check binds to the
+same resolution, so what it wrote against and what it checks against cannot drift
+mid-task.
 
 The canonical remote is the private `https://github.com/cooptimize/coop-standards.git`
 repository. Only its configured authoritative/default `main` branch is consumed. Coop
@@ -189,8 +154,8 @@ reads it as the Obsidian wiki it is: each Markdown article with front matter and
 (`sql`; `powerbi` → `dax` for `dax_expression`/`measure`, else `semantic_model`; any other
 domain keeps its name). `standards.yml`, `standards/*.md`, `scripts/`, and `deprecation/`
 are never read. Tasks receive the relevant articles whole, each with path, SHA-256 and
-revision; the SQL/DAX reviewers' single `--standards` file is a reviewer-input copy of the
-domain's articles (path order, front matter stripped) built in Coop's snapshot storage.
+revision; the domain snapshot above is built in Coop's snapshot storage from the same
+articles.
 Coop performs a bounded, noninteractive, fail-soft refresh at launch and before applicable
 work when the last successful check is at least 15 minutes old; `coop sync` forces a
 check. A verified change stages and durably validates one complete immutable generation,
@@ -199,35 +164,12 @@ Invalid, partial, offline, authentication-failed, or lock-timeout refreshes pres
 prior verified generation as degraded/stale last-known-good. Refreshes use one
 cross-process lock, but Monday P0 never guesses that an old or malformed lock is safe
 to recover: it does not steal, rename, or delete uncertain locks. A crash-abandoned lock
-requires later/manual cleanup. Canonical and accepted-review generations are not pruned
+requires later/manual cleanup. Canonical generations are not pruned
 and readers use no leases; bounded cleanup and disk-growth management are deferred beta
-limitations. Each task uses immutable content-addressed snapshots, so generation and
-SQL/DAX review retain one path, commit and SHA-256 even if a later refresh lands during
-that task. Accepted SQL+DAX review generations also retain captured report bytes,
-COOP-owned bindings, and independently revalidated authority provenance behind one
-atomic pointer. Doctor and Support report source, branch, successful check/sync times,
-commit, SHA-256, freshness, degraded state and per-domain fallback truthfully.
-
-### `sql_review` / `dax_review`
-
-| Param | Type | Notes |
-|-------|------|-------|
-| `paths` | `string[]` (optional) | Files/dirs to check. When omitted, the nearest `.coop/project.yml`'s `repositories.*.local_path` entries scope the review (TODO placeholders and paths missing on this machine are skipped with a note); only with no usable contract does it fall back to `["."]`. Explicit paths always win. The scope used is surfaced in the result (`details.scope` + a `Scope:` line). |
-| `min_severity` | `"error" \| "warning" \| "info"` (optional) | Maps to `--min-severity`. |
-| `strict` | `boolean` (optional, default false) | Maps to `--strict` (CI gate). |
-
-Invocation (built in `runReview`):
-`<bin> check <paths…> --format json [--min-severity <s>] [--strict]`, run with
-`pi.exec(bin, args, { cwd: ctx.cwd, signal })`.
-
-Result:
-
-- `content[0].text` — e.g.
-  `coop-sql-review: 3 finding(s) — 1 error, 2 warning, 0 info (exit 0). Full structured report is in this tool result's details.`
-  (the advisory default exits `0` even with findings; `--strict` exits `2` when errors are present)
-- `details` — `{ tool, args, exitCode, report: <parsed JSON or raw stdout>, stderr }`.
-- If the binary is missing or JSON won't parse, it reports the problem in
-  `content` (not a conversation error) and still returns `details`.
+limitations. Each task uses immutable content-addressed snapshots, so a task retains one
+path, commit and SHA-256 even if a later refresh lands during it. Doctor and Support
+report source, branch, successful check/sync times, commit, SHA-256, freshness and
+degraded state per domain truthfully.
 
 ### `bpa_review` (Tabular Editor)
 
@@ -250,8 +192,6 @@ failures, or rule evaluation errors are reported as incomplete/failed analysis.
 Raw stdout/stderr and the invoked arguments remain in `details`. Missing TE
 configuration returns a setup hint. Legacy `TabularEditor.exe` keeps its
 `<model> -A <rules> -V` invocation and requires an explicit rule file.
-The `coop review` command also accepts an unset rule path for TE's built-in rules
-and preserves the current JSON severity labels and object names.
 
 ### `data_doc`
 
@@ -310,6 +250,43 @@ unchanged. Silent when the contract has no usable target.
 There is deliberately no data-doc `session_start` hook: missing or unbuilt docs
 stay silent, and users opt into setup later with `/setup-docs`, `/start`, or
 `coop data-doc setup`.
+
+### `sql_impact` (live impact tracing)
+
+Read-only live impact tracing for one SQL object (master plan section 8 item 4,
+row SQ4), implemented by `lib/sql_impact.py` over the same connection path as
+`fabric_sql_query` (`open_connection` in `lib/sql_query.py`: the contract's ready
+dev or test `sql_targets` default, or the managed Fabric target when the contract
+has no `sql_targets`; same identity pinning, driver, encryption and timeouts). The
+tool accepts exactly one field, `object` (`schema.name` or `name`, `dbo` assumed,
+brackets allowed, identifier characters only), and runs three fixed, parameterized
+catalog queries with the name bound through `OBJECT_ID(?)`, never spliced in:
+
+| Section | Query | Notes |
+| --- | --- | --- |
+| `downstream` | `sys.dm_sql_referencing_entities(?, 'OBJECT')` joined to `sys.objects` | who references the object, resolved at call time |
+| `upstream` | `sys.sql_expression_dependencies` for the object's referenced entities, joined to `sys.objects` | each item carries `resolved`; an unresolved or ambiguous one (dropped, cross-database) adds `mentioned_in_definition` from a `sys.sql_modules` `LIKE` check |
+| `columns` | `INFORMATION_SCHEMA.COLUMNS` | name, type, nullability, position, so a before/after comparison knows what to count |
+
+Each section is `{"state": "ok", "items": [...], "count", "truncated"}` or
+`{"state": "unavailable", "reason": ...}` when that catalog view is missing on the
+target (Synapse serverless never exposes `sys.dm_sql_referencing_entities`, so its
+`downstream` section says so without asking the server), so an empty list always
+means "no dependents" and never "could not look". Dependencies are capped at 500
+per section and columns at 1000. The result also carries the executor's `target`
+summary and the resolved `object` (schema, name, type); `object_not_found`,
+`object_invalid` and `input_invalid` are the tool's own states, every other state is
+the executor's. Driver error text, hosts and tokens never appear.
+
+Governance (`extensions/coop-guardrails`): `sql_impact` is a metadata read, so it
+runs without a prompt when the trusted contract snapshot resolves a dev or test
+target (the ready `sql_targets` default, or the managed Fabric entry's environment
+without `sql_targets`); a production or unresolved target asks once per call (and
+is blocked headlessly); a call carrying any field beyond `object` is blocked. The
+audit records a fixed label and the environment, never the object name. The tool's
+text output adds a `data_doc` lineage hint when built docs exist in the folder, and
+the `impact-analysis` prompt and the `coop-workflow` skill call `sql_impact` before
+any live SQL edit.
 
 ---
 
@@ -386,6 +363,52 @@ Per `.coop/project.yml` and `docs/guardrails.md`:
 `coop` **never** calls create/update/delete/deploy/publish MCP actions without
 explicit approval — regardless of what the server is capable of.
 
+### SQL connection targets (`sql_targets:` in the project contract)
+
+`.coop/project.yml` can name every SQL environment an engagement reaches and which
+one coop works on (master plan section 8 item 1, row SQ1). `lib/sql_targets.py`
+is the one reader (`doctor-lines`, `show`, `default`; `--project <yml>` or the
+nearest contract), dependency-free like the rest of `lib/`:
+
+```yaml
+sql_targets:
+  default_environment: dev      # dev or test; never prod
+  dev:
+    kind: azure_sql             # fabric_warehouse | fabric_lakehouse | fabric_sql_database | azure_sql | synapse_serverless
+    server: contoso-dev.database.windows.net
+    database: ContosoDW
+  test:
+    kind: fabric_warehouse
+    workspace_id: <guid>        # Fabric kinds carry ids; coop discovers the host
+    item_id: <guid>             # (fabric_lakehouse also needs sql_endpoint_id)
+    database: SalesWarehouse    # the Warehouse / Lakehouse item name
+  prod:
+    kind: azure_sql
+    server: contoso.database.windows.net
+    database: ContosoDW
+```
+
+| `kind` | Host the entry must name (or discovery must return) | Connect timeout |
+| --- | --- | --- |
+| `fabric_warehouse`, `fabric_lakehouse` | `*.datawarehouse.fabric.microsoft.com` (discovered from `workspace_id` / `item_id`; a hand-written `server` is rejected) | 15 s |
+| `fabric_sql_database` | `*.database.fabric.microsoft.com` | 15 s |
+| `azure_sql` | `*.database.windows.net` (serverless compute auto-pauses, so the first connection after idle can take up to a minute) | 60 s |
+| `synapse_serverless` | `*-ondemand.sql.azuresynapse.net` (views and external objects only) | 15 s |
+
+Rules the reader enforces: the host pattern must match the kind, so a production
+host cannot hide behind a dev kind and a Fabric host cannot pass as Azure SQL;
+`prod` may be present but is never the default; an entry with blank values is
+"unconfigured" (a doctor warning, not an error) so a wizard can leave
+placeholders; credential keys (`user`, `password`, `connection_string`, ...) make
+the entry invalid because coop authenticates with Entra ID tokens only. `coop doctor`
+prints one Project-contract row per entry (the ready default is marked) and one
+warning per rule broken. `/setup-project` proposes the dev entry's kind from the
+machine's client platform (SQ7) and the Fabric answer, writes the dev entry, and
+leaves `test` / `prod` to fill in; editing an existing contract touches only the
+dev entry. The SQL executor and the guardrails' resolved scope read this section
+in the later SQ rows; until then the managed `fabric-sqlendpoint` target below
+still comes from `fabric.default_sql_endpoint`.
+
 ### Managed Warehouse SQL endpoint MCP
 
 `coop sync` generates `fabric-sqlendpoint` as a distinct managed server; it does
@@ -440,11 +463,25 @@ expansion retains the earlier grant; revocation and a new session clear it.
 
 The preferred live SQL route is that managed MCP server. Coop also registers exactly
 one explicit fallback, `fabric_sql_query`, implemented by the new consolidated
-`lib/fabric_sql_query.py` helper (no historical standalone runner was recovered).
+`lib/sql_query.py` helper (renamed from `fabric_sql_query.py`; it also serves Azure SQL, Fabric SQL database and Synapse serverless targets declared in `sql_targets:`).
 The tool accepts only `query` plus optional `maximum_rows`; target, server, identity,
-and credentials come from the canonical project/managed MCP snapshot and selected
-Fabric Python (`coop_fabric_python` / `Get-CoopFabricPython`). It never cascades from
-MCP automatically. It accepts one plain literal-`TOP` `SELECT`, rejects mutations,
+and credentials come from the contract and the selected Fabric Python
+(`coop_fabric_python` / `Get-CoopFabricPython`). When the contract declares
+`sql_targets:` (row SQ2), the executor connects to its ready default entry: a
+direct kind (`azure_sql`, `fabric_sql_database`, `synapse_serverless`) connects to
+the contract's `server` with that kind's connect timeout (60 s for Azure SQL, whose
+serverless tier auto-pauses; 15 s otherwise) and mints only the
+`database.windows.net` token; an `azure_sql` entry with `read_scale_replicas: true`
+adds `ApplicationIntent=ReadOnly`. A discovered kind (`fabric_warehouse`,
+`fabric_lakehouse`) runs the same Fabric REST discovery as the managed target, from
+the contract's ids. A production entry is never selected, and a contract whose
+default entry is unconfigured or invalid returns `target_invalid` before any mint.
+Without `sql_targets:` the executor falls back to the canonical project/managed MCP
+snapshot as before. The `ok` result carries a `target` summary (`environment`,
+`kind`, `database`; never the host). On a machine with no managed Warehouse server
+(an Azure SQL-only install), the launch token helper mints the SQL audience for the
+contract's tenant chain so the executor still has a launch identity to pin to.
+It never cascades from MCP automatically. It accepts one plain literal-`TOP` `SELECT`, rejects mutations,
 batches, cross-database names, and unbounded reads before authentication, and returns
 capped structured JSON. Endpoint discovery uses Fabric's documented item APIs:
 Warehouse `GET /v1/workspaces/{workspaceId}/warehouses/{warehouseId}` reads
@@ -461,7 +498,10 @@ a short subprocess and then starts that Python executable directly, so cancellat
 targets the query process. SQL and tokens are
 never placed in argv, config, disk, logs, or diagnostics. The exact fallback tool may
 reuse the same in-memory session grant as MCP only when its canonical
-client/tenant/principal/environment/target/read/row/60-second scope matches.
+client/tenant/principal/environment/target/read/row/60-second scope matches. With a
+contract `sql_targets:` section the guardrails resolve that scope from the trusted
+contract snapshot (row SQ3; `docs/guardrails-reference.md`), so the approval prompt
+names the entry the executor connects to and never the managed Warehouse.
 
 ### Microsoft skills catalog
 
@@ -474,5 +514,13 @@ Each approved skill has a committed tree SHA-256. Every launch recomputes the
 actual exported tree receipt and full generation content address, and rejects
 pointer, repository, revision, path, receipt, or generation rewrites that do not
 match that committed authority.
-Baseline loads Microsoft KQL, Microsoft Docs, and Fabric SQL DW authoring and
-consumption skills only; `sqldw-operations-cli` is recorded as deferred.
+Baseline loads Microsoft KQL, Microsoft Docs, and every skill in the pinned
+skills-for-fabric catalog (v0.3.18) when a contract turns Fabric skills on,
+including `sqldw-cli` for Fabric Warehouse and Lakehouse SQL (its authoring,
+consumption and operations guidance in one skill; the older
+`sqldw-operations-cli` name no longer exists) and `sqldb-cli` for Fabric SQL
+database (`fabric_sql_database` in `sql_targets:`). Neither covers Azure SQL
+Database or Synapse serverless outside Fabric: for those kinds the resolved SQL
+standards (fed into context at launch) and the `coop-workflow` guidance are the
+authority, and no Microsoft skill is substituted (master plan section 8 item 6,
+row SQ6).

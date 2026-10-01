@@ -29,6 +29,10 @@ assert.ok(skill.includes("Only after the passing check completes"), "skill delay
 assert.ok(skill.includes("assumptions were invalidated"), "skill checks assumptions after the slice");
 assert.ok(skill.includes("explain what happened"), "skill requires post-slice explanation");
 assert.ok(skill.includes("Live-data tests between slices"), "skill documents live-data test hook");
+assert.ok(skill.includes("### Verify with data (SQL slices)"), "skill makes verify-with-data concrete for SQL (SQ5)");
+assert.ok(skill.includes("re-run exactly the same queries"), "skill re-runs the baseline queries after the edit");
+assert.match(skill, /writes go only to the\s+default dev target/, "skill confines verify writes to dev");
+assert.match(skill, /never a verify\s+target/, "skill keeps production out of verification");
 assert.ok(skill.includes("tests.live_data.enabled"), "skill references the config key");
 assert.ok(skill.includes("/slice-next"), "skill references the /slice-next prompt");
 assert.ok(skill.includes("resolved standards task authority"), "workflow uses the resolved standards authority abstraction");
@@ -41,6 +45,7 @@ assert.ok(prompt.includes("capture a baseline"), "prompt asks for baseline befor
 assert.ok(prompt.includes("exact data condition"), "prompt asks for exact data condition");
 assert.ok(prompt.includes("specific query/measure/command"), "prompt asks for specific live-data test");
 assert.ok(prompt.includes("Passing check after"), "prompt asks for passing check after");
+assert.ok(prompt.includes("Verify with data"), "prompt asks for the before/after data queries (SQ5)");
 assert.ok(prompt.includes("Why this slice now"), "prompt asks for why this slice now");
 assert.ok(prompt.includes("Assumptions I’m making"), "prompt asks for assumptions");
 assert.ok(prompt.includes("What would prove this slice wrong"), "prompt asks for early-warning signals");
@@ -77,8 +82,6 @@ for (const [name, text] of [["example", example], ["fallback", fallback]]) {
 const agentDocs = [
   "AGENTS.md",
   "docs/architecture.md",
-  "skills/sql-review/SKILL.md",
-  "skills/dax-review/SKILL.md",
   "skills/fabric-workspace-review/SKILL.md",
 ].map((path) => [path, readFileSync(join(ROOT, path), "utf8")]);
 for (const [path, content] of agentDocs) {
