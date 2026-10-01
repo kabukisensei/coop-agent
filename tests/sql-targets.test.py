@@ -104,6 +104,15 @@ assert target(kind="azure_sql", server="x.database.windows.net", database="d", p
 assert target(kind="azure_sql", server="x.database.windows.net", database="d", connection_string="s").state == "invalid"
 assert target(kind="azure_sql", server="x.database.windows.net", database="d", colour="blue").state == "invalid"
 assert st.parse_target("dev", "just a string").state == "invalid"
+
+# --- read_scale_replicas: azure_sql only; the no-PyYAML reader hands it over as text
+AZ = dict(kind="azure_sql", server="x.database.windows.net", database="d")
+assert target(**AZ, read_scale_replicas=True).read_scale_replicas is True
+assert target(**AZ, read_scale_replicas="true").read_scale_replicas is True
+assert target(**AZ, read_scale_replicas="False").read_scale_replicas is False
+assert target(**AZ, read_scale_replicas="yes").state == "invalid"
+assert target(**AZ, read_scale_replicas=1).state == "invalid"
+assert target(kind="synapse_serverless", server="ws-ondemand.sql.azuresynapse.net", database="d", read_scale_replicas="true").state == "invalid"
 listy = section({"default_environment": "dev", "dev": {"kind": "azure_sql", "server": "x.database.windows.net", "database": "d"}, "staging": {}})
 assert any("unknown entries (staging)" in e for e in listy.errors)
 assert section([]).errors == ["sql_targets must be a mapping"]
