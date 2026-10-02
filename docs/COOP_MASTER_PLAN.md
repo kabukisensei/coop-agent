@@ -1199,9 +1199,10 @@ Rules that hold across every row, on top of section 2:
 test is the tripwire, and U2 re-records it. A third-party extension that relies
 on `custom()` without an RPC fallback shows nothing in the window; D1b lists the
 pinned extensions' RPC behavior and opens the session in a terminal for any gap.
-The runtime's npm install downloads about 140 MB (Electron and pdf.js) into the
-window's runtime tree on each machine that runs `coop desktop`; the lockfile
-carries each package's integrity and Electron carries the binary's checksums. An OV
+The runtime's npm install downloads about 150 MB (Electron and pdf.js) and
+unpacks to about 400 MB in the window's runtime tree on each machine that runs
+`coop desktop`; the lockfile carries each package's integrity and Electron
+carries the binary's checksums. An OV
 certificate earns SmartScreen reputation over downloads rather than instantly;
 D1f records what the first teammate sees.
 

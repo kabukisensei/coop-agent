@@ -3034,7 +3034,7 @@ function Install-CoopDesktopRuntime {
     Coop-Warn "could not prepare $dir`: $($_.Exception.Message)"
     return $false
   }
-  Coop-Info "installing the coop window runtime (Electron $pin and pdf.js $pdfPin, about 140 MB) into $dir"
+  Coop-Info "installing the coop window runtime (Electron $pin and pdf.js $pdfPin, about 150 MB to download and 400 MB on disk) into $dir"
   $previousEap = $ErrorActionPreference
   $out = @()
   $rc = 1
