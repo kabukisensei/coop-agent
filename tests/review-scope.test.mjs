@@ -65,6 +65,18 @@ t("scalarValue handles quotes, '' escapes and # comments", () => {
   assert.equal(scalarValue(` ./d   # c`), "./d");
 });
 
+t("scalarValue decodes the YAML escapes coop-data-doc writes for non-ASCII values", () => {
+  // coop-data-doc 1.3.0 writes every non-ASCII character as \uXXXX (row 11a, Windows check).
+  assert.equal(scalarValue(` "Entrep\\u00f4t SQL"`), "Entrepôt SQL");
+  assert.equal(scalarValue(` "Domaine \\u00dcn\\u00efcode \\u2013 \\u00c9t\\u00e9"`), "Domaine Ünïcode – Été");
+  assert.equal(scalarValue(` "\\U0001F600 \\x41"`), "😀 A");
+  assert.equal(scalarValue(` "C:\\\\data\\"docs\\"\\tx"`), 'C:\\data"docs"\tx');
+  assert.equal(scalarValue(` "bad \\u12 end"`), "bad u12 end"); // malformed escape: no throw
+  const cfg = parseExisting('project_name: "Mod\\u00e8le"\nrepos:\n  sql:\n    path: "./Entrep\\u00f4t SQL"\n');
+  assert.equal(cfg.projectName, "Modèle");
+  assert.equal(cfg.sqlPath, "./Entrepôt SQL");
+});
+
 // --- project-contract review scoping (issue #25) -----------------------------
 
 t("contractRepoPaths: filled paths extracted, TODO placeholders reported", () => {

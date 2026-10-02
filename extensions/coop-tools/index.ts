@@ -505,16 +505,34 @@ export function builtLineageDir(cwd: string, env: Record<string, string | undefi
   }
 }
 
+/** YAML double-quoted single-character escapes (YAML 1.2, 5.7). */
+const YAML_ESCAPES: Record<string, string> = {
+  "0": "\0", a: "\x07", b: "\b", t: "\t", "\t": "\t", n: "\n", v: "\v", f: "\f", r: "\r", e: "\x1b",
+  " ": " ", '"': '"', "/": "/", "\\": "\\", N: "\x85", _: "\xa0", L: " ", P: " ",
+};
+const YAML_HEX_ESCAPES: Record<string, number> = { x: 2, u: 4, U: 8 };
+
 /** Read just the scalar value off a `key: value` line, quote- and comment-aware.
- *  Handles double-quote backslash escapes and single-quote '' → ' the way YAML
- *  does, and only treats '#' as a comment when it's whitespace-preceded. */
+ *  Handles double-quote backslash escapes (including the \xXX, \uXXXX and
+ *  \UXXXXXXXX forms coop-data-doc writes for every non-ASCII character) and
+ *  single-quote '' → ' the way YAML does, and only treats '#' as a comment when
+ *  it's whitespace-preceded. */
 export function scalarValue(afterColon: string): string {
   const s = afterColon.trim();
   if (s.startsWith('"')) {
     let out = "";
     for (let i = 1; i < s.length; i++) {
       if (s[i] === "\\") {
-        out += s[i + 1] ?? "";
+        const c = s[i + 1] ?? "";
+        const width = YAML_HEX_ESCAPES[c];
+        const hex = width ? s.slice(i + 2, i + 2 + width) : "";
+        const code = hex.length === width && /^[0-9a-fA-F]+$/.test(hex) ? parseInt(hex, 16) : NaN;
+        if (width && code <= 0x10ffff) {
+          out += String.fromCodePoint(code);
+          i += 1 + width;
+          continue;
+        }
+        out += YAML_ESCAPES[c] ?? c;
         i++;
         continue;
       }
