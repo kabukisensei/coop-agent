@@ -7,7 +7,8 @@
 # Removes (default): the PATH launcher %LOCALAPPDATA%\coop\bin\coop.cmd + that
 # dir's entry on the persistent USER PATH (registry, ExpandString-safe, with the
 # WM_SETTINGCHANGE broadcast), the Start Menu + Desktop shortcuts, coop's
-# isolated Pi agent dir (~/.coop/agent), and the tool layer: the npm-global Pi
+# isolated Pi agent dir (~/.coop/agent), the coop window's runtime and settings
+# (~/.coop/desktop), and the tool layer: the npm-global Pi
 # agent plus the pipx venvs (coop-data-doc / ms-fabric-cli, plus the retired
 # coop-sql-review / coop-dax-review venvs when an older coop left them behind).
 #
@@ -109,7 +110,7 @@ $env:PATH = (($env:PATH -split ';') | Where-Object { $_ -ne $LOCALBIN }) -join '
 # Same folders install wrote to: the shell folders, or the sandbox profile's own
 # Desktop / Start Menu for an isolated install (Get-CoopShortcutDirs).
 $removedLnk = @()
-foreach ($name in @('coop.lnk', 'coop (terminal).lnk')) {
+foreach ($name in @('coop.lnk', 'coop (window).lnk', 'coop (terminal).lnk')) {
   foreach ($dir in (Get-CoopShortcutDirs)) {
     if (-not $dir) { continue }   # special folder can be empty off-Windows
     $lnk = Join-Path $dir $name
@@ -133,6 +134,14 @@ if (-not $agentDir -or $agentDir -eq $HOME -or $agentDir -eq (Get-CoopProfileDir
   else { Coop-Warn "could not fully remove $agentDir — close any running coop/pi session and re-run" }
 } else {
   Coop-Info "no agent dir at $agentDir (already gone)"
+}
+
+# --- 3b. The coop window's runtime and data (<profile dir>\desktop) -------------
+$desktopDir = Get-CoopDesktopDir
+if (Test-Path -LiteralPath $desktopDir) {
+  Remove-Item -LiteralPath $desktopDir -Recurse -Force -ErrorAction SilentlyContinue
+  if (-not (Test-Path -LiteralPath $desktopDir)) { Coop-Ok "removed $desktopDir (the coop window's runtime and settings)" }
+  else { Coop-Warn "could not fully remove $desktopDir — close every coop window and re-run" }
 }
 
 # --- 4. The tool layer (skipped with --keep-tools) -------------------------------

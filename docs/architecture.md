@@ -214,6 +214,29 @@ for the Node tools and extensions; no script builds these paths inline.
    `coop` **never** performs write/create/update/delete/deploy/publish MCP
    actions without explicit approval, regardless of server capability.
 
+8. **The coop window (`coop desktop`, master plan D1b).** A second front end
+   over the same Pi, not a second agent. `coop desktop` runs the launch
+   preflight, prints nothing new into Pi's arguments, and hands the window a
+   launch spec (`coop desktop --print-spec` shows it): node, Pi's entry, the
+   folder, and the exact `Build-CoopPiArgs` arguments and environment that
+   `coop launch-spec --json` reports. The window (`desktop/`, Electron, loaded
+   in place like the extensions) runs `node <pi entry> --mode rpc <args>` with
+   no shell and draws Pi's RPC events: a timeline, the extension dialogs
+   (every guardrail approval and wizard), pickers, sessions and four themes.
+   Its renderer is sandboxed (context isolation, no Node, a strict CSP, only
+   `coop://app` files) and reaches the main process through a fixed IPC list
+   that rebuilds every RPC command field by field
+   (`desktop/lib/rpc-commands.mjs`). It never passes `--approve`, so a work
+   repo's own `.pi` files load only after a saved `/trust` decision, as in any
+   non-interactive Pi mode. Electron is pinned in the release manifest
+   (`desktop.electron`) and installed from `config/desktop-lock.json` into
+   `~/.coop/desktop/runtime` on first use; the window's own settings live in
+   `~/.coop/desktop/data`. Closing the window ends Pi and every process it
+   started. What only the terminal can show (model sign-in, `custom()` screens,
+   `/trust`) opens the same session in a terminal; `desktop/PARITY.md` maps every
+   Pi command, keybinding and extension command, and `tests/desktop.test.mjs`
+   checks it against a recorded session.
+
 ## Diagram
 
 ```mermaid

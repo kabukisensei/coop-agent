@@ -1,0 +1,157 @@
+/* The four coop window themes. Modern dark and light are flat and rounded;
+   Retro dark and light reuse the coop website's pi95 tokens (css/styles.css
+   in coop-website): Windows 95/98 bevels and gradient title bars. Colours
+   live here only; app.css uses the tokens. */
+
+:root,
+[data-theme="modern-dark"] {
+  color-scheme: dark;
+  --bg: #0f1318;
+  --panel: #13181e;
+  --surface: #171d24;
+  --surface-2: #1e2630;
+  --surface-3: #263040;
+  --field: #11161c;
+  --border: #253040;
+  --border-strong: #34414f;
+  --text: #e3e7ec;
+  --text-strong: #f4f5f7;
+  --text-muted: #9aa4b1;
+  --text-faint: #6c7785;
+  --accent: #7aaee0;
+  --accent-strong: #9cc6ee;
+  --accent-text: #0b1520;
+  --accent-soft: rgba(122, 174, 224, 0.14);
+  --accent-2: #e1b06e;
+  --success: #62c287;
+  --warning: #e8a043;
+  --danger: #ef7a5a;
+  --danger-soft: rgba(239, 122, 90, 0.12);
+  --diff-add: rgba(98, 194, 135, 0.14);
+  --diff-del: rgba(239, 122, 90, 0.14);
+  --code-bg: #0b0f14;
+  --selection: rgba(122, 174, 224, 0.35);
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  --shadow-soft: 0 2px 10px rgba(0, 0, 0, 0.25);
+  --radius: 8px;
+  --radius-lg: 14px;
+  --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "Cascadia Code", "Cascadia Mono", Consolas, "SF Mono", Menlo, ui-monospace, monospace;
+  --font-display: var(--font);
+}
+
+[data-theme="modern-light"] {
+  color-scheme: light;
+  --bg: #f6f7f9;
+  --panel: #eef1f4;
+  --surface: #ffffff;
+  --surface-2: #eef2f6;
+  --surface-3: #e2e8ef;
+  --field: #ffffff;
+  --border: #dde3ea;
+  --border-strong: #c4cdd8;
+  --text: #1c232c;
+  --text-strong: #0d1218;
+  --text-muted: #56606d;
+  --text-faint: #7d8794;
+  --accent: #2f6db3;
+  --accent-strong: #1f5a99;
+  --accent-text: #ffffff;
+  --accent-soft: rgba(47, 109, 179, 0.1);
+  --accent-2: #9a5b18;
+  --success: #1f7a43;
+  --warning: #8a5a00;
+  --danger: #b5391d;
+  --danger-soft: rgba(181, 57, 29, 0.08);
+  --diff-add: rgba(31, 122, 67, 0.1);
+  --diff-del: rgba(181, 57, 29, 0.09);
+  --code-bg: #f3f5f8;
+  --selection: rgba(47, 109, 179, 0.22);
+  --shadow: 0 12px 32px rgba(18, 30, 45, 0.16);
+  --shadow-soft: 0 1px 6px rgba(18, 30, 45, 0.08);
+}
+
+/* Retro: pi95 tokens from the coop website, dark (default there) and Win98 silver. */
+[data-theme="retro-dark"] {
+  color-scheme: dark;
+  --bg: #0d1116;
+  --panel: #161d27;
+  --surface: #161d27;
+  --surface-2: #1f2733;
+  --surface-3: #2a3442;
+  --field: #0a0e14;
+  --border: #3a4453;
+  --border-strong: #566273;
+  --text: #d5d8db;
+  --text-strong: #ebe7e4;
+  --text-muted: #9fa4ab;
+  --text-faint: #7d838b;
+  --accent: #6a9fcc;
+  --accent-strong: #8fc0e8;
+  --accent-text: #f3f2f0;
+  --accent-soft: rgba(106, 159, 204, 0.16);
+  --accent-2: #e1b06e;
+  --success: #5db87a;
+  --warning: #e8993a;
+  --danger: #e8704f;
+  --danger-soft: rgba(232, 112, 79, 0.14);
+  --diff-add: rgba(93, 184, 122, 0.16);
+  --diff-del: rgba(232, 112, 79, 0.16);
+  --code-bg: #0a0e14;
+  --selection: #1a6fc2;
+  --shadow: 2px 2px 0 rgba(0, 0, 0, 0.5);
+  --shadow-soft: none;
+  --bevel-hi: #46586e;
+  --bevel-lo: #10151c;
+  --bevel-dark: #04060a;
+  --titlebar-from: #0d2b52;
+  --titlebar-to: #1a6fc2;
+  --titlebar-text: #f3f2f0;
+  --radius: 0;
+  --radius-lg: 0;
+  --font: Tahoma, "Segoe UI", "MS Sans Serif", Geneva, Verdana, sans-serif;
+  --font-mono: Consolas, "Cascadia Mono", "Lucida Console", "Courier New", monospace;
+  --font-display: "Silkscreen", "Courier New", monospace;
+}
+
+[data-theme="retro-light"] {
+  color-scheme: light;
+  --bg: #c8c8c8;
+  --panel: #dcdcdc;
+  --surface: #dcdcdc;
+  --surface-2: #e6e6e6;
+  --surface-3: #d0d0d0;
+  --field: #ffffff;
+  --border: #73777b;
+  --border-strong: #5c5752;
+  --text: #1a262f;
+  --text-strong: #13110f;
+  --text-muted: #44403c;
+  --text-faint: #5c5752;
+  --accent: #0d2b52;
+  --accent-strong: #000080;
+  --accent-text: #ffffff;
+  --accent-soft: rgba(0, 0, 128, 0.1);
+  --accent-2: #63392a;
+  --success: #1f5a2e;
+  --warning: #6b440a;
+  --danger: #8f3121;
+  --danger-soft: rgba(143, 49, 33, 0.1);
+  --diff-add: rgba(31, 90, 46, 0.14);
+  --diff-del: rgba(143, 49, 33, 0.13);
+  --code-bg: #ffffff;
+  --selection: #000080;
+  --shadow: 2px 2px 0 rgba(0, 0, 0, 0.3);
+  --shadow-soft: none;
+  --bevel-hi: #ffffff;
+  --bevel-lo: #73777b;
+  --bevel-dark: #000000;
+  --titlebar-from: #000080;
+  --titlebar-to: #0a5c9c;
+  --titlebar-text: #ffffff;
+  --radius: 0;
+  --radius-lg: 0;
+  --font: Tahoma, "Segoe UI", "MS Sans Serif", Geneva, Verdana, sans-serif;
+  --font-mono: Consolas, "Cascadia Mono", "Lucida Console", "Courier New", monospace;
+  --font-display: "Silkscreen", "Courier New", monospace;
+}

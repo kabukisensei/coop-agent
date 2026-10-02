@@ -5,6 +5,7 @@
 #   • create the isolated dir; share auth/models from your personal pi (login)
 #   • enable Pi's quiet startup in the isolated settings (resources still load)
 #   • converge the manifest's Pi extensions INTO that dir (Sync-CoopExtensionFleet)
+#   • refresh the coop window's Electron runtime where `coop desktop` installed it
 #   • place the read-only MCP config into the isolated dir if absent (never clobbers)
 #   • verify splash / theme / vibes are present
 #
@@ -86,6 +87,19 @@ if ($env:COOP_SKIP_FABRIC_SYNC -ne '1' -and ($env:COOP_FABRIC_PYTHON -or (Get-Co
 Coop-Info "Coop keeps its extensions in $PI_AGENT and pins the versions tested"
 Coop-Info "together with this Coop release. Your personal Pi extensions are unchanged."
 $script:SyncFailures += [int](Sync-CoopExtensionFleet -AgentDir $PI_AGENT)
+
+# --- 4c. The coop window's runtime (master plan D1b; only where installed) ----
+# `coop desktop` installs Electron on first use. Sync keeps an installed runtime
+# on this release's pin and lock and never installs one. A refresh that fails
+# (usually an open window holding electron.exe) is a warning, not a sync
+# failure: the window keeps running on the runtime it has.
+$desktopState = Get-CoopDesktopRuntimeState
+if ($desktopState -eq 'stale') {
+  Coop-Head 'coop window'
+  [void](Install-CoopDesktopRuntime)
+} elseif ($desktopState -eq 'current') {
+  Coop-Ok "coop window runtime current (Electron $(Get-CoopDesktopElectronPin))"
+}
 
 # --- 5. MCP config — manifest-pinned, ownership-aware, non-destructive --------
 # pi-mcp-adapter 3.x reads mcp-adapter.json; the generator migrates an old mcp.json.

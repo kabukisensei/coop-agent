@@ -197,7 +197,7 @@ shows anything still missing.
 | **Microsoft Fabric CLI** (`ms-fabric-cli` → `fab`) | installed via `pipx` |
 | **Power BI authoring tools** — Report Authoring CLI, Power BI Modeling MCP, and Windows-only Desktop Bridge | installed globally from manifest-pinned npm packages; Doctor requires Report Authoring and validates Modeling MCP arguments |
 | **Managed MCP entries** — `fabric`, `fabric-sqlendpoint`, `powerbi-modeling-mcp`, `azure-devops`, `microsoft-learn` | generated from Coop config with release-manifest pins; npm-backed servers use `npx`. Power BI Modeling is also installed globally. `context-mode` is a native Pi extension, not MCP. |
-| **Windows double-click launcher**: **coop** opens the terminal agent | created on the Start Menu and Desktop, starting in your home folder; `coop update` repairs older shortcuts. Purely additive: `coop` in any terminal is unchanged. An isolated install (`USERPROFILE` redirected at a sandbox folder) keeps its shortcuts inside that profile and leaves your user PATH alone |
+| **Windows double-click launcher**: **coop** opens the terminal agent | created on the Start Menu and Desktop, starting in your home folder; `coop update` repairs older shortcuts. A second shortcut, **coop (window)**, appears after your first `coop desktop`. Purely additive: `coop` in any terminal is unchanged. An isolated install (`USERPROFILE` redirected at a sandbox folder) keeps its shortcuts inside that profile and leaves your user PATH alone |
 
 > `pi-powerline-footer` is **not** used. coop renders its own footer and splash via
 > `extensions/coop-powerline` (see [Footer & splash](#footer--splash)).
@@ -221,6 +221,7 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | Command | Description |
 | --- | --- |
 | `coop` | Launch the branded Pi agent (skills, prompts, theme, guardrails, splash) |
+| `coop desktop [folder]` | Open coop in a window on a folder (default: the current one): the same Pi, arguments, guardrails and approvals as `coop`, drawn as a modern UI with four themes (Modern and Retro, dark and light). The first run installs the window's Electron runtime (about 100 MB, pinned in the release manifest, into `~/.coop/desktop`) and adds a **coop (window)** shortcut; `coop sync` keeps it current. Anything only the terminal can show opens the same session in a terminal. Master plan D1b; the parity checklist is `desktop/PARITY.md` |
 | `coop doctor [--fix] [--json] [--publish]` | Check dependencies/configuration; optionally apply safe fixes, emit JSON, or publish a fleet snapshot to `fleet.publish_dir` |
 | `coop update [--check] [--edge] [--yes] [--no-fabric]` | Move coop-agent to the newest release tag (never backwards), converge tools to that release's manifest, and run Doctor. `--edge` is the maintainer channel: head of `main` plus latest upstream; `--check` changes nothing; `--pi-latest` is a deprecated alias of `--edge` |
 | `coop support [--json] [--incident] [--export PATH]` | Offline Support Center: sanitized diagnostics, incident timeline, preview/export, and standards status; works without Pi/model availability |
