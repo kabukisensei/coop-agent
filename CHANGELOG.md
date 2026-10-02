@@ -5,6 +5,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `tests/run.sh` stops at once with one clear line when `pwsh` is on PATH but
+  cannot start (Homebrew's formula without its .NET runtime), and the extended
+  lane stops with the install command when Python has no `jsonschema`, instead
+  of failing dozens of tests one by one (seen on a release check on macOS).
+
 ## [0.27.0] — 2026-10-01
 
 ### Added
