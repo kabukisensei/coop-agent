@@ -5,8 +5,6 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
-## [0.27.0] — 2026-10-01
-
 ### Added
 
 - `coop teamai <status|install|init|pull|recall --query <text>>` (master plan
@@ -33,6 +31,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   while fetch and pull still work. Tests: `tests/teamai-adapter.test.py` (stub
   CLI, decoy `teamai` on `PATH` must never run, the guard blocks a push) and
   `tests/fixtures/teamai.test.ps1`.
+
+## [0.27.0] — 2026-10-01
+
+### Added
+
 - coop-guardrails: Power BI Desktop reload guard (S31). Before `powerbi-desktop
   reload` and before a `powerbi-report-author preview` that reloads the live
   window, coop reads `powerbi-desktop status` itself: an instance with unsaved
