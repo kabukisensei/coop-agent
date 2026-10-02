@@ -2,10 +2,17 @@
 // for Pi's terminal commands. Talks to coop only through window.coop
 // (preload.cjs); the main process checks every call again.
 import { el, icon, openModal, pickFrom, toast, modalOpen, relativeTime } from "./ui.mjs";
-import { createTimeline, applyEvent, loadMessages, startBash, finishBash, formatTokens, textOf, notice } from "./timeline.mjs";
+import { createTimeline, applyEvent, loadMessages, startBash, finishBash, formatTokens, textOf, notice, turnOf, turns } from "./timeline.mjs";
 import { createFinder } from "./find.mjs";
-import { renderItem } from "./view.mjs";
+import { renderItem, renderTurn, codeBlock } from "./view.mjs";
 import { parseInput, completions, BUILTINS, KEYS } from "./commands.mjs";
+import { registerPane, openPane, togglePane, closePane, currentPane, refreshPane, initPanes } from "./panes.mjs";
+import { mountChanges } from "./pane-changes.mjs";
+import { mountStandards } from "./pane-standards.mjs";
+import { mountProject } from "./pane-project.mjs";
+import { mountDocs } from "./pane-docs.mjs";
+import { makeResizer, sidebarMaxWidth } from "./resize.mjs";
+import { attachmentNote } from "./attach-note.mjs";
 
 const coop = window.coop;
 const $ = (id) => document.getElementById(id);
@@ -26,7 +33,8 @@ const app = {
   sessions: [],
   statuses: new Map(),
   widgets: new Map(),
-  attachments: [],
+  attachments: [], // { kind: image | text | office | pdf | pending, ... } from lib/attachments.mjs
+  vibe: "", // the tip under the splash and on the working line; a fresh one each turn
   history: [],
   historyIndex: -1,
   draft: "",
@@ -38,12 +46,20 @@ const app = {
     expandTools: false,
     toolOpen: new Map(),
     thinkingOpen: new Map(),
+    // Tool calls fold into one activity line per reply (Aaron: concise while
+    // working, expandable); activityOpen remembers each line the user opened.
+    activityFold: true,
+    activityOpen: new Map(),
     outputs: new Map(),
     outputState(key) {
       if (!this.outputs.has(key)) this.outputs.set(key, { all: false, redraw: () => {} });
       return this.outputs.get(key);
     },
     redrawOwner(toolCallId) { const owner = app.tl.toolOwner.get(toolCallId); if (owner) redraw(owner); },
+    // The timeline's links into the side pane (a tool card's file, the standards).
+    openPane: (id, options) => openPane(id, options),
+    // The working line carries the vibe, as the terminal's does.
+    workingText: () => app.vibe || "Working",
   },
 };
 
@@ -115,7 +131,12 @@ function onEvent(event) {
   const { changed, status } = applyEvent(app.tl, event);
   for (const id of changed) redraw(id);
   if (status) { renderBusy(); renderHeader(); }
-  if (event.type === "agent_settled") { refreshState(); refreshStats(); loadSessions(); }
+  if (event.type === "agent_start") freshVibe();
+  if (event.type === "agent_settled") {
+    refreshState(); refreshStats(); loadSessions();
+    // The changes pane follows coop's edits.
+    if (currentPane() === "changes") refreshPane();
+  }
   else if (event.type === "message_end" && event.message && event.message.role === "assistant") refreshStats();
 }
 
@@ -240,13 +261,17 @@ function flush() {
   app.frame = 0;
   const box = $("timeline");
   const stick = nearBottom(box);
+  const drawn = new Set();
   for (const id of app.dirty) {
-    const item = app.tl.byId.get(id);
-    if (!item) continue;
-    const node = renderItem(item, app.tl, app.prefs);
-    const old = app.nodes.get(id);
-    if (old && old.isConnected) old.replaceWith(node); else box.append(node);
-    app.nodes.set(id, node);
+    if (drawn.has(id)) continue;
+    // A run of assistant messages is one turn and one node; a change to any
+    // message in it redraws the turn (timeline.mjs turnOf).
+    const turn = turnOf(app.tl.items, id);
+    if (!turn.length) continue;
+    const node = turn[0].kind === "assistant" ? renderTurn(turn, app.tl, app.prefs) : renderItem(turn[0], app.tl, app.prefs);
+    const old = turn.map((item) => app.nodes.get(item.id)).find((known) => known && known.isConnected);
+    if (old) old.replaceWith(node); else box.append(node);
+    for (const item of turn) { app.nodes.set(item.id, node); drawn.add(item.id); }
   }
   app.dirty.clear();
   renderEmpty();
@@ -258,9 +283,9 @@ function renderTimeline() {
   const box = $("timeline");
   app.nodes.clear();
   app.dirty.clear();
-  box.replaceChildren(...app.tl.items.map((item) => {
-    const node = renderItem(item, app.tl, app.prefs);
-    app.nodes.set(item.id, node);
+  box.replaceChildren(...turns(app.tl.items).map((turn) => {
+    const node = turn[0].kind === "assistant" ? renderTurn(turn, app.tl, app.prefs) : renderItem(turn[0], app.tl, app.prefs);
+    for (const item of turn) app.nodes.set(item.id, node);
     return node;
   }));
   renderEmpty();
@@ -279,17 +304,69 @@ function jumpPrompt(direction) {
   else if (direction > 0) box.scrollTop = box.scrollHeight;
 }
 
-function renderEmpty() {
+// The brand gradient of the terminal's wordmark (coop-powerline), one colour per letter.
+const WORDMARK = "COOPTIMIZE";
+const GRADIENT = ["navy", "forest", "olive", "lime"];
+
+// The terminal's block-art logo as crisp rectangles: one <rect> per run of
+// one colour, so it scales to any window and zoom level without blur.
+function splashArt(art) {
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${art.width} ${art.height}`);
+  svg.setAttribute("class", "splash");
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", "Cooptimize");
+  for (const [y, x, length, colour] of art.runs) {
+    const rect = document.createElementNS(NS, "rect");
+    rect.setAttribute("x", x); rect.setAttribute("y", y); rect.setAttribute("width", length); rect.setAttribute("height", 1); rect.setAttribute("fill", colour);
+    svg.append(rect);
+  }
+  return svg;
+}
+
+function wordmark() {
+  return el("div", { class: "wordmark", "aria-label": "Cooptimize" }, [...WORDMARK].map((letter, i) =>
+    el("span", { class: `brand-${GRADIENT[Math.min(GRADIENT.length - 1, Math.round((i / (WORDMARK.length - 1)) * (GRADIENT.length - 1)))]}`, text: letter })));
+}
+
+function vibeLine() {
+  return el("div", { class: "vibe" }, el("span", { class: "vibe-mark", "aria-hidden": "true", text: "\u2b21" }), el("span", { text: app.vibe }));
+}
+
+/** The splash on an empty conversation: the logo, wordmark, tagline and a vibe, as the terminal opens. */
+function renderEmpty({ fresh = false } = {}) {
   const box = $("timeline");
   const empty = box.querySelector(".empty");
   if (app.tl.items.length) { if (empty) empty.remove(); return; }
-  if (empty) return;
+  if (empty && !fresh) return;
+  if (empty) empty.remove();
+  const art = app.info && app.info.splash && app.info.splash.width ? splashArt(app.info.splash) : null;
   const start = el("button", { type: "button", class: "btn primary", text: "Open the Start menu", onclick: () => sendPrompt("/start") });
+  const link = (id, label, glyph) => el("button", { type: "button", class: "btn ghost", onclick: () => openPane(id) }, icon(glyph), el("span", { text: label }));
   box.append(el("div", { class: "empty" },
-    el("div", { class: "empty-mark" }, icon("spark")),
-    el("h1", { text: "What are we working on?" }),
-    el("p", { text: `coop is ready in ${app.info ? app.info.folder : "this folder"}. Ask a question, type / for commands, or start from a common task.` }),
-    start));
+    art,
+    wordmark(),
+    el("p", { class: "tagline", text: "worker-owned analytics engineering" }),
+    el("p", { class: "tagline dim", text: "Microsoft Fabric \u00b7 Power BI \u00b7 D365 \u00b7 SQL \u00b7 DAX" }),
+    app.vibe ? vibeLine() : null,
+    el("p", { class: "lead", text: `coop is ready in ${app.info ? app.info.folder : "this folder"}. Ask a question, type / for commands, or pick a common task from the Start menu.` }),
+    start,
+    el("div", { class: "empty-links" },
+      link("changes", "Changes", "diff"),
+      link("standards", "Standards", "shield"),
+      link("project", "Project settings", "form"),
+      link("docs", "Lineage docs", "graph"))));
+}
+
+/** A new vibe for this turn (or set, after /coop-vibe <set>); the splash and the working line follow. */
+async function freshVibe(set = "") {
+  const result = await coop.vibe(set);
+  if (!result || !result.success) { if (set && result && result.error) toast(result.error, "warning"); return; }
+  app.vibe = String(result.data || "");
+  renderStatus();
+  renderEmpty({ fresh: true });
+  if (app.tl.current) redraw(app.tl.current);
 }
 
 function rerenderAll() {
@@ -332,8 +409,8 @@ function pushHistory(text) {
 }
 
 async function sendPrompt(text, { followUp = false } = {}) {
-  const images = app.attachments.map((image) => ({ type: "image", data: image.data, mimeType: image.mimeType }));
-  const input = { type: "prompt", message: text };
+  const images = app.attachments.filter((file) => file.kind === "image").map((image) => ({ type: "image", data: image.data, mimeType: image.mimeType }));
+  const input = { type: "prompt", message: text + attachmentNote(app.attachments) };
   if (images.length) input.images = images;
   if (app.tl.busy) input.streamingBehavior = followUp ? "followUp" : "steer";
   pushHistory(text);
@@ -349,7 +426,11 @@ async function submit({ followUp = false } = {}) {
   const text = prompt().value;
   if (!text.trim() && !app.attachments.length) return;
   if (!app.running) { toast("coop is not running in this window. Restart it first.", "warning"); return; }
+  if (app.attachments.some((file) => file.kind === "pending")) { toast("Still reading an attached file; one moment.", "info"); return; }
   const parsed = parseInput(text);
+  // /coop-vibe <set> changes Pi's pool in the terminal; the window's own pool follows.
+  const vibe = /^\/coop-vibe(?:\s+(\S+))?\s*$/.exec(text.trim());
+  if (vibe) freshVibe(vibe[1] || "");
   if (parsed.kind === "builtin") {
     pushHistory(text);
     clearPrompt();
@@ -517,26 +598,103 @@ function readImage(file) {
   });
 }
 
-async function addImages(files) {
+function attachLimits() {
+  return (app.info && app.info.attachLimits) || { perMessage: 10, images: 5 };
+}
+
+function modelReadsImages() {
   const model = app.state && app.state.model;
   if (model && Array.isArray(model.input) && !model.input.includes("image")) {
     toast(`${model.name || model.id} does not read images. Pick another model to attach one.`, "warning");
-    return;
+    return false;
   }
+  return true;
+}
+
+function roomFor(kind) {
+  const limits = attachLimits();
+  if (app.attachments.length >= limits.perMessage) { toast(`${limits.perMessage} files at most per message.`, "warning"); return false; }
+  if (kind === "image" && app.attachments.filter((file) => file.kind === "image").length >= limits.images) { toast(`${limits.images} images at most per message.`, "warning"); return false; }
+  return true;
+}
+
+/** Images pasted from the clipboard (a screenshot: no path), read here. */
+async function addImages(files) {
+  if (!files.length || !modelReadsImages()) return;
   for (const file of files) {
-    if (app.attachments.length >= 5) { toast("Five images at most per message.", "warning"); break; }
+    if (!roomFor("image")) break;
     const image = await readImage(file);
-    if (image) app.attachments.push(image);
+    if (image) app.attachments.push({ kind: "image", ...image });
   }
   renderAttachments();
+}
+
+/** Files on disk (dropped, pasted from Explorer, or picked): the main process reads each one. */
+async function addPaths(paths) {
+  for (const path of paths) {
+    if (!path) continue;
+    if (!roomFor(/\.(png|jpe?g|gif|webp)$/i.test(path) ? "image" : "file")) break;
+    if (/\.(png|jpe?g|gif|webp)$/i.test(path) && !modelReadsImages()) continue;
+    const pending = { kind: "pending", name: path.split(/[\\/]/).pop() };
+    app.attachments.push(pending);
+    renderAttachments();
+    const result = await coop.attachFile(path);
+    const index = app.attachments.indexOf(pending);
+    if (index < 0) { if (result.success && result.data.id) coop.forgetAttachment(result.data.id); continue; }
+    if (result.success) {
+      const file = result.data;
+      if (file.kind === "image") file.url = `data:${file.mimeType};base64,${file.data}`;
+      app.attachments.splice(index, 1, file);
+    } else {
+      app.attachments.splice(index, 1);
+      toast(result.error || `${pending.name} could not be attached.`, "warning");
+    }
+    renderAttachments();
+  }
+}
+
+/** Dropped or pasted File objects: by path when they have one, else as image data. */
+function addFiles(files) {
+  const paths = [];
+  const blobs = [];
+  for (const file of files) {
+    const path = coop.pathForFile(file);
+    if (path) paths.push(path);
+    else if (file.type.startsWith("image/")) blobs.push(file);
+    else toast(`${file.name || "That"} has no file on disk to read; save it first.`, "warning");
+  }
+  if (blobs.length) addImages(blobs);
+  if (paths.length) addPaths(paths);
+}
+
+async function pickFiles() {
+  const result = await coop.pickFiles();
+  if (result && result.success && result.data.length) addPaths(result.data);
+}
+
+function removeAttachment(index) {
+  const [file] = app.attachments.splice(index, 1);
+  if (file && file.id) coop.forgetAttachment(file.id);
+  renderAttachments();
+}
+
+function attachmentDetail(file) {
+  if (file.kind === "pending") return "reading";
+  if (file.kind === "text") return `${file.ref}`;
+  return `${file.label}, ${file.detail}${file.truncated ? ", cut at the limit" : ""}`;
 }
 
 function renderAttachments() {
   const box = $("attachments");
   box.hidden = !app.attachments.length;
-  box.replaceChildren(...app.attachments.map((image, index) => el("div", { class: "attachment" },
-    el("img", { src: image.url, alt: image.name }),
-    el("button", { type: "button", class: "btn icon", title: "Remove", onclick: () => { app.attachments.splice(index, 1); renderAttachments(); } }, icon("close", "Remove")))));
+  box.replaceChildren(...app.attachments.map((file, index) => {
+    const remove = el("button", { type: "button", class: "btn icon", title: "Remove", onclick: () => removeAttachment(index) }, icon("close", "Remove"));
+    if (file.kind === "image") return el("div", { class: "attachment", title: file.name }, el("img", { src: file.url, alt: file.name }), remove);
+    return el("div", { class: `attachment file ${file.kind}`, title: file.path || file.name },
+      file.kind === "pending" ? el("span", { class: "spinner" }) : icon("file"),
+      el("span", { class: "attachment-text" }, el("span", { class: "attachment-name", text: file.name }), el("span", { class: "attachment-detail", text: attachmentDetail(file) })),
+      remove);
+  }));
 }
 
 function biggerEditor() {
@@ -577,11 +735,12 @@ function renderBusy() {
   document.body.classList.toggle("busy", busy);
   $("stopButton").hidden = !(busy || app.bashItem);
   $("queueButton").hidden = !busy;
-  $("sendButton").replaceChildren(icon("send"), el("span", { text: busy ? "Steer" : "Send" }));
-  $("sendButton").title = busy ? "Send now and steer coop (Enter)" : "Send (Enter)";
+  $("sendButton").replaceChildren(icon("send"), el("span", { text: busy ? "Send now" : "Send" }));
+  $("sendButton").title = busy ? "Send now, while coop works (Enter)" : "Send (Enter)";
+  $("queueButton").title = "Wait until coop finishes (Alt+Enter)";
   $("composerHint").textContent = busy
-    ? "Enter steers now, Alt+Enter queues it for when coop finishes, Esc stops"
-    : app.bashItem ? "A shell command is running; Esc stops it" : "Enter to send, Shift+Enter for a new line, / for commands, ! runs a shell command";
+    ? "Enter sends it to coop mid-task, Alt+Enter waits until coop finishes, Esc stops"
+    : app.bashItem ? "A shell command is running. Esc stops it" : "Enter sends, Shift+Enter adds a line, / lists commands, ! runs a shell command";
   prompt().disabled = !app.running;
   const queue = app.tl.queue;
   const queued = [...queue.steering.map((text) => ["Steering", text]), ...queue.followUp.map((text) => ["Queued", text])];
@@ -605,7 +764,8 @@ function renderStatus() {
   if (stats && stats.tokens) parts.push(el("span", { class: "status-item", title: "Tokens this session: in / out", text: `${formatTokens(stats.tokens.input)} in, ${formatTokens(stats.tokens.output)} out` }));
   if (stats && Number(stats.cost) > 0) parts.push(el("span", { class: "status-item", text: `$${Number(stats.cost).toFixed(2)}` }));
   for (const [key, text] of app.statuses) parts.push(el("span", { class: "status-item ext", title: key, text }));
-  const left = el("span", { class: "status-left" }, el("span", { class: "status-item status-brand", text: `coop${app.info && app.info.version ? ` v${app.info.version}` : ""}` }), el("span", { class: "status-item", text: app.running ? (app.tl.busy ? "Working" : "Ready") : "Stopped" }));
+  const left = el("span", { class: "status-left" }, el("span", { class: "status-item status-brand", text: `coop${app.info && app.info.version ? ` v${app.info.version}` : ""}` }), el("span", { class: "status-item", text: app.running ? (app.tl.busy ? "Working" : "Ready") : "Stopped" }),
+    app.running && app.tl.busy && app.vibe ? el("span", { class: "status-item vibe", title: app.vibe }, el("span", { class: "vibe-mark", "aria-hidden": "true", text: "\u2b21" }), el("span", { text: app.vibe })) : null);
   bar.replaceChildren(left, el("span", { class: "status-right" }, parts));
 }
 
@@ -930,6 +1090,8 @@ function hotkeys() {
     // The tree view's own controls are listed in that view, not here.
     ...Object.entries(KEYS).filter(([id, k]) => !id.startsWith("app.tree.") && k.keys && k.keys !== "native" && k.keys !== "terminal").map(([, k]) => [k.keys, k.does]),
     ["Ctrl+= / Ctrl+-", "Zoom in or out (Ctrl+0 resets)"],
+    // The side pane is the window's own; it has no terminal key to map.
+    ...Object.values(ACTIONS).filter((action) => action.pane && action.keys).map((action) => [action.keys, action.label]),
   ];
   const seen = new Set();
   const unique = rows.filter(([keys, does]) => { const key = `${keys}|${does}`; if (seen.has(key)) return false; seen.add(key); return true; });
@@ -963,6 +1125,11 @@ const ACTIONS = {
   theme: { label: "Theme", run: () => chooseTheme() },
   folder: { label: "Open a folder in a new window", run: () => openFolder() },
   start: { label: "Start menu: common tasks", run: () => sendPrompt("/start") },
+  changes: { label: "Changes since the last commit", keys: "Ctrl+Shift+D", pane: true, run: () => openPane("changes") },
+  standards: { label: "Standards coop applies here", keys: "Ctrl+Shift+S", pane: true, run: () => openPane("standards") },
+  project: { label: "Project settings (.coop/project.yml)", pane: true, run: () => openPane("project") },
+  docs: { label: "Lineage docs: set up, build, read", pane: true, run: () => openPane("docs") },
+  pane: { label: "Show or hide the side pane", keys: "Ctrl+\\", pane: true, run: () => togglePane(app.lastPane) },
 };
 
 async function runAction(id, arg = "", name = "") {
@@ -1047,8 +1214,15 @@ async function cycleModel() {
 function onGlobalKey(event) {
   const ctrl = event.ctrlKey || event.metaKey;
   const key = event.key.toLowerCase();
-  if (event.key === "Escape" && !modalOpen()) { interrupt(); return; }
+  const inPane = event.target instanceof Element && event.target.closest("#pane");
+  if (event.key === "Escape" && !modalOpen()) {
+    // Esc in the side pane leaves it (a field keeps its own Esc); it never stops coop.
+    if (inPane) { if (!event.target.matches("input, select, textarea")) { closePane(); prompt().focus(); } return; }
+    interrupt();
+    return;
+  }
   if (modalOpen()) return;
+  if (ctrl && !event.shiftKey && !event.altKey && (event.key === "\\" || event.code === "Backslash")) { event.preventDefault(); togglePane(app.lastPane); return; }
   if (ctrl && !event.shiftKey && key === "f") { event.preventDefault(); app.finder.open(); return; }
   if (ctrl && (event.key === "ArrowUp" || event.key === "ArrowDown")) { event.preventDefault(); jumpPrompt(event.key === "ArrowUp" ? -1 : 1); return; }
   // Page keys scroll the conversation from the prompt, as in the terminal,
@@ -1061,14 +1235,14 @@ function onGlobalKey(event) {
   }
   if (ctrl && (key === "k" || (event.shiftKey && key === "p"))) { event.preventDefault(); palette(); return; }
   if (ctrl && event.shiftKey) {
-    const map = { n: "new", t: "tree", f: "fork", r: "resume" };
+    const map = { n: "new", t: "tree", f: "fork", r: "resume", d: "changes", s: "standards" };
     if (map[key]) { event.preventDefault(); runAction(map[key]); return; }
   }
   if (ctrl && !event.shiftKey) {
     if (key === "l") { event.preventDefault(); runAction("model"); return; }
     if (key === "p") { event.preventDefault(); cycleModel(); return; }
     if (key === "t") { event.preventDefault(); app.prefs.showThinking = !app.prefs.showThinking; app.prefs.thinkingOpen.clear(); rerenderAll(); return; }
-    if (key === "o") { event.preventDefault(); app.prefs.expandTools = !app.prefs.expandTools; app.prefs.toolOpen.clear(); rerenderAll(); return; }
+    if (key === "o") { event.preventDefault(); app.prefs.expandTools = !app.prefs.expandTools; app.prefs.toolOpen.clear(); app.prefs.activityOpen.clear(); rerenderAll(); return; }
     if (key === "g") { event.preventDefault(); biggerEditor(); return; }
     if (key === "w") { event.preventDefault(); window.close(); return; }
     if (key === "=" || key === "+") { event.preventDefault(); coop.zoom(1); return; }
@@ -1083,8 +1257,8 @@ function wire() {
   box.addEventListener("keydown", onPromptKey);
   box.addEventListener("blur", () => setTimeout(hideCompletions, 120));
   box.addEventListener("paste", (event) => {
-    const files = [...(event.clipboardData ? event.clipboardData.files : [])].filter((file) => file.type.startsWith("image/"));
-    if (files.length) { event.preventDefault(); addImages(files); }
+    const files = [...(event.clipboardData ? event.clipboardData.files : [])];
+    if (files.length) { event.preventDefault(); addFiles(files); }
   });
   const composer = $("composer");
   composer.addEventListener("submit", (event) => { event.preventDefault(); submit(); });
@@ -1093,9 +1267,10 @@ function wire() {
   composer.addEventListener("drop", (event) => {
     event.preventDefault();
     composer.classList.remove("drop");
-    const files = [...(event.dataTransfer ? event.dataTransfer.files : [])].filter((file) => file.type.startsWith("image/"));
-    if (files.length) addImages(files);
+    const files = [...(event.dataTransfer ? event.dataTransfer.files : [])];
+    if (files.length) addFiles(files);
   });
+  $("attachButton").addEventListener("click", pickFiles);
   // Nothing dropped outside the composer may navigate the window.
   window.addEventListener("dragover", (event) => event.preventDefault());
   window.addEventListener("drop", (event) => event.preventDefault());
@@ -1105,10 +1280,22 @@ function wire() {
   $("openFolder").addEventListener("click", () => runAction("folder"));
   $("sessionFilter").addEventListener("input", renderSessions);
   $("toggleSidebar").addEventListener("click", () => document.body.classList.toggle("no-sidebar"));
+  const sidebar = makeResizer({
+    handle: $("sidebarResize"),
+    key: "coop.sidebarWidth",
+    cssVar: "--sidebar-width",
+    min: 200,
+    max: () => sidebarMaxWidth(window.innerWidth, $("pane").hidden ? 0 : $("pane").getBoundingClientRect().width),
+    measure: () => document.querySelector(".sidebar").getBoundingClientRect().width,
+    fromPointer: (event, start) => start.size + (event.clientX - start.x),
+  });
+  window.addEventListener("resize", () => sidebar.apply());
   $("modelButton").addEventListener("click", () => runAction("model"));
   $("thinkingButton").addEventListener("click", () => runAction("thinking"));
   $("terminalButton").addEventListener("click", () => runAction("terminal"));
   $("menuButton").addEventListener("click", palette);
+  $("paneButton").addEventListener("click", () => togglePane(app.lastPane));
+  initPanes({ onOpen: (id) => { app.lastPane = id; } });
   $("sessionName").addEventListener("click", () => runAction("name"));
   $("timeline").addEventListener("click", (event) => {
     const link = event.target.closest("a.md-link");
@@ -1126,13 +1313,23 @@ function wire() {
   window.addEventListener("resize", autosize);
 }
 
+function registerPanes() {
+  const deps = { coop, codeBlock };
+  registerPane({ id: "changes", label: "Changes", icon: "diff", description: "Files changed since the last commit", mount: (box, options) => mountChanges(box, options, { ...deps, cwd: () => (app.info ? app.info.cwd : "") }) });
+  registerPane({ id: "standards", label: "Standards", icon: "shield", description: "The standards coop applies in this folder", mount: (box, options) => mountStandards(box, options, deps) });
+  registerPane({ id: "project", label: "Project", icon: "form", description: "Project settings (.coop/project.yml)", mount: (box, options) => mountProject(box, options, { ...deps, newSession: () => runAction("new") }) });
+  registerPane({ id: "docs", label: "Docs", icon: "graph", description: "Lineage docs for this folder (coop-data-doc)", mount: (box, options) => mountDocs(box, options, deps) });
+}
+
 async function boot() {
+  registerPanes();
   wire();
   coop.onEvent(onEvent);
   coop.onExit(onExit);
   coop.onNotice((notice) => toast(clean(notice.message), notice.level || "info"));
   coop.onTheme((theme) => applyTheme(theme));
   app.info = await coop.ready();
+  app.vibe = String(app.info.vibe || "");
   applyTheme(app.info);
   renderHeader();
   renderBusy();

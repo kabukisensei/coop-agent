@@ -19,6 +19,12 @@ export function el(tag, props = {}, ...children) {
   return node;
 }
 
+/** Replace a node's children, skipping null, undefined and false (as el() does). */
+export function fill(node, ...children) {
+  node.replaceChildren(...children.flat().filter((child) => child !== undefined && child !== null && child !== false));
+  return node;
+}
+
 // 16x16 line icons; colour comes from CSS (currentColor).
 const ICONS = {
   plus: "M8 3v10M3 8h10",
@@ -33,10 +39,18 @@ const ICONS = {
   close: "M4 4l8 8M12 4l-8 8",
   chevron: "M6 4l4 4-4 4",
   spark: "M8 2v3M8 11v3M2 8h3M11 8h3M4 4l2 2M10 10l2 2M12 4l-2 2M6 10l-2 2",
+  file: "M4 2h5l3 3v9H4zM9 2v3h3M6.5 8.5h3M6.5 11h3",
+  image: "M2.5 3.5h11v9h-11zM2.5 10.5l3-3 3 3 2-2 3 3M10.5 6a.5.5 0 1 1 0 .1",
   shield: "M8 2l5 2v4c0 3-2.2 5-5 6-2.8-1-5-3-5-6V4z",
   book: "M3 3h4.5A1.5 1.5 0 0 1 9 4.5V13a1.5 1.5 0 0 0-1.5-1.5H3zM13 3H10.5A1.5 1.5 0 0 0 9 4.5V13a1.5 1.5 0 0 1 1.5-1.5H13z",
   restart: "M3 8a5 5 0 1 0 1.5-3.5M3 2.5V5h2.5",
   warn: "M8 2.5 14 13H2zM8 6.5v3M8 11.2h.01",
+  up: "M4 10l4-4 4 4",
+  down: "M4 6l4 4 4-4",
+  back: "M10 4 6 8l4 4",
+  diff: "M3.5 2.5h6l3 3v8h-9zM8 5v4M6 7h4M6 11h4",
+  form: "M3 2.5h10v11H3zM5 5.5h6M5 8h6M5 10.5h3.5",
+  graph: "M2.5 3h3v3h-3zM10.5 3h3v3h-3zM6.5 10h3v3h-3zM4 6l3.5 4M12 6l-3.5 4",
 };
 
 export function icon(name, label) {

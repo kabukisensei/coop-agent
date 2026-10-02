@@ -32,10 +32,9 @@
 import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
-import { StringDecoder } from "node:string_decoder";
-import { accessSync, constants, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   buildStandardsContext,
@@ -44,6 +43,67 @@ import {
   sourceStatus,
 } from "../../lib/standards.mjs";
 import { agentDir as coopAgentDir, configPath as coopConfigPath, userProfilePath as coopUserProfilePath } from "../../lib/paths.mjs";
+// The /setup-project contract writer and the /setup-docs wizard driver live in
+// lib/ so the coop window's forms run the same code (master plan D1b2).
+import {
+  CANONICAL_UUID,
+  PROJECT_MESSAGES,
+  SQL_TARGET_DISCOVERED_KINDS,
+  SQL_TARGET_KINDS,
+  applyProjectWizardSettings,
+  boolValue,
+  canonicalProjectUuid,
+  cleanAnswer,
+  clientPlatform,
+  estateMode,
+  findGitRoot,
+  isServerHost,
+  parseProjectWizardSettings,
+  projectSqlEndpointType,
+  projectYamlScalar,
+  proposedSqlTargetKind,
+  renderProjectWizardSettings,
+  repositoryShortName,
+  saveUserProfileName,
+  scalarValue,
+  writeProjectContract,
+} from "../../lib/project-contract.mjs";
+import {
+  DATADOC_CONFIG,
+  DEFAULT_OUTPUT_DIR,
+  dataDocPrefillFromProject,
+  driveJsonlSetup,
+  expandHomePath,
+  findDataDocConfig,
+  isHomeFolder,
+  parseExisting,
+  resolveDataDocExecutable,
+  samePath,
+} from "../../lib/data-doc-setup.mjs";
+// Re-exported unchanged: the extension's tests and callers keep importing them from here.
+export {
+  SQL_TARGET_DISCOVERED_KINDS,
+  SQL_TARGET_KINDS,
+  applyProjectWizardSettings,
+  clientPlatform,
+  estateMode,
+  parseProjectWizardSettings,
+  projectYamlScalar,
+  proposedSqlTargetKind,
+  renderProjectWizardSettings,
+  saveUserProfileName,
+  scalarValue,
+  sqlTargetsBlock,
+  upsertProjectYamlScalar,
+} from "../../lib/project-contract.mjs";
+export {
+  JsonlLineDecoder,
+  classifyManagedLines,
+  dataDocPrefillFromProject,
+  findDataDocConfig,
+  parseExisting,
+  resolveDataDocExecutable,
+} from "../../lib/data-doc-setup.mjs";
 
 const SEVERITY = Type.Union([Type.Literal("error"), Type.Literal("warning"), Type.Literal("info")]);
 
@@ -411,28 +471,7 @@ export function bpaFindingLines(findings: any[], multipleModels: boolean): strin
 // needs (parseExisting) to prefill the wizard and to find the built docs. Keys and
 // defaults mirror coop-data-doc/src/coop_data_doc/config.py; if that schema
 // changes, mirror it here.
-const DATADOC_CONFIG = "coop-data-doc.yml";
-const DEFAULT_OUTPUT_DIR = "./data-docs";
 const NO_GRAPH_TEXT = "No built lineage graph yet — run data_doc (build) first, or /setup-docs to set it up. (You can still work without it.)";
-
-/** Match the companion's environment-first, ancestor config discovery. */
-export function findDataDocConfig(cwd: string, env: Record<string, string | undefined> = process.env): string | null {
-  const selected = env.COOP_DATA_DOC_CONFIG;
-  if (selected) {
-    const candidate = resolve(cwd, expandHomePath(selected));
-    let existing = candidate;
-    while (!existsSync(existing) && dirname(existing) !== existing) existing = dirname(existing);
-    try { return resolve(realpathSync(existing), relative(existing, candidate)); } catch { return candidate; }
-  }
-  let directory = resolve(cwd);
-  for (;;) {
-    const candidate = join(directory, DATADOC_CONFIG);
-    try { if (statSync(candidate).isFile()) return realpathSync(candidate); } catch { /* absent */ }
-    const parent = dirname(directory);
-    if (parent === directory) return null;
-    directory = parent;
-  }
-}
 
 interface DataDocSettings {
   projectName: string;
@@ -461,9 +500,7 @@ async function askText(ctx: any, label: string, def: string): Promise<string | n
   if (typeof ctx?.ui?.input !== "function") return null;
   const raw = await ctx.ui.input(`${label}  ·  Enter = ${def || "(blank)"}`, def);
   if (raw === undefined || raw === null) return null; // Esc / cancel
-  // eslint-disable-next-line no-control-regex
-  const v = String(raw).replace(/[\x00-\x1f\x7f-\x9f]/g, "").trim();
-  return v || def;
+  return cleanAnswer(raw) || def;
 }
 
 /** Yes/no dialog. Throws if no confirm UI is available (caller decides fallback). */
@@ -503,120 +540,6 @@ export function builtLineageDir(cwd: string, env: Record<string, string | undefi
   } catch {
     return null;
   }
-}
-
-/** YAML double-quoted single-character escapes (YAML 1.2, 5.7). */
-const YAML_ESCAPES: Record<string, string> = {
-  "0": "\0", a: "\x07", b: "\b", t: "\t", "\t": "\t", n: "\n", v: "\v", f: "\f", r: "\r", e: "\x1b",
-  " ": " ", '"': '"', "/": "/", "\\": "\\", N: "\x85", _: "\xa0", L: " ", P: " ",
-};
-const YAML_HEX_ESCAPES: Record<string, number> = { x: 2, u: 4, U: 8 };
-
-/** Read just the scalar value off a `key: value` line, quote- and comment-aware.
- *  Handles double-quote backslash escapes (including the \xXX, \uXXXX and
- *  \UXXXXXXXX forms coop-data-doc writes for every non-ASCII character) and
- *  single-quote '' → ' the way YAML does, and only treats '#' as a comment when
- *  it's whitespace-preceded. */
-export function scalarValue(afterColon: string): string {
-  const s = afterColon.trim();
-  if (s.startsWith('"')) {
-    let out = "";
-    for (let i = 1; i < s.length; i++) {
-      if (s[i] === "\\") {
-        const c = s[i + 1] ?? "";
-        const width = YAML_HEX_ESCAPES[c];
-        const hex = width ? s.slice(i + 2, i + 2 + width) : "";
-        const code = hex.length === width && /^[0-9a-fA-F]+$/.test(hex) ? parseInt(hex, 16) : NaN;
-        if (width && code <= 0x10ffff) {
-          out += String.fromCodePoint(code);
-          i += 1 + width;
-          continue;
-        }
-        out += YAML_ESCAPES[c] ?? c;
-        i++;
-        continue;
-      }
-      if (s[i] === '"') break;
-      out += s[i];
-    }
-    return out;
-  }
-  if (s.startsWith("'")) {
-    let out = "";
-    for (let i = 1; i < s.length; i++) {
-      if (s[i] === "'") {
-        if (s[i + 1] === "'") {
-          out += "'";
-          i++;
-          continue;
-        }
-        break;
-      }
-      out += s[i];
-    }
-    return out;
-  }
-  for (let i = 0; i < s.length; i++) {
-    if (s[i] === "#" && (i === 0 || /\s/.test(s[i - 1]))) return s.slice(0, i).trim();
-  }
-  return s.trim();
-}
-
-type ManagedKey = "project_name" | "sql_path" | "powerbi_path" | "output_dir";
-
-/** Locate the lines for the 4 scalars coop reads (project_name, repos.sql.path,
- *  repos.powerbi.path, output.dir) — robust to 2- or 4-space indentation, extra
- *  repo keys (e.g. a third `staging:`), and nested mappings. Block-style YAML only
- *  (best-effort), matching what coop-data-doc emits. */
-export function classifyManagedLines(text: string): Array<{ i: number; key: ManagedKey }> {
-  const lines = text.split("\n");
-  const found: Array<{ i: number; key: ManagedKey }> = [];
-  let section: "repos" | "output" | null = null;
-  let repo: "sql" | "powerbi" | null = null;
-  let repoIndent: number | null = null;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].replace(/\t/g, "  ");
-    const body = line.trim();
-    if (!body || body.startsWith("#")) continue;
-    const indent = line.length - line.trimStart().length;
-    if (indent === 0) {
-      section = null;
-      repo = null;
-      repoIndent = null;
-      const ci = body.indexOf(":");
-      const key = ci >= 0 ? body.slice(0, ci) : body;
-      if (key === "repos") section = "repos";
-      else if (key === "output") section = "output";
-      else if (key === "project_name" && ci >= 0) found.push({ i, key: "project_name" });
-      continue;
-    }
-    if (section === "repos") {
-      if (repoIndent === null) repoIndent = indent; // first nested key sets the repo level
-      if (indent === repoIndent) {
-        repo = body.startsWith("sql:") ? "sql" : body.startsWith("powerbi:") ? "powerbi" : null;
-      } else if (indent > repoIndent && repo && body.startsWith("path:")) {
-        found.push({ i, key: repo === "sql" ? "sql_path" : "powerbi_path" });
-      }
-    } else if (section === "output") {
-      if (body.startsWith("dir:")) found.push({ i, key: "output_dir" });
-    }
-  }
-  return found;
-}
-
-/** Best-effort prefill: pull the few scalars we manage from an existing yml. */
-export function parseExisting(text: string): DataDocSetupPrefill {
-  const out: DataDocSetupPrefill = {};
-  const lines = text.split("\n");
-  for (const { i, key } of classifyManagedLines(text)) {
-    const v = scalarValue(lines[i].slice(lines[i].indexOf(":") + 1));
-    if (key === "project_name") out.projectName = v;
-    else if (key === "sql_path") out.sqlPath = v;
-    else if (key === "powerbi_path") out.pbiPath = v;
-    else if (key === "output_dir") out.outputDir = v;
-  }
-  out.sourceMode = out.sqlPath && out.pbiPath ? "both" : out.sqlPath ? "sql" : out.pbiPath ? "powerbi" : "none";
-  return out;
 }
 
 /* --- Project-contract scoping (.coop/project.yml → review paths) -------------
@@ -855,13 +778,6 @@ async function editDataDocConfig(ctx: any, configPath: string): Promise<void> {
   notify(ctx, `Saved ${configPath}. Build the docs with /start > Document the data sources I have, or \`coop data-doc build\`.`, "info");
 }
 
-/** True when `cwd` is the user's home folder. */
-function isHomeFolder(cwd: string): boolean {
-  let home = "";
-  try { home = homedir(); } catch { return false; }
-  return Boolean(cwd && home) && samePath(cwd, home);
-}
-
 /** /setup-docs and /start > Document never write coop-data-doc.yml into the home
  *  folder (the desktop shortcuts start coop there). Stop and say how to open coop
  *  in the project folder instead (#102). Returns true when it stopped. */
@@ -897,41 +813,6 @@ interface JsonlPrompt {
   message: string;
   default?: unknown;
   choices?: JsonlChoice[];
-}
-type JsonlEvent =
-  | JsonlPrompt
-  | { type: "hello"; protocol_version?: string }
-  | { type: "notice" | "progress" | "complete" | "error" | "cancelled"; id?: string; message?: string; data?: unknown };
-
-export class JsonlLineDecoder {
-  private buffer = "";
-  private readonly decoder = new StringDecoder("utf8");
-  constructor(private readonly maxLine = 1024 * 1024) {}
-  push(chunk: Buffer | string): string[] {
-    this.buffer += typeof chunk === "string" ? chunk : this.decoder.write(chunk);
-    if (this.buffer.length > this.maxLine && !this.buffer.includes("\n")) throw new Error("JSONL line exceeds 1 MiB");
-    const out: string[] = [];
-    for (;;) {
-      const i = this.buffer.indexOf("\n");
-      if (i < 0) break;
-      let line = this.buffer.slice(0, i);
-      this.buffer = this.buffer.slice(i + 1);
-      if (line.endsWith("\r")) line = line.slice(0, -1);
-      if (line.length > this.maxLine) throw new Error("JSONL line exceeds 1 MiB");
-      out.push(line);
-    }
-    return out;
-  }
-  finish(): void {
-    this.buffer += this.decoder.end();
-    if (this.buffer.length) throw new Error("JSONL stream ended with a partial line");
-  }
-}
-
-function expandHomePath(value: string): string {
-  if (value === "~") return homedir();
-  if (value.startsWith("~/") || value.startsWith("~\\")) return join(homedir(), value.slice(2));
-  return value;
 }
 
 function isDirectory(path: string): boolean {
@@ -1080,9 +961,7 @@ export async function renderPrompt(ctx: any, p: JsonlPrompt): Promise<unknown> {
   const def = typeof p.default === "string" ? p.default : "";
   const raw = await ctx.ui.input(`${p.message}  ·  Enter = ${def || "(blank)"}`, def);
   if (raw === null || raw === undefined) return null;
-  // eslint-disable-next-line no-control-regex
-  const v = String(raw).replace(/[\x00-\x1f\x7f-\x9f]/g, "").trim();
-  return v || def;
+  return cleanAnswer(raw) || def;
 }
 
 /** Pi has no native multi-select: render a checkbox toggle loop over the wizard's
@@ -1107,160 +986,29 @@ export async function askCheckbox(ctx: any, p: JsonlPrompt): Promise<string[] | 
   }
 }
 
-export function resolveDataDocExecutable(platform = process.platform, env: NodeJS.ProcessEnv = process.env): string {
-  if (platform !== "win32") return "coop-data-doc";
-  const pathValue = env.PATH || env.Path || "";
-  for (const dir of pathValue.split(delimiter).filter(Boolean)) {
-    const exe = join(dir, "coop-data-doc.exe");
-    if (existsSync(exe)) return exe;
-  }
-  for (const dir of pathValue.split(delimiter).filter(Boolean)) {
-    if (existsSync(join(dir, "coop-data-doc.cmd")) || existsSync(join(dir, "coop-data-doc.bat"))) {
-      throw new Error("Found only an unsafe .cmd/.bat shim. Reinstall coop-data-doc with pipx so coop-data-doc.exe is on PATH.");
-    }
-  }
-  throw new Error("coop-data-doc.exe was not found on PATH. Run `coop install`.");
-}
-
-/** coop-data-doc's notice when setup saved a config that fails validation (for
- *  example a repo path that doesn't exist). Setup still completes with exit 0. */
-const NOT_RUNNABLE_NOTICE = "Saved, but not runnable yet:";
-
 /** What a completed setup reported beyond success; filled in by runJsonlSetup. */
 export interface JsonlSetupOutcome {
   /** The wizard's reason the saved config can't build yet, when it said so. */
   notRunnable?: string;
 }
 
-/** Drive the authoritative JSONL wizard. Terminal event and exit code must agree. */
+/** Drive the authoritative JSONL wizard (lib/data-doc-setup.mjs), one prompt
+ *  per Pi dialog. Terminal event and exit code must agree. */
 export async function runJsonlSetup(_pi: ExtensionAPI, ctx: any, prefill: DataDocSetupPrefill = {}, outcome: JsonlSetupOutcome = {}): Promise<boolean> {
   let executable: string;
   try { executable = resolveDataDocExecutable(); }
   catch (e: any) { notify(ctx, errMsg(e), "error"); return false; }
   const selectedConfig = findDataDocConfig(ctx.cwd);
   const configBase = selectedConfig ? dirname(selectedConfig) : ctx.cwd;
-  const child = spawn(executable, ["setup", "--transport", "jsonl"], { cwd: ctx.cwd, env: { ...process.env, PYTHONIOENCODING: "utf-8" }, stdio: ["pipe", "pipe", "pipe"], shell: false });
-  let stderrTail = "", terminal: "complete" | "cancelled" | "error" | null = null, protocolError = "";
-  let helloSeen = false;
-  child.stderr?.on("data", (d) => { stderrTail = (stderrTail + d.toString()).slice(-2000); });
-  child.stdin?.on("error", (e) => { protocolError ||= `wizard input closed: ${errMsg(e)}`; });
-  const decoder = new JsonlLineDecoder();
-  let chain = Promise.resolve();
-  const send = async (payload: object): Promise<void> => {
-    if (!child.stdin || child.stdin.destroyed || !child.stdin.writable) {
-      throw new Error("coop-data-doc closed before it accepted the wizard answer");
-    }
-    await new Promise<void>((resolveWrite, rejectWrite) => {
-      child.stdin.write(JSON.stringify(payload) + "\n", (error) => {
-        if (!error) { resolveWrite(); return; }
-        // EPIPE race: the wizard exited before consuming the answer. Report it
-        // exactly like the pre-write closed check so the user-facing message is
-        // stable regardless of which event (stream 'error' vs write callback)
-        // lands first — a bare "write EPIPE" both reads worse and flakes the
-        // early-close integration assertion under load.
-        rejectWrite((error as any)?.code === "EPIPE"
-          ? new Error("coop-data-doc closed before it accepted the wizard answer")
-          : error);
-      });
-    });
-  };
-  const accept = async (line: string): Promise<void> => {
-    if (!line.trim()) return;
-    let evt: JsonlEvent;
-    try { evt = JSON.parse(line); } catch { throw new Error("malformed JSONL from coop-data-doc"); }
-    if (!evt || typeof evt !== "object" || !("type" in evt)) throw new Error("invalid JSONL event");
-    if (evt.type === "hello") {
-      // Handshake: required before the first prompt/terminal event; the wire
-      // protocol is 1.x — a future major means the bridge must be upgraded.
-      if (helloSeen) throw new Error("duplicate hello event");
-      const v = typeof (evt as any).protocol_version === "string" ? (evt as any).protocol_version : "";
-      if (!/^1\./.test(v)) throw new Error(`unsupported coop-data-doc protocol version '${v || "(none)"}' (bridge supports 1.x; requires coop-data-doc 1.1.1+)`);
-      helloSeen = true;
-      return;
-    }
-    if (evt.type === "prompt") {
-      if (!helloSeen) throw new Error("missing hello handshake before first prompt (requires coop-data-doc 1.1.1+)");
-      if (terminal) throw new Error("prompt received after terminal event");
-      const prompt = { ...evt } as JsonlPrompt;
-      if (prompt.id === "project_name" && prefill.projectName) prompt.default = prefill.projectName;
-      if (prompt.id === "local_sources" && prefill.sourceMode) prompt.default = prefill.sourceMode;
-      if (prompt.kind === "path" && /SQL repo path/i.test(prompt.message) && prefill.sqlPath) prompt.default = prefill.sqlPath;
-      if (prompt.kind === "path" && /Power BI repo path/i.test(prompt.message) && prefill.pbiPath) prompt.default = prefill.pbiPath;
-      const answer = await renderPrompt({ ...ctx, cwd: configBase }, prompt);
-      if (answer === null) {
-        await send({ id: evt.id, cancelled: true });
-        return;
-      }
-      await send({ id: evt.id, answer });
-    } else if (evt.type === "notice" || evt.type === "progress") {
-      if (!evt.message) return;
-      const notRunnable = evt.type === "notice" && evt.message.trimStart().startsWith(NOT_RUNNABLE_NOTICE);
-      if (notRunnable) outcome.notRunnable = evt.message.trimStart().slice(NOT_RUNNABLE_NOTICE.length).trim();
-      notify(ctx, evt.message, notRunnable ? "warning" : "info");
-    } else if (evt.type === "complete" || evt.type === "cancelled" || evt.type === "error") {
-      if (!helloSeen) throw new Error(`missing hello handshake before ${evt.type} event (requires coop-data-doc 1.1.1+)`);
-      if (terminal) throw new Error(`duplicate terminal event (${terminal}, ${evt.type})`);
-      terminal = evt.type;
-      if (evt.message) notify(ctx, evt.message, evt.type === "error" ? "error" : "info");
-    } else throw new Error(`unknown JSONL event type: ${(evt as any).type}`);
-  };
-  child.stdout?.on("data", (chunk) => {
-    try {
-      for (const line of decoder.push(chunk)) chain = chain.then(() => accept(line));
-      chain = chain.catch((e) => { protocolError = errMsg(e); try { child.kill(); } catch { /* best effort */ } });
-    } catch (e: any) { protocolError = errMsg(e); try { child.kill(); } catch { /* best effort */ } }
+  return await driveJsonlSetup({
+    executable,
+    cwd: ctx.cwd,
+    env: process.env,
+    prefill,
+    outcome,
+    ask: (prompt: JsonlPrompt) => renderPrompt({ ...ctx, cwd: configBase }, prompt),
+    notify: (message: string, level: "info" | "warning" | "error") => notify(ctx, message, level),
   });
-  const code = await new Promise<number | null>((resolveCode) => {
-    child.once("error", (e) => { protocolError = `spawn failed: ${errMsg(e)}`; resolveCode(null); });
-    child.once("close", resolveCode);
-  });
-  await chain;
-  try { decoder.finish(); } catch (e: any) { protocolError ||= errMsg(e); }
-  if (protocolError) { notify(ctx, `setup protocol failed: ${protocolError}`, "error"); return false; }
-  if (code === 0 && terminal === "complete") return true;
-  if (code === 130 && terminal === "cancelled") return false;
-  if (code !== 0 && code !== 130 && terminal === "error") return false;
-  const tail = stderrTail.trim() ? ` — ${stderrTail.trim().split("\n").slice(-2).join("  ")}` : "";
-  if (!terminal) {
-    // The wizard exited without a terminal event (e.g. it died right after a
-    // prompt). That is a silent close, not a protocol contradiction — say so,
-    // and keep the wording stable: the early-close path must be recognizable
-    // regardless of which stdin/exit race won.
-    notify(ctx, `coop-data-doc closed without a terminal event (exit ${code ?? "?"})${tail}`, "error");
-    return false;
-  }
-  notify(ctx, `setup protocol contradiction (exit ${code ?? "?"}, event ${terminal})${tail}`, "error");
-  return false;
-}
-
-/** Use the project contract to prefill data-doc without making users type repo paths twice. */
-export function dataDocPrefillFromProject(cwd: string): DataDocSetupPrefill {
-  const contract = findProjectYml(cwd);
-  if (!contract) return {};
-  const text = safeRead(contract);
-  const projectRoot = resolve(contract, "..", "..");
-  let sqlPath = "", pbiPath = "";
-  let sql = false, powerbi = false;
-  const fromRoot = (raw: string): string => {
-    const absolute = isAbsolute(raw) ? raw : resolve(projectRoot, raw);
-    // project.yml and coop-data-doc.yml are portable contracts, so keep their
-    // relative paths stable when the same project is opened on Windows.
-    return relative(cwd, absolute).replace(/\\/g, "/") || ".";
-  };
-  for (const name of repositoryNames(text)) {
-    const role = projectYamlScalar(text, ["repositories", name, "role"]) || "generic";
-    const raw = projectYamlScalar(text, ["repositories", name, "local_path"]);
-    if (!raw || /^TODO\b/i.test(raw)) continue;
-    if ((role === "sql" || role === "mixed") && !sqlPath) { sqlPath = fromRoot(raw); sql = true; }
-    if ((role === "powerbi" || role === "mixed") && !pbiPath) { pbiPath = fromRoot(raw); powerbi = true; }
-  }
-  const sourceMode = sql && powerbi ? "both" : sql ? "sql" : powerbi ? "powerbi" : "none";
-  return {
-    sourceMode,
-    ...(sqlPath ? { sqlPath } : {}),
-    ...(pbiPath ? { pbiPath } : {}),
-    projectName: projectYamlScalar(text, ["profile", "client"]),
-  };
 }
 
 /** Run the one authoritative coop-data-doc wizard; no local fallback exists. */
@@ -1331,169 +1079,6 @@ export interface ProjectWizardSettings {
   sqlTargetKind: string;
   sqlTargetServer: string;
   sqlTargetDatabase: string;
-}
-
-/** The sql_targets kinds lib/sql_targets.py accepts (the Python module is the authority). */
-export const SQL_TARGET_KINDS = ["fabric_warehouse", "fabric_lakehouse", "fabric_sql_database", "azure_sql", "synapse_serverless"] as const;
-/** Kinds whose host coop discovers from Fabric ids; the others name a server. */
-export const SQL_TARGET_DISCOVERED_KINDS = new Set<string>(["fabric_warehouse", "fabric_lakehouse"]);
-
-/**
- * The dev sql_targets kind to propose for a new contract: the machine's client
- * platform (SQ7) seeds it, the Fabric answer refines it, and the person can
- * still type any kind or blank it (section 8 item 7).
- */
-export function proposedSqlTargetKind(platform: ReturnType<typeof clientPlatform>, fabricEnabled: boolean): string {
-  if (platform === "azure_sql") return "azure_sql";
-  if (platform === "both") return fabricEnabled ? "fabric_warehouse" : "azure_sql";
-  if (platform === "fabric") return fabricEnabled ? "fabric_warehouse" : "";
-  return fabricEnabled ? "fabric_warehouse" : "";
-}
-
-export type EstateMode = "discovery" | "partial" | "connected";
-
-/** Derive the engagement's current local-source coverage from wizard repo roles. */
-export function estateMode(repositories: ProjectRepositorySettings[]): EstateMode {
-  if (!repositories.length) return "discovery";
-  const roles = new Set(repositories.map((repo) => repo.role));
-  return roles.has("mixed") || (roles.has("sql") && roles.has("powerbi")) ? "connected" : "partial";
-}
-
-function coverageFor(repositories: ProjectRepositorySettings[], role: "sql" | "powerbi"): string {
-  if (repositories.some((repo) => repo.role === role || repo.role === "mixed")) return "available";
-  return repositories.some((repo) => repo.role === "generic") ? "unknown" : "not_available_yet";
-}
-
-function yamlLineKey(raw: string): string | null {
-  const body = raw.trim();
-  if (!body || body.startsWith("#") || body.startsWith("-")) return null;
-  const m = /^(?:'((?:[^']|'')*)'|"((?:[^"\\]|\\.)*)"|([A-Za-z0-9_.-]+))\s*:/.exec(body);
-  if (!m) return null;
-  if (m[1] !== undefined) return m[1].replace(/''/g, "'");
-  if (m[2] !== undefined) {
-    try { return JSON.parse(`"${m[2]}"`); } catch { return m[2]; }
-  }
-  return m[3];
-}
-
-function yamlIndent(raw: string): number {
-  return raw.length - raw.trimStart().length;
-}
-
-function yamlBlockEnd(lines: string[], line: number, indent: number): number {
-  let i = line + 1;
-  for (; i < lines.length; i++) {
-    const body = lines[i].trim();
-    if (!body || body.startsWith("#")) continue;
-    if (yamlIndent(lines[i]) <= indent) break;
-  }
-  return i;
-}
-
-function findYamlKey(lines: string[], key: string, start: number, end: number, indent: number): number {
-  for (let i = start; i < end; i++) {
-    if (yamlIndent(lines[i]) === indent && yamlLineKey(lines[i]) === key) return i;
-  }
-  return -1;
-}
-
-/** Read a scalar at a simple mapping path. Exported for contract-wizard tests. */
-export function projectYamlScalar(text: string, path: string[]): string {
-  const lines = text.split(/\r?\n/);
-  let start = 0;
-  let end = lines.length;
-  let indent = 0;
-  for (let depth = 0; depth < path.length; depth++) {
-    const hit = findYamlKey(lines, path[depth], start, end, indent);
-    if (hit < 0) return "";
-    const body = lines[hit].trim();
-    if (depth === path.length - 1) return scalarValue(body.slice(body.indexOf(":") + 1));
-    start = hit + 1;
-    end = yamlBlockEnd(lines, hit, indent);
-    indent += 2;
-  }
-  return "";
-}
-
-function yamlQuoted(value: string): string {
-  return `'${String(value).replace(/'/g, "''")}'`;
-}
-
-function yamlKey(value: string): string {
-  return /^[A-Za-z0-9_.-]+$/.test(value) ? value : yamlQuoted(value);
-}
-
-function canonicalProjectUuid(value: string | undefined): string {
-  const candidate = String(value || "").trim();
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(candidate)
-    ? candidate
-    : "";
-}
-
-function projectSqlEndpointType(value: string | undefined): string {
-  return value === "Warehouse" || value === "Lakehouse" ? value : "";
-}
-
-/** Update or insert one scalar mapping path while preserving every unrelated line. */
-export function upsertProjectYamlScalar(text: string, path: string[], value: string | boolean): string {
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
-  const rendered = typeof value === "boolean" ? String(value) : yamlQuoted(value);
-  let start = 0;
-  let end = lines.length;
-  let indent = 0;
-  for (let depth = 0; depth < path.length; depth++) {
-    const key = path[depth];
-    const hit = findYamlKey(lines, key, start, end, indent);
-    if (hit >= 0) {
-      if (depth === path.length - 1) {
-        lines[hit] = `${" ".repeat(indent)}${yamlKey(key)}: ${rendered}`;
-        return lines.join("\n");
-      }
-      // A scalar/flow value cannot contain child mappings; convert only this
-      // parent line to a block mapping before inserting the wizard-owned child.
-      const after = lines[hit].trim().slice(lines[hit].trim().indexOf(":") + 1).trim();
-      if (after && !after.startsWith("#")) lines[hit] = `${" ".repeat(indent)}${yamlKey(key)}:`;
-      start = hit + 1;
-      end = yamlBlockEnd(lines, hit, indent);
-      indent += 2;
-      continue;
-    }
-
-    const addition: string[] = [];
-    for (let j = depth; j < path.length; j++) {
-      const pad = " ".repeat(indent + (j - depth) * 2);
-      addition.push(j === path.length - 1
-        ? `${pad}${yamlKey(path[j])}: ${rendered}`
-        : `${pad}${yamlKey(path[j])}:`);
-    }
-    // Keep top-level sections visually separated, but never disturb the current
-    // section's existing content when adding a nested value.
-    if (depth === 0 && lines.length && lines[lines.length - 1].trim()) lines.push("");
-    const at = depth === 0 ? lines.length : end;
-    lines.splice(at, 0, ...addition);
-    return lines.join("\n");
-  }
-  return lines.join("\n");
-}
-
-function repositoryNames(text: string): string[] {
-  const lines = text.split(/\r?\n/);
-  const repos = findYamlKey(lines, "repositories", 0, lines.length, 0);
-  if (repos < 0) return [];
-  const end = yamlBlockEnd(lines, repos, 0);
-  const names: string[] = [];
-  for (let i = repos + 1; i < end; i++) {
-    if (yamlIndent(lines[i]) !== 2) continue;
-    const key = yamlLineKey(lines[i]);
-    if (key) names.push(key);
-  }
-  return names;
-}
-
-function boolValue(value: string, fallback = false): boolean {
-  if (/^(true|yes|1|on)$/i.test(value)) return true;
-  if (/^(false|no|0|off)$/i.test(value)) return false;
-  return fallback;
 }
 
 export interface DailyLogRequirement {
@@ -1567,12 +1152,6 @@ export function dailyLogSystemInstruction(requirement: DailyLogRequirement): str
 
 export type DailyLogToolEffect = "none" | "meaningful" | "log";
 
-function samePath(a: string, b: string): boolean {
-  const aa = resolve(a).replace(/\\/g, "/");
-  const bb = resolve(b).replace(/\\/g, "/");
-  return process.platform === "win32" ? aa.toLowerCase() === bb.toLowerCase() : aa === bb;
-}
-
 function shellMentionsPath(command: string, cwd: string, logPath: string): boolean {
   const normalized = command.replace(/\\/g, "/");
   const absolute = resolve(logPath).replace(/\\/g, "/");
@@ -1616,392 +1195,6 @@ function fileMtime(path: string): number {
   }
 }
 
-/** Parse the wizard-owned subset; unknown project fields are intentionally ignored. */
-export function parseProjectWizardSettings(text: string, projectRoot: string): ProjectWizardSettings {
-  const defaultBranch = projectYamlScalar(text, ["profile", "default_branch"]) || "main";
-  const repositories = repositoryNames(text).map((name): ProjectRepositorySettings => ({
-    name,
-    description: projectYamlScalar(text, ["repositories", name, "description"]) || "Project source and docs",
-    role: (projectYamlScalar(text, ["repositories", name, "role"]) as ProjectRepositorySettings["role"]) || "generic",
-    localPath: projectYamlScalar(text, ["repositories", name, "local_path"]) || ".",
-    remoteName: projectYamlScalar(text, ["repositories", name, "remote_name"]) || "origin",
-    defaultBranch: projectYamlScalar(text, ["repositories", name, "default_branch"]) || defaultBranch,
-  }));
-  const fabricFlag = projectYamlScalar(text, ["tools", "fabric_cli", "enabled"]);
-  const teFlag = projectYamlScalar(text, ["tools", "tabular_editor_cli", "enabled"]);
-  return {
-    organization: projectYamlScalar(text, ["profile", "organization"]) || "Cooptimize",
-    client: projectYamlScalar(text, ["profile", "client"]),
-    timezone: projectYamlScalar(text, ["profile", "timezone"]) || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-    defaultBranch,
-    repositories: repositories.length || text.trim() ? repositories : [{
-      name: basename(projectRoot) || "project",
-      description: "Project source and docs",
-      role: "generic",
-      localPath: ".",
-      remoteName: "origin",
-      defaultBranch,
-      isNew: true,
-    }],
-    fabricEnabled: boolValue(fabricFlag, Boolean(projectYamlScalar(text, ["fabric", "tenant_id"]))),
-    tenantId: projectYamlScalar(text, ["fabric", "tenant_id"]),
-    fabricWorkspaceName: projectYamlScalar(text, ["fabric", "default_workspace_name"]),
-    fabricWorkspaceId: projectYamlScalar(text, ["fabric", "default_workspace_id"]),
-    sqlEndpointItemType: projectYamlScalar(text, ["fabric", "default_sql_endpoint", "item_type"]),
-    sqlEndpointItemName: projectYamlScalar(text, ["fabric", "default_sql_endpoint", "item_name"]),
-    sqlEndpointItemId: projectYamlScalar(text, ["fabric", "default_sql_endpoint", "item_id"]),
-    sqlEndpointPropertiesId: projectYamlScalar(text, ["fabric", "default_sql_endpoint", "sqlEndpointProperties", "id"]),
-    powerBiWorkspaceName: projectYamlScalar(text, ["power_bi", "default_workspace_name"]),
-    powerBiWorkspaceId: projectYamlScalar(text, ["power_bi", "default_workspace_id"]),
-    tabularEditorEnabled: boolValue(teFlag, false),
-    tabularEditorPath: projectYamlScalar(text, ["tools", "tabular_editor_cli", "executable_path"]) || "te",
-    bpaRulesPath: projectYamlScalar(text, ["tools", "tabular_editor_cli", "bpa_rules_path"]),
-    sqlTargetKind: projectYamlScalar(text, ["sql_targets", "dev", "kind"]),
-    sqlTargetServer: projectYamlScalar(text, ["sql_targets", "dev", "server"]),
-    sqlTargetDatabase: projectYamlScalar(text, ["sql_targets", "dev", "database"]),
-  };
-}
-
-/** The sql_targets lines for a contract (dev entry from the wizard; test/prod left to fill in). */
-export function sqlTargetsBlock(settings: ProjectWizardSettings): string[] {
-  const kind = settings.sqlTargetKind;
-  if (!kind) return [];
-  const discovered = SQL_TARGET_DISCOVERED_KINDS.has(kind);
-  const lines = [
-    "",
-    "# SQL connection targets (one per environment). coop works on default_environment",
-    "# (dev or test, never prod) unless a session is explicitly scoped and approved.",
-    "# Entra ID tokens only: never a user, password or connection string here.",
-    "sql_targets:",
-    "  default_environment: dev",
-    "  dev:",
-    `    kind: ${yamlQuoted(kind)}`,
-  ];
-  if (discovered) {
-    lines.push(
-      "    # coop discovers the host from these Fabric ids through the Fabric REST API.",
-      `    workspace_id: ${yamlQuoted(canonicalProjectUuid(settings.fabricWorkspaceId))}`,
-      `    item_id: ${yamlQuoted(canonicalProjectUuid(settings.sqlEndpointItemId))}`,
-    );
-    if (kind === "fabric_lakehouse") lines.push(`    sql_endpoint_id: ${yamlQuoted(canonicalProjectUuid(settings.sqlEndpointPropertiesId))}`);
-  } else {
-    lines.push(`    server: ${yamlQuoted(settings.sqlTargetServer)}`);
-  }
-  lines.push(
-    `    database: ${yamlQuoted(settings.sqlTargetDatabase)}`,
-    "  test:",
-    `    kind: ${yamlQuoted(kind)}`,
-    ...(discovered ? ["    workspace_id: ''", "    item_id: ''"] : ["    server: ''"]),
-    "    database: ''",
-    "  prod:",
-    `    kind: ${yamlQuoted(kind)}`,
-    ...(discovered ? ["    workspace_id: ''", "    item_id: ''"] : ["    server: ''"]),
-    "    database: ''",
-  );
-  return lines;
-}
-
-function safeRepositoryBlock(repo: ProjectRepositorySettings): string[] {
-  return [
-    `  ${yamlKey(repo.name)}:`,
-    `    description: ${yamlQuoted(repo.description)}`,
-    `    role: ${yamlQuoted(repo.role)}`,
-    `    local_path: ${yamlQuoted(repo.localPath)}`,
-    `    remote_name: ${yamlQuoted(repo.remoteName)}`,
-    `    default_branch: ${yamlQuoted(repo.defaultBranch)}`,
-    "    agent_allowed_to_commit:",
-    "      - 'docs/**'",
-    "      - 'site/**'",
-    "      - 'docs/agent/logs/**'",
-    "      - 'docs/agent/diagrams/**'",
-    "    agent_never_commit:",
-    "      - '**/*.sql'",
-    "      - '**/*.py'",
-    "      - '**/*.ipynb'",
-    "      - '**/*.pbip'",
-    "      - '**/*.pbir'",
-    "      - '**/*.bim'",
-    "      - '**/*.tmdl'",
-    "      - '**/*.dax'",
-    "      - '**/*.rdl'",
-    "      - '**/*.SemanticModel/**'",
-    "      - '**/*.Report/**'",
-  ];
-}
-
-function appendNewRepository(text: string, repo: ProjectRepositorySettings): string {
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
-  let repos = findYamlKey(lines, "repositories", 0, lines.length, 0);
-  if (repos < 0) {
-    if (lines.length && lines[lines.length - 1].trim()) lines.push("");
-    lines.push("repositories:", ...safeRepositoryBlock(repo), "");
-    return lines.join("\n");
-  }
-  const end = yamlBlockEnd(lines, repos, 0);
-  lines.splice(end, 0, ...safeRepositoryBlock(repo));
-  return lines.join("\n");
-}
-
-/** Apply wizard answers to an existing contract without replacing unknown fields. */
-export function applyProjectWizardSettings(text: string, settings: ProjectWizardSettings): string {
-  let out = text;
-  const set = (path: string[], value: string | boolean) => { out = upsertProjectYamlScalar(out, path, value); };
-  set(["profile", "organization"], settings.organization);
-  set(["profile", "client"], settings.client);
-  set(["profile", "timezone"], settings.timezone);
-  set(["profile", "default_branch"], settings.defaultBranch);
-  set(["profile", "work_mode"], "consultant_review_first");
-  set(["estate", "mode"], estateMode(settings.repositories));
-  set(["estate", "local_source_coverage", "sql"], coverageFor(settings.repositories, "sql"));
-  set(["estate", "local_source_coverage", "power_bi"], coverageFor(settings.repositories, "powerbi"));
-  for (const repo of settings.repositories) {
-    if (repo.isNew && !repositoryNames(out).includes(repo.name)) out = appendNewRepository(out, repo);
-    else {
-      set(["repositories", repo.name, "description"], repo.description);
-      set(["repositories", repo.name, "role"], repo.role);
-      set(["repositories", repo.name, "local_path"], repo.localPath);
-      set(["repositories", repo.name, "remote_name"], repo.remoteName);
-      set(["repositories", repo.name, "default_branch"], repo.defaultBranch);
-    }
-  }
-  set(["tools", "fabric_cli", "enabled"], settings.fabricEnabled);
-  set(["tools", "fabric_cicd", "enabled"], settings.fabricEnabled);
-  set(["mcp", "fabric", "enabled"], settings.fabricEnabled);
-  set(["mcp", "fabric_sqlendpoint", "enabled"], settings.fabricEnabled);
-  if (settings.fabricEnabled) {
-    set(["fabric", "tenant_id"], settings.tenantId);
-    set(["fabric", "default_workspace_name"], settings.fabricWorkspaceName);
-    set(["fabric", "default_workspace_id"], canonicalProjectUuid(settings.fabricWorkspaceId));
-    set(["fabric", "default_sql_endpoint", "item_type"], projectSqlEndpointType(settings.sqlEndpointItemType));
-    set(["fabric", "default_sql_endpoint", "item_name"], settings.sqlEndpointItemName || "");
-    set(["fabric", "default_sql_endpoint", "item_id"], canonicalProjectUuid(settings.sqlEndpointItemId));
-    set(["fabric", "default_sql_endpoint", "sqlEndpointProperties", "id"], canonicalProjectUuid(settings.sqlEndpointPropertiesId));
-    set(["power_bi", "default_workspace_name"], settings.powerBiWorkspaceName);
-    set(["power_bi", "default_workspace_id"], settings.powerBiWorkspaceId);
-  }
-  set(["tools", "tabular_editor_cli", "enabled"], settings.tabularEditorEnabled);
-  if (settings.tabularEditorEnabled) {
-    set(["tools", "tabular_editor_cli", "executable_path"], settings.tabularEditorPath);
-    set(["tools", "tabular_editor_cli", "bpa_rules_path"], settings.bpaRulesPath);
-  }
-  if (settings.sqlTargetKind) {
-    // Only the dev entry is wizard-owned; test/prod entries and an existing
-    // default_environment stay as the person wrote them.
-    if (!projectYamlScalar(out, ["sql_targets", "default_environment"])) set(["sql_targets", "default_environment"], "dev");
-    set(["sql_targets", "dev", "kind"], settings.sqlTargetKind);
-    if (SQL_TARGET_DISCOVERED_KINDS.has(settings.sqlTargetKind)) {
-      set(["sql_targets", "dev", "workspace_id"], canonicalProjectUuid(settings.fabricWorkspaceId));
-      set(["sql_targets", "dev", "item_id"], canonicalProjectUuid(settings.sqlEndpointItemId));
-      if (settings.sqlTargetKind === "fabric_lakehouse") set(["sql_targets", "dev", "sql_endpoint_id"], canonicalProjectUuid(settings.sqlEndpointPropertiesId));
-    } else {
-      set(["sql_targets", "dev", "server"], settings.sqlTargetServer);
-    }
-    set(["sql_targets", "dev", "database"], settings.sqlTargetDatabase);
-  }
-  return out.endsWith("\n") ? out : `${out}\n`;
-}
-
-/** Render a complete safe contract for first-time setup. */
-export function renderProjectWizardSettings(settings: ProjectWizardSettings): string {
-  const lines = [
-    "# Cooptimize agent — project contract (.coop/project.yml)",
-    "# Generated by Coop's in-app /setup-project wizard.",
-    "",
-    "profile:",
-    `  organization: ${yamlQuoted(settings.organization)}`,
-    `  client: ${yamlQuoted(settings.client)}`,
-    `  timezone: ${yamlQuoted(settings.timezone)}`,
-    `  default_branch: ${yamlQuoted(settings.defaultBranch)}`,
-    "  work_mode: 'consultant_review_first'",
-    "",
-    "estate:",
-    `  mode: ${yamlQuoted(estateMode(settings.repositories))}`,
-    "  local_source_coverage:",
-    `    sql: ${yamlQuoted(coverageFor(settings.repositories, "sql"))}`,
-    `    power_bi: ${yamlQuoted(coverageFor(settings.repositories, "powerbi"))}`,
-    "",
-    settings.repositories.length ? "repositories:" : "repositories: {}",
-  ];
-  for (const repo of settings.repositories) lines.push(...safeRepositoryBlock(repo));
-  if (settings.fabricEnabled) lines.push(
-    "",
-    "fabric:",
-    `  tenant_id: ${yamlQuoted(settings.tenantId)}`,
-    `  default_workspace_name: ${yamlQuoted(settings.fabricWorkspaceName)}`,
-    `  default_workspace_id: ${yamlQuoted(canonicalProjectUuid(settings.fabricWorkspaceId))}`,
-    "  # Optional unambiguous Warehouse/Lakehouse target; IDs must come from Fabric.",
-    "  default_sql_endpoint:",
-    `    item_type: ${yamlQuoted(projectSqlEndpointType(settings.sqlEndpointItemType))}`,
-    `    item_name: ${yamlQuoted(settings.sqlEndpointItemName || "")}`,
-    `    item_id: ${yamlQuoted(canonicalProjectUuid(settings.sqlEndpointItemId))}`,
-    "    sqlEndpointProperties:",
-    `      id: ${yamlQuoted(canonicalProjectUuid(settings.sqlEndpointPropertiesId))}`,
-    "  lakehouse_names: []",
-    "  warehouse_names: []",
-    "  # Warehouse / Lakehouse workspace for each deployment environment.",
-    "  environment_names:",
-    "    dev: ''",
-    "    test: ''",
-    "    prod: ''",
-    "",
-    "power_bi:",
-    `  default_workspace_name: ${yamlQuoted(settings.powerBiWorkspaceName)}`,
-    `  default_workspace_id: ${yamlQuoted(settings.powerBiWorkspaceId)}`,
-    "  # Semantic-model workspace for each deployment environment.",
-    "  environment_names:",
-    "    dev: ''",
-    "    test: ''",
-    "    prod: ''",
-    "  semantic_models: []",
-    "  reports: []",
-  );
-  lines.push(...sqlTargetsBlock(settings));
-  lines.push(
-    "",
-    "tools:",
-    "  fabric_cli:",
-    "    command: 'fab'",
-    `    enabled: ${settings.fabricEnabled}`,
-    "    default_mode: 'read_only_first'",
-    "  fabric_cicd:",
-    "    library: 'fabric_cicd'",
-    "    injected_into: 'ms-fabric-cli'",
-    `    enabled: ${settings.fabricEnabled}`,
-    "    default_mode: 'validate_only'",
-    "  tabular_editor_cli:",
-    `    enabled: ${settings.tabularEditorEnabled}`,
-  );
-  if (settings.tabularEditorEnabled) lines.push(
-    `    executable_path: ${yamlQuoted(settings.tabularEditorPath)}`,
-    `    bpa_rules_path: ${yamlQuoted(settings.bpaRulesPath)}`,
-  );
-  lines.push(
-    "  coop_data_doc:",
-    "    command: 'coop-data-doc'",
-    "    enabled: true",
-    "    default_command: 'build'",
-    "    machine_outputs: ['graph.json', 'manifest.json']",
-    "",
-    "mcp:",
-    "  fabric:",
-    `    enabled: ${settings.fabricEnabled}`,
-    "  fabric_sqlendpoint:",
-    `    enabled: ${settings.fabricEnabled}`,
-    "  microsoft_learn:",
-    "    enabled: true",
-    "",
-    "memory:",
-    "  extension: 'pi-hermes-memory'",
-    "  enabled: true",
-    "  secret_scanning: true",
-    "",
-    "microsoft_skills:",
-    "  policy: restricted",
-    "  allow:",
-    "    - 'kql'",
-    "    - 'microsoft-docs'",
-    "",
-    "fabric_skills:",
-    `  policy: ${settings.fabricEnabled ? "baseline" : "disabled"}`,
-    "",
-    "# Standards: the canonical Cooptimize standards come from cooptimize/coop-standards",
-    "# (`coop sync`, `/standards-status`). Add an override only when this project has",
-    "# deliberately approved different standards for a domain. Use a single Markdown file per",
-    "# coop domain (sql, dax, or semantic_model), set as `path:`.",
-    "# standards:",
-    "#   sql:",
-    "#     path: \"docs/standards/client-sql.md\"",
-    "",
-    "backup:",
-    "  root: '.backups'",
-    "  timestamp_format: '%Y%m%d_%H%M%S'",
-    "  naming_pattern: '{original_name}.{timestamp}.bak'",
-    "  required_before_edit: true",
-    "",
-    "logging:",
-    "  daily_log_path: 'docs/agent/logs/daily/{yyyy-mm-dd}.md'",
-    "  weekly_log_path: 'docs/agent/logs/weekly/{yyyy}-W{ww}.md'",
-    "  require_task_log: true",
-    "",
-    "documentation:",
-    "  agent_docs_root: 'docs/agent'",
-    "  human_site_root: 'site'",
-    "  glossary_path: 'docs/agent/glossary/index.md'",
-    "  diagrams_path: 'docs/agent/diagrams'",
-    "  source_of_truth: 'markdown_first_html_generated'",
-    "  use_coop_data_doc: true",
-    "",
-    "workflow:",
-    "  skill: 'coop-workflow'",
-    "  steps:",
-    "    - 'Read .coop/project.yml and use COOP resolved standards task authority'",
-    "    - 'Identify upstream and downstream impact before edits'",
-    "    - 'Write a short plan and get approval before editing'",
-    "    - 'Create backups before changing source files'",
-    "    - 'Make the smallest safe edit and run the applicable review'",
-    "    - 'Show the diff, update documentation, and append to the work log'",
-    "    - 'Commit docs/logs/site only with approval; never commit source'",
-    "",
-    "approval_policy:",
-    "  always_allowed:",
-    "    - 'read files'",
-    "    - 'git status / git diff / git pull'",
-    "    - 'create backups'",
-    "    - 'run the advisory data_doc / bpa_review tools'",
-    "    - 'MCP dev/test metadata / schema / artifact-code list / read / inspect'",
-    "    - 'update markdown docs, html site, logs'",
-    "  ask_first:",
-    "    - 'read actual rows from a live environment'",
-    "    - 'read production metadata or artifact code'",
-    "    - 'read production rows with target / columns / filters / limit'",
-    "    - 'delete files'",
-    "    - 'deploy or publish'",
-    "    - 'change production workspace'",
-    "    - 'commit documentation changes'",
-    "  never_without_explicit_instruction:",
-    "    - 'commit SQL/DAX/model/report source changes'",
-    "    - 'push to remote'",
-    "    - 'deploy to test/prod'",
-    "    - 'MCP create/update/delete/deploy/publish'",
-    "    - 'print secrets, tokens, connection strings, or .env contents'",
-    "",
-    "tests:",
-    "  live_data:",
-    "    enabled: false",
-    "    between_slices: true",
-    "    command: ''",
-    "    workspace: 'dev'",
-    "    require_approval: true",
-    "",
-  );
-  return lines.join("\n");
-}
-
-function findGitRoot(cwd: string): string | null {
-  let dir = resolve(cwd || ".");
-  for (;;) {
-    if (existsSync(join(dir, ".git"))) return dir;
-    const parent = dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
-}
-
-function writeProjectContract(path: string, text: string): string | null {
-  mkdirSync(dirname(path), { recursive: true });
-  let backup: string | null = null;
-  if (existsSync(path)) {
-    backup = `${path}.bak`;
-    copyFileSync(path, backup);
-    writeFileSync(path, text, "utf8");
-  } else {
-    const temp = `${path}.tmp-${process.pid}`;
-    writeFileSync(temp, text, "utf8");
-    renameSync(temp, path);
-  }
-  return backup;
-}
-
 async function chooseRole(ctx: any, label: string, current: ProjectRepositorySettings["role"]): Promise<ProjectRepositorySettings["role"] | null> {
   if (typeof ctx.ui?.select !== "function") return null;
   const choices = [
@@ -2021,7 +1214,7 @@ async function editRepository(ctx: any, root: string, repo: ProjectRepositorySet
   if (askName) {
     const raw = await askText(ctx, "Repository short name", name);
     if (raw === null) return null;
-    name = raw.replace(/[^A-Za-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "") || name;
+    name = repositoryShortName(raw, name);
   }
   const description = await askText(ctx, `${name}: description`, repo.description);
   if (description === null) return null;
@@ -2039,23 +1232,6 @@ async function editRepository(ctx: any, root: string, repo: ProjectRepositorySet
 }
 
 /** Native UI project setup/edit flow. Returns true only after a contract write. */
-/** Write `<profile dir>/user.json` with just a name and the balanced preset: the
- *  same shape and name rules as scripts/onboard.py (`validate_name`), which stays
- *  the place to change the communication preset. Returns the saved name, or null
- *  when the name is invalid or the file could not be written. */
-export function saveUserProfileName(rawName: string, path: string = coopUserProfilePath()): string | null {
-  const name = String(rawName ?? "").replace(/[\x00-\x1f\x7f-\x9f]/g, "").trim();
-  if (!name || name.length > 100 || /[\\/<>|:&;]/.test(name)) return null;
-  try {
-    mkdirSync(dirname(path), { recursive: true });
-    const profile = { schema_version: 1, name, communication: { preset: "balanced", custom_instructions: "" } };
-    writeFileSync(path, JSON.stringify(profile, null, 2) + "\n", "utf8");
-    return name;
-  } catch {
-    return null;
-  }
-}
-
 export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<boolean> {
   if (!ctx.hasUI || typeof ctx.ui?.input !== "function" || typeof ctx.ui?.confirm !== "function") {
     notify(ctx, "Project setup needs an interactive Coop UI. In a shell, run: coop init", "warning");
@@ -2077,7 +1253,7 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
     if (name) {
       const saved = saveUserProfileName(name);
       if (saved) notify(ctx, `Saved your profile name (${saved}). Coop will use it from the next session.`, "info");
-      else notify(ctx, "That name has characters coop can't save (\\ / < > | : & ;) or is over 100 characters; run `coop onboard` to set it.", "warning");
+      else notify(ctx, PROJECT_MESSAGES.profileName, "warning");
     }
   }
 
@@ -2124,7 +1300,7 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
     const added = await editRepository(ctx, root, seed, true);
     if (!added) return false;
     if (editedRepos.some((r) => r.name === added.name)) {
-      notify(ctx, `A repository named ${added.name} already exists; choose a unique short name.`, "error");
+      notify(ctx, PROJECT_MESSAGES.repoName(added.name), "error");
       continue;
     }
     editedRepos.push(added);
@@ -2150,7 +1326,7 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
     const endpointType = await askText(ctx, "Default SQL endpoint item type: Warehouse or Lakehouse (optional)", settings.sqlEndpointItemType || "");
     if (endpointType === null) return false;
     if (endpointType && endpointType !== "Warehouse" && endpointType !== "Lakehouse") {
-      notify(ctx, "SQL endpoint item type must be exactly Warehouse, Lakehouse, or blank.", "error");
+      notify(ctx, PROJECT_MESSAGES.endpointType, "error");
       return false;
     }
     const endpointName = await askText(ctx, "Default SQL endpoint item name (optional)", settings.sqlEndpointItemName || "");
@@ -2159,13 +1335,12 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
     if (endpointId === null) return false;
     const endpointPropertiesId = await askText(ctx, "Lakehouse sqlEndpointProperties.id (canonical UUID; required for Lakehouse)", settings.sqlEndpointPropertiesId || "");
     if (endpointPropertiesId === null) return false;
-    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-    if ((fwId && !uuid.test(fwId)) || (endpointId && !uuid.test(endpointId)) || (endpointPropertiesId && !uuid.test(endpointPropertiesId))) {
-      notify(ctx, "Fabric workspace and SQL endpoint IDs must be lowercase canonical UUIDs or blank.", "error");
+    if ([fwId, endpointId, endpointPropertiesId].some((id) => id && !CANONICAL_UUID.test(id))) {
+      notify(ctx, PROJECT_MESSAGES.uuids, "error");
       return false;
     }
     if (endpointType === "Lakehouse" && !endpointPropertiesId) {
-      notify(ctx, "Lakehouse SQL endpoint selection requires sqlEndpointProperties.id.", "error");
+      notify(ctx, PROJECT_MESSAGES.lakehouseId, "error");
       return false;
     }
     const pbiName = await askText(ctx, "Default Power BI workspace name (optional)", settings.powerBiWorkspaceName || fwName);
@@ -2192,7 +1367,7 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
   if (kind === null) return false;
   const kindValue = kind.trim().toLowerCase();
   if (kindValue && !(SQL_TARGET_KINDS as readonly string[]).includes(kindValue)) {
-    notify(ctx, `SQL target kind must be one of ${SQL_TARGET_KINDS.join(", ")}, or blank.`, "error");
+    notify(ctx, PROJECT_MESSAGES.targetKind, "error");
     return false;
   }
   settings.sqlTargetKind = kindValue;
@@ -2200,8 +1375,8 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
     if (!SQL_TARGET_DISCOVERED_KINDS.has(kindValue)) {
       const server = await askText(ctx, "Dev SQL server host (for example contoso-dev.database.windows.net)", settings.sqlTargetServer);
       if (server === null) return false;
-      if (/[\s,:;=\/\\]/.test(server)) {
-        notify(ctx, "The server is a host name only: no port, path or connection-string parts.", "error");
+      if (!isServerHost(server)) {
+        notify(ctx, PROJECT_MESSAGES.serverHost, "error");
         return false;
       }
       settings.sqlTargetServer = server.toLowerCase();
@@ -2340,24 +1515,6 @@ async function documentDataFlow(pi: ExtensionAPI, ctx: any): Promise<void> {
  * Return the team-knowledge note string if at least one configured knowledge repo clone exists,
  * or null otherwise.
  */
-/**
- * The machine's client platform from ~/.coop/config (client.platform, written by
- * `coop install --platform` / `coop onboard`; master plan section 8 item 7):
- * "fabric", "azure_sql" or "both". "" when unset or unreadable (treated as Fabric).
- * The project contract still wins per repository; this only seeds wizard defaults.
- */
-export function clientPlatform(coopDir?: string): "fabric" | "azure_sql" | "both" | "" {
-  const base = coopDir || process.env.COOP_DIR || homedir();
-  const cfgPath = join(base, ".coop", "config");
-  try {
-    const raw = JSON.parse(readFileSync(cfgPath, "utf8"));
-    const value = raw?.client?.platform;
-    return value === "fabric" || value === "azure_sql" || value === "both" ? value : "";
-  } catch {
-    return "";
-  }
-}
-
 export function teamKnowledgeNote(coopDir?: string, homeDir?: string): string | null {
   // coopDir is the PARENT of .coop (the COOP_DIR meaning); the default is the
   // profile dir from lib/paths.mjs.

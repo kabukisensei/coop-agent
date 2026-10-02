@@ -2,11 +2,14 @@
 // The coop window's runtime lockfile (master plan D1b).
 //
 // config/desktop-lock.json is npm's package-lock.json (lockfileVersion 3) for a
-// tree that holds only the manifest's Electron pin (desktop.electron). The
-// window runtime installs from it with `npm ci --ignore-scripts` into
-// <profile dir>\desktop\runtime (Install-CoopDesktopRuntime in lib/common.ps1),
-// so every machine on a release gets the same Electron package and the same
-// checksums.json its install.js verifies the binary against.
+// tree that holds the manifest's two window pins: Electron (desktop.electron)
+// and pdf.js (desktop.pdfjs, the pdfjs-dist package that reads attached PDFs
+// in a child process). The window runtime installs from it with
+// `npm ci --ignore-scripts --omit=optional` into <profile dir>\desktop\runtime
+// (Install-CoopDesktopRuntime in lib/common.ps1), so every machine on a release
+// gets the same packages and the same checksums.json Electron's install.js
+// verifies the binary against. Optional packages (pdf.js's canvas, which only
+// rendering needs) stay in the lock and out of the tree.
 //
 // usage:
 //   node desktop/scripts/runtime-lock.mjs generate [manifest] [out]   regenerate (network; resolves only, downloads no binary)
@@ -34,11 +37,17 @@ function readJson(file) {
   }
 }
 
-/** The package.json the runtime tree installs: the Electron pin and nothing else. */
+/** The pins the runtime tree holds, as package name -> version. */
+export function runtimePins(manifest) {
+  const desktop = (manifest && manifest.desktop) || {};
+  if (!desktop.electron) throw new Error("manifest has no desktop.electron");
+  if (!desktop.pdfjs) throw new Error("manifest has no desktop.pdfjs");
+  return { electron: desktop.electron, "pdfjs-dist": desktop.pdfjs };
+}
+
+/** The package.json the runtime tree installs: the two pins and nothing else. */
 export function runtimePackageJson(manifest) {
-  const electron = manifest && manifest.desktop && manifest.desktop.electron;
-  if (!electron) throw new Error("manifest has no desktop.electron");
-  return { name: RUNTIME_NAME, private: true, dependencies: { electron } };
+  return { name: RUNTIME_NAME, private: true, dependencies: runtimePins(manifest) };
 }
 
 /** Reasons the lock does not match the manifest; empty when it does. */
@@ -53,9 +62,9 @@ export function lockProblems(manifest, lock) {
   if (JSON.stringify(deps) !== JSON.stringify(want.dependencies)) {
     problems.push(`root dependencies are ${JSON.stringify(deps)}, the manifest pins ${JSON.stringify(want.dependencies)}`);
   }
-  const electron = packages["node_modules/electron"];
-  if (!electron || electron.version !== want.dependencies.electron) {
-    problems.push(`node_modules/electron is ${electron ? electron.version : "missing"}, the manifest pins ${want.dependencies.electron}`);
+  for (const [name, version] of Object.entries(want.dependencies)) {
+    const entry = packages[`node_modules/${name}`];
+    if (!entry || entry.version !== version) problems.push(`node_modules/${name} is ${entry ? entry.version : "missing"}, the manifest pins ${version}`);
   }
   for (const [key, entry] of Object.entries(packages)) {
     if (!key) continue;

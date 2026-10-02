@@ -17,16 +17,21 @@ export function matchOffsets(text, query) {
   return offsets;
 }
 
-export function createFinder({ root, bar, input, count, prev, next, close, onClose }) {
+/**
+ * highlight names the CSS highlights (a pane's search paints its own);
+ * fromTop starts at the first match instead of the newest; bodyClass marks
+ * the page while the bar is open ("" for none).
+ */
+export function createFinder({ root, bar, input, count, prev, next, close, onClose, highlight = "coop-find", fromTop = false, bodyClass = "finding" }) {
   const state = { ranges: [], index: -1, timer: 0 };
   const supported = typeof CSS !== "undefined" && CSS.highlights && typeof Highlight === "function";
 
   function paint() {
     if (!supported) return;
-    CSS.highlights.set("coop-find", new Highlight(...state.ranges));
+    CSS.highlights.set(highlight, new Highlight(...state.ranges));
     const current = state.ranges[state.index];
-    if (current) CSS.highlights.set("coop-find-current", new Highlight(current));
-    else CSS.highlights.delete("coop-find-current");
+    if (current) CSS.highlights.set(`${highlight}-current`, new Highlight(current));
+    else CSS.highlights.delete(`${highlight}-current`);
   }
 
   function show(scroll = true) {
@@ -58,7 +63,7 @@ export function createFinder({ root, bar, input, count, prev, next, close, onClo
       }
     }
     // The newest match first, as the terminal searches up from the bottom.
-    state.index = state.ranges.length ? (keepIndex && previous >= 0 ? Math.min(previous, state.ranges.length - 1) : state.ranges.length - 1) : -1;
+    state.index = state.ranges.length ? (keepIndex && previous >= 0 ? Math.min(previous, state.ranges.length - 1) : fromTop ? 0 : state.ranges.length - 1) : -1;
     show(scroll);
   }
 
@@ -70,7 +75,7 @@ export function createFinder({ root, bar, input, count, prev, next, close, onClo
 
   function open() {
     bar.hidden = false;
-    document.body.classList.add("finding");
+    if (bodyClass) document.body.classList.add(bodyClass);
     input.focus();
     input.select();
     search();
@@ -78,10 +83,10 @@ export function createFinder({ root, bar, input, count, prev, next, close, onClo
 
   function hide() {
     bar.hidden = true;
-    document.body.classList.remove("finding");
+    if (bodyClass) document.body.classList.remove(bodyClass);
     state.ranges = [];
     state.index = -1;
-    if (supported) { CSS.highlights.delete("coop-find"); CSS.highlights.delete("coop-find-current"); }
+    if (supported) { CSS.highlights.delete(highlight); CSS.highlights.delete(`${highlight}-current`); }
     if (onClose) onClose();
   }
 
@@ -91,7 +96,7 @@ export function createFinder({ root, bar, input, count, prev, next, close, onClo
     else if (event.key === "Enter" || (event.ctrlKey && event.key.toLowerCase() === "g")) {
       event.preventDefault();
       event.stopPropagation();
-      step(event.shiftKey ? 1 : -1);
+      step((event.shiftKey ? 1 : -1) * (fromTop ? -1 : 1));
     }
   });
   prev.addEventListener("click", () => step(-1));
@@ -101,6 +106,7 @@ export function createFinder({ root, bar, input, count, prev, next, close, onClo
   return {
     open,
     hide,
+    search,
     get isOpen() { return !bar.hidden; },
     /** The timeline redrew: find again, keeping the place. */
     refresh() {

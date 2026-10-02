@@ -2841,8 +2841,9 @@ function Set-CoopWindowShortcut {
 # --- coop desktop: the window's runtime (master plan D1b) ---------------------
 # The window's code is desktop\ in this repo, loaded in place like the
 # extensions. It runs on Electron, pinned in the release manifest
-# (desktop.electron) and installed from the shipped lockfile
-# (config\desktop-lock.json; regenerate with
+# (desktop.electron), with pdf.js beside it (desktop.pdfjs, the pdfjs-dist
+# package that reads attached PDFs in a child process); both install from the
+# shipped lockfile (config\desktop-lock.json; regenerate with
 # `node desktop/scripts/runtime-lock.mjs generate` after a pin bump) into its own
 # tree, <profile dir>\desktop\runtime. That tree is not Pi's extension tree and
 # not a global npm install: `coop desktop` installs it on first use, `coop sync`
@@ -2853,6 +2854,14 @@ function Get-CoopDesktopDir { return (Join-Path (Get-CoopProfileDir) 'desktop') 
 function Get-CoopDesktopRuntimeDir { return (Join-Path (Get-CoopDesktopDir) 'runtime') }
 function Get-CoopDesktopDataDir { return (Join-Path (Get-CoopDesktopDir) 'data') }
 function Get-CoopDesktopElectronPin { return (Coop-ManifestGet -Key 'desktop.electron') }
+function Get-CoopDesktopPdfjsPin { return (Coop-ManifestGet -Key 'desktop.pdfjs') }
+
+# The pdf.js version installed in the runtime tree; '' when absent.
+function Get-CoopDesktopPdfjsVersion {
+  $f = Join-Path (Get-CoopDesktopRuntimeDir) 'node_modules\pdfjs-dist\package.json'
+  if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return '' }
+  try { return ([string]((Get-Content -LiteralPath $f -Raw | ConvertFrom-Json).version)).Trim() } catch { return '' }
+}
 
 # The Electron version installed in the runtime tree; '' when absent.
 function Get-CoopDesktopElectronVersion {
@@ -2875,30 +2884,34 @@ function Get-CoopDesktopElectronExe {
   return ''
 }
 
-# 'missing' (never installed), 'current' (the pin, from the shipped lock, with
-# its binary) or 'stale' (installed, but not this release's runtime, or half
-# installed).
+# 'missing' (never installed), 'current' (both pins, from the shipped lock, with
+# Electron's binary) or 'stale' (installed, but not this release's runtime, or
+# half installed).
 function Get-CoopDesktopRuntimeState {
   $dir = Get-CoopDesktopRuntimeDir
   if (-not (Test-Path -LiteralPath $dir -PathType Container)) { return 'missing' }
   $pin = Get-CoopDesktopElectronPin
   if (-not $pin -or (Get-CoopDesktopElectronVersion) -ne $pin) { return 'stale' }
   if (-not (Get-CoopDesktopElectronExe)) { return 'stale' }
+  $pdfPin = Get-CoopDesktopPdfjsPin
+  if (-not $pdfPin -or (Get-CoopDesktopPdfjsVersion) -ne $pdfPin) { return 'stale' }
   $lock = Join-Path $script:CoopRoot 'config\desktop-lock.json'
   if ((Get-CoopFileSha256 $lock) -ne (Get-CoopFileSha256 (Join-Path $dir 'package-lock.json'))) { return 'stale' }
   return 'current'
 }
 
 # Install (or refresh) the runtime tree from the shipped lock: `npm ci` with no
-# lifecycle scripts, then Electron's own install.js, which downloads the binary
-# for this machine and checks it against the checksums.json inside the locked
-# package (Electron 44 has no install script of its own). Returns $true when the
-# tree is current afterwards. A running window holds electron.exe open, so a
-# refresh then fails and says to close it.
+# lifecycle scripts and no optional packages (pdf.js's canvas serves rendering
+# only), then Electron's own install.js, which downloads the binary for this
+# machine and checks it against the checksums.json inside the locked package
+# (Electron 44 has no install script of its own). Returns $true when the tree
+# is current afterwards. A running window holds electron.exe open, so a refresh
+# then fails and says to close it.
 function Install-CoopDesktopRuntime {
   $pin = Get-CoopDesktopElectronPin
+  $pdfPin = Get-CoopDesktopPdfjsPin
   $lock = Join-Path $script:CoopRoot 'config\desktop-lock.json'
-  if (-not $pin -or -not (Test-Path -LiteralPath $lock -PathType Leaf)) {
+  if (-not $pin -or -not $pdfPin -or -not (Test-Path -LiteralPath $lock -PathType Leaf)) {
     Coop-Warn 'this coop release does not pin the window runtime' 'run: coop update'
     return $false
   }
@@ -2908,14 +2921,14 @@ function Install-CoopDesktopRuntime {
   $dir = Get-CoopDesktopRuntimeDir
   try {
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
-    $pkgJson = "{`n  `"name`": `"coop-desktop-runtime`",`n  `"private`": true,`n  `"dependencies`": {`n    `"electron`": `"$pin`"`n  }`n}`n"
+    $pkgJson = "{`n  `"name`": `"coop-desktop-runtime`",`n  `"private`": true,`n  `"dependencies`": {`n    `"electron`": `"$pin`",`n    `"pdfjs-dist`": `"$pdfPin`"`n  }`n}`n"
     [System.IO.File]::WriteAllText((Join-Path $dir 'package.json'), $pkgJson)
     Copy-Item -LiteralPath $lock -Destination (Join-Path $dir 'package-lock.json') -Force
   } catch {
     Coop-Warn "could not prepare $dir`: $($_.Exception.Message)"
     return $false
   }
-  Coop-Info "installing the coop window runtime (Electron $pin, about 100 MB) into $dir"
+  Coop-Info "installing the coop window runtime (Electron $pin and pdf.js $pdfPin, about 140 MB) into $dir"
   $previousEap = $ErrorActionPreference
   $out = @()
   $rc = 1
@@ -2924,7 +2937,7 @@ function Install-CoopDesktopRuntime {
     # Native stderr (npm notices, the download progress) is a NativeCommandError
     # under Windows PowerShell 5.1 when redirected; the exit code is the signal.
     $ErrorActionPreference = 'Continue'
-    $out = @(& $npm ci --ignore-scripts --no-audit --no-fund 2>&1)
+    $out = @(& $npm ci --ignore-scripts --omit=optional --no-audit --no-fund 2>&1)
     $rc = $LASTEXITCODE
     if ($rc -eq 0) {
       $out = @(& node (Join-Path $dir 'node_modules\electron\install.js') 2>&1)
@@ -2936,7 +2949,7 @@ function Install-CoopDesktopRuntime {
     Coop-Warn ("could not install the coop window runtime{0}" -f $(if ($detail) { ": $detail" } else { '' })) 'close every coop window, then run: coop sync'
     return $false
   }
-  Coop-Ok "coop window runtime ready: Electron $pin"
+  Coop-Ok "coop window runtime ready: Electron $pin, pdf.js $pdfPin"
   return $true
 }
 

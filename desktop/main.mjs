@@ -21,9 +21,17 @@ import { resolveAsset, isAppUrl, CSP, APP_ORIGIN } from "./lib/serve.mjs";
 import { readBranch } from "./lib/git.mjs";
 import { listFiles, rankFiles } from "./lib/files.mjs";
 import { loadSettings, saveSettings, THEMES } from "./lib/settings.mjs";
+import { listChanges, fileDiff } from "./lib/changes.mjs";
+import { readStandards, readSnapshot } from "./lib/standards-view.mjs";
+import { loadProject, previewProject, saveProject } from "./lib/project-form.mjs";
+import { DocsSetupRun, AnswerError, docsLocation, listDocsPages, pickedPathAnswer, readDocsPage, runDocsBuild } from "./lib/docs-setup.mjs";
+import { attach, forget, pruneStore, findPdfjs, LIMITS as ATTACH_LIMITS } from "./lib/attachments.mjs";
+import { loadSplash } from "./lib/splash.mjs";
+import { vibesDir, loadVibes, vibeSets, userName, fillVibe, pickVibe } from "./lib/vibes.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RENDERER = join(HERE, "renderer");
+const REPO = join(HERE, "..");
 const MAX_QUEUE = 20_000;
 const MAX_COPY = 4 * 1024 * 1024;
 // Pi answers these only when the work is done, which can include a question
@@ -46,6 +54,13 @@ const checkout = createHash("sha256").update(HERE.toLowerCase()).digest("hex").s
 app.setPath("userData", join(isAbsolute(dataRoot) ? dataRoot : join(app.getPath("appData"), "coop", "desktop"), checkout));
 const settingsFile = join(app.getPath("userData"), "settings.json");
 let settings = loadSettings(settingsFile);
+// Text pulled out of attached documents (D1b2) lives beside the settings; a
+// week-old extract is of no use to anyone, so the store is pruned at start.
+const attachmentStore = join(app.getPath("userData"), "attachments");
+pruneStore(attachmentStore);
+// pdf.js is the window runtime's second package, next to Electron.
+const pdfjsDir = findPdfjs(process.execPath);
+const splashArt = loadSplash(REPO);
 
 protocol.registerSchemesAsPrivileged([
   { scheme: "coop", privileges: { standard: true, secure: true, supportFetchAPI: false, corsEnabled: false } },
@@ -118,7 +133,18 @@ function windowInfo(state) {
     canOpenFolder: Boolean(spec.coop),
     loginPresent: spec.loginPresent,
     notices: state.noticesShown ? [] : spec.notices,
+    splash: splashArt,
+    vibe: vibeFor(state),
+    vibeSets: vibeSets(vibesDir(REPO)),
+    attachLimits: { perMessage: ATTACH_LIMITS.perMessage, images: ATTACH_LIMITS.images },
+    pdfReady: Boolean(pdfjsDir),
   };
+}
+
+// The terminal rotates a vibe under its splash and on its working line; the
+// window asks for one here, from the same files, with the same {user} rule.
+function vibeFor(state) {
+  return fillVibe(pickVibe(loadVibes(vibesDir(REPO), state.vibeSet)), userName({ ...process.env, ...state.spec.env }));
 }
 
 function openWindow(rawSpec, token) {
@@ -150,7 +176,7 @@ function openWindow(rawSpec, token) {
       devTools: process.env.COOP_DESKTOP_DEVTOOLS === "1",
     },
   });
-  const state = { win, spec, token, pi: null, ready: false, queue: [], sessionFile: "" };
+  const state = { win, spec, token, pi: null, ready: false, queue: [], sessionFile: "", changes: [], snapshots: new Map(), docs: null, build: null, vibeSet: "" };
   windows.set(win.webContents.id, state);
   if (settings.maximized) win.maximize();
   win.once("ready-to-show", () => win.show());
@@ -165,6 +191,8 @@ function openWindow(rawSpec, token) {
   win.on("closed", () => {
     windows.delete(id);
     if (state.pi) state.pi.stop();
+    if (state.docs) state.docs.cancel();
+    if (state.build) { try { state.build.kill(); } catch { /* already gone */ } }
   });
   // A renderer that crashed or reloaded subscribes again; replaying keeps
   // dialogs Pi is waiting on visible.
@@ -339,6 +367,167 @@ handle("coop:zoom", (state, step) => {
   const level = step === 0 ? 0 : Math.max(-3, Math.min(4, contents.getZoomLevel() + (step > 0 ? 0.5 : -0.5)));
   contents.setZoomLevel(level);
   return { success: true, level };
+});
+
+// --- Panes (D1b2): read-only views, and two forms that write only through
+// the /setup-project writer and coop-data-doc's own wizard -------------------
+
+// coop's environment for the tools the panes run: the window's own without
+// Electron's variables, plus the spec's (piEnv), never the Warehouse token.
+function toolEnv(state) {
+  return piEnv(state.spec, process.env);
+}
+
+handle("coop:changes", async (state) => {
+  const result = await listChanges(state.spec.cwd);
+  state.changes = result.files;
+  return { success: true, data: result };
+});
+
+handle("coop:change-diff", async (state, path) => {
+  const entry = state.changes.find((file) => file.path === path);
+  if (!entry) return { success: false, error: "that file is not in the list of changes; refresh it" };
+  return { success: true, data: await fileDiff(state.spec.cwd, entry) };
+});
+
+handle("coop:standards", async (state) => {
+  const result = await readStandards({ node: state.spec.node, repoRoot: REPO, cwd: state.spec.cwd, env: toolEnv(state) });
+  state.snapshots = result.snapshots;
+  return { success: true, data: { source: result.source, domains: result.domains } };
+});
+
+handle("coop:standards-text", async (state, domain) => {
+  const path = state.snapshots.get(domain);
+  if (!path) return { success: false, error: "no standards are resolved for that domain" };
+  return { success: true, data: await readSnapshot(path) };
+});
+
+handle("coop:project-load", (state) => ({ success: true, data: loadProject(state.spec.cwd, { env: toolEnv(state) }) }));
+
+handle("coop:project-preview", (state, input) => ({ success: true, data: previewProject(state.spec.cwd, input, { env: toolEnv(state) }) }));
+
+handle("coop:project-save", (state, input, token) => {
+  if (typeof token !== "string") return { success: false, error: "review the changes first" };
+  return { success: true, data: saveProject(state.spec.cwd, input, token, { env: toolEnv(state) }) };
+});
+
+// A folder for a path field, relative to what that field is relative to.
+handle("coop:pick-folder", async (state, purpose, current) => {
+  const def = typeof current === "string" ? current.slice(0, 2000) : "";
+  let base;
+  if (purpose === "project") base = loadProject(state.spec.cwd, { env: toolEnv(state) }).root;
+  else if (purpose === "docs" && state.docs && state.docs.base) base = state.docs.base;
+  else return { success: false, error: "nothing is asking for a folder" };
+  const start = isAbsolute(def) ? def : join(base, def || ".");
+  const result = await dialog.showOpenDialog(state.win, { title: "Choose a folder", defaultPath: existsSync(start) ? start : base, properties: ["openDirectory"] });
+  if (result.canceled || !result.filePaths.length) return { success: false, cancelled: true };
+  return { success: true, data: pickedPathAnswer(base, result.filePaths[0], def) };
+});
+
+handle("coop:docs-start", (state) => {
+  if (state.docs && !state.docs.finished) return { success: false, error: "the docs setup is already running" };
+  const run = new DocsSetupRun({ cwd: state.spec.cwd, env: toolEnv(state), send: (event) => send(state, "coop:docs", event) });
+  state.docs = run;
+  run.start().catch((error) => send(state, "coop:docs", { type: "done", ok: false, message: error.message }));
+  return { success: true };
+});
+
+// A reloaded window asks for the question the wizard is waiting on.
+handle("coop:docs-state", (state) => {
+  const run = state.docs;
+  return { success: true, data: { running: Boolean(run && !run.finished), prompt: run && run.pending ? run.pending.prompt : null, building: Boolean(state.build) } };
+});
+
+handle("coop:docs-answer", (state, id, value) => {
+  if (!state.docs || state.docs.finished) return { success: false, error: "the docs setup is not running" };
+  try {
+    state.docs.answer(String(id), value);
+    return { success: true };
+  } catch (error) {
+    if (error instanceof AnswerError) return { success: false, error: error.message };
+    throw error;
+  }
+});
+
+handle("coop:docs-cancel", (state) => {
+  if (state.docs && !state.docs.finished) state.docs.cancel();
+  if (state.build) { try { state.build.kill(); } catch { /* already gone */ } }
+  return { success: true };
+});
+
+function docsView(state) {
+  const where = docsLocation(state.spec.cwd, toolEnv(state));
+  return { config: where.config, exists: where.exists, outputDir: where.outputDir, built: where.built, portal: Boolean(where.portal) };
+}
+
+handle("coop:docs-location", (state) => ({ success: true, data: docsView(state) }));
+
+handle("coop:docs-build", async (state) => {
+  if (state.build) return { success: false, error: "a build is already running" };
+  const where = docsLocation(state.spec.cwd, toolEnv(state));
+  if (!where.exists) return { success: false, error: "set up the docs first" };
+  try {
+    const result = await runDocsBuild({
+      cwd: state.spec.cwd,
+      env: toolEnv(state),
+      onChild: (child) => { state.build = child; },
+      onLine: (line) => send(state, "coop:docs", { type: "build-line", line }),
+    });
+    return { success: true, data: { ...result, location: docsView(state) } };
+  } finally {
+    state.build = null;
+  }
+});
+
+handle("coop:docs-page", (state, page) => {
+  const where = docsLocation(state.spec.cwd, toolEnv(state));
+  if (!where.built) return { success: false, error: "the docs are not built yet" };
+  return { success: true, data: readDocsPage(where.outputDir, page) };
+});
+
+handle("coop:docs-pages", (state) => {
+  const where = docsLocation(state.spec.cwd, toolEnv(state));
+  if (!where.built) return { success: false, error: "the docs are not built yet" };
+  return { success: true, data: listDocsPages(where.outputDir) };
+});
+
+// Attachments (D1b2): the picker, one file at a time (validated and read in
+// lib/attachments.mjs), and the stored text of a chip removed before sending.
+handle("coop:pick-files", async (state) => {
+  const result = await dialog.showOpenDialog(state.win, {
+    title: "Attach files",
+    defaultPath: state.spec.cwd,
+    properties: ["openFile", "multiSelections"],
+    filters: [
+      { name: "Files coop reads", extensions: ["png", "jpg", "jpeg", "gif", "webp", "pdf", "docx", "xlsx", "pptx", "md", "txt", "csv", "tsv", "json", "yml", "yaml", "sql", "dax", "tmdl", "pq", "kql", "py", "ps1", "xml", "html", "log"] },
+      { name: "All files", extensions: ["*"] },
+    ],
+  });
+  if (result.canceled) return { success: true, data: [] };
+  return { success: true, data: result.filePaths.slice(0, ATTACH_LIMITS.perMessage) };
+});
+
+handle("coop:attach-file", async (state, path) => ({
+  success: true,
+  data: await attach(String(path || ""), { cwd: state.spec.cwd, store: attachmentStore, node: state.spec.node, pdfjsDir, env: { ...process.env, ...state.spec.env } }),
+}));
+
+handle("coop:attachment-forget", (state, id) => ({ success: forget(attachmentStore, String(id || "")) }));
+
+handle("coop:vibe", (state, set) => {
+  if (typeof set === "string" && set) {
+    if (set === "all") state.vibeSet = "";
+    else if (vibeSets(vibesDir(REPO)).includes(set)) state.vibeSet = set;
+    else return { success: false, error: `no vibe set named ${set}` };
+  }
+  return { success: true, data: vibeFor(state) };
+});
+
+handle("coop:docs-portal", async (state) => {
+  const where = docsLocation(state.spec.cwd, toolEnv(state));
+  if (!where.portal) return { success: false, error: "the docs portal is not built yet" };
+  const error = await shell.openPath(where.portal);
+  return error ? { success: false, error } : { success: true };
 });
 
 // --- App lifecycle -----------------------------------------------------------

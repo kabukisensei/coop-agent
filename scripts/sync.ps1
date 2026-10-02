@@ -98,7 +98,7 @@ if ($desktopState -eq 'stale') {
   Coop-Head 'coop window'
   [void](Install-CoopDesktopRuntime)
 } elseif ($desktopState -eq 'current') {
-  Coop-Ok "coop window runtime current (Electron $(Get-CoopDesktopElectronPin))"
+  Coop-Ok "coop window runtime current (Electron $(Get-CoopDesktopElectronPin), pdf.js $(Get-CoopDesktopPdfjsPin))"
 }
 
 # --- 5. MCP config — manifest-pinned, ownership-aware, non-destructive --------

@@ -86,6 +86,8 @@ try {
   . (Join-Path $root 'lib\common.ps1')
   $pin = Get-CoopDesktopElectronPin
   if ($pin -match '^\d+\.\d+\.\d+$') { Ok "manifest pins the window's Electron ($pin)" } else { Ko "desktop.electron pin: '$pin'" }
+  $pdfPin = Get-CoopDesktopPdfjsPin
+  if ($pdfPin -match '^\d+\.\d+\.\d+$') { Ok "manifest pins the window's pdf.js ($pdfPin)" } else { Ko "desktop.pdfjs pin: '$pdfPin'" }
   if ((Get-CoopDesktopRuntimeDir) -eq (Join-Path $env:COOP_DIR '.coop\desktop\runtime') -and (Get-CoopDesktopDataDir) -eq (Join-Path $env:COOP_DIR '.coop\desktop\data')) { Ok 'runtime and window data live under the profile' } else { Ko "runtime dir: $(Get-CoopDesktopRuntimeDir)" }
   if ((Get-CoopDesktopRuntimeState) -eq 'missing') { Ok 'runtime state: missing before the first coop desktop' } else { Ko "state: $(Get-CoopDesktopRuntimeState)" }
   $rt = Get-CoopDesktopRuntimeDir
@@ -95,6 +97,10 @@ try {
   [System.IO.File]::WriteAllText((Join-Path $pkg 'path.txt'), 'electron.exe', $utf8)
   if ((Get-CoopDesktopRuntimeState) -eq 'stale') { Ok 'runtime state: stale while the binary is missing' } else { Ko "state without binary: $(Get-CoopDesktopRuntimeState)" }
   [System.IO.File]::WriteAllText((Join-Path $pkg 'dist\electron.exe'), 'stub', $utf8)
+  if ((Get-CoopDesktopRuntimeState) -eq 'stale') { Ok 'runtime state: stale without pdf.js' } else { Ko "state without pdf.js: $(Get-CoopDesktopRuntimeState)" }
+  $pdfPkg = Join-Path $rt 'node_modules\pdfjs-dist'
+  New-Item -ItemType Directory -Force -Path $pdfPkg | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $pdfPkg 'package.json'), ('{"name":"pdfjs-dist","version":"' + $pdfPin + '"}'), $utf8)
   if ((Get-CoopDesktopRuntimeState) -eq 'stale') { Ok 'runtime state: stale without the shipped lock' } else { Ko "state without lock: $(Get-CoopDesktopRuntimeState)" }
   Copy-Item -LiteralPath (Join-Path $root 'config\desktop-lock.json') -Destination (Join-Path $rt 'package-lock.json')
   if ((Get-CoopDesktopRuntimeState) -eq 'current' -and (Get-CoopDesktopElectronExe) -eq (Join-Path $pkg 'dist\electron.exe')) { Ok 'runtime state: current with the pin, the lock and the binary' } else { Ko "state: $(Get-CoopDesktopRuntimeState)" }

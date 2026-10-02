@@ -26,7 +26,7 @@ import { consoleProcess } from "../desktop/lib/terminal.mjs";
 import { listFiles, rankFiles } from "../desktop/lib/files.mjs";
 import { PiSession, endLeftovers, killTree } from "../desktop/lib/pi-session.mjs";
 import { BUILTINS, KEYS, TERMINAL_ONLY, completions, parseInput } from "../desktop/renderer/commands.mjs";
-import { applyEvent, createTimeline, finishBash, loadMessages, startBash, toolSummary } from "../desktop/renderer/timeline.mjs";
+import { activitySummary, applyEvent, createTimeline, finishBash, loadMessages, startBash, toolSummary, turnOf, turns } from "../desktop/renderer/timeline.mjs";
 import { isSafeLink, parseMarkdown } from "../desktop/renderer/markdown.mjs";
 import { diffStats, parseEditDiff } from "../desktop/renderer/diff.mjs";
 import { matchOffsets } from "../desktop/renderer/find.mjs";
@@ -476,16 +476,60 @@ await check("pi-session: on Windows, what a dead Pi left is found by its id and 
 
 // --- Runtime pin ---------------------------------------------------------------
 
-await check("runtime: config/desktop-lock.json matches the manifest's Electron pin", () => {
+await check("runtime: config/desktop-lock.json matches the manifest's Electron and pdf.js pins", () => {
   const lock = JSON.parse(readFileSync(join(ROOT, "config", "desktop-lock.json"), "utf8"));
   assert.match(MANIFEST.desktop.electron, /^\d+\.\d+\.\d+$/);
-  assert.deepEqual(runtimePackageJson(MANIFEST).dependencies, { electron: MANIFEST.desktop.electron });
+  assert.match(MANIFEST.desktop.pdfjs, /^\d+\.\d+\.\d+$/);
+  assert.deepEqual(runtimePackageJson(MANIFEST).dependencies, { electron: MANIFEST.desktop.electron, "pdfjs-dist": MANIFEST.desktop.pdfjs });
   assert.deepEqual(lockProblems(MANIFEST, lock), []);
-  const drifted = { ...MANIFEST, desktop: { electron: "1.0.0" } };
+  const drifted = { ...MANIFEST, desktop: { electron: "1.0.0", pdfjs: MANIFEST.desktop.pdfjs } };
   assert.equal(lockProblems(drifted, lock).length, 2);
+  assert.match(lockProblems({ ...MANIFEST, desktop: { electron: MANIFEST.desktop.electron, pdfjs: "1.0.0" } }, lock).join("\n"), /node_modules\/pdfjs-dist is 6\.\d+\.\d+, the manifest pins 1\.0\.0/);
+  assert.throws(() => runtimePackageJson({ ...MANIFEST, desktop: { electron: "44.0.0" } }), /no desktop\.pdfjs/);
+  // pdf.js's canvas is optional in the lock (rendering only) and never installed: --omit=optional.
+  assert.equal(lock.packages["node_modules/@napi-rs/canvas"].optional, true);
+  assert.match(readFileSync(join(ROOT, "lib", "common.ps1"), "utf8"), /npm ci --ignore-scripts --omit=optional/);
   const tampered = structuredClone(lock);
   tampered.packages["node_modules/electron"].resolved = "https://example.com/electron.tgz";
   assert.match(lockProblems(MANIFEST, tampered).join("\n"), /registry\.npmjs\.org/);
+});
+
+await check("activity: one line for a run of tool calls, the live step while one runs", () => {
+  const tools = new Map([
+    ["t1", { name: "read", args: { path: "sql/vSales.sql" }, status: "done" }],
+    ["t2", { name: "bash", args: { command: "git status\n" }, status: "done" }],
+    ["t3", { name: "edit", args: { path: "C:\\work\\report.sql" }, status: "error" }],
+    ["t4", { name: "data_doc", args: {}, status: "running" }],
+  ]);
+  const block = (id, name) => ({ type: "tool", toolCallId: id, name });
+  assert.equal(activitySummary([block("t1", "read")], tools), "Read vSales.sql");
+  assert.equal(activitySummary([{ type: "thinking", text: "hmm" }, block("t1", "read"), block("t2", "bash"), block("t3", "edit")], tools), "Read vSales.sql, ran git status, edited report.sql (1 step failed)");
+  assert.equal(activitySummary([block("t1", "read"), block("t1", "read"), block("t2", "bash"), block("t2", "bash"), block("t2", "bash")], tools), "Read 2 files, ran 3 commands");
+  assert.equal(activitySummary([{ type: "thinking", text: "hmm" }], tools), "Thought it through");
+  assert.equal(activitySummary([{ type: "tool", toolCallId: "", name: "grep" }, { type: "tool", toolCallId: "", name: "ls" }], tools), "Searched 2 times");
+  assert.equal(activitySummary([block("t4", "data_doc")], tools, { live: true }), "Using data_doc...");
+  assert.equal(activitySummary([block("t1", "read"), { type: "thinking", text: "" }], tools, { live: true }), "Thinking...");
+  assert.equal(activitySummary([block("t4", "data_doc")], tools, { live: false }), "Used data_doc");
+  assert.equal(activitySummary([{ type: "tool", toolCallId: "x", name: "bash" }], new Map([["x", { status: "running", args: { command: "pwsh -File build.ps1" } }]]), { live: true }), "Running pwsh -File build.ps1...");
+});
+
+await check("turns: consecutive assistant messages are one turn, anything else breaks it", () => {
+  const items = [
+    { id: "u1", kind: "user" }, { id: "a1", kind: "assistant" }, { id: "a2", kind: "assistant" }, { id: "a3", kind: "assistant" },
+    { id: "u2", kind: "user" }, { id: "a4", kind: "assistant" }, { id: "b1", kind: "bash" }, { id: "a5", kind: "assistant" },
+  ];
+  const ids = (list) => list.map((item) => item.id);
+  assert.deepEqual(ids(turnOf(items, "a2")), ["a1", "a2", "a3"]);
+  assert.deepEqual(ids(turnOf(items, "a1")), ["a1", "a2", "a3"]);
+  assert.deepEqual(ids(turnOf(items, "a3")), ["a1", "a2", "a3"]);
+  assert.deepEqual(ids(turnOf(items, "a4")), ["a4"]);
+  assert.deepEqual(ids(turnOf(items, "u2")), ["u2"]);
+  assert.deepEqual(ids(turnOf(items, "nope")), []);
+  assert.deepEqual(turns(items).map(ids), [["u1"], ["a1", "a2", "a3"], ["u2"], ["a4"], ["b1"], ["a5"]]);
+  // The recorded session: every turn is one or more assistant items and nothing else.
+  const tl = createTimeline();
+  for (const line of out((m) => typeof m.type === "string")) applyEvent(tl, line);
+  for (const turn of turns(tl.items).filter((t) => t[0].kind === "assistant")) assert.ok(turn.every((item) => item.kind === "assistant") && turnOf(tl.items, turn[0].id).length === turn.length);
 });
 
 // --- Terminal parity (desktop/PARITY.md) -------------------------------------------
