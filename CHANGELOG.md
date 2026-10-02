@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.29.1] — 2026-10-02
+
 ### Changed
 
 - The window runtime's size is stated as measured on the first VM run: about
