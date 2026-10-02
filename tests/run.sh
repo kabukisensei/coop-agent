@@ -349,6 +349,9 @@ if [ "${COOP_TEST_EXTENDED:-0}" = "1" ]; then
   echo "→ live JSONL happy-path vs the installed coop-data-doc"
   COOP_TEST_DATADOC_REQUIRED="${COOP_TEST_DATADOC_REQUIRED:-0}" COOP_TEST_DIST="$TMP" node "$ROOT/tests/jsonl-live.test.mjs"
 
+  echo "→ live data_doc + /setup-docs acceptance vs the installed coop-data-doc (non-ASCII mixed estate)"
+  COOP_TEST_DATADOC_REQUIRED="${COOP_TEST_DATADOC_REQUIRED:-0}" COOP_TEST_DIST="$TMP" node "$ROOT/tests/datadoc-live.test.mjs"
+
 
   echo "→ Fabric request headers and SQL launcher (MCP launch phases: tests/fixtures/fabric-mcp-launch.test.ps1 in run.ps1)"
   node "$ROOT/tests/fabric-request-headers.test.mjs"
