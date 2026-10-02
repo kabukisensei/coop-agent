@@ -323,6 +323,9 @@ COOP_TEST_DIST="$TMP" node "$ROOT/tests/support-command.test.mjs"
 node "$ROOT/tests/support-center.test.mjs"
 echo "→ one profile root in Node (lib/paths.mjs and the bundled extensions)"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/paths.test.mjs"
+echo "→ coop window (D1b): its modules, the recorded Pi RPC session, terminal parity"
+node "$ROOT/tests/desktop.test.mjs"
+node "$ROOT/desktop/scripts/runtime-lock.mjs" check
 
 # ============================================================================
 # EXTENDED LANE (only with COOP_TEST_EXTENDED=1)
@@ -350,6 +353,9 @@ if [ "${COOP_TEST_EXTENDED:-0}" = "1" ]; then
   echo "→ Fabric request headers and SQL launcher (MCP launch phases: tests/fixtures/fabric-mcp-launch.test.ps1 in run.ps1)"
   node "$ROOT/tests/fabric-request-headers.test.mjs"
   COOP_TEST_DIST="$TMP" node "$ROOT/tests/fabric-sql-launcher.test.mjs"
+
+  echo "→ coop window: Pi as a real process (dialogs, hang, crash, leftover children)"
+  node "$ROOT/tests/desktop-rpc.test.mjs"
 
   echo "→ windows owned-kill native evidence probe (Defect A diagnostics)"
   case "$(uname -s 2>/dev/null)" in

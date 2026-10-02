@@ -11,6 +11,7 @@
 #
 # Usage:
 #   coop                      Launch the branded Pi agent (passes extra args to pi)
+#   coop desktop [folder]     Open coop in a window on a folder (Electron over pi --mode rpc)
 #   coop doctor               Check dependencies and configuration
 #   coop update               Update Pi, Coop tools, vibes, skills/prompts, then doctor
 #   coop install              Fresh-install / bootstrap everything (idempotent)
@@ -160,6 +161,7 @@ $(Coop-Bold)$(Coop-Navy)coop$(Coop-Rst) $(Coop-Dim)v$v$(Coop-Rst) — the Coopti
 
 $(Coop-Bold)Usage$(Coop-Rst)
   coop                      Launch the branded Pi agent
+  coop desktop [folder]     Open coop in a window on a folder (default: here; installs the window on first use)
   coop doctor               Check dependencies and configuration
   coop update               Update Pi + Coop tools + vibes/skills, then run doctor
   coop install              Fresh-install / bootstrap everything (idempotent)
@@ -476,13 +478,9 @@ function Invoke-CoopPiProcess {
   }
 }
 
-function Invoke-LaunchPi {
-  param([string[]] $PassArgs = @())
-
-  if (-not (Test-Have 'pi')) {
-    Coop-Die 'pi is not installed. Run: coop install   (installs the release''s tested Pi)'
-  }
-
+# The launch preparation `coop` and `coop desktop` share, in this order. Nothing
+# here can stop a launch except the skew guard's own abort.
+function Initialize-CoopLaunch {
   # First launch (master plan FR1): no wizard and nothing that can stop the launch.
   # The first interactive launch hands coop-tools COOP_FIRST_RUN=1 so the Start
   # Here menu of common workflows opens once Pi is up; `coop onboard` stays on demand.
@@ -502,6 +500,16 @@ function Invoke-LaunchPi {
   }
 
   Invoke-CoopAzPreflight
+}
+
+function Invoke-LaunchPi {
+  param([string[]] $PassArgs = @())
+
+  if (-not (Test-Have 'pi')) {
+    Coop-Die 'pi is not installed. Run: coop install   (installs the release''s tested Pi)'
+  }
+
+  Initialize-CoopLaunch
 
   # A plain interactive launch with no stored provider credential should lead
   # directly into the real Pi login command. The coop-tools extension fills the
@@ -525,6 +533,17 @@ function Invoke-LaunchPi {
   exit $script:CoopPiRc
 }
 
+# The brand environment Build-CoopPiArgs exported, as the launch spec carries it.
+function Get-CoopLaunchEnvMap {
+  $envMap = [ordered]@{}
+  if ($env:PI_CODING_AGENT_DIR) { $envMap['PI_CODING_AGENT_DIR'] = $env:PI_CODING_AGENT_DIR }
+  if ($env:PI_SKIP_VERSION_CHECK) { $envMap['PI_SKIP_VERSION_CHECK'] = $env:PI_SKIP_VERSION_CHECK }
+  if ($env:PI_MCP_CONFIG_MODE)    { $envMap['PI_MCP_CONFIG_MODE']    = $env:PI_MCP_CONFIG_MODE }
+  if ($env:COOP_VIBES_DIR)      { $envMap['COOP_VIBES_DIR']      = $env:COOP_VIBES_DIR }
+  if ($env:COOP_SPLASH_FILE)    { $envMap['COOP_SPLASH_FILE']    = $env:COOP_SPLASH_FILE }
+  return $envMap
+}
+
 # --- Emit the launch spec (for the future desktop app) -----------------------
 # Internal/advanced. `coop launch-spec` prints the resolved pi invocation;
 # `--json` emits {"bin","args","env"} for a programmatic consumer — e.g. the
@@ -534,18 +553,111 @@ function Invoke-CoopLaunchSpec {
   param([string[]] $SpecArgs = @())
   $piArgs = Build-CoopPiArgs
   if ($SpecArgs -contains '--json') {
-    $envMap = [ordered]@{}
-    if ($env:PI_CODING_AGENT_DIR) { $envMap['PI_CODING_AGENT_DIR'] = $env:PI_CODING_AGENT_DIR }
-    if ($env:PI_SKIP_VERSION_CHECK) { $envMap['PI_SKIP_VERSION_CHECK'] = $env:PI_SKIP_VERSION_CHECK }
-    if ($env:PI_MCP_CONFIG_MODE)    { $envMap['PI_MCP_CONFIG_MODE']    = $env:PI_MCP_CONFIG_MODE }
-    if ($env:COOP_VIBES_DIR)      { $envMap['COOP_VIBES_DIR']      = $env:COOP_VIBES_DIR }
-    if ($env:COOP_SPLASH_FILE)    { $envMap['COOP_SPLASH_FILE']    = $env:COOP_SPLASH_FILE }
+    $envMap = Get-CoopLaunchEnvMap
     # The JSON SHAPE ({bin,args,env}) is the contract with programmatic consumers — the
     # formatting (bash pretty-prints, this compresses) intentionally is not.
     [pscustomobject]@{ bin = 'pi'; args = @($piArgs); env = $envMap } | ConvertTo-Json -Depth 5 -Compress
   } else {
     # Mirror bash's %q-quoted human output: quote any arg containing whitespace.
     'pi ' + (($piArgs | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' ')
+  }
+}
+
+# --- coop desktop: the rendered window (master plan D1b) ---------------------
+# Opens the coop window on a folder (default: here). It runs the same launch
+# preparation as `coop` (Initialize-CoopLaunch), the same Build-CoopPiArgs and
+# the same Warehouse MCP token helper, and hands all of it to the window as one
+# launch spec in the window's environment (the token separately, never in the
+# spec). The window runs `node <Pi entry> --mode rpc <args>` from that spec and
+# adds nothing to Pi's arguments: no `--approve`, so a work repo's project-local
+# Pi files stay untrusted exactly as in a terminal that has not trusted them.
+# The window's runtime (Electron) is installed on first use; launch warnings go
+# into the spec, because this console closes once the window opens.
+# --print-spec prints the spec as JSON and starts nothing: no launch checks, no
+# token, no install.
+function Invoke-CoopDesktop {
+  param([string[]] $DesktopArgs = @())
+  $usage = 'usage: coop desktop [folder] [--print-spec]'
+  $folder = ''
+  $printSpec = $false
+  foreach ($a in $DesktopArgs) {
+    if ($a -ceq '--print-spec') { $printSpec = $true }
+    elseif ($a.StartsWith('-')) { Coop-Die "unknown option '$a' — $usage" }
+    elseif (-not $folder) { $folder = $a }
+    else { Coop-Die $usage }
+  }
+  if (-not $folder) { $folder = $PWD.ProviderPath }
+  if (-not (Test-Path -LiteralPath $folder -PathType Container)) { Coop-Die "folder not found: $folder" }
+  $cwd = (Resolve-Path -LiteralPath $folder).ProviderPath
+  # The project contract, tenant and Microsoft skill selection are read from here.
+  Set-Location -LiteralPath $cwd
+  if (-not (Test-Have 'pi')) { Coop-Die 'pi is not installed. Run: coop install   (installs the release''s tested Pi)' }
+  # The window starts node directly (no shell), so on Windows only node.exe will do.
+  $nodeCmd = Get-Command node -CommandType Application -ErrorAction SilentlyContinue |
+    Where-Object { $env:OS -ne 'Windows_NT' -or $_.Source -like '*.exe' } | Select-Object -First 1
+  if (-not $nodeCmd) { Coop-Die 'Node.js is not installed. Run: coop install' }
+  $entry = Get-CoopPiEntry
+  if (-not $entry) { Coop-Die 'could not find the Pi package in the npm global folder. Run: coop install' }
+
+  $script:CoopWarnSink = New-Object System.Collections.Generic.List[string]
+  $token = ''
+  if (-not $printSpec) {
+    Initialize-CoopLaunch
+    Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue
+    $token = Get-CoopFabricMcpToken
+  }
+  $piArgs = Build-CoopPiArgs
+  $envMap = Get-CoopLaunchEnvMap
+  # The profile location travels too, so a second window handed to an
+  # already-open coop process (one process per coop checkout) keeps this one's.
+  foreach ($k in @('COOP_DIR', 'COOP_AGENT_DIR', 'COOP_FIRST_RUN')) {
+    $v = [Environment]::GetEnvironmentVariable($k)
+    if ($v) { $envMap[$k] = $v }
+  }
+  $spec = [ordered]@{
+    schema       = 1
+    version      = $script:CoopVersion
+    node         = $nodeCmd.Source
+    entry        = $entry
+    cwd          = $cwd
+    coop         = (Join-Path $script:CoopRoot 'bin\coop.ps1')
+    args         = @($piArgs)
+    env          = $envMap
+    loginPresent = [bool](Test-CoopPiLoginPresent)
+    notices      = @($script:CoopWarnSink | Select-Object -First 8)
+  }
+  $script:CoopWarnSink = $null
+  $json = $spec | ConvertTo-Json -Depth 6 -Compress
+  if ($printSpec) { $json; return }
+  # One environment variable holds at most 32767 characters on Windows.
+  if ($json.Length -gt 32000) { Coop-Die "the launch spec is too large for the window ($($json.Length) characters)" }
+
+  if ((Get-CoopDesktopRuntimeState) -ne 'current') {
+    $firstInstall = ((Get-CoopDesktopRuntimeState) -eq 'missing')
+    if (Install-CoopDesktopRuntime) {
+      if ($firstInstall -and (Set-CoopWindowShortcut)) { Coop-Ok 'added the "coop (window)" shortcut next to "coop"' }
+    } elseif (-not (Get-CoopDesktopElectronExe)) {
+      Coop-Die 'the coop window runtime is not installed (see above)'
+    } else {
+      Coop-Warn 'opening the window on the runtime already installed'
+    }
+  }
+  $exe = Get-CoopDesktopElectronExe
+  $dataDir = Get-CoopDesktopDataDir
+  New-Item -ItemType Directory -Force -Path $dataDir -ErrorAction SilentlyContinue | Out-Null
+  $env:COOP_DESKTOP_SPEC = $json
+  $env:COOP_DESKTOP_DATA = $dataDir
+  if ($token) { $env:COOP_FABRIC_MCP_TOKEN = $token }
+  try {
+    Start-Process -FilePath $exe -ArgumentList @('"' + (Join-Path $script:CoopRoot 'desktop') + '"') -WorkingDirectory $cwd -ErrorAction Stop | Out-Null
+    Coop-Ok "opened the coop window on $cwd"
+  } catch {
+    Coop-Die "could not open the coop window: $($_.Exception.Message)"
+  } finally {
+    Remove-Item Env:COOP_DESKTOP_SPEC -ErrorAction SilentlyContinue
+    Remove-Item Env:COOP_DESKTOP_DATA -ErrorAction SilentlyContinue
+    Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue
+    Remove-Item Env:COOP_FIRST_RUN -ErrorAction SilentlyContinue
   }
 }
 
@@ -1098,6 +1210,7 @@ switch -CaseSensitive ($cmd) {
   'sync' { & (Join-Path $script:CoopRoot 'scripts\sync.ps1') @rest; exit $LASTEXITCODE }
   'web' { Invoke-CoopWebRetired; break }
   'launch-spec' { Invoke-CoopLaunchSpec $rest; break }
+  'desktop' { Invoke-CoopDesktop $rest; break }
   'onboard' { Invoke-CoopOnboard $rest; break }
   'profile' { Invoke-CoopProfile $rest; break }
   'teamai' { Invoke-CoopTeamai $rest; break }

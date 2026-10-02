@@ -937,8 +937,16 @@ function Coop-Emit {
 function Coop-Say  { param([string]$m) Coop-Emit $m }
 function Coop-Info { param([string]$m) Coop-Emit "$($script:C_LIME)$($script:G_BULLET)$($script:C_RST) $m" }
 function Coop-Ok   { param([string]$m) Coop-Emit "$($script:C_FOREST)$($script:G_CHECK)$($script:C_RST) $m" }
-# Optional second argument is the "how to fix" hint.
-function Coop-Warn { param([string]$m, [string]$Hint = '') Coop-Emit ("$($script:C_OLIVE)!$($script:C_RST) $m" + $(if ($Hint) { " — $Hint" } else { '' })) }
+# Optional second argument is the "how to fix" hint. `coop desktop` also collects
+# its launch warnings in $script:CoopWarnSink (a List[string]; $null elsewhere) and
+# hands them to the window, whose console closes once the window opens.
+$script:CoopWarnSink = $null
+function Coop-Warn {
+  param([string]$m, [string]$Hint = '')
+  $text = $m + $(if ($Hint) { " — $Hint" } else { '' })
+  Coop-Emit "$($script:C_OLIVE)!$($script:C_RST) $text"
+  if ($null -ne $script:CoopWarnSink) { [void]$script:CoopWarnSink.Add($text) }
+}
 function Coop-Err  { param([string]$m) Coop-Emit "$($script:C_RED)$($script:G_CROSS)$($script:C_RST) $m" }
 function Coop-Die  { param([string]$m) Coop-Err $m; exit 1 }
 function Coop-Head { param([string]$m) Coop-Emit "`n$($script:C_BOLD)$($script:C_NAVY)$m$($script:C_RST)" }
@@ -2733,5 +2741,163 @@ function Set-CoopDesktopShortcuts {
     $wrote = $true
     if (Test-Path -LiteralPath $legacyTerminal) { Remove-Item -LiteralPath $legacyTerminal -Force -ErrorAction SilentlyContinue }
   }
+  # The window shortcut, only where one exists (Set-CoopWindowShortcut, below).
+  [void](Set-CoopWindowShortcut -OnlyIfPresent)
   return $wrote
+}
+
+# The "coop (window)" shortcut beside "coop": the same bin\coop-desktop.ps1 front
+# door with `desktop`, so the console shows the launch checks and stays open on an
+# error. The window is opt-in while it is new (master plan D1b): the first
+# `coop desktop` that installs the window runtime writes this shortcut, and
+# install/update rewrite it only where it already exists. Same folders as
+# Set-CoopDesktopShortcuts. Best-effort: returns $true when a shortcut was written.
+function Set-CoopWindowShortcut {
+  param([switch]$OnlyIfPresent)
+  if ($env:OS -ne 'Windows_NT') { return $false }
+  $desktopLauncher = Join-Path $script:CoopRoot 'bin\coop-desktop.ps1'
+  if (-not (Test-Path -LiteralPath $desktopLauncher)) { return $false }
+  $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  $icon  = Join-Path $script:CoopRoot 'themes\coop.ico'
+  $ws = New-Object -ComObject WScript.Shell
+  $wrote = $false
+  foreach ($dir in (Get-CoopShortcutDirs)) {
+    if (-not $dir) { continue }
+    $lnk = Join-Path $dir 'coop (window).lnk'
+    if ($OnlyIfPresent -and -not (Test-Path -LiteralPath $lnk)) { continue }
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    $sc = $ws.CreateShortcut($lnk)
+    $sc.TargetPath       = $psExe
+    $sc.Arguments        = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$desktopLauncher`" desktop"
+    $sc.WorkingDirectory = $HOME
+    $sc.Description      = 'coop - the Cooptimize analytics agent, in a window'
+    $sc.WindowStyle      = 1
+    if (Test-Path -LiteralPath $icon) { $sc.IconLocation = "$icon,0" }
+    $sc.Save()
+    $wrote = $true
+  }
+  return $wrote
+}
+
+# --- coop desktop: the window's runtime (master plan D1b) ---------------------
+# The window's code is desktop\ in this repo, loaded in place like the
+# extensions. It runs on Electron, pinned in the release manifest
+# (desktop.electron) and installed from the shipped lockfile
+# (config\desktop-lock.json; regenerate with
+# `node desktop/scripts/runtime-lock.mjs generate` after a pin bump) into its own
+# tree, <profile dir>\desktop\runtime. That tree is not Pi's extension tree and
+# not a global npm install: `coop desktop` installs it on first use, `coop sync`
+# refreshes it only where it already exists, and uninstall removes it. The
+# window's own data (settings, Chromium cache) lives beside it in
+# <profile dir>\desktop\data, so a redirected sandbox profile keeps both.
+function Get-CoopDesktopDir { return (Join-Path (Get-CoopProfileDir) 'desktop') }
+function Get-CoopDesktopRuntimeDir { return (Join-Path (Get-CoopDesktopDir) 'runtime') }
+function Get-CoopDesktopDataDir { return (Join-Path (Get-CoopDesktopDir) 'data') }
+function Get-CoopDesktopElectronPin { return (Coop-ManifestGet -Key 'desktop.electron') }
+
+# The Electron version installed in the runtime tree; '' when absent.
+function Get-CoopDesktopElectronVersion {
+  $f = Join-Path (Get-CoopDesktopRuntimeDir) 'node_modules\electron\package.json'
+  if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return '' }
+  try { return ([string]((Get-Content -LiteralPath $f -Raw | ConvertFrom-Json).version)).Trim() } catch { return '' }
+}
+
+# The Electron executable the package's path.txt names under dist\; '' until the
+# binary is there.
+function Get-CoopDesktopElectronExe {
+  $pkg = Join-Path (Get-CoopDesktopRuntimeDir) 'node_modules\electron'
+  $pathTxt = Join-Path $pkg 'path.txt'
+  if (-not (Test-Path -LiteralPath $pathTxt -PathType Leaf)) { return '' }
+  $rel = ''
+  try { $rel = ([System.IO.File]::ReadAllText($pathTxt)).Trim() } catch { return '' }
+  if (-not $rel -or $rel.Contains('..')) { return '' }
+  $exe = Join-Path (Join-Path $pkg 'dist') $rel
+  if (Test-Path -LiteralPath $exe -PathType Leaf) { return $exe }
+  return ''
+}
+
+# 'missing' (never installed), 'current' (the pin, from the shipped lock, with
+# its binary) or 'stale' (installed, but not this release's runtime, or half
+# installed).
+function Get-CoopDesktopRuntimeState {
+  $dir = Get-CoopDesktopRuntimeDir
+  if (-not (Test-Path -LiteralPath $dir -PathType Container)) { return 'missing' }
+  $pin = Get-CoopDesktopElectronPin
+  if (-not $pin -or (Get-CoopDesktopElectronVersion) -ne $pin) { return 'stale' }
+  if (-not (Get-CoopDesktopElectronExe)) { return 'stale' }
+  $lock = Join-Path $script:CoopRoot 'config\desktop-lock.json'
+  if ((Get-CoopFileSha256 $lock) -ne (Get-CoopFileSha256 (Join-Path $dir 'package-lock.json'))) { return 'stale' }
+  return 'current'
+}
+
+# Install (or refresh) the runtime tree from the shipped lock: `npm ci` with no
+# lifecycle scripts, then Electron's own install.js, which downloads the binary
+# for this machine and checks it against the checksums.json inside the locked
+# package (Electron 44 has no install script of its own). Returns $true when the
+# tree is current afterwards. A running window holds electron.exe open, so a
+# refresh then fails and says to close it.
+function Install-CoopDesktopRuntime {
+  $pin = Get-CoopDesktopElectronPin
+  $lock = Join-Path $script:CoopRoot 'config\desktop-lock.json'
+  if (-not $pin -or -not (Test-Path -LiteralPath $lock -PathType Leaf)) {
+    Coop-Warn 'this coop release does not pin the window runtime' 'run: coop update'
+    return $false
+  }
+  if (-not (Test-Have 'node')) { Coop-Warn 'the coop window needs Node.js' 'run: coop install'; return $false }
+  $npm = Get-CoopWorkingNpm
+  if (-not $npm) { Coop-Warn 'the coop window needs a working npm' 'run: coop install'; return $false }
+  $dir = Get-CoopDesktopRuntimeDir
+  try {
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $pkgJson = "{`n  `"name`": `"coop-desktop-runtime`",`n  `"private`": true,`n  `"dependencies`": {`n    `"electron`": `"$pin`"`n  }`n}`n"
+    [System.IO.File]::WriteAllText((Join-Path $dir 'package.json'), $pkgJson)
+    Copy-Item -LiteralPath $lock -Destination (Join-Path $dir 'package-lock.json') -Force
+  } catch {
+    Coop-Warn "could not prepare $dir`: $($_.Exception.Message)"
+    return $false
+  }
+  Coop-Info "installing the coop window runtime (Electron $pin, about 100 MB) into $dir"
+  $previousEap = $ErrorActionPreference
+  $out = @()
+  $rc = 1
+  Push-Location -LiteralPath $dir
+  try {
+    # Native stderr (npm notices, the download progress) is a NativeCommandError
+    # under Windows PowerShell 5.1 when redirected; the exit code is the signal.
+    $ErrorActionPreference = 'Continue'
+    $out = @(& $npm ci --ignore-scripts --no-audit --no-fund 2>&1)
+    $rc = $LASTEXITCODE
+    if ($rc -eq 0) {
+      $out = @(& node (Join-Path $dir 'node_modules\electron\install.js') 2>&1)
+      $rc = $LASTEXITCODE
+    }
+  } catch { $rc = 1 } finally { $ErrorActionPreference = $previousEap; Pop-Location }
+  if ($rc -ne 0 -or (Get-CoopDesktopRuntimeState) -ne 'current') {
+    $detail = ((@($out | ForEach-Object { $_.ToString().Trim() } | Where-Object { $_ }) | Select-Object -Last 6) -join ' | ')
+    Coop-Warn ("could not install the coop window runtime{0}" -f $(if ($detail) { ": $detail" } else { '' })) 'close every coop window, then run: coop sync'
+    return $false
+  }
+  Coop-Ok "coop window runtime ready: Electron $pin"
+  return $true
+}
+
+# Pi's JavaScript entry (the package's bin.pi under the npm global root), which
+# the window runs as `node <entry> --mode rpc`. The same package `pi` on PATH
+# runs; '' when it is not found.
+function Get-CoopPiEntry {
+  foreach ($root in (Get-CoopNpmGlobalRoots)) {
+    $pkgDir = Join-Path $root '@earendil-works\pi-coding-agent'
+    $pkgJson = Join-Path $pkgDir 'package.json'
+    if (-not (Test-Path -LiteralPath $pkgJson -PathType Leaf)) { continue }
+    $bin = ''
+    try {
+      $pkg = Get-Content -LiteralPath $pkgJson -Raw | ConvertFrom-Json
+      if ($pkg.bin -is [string]) { $bin = [string]$pkg.bin }
+      elseif ($pkg.bin -and $pkg.bin.PSObject.Properties['pi']) { $bin = [string]$pkg.bin.pi }
+    } catch { continue }
+    if (-not $bin) { continue }
+    $entry = [System.IO.Path]::GetFullPath((Join-Path $pkgDir $bin))
+    if (Test-Path -LiteralPath $entry -PathType Leaf) { return $entry }
+  }
+  return ''
 }

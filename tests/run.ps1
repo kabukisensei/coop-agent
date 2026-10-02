@@ -579,6 +579,7 @@ print("resume verdict contract OK")
     @{ Name = 'login-present';          Lane = 'gate';     Head = 'model login detection ignores Pi''s empty startup auth.json (#167)' },
     @{ Name = 'extensions-lock';        Lane = 'gate';     Head = 'extension lockfile applied through the helpers (#152)' },
     @{ Name = 'team-skills';            Lane = 'gate';     Head = 'team knowledge skills launch slot (launch-spec --json)' },
+    @{ Name = 'desktop-spec';           Lane = 'gate';     Head = 'coop desktop: the window''s launch spec and runtime state (D1b)' },
     @{ Name = 'staleness';              Lane = 'gate';     Head = 'repo staleness nudge (throttled fetch + behind-count)' },
     @{ Name = 'doctor-project';         Lane = 'gate';     Head = 'doctor.ps1 project contract rows' },
     @{ Name = 'first-run';              Lane = 'gate';     Head = 'first-run launcher continuation (onboarding gate)' },
