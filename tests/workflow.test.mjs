@@ -100,7 +100,7 @@ const authoritySurfaces = [
   "docs/guardrails-reference.md",
   "README.md",
   "lib/init_wizard.py",
-  "extensions/coop-tools/index.ts",
+  "lib/project-contract.mjs",
   "bin/coop.ps1",
 ].map((path) => [path, readFileSync(join(ROOT, path), "utf8")]);
 for (const [path, content] of authoritySurfaces) {
