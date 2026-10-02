@@ -493,7 +493,7 @@ if (Test-Have 'pi') {
   D-Warn 'cannot check extensions' 'pi not installed'
 }
 
-D-Head 'MCP servers (read-only, optional)'
+D-Head 'MCP servers (optional; edits ask first)'
 # coop launches pi-mcp-adapter in exclusive mode (#165), so the agent dir's
 # mcp-adapter.json is the only MCP config it reads. Check that file, and name a
 # work repo's MCP file that coop does not use.
@@ -539,7 +539,7 @@ if ($mcpFound) {
   # (#93). coop no longer generates it and never removes a user-owned entry, so
   # doctor names the risk instead of reporting the server as configured.
   if ($mcpText -match '(?i)powerbi-mcp-server') {
-    D-Warn '  • powerbi-mcp-server is not read-only: it ignores --readonly and exposes refresh_dataset, a write (coop-agent#93)' "remove that entry from $mcpFound; coop's read-only Power BI MCP is powerbi-modeling-mcp"
+    D-Warn '  • powerbi-mcp-server is not read-only: it ignores --readonly and exposes refresh_dataset, a write (coop-agent#93)' "remove that entry from $mcpFound; coop's Power BI MCP is powerbi-modeling-mcp (its edits ask for approval)"
   }
   if ($mcpText -notmatch '(?i)learn\.microsoft\.com|microsoft-learn') {
     D-Warn '  Microsoft Learn MCP not configured' 'coop sync   (adds it read-only)'
@@ -598,7 +598,7 @@ if ($mcpFound) {
     D-Warn '  fabric-sqlendpoint status unavailable' 'Python is required'
   }
 } else {
-  D-Warn 'no MCP config found' 'coop sync   (writes a read-only fabric/powerbi/learn config)'
+  D-Warn 'no MCP config found' 'coop sync   (writes the managed fabric/powerbi/learn config)'
 }
 
 D-Head 'Microsoft skills catalog'

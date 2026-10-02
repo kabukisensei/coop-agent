@@ -211,9 +211,9 @@ These sharpen the principles above; reach for them on non-trivial or multi-step 
 
 ## Guardrails (always)
 
-- **Read-only first.** Default to read/list/inspect. MCP servers (Fabric, Power BI,
-  Microsoft Learn) are read-only; never call create/update/delete/deploy/publish
-  without explicit approval.
+- **Read-only first.** Default to read/list/inspect. Fabric and Microsoft Learn MCP
+  are read-only; Power BI Modeling, Azure DevOps and Warehouse SQL are approval-gated,
+  so never call create/update/delete/deploy/publish without explicit approval.
 - **No production changes** without a clear, specific instruction.
 - **Never expose secrets** — no tokens, keys, connection strings, or `.env`
   contents in output or memory.

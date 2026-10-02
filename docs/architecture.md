@@ -139,7 +139,8 @@ for the Node tools and extensions; no script builds these paths inline.
    the pin, else install) and leave the extensions to the `coop sync` child both
    run, where `Sync-CoopExtensionFleet` is the one `pi install` path (pins,
    lockfile, pi-ai/pi-tui alignment, postconditions). The extensions are:
-   - `pi-mcp-adapter` — wires the read-only MCP servers.
+   - `pi-mcp-adapter` — wires the managed MCP servers (Fabric and Microsoft
+     Learn read-only; the rest approval-gated).
    - `pi-hermes-memory` — persistent memory, session search, secret scanning.
    - `pi-better-openai` — plan usage limits (5h / 7d windows), surfaced in
      coop's own footer via `footerData.getExtensionStatuses()`. `coop sync`
@@ -154,7 +155,7 @@ for the Node tools and extensions; no script builds these paths inline.
      coop's footer and terminal title.
    - `context-mode` — a native Pi extension (not an MCP server) that runs
      sandboxed code over the built docs/graph to save context, still subject to
-     Pi's tool approval.
+     the `coop-guardrails` hooks (Pi itself does not prompt per tool call).
 
    The list is exactly the manifest's `extensions` object; nothing optional ships
    beside it. *(`@aliou/pi-guardrails` was dropped — pinned to the deprecated Pi
@@ -187,9 +188,9 @@ for the Node tools and extensions; no script builds these paths inline.
      Fabric CLI's environment; it's used in deployment scripts (`import
      fabric_cicd`, **validate-only by default**), NOT as a `fabric-cicd` command.
      `coop doctor` checks it's importable. Deploy is an approval-gated action.
-   - **Tabular Editor CLI** — optional, path-configured (mostly Windows), not
-     auto-installed; set `tools.tabular_editor_cli.executable_path` in
-     `.coop/project.yml`.
+   - **Tabular Editor CLI** — the cross-platform `te` CLI, optional and not
+     auto-installed; found on `PATH` or through
+     `tools.tabular_editor_cli.executable_path` in `.coop/project.yml`.
 
 7. **Approval-gated MCP servers** (all optional; `coop` runs without them). Generated as
    manifest-pinned, COOP-managed entries in coop's isolated agent dir
