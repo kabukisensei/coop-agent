@@ -31,6 +31,9 @@
     "package": "teamai-cli",
     "version": "0.26.0"
   },
+  "desktop": {
+    "electron": "44.5.1"
+  },
   "mcp_servers": {
     "@microsoft/fabric-mcp": "1.4.0",
     "@azure-devops/mcp": "2.10.0"

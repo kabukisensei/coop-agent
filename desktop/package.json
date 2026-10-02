@@ -1,0 +1,8 @@
+{
+  "name": "coop-desktop",
+  "productName": "coop",
+  "private": true,
+  "description": "The coop window: a rendered view over Pi in RPC mode, started by `coop desktop`.",
+  "type": "module",
+  "main": "main.mjs"
+}

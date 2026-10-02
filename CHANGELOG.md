@@ -26,24 +26,44 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   streaming, and `npm audit` on the package goes from 2 low findings to none.
   `code_search` is gone (`web_search` covers it), and `source_check` is new.
 
-### Fixed
-
-- The `data_doc` wrapper now decodes the `\uXXXX`, `\xXX` and `\UXXXXXXXX`
-  escapes `coop-data-doc` writes for every non-ASCII character in
-  `coop-data-doc.yml`. Before, a non-ASCII project name, repo path or output
-  folder read back garbled (`Entrep\u00f4t` became `Entrepu00f4t`), so `data_doc
-  impact` matched no changed files under such a repo, a non-ASCII output folder
-  looked unbuilt, and re-running `/setup-docs` saved the garbled project name.
-- coop's footer wraps instead of cutting off the usage data. Since the footer
-  fix in 0.26.0 it was one line clipped at the terminal edge, so in a narrower
-  window (Windows Terminal at half screen, for example) the model, token and
-  cost numbers and pi-better-openai's 5h/7d plan limits were lost off the
-  right. It is still one line when everything fits; otherwise the left side
-  keeps line 1 and the right side wraps onto right-aligned lines below,
-  breaking between fields. Wide characters (CJK, emoji) in a session name now
-  count as two columns, so they cannot push a line past the edge.
-
 ### Added
+
+- `coop desktop [folder]` (master plan Phase 8, D1b): coop in a window. The
+  same governed session as the terminal, drawn as a modern UI with four themes
+  (Modern Dark, Modern Light, Retro Dark, Retro Light, switched without a
+  reload): a streaming timeline with thinking, tool cards and edit diffs, the
+  extension dialogs as cards (every guardrail approval, `/start`, the wizards,
+  ask-user questions), `/` completion from Pi's command list, `@` file
+  mentions and Tab path completion, model and thinking pickers, sessions in a
+  sidebar with resume, fork, clone and a filtered session tree, `!`/`!!` shell
+  commands, steering and follow-up queues, Ctrl+F search of the conversation,
+  a status bar from the extensions' `setStatus`, toasts for notices and launch
+  warnings, and Open in terminal on the same session for what only the terminal
+  can show (model sign-in, `/trust`, `custom()` screens such as `/mcp-auth`).
+  `bin/coop.ps1` runs the usual launch preflight and passes the window a launch
+  spec with exactly `Build-CoopPiArgs`' arguments (`coop desktop --print-spec`
+  prints it); the window runs `node <pi entry> --mode rpc <args>`, never
+  `--approve`. Electron 44.5.1 is pinned in `config/release-manifest.json`
+  (`desktop.electron`) with its own lockfile, `config/desktop-lock.json`
+  (`node desktop/scripts/runtime-lock.mjs generate|check`), and installs on the
+  first `coop desktop` into `<profile dir>/desktop/runtime` (about 100 MB;
+  Electron's `install.js` checks the binary against the locked package's
+  checksums), which also adds a "coop (window)" shortcut. `coop sync`
+  refreshes the runtime where it exists, `coop doctor` reports it, and
+  `coop uninstall` removes it and the shortcut. The renderer is sandboxed
+  (context isolation, a strict CSP, `coop://app` files only), every RPC command
+  is rebuilt field by field from an allowlist, and closing the window ends Pi
+  and everything it started (taskkill /T, then any process Pi left behind).
+  `desktop/PARITY.md` maps every Pi built-in command, keybinding action,
+  extension command and extension UI request to what the window does.
+  Tests: `tests/desktop.test.mjs` (gate: the modules, a replay of a recorded
+  Pi 0.87.1 RPC session with coop's release extensions,
+  `tests/fixtures/desktop-rpc.jsonl`, and the parity checklist against the
+  window's lists, the recording and Pi's own command and keybinding lists),
+  `tests/desktop-rpc.test.mjs` (extended: a real child process that hangs or
+  crashes) and `tests/fixtures/desktop-spec.test.ps1` (`--print-spec` equals
+  `launch-spec`, the runtime states). Re-record the session with
+  `node desktop/scripts/record-fixture.mjs` after a Pi or extension upgrade.
 
 - coop builds Fabric Apps (preview) with Microsoft's Rayfin CLI (master plan
   row FA1). The new `fabric-apps` skill scaffolds the web app, connects it to
@@ -63,6 +83,23 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   and real pipes against a synthetic mixed estate with non-ASCII folder, file and
   object names. The extended lane of `tests/run.sh` runs it too, skipping when no
   `coop-data-doc` 1.3.0+ is installed.
+
+### Fixed
+
+- The `data_doc` wrapper now decodes the `\uXXXX`, `\xXX` and `\UXXXXXXXX`
+  escapes `coop-data-doc` writes for every non-ASCII character in
+  `coop-data-doc.yml`. Before, a non-ASCII project name, repo path or output
+  folder read back garbled (`Entrep\u00f4t` became `Entrepu00f4t`), so `data_doc
+  impact` matched no changed files under such a repo, a non-ASCII output folder
+  looked unbuilt, and re-running `/setup-docs` saved the garbled project name.
+- coop's footer wraps instead of cutting off the usage data. Since the footer
+  fix in 0.26.0 it was one line clipped at the terminal edge, so in a narrower
+  window (Windows Terminal at half screen, for example) the model, token and
+  cost numbers and pi-better-openai's 5h/7d plan limits were lost off the
+  right. It is still one line when everything fits; otherwise the left side
+  keeps line 1 and the right side wraps onto right-aligned lines below,
+  breaking between fields. Wide characters (CJK, emoji) in a session name now
+  count as two columns, so they cannot push a line past the edge.
 
 ## [0.28.0] — 2026-10-02
 

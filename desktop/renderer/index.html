@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en" data-theme="modern-dark" data-style="modern">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>coop</title>
+  <link rel="stylesheet" href="styles/themes.css">
+  <link rel="stylesheet" href="styles/app.css">
+  <script type="module" src="app.mjs"></script>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" aria-label="Sessions">
+      <div class="sidebar-head">
+        <span class="brand"><span class="brand-mark" aria-hidden="true"></span>coop</span>
+        <button type="button" id="newSession" class="btn" title="New session (Ctrl+Shift+N)">New session</button>
+      </div>
+      <input id="sessionFilter" class="field" type="search" placeholder="Filter sessions" aria-label="Filter sessions">
+      <ol id="sessionList" class="session-list"></ol>
+      <div class="sidebar-foot">
+        <button type="button" id="openFolder" class="btn ghost" title="Open another folder in a new coop window">Open folder...</button>
+      </div>
+    </aside>
+    <main class="main">
+      <header class="topbar">
+        <button type="button" id="toggleSidebar" class="btn icon" title="Show or hide sessions" aria-label="Show or hide sessions">
+          <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4h11M2.5 8h11M2.5 12h11"/></svg>
+        </button>
+        <div class="where">
+          <span id="folderName" class="folder"></span>
+          <span id="branchName" class="chip branch" hidden></span>
+          <button type="button" id="sessionName" class="session-name" title="Name this session"></button>
+        </div>
+        <div class="top-actions">
+          <button type="button" id="modelButton" class="btn pill" title="Model (Ctrl+L)"></button>
+          <button type="button" id="thinkingButton" class="btn pill" title="Thinking level (Shift+Tab)" hidden></button>
+          <button type="button" id="terminalButton" class="btn" title="Open this session in a terminal" hidden>Open in terminal</button>
+          <button type="button" id="menuButton" class="btn icon" title="Commands (Ctrl+K)" aria-label="Commands">
+            <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8h.01M8 8h.01M12.5 8h.01"/></svg>
+          </button>
+        </div>
+      </header>
+      <div id="banner" class="banner" hidden></div>
+      <div id="findBar" class="find-bar" role="search" hidden>
+        <input id="findInput" class="field" type="search" placeholder="Find in this conversation" aria-label="Find in this conversation">
+        <span id="findCount" class="find-count" aria-live="polite"></span>
+        <button type="button" id="findPrev" class="btn icon" title="Earlier match (Enter)" aria-label="Earlier match">
+          <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 10l4-4 4 4"/></svg>
+        </button>
+        <button type="button" id="findNext" class="btn icon" title="Later match (Shift+Enter)" aria-label="Later match">
+          <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg>
+        </button>
+        <button type="button" id="findClose" class="btn icon" title="Close (Esc)" aria-label="Close search">
+          <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+        </button>
+      </div>
+      <section id="timeline" class="timeline" tabindex="0" aria-live="polite" aria-label="Conversation"></section>
+      <div class="dock">
+        <div id="widgetsAbove" class="widgets" hidden></div>
+        <div id="queue" class="queue" hidden></div>
+        <form id="composer" class="composer" autocomplete="off">
+          <ul id="completions" class="completions" role="listbox" hidden></ul>
+          <div id="attachments" class="attachments" hidden></div>
+          <textarea id="prompt" rows="1" placeholder="Ask coop. Type / for commands, ! to run a shell command." aria-label="Message coop" spellcheck="true"></textarea>
+          <div class="composer-bar">
+            <span id="composerHint" class="hint"></span>
+            <button type="button" id="queueButton" class="btn" title="Queue for when coop finishes (Alt+Enter)" hidden>Queue</button>
+            <button type="button" id="stopButton" class="btn danger" title="Stop (Esc)" hidden>Stop</button>
+            <button type="submit" id="sendButton" class="btn primary">Send</button>
+          </div>
+        </form>
+        <div id="widgetsBelow" class="widgets" hidden></div>
+      </div>
+      <footer id="statusbar" class="statusbar"></footer>
+    </main>
+  </div>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <div id="modalLayer" class="modal-layer" hidden></div>
+</body>
+</html>

@@ -696,6 +696,17 @@ if ($pyBin) {
 
 D-Head 'Optional'
 Check 'jq' 'optional' 'nice-to-have for JSON in your own scripts (coop uses python3)'
+# The coop window (master plan D1b): the first `coop desktop` installs its
+# runtime, `coop sync` keeps an installed one on the release's pin.
+$desktopPin = Get-CoopDesktopElectronPin
+switch (Get-CoopDesktopRuntimeState) {
+  'current' { D-Ok "coop window: Electron $desktopPin in $(Get-CoopDesktopRuntimeDir)" }
+  'stale' {
+    $desktopHave = Get-CoopDesktopElectronVersion
+    D-Warn "coop window: the runtime is $(if ($desktopHave) { "Electron $desktopHave" } else { 'incomplete' }), this release pins Electron $desktopPin" 'close every coop window, then run: coop sync'
+  }
+  default { D-Ok "coop window: not installed (optional; coop desktop installs Electron $desktopPin on first use)" }
+}
 
 D-Head 'Project contract'
 $proj = Find-CoopProjectYml
