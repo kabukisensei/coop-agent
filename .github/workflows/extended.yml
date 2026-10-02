@@ -122,3 +122,77 @@ jobs:
         run: |
           if ($env:COOP_TEST_EXTENDED -ne '1') { Write-Host '::error::COOP_TEST_EXTENDED did not reach Windows PowerShell 5.1'; exit 1 }
           powershell -NoProfile -File tests\run.ps1
+
+  # Master plan row 11a (DD4): the data_doc wrapper and the /setup-docs JSONL wizard
+  # against the REAL coop-data-doc at its manifest pin, through real Windows pipes,
+  # launched from Windows PowerShell 5.1 the way bin/coop.cmd launches Pi. Pi's own
+  # exec (the pinned @earendil-works/pi-coding-agent) spawns the companion; the
+  # fixture is a synthetic mixed estate with non-ASCII folder, file and object
+  # names. No client data, network beyond the package installs, or credentials.
+  datadoc-windows:
+    name: data_doc + /setup-docs live, Windows PowerShell 5.1 (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      COOP_TEST_EXTENDED: '1'
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.19.0'
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      # pipx, as coop install does: coop-data-doc.exe is pipx's launcher, never a
+      # .cmd shim. PIPX_HOME/PIPX_BIN_DIR stay under the runner temp folder.
+      - name: Install coop-data-doc at the manifest pin (pipx) and the pinned Pi
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $manifest = Get-Content -Raw -Encoding UTF8 config\release-manifest.json | ConvertFrom-Json
+          $pin = $manifest.python_tools.'coop-data-doc'
+          $piVersion = $manifest.pi.version
+          $venv = Join-Path $env:RUNNER_TEMP 'pipx-venv'
+          & python -m venv $venv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $python = Join-Path $venv 'Scripts\python.exe'
+          & $python -m pip install --disable-pip-version-check --no-input pipx
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:PIPX_HOME = Join-Path $env:RUNNER_TEMP 'pipx-home'
+          $env:PIPX_BIN_DIR = Join-Path $env:RUNNER_TEMP 'pipx-bin'
+          & $python -m pipx install "coop-data-doc==$pin"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $exe = Join-Path $env:PIPX_BIN_DIR 'coop-data-doc.exe'
+          if (-not (Test-Path -LiteralPath $exe)) { Write-Host "::error::pipx did not create $exe"; exit 1 }
+          & $exe --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:PIPX_BIN_DIR | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $piRoot = Join-Path $env:RUNNER_TEMP 'pi'
+          New-Item -ItemType Directory -Force -Path $piRoot | Out-Null
+          & npm install --prefix $piRoot --ignore-scripts --no-audit --no-fund --loglevel=error "@earendil-works/pi-coding-agent@$piVersion"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "COOP_TEST_PI_ROOT=$piRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Bundle coop-tools (as tests/run.sh does)
+        shell: pwsh
+        run: |
+          $dist = Join-Path $env:RUNNER_TEMP 'coop-dist'
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          & npx -y esbuild extensions/coop-tools/index.ts --bundle --format=esm --platform=node --packages=external "--alias:typebox=$PWD\tests\typebox-stub.mjs" "--outfile=$dist\coop-tools.mjs"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "COOP_TEST_DIST=$dist" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      # Windows PowerShell 5.1 -> node -> coop-data-doc.exe, the coop.cmd process
+      # chain, with the runner's default code page and no PYTHONUTF8. The test home
+      # is a temp folder so standards hooks never touch the runner profile.
+      - name: Live data_doc + /setup-docs acceptance (Windows PowerShell 5.1)
+        shell: powershell
+        run: |
+          if ($PSVersionTable.PSVersion.Major -ne 5) { Write-Host "::error::expected Windows PowerShell 5.1, got $($PSVersionTable.PSVersion)"; exit 1 }
+          Remove-Item Env:PYTHONUTF8, Env:PYTHONIOENCODING -ErrorAction SilentlyContinue
+          $testHome = Join-Path $env:RUNNER_TEMP 'coop-test-home'
+          New-Item -ItemType Directory -Force -Path $testHome | Out-Null
+          $env:USERPROFILE = $testHome
+          $env:HOME = $testHome
+          $env:COOP_TEST_DATADOC_REQUIRED = '1'
+          Write-Host "ANSI code page: $([System.Text.Encoding]::Default.WebName); console: $([Console]::OutputEncoding.WebName)"
+          & node tests\datadoc-live.test.mjs
+          exit $LASTEXITCODE

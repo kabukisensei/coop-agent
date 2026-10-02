@@ -5,6 +5,26 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- The `data_doc` wrapper now decodes the `\uXXXX`, `\xXX` and `\UXXXXXXXX`
+  escapes `coop-data-doc` writes for every non-ASCII character in
+  `coop-data-doc.yml`. Before, a non-ASCII project name, repo path or output
+  folder read back garbled (`Entrep\u00f4t` became `Entrepu00f4t`), so `data_doc
+  impact` matched no changed files under such a repo, a non-ASCII output folder
+  looked unbuilt, and re-running `/setup-docs` saved the garbled project name.
+
+### Added
+
+- Windows acceptance for the `data_doc` wrapper and `/setup-docs` (master plan
+  row 11a, DD4): a `datadoc-windows` job in `extended.yml` installs
+  `coop-data-doc` at the manifest pin with pipx and the pinned Pi, then runs
+  `tests/datadoc-live.test.mjs` from Windows PowerShell 5.1. The test drives the
+  JSONL setup wizard, build, scan, check, lineage and impact through Pi's own exec
+  and real pipes against a synthetic mixed estate with non-ASCII folder, file and
+  object names. The extended lane of `tests/run.sh` runs it too, skipping when no
+  `coop-data-doc` 1.3.0+ is installed.
+
 ## [0.28.0] — 2026-10-02
 
 ### Added
