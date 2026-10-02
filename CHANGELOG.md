@@ -5,6 +5,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Removed
+
+- `lib/tool-result.mjs` and `lib/knowledge-read.mjs`, `lib/knowledge-retrieve.mjs`,
+  `lib/knowledge-sources.mjs`, with their four tests, which the gate lane no
+  longer runs. Nothing under `bin/`, `lib/`, `scripts/`, `extensions/`,
+  `skills/` or `prompts/` called them, and the TeamAI rows (K1-K3, v0.28.0)
+  shipped without adopting them, so each module leaves together with the test
+  that covered it ([#134](https://github.com/kabukisensei/coop-agent/issues/134)).
+
 ### Fixed
 
 - `coop update --check` fetches from origin before it reads the release tags

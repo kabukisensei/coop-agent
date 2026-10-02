@@ -344,7 +344,9 @@ update and install test modes per revision 2.0 S7 (retired in S7, issue #228).
 **Wire or delete now (Phase 1):** the ten orphaned test files above either join the
 gate lane (`tool-result`, `knowledge-*`, `support-center`, `missing-common-guard`,
 `install-pipx-path` look like real unit tests) or are deleted; one BOM check, not
-three.
+three. (Done. T1 wired them; `tool-result` and the three `knowledge-*`
+modules then turned out to have no product caller and left with their tests,
+[#134](https://github.com/kabukisensei/coop-agent/issues/134).)
 
 **Rules for new tests going forward:** a fixture may not sleep or poll for a
 subprocess in the gate lane; a Windows-only behavior gets one Windows test, not a
