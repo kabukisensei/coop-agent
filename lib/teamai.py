@@ -190,7 +190,7 @@ def child_env(home: Path) -> dict:
     env = {}
     for k, v in os.environ.items():
         ku = k.upper()
-        if ku.startswith("TEAMAI_") or ku.startswith("CLAUDE_") or ku in ("HOME", "USERPROFILE", "XDG_CONFIG_HOME", "OPENCLAW_STATE_DIR"):
+        if ku.startswith("TEAMAI_") or ku.startswith("CLAUDE_") or ku.startswith("GIT_CONFIG_") or ku in ("HOME", "USERPROFILE", "XDG_CONFIG_HOME", "OPENCLAW_STATE_DIR"):
             continue
         env[k] = v
     env["HOME"] = str(home)
@@ -203,6 +203,22 @@ def child_env(home: Path) -> dict:
     env["TEAMAI_MR_HINT_DISABLED"] = "1"
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["CI"] = "1"
+    return env
+
+
+PUSH_GUARD_PREFIXES = ("https://", "http://", "ssh://", "git@")
+
+
+def push_guard_env() -> dict:
+    """Environment-scoped git config (GIT_CONFIG_COUNT, git 2.31+) that rewrites
+    every push URL to the unusable `no-push://` scheme. The CLI's own git
+    children inherit it, so nothing the CLI does (member registration on
+    `teamai-reports`, `contribute`, `push`) can reach the team repository;
+    fetch and pull are untouched. coop's own staging push (K2) runs without it."""
+    env = {"GIT_CONFIG_COUNT": str(len(PUSH_GUARD_PREFIXES))}
+    for i, prefix in enumerate(PUSH_GUARD_PREFIXES):
+        env[f"GIT_CONFIG_KEY_{i}"] = "url.no-push://.pushInsteadOf"
+        env[f"GIT_CONFIG_VALUE_{i}"] = prefix
     return env
 
 
@@ -288,7 +304,9 @@ def run_cli(args: list[str], package: str, timeout: int | None = None, cwd: Path
     ws = cwd or workspace()
     home.mkdir(parents=True, exist_ok=True)
     ws.mkdir(parents=True, exist_ok=True)
-    return run_bounded([node, str(entry)] + args, ws, child_env(home), timeout or timeout_seconds())
+    env = child_env(home)
+    env.update(push_guard_env())
+    return run_bounded([node, str(entry)] + args, ws, env, timeout or timeout_seconds())
 
 
 # --- facts --------------------------------------------------------------------

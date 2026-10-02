@@ -66,6 +66,7 @@ const rec = {
   api_token: process.env.TEAMAI_API_TOKEN || '',
   claude_leak: process.env.CLAUDE_SECRET || '',
   git_prompt: process.env.GIT_TERMINAL_PROMPT || '',
+  git_cfg: Object.keys(process.env).filter((k) => k.startsWith('GIT_CONFIG_')).sort().map((k) => k + '=' + process.env[k]).join(';'),
 };
 if (log) fs.appendFileSync(log, JSON.stringify(rec) + '\n');
 const cmd = rec.argv[0];
@@ -288,6 +289,20 @@ with tempfile.TemporaryDirectory() as raw:
     check(init_rec["claude_config_dir"] == str(iso_home / ".claude"), "CLAUDE_CONFIG_DIR points inside the isolated home")
     check(init_rec["api_token"] == "" and init_rec["claude_leak"] == "", "parent TEAMAI_* / CLAUDE_* variables are not inherited")
     check(init_rec["git_prompt"] == "0", "GIT_TERMINAL_PROMPT=0 (no credential prompts)")
+    check("GIT_CONFIG_KEY_0=url.no-push://.pushInsteadOf" in init_rec["git_cfg"] and "GIT_CONFIG_VALUE_0=https://" in init_rec["git_cfg"], "push guard: the CLI's git inherits pushInsteadOf=no-push:// for https/ssh/git@ URLs")
+    # the guard really blocks a push (any remote URL) while fetch still works
+    guard_bare = tmp / "guard.git"
+    subprocess.run(["git", "init", "--quiet", "--bare", "--initial-branch=main", str(guard_bare)], check=True)
+    guard_clone = tmp / "guard-clone"
+    subprocess.run(["git", "clone", "--quiet", str(guard_bare), str(guard_clone)], check=True, capture_output=True)
+    (guard_clone / "a.md").write_text("a\n", encoding="utf-8")
+    subprocess.run(["git", "-c", "user.name=T", "-c", "user.email=t@example.invalid", "-C", str(guard_clone), "add", "a.md"], check=True)
+    subprocess.run(["git", "-c", "user.name=T", "-c", "user.email=t@example.invalid", "-C", str(guard_clone), "commit", "--quiet", "-m", "a"], check=True)
+    subprocess.run(["git", "-C", str(guard_clone), "remote", "set-url", "origin", "https://example.invalid/guard.git"], check=True)
+    guard_env = dict(os.environ)
+    guard_env.update({"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "url.no-push://.pushInsteadOf", "GIT_CONFIG_VALUE_0": "https://"})
+    gp = subprocess.run(["git", "-C", str(guard_clone), "push", "--dry-run", "origin", "main"], env=guard_env, capture_output=True, text=True)
+    check(gp.returncode != 0 and "no-push" in (gp.stderr + gp.stdout), f"push guard: a push under the guard fails on the no-push:// scheme ({(gp.stderr or gp.stdout).strip()[:100]})")
     check((iso_home / ".teamai" / "config.yaml").is_file(), "the CLI's data home landed under the isolated home")
     check(json.loads((profile / "teamai" / "state.json").read_text(encoding="utf-8")).get("last_init_error", "x") == "", "a successful init clears last_init_error")
     check(not (real_home / ".teamai").exists() and not (real_home / ".claude").exists(), "nothing was written to the real home")

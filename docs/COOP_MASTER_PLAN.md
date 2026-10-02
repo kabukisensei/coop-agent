@@ -844,9 +844,12 @@ vendor patch: `lib/teamai.py` installs the pinned `teamai-cli` with
 `npm install --prefix` into `<profile dir>/teamai/pkg` and runs it with
 `HOME`/`USERPROFILE` set to `<profile dir>/teamai/home`, a disposable
 `<profile dir>/teamai/workspace`, `TEAMAI_HOOKS_DISABLED`, `TEAMAI_RECALL_DISABLED`,
-`--dry-run` recall, no inherited `TEAMAI_*`/`CLAUDE_*` variables, no stdin and a
-hard timeout, so the CLI's data home and every AI-tool destination it would
-inject into land inside that root. `coop teamai` is the only entry
+`--dry-run` recall, no inherited `TEAMAI_*`/`CLAUDE_*` variables, no stdin, a
+hard timeout and a git push guard (`pushInsteadOf=no-push://` for every push URL
+the CLI's git sees; the VM run showed `teamai init` trying to register the member
+on the `teamai-reports` branch), so the CLI's data home and every AI-tool
+destination it would inject into land inside that root and nothing it does can
+write to the team repository. `coop teamai` is the only entry
 (`status|install|init|pull|recall --query`), launch never calls it, `coop sync`
 converges it only when `knowledge.teamai.enabled` is true, and results are
 capped at five with repository, revision, file and author provenance plus the

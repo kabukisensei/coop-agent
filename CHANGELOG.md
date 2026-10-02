@@ -24,8 +24,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   installs and pulls only when enabled; `coop doctor` shows the trial's state;
   launch never touches it. The `team-knowledge` skill consults
   `coop teamai recall` only when `coop teamai status` reports `ok`, after the
-  local search. Tests: `tests/teamai-adapter.test.py` (stub CLI, decoy `teamai`
-  on `PATH` must never run) and `tests/fixtures/teamai.test.ps1`.
+  local search. The CLI's git runs under a push guard (`GIT_CONFIG_*`
+  `url.no-push://.pushInsteadOf` for https, ssh and `git@` URLs), so the CLI's
+  own writes to the team repository (the member registration `teamai init`
+  commits to `teamai-reports`, `contribute`, `push`) cannot leave the sandbox
+  while fetch and pull still work. Tests: `tests/teamai-adapter.test.py` (stub
+  CLI, decoy `teamai` on `PATH` must never run, the guard blocks a push) and
+  `tests/fixtures/teamai.test.ps1`.
 - First run shows the common workflows, not a wizard (master plan FR1, Phase 6).
   The first interactive `coop` launch on a machine opens the Start Here menu once
   (`bin/coop.ps1` hands coop-tools `COOP_FIRST_RUN=1` and writes
