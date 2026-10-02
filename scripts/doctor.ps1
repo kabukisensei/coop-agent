@@ -644,6 +644,35 @@ if (Test-Have 'node') {
   D-Warn 'standards status unavailable' 'Node is required to verify the standards wiki cache and the bundled copy'
 }
 
+D-Head 'TeamAI shared knowledge (trial)'
+# Read-only: lib/teamai.py status never installs, initializes or pulls.
+if ($pyBin) {
+  $teamaiDoc = $null
+  try { $teamaiDoc = [string](& $pyBin (Join-Path $env:COOP_ROOT 'lib\teamai.py') status 2>$null | Out-String) | ConvertFrom-Json } catch { $teamaiDoc = $null }
+  if (-not $teamaiDoc) { D-Warn 'TeamAI status unavailable' 'run: coop teamai status' }
+  else {
+    $tState = [string]$teamaiDoc.state
+    switch ($tState) {
+      'disabled'        { D-Ok 'TeamAI trial: disabled (knowledge.teamai.enabled is false; the local knowledge search is unaffected)' }
+      'not_installed'   { D-Warn 'TeamAI trial: enabled but the isolated CLI is not installed' 'run: coop sync (or: coop teamai install)' }
+      'not_initialized' {
+        $tHint = if ($teamaiDoc.detail) { [string]$teamaiDoc.detail } else { 'run: coop teamai init' }
+        D-Warn "TeamAI trial: $($teamaiDoc.package) $($teamaiDoc.installed_version) installed in the isolated prefix, not initialized" $tHint
+      }
+      'ok' {
+        $age = if ($teamaiDoc.last_pull_at) { "last pull $($teamaiDoc.last_pull_at)" } else { 'never pulled' }
+        $rev = if ($teamaiDoc.revision) { " @ $($teamaiDoc.revision)" } else { '' }
+        if ($teamaiDoc.stale) { D-Warn "TeamAI trial: $($teamaiDoc.package) $($teamaiDoc.installed_version) isolated, $age$rev (stale)" 'run: coop teamai pull' }
+        else { D-Ok "TeamAI trial: $($teamaiDoc.package) $($teamaiDoc.installed_version) isolated in $($teamaiDoc.roots.home), $age$rev" }
+        foreach ($w in @($teamaiDoc.warnings)) { if ($w) { D-Warn "TeamAI trial: $w" } }
+      }
+      default           { D-Warn "TeamAI trial: $tState" 'run: coop teamai status' }
+    }
+  }
+} else {
+  D-Warn 'TeamAI status unavailable' 'Python is required'
+}
+
 D-Head 'Optional'
 Check 'jq' 'optional' 'nice-to-have for JSON in your own scripts (coop uses python3)'
 

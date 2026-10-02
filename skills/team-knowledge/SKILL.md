@@ -32,7 +32,8 @@ Fabric catalog first only delays the read.
 
 Team knowledge is searched ONLY through the bundled local-search helper.
 `teamai` is never part of the workflow — do not invoke it, and never treat its
-presence, absence, or configuration as changing how knowledge is found.
+presence, absence, or configuration as changing how knowledge is found. The
+one exception is the TeamAI trial below, reached only through `coop teamai`.
 
 1. **Resolve the helper and interpreter.** `COOP_ROOT` is exported by the
    coop launcher and contains `bin/`, `scripts/`, `skills/`. The helper is
@@ -67,6 +68,22 @@ presence, absence, or configuration as changing how knowledge is found.
 4. **Respect `warnings` and `truncated`** — a searched root with a `partial`
    flag (or subdirectory warnings) had inaccessible subdirectories; say the
    search was partial rather than exhaustive.
+
+## TeamAI trial (K1, optional)
+
+Some machines run the isolated TeamAI shared-knowledge trial. It adds one
+read-only source next to the local search, never instead of it:
+
+1. `coop teamai status` first. Go on only when its JSON `state` is `ok`;
+   `disabled`, `not_installed`, `not_initialized` and `unavailable` mean
+   "no TeamAI on this machine": say so once and use the local search.
+2. `coop teamai recall --query "<topic>"` returns at most 5 results with
+   `repository`, `revision`, `file`, `author`, `date` and `snippet`. Cite the
+   repository and file for anything you use; `no_match` means this query
+   matched nothing, `partial` means the code graph was unavailable, and
+   `stale: true` means the clone is older than a week (say so).
+3. Never run `teamai` yourself, never install it, and never ask for
+   `teamai push`/`contribute`: contributions wait for K2.
 
 ## Vault layer guide
 

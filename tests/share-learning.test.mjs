@@ -145,6 +145,10 @@ await t("team-knowledge skill drives the local-search helper, never teamai", () 
   }
   // Repository identity + note path must be cited together.
   assert.match(content, /repository identity plus the note path|repository \(root label\/path\)/);
-  // No teamai recall route may remain.
-  assert.ok(!/teamai recall/.test(content), "teamai recall route must be removed from the skill");
+  // No direct teamai recall route may remain. The K1 trial is reached only
+  // through `coop teamai recall`, gated on `coop teamai status` reporting ok.
+  const withoutAdapter = content.replace(/coop teamai recall/g, "");
+  assert.ok(!/teamai recall/.test(withoutAdapter), "a direct teamai recall route must not be in the skill");
+  assert.match(content, /`coop teamai status` first/);
+  assert.match(content, /Never run `teamai` yourself/);
 });

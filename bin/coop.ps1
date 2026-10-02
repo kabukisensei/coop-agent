@@ -105,6 +105,21 @@ function Invoke-CoopProfile {
   exit $LASTEXITCODE
 }
 
+# --- TeamAI shared knowledge (K1: isolated CLI, read-only recall) ------------
+# Every operation goes through lib/teamai.py: the pinned teamai-cli lives only in
+# <profile dir>\teamai\pkg, runs with its home redirected to <profile dir>\teamai\home
+# and a disposable workspace, hooks disabled, a hard timeout, and reports one
+# JSON document per call (state: disabled | not_installed | not_initialized |
+# ok | no_match | partial | unavailable). Nothing here runs at launch.
+function Invoke-CoopTeamai {
+  param([string[]]$Rest)
+  $py = Get-CoopPython
+  if (-not $py) { Coop-Die 'python3 is required for coop teamai' }
+  if (-not $Rest -or $Rest.Count -eq 0) { Coop-Die 'usage: coop teamai <status|install|init|pull|recall --query <text>>' }
+  & $py (Join-Path $script:CoopRoot 'lib\teamai.py') @Rest
+  exit $LASTEXITCODE
+}
+
 function Invoke-CoopContextBudget {
   param([string[]]$Rest)
   $py = Get-CoopPython
@@ -155,6 +170,8 @@ $(Coop-Bold)Usage$(Coop-Rst)
   coop profile              Show your COOP user profile
   coop profile edit         Edit your COOP user profile
   coop profile reset        Remove your COOP user profile
+  coop teamai <cmd>         TeamAI shared-knowledge trial, isolated (status|install|init|pull|
+                            recall --query <text>); off until knowledge.teamai.enabled is true
   coop context-budget       Report fixed startup context sizes (use --json for machine output)
   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
                             (--strict: exit 2 on a failing linter; --skip-docs: linters only)
@@ -1082,6 +1099,7 @@ switch -CaseSensitive ($cmd) {
   'launch-spec' { Invoke-CoopLaunchSpec $rest; break }
   'onboard' { Invoke-CoopOnboard $rest; break }
   'profile' { Invoke-CoopProfile $rest; break }
+  'teamai' { Invoke-CoopTeamai $rest; break }
   'context-budget' { Invoke-CoopContextBudget $rest; break }
   'init' { Invoke-CoopInit $rest; break }
   'new-skill' { New-CoopSkill $rest; break }
