@@ -144,4 +144,26 @@ a personal one. The installer then carries on by itself. If it could not show th
 screen (for example, the install ended with **Something went wrong**), type `coop` in
 PowerShell or double-click the **coop** icon: either opens the same screen.
 
+## 6. Add the coop window (optional)
+
+coop also runs in its own window: the same agent and rules, drawn as a modern
+app with four themes. Do this after steps 1 to 5, since the window uses the
+terminal coop you just installed.
+
+1. Download `coop-window-<version>-win-x64.exe` from the link Aaron sends (it
+   comes from the coop-agent release page or a CI build).
+2. Double-click it. Windows shows **Windows protected your PC** because the
+   installer is not signed: click **More info**, then **Run anyway**. That is
+   the only time you see it.
+3. Click **Next** and **Install**. No administrator password is asked; it
+   installs for your user only, under `%LOCALAPPDATA%\Programs\coop`.
+4. Double-click the new **coop (window)** icon on your Desktop or Start Menu,
+   pick the project folder, and the window opens on it. A small console shows
+   coop's launch checks first and closes on its own.
+
+If the window says coop is not installed, finish steps 1 to 5 first and start it
+again. To remove the window, use **Add or remove programs** and pick
+**coop (window)**; the terminal coop and your settings stay. A newer window comes
+as a newer installer: run it over the old one.
+
 Next: [onboarding](onboarding.md) has a safe first task and the day-to-day commands.
