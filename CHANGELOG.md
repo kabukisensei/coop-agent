@@ -18,6 +18,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- `coop doctor` checks the Power BI / Fabric npm tools against their release
+  pins, not just their presence. An update from v0.24.0 left
+  `@microsoft/powerbi-desktop-bridge-cli` at 0.1.2 against a pin of 1.0.0 while
+  doctor showed it green; it now warns with `coop update` as the fix (a second
+  `coop update` converges it). Doctor also names the retired `coop-sql-review`
+  and `coop-dax-review` when an older install left them in pipx, with the
+  `pipx uninstall` command. Found by the v0.27.0 update check on a client VM.
 - `tests/run.sh` stops at once with one clear line when `pwsh` is on PATH but
   cannot start (Homebrew's formula without its .NET runtime), and the extended
   lane stops with the install command when Python has no `jsonschema`, instead

@@ -574,6 +574,7 @@ print("resume verdict contract OK")
     @{ Name = 'azcache';                Lane = 'gate';     Head = 'Azure sign-in preflight (tenant chain, token check, automatic sign-in, .az-ok cache)' },
     @{ Name = 'doctor-warehouse';       Lane = 'gate';     Head = 'doctor.ps1 Warehouse tenant and fabric MCP rows' },
     @{ Name = 'doctor-pipx-shadow';     Lane = 'gate';     Head = 'doctor.ps1 pipx PATH-shadow rows (foreign coop-data-doc on PATH vs. stale venv)' },
+    @{ Name = 'doctor-fleet-pins';      Lane = 'gate';     Head = 'doctor.ps1 npm tool pins and retired reviewers' },
     @{ Name = 'seeddocs';               Lane = 'gate';     Head = 'coop init --seed-docs shows the config-set status (not runnable = warning)' },
     @{ Name = 'fleet-manifest';         Lane = 'gate';     Head = 'fleet manifest (Coop-Manifest* helpers, fleet plan)' },
     @{ Name = 'login-present';          Lane = 'gate';     Head = 'model login detection ignores Pi''s empty startup auth.json (#167)' },
