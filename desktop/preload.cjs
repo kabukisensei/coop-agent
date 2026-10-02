@@ -1,7 +1,7 @@
 // The window's only bridge to coop. The renderer is sandboxed with no Node;
 // it can call these functions and nothing else, and the main process checks
 // every argument again (main.mjs, lib/rpc-commands.mjs).
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 function listen(channel) {
   return (callback) => {
@@ -45,6 +45,14 @@ contextBridge.exposeInMainWorld("coop", Object.freeze({
   docsPage: (page) => ipcRenderer.invoke("coop:docs-page", String(page || "")),
   docsPages: () => ipcRenderer.invoke("coop:docs-pages"),
   docsPortal: () => ipcRenderer.invoke("coop:docs-portal"),
+  // Attachments (D1b2). pathForFile turns a dropped or pasted File into its
+  // path (File.path is gone in this Electron); the main process reads it.
+  pickFiles: () => ipcRenderer.invoke("coop:pick-files"),
+  attachFile: (path) => ipcRenderer.invoke("coop:attach-file", String(path || "")),
+  forgetAttachment: (id) => ipcRenderer.invoke("coop:attachment-forget", String(id || "")),
+  pathForFile: (file) => { try { return webUtils.getPathForFile(file); } catch { return ""; } },
+  // A fresh vibe (tip) for the empty screen and the working line; a set name switches the pool.
+  vibe: (set) => ipcRenderer.invoke("coop:vibe", String(set || "")),
   onEvent: listen("pi:event"),
   onExit: listen("pi:exit"),
   onNotice: listen("pi:notice"),

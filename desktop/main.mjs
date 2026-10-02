@@ -25,6 +25,9 @@ import { listChanges, fileDiff } from "./lib/changes.mjs";
 import { readStandards, readSnapshot } from "./lib/standards-view.mjs";
 import { loadProject, previewProject, saveProject } from "./lib/project-form.mjs";
 import { DocsSetupRun, AnswerError, docsLocation, listDocsPages, pickedPathAnswer, readDocsPage, runDocsBuild } from "./lib/docs-setup.mjs";
+import { attach, forget, pruneStore, findPdfjs, LIMITS as ATTACH_LIMITS } from "./lib/attachments.mjs";
+import { loadSplash } from "./lib/splash.mjs";
+import { vibesDir, loadVibes, vibeSets, userName, fillVibe, pickVibe } from "./lib/vibes.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RENDERER = join(HERE, "renderer");
@@ -51,6 +54,13 @@ const checkout = createHash("sha256").update(HERE.toLowerCase()).digest("hex").s
 app.setPath("userData", join(isAbsolute(dataRoot) ? dataRoot : join(app.getPath("appData"), "coop", "desktop"), checkout));
 const settingsFile = join(app.getPath("userData"), "settings.json");
 let settings = loadSettings(settingsFile);
+// Text pulled out of attached documents (D1b2) lives beside the settings; a
+// week-old extract is of no use to anyone, so the store is pruned at start.
+const attachmentStore = join(app.getPath("userData"), "attachments");
+pruneStore(attachmentStore);
+// pdf.js is the window runtime's second package, next to Electron.
+const pdfjsDir = findPdfjs(process.execPath);
+const splashArt = loadSplash(REPO);
 
 protocol.registerSchemesAsPrivileged([
   { scheme: "coop", privileges: { standard: true, secure: true, supportFetchAPI: false, corsEnabled: false } },
@@ -123,7 +133,18 @@ function windowInfo(state) {
     canOpenFolder: Boolean(spec.coop),
     loginPresent: spec.loginPresent,
     notices: state.noticesShown ? [] : spec.notices,
+    splash: splashArt,
+    vibe: vibeFor(state),
+    vibeSets: vibeSets(vibesDir(REPO)),
+    attachLimits: { perMessage: ATTACH_LIMITS.perMessage, images: ATTACH_LIMITS.images },
+    pdfReady: Boolean(pdfjsDir),
   };
+}
+
+// The terminal rotates a vibe under its splash and on its working line; the
+// window asks for one here, from the same files, with the same {user} rule.
+function vibeFor(state) {
+  return fillVibe(pickVibe(loadVibes(vibesDir(REPO), state.vibeSet)), userName({ ...process.env, ...state.spec.env }));
 }
 
 function openWindow(rawSpec, token) {
@@ -155,7 +176,7 @@ function openWindow(rawSpec, token) {
       devTools: process.env.COOP_DESKTOP_DEVTOOLS === "1",
     },
   });
-  const state = { win, spec, token, pi: null, ready: false, queue: [], sessionFile: "", changes: [], snapshots: new Map(), docs: null, build: null };
+  const state = { win, spec, token, pi: null, ready: false, queue: [], sessionFile: "", changes: [], snapshots: new Map(), docs: null, build: null, vibeSet: "" };
   windows.set(win.webContents.id, state);
   if (settings.maximized) win.maximize();
   win.once("ready-to-show", () => win.show());
@@ -468,6 +489,38 @@ handle("coop:docs-pages", (state) => {
   const where = docsLocation(state.spec.cwd, toolEnv(state));
   if (!where.built) return { success: false, error: "the docs are not built yet" };
   return { success: true, data: listDocsPages(where.outputDir) };
+});
+
+// Attachments (D1b2): the picker, one file at a time (validated and read in
+// lib/attachments.mjs), and the stored text of a chip removed before sending.
+handle("coop:pick-files", async (state) => {
+  const result = await dialog.showOpenDialog(state.win, {
+    title: "Attach files",
+    defaultPath: state.spec.cwd,
+    properties: ["openFile", "multiSelections"],
+    filters: [
+      { name: "Files coop reads", extensions: ["png", "jpg", "jpeg", "gif", "webp", "pdf", "docx", "xlsx", "pptx", "md", "txt", "csv", "tsv", "json", "yml", "yaml", "sql", "dax", "tmdl", "pq", "kql", "py", "ps1", "xml", "html", "log"] },
+      { name: "All files", extensions: ["*"] },
+    ],
+  });
+  if (result.canceled) return { success: true, data: [] };
+  return { success: true, data: result.filePaths.slice(0, ATTACH_LIMITS.perMessage) };
+});
+
+handle("coop:attach-file", async (state, path) => ({
+  success: true,
+  data: await attach(String(path || ""), { cwd: state.spec.cwd, store: attachmentStore, node: state.spec.node, pdfjsDir, env: { ...process.env, ...state.spec.env } }),
+}));
+
+handle("coop:attachment-forget", (state, id) => ({ success: forget(attachmentStore, String(id || "")) }));
+
+handle("coop:vibe", (state, set) => {
+  if (typeof set === "string" && set) {
+    if (set === "all") state.vibeSet = "";
+    else if (vibeSets(vibesDir(REPO)).includes(set)) state.vibeSet = set;
+    else return { success: false, error: `no vibe set named ${set}` };
+  }
+  return { success: true, data: vibeFor(state) };
 });
 
 handle("coop:docs-portal", async (state) => {

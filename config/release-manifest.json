@@ -33,7 +33,8 @@
     "version": "0.26.0"
   },
   "desktop": {
-    "electron": "44.5.1"
+    "electron": "44.5.1",
+    "pdfjs": "6.3.289"
   },
   "mcp_servers": {
     "@microsoft/fabric-mcp": "1.4.0",
