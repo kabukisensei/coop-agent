@@ -27,6 +27,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   download it from the release page (`docs/install-windows.md`, step 6). Nothing else is bundled
   yet (D1d) and the package does not update itself (D1e).
 
+## [0.29.1] — 2026-10-02
+
 ### Changed
 
 - The window runtime's size is stated as measured on the first VM run: about
