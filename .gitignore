@@ -44,3 +44,8 @@ data-docs-site/
 skills/_microsoft/*/
 skills/_microsoft_fabric/*/
 .cache/
+
+# The coop window package build (master plan D1c): the staged app and the
+# installer electron-builder writes; desktop/installer/node_modules is covered above
+desktop/installer/stage/
+desktop/installer/dist/

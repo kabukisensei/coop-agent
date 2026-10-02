@@ -1,7 +1,9 @@
 name: release
 
 # When `coop release` pushes a vX.Y.Z tag, publish a GitHub Release whose body is
-# that version's section from CHANGELOG.md — so release notes are automatic.
+# that version's section from CHANGELOG.md — so release notes are automatic —
+# with the coop window installer attached (master plan D1c), so teammates
+# download it from the release page.
 on:
   push:
     tags: ['v*']
@@ -10,8 +12,36 @@ permissions:
   contents: write
 
 jobs:
+  installer:
+    # The same build the ci.yml `installer (Windows)` job runs on every PR:
+    # the unsigned per-user NSIS installer of the window, from this tag.
+    name: build the coop window installer
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.19.0'
+      - name: install electron-builder (desktop/installer, pinned)
+        shell: pwsh
+        working-directory: desktop/installer
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: build the installer (stage + electron-builder, unsigned)
+        shell: pwsh
+        run: node desktop/scripts/build-installer.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coop-window-installer
+          path: desktop/installer/dist/coop-window-*.exe
+          if-no-files-found: error
+          retention-days: 14
+
   release:
     name: GitHub Release
+    needs: [installer]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -49,6 +79,11 @@ jobs:
           fi
           echo "----- notes for $GITHUB_REF_NAME -----"; cat RELEASE_NOTES.md
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: coop-window-installer
+          path: installer
+
       - name: Create GitHub Release
         # SHA-pinned (v3.0.1) — this is a third-party action with `contents: write`, so
         # a movable tag is the sharpest supply-chain edge in the whole workflow.
@@ -56,3 +91,5 @@ jobs:
         with:
           name: "coop-agent ${{ github.ref_name }}"
           body_path: RELEASE_NOTES.md
+          files: installer/coop-window-*.exe
+          fail_on_unmatched_files: true

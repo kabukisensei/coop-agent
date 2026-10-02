@@ -1,0 +1,8 @@
+{
+  "name": "coop-window-installer",
+  "private": true,
+  "description": "Build tooling for the coop window package (master plan D1c): electron-builder, pinned. The app itself is staged by desktop/scripts/build-installer.mjs.",
+  "devDependencies": {
+    "electron-builder": "26.17.0"
+  }
+}

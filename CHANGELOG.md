@@ -5,6 +5,28 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- The coop window package (master plan D1c): an unsigned, per-user Windows
+  installer of the window alone, built by electron-builder from a staged copy of
+  `desktop/`, the `lib/*.mjs` modules it imports, the vibes, the splash and the
+  icon, with pdf.js unpacked beside the asar and the September fuse policy
+  applied (`desktop/installer/electron-builder.cjs`,
+  `desktop/scripts/build-installer.mjs`). It installs under
+  `%LOCALAPPDATA%\Programs\coop` without administrator rights, adds a
+  **coop (window)** shortcut to the Start Menu and Desktop and an Add/Remove
+  Programs entry, and keeps `~/.coop/desktop/data` on uninstall. Started from
+  its shortcut, it asks for a folder, finds the terminal's `coop.cmd` the way
+  `bin/coop-desktop.ps1` does and runs the new `coop desktop --app <exe>`, so
+  the window gets the same launch checks, spec and Warehouse token as
+  `coop desktop`; `coop.exe --doctor` prints one JSON line about the package.
+  The `installer (Windows)` CI job builds the installer on every PR as the
+  `coop-window-installer` artifact, installs it silently, runs `--doctor` and
+  uninstalls (`desktop/scripts/verify-installer.mjs`); the release workflow
+  builds it from the tag and attaches it to the GitHub Release, so teammates
+  download it from the release page (`docs/install-windows.md`, step 6). Nothing else is bundled
+  yet (D1d) and the package does not update itself (D1e).
+
 ## [0.29.1] — 2026-10-02
 
 ### Changed

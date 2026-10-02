@@ -355,7 +355,7 @@ await check("settings: unknown values fall back, the four themes and auto are ke
   assert.deepEqual(THEMES, ["auto", "modern-dark", "modern-light", "retro-dark", "retro-light"]);
   const file = join(temp, "settings", "window.json");
   assert.equal(loadSettings(file).theme, "auto");
-  assert.deepEqual(saveSettings(file, { theme: "retro-light", width: 99999, height: 900, maximized: "yes", extra: 1 }), { theme: "retro-light", width: 1280, height: 900, maximized: false });
+  assert.deepEqual(saveSettings(file, { theme: "retro-light", width: 99999, height: 900, maximized: "yes", extra: 1 }), { theme: "retro-light", width: 1280, height: 900, maximized: false, lastFolder: "" });
   assert.equal(loadSettings(file).theme, "retro-light");
   writeFileSync(file, "{not json");
   assert.equal(loadSettings(file).theme, "auto");
