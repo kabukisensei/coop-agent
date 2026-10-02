@@ -791,7 +791,9 @@ duplicated the bar). The footer shows `⬢ Cooptimize · <branch>` on the left a
 `<model> · ctx N% · tokens · $cost · <plan usage limits>` on the right, in plain text +
 common Unicode (no Nerd Font glyphs). It surfaces other extensions' status text (e.g.
 `pi-better-openai`'s plan usage limits / 5h + 7d windows) via
-`footerData.getExtensionStatuses()`, so everything is in one clean bar. For that to
+`footerData.getExtensionStatuses()`, so everything is in one clean bar. It is one
+line when it fits; in a narrower window the right side wraps onto extra lines, so
+usage is never cut off. For that to
 work, `coop sync` (also run by `coop install` and `coop update`) keeps
 `pi-better-openai`'s own footer in `status` mode in `~/.coop/agent/extensions/pi-better-openai.json`;
 its default `replace` mode installs a second footer that wipes coop's. A deliberate
