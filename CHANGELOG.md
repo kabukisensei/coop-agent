@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.28.0] — 2026-10-02
+
 ### Added
 
 - `coop teamai <status|install|init|pull|recall --query <text>>` (master plan
