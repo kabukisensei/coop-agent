@@ -717,7 +717,9 @@ the team repository; `coop teamai init` runs once against the sandbox team repos
 URL. Every call runs with `HOME`/`USERPROFILE` redirected to `~/.coop/teamai/home`,
 a disposable `~/.coop/teamai/workspace` as the working directory, hooks and
 recall-quality recording disabled, every inherited `TEAMAI_*`/`CLAUDE_*` variable
-dropped, no stdin and a hard timeout (`COOP_TEAMAI_TIMEOUT_SECONDS`, default 60):
+dropped, no stdin, a hard timeout (`COOP_TEAMAI_TIMEOUT_SECONDS`, default 60) and a
+git push guard (every push URL the CLI's git sees is rewritten to `no-push://`, so the
+CLI can fetch and pull but never write to the team repository):
 the CLI's data home and the AI-tool settings it would inject into stay inside that
 isolated root, never in your real home, the stable coop profile or another agent's
 directory. Launch never touches it. `coop teamai recall --query <text>` returns at
