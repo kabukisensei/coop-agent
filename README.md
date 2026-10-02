@@ -320,8 +320,7 @@ fab --version                # should be the Microsoft Fabric CLI
 ## Managed MCP integrations (optional)
 
 Coop can generate five managed entries through `pi-mcp-adapter`. They are **read-only
-first**, not read-only-only, and all are optional. `context-mode` is installed separately
-as a native Pi extension and is deliberately excluded from generated MCP configuration.
+first**, not read-only-only, and all are optional.
 
 | Server | Provides | Enablement and policy |
 | --- | --- | --- |
@@ -879,12 +878,11 @@ every extension, and all tools to the exact versions in the release manifest —
 queries and no prompts. `--edge` is the only latest/upstream mode. Use `--check` before rollout; it reports Pi, pipx tools, and authoring npm tools,
 but does not enumerate managed Pi extensions or the injected `fabric-cicd` library.
 
-**One update voice.** Coop suppresses Pi and managed-extension self-update notices and
-blocks `context-mode`'s `ctx_upgrade` shortcut so a component cannot drift away from the
-tested fleet. The daily **coop-agent is N commit(s) behind release vX.Y.Z** notice
+**One update voice.** Coop suppresses Pi's self-update notice so a component cannot
+drift away from the tested fleet. The daily **coop-agent is N commit(s) behind release vX.Y.Z** notice
 remains: it is the safe prompt to run `coop update`, which advances the whole manifest
 together. It appears only when a newer release is waiting. Maintainers debugging an
-upstream release can temporarily restore upstream notices and `ctx_upgrade` with
+upstream release can temporarily restore Pi's notice with
 `COOP_SHOW_UPSTREAM_UPDATE_NOTICES=1`.
 
 ---

@@ -332,8 +332,6 @@ def build_project_yml(answers: dict) -> str:
     lines.append("  microsoft_learn:")
     lines.append("    enabled: true")
     lines.append('    purpose: "Always-current Microsoft documentation lookups"')
-    lines.append("  context_mode:")
-    lines.append("    enabled: true")
     lines.append("  fabric_sqlendpoint:")
     lines.append(f"    enabled: {str(answers.get('use_fabric', False)).lower()}")
     lines.append("")

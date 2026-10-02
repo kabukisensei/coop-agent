@@ -685,7 +685,7 @@ function Sync-CoopExtensionPins([string]$AgentDir, [string[]]$Specs) {
 # installed from the lock; $false when the lock does not apply (caller resolves
 # live) or `npm ci` failed (the caller's install then repairs the tree). Mirror
 # of coop_apply_extensions_lock. Lifecycle scripts run as they do for a plain
-# install (better-sqlite3, context-mode and sharp build or fetch their binaries).
+# install (better-sqlite3 and sharp build or fetch their binaries).
 # SHA-256 of a file as an upper-case hex string, through .NET rather than
 # Get-FileHash: Windows PowerShell 5.1 started by coop.cmd from a PowerShell 7
 # window inherits pwsh's PSModulePath and cannot load Microsoft.PowerShell.Utility's
@@ -1214,7 +1214,7 @@ function Sync-CoopExtDeps {
   # Skewed: replace ONLY the two shared libraries. Removing npm's root and hidden
   # lock inventories prevents a manually damaged tree from being credited as the
   # locked version. --ignore-scripts guarantees this repair cannot rebuild an
-  # unrelated native dependency such as context-mode's better-sqlite3.
+  # unrelated native dependency such as pi-hermes-memory's better-sqlite3.
   Coop-Info "aligning extension pi-ai / pi-tui to the agent ($ver; tree has $treeAi)…"
   $scope = Join-Path $npmDir 'node_modules\@earendil-works'
   $ai = Join-Path $scope 'pi-ai'
@@ -1248,6 +1248,40 @@ function Sync-CoopExtDeps {
   else { Coop-Warn "could not fully align extension pi-ai/pi-tui to $ver — close any running coop session, then: coop doctor --fix" }
 }
 
+# Extensions an earlier release installed and this one no longer ships. Leaving a
+# manifest does not uninstall: its `npm:<name>@<pin>` entry stays in the agent
+# dir's settings.json `packages` (Pi loads it, and reinstalls it if the tree lost
+# it) and in npm/package.json (lib/pins.js only adds). `pi remove` drops both.
+#   context-mode: dropped in U1 (its ctx_* tools ran shell commands the
+#   guardrails never saw, and its tool schemas cost ~7k tokens per request).
+$script:CoopRetiredExtensions = @('context-mode')
+
+# Remove every retired extension still present in the isolated agent dir, through
+# `pi remove` (the caller has PI_CODING_AGENT_DIR pointed at $AgentDir). Returns
+# the failure count; absent extensions are a silent no-op.
+function Remove-CoopRetiredExtensions([string]$AgentDir) {
+  $failures = 0
+  $settingsPath = Join-Path $AgentDir 'settings.json'
+  $settingsText = ''
+  if (Test-Path -LiteralPath $settingsPath) {
+    try { $settingsText = Get-Content -LiteralPath $settingsPath -Raw } catch { $settingsText = '' }
+  }
+  foreach ($name in $script:CoopRetiredExtensions) {
+    $listed = $settingsText -match ('"npm:' + [regex]::Escape($name) + '(@[^"]*)?"')
+    $installed = [bool](Get-CoopExtInstalledVersion -AgentDir $AgentDir -Name $name)
+    if (-not $listed -and -not $installed) { continue }
+    Coop-Info "Removing $name (no longer part of coop)…"
+    & pi remove "npm:$name" > $null 2>&1
+    if ($LASTEXITCODE -ne 0 -or (Get-CoopExtInstalledVersion -AgentDir $AgentDir -Name $name)) {
+      Coop-Warn "could not remove $name from the isolated tree" "run: pi remove npm:$name (with PI_CODING_AGENT_DIR=$AgentDir)"
+      $failures++
+    } else {
+      Coop-Ok "Removed $name"
+    }
+  }
+  return $failures
+}
+
 # --- Extension fleet convergence (the ONE `pi install` path; S2, #222) ---------
 # Converge every manifest extension INTO the isolated agent dir, idempotently:
 #   1. `pi install <npm:name@pin>` for each extension whose installed version
@@ -1278,6 +1312,7 @@ function Sync-CoopExtensionFleet {
       Coop-Err 'pi is not installed — no extensions were converged or verified' 'install Pi first: coop install'
       return 1
     }
+    $failures += Remove-CoopRetiredExtensions -AgentDir $AgentDir
     $fleetSpecs = @(); $fleetNames = @(); $fleetPins = @(); $preVers = @{}
     foreach ($ext in (Get-CoopFleetPlan).Extensions) {
       if (-not $ext.Spec -or -not $ext.Pin) { Coop-Warn "manifest pin missing for $($ext.Name)"; $failures++; continue }

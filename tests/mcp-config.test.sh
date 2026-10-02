@@ -5,7 +5,7 @@ PY="$(command -v python3 2>/dev/null || command -v python)"
 d="$(mktemp -d)"; trap 'rm -rf "$d"' EXIT
 mkdir -p "$d/no-project"
 cat > "$d/config" <<'JSON'
-{"schema_version":1,"azure":{"tenant_id":"tenant-1"},"integrations":{"fabric":true,"power_bi":true,"power_bi_modeling":true,"azure_devops":true,"microsoft_learn":true,"context_mode":true},"azure_devops":{"organization":"cooptimize"}}
+{"schema_version":1,"azure":{"tenant_id":"tenant-1"},"integrations":{"fabric":true,"power_bi":true,"power_bi_modeling":true,"azure_devops":true,"microsoft_learn":true},"azure_devops":{"organization":"cooptimize"}}
 JSON
 cat > "$d/mcp.json" <<'JSON'
 {"mcpServers":{"custom":{"command":"custom","args":["x"]},"fabric":{"command":"npx","args":["-y","@microsoft/fabric-mcp@old"],"customField":true,"lifecycle":"eager","auth":"custom-managed-auth","headers":{"X-Managed-Custom":"keep-me"},"extraSettings":{"retry":3}},"fabric-sqlendpoint":{"command":"npx","args":["-y","mcp-remote@0.1.38","https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint","--transport","http-only","--silent"],"auth":"oauth","bearerToken":"stale-secret-fixture","bearerTokenEnv":"STALE_FABRIC_TOKEN_ENV","bearerTokenStore":"stale-store","caFile":"stale-ca.pem","headers":{"Authorization":"Bearer stale-secret-fixture"},"httpTransport":{"forged":true},"oauth":{"legacy":true},"protocolVersion":"forged","requestHeadersCommand":{"command":"forged","args":["stale"]},"requestTimeoutMs":1,"lifecycle":"eager","unknownExtra":true},"microsoft-learn":{"command":"npx","args":["-y","mcp-remote@0.1.38","https://learn.microsoft.com/api/mcp","--transport","http-only","--silent"],"lifecycle":"eager"}},"_coop":{"schema_version":1,"managed_servers":["fabric","fabric-sqlendpoint","microsoft-learn"]}}
@@ -52,7 +52,7 @@ assert all(s[k].get('directTools') is False for k in m['_coop']['managed_servers
 # A user's own server keeps whatever it set.
 assert 'directTools' not in s['custom']
 assert 'mcp-remote' not in json.dumps(m) and 'mcp-remote' not in json.dumps(manifest)
-# context-mode is a native Pi extension — never generated as an MCP server.
+# context-mode is retired (U1) and was never an MCP server; it must not come back as one.
 assert 'context-mode' not in s
 # The adapter's mcpScript tool calls MCP tools out of the guardrails' sight.
 assert m['settings']=={'scriptMode': False, 'allowInstall': False}
@@ -189,7 +189,7 @@ s=json.load(open(sys.argv[1]))['mcpServers']
 assert 'fabric' in s and 'fabric-sqlendpoint' not in s
 PY
 # Missing tenant writes no placeholders and no Power BI server entry.
-printf '%s\n' '{"schema_version":1,"integrations":{"power_bi":true,"fabric":false,"power_bi_modeling":false,"azure_devops":false,"microsoft_learn":false,"context_mode":false}}' > "$d/config"
+printf '%s\n' '{"schema_version":1,"integrations":{"power_bi":true,"fabric":false,"power_bi_modeling":false,"azure_devops":false,"microsoft_learn":false}}' > "$d/config"
 "$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --project-cwd "$d/no-project" --output "$d/mcp2.json"
 "$PY" - "$d/mcp2.json" <<'PY'
 import json,sys
@@ -221,7 +221,7 @@ PY
 cat > "$d/user-owned.json" <<'JSON'
 {"mcpServers":{"powerbi":{"command":"npx","args":["-y","powerbi-mcp-server@9.9.9","--tenant","user-tenant","--custom-auth"]}}}
 JSON
-printf '%s\n' '{"schema_version":1,"azure":{"tenant_id":"client-tenant"},"integrations":{"power_bi":true,"fabric":false,"power_bi_modeling":false,"azure_devops":false,"microsoft_learn":false,"context_mode":false}}' > "$d/config"
+printf '%s\n' '{"schema_version":1,"azure":{"tenant_id":"client-tenant"},"integrations":{"power_bi":true,"fabric":false,"power_bi_modeling":false,"azure_devops":false,"microsoft_learn":false}}' > "$d/config"
 "$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --output "$d/user-owned.json" || exit 1
 "$PY" - "$d/user-owned.json" <<'PY'
 import json,sys
@@ -232,7 +232,7 @@ PY
 cat > "$d/retired.json" <<'JSON'
 {"mcpServers":{"powerbi":{"command":"npx","args":["-y","powerbi-mcp-server@0.1.0","--authentication","azcli","--tenant","client-tenant","--readonly"],"env":{"AZURE_TOKEN_CREDENTIALS":"AzureCliCredential"}},"custom":{"command":"x"}},"_coop":{"schema_version":1,"managed_servers":["powerbi"]}}
 JSON
-printf '%s\n' '{"schema_version":1,"azure":{"tenant_id":"client-tenant"},"integrations":{"power_bi":true,"fabric":false,"power_bi_modeling":true,"azure_devops":false,"microsoft_learn":false,"context_mode":false}}' > "$d/config"
+printf '%s\n' '{"schema_version":1,"azure":{"tenant_id":"client-tenant"},"integrations":{"power_bi":true,"fabric":false,"power_bi_modeling":true,"azure_devops":false,"microsoft_learn":false}}' > "$d/config"
 "$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --output "$d/retired.json" || exit 1
 "$PY" - "$d/retired.json" <<'PY'
 import json,sys
@@ -255,7 +255,7 @@ grep -q 'reserved for client resources' "$d/wrong-domain.err" || exit 1
 cat > "$d/legacy.json" <<'JSON'
 {"mcpServers":{"powerbi":{"command":"npx","args":["-y","powerbi-mcp-server@latest","--tenant","TODO-tenant-id"]},"custom":{"command":"x"}}}
 JSON
-printf '%s\n' '{"schema_version":1,"azure":{"tenant_id":"client-tenant"},"integrations":{"power_bi":true,"fabric":false,"power_bi_modeling":false,"azure_devops":false,"microsoft_learn":false,"context_mode":false}}' > "$d/config"
+printf '%s\n' '{"schema_version":1,"azure":{"tenant_id":"client-tenant"},"integrations":{"power_bi":true,"fabric":false,"power_bi_modeling":false,"azure_devops":false,"microsoft_learn":false}}' > "$d/config"
 "$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --output "$d/legacy.json" || exit 1
 "$PY" - "$d/legacy.json" "$ROOT/config/mcp.example.json" <<'PY'
 import json,sys
