@@ -77,6 +77,8 @@ assert.ok(fallback.includes("resolved standards task authority"), "bundled workf
 // #93: powerbi-mcp-server is retired; neither bundled contract declares a `powerbi` MCP.
 for (const [name, text] of [["example", example], ["fallback", fallback]]) {
   assert.doesNotMatch(text, /^  powerbi:|readonly_flag/m, `${name} project must not declare the retired powerbi MCP`);
+  // #98: no policy field the guardrails do not read.
+  assert.doesNotMatch(text, /live_discovery|allowed_default_actions|requires_approval_actions/, `${name} project must not carry unenforced policy fields`);
 }
 
 const agentDocs = [

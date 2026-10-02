@@ -128,6 +128,12 @@ def read_input(prompt: str, default: str = "") -> str:
     return line.strip() or default
 
 
+def read_input_clearable(prompt: str, default: str = "") -> str:
+    """read_input where a lone "-" clears a saved value instead of keeping it."""
+    value = read_input(prompt, default).strip()
+    return "" if value == "-" else value
+
+
 def read_line_bounded(prompt: str, default: str) -> tuple[str, bool]:
     """Read a line for a re-prompting loop. Returns (value, eof).
 
@@ -516,6 +522,38 @@ def run_config_questions(
     else:
         knowledge = {"enabled": False, "repos": old_repos}
 
+    # TeamAI shared knowledge trial (master plan K1): an isolated copy of the
+    # pinned teamai-cli under <profile dir>/teamai, explicit `coop teamai` commands
+    # only, off by default. Quick start never asks; an existing block is kept.
+    old_t = old_k.get("teamai") if isinstance(old_k.get("teamai"), dict) else {}
+    teamai = {
+        "enabled": bool(old_t.get("enabled", False)),
+        "team_repo": str(old_t.get("team_repo", "") or ""),
+        "provider": str(old_t.get("provider", "") or "git"),
+        "role": str(old_t.get("role", "") or ""),
+        "skills": bool(old_t.get("skills", False)),
+    }
+    if not quick_start:
+        teamai["enabled"] = read_confirm(
+            "Enable the TeamAI shared knowledge trial? (isolated teamai-cli copy; recall only via `coop teamai`)",
+            teamai["enabled"],
+        )
+        if teamai["enabled"]:
+            # Enter keeps the saved value; "-" clears it.
+            teamai["team_repo"] = read_input_clearable(
+                f"TeamAI sandbox team repository (https or ssh URL; - to clear) [{teamai['team_repo'] or 'none'}]: ",
+                teamai["team_repo"],
+            )
+            teamai["role"] = read_input_clearable(
+                f"TeamAI role filter (optional; - to clear) [{teamai['role'] or 'none'}]: ",
+                teamai["role"],
+            )
+            teamai["skills"] = read_confirm(
+                "Load the team repository's skills into coop at launch? (subordinate: Cooptimize skills win)",
+                teamai["skills"],
+            )
+    knowledge["teamai"] = teamai
+
     # Honest summary BEFORE anything is saved.
     labels = {
         "fabric": "Microsoft Fabric MCP",
@@ -544,6 +582,12 @@ def run_config_questions(
         )
     else:
         sys.stderr.write("- Cooptimize Shared Knowledge: disabled\n")
+    if teamai["enabled"]:
+        sys.stderr.write(
+            f"- TeamAI trial: enabled ({re.sub(r'://[^@/]+@', '://', teamai['team_repo']) or 'team repo not set yet'}; isolated, explicit `coop teamai` only)\n"
+        )
+    else:
+        sys.stderr.write("- TeamAI trial: disabled\n")
     sys.stderr.write(
         f"- Enabled: {', '.join(enabled_labels) if enabled_labels else 'none'}\n"
     )

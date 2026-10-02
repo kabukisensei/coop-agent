@@ -227,6 +227,7 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop onboard [--edit|--config-only|--reset|--json]` | Configure profile and managed integrations without launching the agent |
 | `coop profile [--edit|--reset|--json]` | Inspect or update the private user profile |
 | `coop context-budget [--json]` | Inspect the active model/context budget |
+| `coop teamai <status\|install\|init\|pull\|skills\|maintenance\|recall --query <text>\|compare --query <text>\|contribute --file <draft.md> [--title <text>] [--approve]>` | TeamAI shared-knowledge trial (master plan K1, K2, K3): the pinned `teamai-cli` isolated under `~/.coop/teamai`, explicit and bounded, one JSON document per call; `contribute` previews, and stages a review branch only with `--approve`; `skills`, `maintenance` and `compare` are read-only lifecycle views; off until `knowledge.teamai.enabled` is true |
 | `coop uninstall [--keep-tools] [--yes]` | Remove the launcher/shortcuts/user-PATH entry and isolated agent dir; by default also uninstall Pi, pipx tools/Fabric CLI, Power BI Report Authoring CLI, Power BI Modeling MCP, and the Windows Desktop Bridge. `--keep-tools` preserves all managed npm/pipx tools. Never touches repo clones, work repos, the rest of `~/.coop`, or personal `~/.pi/agent` |
 | `coop install [--edge] [--force] [--yes] [--prereqs auto] [--no-prereqs] [--no-fabric] [--platform fabric\|azure_sql\|both]` | Fresh-install/bootstrap (idempotent). Normal mode uses manifest pins; `--edge` deliberately takes upstream latest and is tools-only here (install never moves the repo). With a source arg, alias of `coop add` |
 | `coop bootstrap` | Same bootstrap as bare `coop install` |
@@ -709,6 +710,51 @@ after at least two distinct failed tool results in one session. Use **`/share-le
 a reviewed pull request back to the knowledge source; it never silently publishes or
 commits. Experimental `knowledge.sources` v2 remains disabled by default, and semantic
 retrieval is not claimed as a production runtime feature.
+
+### TeamAI trial (K1, isolated, off by default)
+
+`coop onboard --config-only` can enable the TeamAI shared-knowledge trial
+(`knowledge.teamai`: `enabled`, `team_repo`, `provider`, `role`). When enabled,
+`coop sync` installs the manifest-pinned `teamai-cli` with `npm install --prefix`
+into `~/.coop/teamai/pkg` (never globally, never a `teamai` from `PATH`) and pulls
+the team repository; `coop teamai init` runs once against the sandbox team repository
+URL. Every call runs with `HOME`/`USERPROFILE` redirected to `~/.coop/teamai/home`,
+a disposable `~/.coop/teamai/workspace` as the working directory, hooks and
+recall-quality recording disabled, every inherited `TEAMAI_*`/`CLAUDE_*` variable
+dropped, no stdin, a hard timeout (`COOP_TEAMAI_TIMEOUT_SECONDS`, default 60) and a
+git push guard (every push URL the CLI's git sees is rewritten to `no-push://`, so the
+CLI can fetch and pull but never write to the team repository):
+the CLI's data home and the AI-tool settings it would inject into stay inside that
+isolated root, never in your real home, the stable coop profile or another agent's
+directory. Launch never touches it. `coop teamai recall --query <text>` returns at
+most five results with repository, revision, file and author provenance and reports
+`no_match`, `partial`, `unavailable` and a `stale` flag honestly; `coop doctor` shows
+the trial's state.
+
+Sharing a learning with the trial repository (K2) keeps the review boundary:
+`/share-learning` saves the reviewed note and runs
+`coop teamai contribute --file <note.md> --title "<title>"`, which sweeps the draft
+(secrets, connection strings, URL credentials, a `client-confidential` or missing
+`sensitivity:` marking keep it local as `refused`), asks the CLI in `--dry-run` for the
+exact `learnings/...` destination and returns a `preview`. Only `--approve`, after the
+person has seen that preview, stages the note on a new `coop/learning/<slug>-<stamp>`
+branch pushed from a disposable clone (`~/.coop/teamai/stage`) and prints the compare
+URL; the pull request is the person's. The CLI's own `teamai contribute` (a direct
+write to the team repo's `learnings` branch) and `teamai push` (a pull request opened
+from inside the CLI) are never run, and the default branch is never written.
+
+The broader lifecycle (K3) stays read-only and explicit. `coop teamai skills` lists
+the team repository's `skills/*/SKILL.md`; with `knowledge.teamai.skills` true
+(`coop onboard --config-only`) those skills load at launch through the same
+subordinate slot as the knowledge repos' skills (a Cooptimize skill with the same
+name or folder wins, the clone path comes from `~/.coop/teamai/state.json`, the
+launcher never runs the CLI). `coop teamai maintenance` reports stale learnings
+(`knowledge.teamai.stale_days`, default 180), proposals older than 90 days,
+malformed notes and duplicate titles, and changes nothing: fixes go through a pull
+request on the team repository. `coop teamai compare --query <text>` runs the
+bundled local search and the isolated recall side by side on one query and reports
+the overlap, the evidence the plan asks for before the local search path could ever
+be retired (it is not).
 
 ---
 

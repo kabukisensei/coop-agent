@@ -1736,10 +1736,6 @@ export function applyProjectWizardSettings(text: string, settings: ProjectWizard
   set(["estate", "mode"], estateMode(settings.repositories));
   set(["estate", "local_source_coverage", "sql"], coverageFor(settings.repositories, "sql"));
   set(["estate", "local_source_coverage", "power_bi"], coverageFor(settings.repositories, "powerbi"));
-  set(["estate", "live_discovery", "dev_test_metadata"], "read_only_allowed");
-  set(["estate", "live_discovery", "dev_test_rows"], "ask_first");
-  set(["estate", "live_discovery", "production_metadata"], "ask_first");
-  set(["estate", "live_discovery", "production_rows"], "explicit_scope_and_approval");
   for (const repo of settings.repositories) {
     if (repo.isNew && !repositoryNames(out).includes(repo.name)) out = appendNewRepository(out, repo);
     else {
@@ -1805,11 +1801,6 @@ export function renderProjectWizardSettings(settings: ProjectWizardSettings): st
     "  local_source_coverage:",
     `    sql: ${yamlQuoted(coverageFor(settings.repositories, "sql"))}`,
     `    power_bi: ${yamlQuoted(coverageFor(settings.repositories, "powerbi"))}`,
-    "  live_discovery:",
-    "    dev_test_metadata: 'read_only_allowed'",
-    "    dev_test_rows: 'ask_first'",
-    "    production_metadata: 'ask_first'",
-    "    production_rows: 'explicit_scope_and_approval'",
     "",
     settings.repositories.length ? "repositories:" : "repositories: {}",
   ];
@@ -1876,11 +1867,8 @@ export function renderProjectWizardSettings(settings: ProjectWizardSettings): st
     "mcp:",
     "  fabric:",
     `    enabled: ${settings.fabricEnabled}`,
-    "    allowed_default_actions: ['list', 'read', 'inspect']",
-    "    requires_approval_actions: ['create', 'update', 'delete', 'deploy']",
     "  fabric_sqlendpoint:",
     `    enabled: ${settings.fabricEnabled}`,
-    "    requires_approval_actions: ['executeSQL', 'execute_query']",
     "  microsoft_learn:",
     "    enabled: true",
     "  context_mode:",

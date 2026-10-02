@@ -585,6 +585,7 @@ print("resume verdict contract OK")
     @{ Name = 'first-run';              Lane = 'gate';     Head = 'first-run launcher continuation (onboarding gate)' },
     @{ Name = 'profile-root';           Lane = 'gate';     Head = 'one profile root: COOP_DIR parent of .coop, one agent-dir chain (S3, #220)' },
     @{ Name = 'sync-knowledge';         Lane = 'gate';     Head = 'team knowledge sync (sync-knowledge.ps1; hang cases in the extended lane)' },
+    @{ Name = 'teamai';                 Lane = 'gate';     Head = 'coop teamai: isolated TeamAI adapter entry (K1; off by default)' },
     @{ Name = 'fleet-execution';        Lane = 'extended'; Head = 'fleet execution (install/update/sync against stubs)' },
     @{ Name = 'home-guard';             Lane = 'extended'; Head = 'home-guard (fleet paths must not mutate the real home)'; RestoreHome = $true },
     @{ Name = 'doctor';                 Lane = 'extended'; Head = 'doctor.ps1 MCP mode, az preflight, login and fleet rows' },

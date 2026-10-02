@@ -120,7 +120,12 @@ await t("prompts/share-learning.md exists, is non-empty, and includes expected f
 
 await t("share-learning prompt routes publication through PR only — no teamai push route", () => {
   const content = readFileSync(join(process.cwd(), "prompts", "share-learning.md"), "utf8");
-  assert.ok(!/teamai/i.test(content), "teamai must not appear in the sharing prompt");
+  // The K2 route is `coop teamai contribute` (preview, then --approve stages a
+  // branch); the CLI's own `teamai push` / `teamai contribute` never appear.
+  assert.ok(!/(?<!coop )\bteamai\s+(push|contribute)\b/i.test(content), "no direct teamai push/contribute route may appear in the sharing prompt");
+  assert.match(content, /coop teamai contribute/);
+  assert.match(content, /Never run `teamai` itself/);
+  assert.match(content, /--approve/);
   assert.match(content, /NEVER commit directly to main/i);
   assert.match(content, /pull request/i);
 });
@@ -145,6 +150,10 @@ await t("team-knowledge skill drives the local-search helper, never teamai", () 
   }
   // Repository identity + note path must be cited together.
   assert.match(content, /repository identity plus the note path|repository \(root label\/path\)/);
-  // No teamai recall route may remain.
-  assert.ok(!/teamai recall/.test(content), "teamai recall route must be removed from the skill");
+  // No direct teamai recall route may remain. The K1 trial is reached only
+  // through `coop teamai recall`, gated on `coop teamai status` reporting ok.
+  const withoutAdapter = content.replace(/coop teamai recall/g, "");
+  assert.ok(!/teamai recall/.test(withoutAdapter), "a direct teamai recall route must not be in the skill");
+  assert.match(content, /`coop teamai status` first/);
+  assert.match(content, /Never run `teamai` yourself/);
 });

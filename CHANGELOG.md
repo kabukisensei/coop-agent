@@ -7,6 +7,63 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- `coop teamai <status|install|init|pull|recall --query <text>>` (master plan
+  Phase 7, K1: isolated CLI, read-only recall and sources). `lib/teamai.py`
+  installs the manifest-pinned `teamai-cli` (`teamai` in
+  `config/release-manifest.json`) with `npm install --prefix` into
+  `<profile dir>/teamai/pkg` (never `-g`, never a `teamai` on `PATH`) and runs it
+  with `HOME`/`USERPROFILE` redirected to `<profile dir>/teamai/home`, a disposable
+  workspace, hooks and recall-quality recording disabled, inherited
+  `TEAMAI_*`/`CLAUDE_*` variables dropped, no stdin and a hard timeout
+  (`COOP_TEAMAI_TIMEOUT_SECONDS`). Each call prints one JSON document with
+  `disabled`, `not_installed`, `not_initialized`, `ok`, `no_match`, `partial` or
+  `unavailable`, a `stale` flag, and recall results capped at five with
+  repository (token-redacted), revision, file, author, date and snippet
+  provenance. Off by default: `coop onboard --config-only` asks for
+  `knowledge.teamai` (`enabled`, `team_repo`, `provider`, `role`); `coop sync`
+  installs and pulls only when enabled; `coop doctor` shows the trial's state;
+  launch never touches it. The `team-knowledge` skill consults
+  `coop teamai recall` only when `coop teamai status` reports `ok`, after the
+  local search. The CLI's git runs under a push guard (`GIT_CONFIG_*`
+  `url.no-push://.pushInsteadOf` for https, ssh and `git@` URLs), so the CLI's
+  own writes to the team repository (the member registration `teamai init`
+  commits to `teamai-reports`, `contribute`, `push`) cannot leave the sandbox
+  while fetch and pull still work. Tests: `tests/teamai-adapter.test.py` (stub
+  CLI, decoy `teamai` on `PATH` must never run, the guard blocks a push) and
+  `tests/fixtures/teamai.test.ps1`.
+- `coop teamai contribute --file <draft.md> [--title <text>] [--approve]` (master
+  plan Phase 7, K2: reviewed contribution). The draft is swept first (GitHub,
+  bearer and SAS tokens, private keys, URL credentials, credential assignments,
+  SQL connection strings, a `client-confidential` or missing `sensitivity:`
+  frontmatter marking) and a finding returns `refused` with the note kept local.
+  The CLI runs only in `--dry-run` to name the exact `learnings/...` destination;
+  the default call returns a `preview` with destination, branch and compare URL.
+  `--approve`, after the person has reviewed that preview, stages the note on a
+  new `coop/learning/<slug>-<stamp>` branch pushed from a disposable clone
+  (`<profile dir>/teamai/stage`, removed afterwards) using the person's real git
+  identity, and records it in `state.json`. The CLI's own `teamai contribute`
+  (unreviewed write to the `learnings` branch) and `teamai push` (a pull request
+  from inside the CLI) are never run; `GITHUB_TOKEN`/`GH_TOKEN` are no longer
+  inherited by the isolated CLI. `/share-learning` carries the route for the trial
+  repository; the `team-knowledge` skill points at it. Tests in
+  `tests/teamai-adapter.test.py` (local bare team repo: one branch, one file, main
+  untouched, five refused drafts).
+- `coop teamai skills|maintenance|compare --query <text>` (master plan Phase 7,
+  K3: broader knowledge lifecycle, read-only). `skills` lists the team
+  repository's `skills/*/SKILL.md`; with `knowledge.teamai.skills` true (asked by
+  `coop onboard --config-only`, off by default) `launch-spec` loads them through
+  the subordinate team-skills slot (`Get-CoopTeamaiSkillsRoot` in
+  `lib/common.ps1`: Cooptimize skills win every name or folder clash, the clone
+  path comes from `<profile dir>/teamai/state.json`, the launcher never runs the
+  CLI). `maintenance` reports stale learnings (`knowledge.teamai.stale_days`,
+  default 180), proposals older than 90 days, malformed notes and duplicate
+  titles without writing anything. `compare` runs the bundled local search and
+  the isolated recall side by side on one query and reports the overlap (the
+  section 8.5 evidence; the local search path stays). A failed `teamai init` is
+  now remembered in `state.json` and the `not_initialized` documents, `coop sync`
+  and `coop doctor` name the real next step; `coop onboard --config-only` clears
+  a saved TeamAI repo or role with `-`. Tests: `tests/teamai-adapter.test.py`
+  (K3 section) and `tests/fixtures/teamai.test.ps1` (launch-spec slot).
 - `data_doc` command `impact`: every downstream object that changed source files
   feed, from coop-data-doc's own `impact` command (`--evidence`, so the evidence
   state comes with it). With `files` it reads the current built graph, so it
@@ -15,6 +72,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   companion both as given and relative to each documented repo root. The
   `coop-workflow` skill (step 8) and `git-helper` (the PR description's
   **Lineage impact**) now call it before a change is presented.
+
+### Changed
+
+- Project contracts no longer carry policy fields that nothing enforced (#98):
+  `coop init`, `/setup-project` and the sample contracts stop writing
+  `estate.live_discovery` and `mcp.<server>.allowed_default_actions` /
+  `requires_approval_actions`. The guardrails always hard-coded those rules, and
+  `dev_test_rows: ask_first` contradicted dev reads running without approval.
+  Guardrail behavior is unchanged. Migration: nothing reads these fields, so
+  existing contracts keep working; delete them at your convenience.
+  `docs/guardrails-reference.md` lists the contract fields that do change behavior.
 
 ### Fixed
 

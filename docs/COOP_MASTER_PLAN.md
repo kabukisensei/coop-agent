@@ -923,6 +923,63 @@ after TeamAI covers its supported workflows. Isolation is the development VM (or
 a separate Windows account), since there is no beta channel. Each K row is its
 own PR with its own acceptance evidence.
 
+**K1 as built (2026-10-01, in review).** The isolation is a home redirect, not a
+vendor patch: `lib/teamai.py` installs the pinned `teamai-cli` with
+`npm install --prefix` into `<profile dir>/teamai/pkg` and runs it with
+`HOME`/`USERPROFILE` set to `<profile dir>/teamai/home`, a disposable
+`<profile dir>/teamai/workspace`, `TEAMAI_HOOKS_DISABLED`, `TEAMAI_RECALL_DISABLED`,
+`--dry-run` recall, no inherited `TEAMAI_*`/`CLAUDE_*` variables, no stdin, a
+hard timeout and a git push guard (`pushInsteadOf=no-push://` for every push URL
+the CLI's git sees; the VM run showed `teamai init` trying to register the member
+on the `teamai-reports` branch), so the CLI's data home and every AI-tool
+destination it would inject into land inside that root and nothing it does can
+write to the team repository. `coop teamai` is the only entry
+(`status|install|init|pull|recall --query`), launch never calls it, `coop sync`
+converges it only when `knowledge.teamai.enabled` is true, and results are
+capped at five with repository, revision, file and author provenance plus the
+`no_match`/`partial`/`unavailable`/`stale` distinctions. Defaults taken: off by
+default; the sandbox team repository URL is Aaron's input
+(`knowledge.teamai.team_repo`); the local search and `/share-learning` stay as
+they are (section 8.5 removal waits for K3); contribution is K2. Acceptance
+evidence is the development VM run in `E:\coop-sandbox` (recall against a
+sandbox team repository with harmless markers, real paths under the sandbox
+profile, nothing under the real home).
+
+**K2 as built (2026-10-01, in review, stacked on K1).** The CLI's own publication
+does not meet section 8.3: `teamai contribute` commits straight to the team repo's
+`learnings` branch and `teamai push` opens the pull request from inside the CLI.
+`coop teamai contribute --file <draft.md> [--title] [--approve]` therefore runs the
+CLI only in `--dry-run` (for the exact destination), sweeps the draft (secrets,
+connection strings, URL credentials, `client-confidential` or missing
+`sensitivity:` marking keep it local), returns a `preview`, and only `--approve`
+after the person's review stages the note on a new `coop/learning/<slug>-<stamp>`
+branch pushed from a disposable clone, printing the compare URL; the pull request
+is the person's, the default and `learnings` branches are never written, and the
+isolated CLI no longer inherits `GITHUB_TOKEN`/`GH_TOKEN`. `/share-learning` carries
+the route when the user picks the trial repository. Defaults taken: a staged branch
+(not a pull request) is the hand-off; a 64 KiB draft cap; branch names under
+`coop/learning/`. Acceptance evidence is the VM run (K1 runbook, plus one staged
+branch on the sandbox team repository with a harmless marker note).
+
+**K3 as built (2026-10-01, in review, stacked on K2).** The broader lifecycle is
+three read-only views behind the same `coop teamai` entry. `skills` lists the team
+repository's `skills/*/SKILL.md`; a new `knowledge.teamai.skills` flag (off by
+default, asked by `coop onboard --config-only`) lets `launch-spec` load them through
+the existing subordinate team-skills slot, with the clone path read from
+`state.json` so the launcher still never runs the CLI and a Cooptimize skill wins
+every name or folder clash. `maintenance` reports stale learnings
+(`knowledge.teamai.stale_days`, default 180), proposals older than 90 days,
+malformed notes and duplicate titles and writes nothing; clean-up is a pull request
+on the team repository, never an automatic prune. `compare --query` runs the bundled
+local search and the isolated recall side by side and reports the overlap: that is
+the section 8.5 evidence, and the local search, `coop sync` knowledge clones and
+`/share-learning` all stay (nothing is removed by K3). Not adopted: the CLI's
+`digest`, codebase extraction, session sharing, `recall maintenance --prune` and
+multi-project mode, each a write path or a hook outside the isolation. Acceptance
+evidence is the VM run (K1 runbook: `skills`, `maintenance` and `compare` against
+the sandbox team repository, a launch with `knowledge.teamai.skills` true showing
+the clone skill in `coop launch-spec --json` and absent from a Cooptimize clash).
+
 **B1 is skipped (Aaron, 2026-09-30).** Revision 2.0's isolated beta channel is
 the right design for a fleet too large to reach by hand. Coop's fleet is seven
 people: release-tag updates (H5), the development VM as the qualification machine
@@ -1395,7 +1452,10 @@ Not requested, offered for Aaron's decision. None is scheduled.
   but no enforcement code reads them; the guardrails are hard-coded. Decision
   taken: wire them in Phase 5 step 3 (the guardrail scope reads the contract) and
   drop any field that is still unread when Phase 5 closes, so the contract never
-  promises what it cannot enforce.
+  promises what it cannot enforce. Done 2026-10-02 (issue
+  [#98](https://github.com/kabukisensei/coop-agent/issues/98)): SQ3 wired `sql_targets`;
+  `estate.live_discovery` and the `mcp.*` action lists were dropped; `tests.live_data`
+  stays because the workflow skill reads it.
 - **`docs/tool-contract.md` drifted** from the code: the reviewer invocation omits
   `--standards`, the sample report uses `rule` where the validator requires
   `rule_id`, and the `details` shape is missing four fields. Fix in Phase 4.
@@ -1483,7 +1543,7 @@ tags. A stale row is never a reason to re-do work: check the PR list first.
 | 12 | FR1 | Common-workflows first run | SQ1 (menu items exist) | first launch shows the menu; onboarding no longer blocks | merged ([#241](https://github.com/kabukisensei/coop-agent/pull/241), 2026-10-01; shipped in v0.27.0): first interactive launch opens the seven-item `/start` menu once, the launch never runs the wizard, the name question moved into the project item |
 | 13 | PK1 | `pi-lovely-codex` versus `pi-better-openai`, diagnostics, simplify (naming moved to N1) | U1 + explicit start | one owner of usage stats; adopt/build/defer recorded per candidate | not started |
 | 14 | B1 | Minimal beta channel | — | — | **skipped** (Aaron, 2026-09-30: seven people update from tags; the VM qualifies upgrades) |
-| 15 | K1, K2, K3 | TeamAI shared knowledge: isolated CLI and read-only recall, reviewed contribution, broader lifecycle | FR1 + explicit start; VM isolation | revision 2.0 section 8 gates, one PR per row | not started (scheduled, revision 3.8) |
+| 15 | K1, K2, K3 | TeamAI shared knowledge: isolated CLI and read-only recall, reviewed contribution, broader lifecycle | FR1 + explicit start; VM isolation | revision 2.0 section 8 gates, one PR per row | K1 in review (PR #249), 2026-10-01: isolated `teamai-cli` adapter, `coop teamai`, VM acceptance pending; K2 in review (PR), 2026-10-01: `coop teamai contribute` preview and `--approve` staging on a `coop/learning/...` branch, stacked on K1; K3 in review (PR), 2026-10-01: `coop teamai skills|maintenance|compare`, optional team-skills loading at launch, read-only maintenance report, local-vs-recall comparison, stacked on K2 |
 | 15b | J0–J3 | Jev shadow experiments | explicit start | revision 2.0 gates | waiting (Aaron, 2026-09-30) |
 | 16 | D1 | Electron desktop with packaged installer, worked as D1a–D1g (section 11.2): decision record and salvage, `coop desktop` window from the terminal product (first deliverable, no installer or certificate), unsigned installer, bundled runtime, updates, signing last, teammate acceptance | 7–12 and 15 accepted; Aaron starts D1; U2 landed before D1d; each 11.3 item decided when its row starts | another user installs from the package alone (D1g); signing not required (Aaron, 2026-10-02) | D1a decision record and salvage list in review (PR), revision 3.13, 2026-10-02 (section 11.5); D1b–D1g not started, each waits for Aaron |
 
