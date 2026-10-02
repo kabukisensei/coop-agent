@@ -210,6 +210,13 @@ Both `ci.yml` and `extended.yml` run the suite on three hosts: ubuntu
 (`bash tests/run.sh`, then `tests/run.ps1` under pwsh 7), Windows Git Bash
 (`bash tests/run.sh`) and Windows PowerShell 5.1
 (`powershell -NoProfile -File tests\run.ps1`, the runtime `bin/coop.cmd` uses).
+`extended.yml` adds a fourth Windows job, `datadoc-windows` (master plan row
+11a): it installs `coop-data-doc` at the manifest pin with pipx and the pinned Pi
+from npm, then runs `tests/datadoc-live.test.mjs` from Windows PowerShell 5.1 with
+`COOP_TEST_DATADOC_REQUIRED=1`. That test drives `/setup-docs` and the `data_doc`
+tool through Pi's own exec and real pipes against a synthetic mixed estate with
+non-ASCII names. Elsewhere it runs in the extended block of `tests/run.sh` and
+skips when no `coop-data-doc` 1.3.0+ is on `PATH`.
 `tests/run.ps1` is coop's own lane: the product is PowerShell, so the
 behavioural fixtures under `tests/fixtures/*.test.ps1` drive `bin/coop.ps1`,
 `lib/common.ps1` and `scripts/*.ps1` directly. `tests/run.sh` holds the Node and

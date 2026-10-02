@@ -209,16 +209,19 @@ function findParentKey(lines: string[], idx: number, parentIndent: number): stri
   return null;
 }
 
-export type SessionGovernance = { loaded: boolean; entries: RepoPolicyEntry[]; sqlContract: ContractSqlScope | null };
+/** The contract's dev Fabric workspace (`fabric.default_workspace_id`), named in the
+ *  Rayfin (Fabric Apps, FA1) deploy prompt; "" when absent or not a GUID. */
+export type SessionGovernance = { loaded: boolean; entries: RepoPolicyEntry[]; sqlContract: ContractSqlScope | null; devWorkspaceId: string };
 
 // The TRUSTED policy snapshot: read once per session, then frozen. Editing
 // .coop/project.yml mid-session can never weaken the active guardrails.
-let sessionGovernance: SessionGovernance = { loaded: false, entries: [], sqlContract: null };
+let sessionGovernance: SessionGovernance = { loaded: false, entries: [], sqlContract: null, devWorkspaceId: "" };
 
 /** Read the session's project contract once into an immutable governance snapshot. */
 export function buildSessionGovernance(sessionCwd: string): SessionGovernance {
   const entries: RepoPolicyEntry[] = [];
   let sqlContract: ContractSqlScope | null = null;
+  let devWorkspaceId = "";
   try {
     const proj = findProjectYml(sessionCwd);
     if (proj) {
@@ -226,16 +229,17 @@ export function buildSessionGovernance(sessionCwd: string): SessionGovernance {
       const text = readFileSync(proj, "utf8");
       entries.push(...parseRepoEntries(text, projectRoot));
       sqlContract = parseContractSqlScope(text);
+      devWorkspaceId = parseDevWorkspaceId(text);
     }
   } catch {
     /* conservative defaults are fine */
   }
-  return { loaded: true, entries, sqlContract };
+  return { loaded: true, entries, sqlContract, devWorkspaceId };
 }
 
 /** Forget the snapshot so the next governed call re-reads the contract (new session / tests). */
 export function resetSessionGovernance(): void {
-  sessionGovernance = { loaded: false, entries: [], sqlContract: null };
+  sessionGovernance = { loaded: false, entries: [], sqlContract: null, devWorkspaceId: "" };
 }
 
 // --- sql_targets: the contract's SQL scope (SQ3) ------------------------------------
@@ -332,6 +336,12 @@ function readySqlTarget(environment: "dev" | "test", raw: unknown): ContractSqlT
   }
   if (workspaceId || itemId || sqlEndpointId || sqlPlaceholder(server) || !spec.host.test(server)) return null;
   return { environment, kind, database, server, workspaceId: "", itemId: "", sqlEndpointId: "" };
+}
+
+/** `fabric.default_workspace_id` as a lower-case GUID, or "" (absent, TODO, typo). */
+export function parseDevWorkspaceId(text: string): string {
+  const ws = yamlSection(text, "fabric")?.default_workspace_id;
+  return typeof ws === "string" && SQL_UUID.test(ws.trim()) ? ws.trim().toLowerCase() : "";
 }
 
 /** The contract's SQL scope source: profile.client, fabric.tenant_id and the ready
@@ -1513,6 +1523,62 @@ const FAB_WRITE_SUBCOMMANDS = new Set([
 ]);
 const HTTP_READ_METHODS = new Set(["get", "head", "options"]);
 
+/** Rayfin (Fabric Apps) `up` subcommands that only read or switch local state;
+ *  every other `up` form deploys to Fabric. Bare `up` creates the Fabric app item
+ *  and can create a workspace or assign capacity. */
+const RAYFIN_UP_READS = new Set(["status", "list", "switch"]);
+
+/** Label a Rayfin CLI write to Fabric, or null. `toks[i]` is the program. Reads and
+ *  local work (`init`, `dev`, `env`, `docs`, `connector search|inspect|add`, `login`,
+ *  `up --dry-run`, `up status|list|switch`, `secret list`) pass. */
+function rayfinWriteLabel(toks: string[], i: number): string | null {
+  const sub = (toks[i + 1] || "").toLowerCase();
+  const rest = toks.slice(i + 2);
+  const sub2 = rest.find((t) => !t.startsWith("-"))?.toLowerCase() || "";
+  if (sub === "up") {
+    const nested = rest[0] && !rest[0].startsWith("-") ? rest[0].toLowerCase() : "";
+    if (!nested) return rest.some((t) => t === "-n" || t === "--dry-run") ? null : "rayfin up";
+    if (RAYFIN_UP_READS.has(nested)) return null;
+    return `rayfin up ${nested}`;
+  }
+  if ((sub === "secret" || sub === "secrets") && sub2 !== "list" && sub2 !== "") return `rayfin secret ${sub2}`;
+  return null;
+}
+
+/** Index of the Rayfin program in `toks` (after `npx [-y]`, `npm exec [--]`,
+ *  `pnpm [exec|dlx]`, `yarn [dlx]`, `bunx`), or -1. */
+function rayfinProgramIndex(toks: string[], i: number): number {
+  const base = (t: string) => (t || "").split(/[\\/]/).pop()?.toLowerCase().replace(/\.(cmd|exe|ps1)$/, "") || "";
+  let j = i;
+  const launcher = base(toks[j]);
+  if (launcher === "npx" || launcher === "bunx") j++;
+  else if (launcher === "npm" && (toks[j + 1] === "exec" || toks[j + 1] === "x")) j += 2;
+  else if ((launcher === "pnpm" || launcher === "yarn") && (toks[j + 1] === "exec" || toks[j + 1] === "dlx")) j += 2;
+  else if (launcher === "pnpm" || launcher === "yarn") j++;
+  while (j < toks.length && /^(-y|--yes|--)$/.test(toks[j])) j++;
+  const prog = base(toks[j]).replace(/@[^@/]+$/, "");
+  return prog === "rayfin" || prog === "rayfin-cli" ? j : -1;
+}
+
+/** The deploy prompt's target line: the contract's dev workspace and what the
+ *  command targets, with a warning when they differ. */
+export function rayfinTargetNote(cmd: string, devWorkspaceId: string): string {
+  const target = rayfinWorkspaceTarget(cmd);
+  const line = `Contract dev workspace: ${devWorkspaceId || "(not set)"}; command targets: ${target || "its recorded deployment, or a new workspace"}.\n`;
+  return devWorkspaceId && target && target.toLowerCase() !== devWorkspaceId ? `${line}WARNING: that is not the contract's dev workspace.\n` : line;
+}
+
+/** The workspace a `rayfin` command names (`--workspace-id`, `--workspace`,
+ *  `--workspace-uri`), or null when it relies on its recorded deployment. */
+export function rayfinWorkspaceTarget(cmd: string): string | null {
+  for (const { segment } of splitShellSegments(cmd)) {
+    const toks = tokenizeArgs(segment.trim()).map((t) => t.replace(/^['"]|['"]$/g, ""));
+    const value = optionValue(toks, ["--workspace-id", "--workspace", "--workspace-uri"]);
+    if (value) return value;
+  }
+  return null;
+}
+
 /** Value of a `--flag value` / `--flag=value` / `-X value` option, or null. */
 function optionValue(toks: string[], names: string[]): string | null {
   for (let i = 0; i < toks.length; i++) {
@@ -1528,8 +1594,9 @@ function optionValue(toks: string[], names: string[]): string | null {
 /** Label a Fabric / Azure REST write issued from the shell, or null. The official
  *  Microsoft Fabric skills drive item create/update/deploy/delete with
  *  `az rest --method post|patch|put|delete`, `fab api -X post ...` and `fab deploy`;
- *  none of those are MCP calls, so the MCP mutation gate never sees them. Reads
- *  (`--method get`, `fab api <path>`, `fab ls`) pass. Segment-scoped and quote-aware:
+ *  none of those are MCP calls, so the MCP mutation gate never sees them. Rayfin
+ *  (`npx rayfin up`, Fabric Apps) deploys the same way. Reads (`--method get`,
+ *  `fab api <path>`, `fab ls`, `rayfin up --dry-run`) pass. Segment-scoped and quote-aware:
  *  `echo "az rest --method post"` is one quoted token, not a command. */
 export function fabricWriteLabel(cmd: string): string | null {
   for (const { segment } of splitShellSegments(cmd)) {
@@ -1550,6 +1617,10 @@ export function fabricWriteLabel(cmd: string): string | null {
       } else if (FAB_WRITE_SUBCOMMANDS.has(sub)) {
         return `fab ${sub}`;
       }
+    } else {
+      const r = rayfinProgramIndex(toks, i);
+      const label = r >= 0 ? rayfinWriteLabel(toks, r) : null;
+      if (label) return label;
     }
   }
   return null;
@@ -2064,6 +2135,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       // a mutating MCP call. The official Microsoft skills issue item create /
       // update / deploy / delete this way; fail closed without UI.
       const fabricWrite = fabricWriteLabel(cmd);
+      const rayfin = fabricWrite !== null && fabricWrite.startsWith("rayfin ");
       if (fabricWrite) {
         if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
           audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "blocked-headless", label: fabricWrite, detail: fabricWrite });
@@ -2071,7 +2143,9 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         }
         const ok = await ctx.ui.confirm(
           "coop guardrails",
-          `Fabric / Azure write from the shell (${fabricWrite}):\n  ${cmd.slice(0, 200)}\ncoop treats Fabric item create/update/deploy/delete as approval-gated, like a mutating MCP call. Run it?`,
+          `Fabric / Azure write from the shell (${fabricWrite}):\n  ${cmd.slice(0, 200)}\n` +
+            (rayfin ? rayfinTargetNote(cmd, governance.devWorkspaceId) : "") +
+            `coop treats Fabric item create/update/deploy/delete as approval-gated, like a mutating MCP call. Run it?`,
         );
         audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: ok ? "allowed" : "declined", label: fabricWrite, detail: fabricWrite });
         if (!ok) {
