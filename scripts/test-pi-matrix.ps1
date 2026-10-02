@@ -142,8 +142,8 @@ try {
   if (-not $gotAgent -or $gotAgent -eq $PiVersion) { Ok ("agent peer in the extension tree: {0} (runtime $PiVersion)" -f $(if ($gotAgent) { $gotAgent } else { 'absent' })) }
   else { Ko "extension tree has pi-coding-agent $gotAgent, not the runtime's $PiVersion" }
 
-  $cmEntry = Join-Path $agentNm 'context-mode'
-  if (Test-Path $cmEntry) { Ok ("context-mode installed ({0})" -f (VerOf 'context-mode')) } else { Ko 'context-mode MISSING' }
+  $pwaEntry = Join-Path $agentNm 'pi-web-access'
+  if (Test-Path $pwaEntry) { Ok ("pi-web-access installed ({0})" -f (VerOf 'pi-web-access')) } else { Ko 'pi-web-access MISSING' }
   try { Get-Content (Join-Path $env:PI_CODING_AGENT_DIR 'mcp-adapter.json') -Raw | ConvertFrom-Json | Out-Null; Ok 'generated mcp-adapter.json parses' }
   catch { Ko 'mcp-adapter.json missing or invalid' }
 

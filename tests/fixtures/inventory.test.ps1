@@ -310,7 +310,8 @@ sys.exit(1)
   # $PI_CODING_AGENT_DIR/npm/node_modules, honestly (COOP_TEST_FAKE_PI_OK=1),
   # at a WRONG version (COOP_TEST_FAKE_PI_WRONG=<name> + _INSTALL_VERSION), or
   # NOT AT ALL (COOP_TEST_FAKE_PI_SKIP=<name>). `pi install` exiting 0 proves
-  # nothing: sync must verify the tree.
+  # nothing: sync must verify the tree. `pi remove npm:<name>` deletes the tree
+  # copy and the settings.json entry and logs the call to pi-remove.log.
   $fakePiSource = @'
 import json, os, sys
 args = sys.argv[1:]
@@ -328,6 +329,21 @@ if args[:1] == ['install'] and len(args) >= 2:
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, 'package.json'), 'w') as f:
         json.dump({'name': name, 'version': ver}, f)
+    sys.exit(0)
+if args[:1] == ['remove'] and len(args) >= 2:
+    import shutil
+    name = args[1][4:] if args[1].startswith('npm:') else args[1]
+    agent = os.environ['PI_CODING_AGENT_DIR']
+    with open(os.path.join(agent, 'pi-remove.log'), 'a') as f:
+        f.write(args[1] + '\n')
+    shutil.rmtree(os.path.join(agent, 'npm', 'node_modules', name), ignore_errors=True)
+    sp = os.path.join(agent, 'settings.json')
+    if os.path.exists(sp):
+        with open(sp) as f:
+            st = json.load(f)
+        st['packages'] = [p for p in st.get('packages', []) if not str(p).startswith('npm:' + name + '@') and p != 'npm:' + name]
+        with open(sp, 'w') as f:
+            json.dump(st, f)
     sys.exit(0)
 sys.exit(1)
 '@
@@ -363,18 +379,18 @@ sys.exit(1)
   # S1: fake pi reports SUCCESS but installs a WRONG version. With npm unable to
   # install, production convergence cannot repair it: sync must report accurately
   # and exit non-zero instead of claiming success.
-  $env:COOP_TEST_FAKE_PI_WRONG = 'context-mode'; $env:COOP_TEST_FAKE_PI_INSTALL_VERSION = '0.0.1'
+  $env:COOP_TEST_FAKE_PI_WRONG = 'pi-better-openai'; $env:COOP_TEST_FAKE_PI_INSTALL_VERSION = '0.0.1'
   $r = Invoke-Sync "$badDir$sep"
   Clear-FakePi
   if ($r.Rc -ne 0) { Ok 'blocked enforcement + drifted install -> nonzero result' } else { Ko 'sync exited 0 despite blocked enforcement' $r.Out }
-  if ($r.Out.Contains('context-mode is version 0.0.1')) { Ok 'failure names the offending extension and its drifted version' } else { Ko 'failure output omits the context-mode postcondition' $r.Out }
-  if (-not $r.Out.Contains('release version 1.0.169 (context-mode)')) { Ok 'does not claim success for context-mode when the postcondition failed' } else { Ko 'claimed a converged context-mode despite the failed postcondition' $r.Out }
+  if ($r.Out.Contains('pi-better-openai is version 0.0.1')) { Ok 'failure names the offending extension and its drifted version' } else { Ko 'failure output omits the pi-better-openai postcondition' $r.Out }
+  if (-not $r.Out.Contains('release version 0.1.22 (pi-better-openai)')) { Ok 'does not claim success for pi-better-openai when the postcondition failed' } else { Ko 'claimed a converged pi-better-openai despite the failed postcondition' $r.Out }
 
   # S2: fake pi succeeds but installs NOTHING.
-  $env:COOP_TEST_FAKE_PI_SKIP = 'context-mode'
+  $env:COOP_TEST_FAKE_PI_SKIP = 'pi-better-openai'
   $r = Invoke-Sync "$badDir$sep"
   Clear-FakePi
-  if ($r.Rc -ne 0 -and $r.Out.Contains('context-mode is MISSING')) { Ok 'missing-after-successful-install (enforcement blocked) -> nonzero result' } else { Ko "sync exited $($r.Rc) despite a missing extension" $r.Out }
+  if ($r.Rc -ne 0 -and $r.Out.Contains('pi-better-openai is MISSING')) { Ok 'missing-after-successful-install (enforcement blocked) -> nonzero result' } else { Ko "sync exited $($r.Rc) despite a missing extension" $r.Out }
 
   # S3: honest success path: a correct install converges and reports precisely.
   # The tree starts with the shipped lock and the shared libraries at the fake
@@ -390,6 +406,11 @@ sys.exit(1)
     New-Item -ItemType Directory -Force -Path $libDir | Out-Null
     [System.IO.File]::WriteAllText((Join-Path $libDir 'package.json'), ('{"name":"@earendil-works/' + $lib + '","version":"0.87.1"}'), $utf8)
   }
+  # A retired extension left by an earlier release: in the tree and in settings.json.
+  $retiredDir = Join-Path $syncNpm 'node_modules\context-mode'
+  New-Item -ItemType Directory -Force -Path $retiredDir | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $retiredDir 'package.json'), '{"name":"context-mode","version":"1.0.169"}', $utf8)
+  [System.IO.File]::WriteAllText((Join-Path $syncAgent 'settings.json'), '{"packages":["npm:pi-mcp-adapter@3.3.0","npm:context-mode@1.0.169"],"quietStartup":true}', $utf8)
   $env:COOP_AGENT_DIR = $syncAgent
   $env:COOP_SKIP_FABRIC_SYNC = '1'
   $env:COOP_RELEASE_MANIFEST = Join-Path $root 'config\release-manifest.json'
@@ -407,6 +428,10 @@ sys.exit(1)
   if ($s3Out.Contains('Ensuring isolated pi-mcp-adapter is version')) { Ok 'convergence message states the exact target version' } else { Ko 'targeted convergence message missing' $s3Out }
   if ($s3Out.Contains('Already at release version') -or $s3Out.Contains('Installed release version')) { Ok 'postcondition outcome stated precisely' } else { Ko 'precise outcome message missing' $s3Out }
   if ($s3Out.Contains('Your personal Pi extensions are unchanged')) { Ok 'one-time explanation distinguishes isolated tree' } else { Ko 'isolated-tree explanation missing' $s3Out }
+  $removeLog = Join-Path $syncAgent 'pi-remove.log'
+  if ((Test-Path -LiteralPath $removeLog) -and ((Get-Content -LiteralPath $removeLog -Raw).Trim() -eq 'npm:context-mode')) { Ok 'a retired extension is removed through pi remove' } else { Ko 'retired context-mode was not removed through pi remove' $s3Out }
+  if (-not (Test-Path -LiteralPath $retiredDir) -and -not ((Get-Content -LiteralPath (Join-Path $syncAgent 'settings.json') -Raw).Contains('context-mode'))) { Ok 'the retired extension is gone from the tree and settings.json' } else { Ko 'context-mode survived sync' $s3Out }
+  if ($s3Out.Contains('Removed context-mode')) { Ok 'removal is reported' } else { Ko 'removal message missing' $s3Out }
 
   # S4: alignment rc 10 / rc 11 must count as failures (deterministic): the
   # PRODUCTION sync.ps1 from a sandbox COOP_ROOT whose lib/_extdeps.py is a stub

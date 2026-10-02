@@ -35,10 +35,7 @@ tabular_editor_cli:
 # edits can land; the guardrail asks before each edit (#159). powerbi-mcp-server is retired: it ignores
 # --readonly and exposes refresh_dataset, a write (#93); doctor warns if it is present.
 # The Warehouse SQL endpoint MCP is a separate
-# managed remote HTTP server and every SQL call is approval-gated. context-mode is NOT an
-# MCP server: it is a native Pi extension from the manifest's `extensions` list that runs
-# SANDBOXED code over the docs/graph (not client data) to save context, still subject to
-# the coop-guardrails hooks (Pi itself does not prompt per tool call).
+# managed remote HTTP server and every SQL call is approval-gated.
 mcp:
   generator: lib/mcp_config.py
   install_target: "~/.coop/agent/mcp-adapter.json"

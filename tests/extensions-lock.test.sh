@@ -31,15 +31,16 @@ fi
 # 1b. Packages that ship their binary and declare `gypfile: false` carry that
 #     flag in their lock entry (lib/extlock.js generate); npm builds nodes from
 #     the lock entries, and without the flag `npm ci` ran `node-gyp rebuild` for
-#     the nested better-sqlite3 and failed on the Windows VM (2026-10-01).
+#     the nested better-sqlite3 and failed on the Windows VM (2026-10-01). Since
+#     context-mode (and its better-sqlite3 12) left, pi-hermes-memory's 13 is hoisted.
 if "$PY" - "$LOCK" <<'PYGYP'
 import json, sys
 p = json.load(open(sys.argv[1]))["packages"]
-nested = [k for k, v in p.items() if k.endswith("/node_modules/better-sqlite3") and v.get("version", "").startswith("13.")]
+nested = [k for k, v in p.items() if (k == "node_modules/better-sqlite3" or k.endswith("/node_modules/better-sqlite3")) and v.get("version", "").startswith("13.")]
 sys.exit(0 if nested and all(p[k].get("gypfile") is False for k in nested) else 1)
 PYGYP
 then ok "lock entries for better-sqlite3 13 carry gypfile: false (no node-gyp rebuild from the lock)"
-else ko "the nested better-sqlite3 13 lock entry lacks gypfile: false (regenerate with node lib/extlock.js generate)"; fi
+else ko "the better-sqlite3 13 lock entry lacks gypfile: false (regenerate with node lib/extlock.js generate)"; fi
 
 # 2. A bumped pin without a regenerated lock fails the check (this is the gate).
 "$PY" - "$MANIFEST" "$TMP/bumped.json" <<'PY'

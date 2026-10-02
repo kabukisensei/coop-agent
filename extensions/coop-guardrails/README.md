@@ -20,7 +20,6 @@ never intercepted**.
 | **Secret files** | Confirms before the agent reads/edits/writes a secret-looking file — `.env` (not `.env.example`), `*.pem`/`*.key`/`*.p12`, `id_rsa`/`id_ed25519`, `credentials`, `.npmrc`, `secrets.*`. Declining blocks. |
 | **Live environment reads** | Allows read-only dev/test metadata, schema, and artifact-code inspection. Confirms row-level reads and every production read. A confirmed, explicitly bounded read scope may be reused for matching calls in the same session; production is allowed when it is part of that exact grant. |
 | **Mutating MCP actions** | Confirms create/update/delete/deploy/publish-looking Fabric, Power BI, and proxied MCP calls. |
-| **Managed updates** | Blocks `context-mode`'s `ctx_upgrade` shortcut and removes its independent registry warning. Pi's own banner is disabled by the Coop launcher; the Coop checkout staleness nudge remains the single safe prompt to run `coop update`. |
 
 When a tool call is blocked, the model receives a `reason` explaining why and what to
 do instead (e.g. "unstage source and let a human commit").
@@ -44,8 +43,8 @@ may still contain command text and are not sanitized exports.
 
 ## Toggle & inspect
 
-- Disable governance confirms/blocks: `COOP_NO_GUARDRAILS=1` (the separate managed-update policy stays on).
-- Show upstream Pi/extension notices and allow `ctx_upgrade` for maintainer diagnostics: `COOP_SHOW_UPSTREAM_UPDATE_NOTICES=1`.
+- Disable governance confirms/blocks: `COOP_NO_GUARDRAILS=1`.
+- Show Pi's own update banner for maintainer diagnostics: `COOP_SHOW_UPSTREAM_UPDATE_NOTICES=1` (read by the Coop launcher).
 - `/coop-guardrails` — show what's enforced and whether it's on.
 - `/coop-live-read status` — show the non-secret identity, targets, operation class,
   row limit, and timeout of the current session grant. `/coop-live-read revoke`
@@ -89,7 +88,6 @@ text can describe a scope but cannot approve one; only the confirmation UI can.
 
 ## Implementation
 
-A `pi.on("tool_call", …)` handler (returns `{ block, reason }` to deny) plus a narrow
-`tool_result` filter for context-mode's exact update-notice text. The
+A `pi.on("tool_call", …)` handler (returns `{ block, reason }` to deny). The
 never-commit-source check runs `git diff --cached --name-only` and classifies staged
 paths; the destructive check is a conservative set of command patterns.

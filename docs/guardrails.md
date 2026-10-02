@@ -37,7 +37,7 @@ Advisory tools: `data_doc`, `bpa_review`. Follow the standards in context; devia
 
 ## Read focused
 
-Documentation can be large. Before changing an object, look up its lineage with `data_doc` (`command="lineage"`, `object="<name>"`) and read **only that object's doc plus its immediate upstream/downstream neighbors**, not the whole tree. Prefer context-mode for intent-driven queries. Widen the radius only when the blast radius requires it.
+Documentation can be large. Before changing an object, look up its lineage with `data_doc` (`command="lineage"`, `object="<name>"`) and read **only that object's doc plus its immediate upstream/downstream neighbors**, not the whole tree. Widen the radius only when the blast radius requires it.
 
 ## Communication
 

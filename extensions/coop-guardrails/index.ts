@@ -1819,21 +1819,6 @@ function readAuditTail(n: number): AuditEntry[] {
   }
 }
 
-/** Coop owns the tested Pi/extension fleet. context-mode currently has no setting
- * to disable its independent registry warning, so remove only its two exact update
- * notice shapes while leaving every useful byte of tool output untouched. */
-export function stripManagedUpdateNotices(text: string): string {
-  return text
-    .replace(/^⚠️ context-mode v\S+ outdated → v\S+ available\. Upgrade: [^\r\n]+\r?\n\r?\n/, "")
-    .replace(/^[ \t]*Update available: v\S+ (?:->|→) v\S+[ \t]*\|[ \t]*ctx_upgrade[ \t]*(?:\r?\n|$)/gm, "");
-}
-
-function contextModeToolName(event: any): string | null {
-  const target = effectiveMutationTarget(event);
-  const name = target.innerTool || target.outerTool;
-  return /^ctx_[a-z0-9_]+$/i.test(name) ? name : null;
-}
-
 export default function coopGuardrails(pi: ExtensionAPI) {
   const enabled = () => process.env.COOP_NO_GUARDRAILS !== "1";
   const showUpstreamUpdates = () => process.env.COOP_SHOW_UPSTREAM_UPDATE_NOTICES === "1";
@@ -1867,33 +1852,8 @@ export default function coopGuardrails(pi: ExtensionAPI) {
     modelingProduction = false;
   });
 
-  // context-mode performs its own npm registry check outside Pi's update system.
-  // Filter only its exact warning lines. Maintainers can restore upstream notices
-  // (and the self-upgrade tool) with COOP_SHOW_UPSTREAM_UPDATE_NOTICES=1.
-  pi.on("tool_result", async (event: any) => {
-    try {
-      if (showUpstreamUpdates() || !contextModeToolName(event)) return;
-      let changed = false;
-      const content = (event?.content || []).map((item: any) => {
-        if (item?.type !== "text" || typeof item.text !== "string") return item;
-        const text = stripManagedUpdateNotices(item.text);
-        if (text === item.text) return item;
-        changed = true;
-        return { ...item, text };
-      });
-      return changed ? { content } : undefined;
-    } catch {
-      return;
-    }
-  });
-
   pi.on("tool_call", async (event: any, ctx: ExtensionContext) => {
     try {
-      // Never let an extension self-update around Coop's tested manifest. This is
-      // intentionally a hard block with one fleet-safe remediation path.
-      if (!showUpstreamUpdates() && contextModeToolName(event)?.toLowerCase() === "ctx_upgrade") {
-        return { block: true, reason: "coop update policy: context-mode is manifest-pinned. Use `coop update` so Pi and every extension move together." };
-      }
       if (!enabled()) return;
       const tool = event?.toolName;
 
@@ -2250,7 +2210,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
     handler: async (_args, ctx) => {
       const lines = [
         `coop-guardrails: ${enabled() ? "ON" : "OFF (COOP_NO_GUARDRAILS=1)"}`,
-        `coop update policy: ${showUpstreamUpdates() ? "UPSTREAM NOTICES ENABLED (maintainer mode)" : "ON — Pi/context-mode self-update prompts suppressed; use coop update"}`,
+        `coop update policy: ${showUpstreamUpdates() ? "UPSTREAM NOTICES ENABLED (maintainer mode)" : "ON — Pi self-update prompts suppressed; use coop update"}`,
         "Enforced on the agent's tool calls (your own shell is never intercepted):",
         "  • never commit source — blocks `git commit` (incl. -a/-am, `git -C`, `git commit <path>`, and `cd <dir> && git commit`) of anything outside docs/logs/site",
         "  • destructive commands — confirms rm -rf / git push --force (incl. +refspec) / reset --hard / git clean -f / DROP·TRUNCATE",
@@ -2259,7 +2219,6 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         "  • mutating MCP actions — confirms create/update/delete/deploy/publish-looking Fabric/Power BI/MCP tool calls (best-effort)",
         "  • Power BI Desktop reloads — reads `powerbi-desktop status` before `powerbi-desktop reload` / `powerbi-report-author preview`; asks on unsaved changes, blocks when the instance can't be verified",
         `  • edit approvals — approving an edit can cover that server for the session; deletes, drops and production still ask (${editApprovals.size ? `${editApprovals.size} active` : "none"}; /coop-approvals status|revoke)`,
-        "  • managed updates — blocks ctx_upgrade so the manifest-pinned fleet moves together",
         "Advisory rules live in docs/guardrails.md. Disable with COOP_NO_GUARDRAILS=1.",
         "",
         `Audit log (append-only; secrets/file contents never written): ${auditPath()}`,

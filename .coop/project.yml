@@ -83,7 +83,6 @@ tools:
 mcp:
   fabric:          { enabled: true }
   microsoft_learn: { enabled: true, purpose: "Always-current Microsoft documentation lookups" }
-  context_mode:    { enabled: true }
   fabric_sqlendpoint: { enabled: true }
 
 memory:

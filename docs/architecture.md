@@ -148,19 +148,20 @@ for the Node tools and extensions; no script builds these paths inline.
      pins its `footer.mode` to `status` (its `replace` default would wipe
      coop's footer).
    - `pi-web-access` — web search, URL fetch, GitHub clone, PDF/YouTube/video
-     understanding (read-only; complements the Microsoft Learn MCP).
+     understanding (read-only; complements the Microsoft Learn MCP). A fresh
+     session shows only its small `web_enable` tool; the model calls it to load
+     the web tools when it needs them.
    - `@juicesharp/rpiv-ask-user-question` — lets the model put a structured,
      typed-option question to the user instead of guessing (fits consent rounds).
    - `@xl0/pi-lovely-rename` — names an unnamed session after three user turns
      (`/rename` regenerates; a manual `/name` always wins). The name shows in
      coop's footer and terminal title.
-   - `context-mode` — a native Pi extension (not an MCP server) that runs
-     sandboxed code over the built docs/graph to save context, still subject to
-     the `coop-guardrails` hooks (Pi itself does not prompt per tool call).
 
    The list is exactly the manifest's `extensions` object; nothing optional ships
    beside it. *(`@aliou/pi-guardrails` was dropped — pinned to the deprecated Pi
-   and superseded by `coop-guardrails`.)*
+   and superseded by `coop-guardrails`. `context-mode` was dropped in U1: its
+   `ctx_*` tools ran shell commands outside the guardrails' checks; `coop sync`
+   removes it from existing installs.)*
 
    `pi-powerline-footer` is **not** used — coop renders its own footer/splash via
    `extensions/coop-powerline` (see layer 3).
@@ -207,9 +208,6 @@ for the Node tools and extensions; no script builds these paths inline.
    - `microsoft-learn` — `learn.microsoft.com/api/mcp`, a direct Streamable HTTP
      entry the adapter speaks itself (no bridge package)
      (always-current Microsoft docs).
-
-   (`context-mode` is NOT an MCP server — it is a native Pi extension from the
-   release-manifest `extensions` list; one ownership path only.)
 
    `coop` **never** performs write/create/update/delete/deploy/publish MCP
    actions without explicit approval, regardless of server capability.
@@ -273,7 +271,6 @@ flowchart TD
       webacc["pi-web-access"]
       askq["rpiv-ask-user-question"]
       rename["pi-lovely-rename"]
-      ctxmode["context-mode\n(native extension, not MCP)"]
     end
     pi --> PIEXT
     bopenai -. "status via getExtensionStatuses()" .-> ext_pl

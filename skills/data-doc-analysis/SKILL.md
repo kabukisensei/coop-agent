@@ -41,9 +41,8 @@ workflow calls at step 3 (read target + lineage) and step 9 (document).
   `lineage` command above, which returns the object's neighbors + its doc path in one
   call; otherwise locate the object's node in `manifest.json` / `graph.json` (it
   carries `upstream`, `downstream`, and each object's `slug`). Then read **only** that
-  object's `<slug>.md` plus its immediate upstream and downstream neighbors. Prefer
-  **context-mode** (intent-driven search + sandboxed execution) to pull just the
-  relevant slice. Widen the radius only when the change's blast radius requires it.
+  object's `<slug>.md` plus its immediate upstream and downstream neighbors. Widen
+  the radius only when the change's blast radius requires it.
 - **Lineage flows.** Summarize key flows: sources → bronze → silver → gold →
   semantic model → report. Highlight critical paths and any cross-repo edges.
 - **Coverage gaps.** Identify objects with no description, no owner, or no glossary
