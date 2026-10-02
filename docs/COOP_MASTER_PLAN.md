@@ -1,6 +1,6 @@
 # Coop master plan — ordered execution roadmap
 
-**Document revision 3.11 · October 2, 2026** (Phase 8 D1, the packaged Electron desktop, scoped into rows D1a–D1g with the decisions Aaron must take before it starts; sections 11.1–11.4 and register row 16. Revision 3.10 added the Pi 1.0 row U2, section 6.5; revision 3.9 added the mixed-estate documentation repair, section 8.1. Existing phase ordering and the revision 3.8 scope decisions remain.)
+**Document revision 3.12 · October 2, 2026** (an explore and research watch list, section 12.1, starting with PiG, the Go port of Pi: watched, not scheduled. Revision 3.11 scoped Phase 8 D1, the packaged Electron desktop, into rows D1a–D1g with the decisions Aaron must take before it starts; sections 11.1–11.4 and register row 16. Revision 3.10 added the Pi 1.0 row U2, section 6.5; revision 3.9 added the mixed-estate documentation repair, section 8.1. Existing phase ordering and the revision 3.8 scope decisions remain.)
 **Product scope: Coop Windows terminal first; an installable Electron desktop returns after the terminal is simplified.**
 
 **Canonical repository location:** `docs/COOP_MASTER_PLAN.md`. This revision keeps the
@@ -1201,6 +1201,49 @@ Not requested, offered for Aaron's decision. None is scheduled.
 - **Daily logs reference `E:` and `C:` workstation paths.** Fine as evidence, but the
   plan should not depend on a specific machine's drive letters; B1's E: proposal is
   Aaron's workstation preference, not a product path.
+
+### 12.1 Explore and research: a watch list (revision 3.12)
+
+Things worth knowing about that nobody has scheduled. An entry here is never a
+register row: it becomes one only when its "worth adopting when" holds and Aaron
+starts it. Each entry is judged on stability, capability, simplicity and
+maintainability, the same lens that parked U2 (section 6.5).
+
+**PiG, Pi in Go ([pi-in-go.dev](https://pi-in-go.dev)).** Aaron flagged it on
+2026-10-02. Read the same day from its repository
+([MichaelKinsy/PiG](https://github.com/MichaelKinsy/PiG), MIT); nothing was
+installed.
+
+- **What it is.** A third-party Go port of Pi, shipped as one native `pig` binary,
+  that treats Pi's behavior as the contract. It pins Pi **0.87.1**, the Pi coop ships
+  today, and checks its core paths against it with paired parity scenarios. First
+  release 0.2.0 on 2026-09-25, newest 0.3.1 on 2026-09-30. Its README says the Pi
+  maintainers do not endorse it.
+- **What it offers.** Pi's TypeScript extension API runs unchanged, extensions can
+  also be written in Go, Rust or Python, and the core starts fast without Node.
+- **Why not now.**
+  - *Stability:* Windows support is a preview (source builds only until its native
+    release verification passes), the project is a week old, and its own README says
+    edge cases are still hardening. Its 0.3.x changelog is still fixing
+    `pi-mcp-adapter` behavior coop depends on (the `/mcp` panel, tool cards, the
+    tool list the adapter reads).
+  - *Simplicity:* coop's four extensions and its npm extensions (`pi-mcp-adapter`,
+    `pi-hermes-memory` and the rest) are Node extensions, and PiG runs Node
+    extensions in isolated Node processes. Coop would keep Node and gain a second
+    runtime layer, not lose one.
+  - *Maintainability:* the names differ (`pig`, `~/.pig/agent`,
+    `PIG_CODING_AGENT_DIR`), so the launcher, isolation, `lib/_extdeps.py`
+    alignment, doctor and the extension lock would all fork. Coop would also trail Pi
+    twice (Pi's release, then PiG's port of it), which works against U2's move to
+    Pi 1.0.
+  - *Capability:* nothing coop needs is missing from Pi.
+- **Worth adopting when all of these hold.** (1) Windows is release-supported with
+  native verification. (2) PiG tracks the Pi coop ships (1.0.x once U2 lands) within
+  a release or two. (3) Coop's own extension set, including `pi-mcp-adapter` with the
+  Azure bearer header and the guardrails' approval prompts, passes the VM matrix
+  under `pig` with no coop-side shims. (4) A concrete gain coop can name: a
+  materially smaller or simpler D1d bundle, or startup time teammates notice.
+  Re-check at U2 or D1d, whichever starts first; until then it stays here.
 
 ## 13. Ordered work register
 
