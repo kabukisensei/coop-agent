@@ -130,7 +130,8 @@ await t("new-project renderer produces a parseable, governed contract", () => {
   assert.doesNotMatch(text, /^standards:/m, "new projects must use canonical standards by default");
   assert.match(text, /^# standards:\n#   sql:\n#     path: /m, "the in-app wizard documents the nested override shape");
   assert.equal(projectYamlScalar(text, ["estate", "mode"]), "partial");
-  assert.equal(projectYamlScalar(text, ["estate", "live_discovery", "production_rows"]), "explicit_scope_and_approval");
+  // #98: the guardrails hard-code these rules; contracts no longer carry policy nothing reads.
+  assert.doesNotMatch(text, /live_discovery|allowed_default_actions|requires_approval_actions/);
   assert.equal((text.match(/^  environment_names:$/gm) || []).length, 2);
   assert.match(text, /# Warehouse \/ Lakehouse workspace for each deployment environment\./);
   assert.match(text, /# Semantic-model workspace for each deployment environment\./);
@@ -318,6 +319,9 @@ await t("coop init contract round-trips through /setup-project with a nested sta
   // #93: neither wizard writes the retired `powerbi` MCP policy block.
   assert.doesNotMatch(generated, /^  powerbi:|readonly_flag/m, "coop init must not write mcp.powerbi");
   assert.doesNotMatch(merged, /^  powerbi:|readonly_flag/m, "setup-project must not add mcp.powerbi");
+  // #98: neither wizard writes contract policy fields that nothing enforces.
+  assert.doesNotMatch(generated, /live_discovery|allowed_default_actions|requires_approval_actions/, "coop init must not write unenforced policy fields");
+  assert.doesNotMatch(merged, /live_discovery|allowed_default_actions|requires_approval_actions/, "setup-project must not add unenforced policy fields");
   assert.equal(projectYamlScalar(merged, ["standards", "sql", "path"]), "docs/standards/client-sql.md");
 });
 

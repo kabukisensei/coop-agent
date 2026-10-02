@@ -19,11 +19,6 @@ estate:
   local_source_coverage:
     sql: "available"               # available | unknown | not_available_yet
     power_bi: "available"
-  live_discovery:
-    dev_test_metadata: "read_only_allowed"
-    dev_test_rows: "ask_first"
-    production_metadata: "ask_first"
-    production_rows: "explicit_scope_and_approval"
 
 # --- Repositories the agent may touch ----------------------------------------
 repositories:
@@ -159,8 +154,6 @@ tools:
 mcp:
   fabric:
     enabled: true
-    allowed_default_actions: ["list", "read", "inspect"]
-    requires_approval_actions: ["create", "update", "delete", "deploy"]
   microsoft_learn:
     enabled: true
     purpose: "Always-current Microsoft documentation lookups"
@@ -168,7 +161,6 @@ mcp:
     enabled: true
   fabric_sqlendpoint:
     enabled: true
-    requires_approval_actions: ["executeSQL", "execute_query"]
 
 # --- Persistent memory (pi-hermes-memory) ------------------------------------
 memory:

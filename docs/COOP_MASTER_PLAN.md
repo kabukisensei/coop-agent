@@ -1395,7 +1395,10 @@ Not requested, offered for Aaron's decision. None is scheduled.
   but no enforcement code reads them; the guardrails are hard-coded. Decision
   taken: wire them in Phase 5 step 3 (the guardrail scope reads the contract) and
   drop any field that is still unread when Phase 5 closes, so the contract never
-  promises what it cannot enforce.
+  promises what it cannot enforce. Done 2026-10-02 (issue
+  [#98](https://github.com/kabukisensei/coop-agent/issues/98)): SQ3 wired `sql_targets`;
+  `estate.live_discovery` and the `mcp.*` action lists were dropped; `tests.live_data`
+  stays because the workflow skill reads it.
 - **`docs/tool-contract.md` drifted** from the code: the reviewer invocation omits
   `--standards`, the sample report uses `rule` where the validator requires
   `rule_id`, and the `details` shape is missing four fields. Fix in Phase 4.
