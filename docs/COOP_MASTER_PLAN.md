@@ -1,6 +1,6 @@
 # Coop master plan — ordered execution roadmap
 
-**Document revision 3.9 · October 1, 2026** (mixed-estate documentation repair authorized by Aaron; section 8.1. Existing phase ordering and the revision 3.8 scope decisions remain.)
+**Document revision 3.11 · October 2, 2026** (Phase 8 D1, the packaged Electron desktop, scoped into rows D1a–D1g with the decisions Aaron must take before it starts; sections 11.1–11.4 and register row 16. Revision 3.10 added the Pi 1.0 row U2, section 6.5; revision 3.9 added the mixed-estate documentation repair, section 8.1. Existing phase ordering and the revision 3.8 scope decisions remain.)
 **Product scope: Coop Windows terminal first; an installable Electron desktop returns after the terminal is simplified.**
 
 **Canonical repository location:** `docs/COOP_MASTER_PLAN.md`. This revision keeps the
@@ -925,6 +925,125 @@ gate, not the order; it stays last.
 - **Decision to record before starting:** a native rewrite (WinUI/WPF) is off the
   roadmap; "Coop 2.0" means this packaged Electron app.
 
+### 11.1 D1 scoped into rows (revision 3.11, read-only, October 2, 2026)
+
+Scoped from the tree at v0.26.0 and the old desktop branches; no app code was
+written and nothing was installed. D1 stays one register row (16) worked as seven
+sub-rows, D1a–D1g, one issue, one branch and one PR each, in this order. **No
+sub-row starts until Aaron approves this breakdown and the decisions in 11.3, and
+starts D1 explicitly** (section 14). Rows 7–12 and 15 accepted, and U2 landed, stay
+the entry gate: the app packages the Pi that coop ships, so the Pi pin must be
+settled first (section 6.5).
+
+**What the codebase already gives D1.**
+
+- `coop launch-spec --json` (`Invoke-CoopLaunchSpec` in `bin/coop.ps1`) emits
+  `{bin, args, env}` from the same `Build-CoopPiArgs` the terminal uses: guardrails
+  system prompt, skills (first-party, Microsoft catalog, team knowledge), prompts,
+  theme, the four extensions, isolation env. It was written for the desktop and
+  is tested against drift. The app consumes it; it never builds Pi arguments.
+- `Get-CoopPrereqs` in `lib/common.ps1` is the H1 prerequisite table (Git, Node,
+  Python 3.10–3.13, pipx, Azure CLI, ODBC 18, each with its `winget` fix) that
+  `coop install` and `coop doctor` share. The app shows the same rows and text.
+- `config/release-manifest.json` plus `config/extensions-lock.json` define the
+  exact Pi and extension tree (`npm ci`, `gypfile: false`), so a build can
+  pre-install that tree offline and byte-compare it with what `coop sync` makes.
+- `coop update` follows release tags only (H5); `--edge` is maintainers'. The app
+  follows the same tags through its packager's updater, nothing else.
+- `bin/coop-desktop.ps1` and the Start Menu/Desktop shortcut are the current
+  "double-click" path (phase 1 in `docs/history/ui-strategy.md`); D1 replaces the
+  shortcut's target on machines that install the package and leaves the terminal
+  install unchanged.
+
+**Shape decision the rows assume (Aaron confirms in 11.3, item 1).** The window is
+the terminal: Electron hosts an `xterm.js` view over a `node-pty` ConPTY running
+the exact launch spec, so Pi's own TUI, the coop-powerline footer and splash, the
+`/start` menu, the ask-user dialogs and every approval prompt render unchanged.
+The alternative, a rendered chat over `pi --mode rpc`, needs a second
+implementation of every extension dialog (the footer, `/start`, ask-user,
+approvals are TUI components) and so breaks "never carry a second policy
+implementation"; `docs/history/ui-strategy.md` records the RPC lessons for the day
+a rendered view is wanted. D1's value is the installer and the updater; the window
+is the vessel, and the experience-friction work (rendered diffs, review views) is
+a later row, not D1.
+
+### 11.2 The rows
+
+| Row | Package | Scope | Starts after | Done when |
+| --- | --- | --- | --- | --- |
+| D1a | Decision record and salvage review (docs only) | Record the 11.3 decisions as a plan revision; review the old branches and list what is salvaged (the sandboxed-renderer and Electron fuse settings in `desktop/package.json`, the `coop-launcher.mjs` PowerShell dispatcher resolution, the idea of `verify-windows-installer.mjs`) and what is not (the managed-runtime staging and lock system, the parity and release-evidence schemas, the `coop runtime` HTTP contract, the Tauri spike, bundled Python); choose the repo location (`desktop/` in coop-agent, recommended, so the app and coop share one tag and one CI) | Aaron approves this breakdown; D1 started | plan revision merged with every 11.3 item answered; salvage list closed; no app code |
+| D1b | App shell | `desktop/`: Electron main process with the renderer sandboxed (context isolation on, Node integration off, navigation and new windows blocked, named preload methods only), one `xterm.js` view, a `node-pty` ConPTY that runs `pi` with the `{bin,args,env}` from `coop launch-spec --json` (the app adds nothing to args and only the profile path to env); window close ends Pi cleanly; `npm start` against an installed terminal coop; unit tests for the spec consumer and the PTY lifecycle, run in the gate lane on `windows-latest` | D1a | on a developer machine with coop installed: a governed session in the window (guardrails prompt, `/start`, footer, an approval prompt, ask-user dialog, resume) matches the terminal; `coop launch-spec --json` diff against the spawned command is empty |
+| D1c | Bundled runtime and first-launch prerequisites | Build step stages a pinned Node (nodejs.org zip, version and SHA-256 recorded in the manifest), the pinned Pi and the `extensions-lock.json` tree pre-installed offline, and a snapshot of this repository (skills, prompts, extensions, `docs/guardrails.md`, standards bundle) under the app's resources; the app uses the same profile root as the terminal (S3) so the two can coexist and sessions, memory and `.coop/project.yml` are shared; first launch runs the H1 table for Git, Python, pipx, Azure CLI and ODBC in the window, prints the exact `winget` lines (or runs them visibly, as `coop install --prereqs auto` does) and then the same sync and Azure sign-in the terminal install runs; Node is never a prerequisite for the package | D1b | blank VM snapshot: install, launch, the prerequisite screen names exactly what is missing, after the printed commands `coop doctor` inside the app is all green; `npm ls --all` of the staged tree equals a clean `coop sync` tree |
+| D1d | Installer | electron-builder NSIS **per-user** target (no administrator), Start Menu and Desktop shortcuts with `themes/coop.ico`, Add/Remove entry that removes the app and the staged runtime but keeps `~/.coop` (profile, sessions, memory) unless the user ticks remove; silent `/S` install and uninstall; a `windows-latest` CI job builds the unsigned installer on every PR as an artifact, installs it silently, launches the app headlessly to `coop doctor` and uninstalls; replaces the old shortcut target when a terminal install exists | D1c | CI job green; manual install, launch, uninstall on the blank VM leaves no trace outside `~/.coop` |
+| D1e | Signing and distribution | Sign the installer and the app binaries on tag in `release.yml` with the certificate Aaron supplies (11.3 item 3); publish the installer and electron-builder's `latest.yml` as assets of the GitHub Release the tag already creates; record the SmartScreen result; coop-website onboarding gets the download link | D1d; Aaron's certificate and distribution choice | a teammate downloads the release asset, Windows shows the publisher name, no "unknown publisher" block; `latest.yml` present on the release |
+| D1f | Updates | `electron-updater` with the GitHub Releases provider, release tags only (no edge channel in the app), check on launch, download in the background, install on quit with one prompt; inside the app `coop update` says the app updates itself; the staged Pi and extension tree move with the app version, so no npm runs on the user's machine for an update | D1e | VM installs vN; vN+1 tagged; the app offers, downloads and applies it; `~/.coop` sessions, memory and project contract intact; `coop doctor` green after the update |
+| D1g | Teammate acceptance and docs | One teammate who is not Aaron installs from the package alone on a machine without coop, Node or Python, following only `docs/install-windows.md`'s new "Desktop app" section (the terminal path stays the first section, unchanged); README, architecture and coop-website pages updated; the old desktop branches deleted after Aaron confirms | D1f | the teammate reaches a governed session and runs one workflow from the `/start` menu with no help; row 16 moves to `done (tag)` when Aaron tags |
+
+Rules that hold across every row, on top of section 2:
+
+- The app never carries policy. Guardrails, approvals, standards, skills and the
+  profile come from the packaged coop snapshot and the launch spec. A desktop-only
+  setting, environment variable or schema needs the same justification as any
+  other new abstraction (section 2).
+- Windows x64 only. No macOS build, no ARM build, no per-machine install.
+- One Pi. The app ships the manifest's Pi pin, never a second copy for the
+  terminal; a machine with both installs shares the profile root and the Pi
+  the manifest names.
+- CI builds the package on every PR; signing happens only on a tag Aaron pushed.
+- The VM gates acceptance, not the start of work (section 14): D1b–D1d begin on
+  green CI; D1c, D1d, D1f and D1g are accepted on the blank snapshot.
+
+**Risks named now.** `node-pty` is a native module compiled against Electron's
+ABI (electron-builder rebuilds it; prebuilt binaries exist for current releases);
+if it fails on the VM, the fallback is the existing shortcut path (the app
+launches `coop` in Windows Terminal) and D1b is re-scoped before D1c. Pi 1.0's
+fullscreen default (section 6.5) is the TUI mode the window would show; D1b
+qualifies `tuiMode: "regular"` against `xterm.js` scrollback on the VM. An OV
+certificate earns SmartScreen reputation over downloads rather than instantly;
+D1e records what the first teammate sees.
+
+### 11.3 Decisions only Aaron can make
+
+1. **The window shows Pi's terminal** (`xterm.js` over the launch spec, the
+   recommendation and what 11.2 assumes) **or a rendered chat** over `pi --mode
+   rpc` (a renderer for every extension dialog; weeks more, and a second UI for the
+   same policy). Recommendation: terminal now; a rendered view is its own later row.
+2. **Installer type:** NSIS per-user via electron-builder (recommended: no
+   administrator, works with any code-signing certificate, Add/Remove entry,
+   `electron-updater` support) or MSIX (Store-style identity, needs the
+   certificate's subject to match the package publisher, sideloading settings on
+   some machines).
+3. **Code-signing certificate.** Aaron owns this input. Options: Azure Trusted
+   Signing (a subscription resource, signs from GitHub Actions with no hardware
+   token, the recommendation), an OV certificate on a cloud HSM, or an EV
+   certificate with a hardware token (instant SmartScreen reputation but cannot
+   sign from CI without extra setup). Until one exists, D1a–D1d proceed unsigned
+   and D1e waits.
+4. **Where the package is published.** `electron-updater`'s GitHub provider
+   needs the release assets reachable without a token by every teammate. If
+   `kabukisensei/coop-agent` stays private, the choice is a public release
+   repository for the installer alone, or hosting the installer and `latest.yml`
+   on the coop website's VPS with the generic provider. Recommendation: public
+   release assets, private source stays private.
+5. **Repository location:** `desktop/` in coop-agent (recommended: one tag, one
+   CI, the package snapshots the repo it lives in) or a separate `coop-desktop`
+   repository.
+6. **Git on the user's machine.** The standards wiki and team knowledge are git
+   clones. Keep Git in the prerequisite table (one more `winget` line, the
+   recommendation) or bundle a portable MinGit (about 50 MB, another pin to
+   track).
+7. **Which teammate** does the D1g acceptance, and whether a second blank VM
+   snapshot ("desktop-blank") is kept next to the existing blank and stable ones.
+
+### 11.4 Out of scope for D1
+
+A rendered chat or review UI, macOS and ARM packages, a per-machine install,
+bundled Python or Azure CLI, a beta or edge channel in the app, Power BI Desktop
+automation beyond what the terminal already does, and any change to the terminal
+product's install, update or profile layout. The old branches' managed-runtime
+platform (staged Python, parity schemas, the `coop runtime` HTTP contract) is
+not revived; the one Pi and one profile root rule from Phase 2 holds.
+
 ## 12. Other improvements found in this review
 
 Not requested, offered for Aaron's decision. None is scheduled.
@@ -980,7 +1099,7 @@ tags. A stale row is never a reason to re-do work: check the PR list first.
 | 14 | B1 | Minimal beta channel | — | — | **skipped** (Aaron, 2026-09-30: seven people update from tags; the VM qualifies upgrades) |
 | 15 | K1, K2, K3 | TeamAI shared knowledge: isolated CLI and read-only recall, reviewed contribution, broader lifecycle | FR1 + explicit start; VM isolation | revision 2.0 section 8 gates, one PR per row | not started (scheduled, revision 3.8) |
 | 15b | J0–J3 | Jev shadow experiments | explicit start | revision 2.0 gates | waiting (Aaron, 2026-09-30) |
-| 16 | D1 | Electron desktop with packaged installer | 7–12 and 15 accepted | another user installs from the package alone | not started |
+| 16 | D1 | Electron desktop with packaged installer, worked as D1a–D1g (section 11.2): decision record and salvage, app shell, bundled runtime and prerequisites, installer, signing and distribution, updates, teammate acceptance | 7–12 and 15 accepted; U2 landed; Aaron approves section 11.3 and starts D1 | another user installs from the package alone (D1g) | scoped (revision 3.11, 2026-10-02); not started; waits on the 11.3 decisions |
 
 Phase 0 rows can each be released as a patch. Later phases are minor versions.
 Rows become `agent:ready` only when Aaron says so. On September 28 he marked the
