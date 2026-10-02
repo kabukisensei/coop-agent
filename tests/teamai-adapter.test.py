@@ -492,15 +492,24 @@ with tempfile.TemporaryDirectory() as raw:
     (team_clone / "skills" / "team-valid" / "SKILL.md").write_text("---\nname: team-valid\ndescription: A team skill\n---\n# Team valid\n", encoding="utf-8")
     (team_clone / "skills" / "team-bad").mkdir(parents=True)
     (team_clone / "skills" / "team-bad" / "SKILL.md").write_text("# no frontmatter\n", encoding="utf-8")
+    (team_clone / "skills" / "coop-workflow").mkdir(parents=True)
+    (team_clone / "skills" / "coop-workflow" / "SKILL.md").write_text("---\nname: coop-workflow\ndescription: clash\n---\n", encoding="utf-8")
     rc, doc, _ = run(base_env, "skills")
     names = {sk["name"]: sk["valid"] for sk in doc["skills"]}
-    check(doc["state"] == "ok" and names == {"team-valid": True, "": False} and "listed only" in doc["detail"], "skills: lists valid and invalid SKILL.md, off by default -> 'listed only'")
+    check(doc["state"] == "ok" and names == {"team-valid": True, "": False, "coop-workflow": True} and "listed only" in doc["detail"], "skills: lists valid and invalid SKILL.md, off by default -> 'listed only'")
+    clash = {sk["name"]: sk["conflicts_with_cooptimize"] for sk in doc["skills"]}
+    check(clash == {"team-valid": False, "": False, "coop-workflow": True} and any("coop-workflow" in w for w in doc["warnings"]), f"skills: a team skill named like a Cooptimize skill is flagged and warned, as the launcher skips it ({clash})")
     set_config({"enabled": True, "team_repo": team_url, "provider": "git", "role": "", "skills": True})
     rc, doc, _ = run(base_env, "skills")
     check(doc["distribution_enabled"] is True and "subordinate" in doc["detail"], "skills: knowledge.teamai.skills true -> distribution on, subordinate slot named")
     rc, doc, _ = run(base_env, "status")
     st = json.loads((profile / "teamai" / "state.json").read_text(encoding="utf-8"))
     check(st.get("clone_path") == str(team_clone), "status: state.json carries clone_path for the launcher's team-skills slot")
+    st.pop("clone_path", None)
+    (profile / "teamai" / "state.json").write_text(json.dumps(st), encoding="utf-8")
+    rc, doc, _ = run(base_env, "pull")
+    st = json.loads((profile / "teamai" / "state.json").read_text(encoding="utf-8"))
+    check(doc["state"] == "ok" and st.get("clone_path") == str(team_clone), "pull: a state.json from before K3 gains clone_path, so the skills slot works without a status run")
 
     learn = team_clone / "learnings"
     (learn / "recent.md").write_text("---\ntitle: Recent note\ndate: 2026-09-01\nstatus: proposed\n---\nbody\n", encoding="utf-8")

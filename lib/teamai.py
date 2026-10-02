@@ -451,14 +451,21 @@ def gate(doc: dict, package: str, need_init: bool = True) -> str | None:
 
 # --- commands -----------------------------------------------------------------
 
+def remember_clone_path() -> None:
+    """Record the clone in state.json, which the launcher's team-skills slot reads.
+    status, pull and skills all refresh it, so a profile initialized before K3
+    picks the slot up on its next pull instead of silently loading nothing."""
+    clone = str(team_repo_local_path() or "")
+    if clone and read_state().get("clone_path") != clone:
+        write_state({"clone_path": clone})
+
+
 def cmd_status(block: dict, package: str, pin: str) -> dict:
     doc = base_doc("status", block, package, pin)
     doc["initialized"] = initialized()
     doc["revision"] = team_repo_revision() if doc["initialized"] else ""
     if doc["initialized"]:
-        clone = str(team_repo_local_path() or "")
-        if clone and read_state().get("clone_path") != clone:
-            write_state({"clone_path": clone})  # the launcher's team-skills slot reads it
+        remember_clone_path()
     doc.update(staleness(read_state()))
     g = gate(doc, package)
     if g:
@@ -564,6 +571,7 @@ def cmd_pull(block: dict, package: str, pin: str) -> dict:
         doc.update(staleness(read_state()))
         return doc
     write_state({"last_pull_at": now_iso()})
+    remember_clone_path()
     doc["state"] = "ok"
     doc["revision"] = team_repo_revision()
     doc.update(staleness(read_state()))
@@ -970,7 +978,29 @@ def skills_enabled(block: dict) -> bool:
     return bool(v)
 
 
+def cooptimize_skill_names(root: Path | None = None) -> set[str]:
+    """Folder and frontmatter names of coop's own skills, the same set the launcher
+    (bin/coop.ps1) checks before it loads a team skill: a Cooptimize skill wins."""
+    names: set[str] = set()
+    skills = (root or HERE.parent) / "skills"
+    if not skills.is_dir():
+        return names
+    for d in skills.iterdir():
+        sk = d / "SKILL.md"
+        if not d.is_dir() or not sk.is_file():
+            continue
+        names.add(d.name)
+        try:
+            fm = frontmatter(sk.read_text(encoding="utf-8-sig", errors="replace"))
+        except OSError:
+            fm = {}
+        if fm.get("name"):
+            names.add(fm["name"])
+    return names
+
+
 def list_team_skills(clone: Path) -> list[dict]:
+    own = cooptimize_skill_names()
     out: list[dict] = []
     root = clone / "skills"
     if not root.is_dir():
@@ -983,7 +1013,14 @@ def list_team_skills(clone: Path) -> list[dict]:
             fm = frontmatter(sk.read_text(encoding="utf-8-sig", errors="replace"))
         except OSError:
             fm = {}
-        out.append({"dir": str(d), "name": fm.get("name", ""), "description": fm.get("description", ""), "valid": bool(fm.get("name"))})
+        name = fm.get("name", "")
+        out.append({
+            "dir": str(d),
+            "name": name,
+            "description": fm.get("description", ""),
+            "valid": bool(name),
+            "conflicts_with_cooptimize": d.name in own or name in own,  # skipped at launch
+        })
     return out
 
 
@@ -1000,7 +1037,11 @@ def cmd_skills(block: dict, package: str, pin: str) -> dict:
         doc["state"] = "unavailable"
         doc["warnings"].append("the isolated team-repo clone is missing; run: coop teamai pull")
         return doc
+    remember_clone_path()
     doc["skills"] = list_team_skills(clone)
+    clashes = [k["name"] or Path(k["dir"]).name for k in doc["skills"] if k["conflicts_with_cooptimize"]]
+    if clashes:
+        doc["warnings"].append("never loaded, a Cooptimize skill has the same name: " + ", ".join(clashes))
     doc["revision"] = team_repo_revision()
     doc["state"] = "ok" if doc["skills"] else "no_match"
     doc["detail"] = (
