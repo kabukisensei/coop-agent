@@ -625,8 +625,12 @@ def cmd_recall(block: dict, package: str, pin: str, query: str) -> dict:
         return doc
     text = r["stdout"]
     if "No learnings available" in text:
-        doc["state"] = "not_initialized" if not doc["last_pull_at"] else "no_match"
-        doc["warnings"].append("the isolated clone holds no learnings yet; run: coop teamai pull")
+        if not doc["last_pull_at"]:
+            doc["state"] = "not_initialized"
+            doc["warnings"].append("the isolated clone holds no learnings yet; run: coop teamai pull")
+        else:
+            doc["state"] = "no_match"
+            doc["warnings"].append(f"the team repository has no learnings yet (pulled {doc['last_pull_at']} @ {doc.get('revision') or 'unknown'}): nothing to recall")
         return doc
     entries = parse_recall(text)
     if "code graph retrieval unavailable" in (r["stderr"] + text):
