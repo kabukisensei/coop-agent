@@ -5,6 +5,24 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `coop update --check` fetches from origin before it reads the release tags
+  (the same fetch step 1 of `coop update` makes, warn-and-continue offline), so a
+  release tagged since the clone's last fetch is reported as `would move to
+  release vX.Y.Z` instead of `no newer release`. Fetching touches no file in the
+  checkout, so `--check` still changes nothing.
+- The install's `pipx` unit no longer fails a `coop install` whose pipx works.
+  The unit (`Invoke-CoopPipxBootstrap` in `lib/common.ps1`) now uses the same
+  probe as every other pipx step, so a pipx reachable only as `python -m pipx`
+  (where `pip install --user pipx` puts it, off PATH) counts as present instead
+  of being re-installed on every run, and its verdict is whether pipx answers
+  after the step, not the job's return value alone: the installer re-checks that
+  itself after the job (on Windows PowerShell 5.1 the job came back with no
+  result on machines where pipx then worked, v0.23.5 through v0.29.0). A unit
+  whose job dies or returns nothing now names the reason instead of printing a
+  bare `! pipx`.
+
 ### Changed
 
 - `coop-data-doc` pin 1.3.0 -> 1.3.1 (`config/release-manifest.json`): link

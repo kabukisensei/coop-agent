@@ -1960,6 +1960,34 @@ function Get-CoopRepoDoctorRow {
   return [pscustomobject]@{ Level = 'ok'; Message = "coop-agent $at (follows release tags via: coop update)"; Hint = '' }
 }
 
+# Refresh origin so the release helpers see every tag pushed since the last
+# fetch: `git fetch origin` (branches and the tags on them), never a prompt.
+# Shared by step 1 of `coop update` and `coop update --check`, which otherwise
+# read the tags already on the machine and call a fresh release "no newer
+# release" until something else fetches. Warn-and-continue: offline, the
+# releases already fetched are used. $true when the fetch succeeded. Fetching
+# changes no file in the checkout, so --check still changes nothing.
+function Invoke-CoopRepoFetchOrigin {
+  $ErrorActionPreference = 'Continue'
+  if (-not (Test-Have 'git') -or -not (Test-CoopGitCheckout $script:CoopRoot)) { return $false }
+  $root = $script:CoopRoot
+  & git -C $root remote get-url origin *> $null
+  if ($LASTEXITCODE -ne 0) { return $false }
+  $oldPrompt = $env:GIT_TERMINAL_PROMPT
+  $env:GIT_TERMINAL_PROMPT = '0'
+  try {
+    $fetchOut = @(& git -C $root fetch --quiet origin 2>&1)
+    if ($LASTEXITCODE -eq 0) { return $true }
+    $line = 'fetch failed'
+    foreach ($o in $fetchOut) { $s = ([string]$o).Trim(); if ($s) { $line = $s; break } }
+    Coop-Warn 'could not fetch from origin — using the releases already on this machine' "git: $line"
+    return $false
+  } finally {
+    if ($null -eq $oldPrompt) { Remove-Item Env:\GIT_TERMINAL_PROMPT -ErrorAction SilentlyContinue }
+    else { $env:GIT_TERMINAL_PROMPT = $oldPrompt }
+  }
+}
+
 # Step 1 of `coop update`: move the coop-agent checkout. Default: fast-forward to
 # Get-CoopRepoNextRelease, never backwards, never a tag checkout or reset. -Edge:
 # head of main, via today's `git pull --ff-only` on a branch, or a guarded
@@ -1991,12 +2019,7 @@ function Invoke-CoopRepoFollowRelease {
       return
     }
     if (-not (Test-CoopRepoFollowsReleases)) { $null = Write-CoopRepoStranded; return }
-    $fetchOut = @(& git -C $root fetch --quiet origin 2>&1)
-    if ($LASTEXITCODE -ne 0) {
-      $line = 'fetch failed'
-      foreach ($o in $fetchOut) { $s = ([string]$o).Trim(); if ($s) { $line = $s; break } }
-      Coop-Warn 'could not fetch from origin — using the releases already on this machine' "git: $line"
-    }
+    $null = Invoke-CoopRepoFetchOrigin
     if ($Edge) {
       # Detached HEAD: re-attach to main only when that is forward-only and loses
       # nothing — HEAD and any existing local main must both be ancestors of
@@ -2195,6 +2218,26 @@ function Get-CoopPipxInvocation {
   return @()
 }
 function Test-CoopPipxAvailable { return ((@(Get-CoopPipxInvocation)).Count -gt 0) }
+# The install's pipx unit (Coop-Unit body, runs in a job): a pipx that answers
+# (on PATH, COOP_PIPX_BIN, or `python -m pipx`, the same probe every other pipx
+# step uses) is present; else `pip install --user pipx` with the generic Python
+# and `pipx ensurepath` for the next shell. The verdict is whether pipx answers
+# afterwards, not the exit codes alone: a pipx that `pip install --user` put in
+# a Scripts dir off PATH is fine (Add-CoopUserPaths and `python -m pipx` reach
+# it). Before this, the unit saw only `pipx` on PATH, so such a pipx was
+# "missing" and re-installed on every install run.
+function Invoke-CoopPipxBootstrap {
+  $ErrorActionPreference = 'Continue'
+  if (Test-CoopPipxAvailable) { return (Coop-UnitResult $true 'pipx present') }
+  $py = Get-CoopPython
+  if (-not $py) { return (Coop-UnitResult $false 'skipping pipx (python missing)') }
+  & $py -m pip install --user pipx *> $null
+  if ($LASTEXITCODE -ne 0) { return (Coop-UnitResult $false "could not install pipx automatically (`"$py`" -m pip install --user pipx failed) — see https://pipx.pypa.io") }
+  & $py -m pipx ensurepath *> $null
+  $pathNote = if ($LASTEXITCODE -eq 0) { 'open a new shell for PATH changes' } else { 'pipx ensurepath failed: add the pipx bin dir to PATH yourself' }
+  if (Test-CoopPipxAvailable) { return (Coop-UnitResult $true "pipx installed ($pathNote)") }
+  return (Coop-UnitResult $false "pipx was installed but does not answer (`"$py`" -m pipx --version) — see https://pipx.pypa.io")
+}
 # Run pipx quietly; the exit code (1 when no pipx answers).
 function Invoke-CoopPipx([string[]]$PipxArgs) {
   $inv = @(Get-CoopPipxInvocation)
@@ -2621,8 +2664,31 @@ function Start-CoopJob {
 #   the bar advances by one and a permanent ✓/! line is printed. NB: the scriptblock
 #   runs in a FRESH runspace — it sees none of these functions/variables, so units
 #   must be self-contained and take their inputs as arguments.
+# Why a finished job produced no result object: the job's failure reason, else
+# its first error record, else its state. '' when nothing is known.
+function Get-CoopJobFailure($Job) {
+  $reason = ''
+  try {
+    $jobs = @($Job.ChildJobs); if ($jobs.Count -eq 0) { $jobs = @($Job) }
+    foreach ($j in $jobs) {
+      $r = $j.JobStateInfo.Reason
+      if ($r -and $r.Message) { $reason = [string]$r.Message; break }
+      foreach ($e in @($j.Error)) { if ($e) { $reason = [string]$e; break } }
+      if ($reason) { break }
+    }
+    if (-not $reason -and $Job.State -and $Job.State -ne 'Completed') { $reason = "job $($Job.State)" }
+  } catch { }
+  return ($reason -replace '\s+', ' ').Trim()
+}
+
+# -Verify: an optional parent-side check run after the job with the job's
+# verdict ($ok, $msg); it returns a Coop-UnitResult to replace that verdict, or
+# $null to keep it. For a unit whose outcome the parent can observe (pipx
+# answers, a file exists), the observation wins over a job that died or
+# returned nothing — on Windows PowerShell 5.1 the pipx bootstrap job came back
+# empty on machines where pipx then worked (v0.23.5 to v0.29.0).
 function Coop-Unit {
-  param([string]$Label, [scriptblock]$Work, [object[]]$WorkArgs = @())
+  param([string]$Label, [scriptblock]$Work, [object[]]$WorkArgs = @(), [scriptblock]$Verify = $null)
   $sw  = [System.Diagnostics.Stopwatch]::StartNew()
   $job = Start-CoopJob $Work $WorkArgs
   if ((Test-ProgTty) -and $script:ProgActive) {
@@ -2644,11 +2710,23 @@ function Coop-Unit {
   $null = Wait-Job $job -ErrorAction SilentlyContinue
   $res = $null
   try { $res = Receive-Job $job -ErrorAction SilentlyContinue | Select-Object -Last 1 } catch {}
+  $why = if ($null -eq $res) { Get-CoopJobFailure $job } else { '' }
   Remove-Job $job -Force -ErrorAction SilentlyContinue
   $ok = $false; $msg = $Label
   if ($null -ne $res) {
     if ($res.PSObject.Properties.Name -contains 'ok')  { $ok  = [bool]$res.ok }
     if ($res.PSObject.Properties.Name -contains 'msg') { $msg = [string]$res.msg }
+  } else {
+    # A bare label told nobody anything; name what the job reported.
+    $msg = if ($why) { "$Label (the step returned no result: $why)" } else { "$Label (the step returned no result)" }
+  }
+  if ($null -ne $Verify) {
+    $v = $null
+    try { $v = & $Verify $ok $msg } catch { }
+    if ($null -ne $v -and ($v.PSObject.Properties.Name -contains 'ok')) {
+      $ok = [bool]$v.ok
+      if (($v.PSObject.Properties.Name -contains 'msg') -and $v.msg) { $msg = [string]$v.msg }
+    }
   }
   $script:ProgDone++
   $script:ProgSpinline = ''
