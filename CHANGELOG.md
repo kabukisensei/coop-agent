@@ -5,18 +5,6 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
-### Added
-
-- coop builds Fabric Apps (preview) with Microsoft's Rayfin CLI (master plan
-  row FA1). The new `fabric-apps` skill scaffolds the web app, connects it to
-  the client's semantic models, warehouses or lakehouses, and deploys it to the
-  contract's dev workspace with a dry run first and Rayfin's telemetry off.
-  The guardrails now ask before every Rayfin deploy (`rayfin up` and its
-  subcommands, `rayfin secret set|delete`); the prompt names the dev workspace
-  and warns when the command targets another one. Rayfin itself is not
-  bundled: each app's `package.json` pins it, and Rayfin's own agent files
-  (`rayfin init ai-files install`) carry the how-to.
-
 ### Fixed
 
 - The `data_doc` wrapper now decodes the `\uXXXX`, `\xXX` and `\UXXXXXXXX`
@@ -35,6 +23,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   count as two columns, so they cannot push a line past the edge.
 
 ### Added
+
+- coop builds Fabric Apps (preview) with Microsoft's Rayfin CLI (master plan
+  row FA1). The new `fabric-apps` skill scaffolds the web app, connects it to
+  the client's semantic models, warehouses or lakehouses, and deploys it to the
+  contract's dev workspace with a dry run first and Rayfin's telemetry off.
+  The guardrails now ask before every Rayfin deploy (`rayfin up` and its
+  subcommands, `rayfin secret set|delete`); the prompt names the dev workspace
+  and warns when the command targets another one. Rayfin itself is not
+  bundled: each app's `package.json` pins it, and Rayfin's own agent files
+  (`rayfin init ai-files install`) carry the how-to.
 
 - Windows acceptance for the `data_doc` wrapper and `/setup-docs` (master plan
   row 11a, DD4): a `datadoc-windows` job in `extended.yml` installs
