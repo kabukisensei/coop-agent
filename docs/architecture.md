@@ -251,7 +251,7 @@ flowchart TD
       prompts["prompts/"]
       theme["themes/cooptimize.json"]
       ext_pl["ext: coop-powerline\nfooter · splash · rotating feature tips\n(no pi-powerline-footer)"]
-      ext_tools["ext: coop-tools\ndata_doc (scan/build/check/lineage) · bpa_review\n+ standards articles in context · /setup-docs wizard · lineage note"]
+      ext_tools["ext: coop-tools\ndata_doc (scan/build/check/lineage/impact) · bpa_review\n+ standards articles in context · /setup-docs wizard · lineage note"]
       ext_profile["ext: coop-profile\nhidden user-profile instruction"]
       ext_guard["ext: coop-guardrails\ntool_call hook · policy enforcement"]
     end

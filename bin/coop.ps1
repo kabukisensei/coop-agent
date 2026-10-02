@@ -116,7 +116,7 @@ function Invoke-CoopTeamai {
   param([string[]]$Rest)
   $py = Get-CoopPython
   if (-not $py) { Coop-Die 'python3 is required for coop teamai' }
-  if (-not $Rest -or $Rest.Count -eq 0) { Coop-Die 'usage: coop teamai <status|install|init|pull|recall --query <text>|contribute --file <draft.md> [--title <text>] [--approve]>' }
+  if (-not $Rest -or $Rest.Count -eq 0) { Coop-Die 'usage: coop teamai <status|install|init|pull|skills|maintenance|recall --query <text>|compare --query <text>|contribute --file <draft.md> [--title <text>] [--approve]>' }
   & $py (Join-Path $script:CoopRoot 'lib\teamai.py') @Rest
   exit $LASTEXITCODE
 }
@@ -136,7 +136,7 @@ function Invoke-CoopSummarizeDataDocJson {
   $pyScript = @'
 import sys, json
 try:
-    d = json.load(open(sys.argv[1]))
+    d = json.load(open(sys.argv[1], encoding="utf-8"))
 except Exception:
     sys.exit(0)
 def n(*keys):
@@ -173,8 +173,9 @@ $(Coop-Bold)Usage$(Coop-Rst)
   coop profile edit         Edit your COOP user profile
   coop profile reset        Remove your COOP user profile
   coop teamai <cmd>         TeamAI shared-knowledge trial, isolated (status|install|init|pull|
-                            recall --query <text>|contribute --file <draft.md> [--approve]);
-                            off until knowledge.teamai.enabled is true
+                            skills|maintenance|recall --query <text>|compare --query <text>|
+                            contribute --file <draft.md> [--approve]); off until
+                            knowledge.teamai.enabled is true
   coop context-budget       Report fixed startup context sizes (use --json for machine output)
   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
                             (--strict: exit 2 on a failing linter; --skip-docs: linters only)
@@ -301,11 +302,19 @@ function Build-CoopPiArgs {
         }
       }
     }
+    # Team skills roots: every knowledge repo's skills\ plus, when the TeamAI
+    # trial's distribution is enabled (K3), the isolated clone's skills\. Same
+    # subordinate rules for all of them: a Cooptimize skill always wins.
+    $teamSkillRoots = @()
     if (Test-CoopKnowledgeEnabled) {
       foreach ($repo in (Get-CoopKnowledgeRepos)) {
-        $path = $repo.LocalPath
-        if (-not $path) { continue }
-        $teamSkills = Join-Path $path 'skills'
+        if ($repo.LocalPath) { $teamSkillRoots += (Join-Path $repo.LocalPath 'skills') }
+      }
+    }
+    $teamaiSkills = Get-CoopTeamaiSkillsRoot
+    if ($teamaiSkills) { $teamSkillRoots += $teamaiSkills }
+    if ($teamSkillRoots.Count -gt 0) {
+      foreach ($teamSkills in $teamSkillRoots) {
         if (-not (Test-Path -LiteralPath $teamSkills -PathType Container)) { continue }
         # Parse the frontmatter name BEFORE adding any launch argument; an
         # optional external skill that can't identify itself is skipped, never
@@ -688,17 +697,42 @@ function Invoke-DataDoc {
   if ($RestArgs.Count -eq 0) { $RestArgs = @('build') }
   Coop-Head "coop-data-doc $($RestArgs -join ' ')"
   & coop-data-doc @RestArgs
-  $rc = $LASTEXITCODE   # capture before the summary loop so the tool's exit code propagates
-  # Summarize machine-readable artifacts when present (manifest.json / graph.json).
-  # Includes the default output dir (./data-docs) plus legacy/alternate locations.
-  foreach ($f in @('data-docs/manifest.json', 'data-docs/graph.json', 'manifest.json', 'graph.json', 'docs/manifest.json', 'docs/graph.json', 'site/manifest.json', 'data-docs-site/manifest.json')) {
-    if (Test-Path -LiteralPath $f -PathType Leaf) {
-      Coop-Ok "Machine-readable output: $f"
-      Invoke-CoopSummarizeDataDocJson $f
-      break
+  $rc = $LASTEXITCODE   # capture before the summary so the tool's exit code propagates
+  # Summarize the graph a successful build/update/scan just wrote. Other
+  # subcommands (setup, check, lineage, --help) write none, so they get no summary.
+  if ($rc -eq 0 -and $RestArgs[0] -in @('build', 'update', 'scan')) {
+    $graph = Get-CoopDataDocGraphPath $RestArgs
+    if ($graph) {
+      Coop-Ok "Machine-readable output: $graph"
+      Invoke-CoopSummarizeDataDocJson $graph
     }
   }
   exit $rc   # a coop-data-doc failure must not be masked by the summary
+}
+
+# The built graph.json for the config coop-data-doc itself selects: `show-config`
+# applies the companion's --config / COOP_DATA_DOC_CONFIG / parent-folder
+# discovery, and output.dir resolves against the config's folder. So a build run
+# from a subfolder, or with a custom output dir, summarizes the graph it wrote,
+# never an unrelated manifest.json. $null when there is no config or no graph.
+function Get-CoopDataDocGraphPath {
+  param([string[]] $RestArgs = @())
+  $cfgArgs = @()
+  for ($i = 0; $i -lt $RestArgs.Count; $i++) {
+    if ($RestArgs[$i] -eq '--config' -and ($i + 1) -lt $RestArgs.Count) { $cfgArgs = @('--config', $RestArgs[$i + 1]) }
+    elseif ($RestArgs[$i] -like '--config=*') { $cfgArgs = @($RestArgs[$i]) }
+  }
+  try {
+    $json = (& coop-data-doc show-config @cfgArgs 2>$null | Out-String)
+    if ($LASTEXITCODE -ne 0) { return $null }
+    $cfg = $json | ConvertFrom-Json
+  } catch { return $null }
+  if (-not $cfg -or -not $cfg.exists -or -not $cfg.path -or -not $cfg.output -or -not $cfg.output.dir) { return $null }
+  $dir = [string]$cfg.output.dir
+  if (-not [System.IO.Path]::IsPathRooted($dir)) { $dir = Join-Path (Split-Path -Parent ([string]$cfg.path)) $dir }
+  $graph = Join-Path $dir 'graph.json'
+  if (Test-Path -LiteralPath $graph -PathType Leaf) { return (Resolve-Path -LiteralPath $graph).ProviderPath }
+  return $null
 }
 
 # --- Authoring scaffolders ---------------------------------------------------

@@ -228,7 +228,7 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop onboard [--edit|--config-only|--reset|--json]` | Configure profile and managed integrations without launching the agent |
 | `coop profile [--edit|--reset|--json]` | Inspect or update the private user profile |
 | `coop context-budget [--json]` | Inspect the active model/context budget |
-| `coop teamai <status\|install\|init\|pull\|recall --query <text>\|contribute --file <draft.md> [--title <text>] [--approve]>` | TeamAI shared-knowledge trial (master plan K1, K2): the pinned `teamai-cli` isolated under `~/.coop/teamai`, explicit and bounded, one JSON document per call; `contribute` previews, and stages a review branch only with `--approve`; off until `knowledge.teamai.enabled` is true |
+| `coop teamai <status\|install\|init\|pull\|skills\|maintenance\|recall --query <text>\|compare --query <text>\|contribute --file <draft.md> [--title <text>] [--approve]>` | TeamAI shared-knowledge trial (master plan K1, K2, K3): the pinned `teamai-cli` isolated under `~/.coop/teamai`, explicit and bounded, one JSON document per call; `contribute` previews, and stages a review branch only with `--approve`; `skills`, `maintenance` and `compare` are read-only lifecycle views; off until `knowledge.teamai.enabled` is true |
 | `coop uninstall [--keep-tools] [--yes]` | Remove the launcher/shortcuts/user-PATH entry and isolated agent dir; by default also uninstall Pi, pipx tools/Fabric CLI, Power BI Report Authoring CLI, Power BI Modeling MCP, and the Windows Desktop Bridge. `--keep-tools` preserves all managed npm/pipx tools. Never touches repo clones, work repos, the rest of `~/.coop`, or personal `~/.pi/agent` |
 | `coop install [--edge] [--force] [--yes] [--prereqs auto] [--no-prereqs] [--no-fabric] [--platform fabric\|azure_sql\|both]` | Fresh-install/bootstrap (idempotent). Normal mode uses manifest pins; `--edge` deliberately takes upstream latest and is tools-only here (install never moves the repo). With a source arg, alias of `coop add` |
 | `coop bootstrap` | Same bootstrap as bare `coop install` |
@@ -628,8 +628,12 @@ impact before it touches an object — without you running anything by hand:
 - **Look up lineage.** Before analyzing or changing any SQL object, DAX measure, or
   semantic model, the agent calls the `data_doc` tool with `command="lineage"`,
   `object="<name>"` (optionally a `depth`), which returns that object's upstream
-  inputs, downstream dependents, and relationships as JSON — it reads the focused
+  inputs, downstream dependents, and relationships — it reads the focused
   per-object doc rather than re-deriving lineage by hand.
+- **Check what a change feeds.** Before presenting an edit to SQL, DAX or model
+  source, the agent calls `data_doc` with `command="impact"` and the changed files,
+  and lists every downstream object they feed (also the PR description's
+  **Lineage impact**).
 - **Degrade gracefully.** If the folder has **no** `coop-data-doc.yml` or no built
   graph, lineage is silent and optional — the agent proceeds without it and may
   suggest **`/setup-docs`**. The docs are an aid, not a gate.
@@ -739,6 +743,19 @@ branch pushed from a disposable clone (`~/.coop/teamai/stage`) and prints the co
 URL; the pull request is the person's. The CLI's own `teamai contribute` (a direct
 write to the team repo's `learnings` branch) and `teamai push` (a pull request opened
 from inside the CLI) are never run, and the default branch is never written.
+
+The broader lifecycle (K3) stays read-only and explicit. `coop teamai skills` lists
+the team repository's `skills/*/SKILL.md`; with `knowledge.teamai.skills` true
+(`coop onboard --config-only`) those skills load at launch through the same
+subordinate slot as the knowledge repos' skills (a Cooptimize skill with the same
+name or folder wins, the clone path comes from `~/.coop/teamai/state.json`, the
+launcher never runs the CLI). `coop teamai maintenance` reports stale learnings
+(`knowledge.teamai.stale_days`, default 180), proposals older than 90 days,
+malformed notes and duplicate titles, and changes nothing: fixes go through a pull
+request on the team repository. `coop teamai compare --query <text>` runs the
+bundled local search and the isolated recall side by side on one query and reports
+the overlap, the evidence the plan asks for before the local search path could ever
+be retired (it is not).
 
 ---
 

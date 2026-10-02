@@ -46,6 +46,12 @@ try {
     assert.deepEqual(result.details.report.summary, { error: 1, warning: 1, info: 1 });
     assert.equal(result.details.report.findings[0].object, "'Sales'[Amount]");
     assert.equal(result.details.report.findings[0].file, join(root, "Finance.SemanticModel"));
+    // Pi gives the model the text only, so every finding is in it, errors first.
+    const text = result.content[0].text;
+    assert.match(text, /^bpa_review: 3 finding\(s\)/);
+    assert.ok(text.indexOf("- [error] RULE_Error: Set a format string ('Sales'[Amount])") < text.indexOf("- [warning] RULE_Warning"), text);
+    assert.match(text, /- \[info\] RULE_Info: Set a format string \('Sales'\[Amount\]\)/);
+    assert.doesNotMatch(text, /in details/);
     assert.deepEqual(calls.at(-1).args, ["bpa", "run", "--model", join(root, "Finance.SemanticModel"), "--output-format", "json", "--non-interactive"]);
     assert.equal(calls.at(-1).options.signal, signal);
   }
