@@ -50,9 +50,8 @@ URL_SERVERS = frozenset({"fabric-sqlendpoint", "microsoft-learn"})
 # warns). `powerbi` ran powerbi-mcp-server, which ignores --readonly and exposes
 # refresh_dataset, a write (#93); powerbi-modeling-mcp is the Power BI MCP.
 RETIRED_SERVERS = {"powerbi"}
-# NOTE: context-mode is deliberately NOT here. It is a native Pi extension
-# (release manifest `extensions` list, installed via `pi install`) — generating it
-# too as an MCP server would register the same capability twice.
+# NOTE: context-mode is not here: it was a native Pi extension, never an MCP
+# server, and its retirement is handled by Remove-CoopRetiredExtensions.
 
 
 def load_json(path: Path, *, required: bool = False) -> dict[str, Any]:

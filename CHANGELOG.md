@@ -5,6 +5,27 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Removed
+
+- `context-mode` is no longer part of coop. Its `ctx_execute`,
+  `ctx_batch_execute` and `ctx_execute_file` tools ran shell commands the
+  guardrails never checked, so `git commit`, `.env` reads and `fab rm` went
+  through without the usual block or prompt, and its tool definitions added
+  about 7,000 tokens to every request. `coop update` and `coop sync` now remove
+  it from existing installs with `pi remove npm:context-mode`. The unused
+  `mcp.context_mode` key is no longer written into new project contracts;
+  existing contracts keep it harmlessly.
+
+### Changed
+
+- `pi-web-access` moves from 0.10.7 to 0.35.0. A fresh session now shows only
+  a small `web_enable` tool, and the model loads the web tools when it needs
+  them. Searches no longer open a browser review page by default. GitHub clones
+  can't pop a Git Credential Manager sign-in on Windows, and a timed-out clone
+  stops its whole process tree. Page fetches enforce the 5 MB limit while
+  streaming, and `npm audit` on the package goes from 2 low findings to none.
+  `code_search` is gone (`web_search` covers it), and `source_check` is new.
+
 ### Fixed
 
 - The `data_doc` wrapper now decodes the `\uXXXX`, `\xXX` and `\UXXXXXXXX`

@@ -1889,8 +1889,6 @@ export function renderProjectWizardSettings(settings: ProjectWizardSettings): st
     `    enabled: ${settings.fabricEnabled}`,
     "  microsoft_learn:",
     "    enabled: true",
-    "  context_mode:",
-    "    enabled: true",
     "",
     "memory:",
     "  extension: 'pi-hermes-memory'",

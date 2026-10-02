@@ -378,9 +378,7 @@ approval are what hold it. `powerbi-modeling-mcp` runs `--readwrite` so an appro
 semantic model edit can land (#159): the guardrail reads each call's
 `request.operation`, lets reads run, asks before edits (an approval can cover the
 session), and asks every time for deletes, whole-model imports, deploys, unknown
-operations and production. `context-mode` is **not**
-a pure read: it runs **sandboxed code over the docs/graph** (not client data) to save
-context. Manifest-pinned managed config is generated into coop's isolated agent dir
+operations and production. Manifest-pinned managed config is generated into coop's isolated agent dir
 (`~/.coop/agent/mcp-adapter.json`) from `~/.coop/config` by `coop onboard` / `coop sync`,
 and wired through `pi-mcp-adapter`.
 
@@ -392,7 +390,6 @@ Per `.coop/project.yml` and `docs/guardrails.md`:
 | `fabric-sqlendpoint` | separate managed direct HTTP SQL endpoint | every `executeSQL` / `execute_query` call; DDL/DML/destructive SQL is classified before row-read handling |
 | `powerbi-modeling-mcp` (`--readwrite`) | `Get`, `List`, `Export`, connect, trace | `Create`, `Update`, `Rename`, refresh (session approval allowed); `Delete`, imports, `DeployToFabric`, unknown operations and production (every time) |
 | `microsoft-learn` | docs lookups (always-current) | — |
-| `context-mode` | intent search + **sandboxed exec** over docs/graph | — |
 
 `coop` **never** calls create/update/delete/deploy/publish MCP actions without
 explicit approval — regardless of what the server is capable of.

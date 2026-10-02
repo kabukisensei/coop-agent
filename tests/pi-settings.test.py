@@ -34,7 +34,7 @@ with tempfile.TemporaryDirectory() as raw_tmp:
 
     existing = tmp / "existing.json"
     original = {
-        "packages": ["npm:context-mode@1.0.169"],
+        "packages": ["npm:pi-mcp-adapter@3.3.0"],
         "theme": "dark",
         "quietStartup": False,
         "futureSetting": {"preserve": True},
