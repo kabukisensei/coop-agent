@@ -226,8 +226,6 @@ dialogs as cards and lists.
 | `/google-account` | pi-web-access | Pi | Answers in the conversation. |
 | `/search` | pi-web-access | Pi | Stored results, as a list or a notice. |
 | `/rename` | pi-lovely-rename | Pi | Names the session from the conversation. |
-| `/ctx-stats` | context-mode | Pi | The statistics report in the conversation. |
-| `/ctx-doctor` | context-mode | Pi | The diagnostics report in the conversation. |
 | `/llama` | Pi | terminal | The llama.cpp manager is interactive-mode only (Pi says so). |
 
 ## Prompt templates and skills
