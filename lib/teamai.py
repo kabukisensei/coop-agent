@@ -45,6 +45,16 @@ With `--approve` it stages the note on a new `coop/learning/...` branch pushed f
 a disposable clone of the team repo (`<profile dir>/teamai/stage`), prints the
 branch and compare URL, and leaves the pull request to the person. The default
 branch and the `learnings` branch are never written.
+
+Lifecycle (K3, revision 2.0 section 8.4, each piece deliberately enabled and
+read-only): `skills` lists the team repo's `skills/*/SKILL.md` and, only with
+`knowledge.teamai.skills: true`, the launcher loads them through the existing
+subordinate team-skills slot (Cooptimize skills win); `maintenance` is a stale-entry
+report over the isolated clone's `learnings/` (nothing is pruned: the CLI's
+`recall maintenance --prune` is not adopted); `compare --query` runs the bundled
+local search and the isolated recall on the same query, side by side, as the
+section 8.5 migration evidence. Digest, codebase extraction and session sharing
+are not adopted.
 """
 
 from __future__ import annotations
@@ -441,10 +451,21 @@ def gate(doc: dict, package: str, need_init: bool = True) -> str | None:
 
 # --- commands -----------------------------------------------------------------
 
+def remember_clone_path() -> None:
+    """Record the clone in state.json, which the launcher's team-skills slot reads.
+    status, pull and skills all refresh it, so a profile initialized before K3
+    picks the slot up on its next pull instead of silently loading nothing."""
+    clone = str(team_repo_local_path() or "")
+    if clone and read_state().get("clone_path") != clone:
+        write_state({"clone_path": clone})
+
+
 def cmd_status(block: dict, package: str, pin: str) -> dict:
     doc = base_doc("status", block, package, pin)
     doc["initialized"] = initialized()
     doc["revision"] = team_repo_revision() if doc["initialized"] else ""
+    if doc["initialized"]:
+        remember_clone_path()
     doc.update(staleness(read_state()))
     g = gate(doc, package)
     if g:
@@ -530,7 +551,7 @@ def cmd_init(block: dict, package: str, pin: str) -> dict:
         doc["warnings"].append(failure)
         write_state({"last_init_error": failure, "last_init_at": now_iso()})
         return doc
-    write_state({"initialized_at": now_iso(), "last_init_error": "", "last_init_at": now_iso()})
+    write_state({"initialized_at": now_iso(), "clone_path": str(team_repo_local_path() or ""), "last_init_error": "", "last_init_at": now_iso()})
     doc["state"] = "ok"
     doc["revision"] = team_repo_revision()
     doc["detail"] = "initialized in the isolated home against the configured team repo"
@@ -550,6 +571,7 @@ def cmd_pull(block: dict, package: str, pin: str) -> dict:
         doc.update(staleness(read_state()))
         return doc
     write_state({"last_pull_at": now_iso()})
+    remember_clone_path()
     doc["state"] = "ok"
     doc["revision"] = team_repo_revision()
     doc.update(staleness(read_state()))
@@ -942,9 +964,205 @@ def cmd_contribute(block: dict, package: str, pin: str, file: str, title: str, a
     return doc
 
 
+# --- lifecycle (K3: deliberately enabled, read-only) -----------------------------
+
+DEFAULT_STALE_DAYS = 180
+PROPOSED_OLD_DAYS = 90
+COMPARE_TOP = 3
+
+
+def skills_enabled(block: dict) -> bool:
+    v = block.get("skills", False)
+    if isinstance(v, str):
+        return v.strip().lower() in ("1", "true", "yes", "on")
+    return bool(v)
+
+
+def cooptimize_skill_names(root: Path | None = None) -> set[str]:
+    """Folder and frontmatter names of coop's own skills, the same set the launcher
+    (bin/coop.ps1) checks before it loads a team skill: a Cooptimize skill wins."""
+    names: set[str] = set()
+    skills = (root or HERE.parent) / "skills"
+    if not skills.is_dir():
+        return names
+    for d in skills.iterdir():
+        sk = d / "SKILL.md"
+        if not d.is_dir() or not sk.is_file():
+            continue
+        names.add(d.name)
+        try:
+            fm = frontmatter(sk.read_text(encoding="utf-8-sig", errors="replace"))
+        except OSError:
+            fm = {}
+        if fm.get("name"):
+            names.add(fm["name"])
+    return names
+
+
+def list_team_skills(clone: Path) -> list[dict]:
+    own = cooptimize_skill_names()
+    out: list[dict] = []
+    root = clone / "skills"
+    if not root.is_dir():
+        return out
+    for d in sorted(p for p in root.iterdir() if p.is_dir()):
+        sk = d / "SKILL.md"
+        if not sk.is_file():
+            continue
+        try:
+            fm = frontmatter(sk.read_text(encoding="utf-8-sig", errors="replace"))
+        except OSError:
+            fm = {}
+        name = fm.get("name", "")
+        out.append({
+            "dir": str(d),
+            "name": name,
+            "description": fm.get("description", ""),
+            "valid": bool(name),
+            "conflicts_with_cooptimize": d.name in own or name in own,  # skipped at launch
+        })
+    return out
+
+
+def cmd_skills(block: dict, package: str, pin: str) -> dict:
+    doc = base_doc("skills", block, package, pin)
+    doc["distribution_enabled"] = skills_enabled(block)
+    doc["skills"] = []
+    g = gate(doc, package)
+    if g:
+        doc["state"] = g
+        return doc
+    clone = team_repo_local_path()
+    if not clone or not clone.is_dir():
+        doc["state"] = "unavailable"
+        doc["warnings"].append("the isolated team-repo clone is missing; run: coop teamai pull")
+        return doc
+    remember_clone_path()
+    doc["skills"] = list_team_skills(clone)
+    clashes = [k["name"] or Path(k["dir"]).name for k in doc["skills"] if k["conflicts_with_cooptimize"]]
+    if clashes:
+        doc["warnings"].append("never loaded, a Cooptimize skill has the same name: " + ", ".join(clashes))
+    doc["revision"] = team_repo_revision()
+    doc["state"] = "ok" if doc["skills"] else "no_match"
+    doc["detail"] = (
+        "loaded at launch through the subordinate team-skills slot (Cooptimize skills win on a name clash)"
+        if doc["distribution_enabled"]
+        else "listed only; set knowledge.teamai.skills to true to load them at launch"
+    )
+    return doc
+
+
+def parse_date(raw: str) -> datetime | None:
+    raw = (raw or "").strip().strip("'\"")
+    for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(raw[: len(fmt) + 2] if "T" in fmt else raw[:10], fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
+def cmd_maintenance(block: dict, package: str, pin: str) -> dict:
+    doc = base_doc("maintenance", block, package, pin)
+    try:
+        stale_days = int(block.get("stale_days") or DEFAULT_STALE_DAYS)
+    except (TypeError, ValueError):
+        stale_days = DEFAULT_STALE_DAYS
+    doc.update({"stale_days": stale_days, "entries_total": 0, "stale": [], "proposed_old": [], "malformed": [], "duplicates": [], "writes": False})
+    g = gate(doc, package)
+    if g:
+        doc["state"] = g
+        return doc
+    clone = team_repo_local_path()
+    root = clone / "learnings" if clone else None
+    if not root or not root.is_dir():
+        doc["state"] = "no_learnings"
+        doc["detail"] = "the isolated clone has no learnings/ folder"
+        return doc
+    now = datetime.now(timezone.utc)
+    seen: dict[str, str] = {}
+    for f in sorted(root.rglob("*.md")):
+        rel = f.relative_to(clone).as_posix()
+        doc["entries_total"] += 1
+        try:
+            text = f.read_text(encoding="utf-8-sig", errors="replace")
+        except OSError as exc:
+            doc["malformed"].append({"path": rel, "why": f"unreadable: {exc}"})
+            continue
+        fm = frontmatter(text)
+        if not fm or not fm.get("title"):
+            doc["malformed"].append({"path": rel, "why": "no frontmatter title"})
+            continue
+        title = fm["title"].strip().lower()
+        if title in seen:
+            doc["duplicates"].append({"path": rel, "title": fm["title"], "same_as": seen[title]})
+        else:
+            seen[title] = rel
+        when = parse_date(fm.get("date", ""))
+        if when is None:
+            doc["malformed"].append({"path": rel, "why": "no parsable date"})
+            continue
+        age = max(0, (now - when).days)
+        entry = {"path": rel, "title": fm["title"], "date": fm.get("date", ""), "age_days": age}
+        if age > stale_days:
+            doc["stale"].append(entry)
+        if fm.get("status", "") == "proposed" and age > PROPOSED_OLD_DAYS:
+            doc["proposed_old"].append(dict(entry, status="proposed"))
+    doc["revision"] = team_repo_revision()
+    doc["state"] = "ok"
+    n = len(doc["stale"]) + len(doc["proposed_old"]) + len(doc["malformed"]) + len(doc["duplicates"])
+    doc["detail"] = f"{doc['entries_total']} learnings, {n} finding(s); nothing was changed (review and fix through a pull request)"
+    return doc
+
+
+def local_search(query: str) -> dict:
+    """The bundled literal search (scripts/search-knowledge.py) on the same
+    profile, as the adapter's peer: {status, matches, top, warnings, error}."""
+    helper = HERE.parent / "scripts" / "search-knowledge.py"
+    out = {"status": "", "matches": 0, "top": [], "warnings": [], "error": ""}
+    if not helper.is_file():
+        out["error"] = "scripts/search-knowledge.py is missing"
+        return out
+    r = run_bounded([sys.executable, str(helper), "--query", query], helper.parent, dict(os.environ), timeout_seconds())
+    if r["timed_out"] or r["error"]:
+        out["error"] = r["error"]
+        return out
+    try:
+        data = json.loads(r["stdout"] or "{}")
+    except json.JSONDecodeError:
+        out["error"] = f"local search exited {r['rc']} without JSON"
+        return out
+    out["status"] = str(data.get("status", ""))
+    matches = data.get("matches") if isinstance(data.get("matches"), list) else []
+    out["matches"] = len(matches)
+    out["top"] = [{"repository": m.get("root_label", ""), "path": m.get("path", ""), "snippet": m.get("snippet", "")} for m in matches[:COMPARE_TOP]]
+    out["warnings"] = [str(w) for w in (data.get("warnings") or [])]
+    return out
+
+
+def cmd_compare(block: dict, package: str, pin: str, query: str) -> dict:
+    doc = base_doc("compare", block, package, pin)
+    doc["query"] = query
+    doc["local"] = local_search(query)
+    recall = cmd_recall(block, package, pin, query)
+    doc["teamai"] = {
+        "state": recall["state"],
+        "results": len(recall.get("results", [])),
+        "truncated": bool(recall.get("truncated")),
+        "stale": bool(recall.get("stale")),
+        "top": [{"repository": r.get("repository", ""), "path": r.get("file", ""), "title": r.get("title", ""), "snippet": r.get("snippet", "")} for r in recall.get("results", [])[:COMPARE_TOP]],
+        "warnings": recall.get("warnings", []),
+    }
+    local_names = {Path(m["path"]).name for m in doc["local"]["top"] if m.get("path")}
+    doc["overlap"] = sorted(Path(r.get("file", "")).name for r in recall.get("results", []) if r.get("file") and Path(r["file"]).name in local_names)
+    doc["state"] = "ok" if (doc["local"]["status"] or doc["teamai"]["state"] not in ("disabled", "not_installed", "not_initialized")) else recall["state"]
+    doc["detail"] = "read-only side-by-side of the bundled local search and the isolated recall on one query (section 8.5 evidence); neither path was changed"
+    return doc
+
+
 # --- CLI ------------------------------------------------------------------------
 
-USAGE = "usage: teamai.py <status|install|init|pull|recall --query <text>|contribute --file <draft.md> [--title <text>] [--approve]>"
+USAGE = "usage: teamai.py <status|install|init|pull|skills|maintenance|recall --query <text>|compare --query <text>|contribute --file <draft.md> [--title <text>] [--approve]>"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -976,7 +1194,7 @@ def main(argv: list[str] | None = None) -> int:
         if not c_file:
             print("error: contribute needs --file <draft.md>", file=sys.stderr)
             return EXIT_USAGE
-    elif command == "recall":
+    elif command in ("recall", "compare"):
         rest = argv[1:]
         if len(rest) >= 2 and rest[0] == "--query":
             query = " ".join(rest[1:]).strip()
@@ -985,7 +1203,7 @@ def main(argv: list[str] | None = None) -> int:
         if not query:
             print("error: recall needs --query <text>", file=sys.stderr)
             return EXIT_USAGE
-    elif command not in ("status", "install", "init", "pull"):
+    elif command not in ("status", "install", "init", "pull", "skills", "maintenance"):
         print(f"error: unknown command {command!r}\n{USAGE}", file=sys.stderr)
         return EXIT_USAGE
     elif argv[1:]:
@@ -1004,6 +1222,12 @@ def main(argv: list[str] | None = None) -> int:
             doc = cmd_pull(block, package, pin)
         elif command == "contribute":
             doc = cmd_contribute(block, package, pin, c_file, c_title, c_approve)
+        elif command == "skills":
+            doc = cmd_skills(block, package, pin)
+        elif command == "maintenance":
+            doc = cmd_maintenance(block, package, pin)
+        elif command == "compare":
+            doc = cmd_compare(block, package, pin, query)
         else:
             doc = cmd_recall(block, package, pin, query)
     except Exception as exc:  # the adapter itself failed: say so, never a traceback on stdout

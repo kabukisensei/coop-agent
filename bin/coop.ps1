@@ -115,7 +115,7 @@ function Invoke-CoopTeamai {
   param([string[]]$Rest)
   $py = Get-CoopPython
   if (-not $py) { Coop-Die 'python3 is required for coop teamai' }
-  if (-not $Rest -or $Rest.Count -eq 0) { Coop-Die 'usage: coop teamai <status|install|init|pull|recall --query <text>|contribute --file <draft.md> [--title <text>] [--approve]>' }
+  if (-not $Rest -or $Rest.Count -eq 0) { Coop-Die 'usage: coop teamai <status|install|init|pull|skills|maintenance|recall --query <text>|compare --query <text>|contribute --file <draft.md> [--title <text>] [--approve]>' }
   & $py (Join-Path $script:CoopRoot 'lib\teamai.py') @Rest
   exit $LASTEXITCODE
 }
@@ -171,8 +171,9 @@ $(Coop-Bold)Usage$(Coop-Rst)
   coop profile edit         Edit your COOP user profile
   coop profile reset        Remove your COOP user profile
   coop teamai <cmd>         TeamAI shared-knowledge trial, isolated (status|install|init|pull|
-                            recall --query <text>|contribute --file <draft.md> [--approve]);
-                            off until knowledge.teamai.enabled is true
+                            skills|maintenance|recall --query <text>|compare --query <text>|
+                            contribute --file <draft.md> [--approve]); off until
+                            knowledge.teamai.enabled is true
   coop context-budget       Report fixed startup context sizes (use --json for machine output)
   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
                             (--strict: exit 2 on a failing linter; --skip-docs: linters only)
@@ -299,11 +300,19 @@ function Build-CoopPiArgs {
         }
       }
     }
+    # Team skills roots: every knowledge repo's skills\ plus, when the TeamAI
+    # trial's distribution is enabled (K3), the isolated clone's skills\. Same
+    # subordinate rules for all of them: a Cooptimize skill always wins.
+    $teamSkillRoots = @()
     if (Test-CoopKnowledgeEnabled) {
       foreach ($repo in (Get-CoopKnowledgeRepos)) {
-        $path = $repo.LocalPath
-        if (-not $path) { continue }
-        $teamSkills = Join-Path $path 'skills'
+        if ($repo.LocalPath) { $teamSkillRoots += (Join-Path $repo.LocalPath 'skills') }
+      }
+    }
+    $teamaiSkills = Get-CoopTeamaiSkillsRoot
+    if ($teamaiSkills) { $teamSkillRoots += $teamaiSkills }
+    if ($teamSkillRoots.Count -gt 0) {
+      foreach ($teamSkills in $teamSkillRoots) {
         if (-not (Test-Path -LiteralPath $teamSkills -PathType Container)) { continue }
         # Parse the frontmatter name BEFORE adding any launch argument; an
         # optional external skill that can't identify itself is skipped, never

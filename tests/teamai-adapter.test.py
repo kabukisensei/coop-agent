@@ -172,8 +172,8 @@ with tempfile.TemporaryDirectory() as raw:
         }
     )
 
-    def set_config(block: dict | None) -> None:
-        cfg = {"schema_version": 1, "knowledge": {"enabled": False, "repos": []}}
+    def set_config(block: dict | None, repos: list | None = None) -> None:
+        cfg = {"schema_version": 1, "knowledge": {"enabled": bool(repos), "repos": repos or []}}
         if block is not None:
             cfg["knowledge"]["teamai"] = block
         (profile / "config").write_text(json.dumps(cfg), encoding="utf-8")
@@ -480,6 +480,72 @@ with tempfile.TemporaryDirectory() as raw:
     check(len(refs) == 3, "refused drafts never reached the team repo")
     rc, doc, _ = run(base_env, "contribute", "--file", str(draft), "--bogus")
     check(rc == 2, "contribute: unknown argument -> exit 2")
+
+    # --- K3: skills listing, maintenance report (read-only), compare (section 8.5 evidence) ---------
+    stub_mode.write_text("results", encoding="utf-8")
+    set_config({"enabled": True, "team_repo": team_url, "provider": "git", "role": ""})
+    rc, doc, err = run(base_env, "skills", "extra")
+    check(rc == 2, "skills with an argument -> exit 2")
+    rc, doc, _ = run(base_env, "skills")
+    check(rc == 0 and doc["state"] == "no_match" and doc["skills"] == [] and doc["distribution_enabled"] is False, f"skills: no skills/ in the clone -> no_match, distribution off ({doc['state']})")
+    (team_clone / "skills" / "team-valid").mkdir(parents=True)
+    (team_clone / "skills" / "team-valid" / "SKILL.md").write_text("---\nname: team-valid\ndescription: A team skill\n---\n# Team valid\n", encoding="utf-8")
+    (team_clone / "skills" / "team-bad").mkdir(parents=True)
+    (team_clone / "skills" / "team-bad" / "SKILL.md").write_text("# no frontmatter\n", encoding="utf-8")
+    (team_clone / "skills" / "coop-workflow").mkdir(parents=True)
+    (team_clone / "skills" / "coop-workflow" / "SKILL.md").write_text("---\nname: coop-workflow\ndescription: clash\n---\n", encoding="utf-8")
+    rc, doc, _ = run(base_env, "skills")
+    names = {sk["name"]: sk["valid"] for sk in doc["skills"]}
+    check(doc["state"] == "ok" and names == {"team-valid": True, "": False, "coop-workflow": True} and "listed only" in doc["detail"], "skills: lists valid and invalid SKILL.md, off by default -> 'listed only'")
+    clash = {sk["name"]: sk["conflicts_with_cooptimize"] for sk in doc["skills"]}
+    check(clash == {"team-valid": False, "": False, "coop-workflow": True} and any("coop-workflow" in w for w in doc["warnings"]), f"skills: a team skill named like a Cooptimize skill is flagged and warned, as the launcher skips it ({clash})")
+    set_config({"enabled": True, "team_repo": team_url, "provider": "git", "role": "", "skills": True})
+    rc, doc, _ = run(base_env, "skills")
+    check(doc["distribution_enabled"] is True and "subordinate" in doc["detail"], "skills: knowledge.teamai.skills true -> distribution on, subordinate slot named")
+    rc, doc, _ = run(base_env, "status")
+    st = json.loads((profile / "teamai" / "state.json").read_text(encoding="utf-8"))
+    check(st.get("clone_path") == str(team_clone), "status: state.json carries clone_path for the launcher's team-skills slot")
+    st.pop("clone_path", None)
+    (profile / "teamai" / "state.json").write_text(json.dumps(st), encoding="utf-8")
+    rc, doc, _ = run(base_env, "pull")
+    st = json.loads((profile / "teamai" / "state.json").read_text(encoding="utf-8"))
+    check(doc["state"] == "ok" and st.get("clone_path") == str(team_clone), "pull: a state.json from before K3 gains clone_path, so the skills slot works without a status run")
+
+    learn = team_clone / "learnings"
+    (learn / "recent.md").write_text("---\ntitle: Recent note\ndate: 2026-09-01\nstatus: proposed\n---\nbody\n", encoding="utf-8")
+    (learn / "old.md").write_text("---\ntitle: Old note\ndate: 2025-01-01\nstatus: proposed\n---\nbody\n", encoding="utf-8")
+    (learn / "dup.md").write_text("---\ntitle: recent NOTE\ndate: 2026-09-15\n---\nbody\n", encoding="utf-8")
+    (learn / "undated.md").write_text("---\ntitle: Undated\n---\nbody\n", encoding="utf-8")
+    before = {f.name: f.read_bytes() for f in learn.iterdir()}
+    rc, doc, _ = run(base_env, "maintenance")
+    check(rc == 0 and doc["state"] == "ok" and doc["writes"] is False and doc["entries_total"] == 5, f"maintenance: ok, read-only, 5 entries ({doc['entries_total']})")
+    check([e["path"] for e in doc["stale"]] == ["learnings/old.md"], f"maintenance: stale after {doc['stale_days']} days -> old.md only")
+    check([e["path"] for e in doc["proposed_old"]] == ["learnings/old.md"], "maintenance: proposed older than 90 days -> old.md")
+    check(sorted(m["path"] for m in doc["malformed"]) == ["learnings/existing-note.md", "learnings/undated.md"], "maintenance: no title / no date -> malformed")
+    check([d["path"] for d in doc["duplicates"]] == ["learnings/recent.md"] and doc["duplicates"][0]["same_as"] == "learnings/dup.md", "maintenance: duplicate titles (case-insensitive) reported with the first path")
+    check({f.name: f.read_bytes() for f in learn.iterdir()} == before, "maintenance: nothing in the clone was changed")
+    set_config({"enabled": True, "team_repo": team_url, "provider": "git", "role": "", "stale_days": 10})
+    rc, doc, _ = run(base_env, "maintenance")
+    check(doc["stale_days"] == 10 and sorted(e["path"] for e in doc["stale"]) == ["learnings/dup.md", "learnings/old.md", "learnings/recent.md"], "maintenance: knowledge.teamai.stale_days overrides the 180-day default")
+    shutil.rmtree(learn)
+    rc, doc, _ = run(base_env, "maintenance")
+    check(doc["state"] == "no_learnings", "maintenance: no learnings/ folder -> no_learnings")
+
+    local_repo = tmp / "local-knowledge"
+    (local_repo / "learnings").mkdir(parents=True)
+    (local_repo / "learnings" / "2026-09-30-marker-alpha-1.md").write_text("# Marker alpha\n\nUse a watermark per partition (marker alpha).\n", encoding="utf-8")
+    set_config({"enabled": True, "team_repo": team_url, "provider": "git", "role": ""}, repos=[{"url": "https://example.invalid/local.git", "local_path": str(local_repo)}])
+    rc, doc, err = run(base_env, "compare", "--query", "marker alpha")
+    check(rc == 0 and doc["state"] == "ok" and doc["query"] == "marker alpha", f"compare: ok ({err.strip()[:120]})")
+    check(doc["local"]["status"] == "ok" and doc["local"]["matches"] >= 1 and doc["local"]["top"][0]["path"].endswith("2026-09-30-marker-alpha-1.md"), f"compare: local search ran on the configured repo ({doc['local']})")
+    check(doc["teamai"]["state"] == "ok" and doc["teamai"]["results"] == 5 and len(doc["teamai"]["top"]) == 3, "compare: isolated recall side with capped results and top 3")
+    check(doc["overlap"] == ["2026-09-30-marker-alpha-1.md"], f"compare: overlap by file name ({doc['overlap']})")
+    check("ghp_SECRET_TOKEN" not in json.dumps(doc), "compare: no token in the document")
+    set_config({"enabled": False, "team_repo": team_url}, repos=[{"url": "https://example.invalid/local.git", "local_path": str(local_repo)}])
+    rc, doc, _ = run(base_env, "compare", "--query", "marker alpha")
+    check(doc["state"] == "ok" and doc["teamai"]["state"] == "disabled" and doc["local"]["matches"] >= 1, "compare: trial disabled -> local side still answers, teamai side says disabled")
+    rc, doc, _ = run(base_env, "compare")
+    check(rc == 2, "compare without a query -> exit 2")
 
     # --- the decoy never ran ---------------------------------------------------------------------
     check(not decoy_marker.exists(), "a `teamai` on PATH was never executed")
