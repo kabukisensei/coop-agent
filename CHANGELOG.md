@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.29.2] — 2026-10-02
+
 ### Added
 
 - The coop window package (master plan D1c): an unsigned, per-user Windows
