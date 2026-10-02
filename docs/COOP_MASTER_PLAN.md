@@ -1,6 +1,6 @@
 # Coop master plan — ordered execution roadmap
 
-**Document revision 3.11 · October 2, 2026** (Phase 8 D1, the packaged Electron desktop, scoped into rows D1a–D1g with the decisions Aaron must take before it starts; sections 11.1–11.4 and register row 16. Revision 3.10 added the Pi 1.0 row U2, section 6.5; revision 3.9 added the mixed-estate documentation repair, section 8.1. Existing phase ordering and the revision 3.8 scope decisions remain.)
+**Document revision 3.12 · October 2, 2026** (D1a, the desktop decision record and salvage list: every section 11.3 item has a recorded answer or default, and the September desktop branches are reviewed file by file; section 11.5 and register row 16. Revision 3.11 scoped Phase 8 D1 into rows D1a–D1g, sections 11.1–11.4; revision 3.10 added the Pi 1.0 row U2, section 6.5; revision 3.9 added the mixed-estate documentation repair, section 8.1. Existing phase ordering and the revision 3.8 scope decisions remain.)
 **Product scope: Coop Windows terminal first; an installable Electron desktop returns after the terminal is simplified.**
 
 **Canonical repository location:** `docs/COOP_MASTER_PLAN.md`. This revision keeps the
@@ -1124,6 +1124,7 @@ instantly; D1f records what the first teammate sees.
 Aaron, 2026-10-02: item 8 is decided (signing is not required for done); items
 1–7 are decided "when needed", so each is asked at the start of the row that
 needs it (noted per item) and the recommendation is the default until then.
+Section 11.5 records the answer or default for every item (D1a, revision 3.12).
 
 1. **(D1b)** **The window shows Pi's terminal** (`xterm.js` over the launch spec, the
    recommendation and what 11.2 assumes) **or a rendered chat** over `pi --mode
@@ -1176,6 +1177,133 @@ platform (staged Python, parity schemas, the `coop runtime` HTTP contract, the
 Ed25519 update service) is not revived; the one Pi and one profile root rule from
 Phase 2 holds.
 
+### 11.5 D1a: decision record and salvage list (revision 3.12, October 2, 2026)
+
+Docs only; no app code. D1a is the one D1 row that needs no start beyond this
+record, because it writes nothing but the plan. D1b and every later row still
+wait for Aaron's explicit start (section 14); on 2026-10-02 Aaron chose to land
+this record only and not to start D1b yet.
+
+**Decision record.** What Aaron has said, and the default for everything else.
+Each default holds until the row named in brackets starts, when Aaron confirms
+or changes it; a changed default is a plan revision in that row's PR.
+
+| 11.3 item | Row | Answer | Source |
+| --- | --- | --- | --- |
+| Launch | D1b | Starting the window from the terminal product (`coop desktop`, a shortcut next to the terminal one) is fine; no installer is needed first | Aaron, 2026-10-02 |
+| 8 Signing | D1f | Not required for done; D1f is optional and blocks nothing | Aaron, 2026-10-02 |
+| Audience | all | Internal only: the seven teammates, nothing official, no public download, store identity or publisher reputation | Aaron, 2026-10-02 |
+| 1 Window shape | D1b | Default: Pi's own terminal in the window (`xterm.js` over `node-pty`, running the launch spec); a rendered chat is a later row | recommendation |
+| 2 Installer type | D1c | Default: NSIS per-user via electron-builder, no administrator | recommendation |
+| 3 Certificate | D1f | None; Azure Trusted Signing is the default only if Aaron later wants the SmartScreen click gone | follows item 8 |
+| 4 Distribution | D1e | Default: the release page of `kabukisensei/coop-agent`, downloaded by a signed-in teammate; reinstall over the old version is the update path, with a one-line in-app notice when behind | recommendation, follows the audience |
+| 5 Repository | D1a | Default: `desktop/` in coop-agent, so the app and coop share one tag, one CI and one lockfile | recommendation; Aaron may still move it before D1b writes code |
+| 6 Git | D1d | Default: Git stays a prerequisite in the H1 table (one more `winget` line); no bundled MinGit | recommendation |
+| 7 Acceptance | D1g | Default: Aaron names the teammate when D1g starts; a "desktop-blank" VM snapshot is kept only if D1d needs a second blank machine | recommendation |
+
+**What the review found.** The September branches never had a terminal in the
+window: the app was a rendered chat (the Coop Web single-page app) over a
+`coop runtime` HTTP server, and its "native terminal" opened a separate console
+window. No `xterm.js` or `node-pty` code exists on any of the ten branches, so
+D1b's core (the PTY host and the terminal view) is new code. What carries over is
+the hardening and packaging around a window. Paths below are on
+`desktop/candidate-2026-09-20` (head `ed516b2`, September 13) unless a branch is
+named; `feature/coop-desktop-windows-validation-gui` is at `0f96d2e`. The other
+eight `feature/coop-desktop-*` branches add validation fixes, diagnostics and
+handoff notes for the parts left behind below, and nothing to salvage. Salvage means copying the idea or a few
+reviewed lines into the new `desktop/`, never merging a branch.
+
+**Salvage: reuse in D1b.**
+
+- *Renderer hardening* (`desktop/src/main.mjs`): the `BrowserWindow`
+  `webPreferences` block (sandbox, context isolation, no Node integration in the
+  renderer or workers, web security on, no insecure content, no experimental
+  features), the deny-all permission request, permission check and device
+  handlers, `setWindowOpenHandler` returning deny, the `will-navigate` guard, and
+  `safeExternalUrl` with a confirm dialog (http or https only, no embedded
+  credentials, 2048 characters at most) for links Pi prints. This is D1b's
+  "renderer sandboxed" scope, already written and reviewed once.
+- *Finding coop* (`desktop/src/coop-launcher.mjs`, `resolveCoopLauncher`): PATH
+  and PATHEXT lookup that skips relative PATH entries, `coop.cmd` resolved to its
+  `coop.ps1`, `pwsh` then `powershell` with `-NoProfile -ExecutionPolicy Bypass
+  -File`, and refusal of relative or control-character paths. D1b uses it to run
+  `coop launch-spec --json`; drop the macOS and Linux branches.
+- *Ending the process tree* (`desktop/src/runtime-supervisor.mjs`,
+  `terminateWindowsRuntimeTree`): `taskkill /PID <pid> /T /F` from `SystemRoot`
+  with a timeout, then wait for the pipes to close. D1b's "window close ends Pi
+  cleanly" needs this after `node-pty`'s own kill, because Pi starts MCP servers
+  and other children that a ConPTY kill can leave running.
+- *Preload shape* (`desktop/src/preload.cjs`): a frozen `contextBridge` object of
+  named methods. Keep the pattern, not the methods: D1b's preload exposes only
+  terminal input, output, resize and exit.
+
+**Salvage: reuse in D1c and D1d.**
+
+- *Electron fuses* (`desktop/package.json`, `build.electronFuses`): run-as-node
+  off, `NODE_OPTIONS` and inspect arguments off, embedded asar integrity on, load
+  the app only from asar, no extra `file:` privileges. Fuses apply to a packaged
+  app, so they start in D1c (D1b runs Electron from the isolated tree).
+- *NSIS options* (`desktop/electron-builder-installer.cjs`): `perMachine: false`,
+  `allowElevation: false`, `oneClick: false`, `deleteAppDataOnUninstall: false`,
+  `runAfterFinish: false`, `themes/coop.ico` for installer and uninstaller, and
+  the `Coop-Desktop-${version}-${os}-${arch}` artifact name. Drop the macOS
+  `dmg` block and the managed-runtime config it extends. D1c.
+- *Installer acceptance* (`desktop/scripts/verify-windows-installer.mjs`):
+  `assertDisposableInstallerHost` (the mutating test runs only on a GitHub-hosted
+  runner with an explicit opt-in variable), `buildNsisInvocation` (`/S
+  /currentuser`, then `/D=` or `_?=` last and unquoted, as NSIS requires), the
+  bounded `runOwnedCommand` and the Add/Remove registry check. Drop its
+  managed-package and native-health imports. D1c's CI job.
+- *Long-path uninstall* (`desktop/build/windows-uninstall.nsh` and
+  `desktop/scripts/verify-nsis-long-paths.mjs` on
+  `feature/coop-desktop-windows-validation-gui`): electron-builder's uninstaller
+  moves the old install into a temporary folder during an upgrade, where a deep
+  npm tree passes 260 characters and the upgrade fails with exit code 2. The hook
+  uses extended paths and refuses junctions. Not needed for D1c's window-only
+  package; D1d needs it as soon as the Pi and extension tree is staged.
+- *Footprint baseline* (`docs/adr/desktop-shell-spike-results.md`): Electron
+  44.2.0 measured 373 MB unpacked on Windows and about 516 MiB idle memory on
+  macOS. Use it as the expectation D1c and D1d record against; the Tauri result
+  in the same file is not pursued (section 11.4).
+
+**Leave behind.** None of this is copied or revived:
+
+- the managed runtime: `desktop/src/managed-runtime.mjs`, `managed-profile.mjs`,
+  `dependency-inventory.mjs`, `development-wheels.mjs`,
+  `scripts/prepare-managed-runtime.mjs`, `stage-managed-runtime.mjs`,
+  `verify-managed-runtime.mjs`, `managed-runtime-build-plan.mjs`,
+  `config/managed-runtime*.json` and `desktop/electron-builder-managed.cjs`
+  (staged Node and relocatable Python with hash locks; D1d stages Node and the
+  `extensions-lock.json` tree instead, and Python stays a prerequisite);
+- the contracts and evidence: `config/desktop-parity*.json`,
+  `config/desktop-release-*.json`, `config/desktop-update*.json`,
+  `config/runtime-event.schema.json`, `scripts/desktop-release-gate.mjs` and
+  `docs/desktop-extension-contracts.md`;
+- the `coop runtime` HTTP contract and its clients: `web/runtime-*.mjs`,
+  `lib/rpc-questionnaire.mjs` (on `feature/coop-desktop-windows-validation-interaction`) and the Coop Web renderer (D1b shows Pi's own TUI,
+  so no extension dialog is re-implemented);
+- the Ed25519 update service: the twenty-two `desktop/src/update-*` files
+  (JavaScript, Python and PowerShell) and their trust key and feed (D1e uses
+  reinstall, or `electron-updater` only if it needs no token);
+- renderer features: workspace selection and leases, the three themes, session
+  restoration and HTML export, and terminal clone, move and model-login handoffs
+  (`native-terminal.mjs`, `workspace-selection.mjs`, `session-*.mjs`,
+  `desktop-state.mjs`); the window opens in the folder `coop desktop` was started
+  from, and Pi's own `/resume` and `/export` cover the rest;
+- the Windows validation diagnostics: `desktop/scripts/diagnose-windows-shell.mjs`,
+  `electron-builder-windows-validation.cjs`, the "Defect D" `Start-Job` work and
+  the `docs/agent/*` notes. Their cause was the managed dispatcher launching coop
+  its own way; D1b runs the launch spec coop already emits and tests;
+- the Tauri spike (`desktop/spikes/tauri/`), the Electron spike
+  (`desktop/spikes/electron/`), the macOS targets, the `managed-desktop-smoke.yml`
+  workflow, and the old pins (Electron 44.2.0, electron-builder 26.15.3): D1b pins
+  the current releases in `config/release-manifest.json`.
+
+**Branch disposal.** The branches stay until D1g, as 11.2 says. Deleting a
+branch makes its commits unreachable, so before D1g deletes them it checks that
+every salvaged item above landed in `desktop/` or is no longer wanted; the two
+heads named above are the reference until then.
+
 ## 12. Other improvements found in this review
 
 Not requested, offered for Aaron's decision. None is scheduled.
@@ -1227,12 +1355,12 @@ tags. A stale row is never a reason to re-do work: check the PR list first.
 | 10 | ST1 | Standards alignment and reviewer decision | H3 + U1 | resolver data-driven; reviewers retired from coop (decided 2026-09-28), self-check in place | merged 2026-10-01 (unreleased, [#211](https://github.com/kabukisensei/coop-agent/pull/211), f29bd50): wrappers, `coop review`, reviewer-discovered fallback and CI jobs removed; self-check in the workflow with the standards rule (deviate only on a user exception or a stated reason); a bundled copy of the wiki ships in coop as the offline/first-run fallback (Aaron, 2026-10-01); CLI repos archived by Aaron |
 | 11 | SQ1–SQ7 | Azure SQL targets, dev default, live impact, data verification, install-time Fabric/Azure SQL client choice (section 8 item 7) | ST1 | section 8 acceptance | merged 2026-10-01 (shipped in v0.26.0): SQ7 install-time client choice ([#208](https://github.com/kabukisensei/coop-agent/pull/208)), SQ1 `sql_targets` contract section ([#209](https://github.com/kabukisensei/coop-agent/pull/209)), SQ2 executor targets ([#212](https://github.com/kabukisensei/coop-agent/pull/212)), SQ3 guardrail scope ([#214](https://github.com/kabukisensei/coop-agent/pull/214)), SQ4 `sql_impact` ([#215](https://github.com/kabukisensei/coop-agent/pull/215)), SQ5 verify-with-data text ([#216](https://github.com/kabukisensei/coop-agent/pull/216)), SQ6 skill mapping text ([#217](https://github.com/kabukisensei/coop-agent/pull/217)); dev reads without approval ([#230](https://github.com/kabukisensei/coop-agent/pull/230)) and the `sql-formatting` skill ([#231](https://github.com/kabukisensei/coop-agent/pull/231)) followed; live acceptance (dev Azure SQL database + Fabric Warehouse) is Aaron's |
 | 11a | DD1–DD4 | Mixed-estate offline documentation and Coop evidence contract (section 8.1) | DD1 authorized now; later steps follow dependencies in section 8.1 | acceptance matrix, preserved intent/cache, honest scoped impact, Windows contract verification | DD1–DD3 merged in coop-data-doc [#67](https://github.com/kabukisensei/coop-data-doc/pull/67) (supersedes draft #66) and released as v1.3.0 (2026-10-01); coop pin bump [#238](https://github.com/kabukisensei/coop-agent/pull/238); DD4 wrapper contract in [#235](https://github.com/kabukisensei/coop-agent/pull/235) (supersedes draft #233), lands after row 11 and #230/#231. Native Windows and scope-ID migration acceptance pending |
-| 12 | FR1 | Common-workflows first run | SQ1 (menu items exist) | first launch shows the menu; onboarding no longer blocks | in review (PR), 2026-10-01: first interactive launch opens the seven-item `/start` menu once, the launch never runs the wizard, the name question moved into the project item |
+| 12 | FR1 | Common-workflows first run | SQ1 (menu items exist) | first launch shows the menu; onboarding no longer blocks | merged ([#241](https://github.com/kabukisensei/coop-agent/pull/241), 2026-10-01; shipped in v0.27.0): first interactive launch opens the seven-item `/start` menu once, the launch never runs the wizard, the name question moved into the project item |
 | 13 | PK1 | `pi-lovely-codex` versus `pi-better-openai`, diagnostics, simplify (naming moved to N1) | U1 + explicit start | one owner of usage stats; adopt/build/defer recorded per candidate | not started |
 | 14 | B1 | Minimal beta channel | — | — | **skipped** (Aaron, 2026-09-30: seven people update from tags; the VM qualifies upgrades) |
 | 15 | K1, K2, K3 | TeamAI shared knowledge: isolated CLI and read-only recall, reviewed contribution, broader lifecycle | FR1 + explicit start; VM isolation | revision 2.0 section 8 gates, one PR per row | not started (scheduled, revision 3.8) |
 | 15b | J0–J3 | Jev shadow experiments | explicit start | revision 2.0 gates | waiting (Aaron, 2026-09-30) |
-| 16 | D1 | Electron desktop with packaged installer, worked as D1a–D1g (section 11.2): decision record and salvage, `coop desktop` window from the terminal product (first deliverable, no installer or certificate), unsigned installer, bundled runtime, updates, signing last, teammate acceptance | 7–12 and 15 accepted; Aaron starts D1; U2 landed before D1d; each 11.3 item decided when its row starts | another user installs from the package alone (D1g); signing not required (Aaron, 2026-10-02) | scoped (revision 3.11, 2026-10-02); not started |
+| 16 | D1 | Electron desktop with packaged installer, worked as D1a–D1g (section 11.2): decision record and salvage, `coop desktop` window from the terminal product (first deliverable, no installer or certificate), unsigned installer, bundled runtime, updates, signing last, teammate acceptance | 7–12 and 15 accepted; Aaron starts D1; U2 landed before D1d; each 11.3 item decided when its row starts | another user installs from the package alone (D1g); signing not required (Aaron, 2026-10-02) | D1a decision record and salvage list in review (PR), revision 3.12, 2026-10-02 (section 11.5); D1b–D1g not started, each waits for Aaron |
 
 Phase 0 rows can each be released as a patch. Later phases are minor versions.
 Rows become `agent:ready` only when Aaron says so. On September 28 he marked the
