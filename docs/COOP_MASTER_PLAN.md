@@ -1,6 +1,6 @@
 # Coop master plan — ordered execution roadmap
 
-**Document revision 3.15 · October 2, 2026** (D1b2 as built: one side pane beside the timeline with four views, Changes, Standards, Project and Docs, opened from tool cards, the standards chip, setup notices, the command palette and Ctrl+\; the `/setup-project` writer and the `/setup-docs` driver moved out of `extensions/coop-tools/index.ts` into `lib/project-contract.mjs` and `lib/data-doc-setup.mjs` so the window calls the same code; the docs form shows coop-data-doc's prompts one at a time, as its wizard asks them, and the built docs open as Markdown in the pane, with a list of every object page because coop-data-doc's overview does not link them, and the HTML portal in the browser. Aaron's second D1b2 batch, same day: file attachments in the composer (images with the prompt as in the terminal; text by path; Word, Excel, PowerPoint read to Markdown by coop's own readers and PDF by pdf.js in a time-limited process, every document referenced by path so coop reads it through its guarded read tool), pdf.js pinned next to Electron as the runtime's second package, every pane draggable, the Cooptimize splash logo and the vibes in the window, the thinking and tool calls between replies folded into one expandable line with nothing removed from the session, and a readability pass over all four themes; register row 16. Revision 3.14 was D1b as built: the window runs coop's launch arguments with `--mode rpc` and no `-a`, because the recorded session shows coop's guardrails, standards and skills load without it and `-a` would only trust a work repo's own `.pi` files, which the terminal asks about first; Electron installs into its own runtime tree on the first `coop desktop`, not into the extension tree on every machine; the first `coop desktop` adds the "coop (window)" shortcut; register row 16. Revision 3.13 was D1a, the desktop decision record and salvage list: Aaron chose a rendered, modern UI with four themes over a terminal in a window, D1b is re-scoped to it with a terminal parity rule, a changes panel, a standards pane, a project form and a docs setup form go into D1b2 with a list of proposed enhancements (section 11.6), every other section 11.3 item has a recorded default, and the September desktop branches are reviewed file by file; sections 11.1–11.6 and register row 16. Revision 3.12 added an explore and research watch list, section 12.1, starting with PiG, the Go port of Pi: watched, not scheduled. Revision 3.11 scoped Phase 8 D1 into rows D1a–D1g, sections 11.1–11.4; revision 3.10 added the Pi 1.0 row U2, section 6.5; revision 3.9 added the mixed-estate documentation repair, section 8.1. Existing phase ordering and the revision 3.8 scope decisions remain.)
+**Document revision 3.16 · October 2, 2026** (Pi Durable added to the section 12.1 watch list: the experimental durable agent-harness library published beside Pi 1.0, watched, not scheduled; Aaron asked on 2026-10-02. Revision 3.15 was D1b2 as built: one side pane beside the timeline with four views, Changes, Standards, Project and Docs, opened from tool cards, the standards chip, setup notices, the command palette and Ctrl+\; the `/setup-project` writer and the `/setup-docs` driver moved out of `extensions/coop-tools/index.ts` into `lib/project-contract.mjs` and `lib/data-doc-setup.mjs` so the window calls the same code; the docs form shows coop-data-doc's prompts one at a time, as its wizard asks them, and the built docs open as Markdown in the pane, with a list of every object page because coop-data-doc's overview does not link them, and the HTML portal in the browser. Aaron's second D1b2 batch, same day: file attachments in the composer (images with the prompt as in the terminal; text by path; Word, Excel, PowerPoint read to Markdown by coop's own readers and PDF by pdf.js in a time-limited process, every document referenced by path so coop reads it through its guarded read tool), pdf.js pinned next to Electron as the runtime's second package, every pane draggable, the Cooptimize splash logo and the vibes in the window, the thinking and tool calls between replies folded into one expandable line with nothing removed from the session, and a readability pass over all four themes; register row 16. Revision 3.14 was D1b as built: the window runs coop's launch arguments with `--mode rpc` and no `-a`, because the recorded session shows coop's guardrails, standards and skills load without it and `-a` would only trust a work repo's own `.pi` files, which the terminal asks about first; Electron installs into its own runtime tree on the first `coop desktop`, not into the extension tree on every machine; the first `coop desktop` adds the "coop (window)" shortcut; register row 16. Revision 3.13 was D1a, the desktop decision record and salvage list: Aaron chose a rendered, modern UI with four themes over a terminal in a window, D1b is re-scoped to it with a terminal parity rule, a changes panel, a standards pane, a project form and a docs setup form go into D1b2 with a list of proposed enhancements (section 11.6), every other section 11.3 item has a recorded default, and the September desktop branches are reviewed file by file; sections 11.1–11.6 and register row 16. Revision 3.12 added an explore and research watch list, section 12.1, starting with PiG, the Go port of Pi: watched, not scheduled. Revision 3.11 scoped Phase 8 D1 into rows D1a–D1g, sections 11.1–11.4; revision 3.10 added the Pi 1.0 row U2, section 6.5; revision 3.9 added the mixed-estate documentation repair, section 8.1. Existing phase ordering and the revision 3.8 scope decisions remain.)
 **Product scope: Coop Windows terminal first; an installable Electron desktop returns after the terminal is simplified.**
 
 **Canonical repository location:** `docs/COOP_MASTER_PLAN.md`. This revision keeps the
@@ -1519,6 +1519,41 @@ installed.
   Azure bearer header and the guardrails' approval prompts, passes the VM matrix
   under `pig` with no coop-side shims. (4) A concrete gain coop can name: a
   materially smaller or simpler D1d bundle, or startup time teammates notice.
+  Re-check at U2 or D1d, whichever starts first; until then it stays here.
+
+**Pi Durable (`@earendil-works/pi-durable`).** Aaron asked about it on 2026-10-02
+with Pi 1.0.0. Read the same day from npm and the Pi repository
+(`packages/durable`, MIT); nothing was installed.
+
+- **What it is.** An experimental library in the Pi monorepo, internally "Pico5",
+  published in lockstep with Pi since 0.87.0 and now 1.0.0. It is a crash-safe
+  agent harness: every user message, model turn, tool call and compaction is
+  committed to local storage (SQLite or JSONL) before it is shown, so a process that
+  dies mid-turn resumes where it stopped when the storage is reopened. It brings its
+  own extension model (tools, prompt sections, hooks, subagents, a task graph) and a
+  state view a UI can subscribe to. Two siblings, `pi-protocol` and `pi-client`, are
+  an experimental client and server split over a byte stream. Its README says the
+  API changes without notice between releases.
+- **Isolation.** Nothing hosted: storage is a local file, and the remote protocol
+  is a transport the host runs itself. If coop ever used it, the session store would
+  live under `~/.coop` on the client machine.
+- **Why not now.**
+  - *Simplicity and maintainability:* the `pi` CLI that coop wraps (1.0.0) does not
+    use pi-durable. Coop's four extensions, `pi-mcp-adapter` and `pi-hermes-memory`
+    are written against the coding agent's extension API, which is a different API.
+    Adopting pi-durable means rewriting coop as its own agent on the harness, the
+    fork coop has always avoided.
+  - *Stability:* experimental, with no compatibility guarantees.
+  - *Capability:* nothing coop needs is missing. Pi sessions already persist and
+    resume, and the guardrails already hook tool calls.
+- **Why watch it.** The state view, event stream, late join and crash resume are
+  what a rendered desktop window wants (section 11, D1b and D1e). If the Pi
+  maintainers move the CLI onto it, coop inherits it through a U2-style upgrade and
+  keeps its extensions; nothing published says that is planned.
+- **Worth adopting when all of these hold.** (1) It loses the experimental label.
+  (2) The `pi` CLI itself runs on it, or there is a documented path for `pi -e`
+  extensions. (3) `pi-mcp-adapter` and `pi-hermes-memory` work on it. (4) A concrete
+  gain coop can name, such as crash-safe sessions behind the desktop window.
   Re-check at U2 or D1d, whichever starts first; until then it stays here.
 
 ### 12.2 Fabric Apps with Rayfin: row FA1 (October 2, 2026)
