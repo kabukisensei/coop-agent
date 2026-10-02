@@ -589,7 +589,8 @@ print("resume verdict contract OK")
     @{ Name = 'home-guard';             Lane = 'extended'; Head = 'home-guard (fleet paths must not mutate the real home)'; RestoreHome = $true },
     @{ Name = 'doctor';                 Lane = 'extended'; Head = 'doctor.ps1 MCP mode, az preflight, login and fleet rows' },
     @{ Name = 'inventory';              Lane = 'extended'; Head = 'truthful inventory (doctor pipx probes / sync postconditions)' },
-    @{ Name = 'profile-redirect';       Lane = 'gate';     Head = 'install shortcuts and user PATH follow a redirected profile (isolated install)' })
+    @{ Name = 'profile-redirect';       Lane = 'gate';     Head = 'install shortcuts and user PATH follow a redirected profile (isolated install)' },
+    @{ Name = 'pi-busy-guard';          Lane = 'gate';     Head = 'install/update busy guard counts only this install''s Pi sessions (#234)' })
   foreach ($fx in $fixtures) {
     if ($fx.Lane -eq 'extended' -and -not $extendedLane) { continue }
     Head $fx.Head

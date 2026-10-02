@@ -67,8 +67,9 @@ coop data-doc init      # or: write a starter coop-data-doc.yml to edit by hand
 ```
 
 Until a config exists, doc-building commands flow through and the tool reports
-`error: Config file not found: coop-data-doc.yml` — and the native `data_doc` tool
-appends a `/setup-docs` hint when it sees that.
+`No coop-data-doc.yml found in this folder or any parent` (or `Config file not
+found: <path>` when `--config` / `COOP_DATA_DOC_CONFIG` names a missing file) —
+and the native `data_doc` tool appends a `/setup-docs` hint when it sees either.
 
 **How `coop` invokes it** (`bin/coop.ps1` → `Invoke-DataDoc`):
 
