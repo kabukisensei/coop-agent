@@ -44,6 +44,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `launch-spec`, the runtime states). Re-record the session with
   `node desktop/scripts/record-fixture.mjs` after a Pi or extension upgrade.
 
+- coop builds Fabric Apps (preview) with Microsoft's Rayfin CLI (master plan
+  row FA1). The new `fabric-apps` skill scaffolds the web app, connects it to
+  the client's semantic models, warehouses or lakehouses, and deploys it to the
+  contract's dev workspace with a dry run first and Rayfin's telemetry off.
+  The guardrails now ask before every Rayfin deploy (`rayfin up` and its
+  subcommands, `rayfin secret set|delete`); the prompt names the dev workspace
+  and warns when the command targets another one. Rayfin itself is not
+  bundled: each app's `package.json` pins it, and Rayfin's own agent files
+  (`rayfin init ai-files install`) carry the how-to.
+
 - Windows acceptance for the `data_doc` wrapper and `/setup-docs` (master plan
   row 11a, DD4): a `datadoc-windows` job in `extended.yml` installs
   `coop-data-doc` at the manifest pin with pipx and the pinned Pi, then runs

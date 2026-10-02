@@ -1518,6 +1518,32 @@ installed.
   materially smaller or simpler D1d bundle, or startup time teammates notice.
   Re-check at U2 or D1d, whichever starts first; until then it stays here.
 
+### 12.2 Fabric Apps with Rayfin: row FA1 (October 2, 2026)
+
+Aaron asked for Fabric app creation for Fabric clients and started row FA1 the same
+day ("yes go for it"), then asked that coop just do it, with no per-project switch.
+**Rayfin** (`@microsoft/rayfin-cli`, MIT) is Microsoft's toolchain for **Fabric
+Apps**, a preview workspace item that hosts a TypeScript web app with its own Fabric
+SQL database, a GraphQL API and Fabric SSO; connectors read the client's semantic
+models, warehouses and lakehouse SQL endpoints in place. A tenant admin must turn on
+**Fabric Apps (preview)**, and the workspace needs capacity. Rayfin ships its own
+agent files per app (`rayfin init ai-files install`: `AGENTS.md`, skills under
+`.agents/skills/`, which Pi loads after project trust), and it releases weekly, so
+coop does not bundle or pin it. Microsoft's skills-for-fabric catalog (v0.3.18) has
+no Rayfin skill yet.
+
+- **Simplicity and maintainability:** one on-demand skill (`skills/fabric-apps`,
+  about 40 always-on tokens) and one gate extension; the app's `package.json` owns
+  the Rayfin version, so its churn never reaches the release manifest.
+- **Stability:** the guardrails ask before every Rayfin deploy (`rayfin up` and its
+  subcommands, `rayfin secret set|delete`) and name the contract's dev workspace
+  (`fabric.default_workspace_id`), warning when the command targets another.
+  Before FA1 those commands ran without a prompt.
+- **Not in FA1:** deploys to test or prod, deleting app items, Kusto connectors
+  (held upstream), the Rayfin docs MCP (coop's MCP config is exclusive; the skill
+  uses `rayfin docs search` and the docs in `node_modules`).
+
+
 ## 13. Ordered work register
 
 Status values: `not started`, `issue open`, `in progress (branch)`, `in review
@@ -1549,6 +1575,7 @@ tags. A stale row is never a reason to re-do work: check the PR list first.
 | 15 | K1, K2, K3 | TeamAI shared knowledge: isolated CLI and read-only recall, reviewed contribution, broader lifecycle | FR1 + explicit start; VM isolation | revision 2.0 section 8 gates, one PR per row | merged 2026-10-02 and shipped in v0.28.0: K1 ([#249](https://github.com/kabukisensei/coop-agent/pull/249)), K2 ([#250](https://github.com/kabukisensei/coop-agent/pull/250)), K3 ([#259](https://github.com/kabukisensei/coop-agent/pull/259), which landed [#251](https://github.com/kabukisensei/coop-agent/pull/251) on main) |
 | 15b | J0–J3 | Jev shadow experiments | explicit start | revision 2.0 gates | waiting (Aaron, 2026-09-30) |
 | 16 | D1 | Electron desktop with packaged installer, worked as D1a–D1g (section 11.2): decision record and salvage, `coop desktop` window from the terminal product (first deliverable, no installer or certificate), unsigned installer, bundled runtime, updates, signing last, teammate acceptance | 7–12 and 15 accepted; Aaron starts D1; U2 landed before D1d; each 11.3 item decided when its row starts | another user installs from the package alone (D1g); signing not required (Aaron, 2026-10-02) | D1a decision record and salvage list merged ([#255](https://github.com/kabukisensei/coop-agent/pull/255), revision 3.13, section 11.5); D1b `coop desktop` window in review as a draft PR (revision 3.14; Aaron started it 2026-10-02), VM acceptance on the "stable" snapshot pending; D1b2–D1g not started, each waits for Aaron |
+| 17 | FA1 | Fabric Apps with Rayfin (section 12.2): `fabric-apps` skill and a Rayfin deploy gate | Aaron started it 2026-10-02 | gate tests in the gate lane; acceptance on a tenant with Fabric Apps (preview) on: scaffold the todo template, connect one semantic model, deploy to a throwaway dev workspace through the prompt, delete the item in Fabric | in review (PR), 2026-10-02 |
 
 Phase 0 rows can each be released as a patch. Later phases are minor versions.
 Rows become `agent:ready` only when Aaron says so. On September 28 he marked the
