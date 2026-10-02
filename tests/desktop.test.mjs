@@ -35,7 +35,8 @@ import { lockProblems, runtimePackageJson } from "../desktop/scripts/runtime-loc
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const FIXTURE = readFileSync(join(ROOT, "tests", "fixtures", "desktop-rpc.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
 const SURFACE = JSON.parse(readFileSync(join(ROOT, "tests", "fixtures", "desktop-pi-surface.json"), "utf8"));
-const PARITY = readFileSync(join(ROOT, "desktop", "PARITY.md"), "utf8");
+// A Windows checkout may turn the Markdown into CRLF.
+const PARITY = readFileSync(join(ROOT, "desktop", "PARITY.md"), "utf8").replace(/\r\n/g, "\n");
 const MANIFEST = JSON.parse(readFileSync(join(ROOT, "config", "release-manifest.json"), "utf8"));
 
 let passed = 0;
