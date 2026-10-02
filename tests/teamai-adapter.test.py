@@ -346,7 +346,7 @@ with tempfile.TemporaryDirectory() as raw:
 
     stub_mode.write_text("none", encoding="utf-8")
     rc, doc, _ = run(base_env, "recall", "--query", "nothing")
-    check(doc["state"] == "no_match" and doc["results"] == [], "recall: 'No learnings available' after a pull -> no_match")
+    check(doc["state"] == "no_match" and doc["results"] == [] and any("has no learnings yet" in w and "run: coop teamai pull" not in w for w in doc["warnings"]), "recall: 'No learnings available' after a pull -> no_match, warning names the empty repo, not a pull")
     stub_mode.write_text("partial", encoding="utf-8")
     rc, doc, _ = run(base_env, "recall", "--query", "marker")
     check(doc["state"] == "partial" and len(doc["results"]) == 5 and any("code-graph" in w for w in doc["warnings"]), "recall: code-graph unavailable -> partial with results")
