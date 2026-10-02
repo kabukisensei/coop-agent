@@ -608,6 +608,47 @@ def parse_recall(stdout: str) -> list[dict]:
     return entries
 
 
+def _under(path: Path, root: Path) -> Path | None:
+    try:
+        return path.resolve().relative_to(root.resolve())
+    except (OSError, ValueError):
+        return None
+
+
+def localize_result(entry: dict, query: str) -> None:
+    """teamai-cli 0.26.0 prints an absolute File path into the isolated home and a
+    Snippet line only when its index stored one. Report the file relative to the
+    team-repo clone (or the CLI's .teamai folder, where pulled learnings live) and
+    keep the absolute path as local_path; fill an empty snippet from that file."""
+    raw = entry.get("file") or ""
+    p = Path(raw) if raw else None
+    if not p or not p.is_absolute():
+        return
+    clone = team_repo_local_path()
+    rel = (_under(p, clone) if clone else None) or _under(p, isolated_home() / ".teamai")
+    if rel is None:
+        return  # outside the isolated home: leave it exactly as the CLI printed it
+    entry["local_path"] = str(p)
+    entry["file"] = rel.as_posix()
+    if not entry.get("snippet") and p.is_file():
+        entry["snippet"] = snippet_from_file(p, query)
+
+
+def snippet_from_file(path: Path, query: str) -> str:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    lines = text.splitlines()
+    if lines and lines[0].strip() == "---":  # skip YAML frontmatter
+        end = next((i for i in range(1, len(lines)) if lines[i].strip() == "---"), None)
+        lines = lines[end + 1 :] if end is not None else lines
+    body = [l.strip() for l in lines if l.strip() and not l.lstrip().startswith("#")]
+    tokens = [t for t in re.split(r"\W+", query.lower()) if len(t) > 1]
+    hit = next((l for l in body if any(t in l.lower() for t in tokens)), body[0] if body else "")
+    return hit[:400]
+
+
 def summarize_failure(what: str, r: dict) -> str:
     if r.get("timed_out"):
         return f"{what} {r['error']}"
@@ -656,6 +697,7 @@ def cmd_recall(block: dict, package: str, pin: str, query: str) -> dict:
         return doc
     doc["truncated"] = len(entries) > RESULT_CAP
     for e in entries[:RESULT_CAP]:
+        localize_result(e, query)
         e["repository"] = doc["team_repo"]
         e["revision"] = doc["revision"]
     doc["results"] = entries[:RESULT_CAP]
