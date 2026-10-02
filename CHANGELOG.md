@@ -7,6 +7,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- coop-guardrails: Power BI Desktop reload guard (S31). Before `powerbi-desktop
+  reload` and before a `powerbi-report-author preview` that reloads the live
+  window, coop reads `powerbi-desktop status` itself: an instance with unsaved
+  changes asks first (blocked headlessly), an instance that cannot be verified is
+  blocked, only a connected clean instance reloads. The rule used to be skill
+  prose only; it is now enforced in code and tested against a stubbed bridge.
+
 - First run shows the common workflows, not a wizard (master plan FR1, Phase 6).
   The first interactive `coop` launch on a machine opens the Start Here menu once
   (`bin/coop.ps1` hands coop-tools `COOP_FIRST_RUN=1` and writes
