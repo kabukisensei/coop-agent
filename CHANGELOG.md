@@ -25,7 +25,7 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `--approve`. Electron 44.5.1 is pinned in `config/release-manifest.json`
   (`desktop.electron`) with its own lockfile, `config/desktop-lock.json`
   (`node desktop/scripts/runtime-lock.mjs generate|check`), and installs on the
-  first `coop desktop` into `<profile dir>/desktop/runtime` (about 100 MB;
+  first `coop desktop` into `<profile dir>/desktop/runtime` (about 140 MB with pdf.js;
   Electron's `install.js` checks the binary against the locked package's
   checksums), which also adds a "coop (window)" shortcut. `coop sync`
   refreshes the runtime where it exists, `coop doctor` reports it, and
@@ -64,6 +64,49 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   the window share one implementation; `tests/desktop-panes.test.mjs` checks
   that both forms write exactly what the terminal wizards write for the same
   answers. The parity checklist is unchanged.
+- The coop window, second D1b2 batch (Aaron, 2026-10-02). **Attachments**:
+  the paperclip, Ctrl+V and drag and drop attach up to ten files a message.
+  Images go with the prompt when the model reads them (five, 4 MB each, as in
+  the terminal); text files (Markdown, CSV, SQL, DAX, TMDL, YAML, JSON and the
+  like, 2 MB) are referenced by path; Word, Excel, PowerPoint (`.docx`,
+  `.xlsx`, `.pptx`, 25 MB) are read to Markdown by coop's own dependency-free
+  readers (`desktop/lib/office.mjs`, `zip.mjs`, `xml.mjs`: paragraphs,
+  headings and tables, every sheet as a table with dates and times resolved,
+  slides with notes) and PDFs by pdf.js (`desktop/scripts/pdf-text.mjs`, run as
+  its own node process with a 60 second limit, no rendering, no PDF
+  JavaScript). Extracts are saved under the window's data folder
+  (`attachments/`, pruned after seven days or one hundred files) and
+  referenced by path in the prompt, so coop reads every document through its
+  guarded read tool and the session log stays auditable; under the sent
+  message the window shows the files as chips, not the note. `pdfjs-dist` 6.3.289
+  is the runtime's second package, pinned in `config/release-manifest.json`
+  (`desktop.pdfjs`) and `config/desktop-lock.json` next to Electron (the
+  runtime is about 140 MB; its optional native canvas package is never
+  installed: `npm ci --ignore-scripts --omit=optional`), checked by `coop
+  doctor` and refreshed by `coop sync`. **Draggable panes**: the sidebar, the
+  side pane and the split between the change list and its diff resize by
+  dragging (or the arrow keys on the handle; double-click or Home resets), and
+  the sizes are remembered. **Splash and vibes**: a new conversation shows the
+  Cooptimize block logo (drawn from `extensions/coop-powerline/splash.ansi`
+  as SVG, pixel-crisp in the retro themes), the wordmark, the taglines and a
+  vibe from the same `vibes/*.txt` sets as the terminal; a fresh vibe shows on
+  the working line and in the status bar each turn, and `/coop-vibe <set>`
+  switches the window's pool with Pi's. **Concise activity**: a run of
+  assistant messages with nothing else between them is drawn as one answer,
+  and between two pieces of its prose the thinking and tool calls (across the
+  model's messages too) fold into one line ("Read vSales.sql, ran git status, edited report.sql"; a live "Reading
+  vSales.sql..." while it runs) that expands on click, opens by itself when a
+  step fails, and stays open with Ctrl+O (Expand tool output); nothing is
+  dropped from the session, only folded. **Readability pass**: stronger
+  contrast tokens in all four themes, visible focus rings, tooltips on the pane
+  tabs, change statuses and every icon button, a sticky Save/Review footer on
+  the forms, and clearer composer hints. Tests: `tests/desktop-attachments.test.mjs`
+  (gate: the readers over generated `.docx`, `.xlsx` and `.pptx` files, the
+  PDF line builder, classification and limits, the store and pruning, the
+  attachment note; with `COOP_TEST_PDFJS=<pdfjs-dist dir>` also the real
+  pdf.js over a hand-written PDF), plus new cases in `tests/desktop.test.mjs` (the runtime
+  lock with both pins, the activity fold) and `tests/desktop-panes.test.mjs`
+  (the resizer limits).
 
 ## [0.28.0] — 2026-10-02
 

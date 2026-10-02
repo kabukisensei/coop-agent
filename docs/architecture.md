@@ -247,6 +247,20 @@ for the Node tools and extensions; no script builds these paths inline.
    process rebuilds every form answer from an allowlist with the wizard's own
    checks; `tests/desktop-panes.test.mjs` compares both forms with the wizards.
 
+   Attachments follow the same rule: the window never hands the model a
+   document itself. Images go with the prompt as Pi's own image content (as
+   the terminal's paste does); text files are referenced by path; Word, Excel
+   and PowerPoint files are read to Markdown by `desktop/lib/office.mjs` (a
+   dependency-free zip and XML walk) and PDFs by pdf.js in a separate node
+   process with a time limit (`desktop/scripts/pdf-text.mjs`; no rendering, no
+   PDF JavaScript). The extract is saved under the window's data folder and
+   referenced by path, so coop reads it through its guarded read tool and the
+   session log records what it read. `pdfjs-dist` is the runtime's second
+   pinned package (`desktop.pdfjs` in the manifest, `config/desktop-lock.json`).
+   The timeline draws a run of assistant messages as one answer and folds the
+   thinking and tool calls between two pieces of prose into one expandable
+   line; the session file is untouched, only the view.
+
 ## Diagram
 
 ```mermaid

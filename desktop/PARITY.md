@@ -98,7 +98,7 @@ Pi 0.87.1, `docs/keybindings.md`: every action id, with the window's key.
 | `app.exit` | window | Ctrl+W closes the window. |
 | `app.suspend` | terminal | Job control has no window form (and none on Windows). |
 | `app.editor.external` | window | Ctrl+G opens a larger editor for the prompt. |
-| `app.clipboard.pasteImage` | window | Ctrl+V or drag and drop attaches up to five images when the model reads images. |
+| `app.clipboard.pasteImage` | window | Ctrl+V, drag and drop or the paperclip attaches files (up to ten a message): images go with the prompt when the model reads them (five, 4 MB each); text files are referenced by path; Word, Excel, PowerPoint and PDF are read to Markdown (pdf.js in its own time-limited process) and referenced by path, so coop reads them through its guarded read tool. |
 | `app.session.new` | rpc | Ctrl+Shift+N. |
 | `app.session.tree` | rpc | Ctrl+Shift+T. |
 | `app.session.fork` | rpc | Ctrl+Shift+F. |
