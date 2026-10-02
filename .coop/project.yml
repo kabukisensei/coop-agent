@@ -15,11 +15,6 @@ estate:
   local_source_coverage:
     sql: "available"
     power_bi: "available"
-  live_discovery:
-    dev_test_metadata: "read_only_allowed"
-    dev_test_rows: "ask_first"
-    production_metadata: "ask_first"
-    production_rows: "explicit_scope_and_approval"
 
 repositories:
   fabric:
@@ -86,12 +81,10 @@ tools:
   coop_data_doc:   { command: "coop-data-doc",   enabled: true, default_command: "build", machine_outputs: ["graph.json", "manifest.json"] }
 
 mcp:
-  fabric:          { enabled: true, allowed_default_actions: ["list","read","inspect"], requires_approval_actions: ["create","update","delete","deploy"] }
+  fabric:          { enabled: true }
   microsoft_learn: { enabled: true, purpose: "Always-current Microsoft documentation lookups" }
   context_mode:    { enabled: true }
-  fabric_sqlendpoint:
-    enabled: true
-    requires_approval_actions: ["executeSQL","execute_query"]
+  fabric_sqlendpoint: { enabled: true }
 
 memory:
   extension: "pi-hermes-memory"
