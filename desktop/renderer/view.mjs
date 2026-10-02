@@ -60,6 +60,43 @@ function diffView(rows) {
     el("span", { class: "diff-text", text: row.text }))));
 }
 
+// Where a tool call's file opens in the side pane: the project form for the
+// contract, the docs pane for the docs config, else the changes panel.
+const PROJECT_FILE = /(^|[\\/])\.coop[\\/]project\.ya?ml$/i;
+const DOCS_FILE = /(^|[\\/])coop-data-doc\.ya?ml$/i;
+
+export function paneLinksForTool(name, args, status) {
+  const a = args && typeof args === "object" ? args : {};
+  const path = String(a.path || a.file_path || a.filePath || "");
+  const links = [];
+  if (name === "data_doc") links.push({ pane: "docs", label: "Lineage docs", options: {} });
+  if ((name === "edit" || name === "write") && path && status !== "error") {
+    if (PROJECT_FILE.test(path)) links.push({ pane: "project", label: "Project settings", options: {} });
+    else if (DOCS_FILE.test(path)) links.push({ pane: "docs", label: "Lineage docs", options: {} });
+    links.push({ pane: "changes", label: "View in Changes", options: { path } });
+  }
+  return links;
+}
+
+/** Side-pane links for a notice that points at /setup-project or /setup-docs. */
+export function paneLinksForText(text) {
+  const value = String(text || "");
+  const links = [];
+  if (/\/setup-project\b/.test(value)) links.push({ pane: "project", label: "Open the project form", options: {} });
+  if (/\/setup-docs\b/.test(value)) links.push({ pane: "docs", label: "Open the docs setup", options: {} });
+  return links;
+}
+
+function paneButtons(links, prefs) {
+  if (!links.length || !prefs.openPane) return null;
+  return el("div", { class: "pane-links" }, links.map((link) => el("button", {
+    type: "button",
+    class: "btn link",
+    text: link.label,
+    onclick: (event) => { event.stopPropagation(); prefs.openPane(link.pane, link.options); },
+  })));
+}
+
 function statusIcon(status) {
   if (status === "running" || status === "pending") return el("span", { class: "spinner", "aria-label": "Running" });
   if (status === "error") return icon("close", "Failed");
@@ -105,6 +142,10 @@ function toolCard(block, tl, prefs) {
     const state = prefs.outputState(key);
     if (tool.partial && status === "running") body.append(outputBlock(tool.partial, "partial", state));
     if (tool.result && tool.result.text && !(rows.length && !tool.isError)) body.append(outputBlock(tool.result.text, tool.isError ? "error" : "", state));
+    if (status !== "running" && status !== "pending") {
+      const links = paneButtons(paneLinksForTool(name, args, status), prefs);
+      if (links) body.append(links);
+    }
     card.append(body);
   }
   return card;
@@ -143,12 +184,13 @@ function assistantView(item, tl, prefs) {
   return node;
 }
 
-function standardsView(item) {
+function standardsView(item, prefs) {
   const label = item.sources.length
     ? item.sources.map((source) => `${source.domain.toUpperCase()}${source.authority ? `, ${source.authority.replace(/_/g, " ")}` : ""}${source.state && source.state !== "canonical" ? ` (${source.state})` : ""}`).join("; ")
     : item.domains.join(", ").toUpperCase();
   return el("details", { class: "standards", dataset: { id: item.id } },
     el("summary", {}, icon("shield"), el("span", { text: `Standards applied: ${label || "Cooptimize"}` })),
+    paneButtons([{ pane: "standards", label: "Read them in the side pane", options: { domain: (item.sources[0] && item.sources[0].domain) || item.domains[0] || "" } }], prefs),
     el("pre", { class: "output standards-text" }, el("code", { text: item.content })));
 }
 
@@ -164,7 +206,7 @@ export function renderItem(item, tl, prefs) {
     case "assistant":
       return assistantView(item, tl, prefs);
     case "standards":
-      return standardsView(item);
+      return standardsView(item, prefs);
     case "custom":
       return el("article", { class: "msg custom", dataset: { id: item.id } }, el("div", { class: "custom-type", text: item.customType }), markdown(item.text));
     case "bash": {
@@ -186,8 +228,8 @@ export function renderItem(item, tl, prefs) {
     case "branch":
       return el("details", { class: "divider", dataset: { id: item.id } }, el("summary", { text: "Summary of the other branch" }), markdown(item.summary));
     case "notice":
-      if (item.markdown) return el("div", { class: `notice report ${item.level}`, dataset: { id: item.id } }, markdown(item.text));
-      return el("div", { class: `notice ${item.level}`, dataset: { id: item.id } }, item.level === "error" || item.level === "warning" ? icon("warn") : null, el("span", { text: item.text }));
+      if (item.markdown) return el("div", { class: `notice report ${item.level}`, dataset: { id: item.id } }, markdown(item.text), paneButtons(paneLinksForText(item.text), prefs));
+      return el("div", { class: `notice ${item.level}`, dataset: { id: item.id } }, item.level === "error" || item.level === "warning" ? icon("warn") : null, el("span", { text: item.text }), paneButtons(paneLinksForText(item.text), prefs));
     default:
       return el("div");
   }

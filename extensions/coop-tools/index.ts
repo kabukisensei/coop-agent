@@ -1253,7 +1253,7 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
     if (name) {
       const saved = saveUserProfileName(name);
       if (saved) notify(ctx, `Saved your profile name (${saved}). Coop will use it from the next session.`, "info");
-      else notify(ctx, "That name has characters coop can't save (\\ / < > | : & ;) or is over 100 characters; run `coop onboard` to set it.", "warning");
+      else notify(ctx, PROJECT_MESSAGES.profileName, "warning");
     }
   }
 

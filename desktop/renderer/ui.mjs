@@ -37,6 +37,12 @@ const ICONS = {
   book: "M3 3h4.5A1.5 1.5 0 0 1 9 4.5V13a1.5 1.5 0 0 0-1.5-1.5H3zM13 3H10.5A1.5 1.5 0 0 0 9 4.5V13a1.5 1.5 0 0 1 1.5-1.5H13z",
   restart: "M3 8a5 5 0 1 0 1.5-3.5M3 2.5V5h2.5",
   warn: "M8 2.5 14 13H2zM8 6.5v3M8 11.2h.01",
+  up: "M4 10l4-4 4 4",
+  down: "M4 6l4 4 4-4",
+  back: "M10 4 6 8l4 4",
+  diff: "M3.5 2.5h6l3 3v8h-9zM8 5v4M6 7h4M6 11h4",
+  form: "M3 2.5h10v11H3zM5 5.5h6M5 8h6M5 10.5h3.5",
+  graph: "M2.5 3h3v3h-3zM10.5 3h3v3h-3zM6.5 10h3v3h-3zM4 6l3.5 4M12 6l-3.5 4",
 };
 
 export function icon(name, label) {

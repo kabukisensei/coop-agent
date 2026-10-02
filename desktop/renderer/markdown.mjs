@@ -249,7 +249,7 @@ function el(doc, tag, className, text) {
   return node;
 }
 
-function renderInline(doc, nodes, parent) {
+function renderInline(doc, nodes, parent, opts = {}) {
   for (const node of nodes) {
     switch (node.type) {
       case "text": parent.append(doc.createTextNode(node.text)); break;
@@ -257,7 +257,7 @@ function renderInline(doc, nodes, parent) {
       case "code": parent.append(el(doc, "code", "", node.text)); break;
       case "strong": case "em": case "del": {
         const child = doc.createElement(node.type);
-        renderInline(doc, node.children, child);
+        renderInline(doc, node.children, child, opts);
         parent.append(child);
         break;
       }
@@ -267,12 +267,20 @@ function renderInline(doc, nodes, parent) {
           a.setAttribute("href", node.href);
           a.dataset.href = node.href;
           a.title = node.href;
-          renderInline(doc, node.children, a);
+          renderInline(doc, node.children, a, opts);
+          parent.append(a);
+        } else if (opts.localLink && opts.localLink(node.href)) {
+          // A page the view itself can open (the docs pane's own Markdown).
+          const a = el(doc, "a", "md-local");
+          a.dataset.local = node.href;
+          a.tabIndex = 0;
+          a.title = node.href;
+          renderInline(doc, node.children, a, opts);
           parent.append(a);
         } else {
           // Relative links and file paths: show the text, never navigate.
           const span = el(doc, "span", "md-link-text");
-          renderInline(doc, node.children, span);
+          renderInline(doc, node.children, span, opts);
           parent.append(span);
         }
         break;
@@ -286,11 +294,12 @@ function renderInline(doc, nodes, parent) {
  * Build DOM for parsed blocks. codeBlock(doc, lang, text) may return a custom
  * node for fenced code (the app adds copy buttons there).
  */
-export function renderBlocks(doc, blocks, parent, { codeBlock } = {}) {
+export function renderBlocks(doc, blocks, parent, opts = {}) {
+  const { codeBlock } = opts;
   for (const block of blocks) {
     switch (block.type) {
-      case "paragraph": { const p = doc.createElement("p"); renderInline(doc, block.children, p); parent.append(p); break; }
-      case "heading": { const h = doc.createElement(`h${Math.min(6, block.level + 1)}`); renderInline(doc, block.children, h); parent.append(h); break; }
+      case "paragraph": { const p = doc.createElement("p"); renderInline(doc, block.children, p, opts); parent.append(p); break; }
+      case "heading": { const h = doc.createElement(`h${Math.min(6, block.level + 1)}`); renderInline(doc, block.children, h, opts); parent.append(h); break; }
       case "hr": parent.append(doc.createElement("hr")); break;
       case "code": {
         if (codeBlock) { parent.append(codeBlock(doc, block.lang, block.text)); break; }
@@ -299,7 +308,7 @@ export function renderBlocks(doc, blocks, parent, { codeBlock } = {}) {
         parent.append(pre);
         break;
       }
-      case "blockquote": { const q = doc.createElement("blockquote"); renderBlocks(doc, block.children, q, { codeBlock }); parent.append(q); break; }
+      case "blockquote": { const q = doc.createElement("blockquote"); renderBlocks(doc, block.children, q, opts); parent.append(q); break; }
       case "list": {
         const list = doc.createElement(block.ordered ? "ol" : "ul");
         if (block.ordered && block.start !== 1) list.setAttribute("start", String(block.start));
@@ -307,8 +316,8 @@ export function renderBlocks(doc, blocks, parent, { codeBlock } = {}) {
           const li = doc.createElement("li");
           if (item.checked !== null) { li.className = "task"; li.append(el(doc, "span", "task-box", item.checked ? "[x]" : "[ ]")); }
           // Tight lists: a single paragraph renders inline.
-          if (item.children.length === 1 && item.children[0].type === "paragraph") renderInline(doc, item.children[0].children, li);
-          else renderBlocks(doc, item.children, li, { codeBlock });
+          if (item.children.length === 1 && item.children[0].type === "paragraph") renderInline(doc, item.children[0].children, li, opts);
+          else renderBlocks(doc, item.children, li, opts);
           list.append(li);
         }
         parent.append(list);
@@ -319,12 +328,12 @@ export function renderBlocks(doc, blocks, parent, { codeBlock } = {}) {
         const table = doc.createElement("table");
         const thead = doc.createElement("thead");
         const tr = doc.createElement("tr");
-        block.header.forEach((cell, c) => { const th = doc.createElement("th"); if (block.align[c]) th.dataset.align = block.align[c]; renderInline(doc, cell, th); tr.append(th); });
+        block.header.forEach((cell, c) => { const th = doc.createElement("th"); if (block.align[c]) th.dataset.align = block.align[c]; renderInline(doc, cell, th, opts); tr.append(th); });
         thead.append(tr);
         const tbody = doc.createElement("tbody");
         for (const row of block.rows) {
           const r = doc.createElement("tr");
-          row.forEach((cell, c) => { const td = doc.createElement("td"); if (block.align[c]) td.dataset.align = block.align[c]; renderInline(doc, cell, td); r.append(td); });
+          row.forEach((cell, c) => { const td = doc.createElement("td"); if (block.align[c]) td.dataset.align = block.align[c]; renderInline(doc, cell, td, opts); r.append(td); });
           tbody.append(r);
         }
         table.append(thead, tbody);

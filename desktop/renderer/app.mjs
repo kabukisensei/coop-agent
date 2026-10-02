@@ -4,8 +4,13 @@
 import { el, icon, openModal, pickFrom, toast, modalOpen, relativeTime } from "./ui.mjs";
 import { createTimeline, applyEvent, loadMessages, startBash, finishBash, formatTokens, textOf, notice } from "./timeline.mjs";
 import { createFinder } from "./find.mjs";
-import { renderItem } from "./view.mjs";
+import { renderItem, codeBlock } from "./view.mjs";
 import { parseInput, completions, BUILTINS, KEYS } from "./commands.mjs";
+import { registerPane, openPane, togglePane, closePane, currentPane, refreshPane, initPanes } from "./panes.mjs";
+import { mountChanges } from "./pane-changes.mjs";
+import { mountStandards } from "./pane-standards.mjs";
+import { mountProject } from "./pane-project.mjs";
+import { mountDocs } from "./pane-docs.mjs";
 
 const coop = window.coop;
 const $ = (id) => document.getElementById(id);
@@ -44,6 +49,8 @@ const app = {
       return this.outputs.get(key);
     },
     redrawOwner(toolCallId) { const owner = app.tl.toolOwner.get(toolCallId); if (owner) redraw(owner); },
+    // The timeline's links into the side pane (a tool card's file, the standards).
+    openPane: (id, options) => openPane(id, options),
   },
 };
 
@@ -115,7 +122,11 @@ function onEvent(event) {
   const { changed, status } = applyEvent(app.tl, event);
   for (const id of changed) redraw(id);
   if (status) { renderBusy(); renderHeader(); }
-  if (event.type === "agent_settled") { refreshState(); refreshStats(); loadSessions(); }
+  if (event.type === "agent_settled") {
+    refreshState(); refreshStats(); loadSessions();
+    // The changes pane follows coop's edits.
+    if (currentPane() === "changes") refreshPane();
+  }
   else if (event.type === "message_end" && event.message && event.message.role === "assistant") refreshStats();
 }
 
@@ -285,11 +296,17 @@ function renderEmpty() {
   if (app.tl.items.length) { if (empty) empty.remove(); return; }
   if (empty) return;
   const start = el("button", { type: "button", class: "btn primary", text: "Open the Start menu", onclick: () => sendPrompt("/start") });
+  const link = (id, label, glyph) => el("button", { type: "button", class: "btn ghost", onclick: () => openPane(id) }, icon(glyph), el("span", { text: label }));
   box.append(el("div", { class: "empty" },
     el("div", { class: "empty-mark" }, icon("spark")),
     el("h1", { text: "What are we working on?" }),
     el("p", { text: `coop is ready in ${app.info ? app.info.folder : "this folder"}. Ask a question, type / for commands, or start from a common task.` }),
-    start));
+    start,
+    el("div", { class: "empty-links" },
+      link("changes", "Changes", "diff"),
+      link("standards", "Standards", "shield"),
+      link("project", "Project settings", "form"),
+      link("docs", "Lineage docs", "graph"))));
 }
 
 function rerenderAll() {
@@ -930,6 +947,8 @@ function hotkeys() {
     // The tree view's own controls are listed in that view, not here.
     ...Object.entries(KEYS).filter(([id, k]) => !id.startsWith("app.tree.") && k.keys && k.keys !== "native" && k.keys !== "terminal").map(([, k]) => [k.keys, k.does]),
     ["Ctrl+= / Ctrl+-", "Zoom in or out (Ctrl+0 resets)"],
+    // The side pane is the window's own; it has no terminal key to map.
+    ...Object.values(ACTIONS).filter((action) => action.pane && action.keys).map((action) => [action.keys, action.label]),
   ];
   const seen = new Set();
   const unique = rows.filter(([keys, does]) => { const key = `${keys}|${does}`; if (seen.has(key)) return false; seen.add(key); return true; });
@@ -963,6 +982,11 @@ const ACTIONS = {
   theme: { label: "Theme", run: () => chooseTheme() },
   folder: { label: "Open a folder in a new window", run: () => openFolder() },
   start: { label: "Start menu: common tasks", run: () => sendPrompt("/start") },
+  changes: { label: "Changes since the last commit", keys: "Ctrl+Shift+D", pane: true, run: () => openPane("changes") },
+  standards: { label: "Standards coop applies here", keys: "Ctrl+Shift+S", pane: true, run: () => openPane("standards") },
+  project: { label: "Project settings (.coop/project.yml)", pane: true, run: () => openPane("project") },
+  docs: { label: "Lineage docs: set up, build, read", pane: true, run: () => openPane("docs") },
+  pane: { label: "Show or hide the side pane", keys: "Ctrl+\\", pane: true, run: () => togglePane(app.lastPane) },
 };
 
 async function runAction(id, arg = "", name = "") {
@@ -1047,8 +1071,15 @@ async function cycleModel() {
 function onGlobalKey(event) {
   const ctrl = event.ctrlKey || event.metaKey;
   const key = event.key.toLowerCase();
-  if (event.key === "Escape" && !modalOpen()) { interrupt(); return; }
+  const inPane = event.target instanceof Element && event.target.closest("#pane");
+  if (event.key === "Escape" && !modalOpen()) {
+    // Esc in the side pane leaves it (a field keeps its own Esc); it never stops coop.
+    if (inPane) { if (!event.target.matches("input, select, textarea")) { closePane(); prompt().focus(); } return; }
+    interrupt();
+    return;
+  }
   if (modalOpen()) return;
+  if (ctrl && !event.shiftKey && !event.altKey && (event.key === "\\" || event.code === "Backslash")) { event.preventDefault(); togglePane(app.lastPane); return; }
   if (ctrl && !event.shiftKey && key === "f") { event.preventDefault(); app.finder.open(); return; }
   if (ctrl && (event.key === "ArrowUp" || event.key === "ArrowDown")) { event.preventDefault(); jumpPrompt(event.key === "ArrowUp" ? -1 : 1); return; }
   // Page keys scroll the conversation from the prompt, as in the terminal,
@@ -1061,7 +1092,7 @@ function onGlobalKey(event) {
   }
   if (ctrl && (key === "k" || (event.shiftKey && key === "p"))) { event.preventDefault(); palette(); return; }
   if (ctrl && event.shiftKey) {
-    const map = { n: "new", t: "tree", f: "fork", r: "resume" };
+    const map = { n: "new", t: "tree", f: "fork", r: "resume", d: "changes", s: "standards" };
     if (map[key]) { event.preventDefault(); runAction(map[key]); return; }
   }
   if (ctrl && !event.shiftKey) {
@@ -1109,6 +1140,8 @@ function wire() {
   $("thinkingButton").addEventListener("click", () => runAction("thinking"));
   $("terminalButton").addEventListener("click", () => runAction("terminal"));
   $("menuButton").addEventListener("click", palette);
+  $("paneButton").addEventListener("click", () => togglePane(app.lastPane));
+  initPanes({ onOpen: (id) => { app.lastPane = id; } });
   $("sessionName").addEventListener("click", () => runAction("name"));
   $("timeline").addEventListener("click", (event) => {
     const link = event.target.closest("a.md-link");
@@ -1126,7 +1159,16 @@ function wire() {
   window.addEventListener("resize", autosize);
 }
 
+function registerPanes() {
+  const deps = { coop, codeBlock };
+  registerPane({ id: "changes", label: "Changes", icon: "diff", mount: (box, options) => mountChanges(box, options, { ...deps, cwd: () => (app.info ? app.info.cwd : "") }) });
+  registerPane({ id: "standards", label: "Standards", icon: "shield", mount: (box, options) => mountStandards(box, options, deps) });
+  registerPane({ id: "project", label: "Project", icon: "form", mount: (box, options) => mountProject(box, options, { ...deps, newSession: () => runAction("new") }) });
+  registerPane({ id: "docs", label: "Docs", icon: "graph", mount: (box, options) => mountDocs(box, options, deps) });
+}
+
 async function boot() {
+  registerPanes();
   wire();
   coop.onEvent(onEvent);
   coop.onExit(onExit);

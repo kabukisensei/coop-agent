@@ -1,0 +1,211 @@
+// The project form's back end (master plan D1b2): .coop/project.yml as a form,
+// written only through the /setup-project writer in lib/project-contract.mjs.
+// The window's answers are untrusted: settingsFromForm rebuilds wizard
+// settings field by field from an allowlist, with the wizard's own cleaning and
+// checks, so the same answers write the same file as /setup-project, unowned
+// fields are kept and the old file is backed up. The form never sees or sends
+// the fields nothing reads (estate.live_discovery, the mcp.* action lists).
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
+import { findProjectContract } from "../../lib/standards.mjs";
+import { userProfilePath } from "../../lib/paths.mjs";
+import {
+  PROJECT_MESSAGES,
+  SQL_ENDPOINT_TYPES,
+  SQL_TARGET_DISCOVERED_KINDS,
+  SQL_TARGET_KINDS,
+  cleanAnswer,
+  clientPlatform,
+  estateMode,
+  findGitRoot,
+  isSavableProfileName,
+  parseProjectWizardSettings,
+  projectContractText,
+  projectSettingsProblems,
+  projectYamlList,
+  proposedSqlTargetKind,
+  repositoryShortName,
+  saveUserProfileName,
+  writeProjectContract,
+} from "../../lib/project-contract.mjs";
+import { unifiedDiff } from "./text-diff.mjs";
+
+export const ROLES = Object.freeze(["sql", "powerbi", "mixed", "generic"]);
+const MAX_FIELD = 2000;
+const MAX_REPOS = 50;
+
+/** Fields the guardrails read (docs/guardrails-reference.md): the form marks them. */
+export const GUARDRAIL_FIELDS = Object.freeze(["client", "tenantId", "sqlTargetKind", "sqlTargetServer", "sqlTargetDatabase", "repositories.localPath", "commitLists"]);
+
+const hash = (text) => createHash("sha256").update(text).digest("hex");
+
+/** The contract the form edits for a folder, as /setup-project finds it. */
+export function locateProject(cwd) {
+  const existing = findProjectContract(cwd);
+  const root = existing ? resolve(existing, "..", "..") : (findGitRoot(cwd) || resolve(cwd));
+  return { existing, root, path: existing || join(root, ".coop", "project.yml") };
+}
+
+function readOriginal(where) {
+  return where.existing ? readFileSync(where.existing, "utf8") : "";
+}
+
+function commitLists(text, names) {
+  return {
+    top: projectYamlList(text, ["agent_allowed_to_commit"]),
+    repositories: Object.fromEntries(names.map((name) => [name, {
+      allowed: projectYamlList(text, ["repositories", name, "agent_allowed_to_commit"]),
+      never: projectYamlList(text, ["repositories", name, "agent_never_commit"]),
+    }])),
+  };
+}
+
+// The window's environment plus coop's (spec.env): where user.json and the
+// machine's client platform live, so a redirected sandbox profile is honoured.
+const profileFile = (env) => userProfilePath(env || process.env);
+
+/** Everything the form shows: the wizard-owned settings and read-only context. */
+export function loadProject(cwd, { env } = {}) {
+  const where = locateProject(cwd);
+  const original = readOriginal(where);
+  const settings = parseProjectWizardSettings(original, where.root);
+  const platform = clientPlatform((env || process.env).COOP_DIR || undefined);
+  const existingNames = settings.repositories.filter((repo) => !repo.isNew).map((repo) => repo.name);
+  return {
+    exists: Boolean(where.existing),
+    path: where.path,
+    root: where.root,
+    folder: basename(where.root) || where.root,
+    settings,
+    commitLists: commitLists(original, existingNames),
+    profileMissing: !existsSync(profileFile(env)),
+    platform,
+    proposedKind: { fabric: proposedSqlTargetKind(platform, true), noFabric: proposedSqlTargetKind(platform, false) },
+    kinds: [...SQL_TARGET_KINDS],
+    discoveredKinds: [...SQL_TARGET_DISCOVERED_KINDS],
+    endpointTypes: [...SQL_ENDPOINT_TYPES],
+    roles: [...ROLES],
+    guardrailFields: [...GUARDRAIL_FIELDS],
+    token: hash(original),
+  };
+}
+
+function field(input, key) {
+  const value = input && typeof input === "object" ? input[key] : undefined;
+  if (value === undefined || value === null) return undefined;
+  return cleanAnswer(String(value).slice(0, MAX_FIELD));
+}
+
+/**
+ * Wizard settings from the form's answers, the way /setup-project collects
+ * them: required fields keep their current value when left blank, optional
+ * ones may be blank, Fabric, Tabular Editor and SQL target details count only
+ * when that part is switched on, existing repositories keep their names, and
+ * the target kind and server are lowercased.
+ */
+export function settingsFromForm(input, base, existingNames) {
+  const s = { ...base, repositories: base.repositories.map((repo) => ({ ...repo })) };
+  const keep = (key) => { const v = field(input, key); if (v) s[key] = v; };
+  const take = (key) => { const v = field(input, key); if (v !== undefined) s[key] = v; };
+  keep("organization");
+  take("client");
+  keep("timezone");
+  keep("defaultBranch");
+
+  const repos = Array.isArray(input && input.repositories) ? input.repositories.slice(0, MAX_REPOS) : null;
+  if (repos) {
+    const known = new Map(s.repositories.map((repo) => [repo.name, repo]));
+    const next = [];
+    repos.forEach((raw, index) => {
+      if (!raw || typeof raw !== "object") return;
+      const name = field(raw, "name") || "";
+      const current = existingNames.includes(name) ? known.get(name) : null;
+      const repo = current ? { ...current } : {
+        name: repositoryShortName(name, `repo${index + 1}`),
+        description: "Project source and docs",
+        role: "generic",
+        localPath: ".",
+        remoteName: "origin",
+        defaultBranch: s.defaultBranch,
+        isNew: true,
+      };
+      for (const key of ["description", "localPath", "remoteName", "defaultBranch"]) {
+        const v = field(raw, key);
+        if (v) repo[key] = v;
+      }
+      if (ROLES.includes(raw.role)) repo.role = raw.role;
+      next.push(repo);
+    });
+    // The writer cannot remove a repository, so the ones already in the file stay.
+    for (const name of existingNames) if (!next.some((repo) => repo.name === name)) next.push(known.get(name));
+    s.repositories = next;
+  }
+
+  if (typeof input.fabricEnabled === "boolean") s.fabricEnabled = input.fabricEnabled;
+  if (s.fabricEnabled) {
+    for (const key of ["tenantId", "fabricWorkspaceName", "fabricWorkspaceId", "sqlEndpointItemType", "sqlEndpointItemName", "sqlEndpointItemId", "sqlEndpointPropertiesId", "powerBiWorkspaceName", "powerBiWorkspaceId"]) take(key);
+  }
+
+  const kind = field(input, "sqlTargetKind");
+  if (kind !== undefined) s.sqlTargetKind = kind.toLowerCase();
+  if (s.sqlTargetKind) {
+    if (!SQL_TARGET_DISCOVERED_KINDS.has(s.sqlTargetKind)) take("sqlTargetServer");
+    take("sqlTargetDatabase");
+  }
+
+  if (typeof input.tabularEditorEnabled === "boolean") s.tabularEditorEnabled = input.tabularEditorEnabled;
+  if (s.tabularEditorEnabled) {
+    keep("tabularEditorPath");
+    take("bpaRulesPath");
+  }
+  return s;
+}
+
+function prepare(cwd, input, options) {
+  const where = locateProject(cwd);
+  const original = readOriginal(where);
+  const base = parseProjectWizardSettings(original, where.root);
+  const existingNames = base.repositories.filter((repo) => !repo.isNew).map((repo) => repo.name);
+  const settings = settingsFromForm(input || {}, base, existingNames);
+  const problems = projectSettingsProblems(settings);
+  const profileName = field(input, "profileName") || "";
+  const profileMissing = !existsSync(profileFile(options.env));
+  if (profileMissing && profileName && !isSavableProfileName(profileName)) problems.push({ field: "profileName", message: PROJECT_MESSAGES.profileName });
+  // The wizard lowercases the server only after checking it.
+  if (settings.sqlTargetServer) settings.sqlTargetServer = settings.sqlTargetServer.toLowerCase();
+  const text = problems.length ? original : projectContractText(original, settings);
+  return { where, original, settings, problems, text, profileName: profileMissing ? profileName : "" };
+}
+
+/**
+ * What saving would do, without writing: { problems } when an answer fails
+ * the wizard's checks, else { diff, changed, mode, path, exists, token }.
+ */
+export function previewProject(cwd, input, options = {}) {
+  const p = prepare(cwd, input, options);
+  if (p.problems.length) return { problems: p.problems };
+  return {
+    problems: [],
+    path: p.where.path,
+    exists: Boolean(p.where.existing),
+    mode: estateMode(p.settings.repositories),
+    changed: p.text !== p.original,
+    diff: unifiedDiff(p.original, p.text),
+    token: hash(p.original),
+  };
+}
+
+/**
+ * Write the contract through the /setup-project writer: { path, backup,
+ * created, profileSaved }. `token` is the preview's: a file changed on disk
+ * since the preview is not overwritten.
+ */
+export function saveProject(cwd, input, token, options = {}) {
+  const p = prepare(cwd, input, options);
+  if (p.problems.length) return { problems: p.problems };
+  if (hash(p.original) !== token) throw new Error(".coop/project.yml changed on disk since you reviewed it. Review the changes again.");
+  const backup = writeProjectContract(p.where.path, p.text);
+  const profileSaved = p.profileName ? saveUserProfileName(p.profileName, profileFile(options.env)) : null;
+  return { problems: [], path: p.where.path, backup, created: !p.where.existing, profileSaved };
+}
