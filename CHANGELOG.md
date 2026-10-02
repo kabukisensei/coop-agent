@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.29.0] — 2026-10-02
+
 ### Removed
 
 - `context-mode` is no longer part of coop. Its `ctx_execute`,
