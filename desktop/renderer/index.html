@@ -20,6 +20,7 @@
       <div class="sidebar-foot">
         <button type="button" id="openFolder" class="btn ghost" title="Open another folder in a new coop window">Open folder...</button>
       </div>
+      <div id="sidebarResize" class="sidebar-resize" role="separator" aria-orientation="vertical" aria-label="Resize the sessions list" tabindex="0"></div>
     </aside>
     <main class="main">
       <header class="topbar">
@@ -29,11 +30,11 @@
         <div class="where">
           <span id="folderName" class="folder"></span>
           <span id="branchName" class="chip branch" hidden></span>
-          <button type="button" id="sessionName" class="session-name" title="Name this session"></button>
+          <button type="button" id="sessionName" class="session-name" title="Rename this session"></button>
         </div>
         <div class="top-actions">
-          <button type="button" id="modelButton" class="btn pill" title="Model (Ctrl+L)"></button>
-          <button type="button" id="thinkingButton" class="btn pill" title="Thinking level (Shift+Tab)" hidden></button>
+          <button type="button" id="modelButton" class="btn pill" title="Change the model (Ctrl+L)"></button>
+          <button type="button" id="thinkingButton" class="btn pill" title="Change the thinking level (Shift+Tab)" hidden></button>
           <button type="button" id="terminalButton" class="btn" title="Open this session in a terminal" hidden>Open in terminal</button>
           <button type="button" id="paneButton" class="btn icon" title="Side pane: changes, standards, project, docs (Ctrl+\)" aria-label="Show or hide the side pane">
             <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11v9h-11zM9.5 3.5v9"/></svg>
@@ -66,6 +67,9 @@
           <div id="attachments" class="attachments" hidden></div>
           <textarea id="prompt" rows="1" placeholder="Ask coop. Type / for commands, ! to run a shell command." aria-label="Message coop" spellcheck="true"></textarea>
           <div class="composer-bar">
+            <button type="button" id="attachButton" class="btn icon" title="Attach files: images, text, Word, Excel, PowerPoint or PDF" aria-label="Attach files">
+              <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M10.6 5.4L6 10a1.4 1.4 0 0 0 2 2l5.1-5.1a2.9 2.9 0 0 0-4.1-4.1L3.9 7.9a4.2 4.2 0 0 0 5.9 5.9l3.4-3.4"/></svg>
+            </button>
             <span id="composerHint" class="hint"></span>
             <button type="button" id="queueButton" class="btn" title="Queue for when coop finishes (Alt+Enter)" hidden>Queue</button>
             <button type="button" id="stopButton" class="btn danger" title="Stop (Esc)" hidden>Stop</button>
@@ -76,11 +80,11 @@
       </div>
       <footer id="statusbar" class="statusbar"></footer>
     </main>
-    <aside id="pane" class="pane" aria-label="Pane" hidden>
-      <div id="paneResize" class="pane-resize" role="separator" aria-orientation="vertical" aria-label="Resize the pane" tabindex="0"></div>
+    <aside id="pane" class="pane" aria-label="Side pane" hidden>
+      <div id="paneResize" class="pane-resize" role="separator" aria-orientation="vertical" aria-label="Resize the side pane" tabindex="0"></div>
       <header class="pane-head">
-        <div id="paneTabs" class="pane-tabs" role="tablist" aria-label="Panes"></div>
-        <button type="button" id="paneRefresh" class="btn icon" title="Refresh" aria-label="Refresh">
+        <div id="paneTabs" class="pane-tabs" role="tablist" aria-label="Side pane views"></div>
+        <button type="button" id="paneRefresh" class="btn icon" title="Refresh this view" aria-label="Refresh this view">
           <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8a5 5 0 1 0 1.5-3.5M3 2.5V5h2.5"/></svg>
         </button>
         <button type="button" id="paneClose" class="btn icon" title="Close the pane (Ctrl+\)" aria-label="Close the pane">

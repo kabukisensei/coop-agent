@@ -191,9 +191,10 @@ export function mountProject(box, options, { coop, newSession }) {
         toggle("tabularEditorEnabled", "Use the Tabular Editor CLI for semantic-model BPA reviews", (on) => { teBox.hidden = !on; }),
         teBox),
       el("div", { class: "form-problems", role: "alert", hidden: true }),
-      el("div", { class: "form-actions" },
-        el("button", { type: "button", class: "btn primary", text: "Review changes", onclick: review }),
-        el("button", { type: "button", class: "btn", text: "Discard edits", onclick: () => reload(true) })));
+      // The form is long: its buttons stay in view at the bottom of the pane.
+      el("div", { class: "form-actions form-footer" },
+        el("button", { type: "button", class: "btn primary", text: "Review changes", title: "Check the answers and show what saving would change", onclick: review }),
+        el("button", { type: "button", class: "btn", text: "Discard edits", title: "Go back to what the file says now", onclick: () => reload(true) })));
     showTarget();
   }
 

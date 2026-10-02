@@ -346,6 +346,98 @@ function shortPath(path) {
   return parts.slice(-2).join("/") || text;
 }
 
+function fileName(path) {
+  return String(path || "").split(/[\\/]/).filter(Boolean).pop() || "";
+}
+
+function pathOf(args) {
+  const a = args && typeof args === "object" ? args : {};
+  return String(a.path || a.file_path || a.filePath || "");
+}
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/**
+ * One line for a run of tool calls and thinking: "Read vSales.sql, ran 2
+ * commands, edited report.sql", or the live step while the last one runs.
+ * blocks are the run's blocks in order; tools is the timeline's tool map.
+ */
+export function activitySummary(blocks, tools, { live = false } = {}) {
+  const read = []; const ran = []; const edited = []; const searched = []; const other = [];
+  let thinking = 0; let failed = 0;
+  const toolOf = (block) => tools.get(block.toolCallId) || { status: "pending" };
+  for (const block of blocks) {
+    if (block.type === "thinking") { if (block.text && block.text.trim()) thinking++; continue; }
+    if (block.type !== "tool") continue;
+    const tool = toolOf(block);
+    const name = block.name || tool.name || "tool";
+    const args = block.args !== undefined ? block.args : tool.args;
+    if (tool.status === "error") failed++;
+    if (name === "read") read.push(fileName(pathOf(args)));
+    else if (name === "bash") ran.push(String((args && args.command) || "").split("\n")[0]);
+    else if (name === "edit" || name === "write") edited.push(fileName(pathOf(args)));
+    else if (name === "grep" || name === "find" || name === "ls") searched.push(name);
+    else other.push(name);
+  }
+  const last = blocks[blocks.length - 1];
+  if (live && last) {
+    if (last.type === "thinking") return "Thinking...";
+    if (last.type === "tool") {
+      const tool = toolOf(last);
+      if (tool.status === "pending" || tool.status === "running") {
+        const name = last.name || tool.name || "tool";
+        const args = last.args !== undefined ? last.args : tool.args;
+        const target = name === "bash" ? String((args && args.command) || "").split("\n")[0].slice(0, 60) : fileName(pathOf(args));
+        if (name === "read") return `Reading ${target || "a file"}...`;
+        if (name === "bash") return `Running ${target || "a command"}...`;
+        if (name === "edit" || name === "write") return `Editing ${target || "a file"}...`;
+        if (name === "grep" || name === "find" || name === "ls") return "Searching the folder...";
+        return `Using ${name}...`;
+      }
+    }
+  }
+  const parts = [];
+  if (read.length) parts.push(`read ${read.length === 1 && read[0] ? read[0] : plural(read.length, "file")}`);
+  if (ran.length) parts.push(`ran ${ran.length === 1 && ran[0] ? ran[0].slice(0, 60) : plural(ran.length, "command")}`);
+  if (edited.length) parts.push(`edited ${edited.length === 1 && edited[0] ? edited[0] : plural(edited.length, "file")}`);
+  if (searched.length) parts.push(searched.length === 1 ? "searched the folder" : `searched ${searched.length} times`);
+  if (other.length) parts.push(`used ${[...new Set(other)].join(", ")}`);
+  if (!parts.length) parts.push(thinking ? "thought it through" : "worked");
+  let text = parts.join(", ");
+  text = text.charAt(0).toUpperCase() + text.slice(1);
+  if (failed) text += ` (${plural(failed, "step")} failed)`;
+  return text;
+}
+
+/**
+ * One turn as the window shows it: a run of assistant messages with nothing
+ * else between them (the model answers, calls tools, answers again) is one
+ * answer, so its tool calls fold across the message boundaries. Returns the
+ * consecutive assistant items around the item with this id (the item alone
+ * for anything else).
+ */
+export function turnOf(items, id) {
+  const at = items.findIndex((item) => item.id === id);
+  if (at < 0) return [];
+  if (items[at].kind !== "assistant") return [items[at]];
+  let start = at;
+  while (start > 0 && items[start - 1].kind === "assistant") start--;
+  let end = at;
+  while (end + 1 < items.length && items[end + 1].kind === "assistant") end++;
+  return items.slice(start, end + 1);
+}
+
+/** Every item, with each run of assistant messages grouped as one turn. */
+export function turns(items) {
+  const out = [];
+  for (const item of items) {
+    const last = out[out.length - 1];
+    if (item.kind === "assistant" && last && last[0].kind === "assistant") last.push(item);
+    else out.push([item]);
+  }
+  return out;
+}
+
 /** One line that says what a tool call does, for its collapsed header. */
 export function toolSummary(name, args) {
   const a = args && typeof args === "object" ? args : {};

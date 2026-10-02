@@ -2,7 +2,8 @@
 import { el, icon } from "./ui.mjs";
 import { renderMarkdown } from "./markdown.mjs";
 import { parseEditDiff, diffStats } from "./diff.mjs";
-import { toolSummary, formatTokens } from "./timeline.mjs";
+import { toolSummary, activitySummary, formatTokens } from "./timeline.mjs";
+import { splitAttachmentNote } from "./attach-note.mjs";
 
 const MAX_LINES = 80;
 const MAX_CHARS = 12_000;
@@ -151,37 +152,92 @@ function toolCard(block, tl, prefs) {
   return card;
 }
 
-function assistantView(item, tl, prefs) {
-  const node = el("article", { class: `msg assistant ${item.streaming ? "streaming" : ""}`, dataset: { id: item.id } });
-  const blocks = item.blocks.filter(Boolean);
-  blocks.forEach((block, index) => {
-    if (block.type === "thinking") {
-      if (!block.text.trim()) return;
-      const key = `${item.id}:${index}`;
-      const remembered = prefs.thinkingOpen.get(key);
-      const open = remembered !== undefined ? remembered : prefs.showThinking || (item.streaming && index === blocks.length - 1);
-      const details = el("details", { class: "thinking", open },
-        el("summary", { text: item.streaming && index === blocks.length - 1 ? "Thinking..." : "Thinking" }),
-        el("div", { class: "thinking-text", text: block.text }));
-      details.addEventListener("toggle", () => prefs.thinkingOpen.set(key, details.open));
-      node.append(details);
-    } else if (block.type === "text") {
-      if (block.text) node.append(markdown(block.text));
-    } else if (block.type === "tool") {
-      node.append(toolCard(block, tl, prefs));
-    }
+function thinkingView(block, index, item, blocks, prefs) {
+  const key = `${item.id}:${index}`;
+  const remembered = prefs.thinkingOpen.get(key);
+  const open = remembered !== undefined ? remembered : prefs.showThinking || (item.streaming && index === blocks.length - 1);
+  const details = el("details", { class: "thinking", open },
+    el("summary", { text: item.streaming && index === blocks.length - 1 ? "Thinking..." : "Thinking" }),
+    el("div", { class: "thinking-text", text: block.text }));
+  details.addEventListener("toggle", () => prefs.thinkingOpen.set(key, details.open));
+  return details;
+}
+
+// A run of tool calls and thinking between two pieces of prose folds into one
+// line: what coop did, or the step running now. Open it for the tool cards
+// (Ctrl+O opens them all); a failed step opens on its own. The session file
+// keeps everything either way.
+function activityView(entries, tl, prefs, { last }) {
+  const key = `${entries[0].item.id}:${entries[0].index}`;
+  const run = entries.map((entry) => entry.block);
+  const failed = run.some((block) => block.type === "tool" && (tl.tools.get(block.toolCallId) || {}).status === "error");
+  // The step running now: the model's message has ended by the time its tool
+  // runs, so look at the tool, not at streaming; a thinking block is live
+  // only while its message streams. Nothing runs once the agent has settled.
+  const running = last && tl.busy && (() => {
+    const tail = entries[entries.length - 1];
+    if (tail.block.type === "thinking") return tail.item.streaming;
+    const tool = tl.tools.get(tail.block.toolCallId) || { status: "pending" };
+    return tool.status === "pending" || tool.status === "running";
+  })();
+  const remembered = prefs.activityOpen.get(key);
+  const open = remembered !== undefined ? remembered : (prefs.expandTools || failed);
+  const steps = run.filter((block) => block.type === "tool").length;
+  const details = el("details", { class: `activity ${running ? "running" : ""} ${failed ? "failed" : ""}`, open },
+    el("summary", { class: "activity-head" },
+      el("span", { class: "activity-status" }, running ? el("span", { class: "spinner" }) : failed ? icon("warn", "A step failed") : icon("check", "Done")),
+      el("span", { class: "activity-text", text: activitySummary(run, tl.tools, { live: running }) }),
+      steps ? el("span", { class: "activity-count", text: `${steps} ${steps === 1 ? "step" : "steps"}` }) : null,
+      icon("chevron")),
+    el("div", { class: "activity-body" }, entries.map(({ block, index, item, blocks }) => (block.type === "thinking" ? (block.text.trim() ? thinkingView(block, index, item, blocks, prefs) : null) : toolCard(block, tl, prefs)))));
+  details.addEventListener("toggle", () => prefs.activityOpen.set(key, details.open));
+  return details;
+}
+
+/**
+ * One turn: a run of assistant messages with nothing else between them, drawn
+ * as one answer. Prose stays as it is; everything between two pieces of prose,
+ * across the message boundaries too, is one activity line.
+ */
+function assistantView(items, tl, prefs) {
+  const last = items[items.length - 1];
+  const streaming = items.some((item) => item.streaming);
+  const node = el("article", { class: `msg assistant ${streaming ? "streaming" : ""}`, dataset: { id: items[0].id, ids: items.map((item) => item.id).join(" ") } });
+  const entries = [];
+  for (const item of items) {
+    const blocks = item.blocks.filter(Boolean);
+    blocks.forEach((block, index) => entries.push({ block, index, item, blocks }));
+  }
+  const groups = [];
+  for (const entry of entries) {
+    const { block, item } = entry;
+    if (block.type === "text") { groups.push({ kind: "text", block }); continue; }
+    if (block.type === "thinking" && !block.text.trim() && !item.streaming) continue;
+    const tail = groups[groups.length - 1];
+    if (tail && tail.kind === "activity") tail.entries.push(entry);
+    else groups.push({ kind: "activity", entries: [entry] });
+  }
+  groups.forEach((group, g) => {
+    if (group.kind === "text") { if (group.block.text) node.append(markdown(group.block.text)); return; }
+    if (!prefs.activityFold) { for (const { block, index, item, blocks } of group.entries) node.append(block.type === "thinking" ? thinkingView(block, index, item, blocks, prefs) : toolCard(block, tl, prefs)); return; }
+    node.append(activityView(group.entries, tl, prefs, { last: g === groups.length - 1 }));
   });
-  if (item.streaming && !blocks.length) node.append(el("div", { class: "working" }, el("span", { class: "spinner" }), el("span", { text: "Working" })));
-  if (item.stopReason === "error" || item.errorMessage) {
-    node.append(el("div", { class: "notice error" }, icon("warn"), el("span", { text: item.errorMessage || "The model stopped with an error." })));
-  } else if (item.stopReason === "aborted") {
+  if (last.streaming && !last.blocks.filter(Boolean).length) node.append(el("div", { class: "working" }, el("span", { class: "spinner" }), el("span", { text: prefs.workingText ? prefs.workingText() : "Working" })));
+  if (last.stopReason === "error" || last.errorMessage) {
+    node.append(el("div", { class: "notice error" }, icon("warn"), el("span", { text: last.errorMessage || "The model stopped with an error." })));
+  } else if (last.stopReason === "aborted") {
     node.append(el("div", { class: "notice muted", text: "Stopped." }));
   }
-  const answer = blocks.filter((block) => block.type === "text").map((block) => block.text).join("\n\n");
-  if (!item.streaming && answer.trim()) {
-    node.append(el("div", { class: "msg-actions" }, copyButton(answer, "Copy answer"), item.model ? el("span", { class: "msg-meta", text: item.model }) : null));
+  const answer = entries.filter(({ block }) => block.type === "text").map(({ block }) => block.text).join("\n\n");
+  if (!streaming && answer.trim()) {
+    node.append(el("div", { class: "msg-actions" }, copyButton(answer, "Copy answer"), last.model ? el("span", { class: "msg-meta", text: last.model }) : null));
   }
   return node;
+}
+
+/** A run of consecutive assistant items (see timeline.mjs turnOf) as one node. */
+export function renderTurn(items, tl, prefs) {
+  return assistantView(items, tl, prefs);
 }
 
 function standardsView(item, prefs) {
@@ -200,11 +256,15 @@ export function renderItem(item, tl, prefs) {
     case "user":
       // Typed prompts keep their line breaks; a prompt with a code fence (or a
       // report an extension sent as a user message) renders as Markdown.
+      // The files a message attached show as chips under it; the note that
+      // names them for coop stays in the session text.
+      const { text, files } = splitAttachmentNote(item.text || "");
       return el("article", { class: "msg user", dataset: { id: item.id } },
-        /^\s*```/m.test(item.text || "") ? el("div", { class: "bubble rich" }, markdown(item.text)) : el("div", { class: "bubble", text: item.text || (item.images ? "" : " ") }),
+        /^\s*```/m.test(text) ? el("div", { class: "bubble rich" }, markdown(text)) : el("div", { class: "bubble", text: text || (item.images || files.length ? "" : " ") }),
+        files.length ? el("div", { class: "msg-files" }, files.map((file) => el("span", { class: "msg-file", title: file.ref }, icon("file"), el("span", { class: "msg-file-name", text: file.name }), file.detail ? el("span", { class: "msg-file-detail", text: file.detail }) : null))) : null,
         item.images ? el("div", { class: "msg-meta", text: item.images === 1 ? "1 image" : `${item.images} images` }) : null);
     case "assistant":
-      return assistantView(item, tl, prefs);
+      return assistantView([item], tl, prefs);
     case "standards":
       return standardsView(item, prefs);
     case "custom":

@@ -84,7 +84,7 @@ export function mountStandards(box, options, { coop, codeBlock }) {
     const outline = articleOutline(blocks);
     fill(content);
     renderBlocks(document, blocks, content, { codeBlock });
-    if (result.data.truncated) content.append(el("p", { class: "hint", text: "Cut short: the rest is in the terminal's /standards-status sources." }));
+    if (result.data.truncated) content.append(el("p", { class: "hint", text: "Cut short here. The full text is in the terminal: run /standards-status." }));
     const headings = [...content.querySelectorAll(":scope > h2")];
     fill(articles, el("option", { value: "", text: `${outline.length} ${outline.length === 1 ? "article" : "articles"}: jump to one` }),
       ...outline.map((a, i) => el("option", { value: String(i), text: a.title })));

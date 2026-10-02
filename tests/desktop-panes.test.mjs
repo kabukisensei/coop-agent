@@ -782,7 +782,7 @@ await check("styles: the pane draws in all four themes", () => {
   }
   const tokens = (block) => [...new Set([...block.matchAll(/var\((--[a-z0-9-]+)/g)].map((m) => m[1]))];
   const themeBody = (name) => { const i = themes.indexOf(`[data-theme="${name}"]`); return themes.slice(i, themes.indexOf("}", i)); };
-  const colours = tokens(modern).filter((t) => !/^--(pane-width|font|radius|shadow)/.test(t));
+  const colours = tokens(modern).filter((t) => !/^--(pane-width|sidebar-width|change-list-height|font|radius|shadow)/.test(t));
   for (const theme of ["modern-dark", "modern-light", "retro-dark", "retro-light"]) {
     const body = themeBody(theme);
     for (const token of colours) assert.match(body, new RegExp(`${token}\\s*:`), `${theme} defines ${token}`);
@@ -806,6 +806,28 @@ await check("render: no stray text or borrowed layout in the panes", () => {
   const diffView = readFileSync(join(ROOT, "desktop", "renderer", "diff-view.mjs"), "utf8");
   assert.equal(/class: "[^"]*\bempty\b/.test(diffView), false, "the split diff's blank cell is not .empty");
   assert.equal(docs.MESSAGES.notRunnable("output.dir overlaps source repo 'sql'.").includes(".."), false);
+});
+
+await check("resize: every pane drags, within limits that keep the conversation readable", async () => {
+  const resize = await import(pathToFileURL(join(ROOT, "desktop", "renderer", "resize.mjs")).href);
+  assert.equal(resize.clampSize(100, 200, 480), 200);
+  assert.equal(resize.clampSize(900, 200, 480), 480);
+  assert.equal(resize.clampSize(300.6, 200, 480), 301);
+  assert.equal(resize.clampSize(300, 320, 100), 320, "a max below the min yields the min");
+  assert.equal(resize.clampSize(5000, 36, Infinity), 5000, "no layout yet: a saved size is kept");
+  // Wide window: the pane stops at 70% of it; narrow: the conversation keeps MIN_MAIN.
+  assert.equal(resize.paneMaxWidth(3000, 264), 2100);
+  assert.equal(resize.paneMaxWidth(1200, 264), 1200 - 264 - resize.MIN_MAIN);
+  assert.equal(resize.sidebarMaxWidth(2000, 0), resize.SIDEBAR_MAX);
+  assert.equal(resize.sidebarMaxWidth(1200, 520), 1200 - 520 - resize.MIN_MAIN);
+  // Each handle is in the markup or the pane, labelled, and keyboard reachable.
+  const html = readFileSync(join(ROOT, "desktop", "renderer", "index.html"), "utf8");
+  for (const id of ["sidebarResize", "paneResize"]) assert.match(html, new RegExp(`id="${id}"[^>]*role="separator"[^>]*aria-label="[^"]+"[^>]*tabindex="0"`), id);
+  const changes = readFileSync(join(ROOT, "desktop", "renderer", "pane-changes.mjs"), "utf8");
+  assert.match(changes, /class: "split-resize", role: "separator", "aria-orientation": "horizontal"/);
+  const css = readFileSync(join(ROOT, "desktop", "renderer", "styles", "app.css"), "utf8");
+  for (const variable of ["--sidebar-width", "--pane-width", "--change-list-height"]) assert.ok(css.includes(`var(${variable}`), `app.css sizes with ${variable}`);
+  assert.equal(/grid-template-columns: 264px/.test(css), false, "the sidebar column follows --sidebar-width");
 });
 
 rmSync(temp, { recursive: true, force: true });

@@ -3,30 +3,27 @@
 // docs setup form), opened from the timeline or from a menu. Each view is
 // mounted once and kept while the window lives, so switching keeps its state.
 import { el, icon } from "./ui.mjs";
+import { makeResizer, paneMaxWidth } from "./resize.mjs";
 
 const $ = (id) => document.getElementById(id);
-const WIDTH_KEY = "coop.paneWidth";
-const MIN_WIDTH = 320;
 
 const views = new Map();
 const mounted = new Map();
 let current = "";
 let onOpen = () => {};
 
-function storedWidth() {
-  try { return Number(window.localStorage.getItem(WIDTH_KEY)) || 0; } catch { return 0; }
-}
-
-function setWidth(px) {
-  const max = Math.max(MIN_WIDTH, Math.floor(window.innerWidth * 0.7));
-  const width = Math.max(MIN_WIDTH, Math.min(max, Math.round(px)));
-  document.documentElement.style.setProperty("--pane-width", `${width}px`);
-  try { window.localStorage.setItem(WIDTH_KEY, String(width)); } catch { /* storage off */ }
-}
+// What each tab shows, for its tooltip: the label alone is one word.
+const TAB_HELP = {
+  changes: "Files changed since the last commit",
+  standards: "The standards coop applies in this folder",
+  project: "Project settings (.coop/project.yml)",
+  docs: "Lineage docs for this folder (coop-data-doc)",
+};
 
 /**
- * Register a view: { id, label, icon, mount(container, options) } where mount
- * returns { show(options), refresh(), unmount() } (each optional).
+ * Register a view: { id, label, icon, description, mount(container, options) }
+ * where mount returns { show(options), refresh(), unmount() } (each optional)
+ * and description, when given, is the tab's tooltip.
  */
 export function registerPane(view) {
   views.set(view.id, view);
@@ -46,7 +43,7 @@ function renderTabs() {
     class: `pane-tab${view.id === current ? " active" : ""}`,
     role: "tab",
     "aria-selected": view.id === current ? "true" : "false",
-    title: view.label,
+    title: view.description || TAB_HELP[view.id] || view.label,
     onclick: () => openPane(view.id),
   }, icon(view.icon), el("span", { text: view.label }))));
 }
@@ -89,27 +86,22 @@ export function refreshPane() {
   if (instance && instance.api.refresh) instance.api.refresh();
 }
 
-function wireResize() {
-  const handle = $("paneResize");
-  handle.addEventListener("pointerdown", (event) => {
-    event.preventDefault();
-    handle.setPointerCapture(event.pointerId);
-    const move = (e) => setWidth(window.innerWidth - e.clientX);
-    const up = () => { handle.removeEventListener("pointermove", move); handle.removeEventListener("pointerup", up); };
-    handle.addEventListener("pointermove", move);
-    handle.addEventListener("pointerup", up);
-  });
-  handle.addEventListener("keydown", (event) => {
-    const now = $("pane").getBoundingClientRect().width;
-    if (event.key === "ArrowLeft") { event.preventDefault(); setWidth(now + 32); }
-    if (event.key === "ArrowRight") { event.preventDefault(); setWidth(now - 32); }
-  });
-}
+const sidebarWidth = () => (document.body.classList.contains("no-sidebar") ? 0 : document.querySelector(".sidebar").getBoundingClientRect().width);
 
 export function initPanes(options = {}) {
   if (options.onOpen) onOpen = options.onOpen;
-  const width = storedWidth();
-  if (width) setWidth(width);
+  const resizer = makeResizer({
+    handle: $("paneResize"),
+    key: "coop.paneWidth",
+    cssVar: "--pane-width",
+    min: 320,
+    max: () => paneMaxWidth(window.innerWidth, sidebarWidth()),
+    measure: () => $("pane").getBoundingClientRect().width,
+    // The handle is on the pane's left edge: dragging left widens it.
+    fromPointer: (event, start) => start.size + (start.x - event.clientX),
+    keys: { grow: "ArrowLeft", shrink: "ArrowRight" },
+  });
+  window.addEventListener("resize", () => resizer.apply());
   $("paneClose").addEventListener("click", closePane);
   $("paneRefresh").addEventListener("click", refreshPane);
   // Web links in a pane's Markdown open in the browser, never in the window.
@@ -117,5 +109,4 @@ export function initPanes(options = {}) {
     const link = event.target.closest("a.md-link");
     if (link) { event.preventDefault(); window.coop.openExternal(link.dataset.href); }
   });
-  wireResize();
 }

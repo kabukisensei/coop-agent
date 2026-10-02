@@ -43,6 +43,19 @@ export function stripFrontMatter(text) {
   return match ? value.slice(match[0].length) : value;
 }
 
+/**
+ * The wizard's wording minus the key hints that only apply in a terminal:
+ * here a checkbox list, a Next button and a Cancel button do that work.
+ */
+export function windowWording(text) {
+  return String(text || "")
+    .replace(/\s*\((?:nothing is checked to start;\s*)?SPACE (?:checks|toggles)[^)]*\)/gi, "")
+    .replace(/\s*\((?:or )?press (?:Ctrl-C|Ctrl\+C|Enter)[^)]*\)/gi, "")
+    .replace(/,?\s*(?:ENTER|Enter) confirms\b/g, "")
+    .replace(/\s+([:.,;])/g, "$1")
+    .trim();
+}
+
 /** How a wizard answer reads in the list of earlier answers. */
 export function answerLabel(prompt, value) {
   if (prompt.kind === "confirm") return value ? "Yes" : "No";
@@ -91,8 +104,8 @@ export function mountDocs(box, options, { coop, codeBlock }) {
     setup.hidden = !(state.running || state.steps.length || state.result);
     // Answers and the wizard's notes, in the order the terminal prints them.
     const steps = state.steps.map((step) => step.kind === "answer"
-      ? el("div", { class: "docs-answer" }, el("span", { class: "docs-question", text: step.message }), el("span", { class: "docs-value", text: step.answer }))
-      : el("div", { class: `notice ${step.level === "error" || step.level === "warning" ? step.level : "info"}` }, step.level === "error" || step.level === "warning" ? icon("warn") : null, el("span", { text: step.message })));
+      ? el("div", { class: "docs-answer" }, el("span", { class: "docs-question", text: windowWording(step.message) }), el("span", { class: "docs-value", text: step.answer }))
+      : el("div", { class: `notice ${step.level === "error" || step.level === "warning" ? step.level : "info"}` }, step.level === "error" || step.level === "warning" ? icon("warn") : null, el("span", { text: windowWording(step.message) })));
     let current = null;
     if (state.prompt) current = promptField(state.prompt);
     else if (state.running) current = el("div", { class: "working" }, el("span", { class: "spinner" }), el("span", { text: "coop-data-doc is working" }));
@@ -108,16 +121,17 @@ export function mountDocs(box, options, { coop, codeBlock }) {
 
   function promptField(prompt) {
     const problem = el("div", { class: "form-problem", role: "alert", hidden: true });
+    const question = windowWording(prompt.message);
     const send = async (value) => {
       const result = await coop.docsAnswer(prompt.id, value);
       if (!result.success) { problem.textContent = result.error || "That answer did not fit."; problem.hidden = false; return; }
       if (!state.prompt || state.prompt.id !== prompt.id) return;
-      state.steps.push({ kind: "answer", message: prompt.message, answer: answerLabel(prompt, normalizedForLabel(prompt, value)) });
+      state.steps.push({ kind: "answer", message: question, answer: answerLabel(prompt, normalizedForLabel(prompt, value)) });
       state.prompt = null;
       renderSetup();
     };
-    const cancel = el("button", { type: "button", class: "btn", text: "Cancel", onclick: () => coop.docsCancel() });
-    const label = el("label", { class: "form-label" }, el("span", { text: prompt.message }));
+    const cancel = el("button", { type: "button", class: "btn", text: "Cancel", title: "Stop the setup; nothing is saved", onclick: () => coop.docsCancel() });
+    const label = el("label", { class: "form-label" }, el("span", { text: question }));
     let control;
     let next;
     if (prompt.kind === "confirm") {
@@ -130,12 +144,12 @@ export function mountDocs(box, options, { coop, codeBlock }) {
       const name = `docs-${prompt.id}`;
       const inputs = prompt.choices.map((choice) => el("input", { type: multi ? "checkbox" : "radio", name, value: choice.value, checked: multi ? choice.checked : choice.value === prompt.default }));
       if (!multi && !inputs.some((input) => input.checked) && inputs[0]) inputs[0].checked = true;
-      control = el("div", { class: "choice-list", role: multi ? "group" : "radiogroup", "aria-label": prompt.message },
+      control = el("div", { class: "choice-list", role: multi ? "group" : "radiogroup", "aria-label": question },
         prompt.choices.map((choice, i) => el("label", { class: "choice" }, inputs[i], el("span", { text: choice.label }))));
       next = () => send(multi ? inputs.filter((input) => input.checked).map((input) => input.value) : (inputs.find((input) => input.checked) || {}).value);
     } else {
       const fallback = defaultText(prompt);
-      const input = el("input", { class: "field", type: "text", value: fallback, spellcheck: "false", "aria-label": prompt.message });
+      const input = el("input", { class: "field", type: "text", value: fallback, spellcheck: "false", "aria-label": question });
       input.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); next(); } });
       const browse = prompt.kind === "path" ? el("button", { type: "button", class: "btn", text: "Browse...", onclick: async () => {
         const result = await coop.pickFolder("docs", input.value || fallback);
@@ -147,7 +161,7 @@ export function mountDocs(box, options, { coop, codeBlock }) {
       requestAnimationFrame(() => { if (input.isConnected) input.focus(); });
     }
     return el("div", { class: "form-row docs-prompt" }, label, control,
-      defaultText(prompt) ? el("div", { class: "hint", text: `Blank keeps ${defaultText(prompt)}` }) : null,
+      defaultText(prompt) ? el("div", { class: "hint", text: `Leave it blank to keep ${defaultText(prompt)}` }) : null,
       problem,
       el("div", { class: "form-actions" }, el("button", { type: "button", class: "btn primary", text: "Next", onclick: () => next() }), cancel));
   }
