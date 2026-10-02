@@ -43,6 +43,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   crashes) and `tests/fixtures/desktop-spec.test.ps1` (`--print-spec` equals
   `launch-spec`, the runtime states). Re-record the session with
   `node desktop/scripts/record-fixture.mjs` after a Pi or extension upgrade.
+
+## [0.28.0] — 2026-10-02
+
+### Added
+
 - `coop teamai <status|install|init|pull|recall --query <text>>` (master plan
   Phase 7, K1: isolated CLI, read-only recall and sources). `lib/teamai.py`
   installs the manifest-pinned `teamai-cli` (`teamai` in
