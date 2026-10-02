@@ -151,7 +151,9 @@ powerbi-report-author validate "Report.Report" --out diag.json # capture to file
 Rules:
 
 - If `status` shows `hasUnsavedChanges: true`, stop and ask the user to save or
-  discard in Desktop first.
+  discard in Desktop first. coop enforces this: the guardrails run `status`
+  before every `reload` (and every `preview` that reloads) and block or ask on
+  unsaved changes; a blocked reload is a question for the user, not a retry.
 - Run reload and screenshots **serially per PID** — never in parallel.
 - **Theme files are cache-keyed by name.** After editing a theme JSON, rename
   it with a random suffix (and update `report.json`), or close and reopen

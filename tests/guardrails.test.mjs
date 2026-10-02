@@ -21,7 +21,7 @@ const clearAudit = () => rmSync(AUDIT_FILE, { force: true });
 const dist = process.env.COOP_TEST_DIST;
 const cg = await import(pathToFileURL(`${dist}/coop-guardrails.mjs`).href);
 const coopGuardrails = cg.default;
-const { isSecretPath, commitStagesAll, mcpMutationLabel, mcpLiveReadRisk, sqlMcpRisk, effectiveMutationTarget, gitRepoDir, leadingCdDir, bashSecretCmdPath, parseGitCommand, parseGitCommands, hasAmbiguousGitInvocation, parseRepoEntries, commitPolicy, buildSessionGovernance, resetSessionGovernance, stripManagedUpdateNotices } = cg;
+const { desktopReloadTarget, decideDesktopReload, desktopStatusCommand, isSecretPath, commitStagesAll, mcpMutationLabel, mcpLiveReadRisk, sqlMcpRisk, effectiveMutationTarget, gitRepoDir, leadingCdDir, bashSecretCmdPath, parseGitCommand, parseGitCommands, hasAmbiguousGitInvocation, parseRepoEntries, commitPolicy, buildSessionGovernance, resetSessionGovernance, stripManagedUpdateNotices } = cg;
 
 // Capture the handler the extension registers.
 let staged = "";     // `git diff --cached --name-only`
@@ -30,12 +30,19 @@ let confirmAnswer = false;
 let confirmCount = 0;
 let lastConfirm = "";
 let lastRepoDir = ""; // the `-C <dir>` the commit gate ran git against (which repo it checked)
+let desktopStatus = null; // canned `powerbi-desktop status` result ({stdout, code}) or a thrower — the stubbed bridge
+const execLog = [];       // every pi.exec call: { bin, args }
 const handlers = {};
 const cmds = {};
 const pi = {
   on: (ev, h) => (handlers[ev] = h),
   registerCommand: (name, opts) => (cmds[name] = opts),
   exec: async (bin, args) => {
+    execLog.push({ bin, args });
+    if (bin === "powerbi-desktop" || (bin === process.execPath && /powerbi-desktop-bridge-cli/.test(String(args[0])))) {
+      if (typeof desktopStatus === "function") return desktopStatus();
+      return desktopStatus ? { stderr: "", ...desktopStatus } : { stdout: "", code: 1, stderr: "no stubbed bridge" };
+    }
     const a = args.join(" ");
     if (bin === "git") { const i = args.indexOf("-C"); if (i >= 0) lastRepoDir = args[i + 1]; }
     // NB: cached diff args ("diff --cached --name-only") contain BOTH substrings, so
@@ -1867,6 +1874,163 @@ await t("dynamic grant rejection, approval expansion, revocation and new session
   await handleSessionStart({ reason: "new" }, liveCtx);
   confirmAnswer = false;
   assert.equal(blocked(await handle(dynamicRead(), liveCtx)), true);
+});
+
+// --- Power BI Desktop reload guard (S31) -----------------------------------------
+// The "bridge" is the mocked pi.exec: `powerbi-desktop status` returns canned JSON in
+// the shape Desktop Bridge CLI 1.0.0 prints (status / instances[] with pid,
+// bridgeStatus, currentFilePath, hasUnsavedChanges, reportDir, pages).
+const inst = (pid, hasUnsavedChanges, file = `E:\\coop-sandbox\\tmp\\pbip-copy\\Resources.pbip`) => ({
+  pid, bridgeStatus: "connected", currentFilePath: file, hasUnsavedChanges,
+  reportDir: file.replace(/\.pbip$/, ".Report"), pages: [],
+});
+const statusJson = (...instances) => JSON.stringify({ status: instances.some((i) => i.bridgeStatus === "connected") ? "ready" : "not_connected", instances }, null, 2);
+const withStatus = (status, fn) => { desktopStatus = status; return fn().finally(() => { desktopStatus = null; }); };
+const reloadCall = (command, opts) => withStatus(opts?.status ?? null, () => call(command, opts));
+const statusCalls = () => execLog.filter((e) => e.bin === "powerbi-desktop").map((e) => e.args.join(" "));
+
+await t("reload guard: status runs through the npm shim's cli.js on Windows (spawn has no shell)", async () => {
+  assert.deepEqual(desktopStatusCommand("19284", "linux", { PATH: "/usr/bin" }, () => true, "/node"), { bin: "powerbi-desktop", args: ["status", "--pid", "19284"] });
+  assert.deepEqual(desktopStatusCommand(null, "linux", {}, () => true, "/node"), { bin: "powerbi-desktop", args: ["status"] });
+  const npm = "C:\\Users\\aaron\\AppData\\Roaming\\npm";
+  const cli = `${npm}\\node_modules\\@microsoft\\powerbi-desktop-bridge-cli\\dist\\cli.js`;
+  const files = new Set([`${npm}\\powerbi-desktop.cmd`, cli]);
+  const exists = (p) => files.has(p.replace(/\//g, "\\"));
+  const win = { PATH: `C:\\Windows\\system32;${npm};C:\\Program Files\\Git\\cmd` };
+  const r = desktopStatusCommand("19284", "win32", win, exists, "C:\\Program Files\\nodejs\\node.exe");
+  assert.equal(r.bin, "C:\\Program Files\\nodejs\\node.exe");
+  assert.equal(r.args[0].replace(/\//g, "\\"), cli);
+  assert.deepEqual(r.args.slice(1), ["status", "--pid", "19284"]);
+  // Path spelled with the lowercase `Path` key, as PowerShell-launched processes often carry it.
+  assert.equal(desktopStatusCommand(null, "win32", { Path: npm }, exists, "node.exe").bin, "node.exe");
+  // No shim or no package behind it: fall back to the bare name (exec then fails and the gate blocks).
+  assert.deepEqual(desktopStatusCommand(null, "win32", win, () => false, "node.exe"), { bin: "powerbi-desktop", args: ["status"] });
+  assert.deepEqual(desktopStatusCommand(null, "win32", win, (p) => p.endsWith("powerbi-desktop.cmd"), "node.exe"), { bin: "powerbi-desktop", args: ["status"] });
+});
+
+await t("reload guard: detects Desktop reloads and nothing else", async () => {
+  assert.deepEqual(desktopReloadTarget("powerbi-desktop reload --pid 19284"), { label: "powerbi-desktop reload", pid: "19284", folder: null });
+  assert.deepEqual(desktopReloadTarget("cd E:/work && powerbi-desktop reload --pid=7 --wait-seconds 30"), { label: "powerbi-desktop reload", pid: "7", folder: null });
+  assert.deepEqual(desktopReloadTarget("npx -y powerbi-desktop reload"), { label: "powerbi-desktop reload", pid: null, folder: null });
+  assert.deepEqual(desktopReloadTarget("C:\\Users\\me\\AppData\\Roaming\\npm\\powerbi-desktop.cmd reload --pid 3"), { label: "powerbi-desktop reload", pid: "3", folder: null });
+  assert.deepEqual(desktopReloadTarget('powerbi-report-author preview "E:\\x\\Resources.Report" --host desktop --reload'), { label: "powerbi-report-author preview --reload", pid: null, folder: "E:\\x\\Resources.Report" });
+  assert.deepEqual(desktopReloadTarget("powerbi-report-author preview Resources.Report"), { label: "powerbi-report-author preview", pid: null, folder: "Resources.Report" });
+  assert.equal(desktopReloadTarget("powerbi-report-author preview Resources.Report --reload-with-model").label, "powerbi-report-author preview --reload-with-model");
+  for (const c of [
+    "powerbi-desktop status", "powerbi-desktop status --pid 19284", "powerbi-desktop screenshot-all --pid 19284 --output-dir shots",
+    "powerbi-report-author preview Resources.Report --status", "powerbi-report-author preview Resources.Report --screenshot shot.png",
+    "powerbi-report-author preview Resources.Report --screenshot shots --all-pages", "powerbi-report-author preview Resources.Report --close",
+    "powerbi-report-author preview --list-hosts", "powerbi-report-author preview Resources.Report --host service --group g --dataset d",
+    "powerbi-report-author validate Resources.Report", 'echo "powerbi-desktop reload --pid 1"', "grep reload powerbi-desktop.md",
+  ]) assert.equal(desktopReloadTarget(c), null, c);
+});
+
+await t("reload guard: decision table over status JSON", async () => {
+  const pid = { label: "powerbi-desktop reload", pid: "19284", folder: null };
+  assert.deepEqual(decideDesktopReload(statusJson(inst(19284, false)), pid), { action: "allow", pid: "19284" });
+  assert.equal(decideDesktopReload(statusJson(inst(19284, true)), pid).action, "ask");
+  assert.equal(decideDesktopReload(statusJson(inst(19284, undefined)), pid).action, "block", "an unstated flag is not clean");
+  assert.equal(decideDesktopReload(statusJson(inst(1, false)), pid).action, "block", "pid not listed");
+  assert.equal(decideDesktopReload(statusJson({ pid: 19284, bridgeStatus: "not_connected" }), pid).action, "block");
+  assert.equal(decideDesktopReload(statusJson({ pid: 19284, bridgeStatus: "error", error: { code: "X" } }), pid).action, "block");
+  assert.equal(decideDesktopReload("not json", pid).action, "block");
+  assert.equal(decideDesktopReload("", pid).action, "block");
+  assert.equal(decideDesktopReload(JSON.stringify({ status: "not_connected", instances: [] }), pid).action, "block");
+  // No --pid: the single clean instance passes; any dirty connected instance asks.
+  const any = { label: "powerbi-desktop reload", pid: null, folder: null };
+  assert.equal(decideDesktopReload(statusJson(inst(19284, false)), any).action, "allow");
+  assert.equal(decideDesktopReload(statusJson(inst(1, false), inst(2, true)), any).action, "ask");
+  assert.equal(decideDesktopReload(statusJson(), any).action, "block");
+  // Preview picks the instance by .Report folder (case-insensitive, trailing slash, pbip vs Report).
+  const live = inst(1, true, "C:\\Users\\aaron\\Reports\\Sales.pbip");
+  const sandbox = inst(19284, false);
+  const prev = (folder) => ({ label: "powerbi-report-author preview --reload", pid: null, folder });
+  assert.deepEqual(decideDesktopReload(statusJson(live, sandbox), prev("E:\\coop-sandbox\\tmp\\pbip-copy\\Resources.Report")), { action: "allow", pid: "19284" });
+  assert.deepEqual(decideDesktopReload(statusJson(live, sandbox), prev("e:/coop-sandbox/tmp/pbip-copy/resources.report/")), { action: "allow", pid: "19284" });
+  assert.equal(decideDesktopReload(statusJson(live, sandbox), prev("C:\\Users\\aaron\\Reports\\Sales.Report")).action, "ask");
+  assert.equal(decideDesktopReload(statusJson(live, sandbox), prev("Other.Report")).action, "ask", "unmatched folder falls back to every connected instance");
+});
+
+await t("reload guard: clean instance reloads after one status read, no prompt", async () => {
+  clearAudit(); execLog.length = 0;
+  const r = await reloadCall("powerbi-desktop reload --pid 19284", { status: { code: 0, stdout: statusJson(inst(19284, false)) } });
+  assert.equal(blocked(r), false);
+  assert.equal(confirmCount, 0);
+  assert.deepEqual(statusCalls(), ["status --pid 19284"]);
+  assert.equal(readAudit().at(-1).decision, "allowed");
+});
+
+await t("reload guard: unsaved changes ask; declining blocks and tells the agent to ask the user", async () => {
+  clearAudit();
+  const dirty = { code: 0, stdout: statusJson(inst(19284, true)) };
+  const r = await reloadCall("powerbi-desktop reload --pid 19284", { status: dirty, confirm: false });
+  assert.equal(blocked(r), true);
+  assert.equal(confirmCount, 1);
+  assert.match(lastConfirm, /unsaved changes/);
+  assert.match(lastConfirm, /Resources\.pbip/);
+  assert.match(r.reason, /save or discard in Power BI Desktop/);
+  const ok = await reloadCall("powerbi-desktop reload --pid 19284", { status: dirty, confirm: true });
+  assert.equal(blocked(ok), false, "an explicit yes reloads (covers the 2.157 false-positive build)");
+  const entries = readAudit().filter((e) => e.label === "Desktop reload");
+  assert.deepEqual(entries.map((e) => e.decision), ["declined", "allowed"]);
+  assert.ok(entries.every((e) => !JSON.stringify(e).includes("Resources")), "audit never records the command or paths");
+});
+
+await t("reload guard: headless with unsaved changes fails closed", async () => {
+  const headless = { ...ctx, hasUI: false, ui: undefined };
+  desktopStatus = { code: 0, stdout: statusJson(inst(19284, true)) };
+  try {
+    const r = await handle({ toolName: "bash", input: { command: "powerbi-desktop reload --pid 19284" } }, headless);
+    assert.equal(blocked(r), true);
+    assert.match(r.reason, /headless/);
+    // A clean instance still passes headlessly: the guard only asks when there is something to lose.
+    desktopStatus = { code: 0, stdout: statusJson(inst(19284, false)) };
+    assert.equal(blocked(await handle({ toolName: "bash", input: { command: "powerbi-desktop reload --pid 19284" } }, headless)), false);
+  } finally { desktopStatus = null; }
+});
+
+await t("reload guard: an unverifiable instance blocks without a prompt", async () => {
+  for (const [name, status] of [
+    ["status exits non-zero", { code: 1, stdout: "", stderr: "boom" }],
+    ["status prints no JSON", { code: 0, stdout: "" }],
+    ["pid not connected", { code: 0, stdout: statusJson({ pid: 19284, bridgeStatus: "not_connected" }) }],
+    ["pid missing", { code: 0, stdout: statusJson(inst(1, false)) }],
+    ["no Desktop at all", { code: 0, stdout: JSON.stringify({ status: "not_connected", instances: [] }) }],
+    ["powerbi-desktop not installed", () => { throw new Error("ENOENT"); }],
+  ]) {
+    const r = await reloadCall("powerbi-desktop reload --pid 19284", { status, confirm: true });
+    assert.equal(blocked(r), true, name);
+    assert.equal(confirmCount, 0, name);
+    assert.match(r.reason, /powerbi-desktop status/, name);
+  }
+});
+
+await t("reload guard: preview reloads are gated by folder; status/screenshot/close/service are not", async () => {
+  execLog.length = 0;
+  const two = { code: 0, stdout: statusJson(inst(1, true, "C:\\Users\\aaron\\Reports\\Sales.pbip"), inst(19284, false)) };
+  assert.equal(blocked(await reloadCall('powerbi-report-author preview "E:\\coop-sandbox\\tmp\\pbip-copy\\Resources.Report" --host desktop --reload', { status: two })), false);
+  assert.equal(confirmCount, 0);
+  assert.deepEqual(statusCalls(), ["status"], "no --pid: the whole status list is read");
+  assert.equal(blocked(await reloadCall('powerbi-report-author preview "C:\\Users\\aaron\\Reports\\Sales.Report"', { status: two, confirm: false })), true, "bare preview reloads the live window");
+  assert.equal(confirmCount, 1);
+  execLog.length = 0;
+  for (const c of [
+    'powerbi-report-author preview "C:\\Users\\aaron\\Reports\\Sales.Report" --status',
+    'powerbi-report-author preview "C:\\Users\\aaron\\Reports\\Sales.Report" --screenshot shots --all-pages',
+    'powerbi-report-author preview "C:\\Users\\aaron\\Reports\\Sales.Report" --close',
+    'powerbi-report-author preview "C:\\Users\\aaron\\Reports\\Sales.Report" --host service --group g --dataset d',
+    "powerbi-desktop status", "powerbi-desktop screenshot-all --pid 1 --output-dir shots",
+  ]) assert.equal(blocked(await reloadCall(c, { status: two, confirm: false })), false, c);
+  assert.deepEqual(statusCalls(), [], "non-reload commands never touch the bridge");
+});
+
+await t("reload guard: COOP_NO_GUARDRAILS=1 disables it like every other gate", async () => {
+  execLog.length = 0;
+  process.env.COOP_NO_GUARDRAILS = "1";
+  try {
+    assert.equal(blocked(await reloadCall("powerbi-desktop reload --pid 19284", { status: { code: 0, stdout: statusJson(inst(19284, true)) } })), false);
+  } finally { delete process.env.COOP_NO_GUARDRAILS; }
+  assert.deepEqual(statusCalls(), []);
 });
 
 console.log(`  ${n} guardrails tests passed`);
