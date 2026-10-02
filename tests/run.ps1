@@ -565,6 +565,7 @@ print("resume verdict contract OK")
     @{ Name = 'update-follow';          Lane = 'gate';     Head = 'coop update follows release tags (never backwards)' },
     @{ Name = 'version-describe';       Lane = 'gate';     Head = 'coop version and doctor --publish carry git describe' },
     @{ Name = 'pipx-ownership';         Lane = 'gate';     Head = 'pipx executable ownership' },
+    @{ Name = 'install-pipx-unit';      Lane = 'gate';     Head = 'install pipx unit (bootstrap verdict, no-result job diagnostics, parent-side verify)' },
     @{ Name = 'fabric-python-finder';   Lane = 'gate';     Head = 'fabric-compatible Python discovery' },
     @{ Name = 'fabric-mcp-launch';      Lane = 'extended'; Head = 'Fabric MCP launch-time bearer isolation'; Needle = 'FABRIC_MCP_FIXTURE_INJECTION_REACHED' },
     @{ Name = 'release';                Lane = 'gate';     Head = 'release transaction consistency' },

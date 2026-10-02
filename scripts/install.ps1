@@ -26,8 +26,8 @@ $ErrorActionPreference = 'Continue'
 # turn an unusable install (for example, extension sync failure) into exit 0.
 $script:InstallFailures = 0
 function Install-Unit {
-  param([string]$Label, [scriptblock]$Work, [object[]]$WorkArgs = @())
-  Coop-Unit $Label $Work $WorkArgs
+  param([string]$Label, [scriptblock]$Work, [object[]]$WorkArgs = @(), [scriptblock]$Verify = $null)
+  Coop-Unit $Label $Work $WorkArgs -Verify $Verify
   if (-not $script:CoopUnitLastOk) { $script:InstallFailures++ }
 }
 
@@ -111,27 +111,19 @@ $TOTAL = 2 + @($PLAN.PythonTools).Count + 1
 if ($PLAN.Fabric) { $TOTAL += 1 }
 
 # --- Per-item units (run in a background job; return @{ok=<bool>; msg=<string>}) --
-$UnitPipx = {
-  if (Get-Command pipx -ErrorAction SilentlyContinue) { return [pscustomobject]@{ ok = $true; msg = 'pipx present' } }
-  # Skip a Windows Store App-Execution-Alias stub (under \WindowsApps\, no real python):
-  # it makes Get-Command succeed but every pip call returns rc 9009. Self-contained
-  # because this scriptblock runs in a background job without the script's functions.
-  $py = $null
-  foreach ($name in @('python3', 'python')) {
-    $c = Get-Command $name -ErrorAction SilentlyContinue
-    if ($c -and ($c.Source -notmatch '\\WindowsApps\\')) {
-      $vv = (& $name --version 2>&1)
-      if ($vv -match '\d+\.\d+') { $py = $name; break }
-    }
-  }
-  if (-not $py) { return [pscustomobject]@{ ok = $false; msg = 'skipping pipx (python missing)' } }
-  & $py -m pip install --user pipx *> $null; $a = ($LASTEXITCODE -eq 0)
-  & $py -m pipx ensurepath          *> $null; $b = ($LASTEXITCODE -eq 0)
-  if ($a -and $b) { return [pscustomobject]@{ ok = $true; msg = 'pipx installed (open a new shell for PATH changes)' } }
-  return [pscustomobject]@{ ok = $false; msg = 'could not install pipx automatically — see https://pipx.pypa.io' }
+# pipx: Invoke-CoopPipxBootstrap in lib/common.ps1 (present, or pip install
+# --user + ensurepath). The parent decides the verdict after the job from what it
+# can see: on Windows PowerShell 5.1 this job came back with no result on
+# machines where pipx then worked, and the whole install exited 1 for it.
+$VerifyPipx = {
+  param([bool]$ok, [string]$msg)
+  if ($ok) { return $null }
+  Add-CoopUserPaths
+  if (Test-CoopPipxAvailable) { return (Coop-UnitResult $true 'pipx answers (checked by the installer after the step)') }
+  return $null
 }
 
-# Every other item is a convergence function in lib/common.ps1 (Invoke-CoopPiConverge,
+# Every item is a convergence function in lib/common.ps1 (Invoke-CoopPipxBootstrap, Invoke-CoopPiConverge,
 # Invoke-CoopFabricCliConverge, Invoke-CoopPipxConverge, Invoke-CoopNpmToolsConverge),
 # run through $script:CoopConvergeUnit: the job's fresh runspace dot-sources the
 # library and every input arrives as an argument (#213). `coop update` runs the
@@ -228,7 +220,7 @@ if ($gatePython -and [System.IO.Path]::IsPathRooted($gatePython)) {
 # hiding the cursor and the first loop still reaches the finally.
 try {
   Coop-ProgBegin $TOTAL
-  Install-Unit 'pipx' $UnitPipx
+  Install-Unit 'pipx' $script:CoopConvergeUnit @($script:CoopCommonPath, 'Invoke-CoopPipxBootstrap', @{}) -Verify $VerifyPipx
   Add-CoopUserPaths    # make a just-installed pipx + its tool-bin visible this run
 
   # A local 3.10-3.13, or pipx's standalone 3.12 (Get-CoopFabricPipxPlan, shared

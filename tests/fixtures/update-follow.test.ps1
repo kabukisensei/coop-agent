@@ -478,6 +478,35 @@ try {
   else { Ok '--check repo line: no newer release, would move to the release, or the stranded state with its fix; nothing moves' }
   $updatePs = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'scripts') 'update.ps1'))
   if (-not $updatePs.Contains('$repoCheck = Get-CoopRepoCheckLine')) { Ko 'update.ps1 --check must print Get-CoopRepoCheckLine' } else { Ok 'update.ps1 --check prints the shared repo line' }
+
+  # 13c. --check fetches before it reads the tags (Invoke-CoopRepoFetchOrigin): a
+  #      release tagged on origin since this clone's last fetch is what --check
+  #      reports, with nothing moved. A clone with no origin is left alone.
+  $null = New-FixtureClone 'check-stale'
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'reset', '-q', '--hard', 'v0.10.0')
+  $tagger = Join-Path $t 'check-tagger'
+  Invoke-FixtureGit @('clone', '-q', $script:Origin, $tagger)
+  Invoke-FixtureGit @('-C', $tagger, 'tag', '-a', 'v0.11.0', '-m', 'v0.11.0', 'main')
+  Invoke-FixtureGit @('-C', $tagger, 'push', '-q', 'origin', 'v0.11.0')
+  $cStaleBefore = Get-CoopRepoCheckLine
+  $fetched = Invoke-CoopRepoFetchOrigin
+  $cStaleAfter = Get-CoopRepoCheckLine
+  $cStaleAt = Get-At
+  $cStaleStatus = (Get-FixtureGit @('-C', $script:CoopRoot, 'status', '--porcelain'))
+  if ($cStaleBefore.Line -cne 'v0.10.0  no newer release') { Ko 'check line before the fetch reads the local tags only' "$($cStaleBefore.Line)" }
+  elseif (-not $fetched -or $cStaleAfter.Line -cne 'v0.10.0  would move to release v0.11.0') { Ko 'check line after Invoke-CoopRepoFetchOrigin names the release tagged since the last fetch' "$fetched / $($cStaleAfter.Line)" }
+  elseif ($cStaleAt -ne $C2 -or $cStaleStatus) { Ko 'the fetch must move nothing and dirty nothing' "$cStaleAt / $cStaleStatus" }
+  else { Ok '--check fetches first: a release tagged since the last fetch is reported, nothing moves' }
+  $script:CoopRoot = Join-Path $t 'check-no-origin'
+  Invoke-FixtureGit @('init', '-q', $script:CoopRoot)
+  if (Invoke-CoopRepoFetchOrigin) { Ko 'a checkout with no origin remote must not report a fetch' } else { Ok 'no origin remote: Invoke-CoopRepoFetchOrigin is a quiet no-op' }
+  $script:CoopRoot = Join-Path $t 'check-bad-origin'
+  Invoke-FixtureGit @('clone', '-q', $script:Origin, $script:CoopRoot)
+  Invoke-FixtureGit @('-C', $script:CoopRoot, 'remote', 'set-url', 'origin', (Join-Path $t 'no-such-origin.git'))
+  $badOut = Invoke-Captured { $script:badFetched = Invoke-CoopRepoFetchOrigin }
+  if ($script:badFetched -or -not $badOut.Contains('could not fetch from origin')) { Ko 'an unreachable origin warns and continues with the local tags' "$($script:badFetched) / $badOut" }
+  else { Ok 'unreachable origin: --check warns and reads the releases already on the machine' }
+  if (-not $updatePs.Contains('$null = Invoke-CoopRepoFetchOrigin') -or ($updatePs.IndexOf('$null = Invoke-CoopRepoFetchOrigin') -gt $updatePs.IndexOf('$repoCheck = Get-CoopRepoCheckLine'))) { Ko 'update.ps1 --check must fetch (Invoke-CoopRepoFetchOrigin) before the repo line' } else { Ok 'update.ps1 --check fetches before the repo line' }
   $doctorPs = [System.IO.File]::ReadAllText((Join-Path (Join-Path $root 'scripts') 'doctor.ps1'))
   if (-not $doctorPs.Contains('$repoRow = Get-CoopRepoDoctorRow') -or -not $doctorPs.Contains('if ($repoRow.Level -ceq ''ok'') { D-Ok $repoRow.Message } else { D-Warn $repoRow.Message $repoRow.Hint }')) { Ko 'doctor.ps1 must dispatch Get-CoopRepoDoctorRow: ok, else warn with the hint' }
   else { Ok 'doctor.ps1 dispatches the shared repo row' }

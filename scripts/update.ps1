@@ -63,7 +63,11 @@ $env:PI_CODING_AGENT_DIR = Get-CoopPiAgentDir
 # --- coop update --check (dry-run: report versions, change NOTHING) ----------
 if ($CHECK) {
   Coop-Head 'coop update --check (dry-run — nothing is installed)'
-  # Step 1's move first (#107): local only, no fetch.
+  # Step 1's move first (#107), after the same fetch step 1 makes: a release
+  # tagged since the last fetch is not on the machine yet, and reading local tags
+  # alone called it "no newer release" until something else fetched. Fetching
+  # updates no file in the checkout, so --check still changes nothing.
+  $null = Invoke-CoopRepoFetchOrigin
   $repoCheck = Get-CoopRepoCheckLine
   Write-Output ('  {0,-32} {1}' -f 'repo (coop-agent)', $repoCheck.Line)
   if ($repoCheck.Hint) { Write-Output ('  {0,-32} {1}' -f '', $repoCheck.Hint) }
