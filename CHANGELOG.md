@@ -13,6 +13,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   folder read back garbled (`Entrep\u00f4t` became `Entrepu00f4t`), so `data_doc
   impact` matched no changed files under such a repo, a non-ASCII output folder
   looked unbuilt, and re-running `/setup-docs` saved the garbled project name.
+- coop's footer wraps instead of cutting off the usage data. Since the footer
+  fix in 0.26.0 it was one line clipped at the terminal edge, so in a narrower
+  window (Windows Terminal at half screen, for example) the model, token and
+  cost numbers and pi-better-openai's 5h/7d plan limits were lost off the
+  right. It is still one line when everything fits; otherwise the left side
+  keeps line 1 and the right side wraps onto right-aligned lines below,
+  breaking between fields. Wide characters (CJK, emoji) in a session name now
+  count as two columns, so they cannot push a line past the edge.
 
 ### Added
 

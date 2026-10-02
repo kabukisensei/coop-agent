@@ -20,7 +20,7 @@ also exports the two env vars below.
 
 ### Footer (`ctx.ui.setFooter`)
 
-coop-powerline renders its own single footer in plain text + common Unicode (no
+coop-powerline renders its own footer in plain text + common Unicode (no
 Nerd Font glyphs):
 
 - **left** — `⬢ Cooptimize · <session> · <branch>` (the honeycomb in navy,
@@ -34,8 +34,10 @@ Nerd Font glyphs):
 It also surfaces **other extensions' status text** via
 `footerData.getExtensionStatuses()` — for example pi-better-openai's plan usage
 limits / 5h+7d windows — appending them to the right side, so everything ends up
-in one clean bar instead of a duplicate one. The whole line is clipped to the
-terminal width so it never overflows, and it re-renders on branch changes,
+in one clean bar instead of a duplicate one. When everything fits it is one
+line; in a narrower window the left side keeps the first line and the right side
+wraps onto right-aligned lines below it (between fields, never mid-number), so
+the usage data is never cut off. It re-renders on branch changes,
 session renames and between turns so the numbers stay current.
 
 ### Startup splash (`ctx.ui.setHeader`)

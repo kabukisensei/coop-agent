@@ -6,6 +6,7 @@
  *   • its OWN footer via ctx.ui.setFooter — left "⬢ Cooptimize · <session> · <branch>", right
  *     "<model> · ctx% · tokens · $cost · <ext statuses>", surfacing other extensions'
  *     status text (e.g. pi-better-openai's plan usage limits) via getExtensionStatuses();
+ *     one line when it fits, else the right side wraps onto extra lines (layoutFooter);
  *     plain text + common Unicode (no Nerd Font glyphs)
  *   • a startup SPLASH header via ctx.ui.setHeader, rendered from the truecolor block-art
  *     logo (assets/splash.ansi), uniform-padded and width-robust
@@ -44,10 +45,35 @@ const RED = fg(239, 65, 45);
 const GRAD = [NAVY, FOREST, OLIVE, LIME];
 
 const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
-const visWidth = (s: string) => stripAnsi(s).length;
+// Terminal columns one code point takes: 0 for combining marks, zero-width
+// joiners and variation selectors, 2 for CJK and emoji, else 1. A rough
+// East Asian Width table, enough that a wide session name cannot push a footer
+// line past the terminal edge.
+function charWidth(cp: number): number {
+  if ((cp >= 0x0300 && cp <= 0x036f) || cp === 0x200b || cp === 0x200c || cp === 0x200d) return 0;
+  if ((cp >= 0xfe00 && cp <= 0xfe0f) || (cp >= 0xe0100 && cp <= 0xe01ef)) return 0;
+  if (
+    (cp >= 0x1100 && cp <= 0x115f) ||
+    (cp >= 0x2e80 && cp <= 0xa4cf) ||
+    (cp >= 0xac00 && cp <= 0xd7a3) ||
+    (cp >= 0xf900 && cp <= 0xfaff) ||
+    (cp >= 0xfe30 && cp <= 0xfe4f) ||
+    (cp >= 0xff00 && cp <= 0xff60) ||
+    (cp >= 0xffe0 && cp <= 0xffe6) ||
+    (cp >= 0x1f300 && cp <= 0x1faff) ||
+    (cp >= 0x20000 && cp <= 0x3fffd)
+  )
+    return 2;
+  return 1;
+}
+export function visWidth(s: string): number {
+  let w = 0;
+  for (const ch of stripAnsi(s)) w += charWidth(ch.codePointAt(0) || 0);
+  return w;
+}
 // Session names come from the user (`/name`) or the naming model (`/rename`,
 // automatic naming): fold whitespace and control characters and cap the length
-// so one odd title cannot break the single-line footer.
+// so one odd title cannot crowd the footer.
 export function formatSessionName(name: unknown, max = 40): string {
   if (typeof name !== "string") return "";
   const clean = name.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, " ").replace(/\s+/g, " ").trim();
@@ -64,26 +90,110 @@ function center(line: string, width: number): string {
   if (w >= width) return line;
   return " ".repeat(Math.floor((width - w) / 2)) + line;
 }
-// Truncate to `width` visible columns, preserving ANSI escapes so the footer never overflows.
-function clip(s: string, width: number): string {
-  if (visWidth(s) <= width) return s;
-  let out = "";
+// Split `s` into chunks of at most `width` visible columns, keeping ANSI escapes
+// with the text they colour and never splitting a surrogate pair. Each chunk
+// that carried an escape ends with a reset so colour cannot bleed into the next.
+function chunks(s: string, width: number): string[] {
+  const out: string[] = [];
+  let cur = "";
   let vis = 0;
+  let styled = false;
   let i = 0;
-  while (i < s.length && vis < width) {
+  while (i < s.length) {
     if (s[i] === "\x1b") {
       const m = /^\x1b\[[0-9;]*m/.exec(s.slice(i));
       if (m) {
-        out += m[0];
+        cur += m[0];
+        styled = true;
         i += m[0].length;
         continue;
       }
     }
-    out += s[i];
-    vis++;
-    i++;
+    const ch = String.fromCodePoint(s.codePointAt(i) || 0);
+    const w = charWidth(ch.codePointAt(0) || 0);
+    if (vis + w > width && vis > 0) {
+      out.push(styled ? `${cur}\x1b[0m` : cur);
+      cur = "";
+      vis = 0;
+    }
+    cur += ch;
+    vis += w;
+    i += ch.length;
   }
-  return `${out}\x1b[0m`;
+  if (cur) out.push(styled ? `${cur}\x1b[0m` : cur);
+  return out;
+}
+// Truncate to `width` visible columns, preserving ANSI escapes so a line never overflows.
+function clip(s: string, width: number): string {
+  if (visWidth(s) <= width) return s;
+  return chunks(s, width)[0] || "";
+}
+
+// A footer segment: its fields, the separator between them, and the separator
+// drawn before the segment when it shares a line with the one before it.
+export interface FooterSegment {
+  parts: string[];
+  join: string;
+  sep: string;
+}
+
+// Lay the footer out for `width` columns. When the left side, a gap and every
+// right-hand segment fit, it is the one line it has always been. Otherwise the
+// left side keeps line 1 with whatever segments still fit beside it, and the
+// rest wrap onto right-aligned lines below, so usage and plan limits are never
+// cut off in a narrow window. A segment moves to the next line whole; only one
+// wider than a whole line breaks between its fields (and a field wider than a
+// line is split).
+export function layoutFooter(left: string, segments: FooterSegment[], width: number): string[] {
+  if (width < 1) return [];
+  const segs = segments
+    .map((s) => ({ ...s, parts: s.parts.filter((p) => p && stripAnsi(p).trim()) }))
+    .filter((s) => s.parts.length > 0);
+  const leftW = visWidth(left);
+  const joined = segs.map((s, i) => (i ? s.sep : "") + s.parts.join(s.join)).join("");
+  if (leftW + 1 + visWidth(joined) <= width) {
+    return [left + " ".repeat(Math.max(1, width - leftW - visWidth(joined))) + joined];
+  }
+  const lines: string[] = [];
+  const first = clip(left, width);
+  const firstW = visWidth(first);
+  let onFirst = true;
+  let cur = "";
+  const flush = () => {
+    if (onFirst) {
+      lines.push(cur ? first + " ".repeat(Math.max(2, width - firstW - visWidth(cur))) + cur : first);
+      onFirst = false;
+    } else if (cur) {
+      lines.push(" ".repeat(Math.max(0, width - visWidth(cur))) + cur);
+    }
+    cur = "";
+  };
+  // Append `text` to the current line, or start a new one; true when it fit.
+  const place = (text: string, sep: string): boolean => {
+    const candidate = cur ? cur + sep + text : text;
+    if (visWidth(candidate) <= (onFirst ? width - firstW - 2 : width)) {
+      cur = candidate;
+      return true;
+    }
+    return false;
+  };
+  for (const seg of segs) {
+    const whole = seg.parts.join(seg.join);
+    if (place(whole, seg.sep)) continue;
+    flush();
+    if (place(whole, seg.sep)) continue;
+    seg.parts.forEach((part, i) => {
+      const sep = i ? seg.join : seg.sep;
+      if (place(part, sep)) return;
+      flush();
+      if (place(part, sep)) return;
+      const pieces = chunks(part, width);
+      cur = pieces.pop() || "";
+      lines.push(...pieces);
+    });
+  }
+  flush();
+  return lines;
 }
 
 // --- Vibes ---
@@ -318,7 +428,7 @@ export default function coopPowerline(pi: ExtensionAPI) {
                 const model = ctx.model?.id || "";
                 const usage = formatUsage(ctx);
                 // Surface other extensions' status text (e.g. pi-better-openai's plan
-                // usage limits / 5h+7d windows) in OUR single footer — no duplicate bar.
+                // usage limits / 5h+7d windows) in OUR footer — no duplicate bar.
                 const extTexts: string[] = [];
                 try {
                   const statuses =
@@ -333,10 +443,14 @@ export default function coopPowerline(pi: ExtensionAPI) {
                   `${NAVY("⬢")}${LIME(" Cooptimize")}` +
                   (session ? theme.fg("muted", `  ${session}`) : "") +
                   (branch ? theme.fg("dim", `  ${branch}`) : "");
-                const meta = theme.fg("dim", [model, usage].filter(Boolean).join("  ·  "));
-                const right = [meta, ...extTexts].filter((s) => s && stripAnsi(s).trim()).join(theme.fg("dim", "  ·  "));
-                const gap = Math.max(1, width - visWidth(left) - visWidth(right));
-                return [clip(left + " ".repeat(gap) + right, width)];
+                // Model and usage first, then each extension status with its " | "
+                // fields, so a status too wide for a whole line breaks between fields.
+                const dot = theme.fg("dim", "  ·  ");
+                const segments: FooterSegment[] = [model, usage]
+                  .filter(Boolean)
+                  .map((text) => ({ parts: [theme.fg("dim", text)], join: "", sep: dot }));
+                for (const ext of extTexts) segments.push({ parts: ext.split(" | "), join: theme.fg("dim", " | "), sep: dot });
+                return layoutFooter(left, segments, width);
               } catch {
                 return [theme.fg("dim", " Cooptimize")];
               }
