@@ -416,8 +416,10 @@ with tempfile.TemporaryDirectory() as raw:
     refs = subprocess.run(["git", "-C", str(bare), "for-each-ref", "--format=%(refname:short)"], capture_output=True, text=True, check=True).stdout.split()
     check(refs == ["main"], "contribute preview: no branch reached the team repo")
 
+    preview_doc = doc
     rc, doc, err = run(base_env, "contribute", "--file", str(draft), "--approve")
     check(rc == 0 and doc["state"] == "staged" and doc["staged"] is True, f"contribute --approve: staged ({err.strip()[:160]})")
+    check(doc["destination"] == preview_doc["destination"] and doc["branch"] == preview_doc["branch"] and not doc["warnings"], "contribute --approve: stages exactly the destination and branch the preview showed")
     branch = doc["branch"]
     refs = subprocess.run(["git", "-C", str(bare), "for-each-ref", "--format=%(refname:short)"], capture_output=True, text=True, check=True).stdout.split()
     check(sorted(refs) == sorted(["main", branch]), f"staged: exactly one new branch on the team repo ({refs})")
@@ -433,6 +435,11 @@ with tempfile.TemporaryDirectory() as raw:
     check(not published_marker.exists(), "staged: still no CLI publish")
     st = json.loads((profile / "teamai" / "state.json").read_text(encoding="utf-8"))
     check(st.get("contributions") and st["contributions"][-1]["branch"] == branch, "staged: state.json records the contribution")
+    draft.write_text(good + "\nEdited after the preview.\n", encoding="utf-8")
+    time.sleep(1.1)  # the branch stamp has one-second resolution
+    rc, doc, _ = run(base_env, "contribute", "--file", str(draft), "--approve")
+    check(doc["state"] == "staged" and doc["branch"] != branch and any("no preview on record" in w for w in doc["warnings"]), "contribute --approve on an edited draft: new names, with a warning that no preview matched")
+    draft.write_text(good, encoding="utf-8")
     check(doc["compare_url"] == "" , "staged: no compare URL for a non-GitHub remote (local bare repo)")
     status = subprocess.run(["git", "-C", str(team_clone), "status", "--porcelain", "--branch"], capture_output=True, text=True, check=True).stdout
     check(status.startswith("## main") and len(status.splitlines()) == 1, "staged: the CLI's own clone is left alone")
@@ -456,7 +463,7 @@ with tempfile.TemporaryDirectory() as raw:
     rc, doc, _ = run(base_env, "contribute", "--file", str(draft))
     check(doc["state"] == "refused" and any("title" in w for w in doc["warnings"]), "contribute: no title anywhere -> refused")
     refs = subprocess.run(["git", "-C", str(bare), "for-each-ref", "--format=%(refname:short)"], capture_output=True, text=True, check=True).stdout.split()
-    check(len(refs) == 2, "refused drafts never reached the team repo")
+    check(len(refs) == 3, "refused drafts never reached the team repo")
     rc, doc, _ = run(base_env, "contribute", "--file", str(draft), "--bogus")
     check(rc == 2, "contribute: unknown argument -> exit 2")
 

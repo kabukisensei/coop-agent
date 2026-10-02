@@ -49,6 +49,7 @@ branch and the `learnings` branch are never written.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -821,10 +822,22 @@ def cmd_contribute(block: dict, package: str, pin: str, file: str, title: str, a
         doc["state"] = "unavailable"
         doc["warnings"].append(f"unexpected destination from the CLI: {dest}")
         return doc
-    doc["destination"] = dest
+    # What the person reviewed in the preview is what gets staged: the preview's
+    # destination, branch and stamp are kept in state.json keyed by the draft's
+    # hash, and --approve reuses them while the draft is unchanged.
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    previewed = read_state().get("preview") if approve else None
+    if isinstance(previewed, dict) and previewed.get("sha256") == digest and previewed.get("destination") and previewed.get("branch") and previewed.get("stamp"):
+        dest = str(previewed["destination"])
+        stamp = str(previewed["stamp"])
+    elif approve:
+        doc["warnings"].append("no preview on record for this draft; destination and branch were generated now")
     branch = f"coop/learning/{slugify(title)}-{stamp}"
+    doc["destination"] = dest
     doc["branch"] = branch
+    if not approve:
+        write_state({"preview": {"sha256": digest, "destination": dest, "branch": branch, "stamp": stamp, "at": now_iso()}})
     clone = team_repo_local_path()
     remote = ""
     if clone and clone.is_dir():
