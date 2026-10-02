@@ -14,11 +14,14 @@ what the window does:
 
 A row without a mapping fails D1b. `tests/desktop.test.mjs` checks this file
 against the window's own lists (`desktop/renderer/commands.mjs`: `BUILTINS`,
-`KEYS`, `TERMINAL_ONLY`) and against the command list Pi returned in the
+`KEYS`, `TERMINAL_ONLY`), against the command list Pi returned in the
 recorded fixture (`tests/fixtures/desktop-rpc.jsonl`, coop's release extensions
-loaded). A Pi or extension upgrade that adds a command or a keybinding fails
-that test until it has a row here; re-record the fixture with
-`node desktop/scripts/record-fixture.mjs` (row U2 does this for Pi 1.0).
+loaded) and against Pi's own slash commands and keybinding actions, read from
+the docs in Pi's package when the fixture was recorded
+(`tests/fixtures/desktop-pi-surface.json`). A Pi or extension upgrade that adds
+a command or a keybinding fails that test until it has a row here; re-record
+both files with `node desktop/scripts/record-fixture.mjs` (row U2 does this for
+Pi 1.0).
 
 The window adds nothing to Pi's launch: `coop desktop` builds the same
 arguments as `coop` (`Build-CoopPiArgs`) and the window runs them with
