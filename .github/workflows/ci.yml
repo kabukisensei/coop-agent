@@ -243,13 +243,51 @@ jobs:
         shell: powershell
         run: powershell -NoProfile -File tests\run.ps1
 
+  installer:
+    # The coop window package (master plan D1c): build the unsigned NSIS
+    # per-user installer on every PR as an artifact, then install it silently
+    # on this disposable runner, run `coop.exe --doctor`, and uninstall
+    # (desktop/scripts/verify-installer.mjs refuses to run anywhere else).
+    name: installer (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.19.0'
+      - name: install electron-builder (desktop/installer, pinned)
+        shell: pwsh
+        working-directory: desktop/installer
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: build the installer (stage + electron-builder, unsigned)
+        shell: pwsh
+        run: node desktop/scripts/build-installer.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coop-window-installer
+          path: desktop/installer/dist/coop-window-*.exe
+          if-no-files-found: error
+          retention-days: 14
+      - name: silent install, coop.exe --doctor, silent uninstall
+        shell: pwsh
+        env:
+          COOP_INSTALLER_TEST: '1'
+        run: node desktop/scripts/verify-installer.mjs --output "$env:RUNNER_TEMP\installer-acceptance.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coop-window-installer-acceptance
+          path: ${{ runner.temp }}/installer-acceptance.json
+          if-no-files-found: ignore
+
   gate:
     # The one stable check name for this workflow. It needs every job above and
     # fails unless each one finished with `success`, so a failed, cancelled or
     # skipped job fails it too. Add any new ci.yml job to `needs` here.
     name: gate
     if: always()
-    needs: [shell, extensions, tests, tests-windows, windows]
+    needs: [shell, extensions, tests, tests-windows, windows, installer]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

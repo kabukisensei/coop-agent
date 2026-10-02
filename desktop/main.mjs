@@ -28,10 +28,19 @@ import { DocsSetupRun, AnswerError, docsLocation, listDocsPages, pickedPathAnswe
 import { attach, forget, pruneStore, findPdfjs, LIMITS as ATTACH_LIMITS } from "./lib/attachments.mjs";
 import { loadSplash } from "./lib/splash.mjs";
 import { vibesDir, loadVibes, vibeSets, userName, fillVibe, pickVibe } from "./lib/vibes.mjs";
+import { bootstrapProcess, doctorReport, findCoop, folderArgument, packagedPaths } from "./lib/bootstrap.mjs";
+import { profileDir } from "../lib/paths.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RENDERER = join(HERE, "renderer");
+// The checkout this code runs from: the terminal's clone, or, in the installed
+// package (D1c), the staged copy inside the asar (desktop/, lib/, vibes/, the
+// splash and the icon). Child processes cannot read an asar, so the package
+// runs the standards reader on the terminal's checkout (repoRootFor) and keeps
+// pdf.js and the PDF script unpacked beside the asar (packagedPaths).
 const REPO = join(HERE, "..");
+const PACKAGED = app.isPackaged;
+const UNPACKED = PACKAGED ? packagedPaths(process.resourcesPath) : { pdfjsDir: "", pdfScript: "" };
 const MAX_QUEUE = 20_000;
 const MAX_COPY = 4 * 1024 * 1024;
 // Pi answers these only when the work is done, which can include a question
@@ -41,7 +50,10 @@ const WAITS_ON_WORK = new Set(["prompt", "steer", "follow_up", "bash", "compact"
 // The spec and the Warehouse MCP token arrive in the environment (never argv
 // or disk) and leave it at once, so no later child inherits them.
 const initial = { spec: process.env.COOP_DESKTOP_SPEC || "", token: process.env.COOP_FABRIC_MCP_TOKEN || "" };
-const dataRoot = process.env.COOP_DESKTOP_DATA || "";
+// The package started from its shortcut has no spec: its data goes where coop
+// desktop would put it (the profile's desktop\data), so the process that
+// coop.ps1 then starts with the spec shares this one's single-instance lock.
+const dataRoot = process.env.COOP_DESKTOP_DATA || (PACKAGED ? join(profileDir(process.env), "desktop", "data") : "");
 delete process.env.COOP_DESKTOP_SPEC;
 delete process.env.COOP_FABRIC_MCP_TOKEN;
 delete process.env.COOP_DESKTOP_DATA;
@@ -58,8 +70,14 @@ let settings = loadSettings(settingsFile);
 // week-old extract is of no use to anyone, so the store is pruned at start.
 const attachmentStore = join(app.getPath("userData"), "attachments");
 pruneStore(attachmentStore);
-// pdf.js is the window runtime's second package, next to Electron.
-const pdfjsDir = findPdfjs(process.execPath);
+// pdf.js is the window runtime's second package, next to Electron; the
+// installed package carries it unpacked beside its asar.
+const pdfjsDir = PACKAGED ? UNPACKED.pdfjsDir : findPdfjs(process.execPath);
+
+/** The checkout whose scripts a child node process may run: the terminal's. */
+function repoRootFor(spec) {
+  return PACKAGED && spec.coop ? dirname(dirname(spec.coop)) : REPO;
+}
 const splashArt = loadSplash(REPO);
 
 protocol.registerSchemesAsPrivileged([
@@ -178,6 +196,7 @@ function openWindow(rawSpec, token) {
   });
   const state = { win, spec, token, pi: null, ready: false, queue: [], sessionFile: "", changes: [], snapshots: new Map(), docs: null, build: null, vibeSet: "" };
   windows.set(win.webContents.id, state);
+  if (settings.lastFolder !== spec.cwd) { try { settings = saveSettings(settingsFile, { ...settings, lastFolder: spec.cwd }); } catch { /* keep going */ } }
   if (settings.maximized) win.maximize();
   win.once("ready-to-show", () => win.show());
   win.on("close", () => {
@@ -316,7 +335,7 @@ handle("coop:open-folder", async (state) => {
   if (result.canceled || !result.filePaths.length) return { success: false, cancelled: true };
   const folder = result.filePaths[0];
   if (process.platform === "win32") {
-    const proc = consoleProcess({ mode: "window", coop: state.spec.coop, cwd: folder, env: process.env });
+    const proc = consoleProcess({ mode: "window", coop: state.spec.coop, cwd: folder, env: process.env, app: PACKAGED ? process.execPath : "" });
     spawn(proc.command, proc.args, proc.options).unref();
   } else {
     // Development on macOS or Linux: run the same command without a console.
@@ -391,7 +410,7 @@ handle("coop:change-diff", async (state, path) => {
 });
 
 handle("coop:standards", async (state) => {
-  const result = await readStandards({ node: state.spec.node, repoRoot: REPO, cwd: state.spec.cwd, env: toolEnv(state) });
+  const result = await readStandards({ node: state.spec.node, repoRoot: repoRootFor(state.spec), cwd: state.spec.cwd, env: toolEnv(state) });
   state.snapshots = result.snapshots;
   return { success: true, data: { source: result.source, domains: result.domains } };
 });
@@ -509,7 +528,7 @@ handle("coop:pick-files", async (state) => {
 
 handle("coop:attach-file", async (state, path) => ({
   success: true,
-  data: await attach(String(path || ""), { cwd: state.spec.cwd, store: attachmentStore, node: state.spec.node, pdfjsDir, env: { ...process.env, ...state.spec.env } }),
+  data: await attach(String(path || ""), { cwd: state.spec.cwd, store: attachmentStore, node: state.spec.node, pdfjsDir, script: UNPACKED.pdfScript || undefined, env: { ...process.env, ...state.spec.env } }),
 }));
 
 handle("coop:attachment-forget", (state, id) => ({ success: forget(attachmentStore, String(id || "")) }));
@@ -557,18 +576,63 @@ app.on("web-contents-created", (_event, contents) => {
   contents.on("will-attach-webview", (event) => event.preventDefault());
 });
 
+// `coop.exe --doctor`: one JSON line about this package, then exit (the CI
+// job and `coop doctor` read it; nothing starts).
+if (process.argv.includes("--doctor")) {
+  const report = JSON.stringify(doctorReport({ version: app.getVersion(), packaged: PACKAGED, execPath: process.execPath, resourcesPath: process.resourcesPath }));
+  process.stdout.write(report + "\n", () => app.exit(0));
+}
+
+// The installed package started with no spec (its shortcut, or `coop.exe
+// <folder>`): ask the terminal coop for one. coop.ps1 starts this exe again
+// with the spec; that process hands it over through the single-instance lock
+// (second-instance below) and this one opens the window.
+async function bootstrap() {
+  const coop = findCoop(process.env);
+  if (!coop) {
+    dialog.showErrorBox("coop", "The coop window needs the terminal coop, which is not installed on this computer yet.\n\nInstall coop first (README: clone coop-agent and double-click \"Install coop.cmd\"), then start the window again.");
+    app.quit();
+    return;
+  }
+  let folder = folderArgument(process.argv.slice(1));
+  if (!folder) {
+    const picked = await dialog.showOpenDialog({ title: "Open a folder in coop", defaultPath: settings.lastFolder && existsSync(settings.lastFolder) ? settings.lastFolder : app.getPath("home"), properties: ["openDirectory"], buttonLabel: "Open in coop" });
+    if (picked.canceled || !picked.filePaths.length) { app.quit(); return; }
+    folder = picked.filePaths[0];
+  }
+  let proc;
+  try {
+    proc = bootstrapProcess({ coop, app: process.execPath, cwd: folder, env: process.env });
+  } catch (error) {
+    dialog.showErrorBox("coop", `coop could not start its window: ${error.message}`);
+    app.quit();
+    return;
+  }
+  const child = spawn(proc.command, proc.args, proc.options);
+  child.on("error", (error) => {
+    dialog.showErrorBox("coop", `coop could not start its window: ${error.message}`);
+    app.quit();
+  });
+  child.on("exit", () => {
+    // The console showed coop's own message on a failure; on success the
+    // window is open by now, or another window process took the spec.
+    setTimeout(() => { if (!windows.size) app.quit(); }, 5000);
+  });
+}
+
 if (!app.requestSingleInstanceLock({ spec: initial.spec, token: initial.token })) {
   // Another coop window process is running: it opens this folder's window.
   app.quit();
 } else {
   app.on("second-instance", (_event, _argv, _cwd, data) => {
-    if (data && typeof data.spec === "string") openWindow(data.spec, typeof data.token === "string" ? data.token : "");
+    if (data && typeof data.spec === "string" && data.spec) openWindow(data.spec, typeof data.token === "string" ? data.token : "");
   });
   app.whenReady().then(() => {
     Menu.setApplicationMenu(null);
     harden();
     nativeTheme.on("updated", () => broadcast("coop:theme", { theme: settings.theme, systemDark: nativeTheme.shouldUseDarkColors }));
-    openWindow(initial.spec, initial.token);
+    if (!initial.spec && PACKAGED) bootstrap();
+    else openWindow(initial.spec, initial.token);
     initial.token = "";
   });
 }

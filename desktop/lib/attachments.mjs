@@ -151,7 +151,7 @@ export function forget(store, id) {
  *   office, pdf: { kind, label, name, size, path, ref (the extract), id, detail, chars, truncated }
  * Throws AttachError with a sentence for the person.
  */
-export async function attach(path, { cwd, store, node, pdfjsDir, limits = LIMITS, env = process.env }) {
+export async function attach(path, { cwd, store, node, pdfjsDir, script = PDF_SCRIPT, limits = LIMITS, env = process.env }) {
   if (typeof path !== "string" || !isAbsolute(path) || /[\0\r\n]/.test(path)) throw new AttachError("That is not a file path.");
   let stat;
   try { stat = statSync(path); } catch { throw new AttachError(`${basename(path)} was not found.`); }
@@ -173,7 +173,7 @@ export async function attach(path, { cwd, store, node, pdfjsDir, limits = LIMITS
   if (kind.kind === "office") {
     try { extracted = officeText(readFileSync(path), extname(path).toLowerCase(), { maxChars: limits.chars }); } catch (error) { throw new AttachError(`${name} could not be read: ${error.message}.`); }
   } else {
-    extracted = await pdfText({ node, pdfjsDir, file: path, maxChars: limits.chars, timeoutMs: limits.pdfSeconds * 1000, env });
+    extracted = await pdfText({ node, pdfjsDir, file: path, maxChars: limits.chars, timeoutMs: limits.pdfSeconds * 1000, script, env });
   }
   if (!extracted.text.trim()) throw new AttachError(`${name} has no text coop can read${kind.kind === "pdf" ? " (a scanned PDF has only pictures of text)" : ""}.`);
   const saved = saveExtract(store, { name, source: path, label: kind.label, detail: extracted.detail, text: extracted.text });

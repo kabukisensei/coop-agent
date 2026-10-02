@@ -199,6 +199,21 @@ shows anything still missing.
 | **Managed MCP entries** — `fabric`, `fabric-sqlendpoint`, `powerbi-modeling-mcp`, `azure-devops`, `microsoft-learn` | generated from Coop config with release-manifest pins; npm-backed servers use `npx`. Power BI Modeling is also installed globally. `context-mode` is a native Pi extension, not MCP. |
 | **Windows double-click launcher**: **coop** opens the terminal agent | created on the Start Menu and Desktop, starting in your home folder; `coop update` repairs older shortcuts. A second shortcut, **coop (window)**, appears after your first `coop desktop`. Purely additive: `coop` in any terminal is unchanged. An isolated install (`USERPROFILE` redirected at a sandbox folder) keeps its shortcuts inside that profile and leaves your user PATH alone |
 
+**The coop window package (master plan D1c).** CI builds an unsigned, per-user
+Windows installer of the window alone on every PR (the `coop-window-installer`
+artifact of the `installer (Windows)` job: `coop-window-<version>-win-x64.exe`).
+It installs under `%LOCALAPPDATA%\Programs\coop` with no administrator prompt,
+adds a **coop (window)** shortcut to the Start Menu and Desktop and an Add/Remove
+Programs entry, and keeps the window's data (`~/.coop/desktop/data`) on
+uninstall. SmartScreen shows "unknown publisher" once (one click; signing is
+D1f, optional). The package still needs the terminal coop: its shortcut asks for
+a folder, then runs `coop desktop --app <its exe>` in a console, so the window
+gets the same launch checks, spec and token as `coop desktop`; without the
+terminal coop it says so and points at the install steps. It bundles nothing
+else yet (Node, Pi and this repository come with D1d; updates with D1e: reinstall
+the newer exe). Build it yourself with `npm ci` in `desktop/installer` and
+`node desktop/scripts/build-installer.mjs` (Windows, or any OS with Wine).
+
 > `pi-powerline-footer` is **not** used. coop renders its own footer and splash via
 > `extensions/coop-powerline` (see [Footer & splash](#footer--splash)).
 
@@ -221,7 +236,7 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | Command | Description |
 | --- | --- |
 | `coop` | Launch the branded Pi agent (skills, prompts, theme, guardrails, splash) |
-| `coop desktop [folder]` | Open coop in a window on a folder (default: the current one): the same Pi, arguments, guardrails and approvals as `coop`, drawn as a modern UI with four themes (Modern and Retro, dark and light). The first run installs the window's runtime (Electron and pdf.js, about 150 MB to download and 400 MB on disk, pinned in the release manifest, into `~/.coop/desktop`) and adds a **coop (window)** shortcut; `coop sync` keeps it current. Anything only the terminal can show opens the same session in a terminal. A side pane (Ctrl+\\) shows the changes since the last commit, the standards coop applies, a form for `.coop/project.yml` and the docs setup with Build; the sidebar and panes resize by dragging. The paperclip, Ctrl+V or drag and drop attach images, text files, Word, Excel, PowerPoint and PDF files (documents are read to Markdown and referenced by path, so coop reads them through its guarded read tool). The thinking and tool calls between coop's replies fold into one expandable line (Ctrl+O keeps them open); nothing leaves the session log. Master plan D1b and D1b2; the parity checklist is `desktop/PARITY.md` |
+| `coop desktop [folder]` | Open coop in a window on a folder (default: the current one): the same Pi, arguments, guardrails and approvals as `coop`, drawn as a modern UI with four themes (Modern and Retro, dark and light). The first run installs the window's runtime (Electron and pdf.js, about 150 MB to download and 400 MB on disk, pinned in the release manifest, into `~/.coop/desktop`) and adds a **coop (window)** shortcut; `coop sync` keeps it current. Anything only the terminal can show opens the same session in a terminal. A side pane (Ctrl+\\) shows the changes since the last commit, the standards coop applies, a form for `.coop/project.yml` and the docs setup with Build; the sidebar and panes resize by dragging. The paperclip, Ctrl+V or drag and drop attach images, text files, Word, Excel, PowerPoint and PDF files (documents are read to Markdown and referenced by path, so coop reads them through its guarded read tool). The thinking and tool calls between coop's replies fold into one expandable line (Ctrl+O keeps them open); nothing leaves the session log. Master plan D1b and D1b2; the parity checklist is `desktop/PARITY.md`. `--app <exe>` opens the window in the installed **coop window package** instead of the runtime tree (the package passes it itself; see below) |
 | `coop doctor [--fix] [--json] [--publish]` | Check dependencies/configuration; optionally apply safe fixes, emit JSON, or publish a fleet snapshot to `fleet.publish_dir` |
 | `coop update [--check] [--edge] [--yes] [--no-fabric]` | Move coop-agent to the newest release tag (never backwards), converge tools to that release's manifest, and run Doctor. `--edge` is the maintainer channel: head of `main` plus latest upstream; `--check` fetches origin, then reports what the update would do and changes nothing; `--pi-latest` is a deprecated alias of `--edge` |
 | `coop support [--json] [--incident] [--export PATH]` | Offline Support Center: sanitized diagnostics, incident timeline, preview/export, and standards status; works without Pi/model availability |

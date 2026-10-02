@@ -230,7 +230,20 @@ for the Node tools and extensions; no script builds these paths inline.
    (`desktop.electron`) and installed from `config/desktop-lock.json` into
    `~/.coop/desktop/runtime` on first use; the window's own settings live in
    `~/.coop/desktop/data`. Closing the window ends Pi and every process it
-   started. What only the terminal can show (model sign-in, `custom()` screens,
+   started. The **coop window package** (master plan D1c) is the same `desktop/`
+   code packed by electron-builder into an unsigned NSIS per-user installer
+   (`desktop/installer/electron-builder.cjs`, staged by
+   `desktop/scripts/build-installer.mjs`: `desktop/`, the `lib/*.mjs` modules it
+   imports, the vibes, the splash and the icon in an asar, pdf.js and its reader
+   script unpacked beside it, the September fuse policy applied). Started from
+   its shortcut it has no spec, so it finds the terminal's `coop.cmd` the way
+   `bin/coop-desktop.ps1` does and runs `coop desktop --app <its exe>`
+   (`desktop/lib/bootstrap.mjs`); coop.ps1 starts the exe again with the spec,
+   and that process hands it to the first through Electron's single-instance
+   lock. Child processes cannot read an asar, so the package runs the standards
+   reader on the terminal's checkout. `coop.exe --doctor` prints one JSON line
+   and exits; the `installer (Windows)` CI job builds the installer, installs it
+   silently, runs that and uninstalls (`desktop/scripts/verify-installer.mjs`). What only the terminal can show (model sign-in, `custom()` screens,
    `/trust`) opens the same session in a terminal; `desktop/PARITY.md` maps every
    Pi command, keybinding and extension command, and `tests/desktop.test.mjs`
    checks it against a recorded session.

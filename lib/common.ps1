@@ -2932,6 +2932,9 @@ function Set-CoopWindowShortcut {
     if ($OnlyIfPresent -and -not (Test-Path -LiteralPath $lnk)) { continue }
     if (-not (Test-Path -LiteralPath $dir -PathType Container)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
     $sc = $ws.CreateShortcut($lnk)
+    # The installed window package (master plan D1c) writes a shortcut of the
+    # same name that starts its own exe; leave that one to its installer.
+    if ((Test-Path -LiteralPath $lnk) -and $sc.TargetPath -and ($sc.TargetPath -notlike '*powershell.exe')) { continue }
     $sc.TargetPath       = $psExe
     $sc.Arguments        = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$desktopLauncher`" desktop"
     $sc.WorkingDirectory = $HOME

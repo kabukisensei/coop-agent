@@ -6,7 +6,7 @@ import { dirname } from "node:path";
 // "auto" follows Windows' light or dark setting with the modern pair.
 export const THEMES = Object.freeze(["auto", "modern-dark", "modern-light", "retro-dark", "retro-light"]);
 
-const DEFAULTS = Object.freeze({ theme: "auto", width: 1280, height: 860, maximized: false });
+const DEFAULTS = Object.freeze({ theme: "auto", width: 1280, height: 860, maximized: false, lastFolder: "" });
 
 function size(value, fallback, min, max) {
   return Number.isInteger(value) && value >= min && value <= max ? value : fallback;
@@ -19,6 +19,8 @@ function normalize(value) {
     width: size(raw.width, DEFAULTS.width, 640, 10000),
     height: size(raw.height, DEFAULTS.height, 420, 10000),
     maximized: raw.maximized === true,
+    // The folder the installed package's picker opens on (the last window's).
+    lastFolder: typeof raw.lastFolder === "string" && !/[\0\r\n]/.test(raw.lastFolder) ? raw.lastFolder.slice(0, 1024) : DEFAULTS.lastFolder,
   };
 }
 

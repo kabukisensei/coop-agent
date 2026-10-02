@@ -161,7 +161,8 @@ $(Coop-Bold)$(Coop-Navy)coop$(Coop-Rst) $(Coop-Dim)v$v$(Coop-Rst) — the Coopti
 
 $(Coop-Bold)Usage$(Coop-Rst)
   coop                      Launch the branded Pi agent
-  coop desktop [folder]     Open coop in a window on a folder (default: here; installs the window on first use)
+  coop desktop [folder]     Open coop in a window on a folder (default: here; installs the window on first use;
+                            --app <exe> opens it in the installed coop window package instead)
   coop doctor               Check dependencies and configuration
   coop update               Update Pi + Coop tools + vibes/skills, then run doctor
   coop install              Fresh-install / bootstrap everything (idempotent)
@@ -584,13 +585,26 @@ function Invoke-CoopLaunchSpec {
 # into the spec, because this console closes once the window opens.
 # --print-spec prints the spec as JSON and starts nothing: no launch checks, no
 # token, no install.
+# --app <exe> opens the window in that executable instead of the runtime tree:
+# the installed package (master plan D1c, the unsigned per-user installer)
+# passes itself here, so it gets the same spec and token without a second
+# Electron; nothing is installed for it.
 function Invoke-CoopDesktop {
   param([string[]] $DesktopArgs = @())
-  $usage = 'usage: coop desktop [folder] [--print-spec]'
+  $usage = 'usage: coop desktop [folder] [--print-spec] [--app <exe>]'
   $folder = ''
   $printSpec = $false
-  foreach ($a in $DesktopArgs) {
+  $appExe = ''
+  for ($i = 0; $i -lt $DesktopArgs.Count; $i++) {
+    $a = $DesktopArgs[$i]
     if ($a -ceq '--print-spec') { $printSpec = $true }
+    elseif ($a -ceq '--app') {
+      $i++
+      if ($i -ge $DesktopArgs.Count -or -not $DesktopArgs[$i]) { Coop-Die "--app needs the window executable — $usage" }
+      $appExe = $DesktopArgs[$i]
+      if (-not (Test-Path -LiteralPath $appExe -PathType Leaf)) { Coop-Die "window executable not found: $appExe" }
+      $appExe = (Resolve-Path -LiteralPath $appExe).ProviderPath
+    }
     elseif ($a.StartsWith('-')) { Coop-Die "unknown option '$a' — $usage" }
     elseif (-not $folder) { $folder = $a }
     else { Coop-Die $usage }
@@ -641,24 +655,32 @@ function Invoke-CoopDesktop {
   # One environment variable holds at most 32767 characters on Windows.
   if ($json.Length -gt 32000) { Coop-Die "the launch spec is too large for the window ($($json.Length) characters)" }
 
-  if ((Get-CoopDesktopRuntimeState) -ne 'current') {
-    $firstInstall = ((Get-CoopDesktopRuntimeState) -eq 'missing')
-    if (Install-CoopDesktopRuntime) {
-      if ($firstInstall -and (Set-CoopWindowShortcut)) { Coop-Ok 'added the "coop (window)" shortcut next to "coop"' }
-    } elseif (-not (Get-CoopDesktopElectronExe)) {
-      Coop-Die 'the coop window runtime is not installed (see above)'
-    } else {
-      Coop-Warn 'opening the window on the runtime already installed'
+  $exeArgs = @()
+  if ($appExe) {
+    # The installed package carries the window's code: no runtime tree, no argument.
+    $exe = $appExe
+  } else {
+    if ((Get-CoopDesktopRuntimeState) -ne 'current') {
+      $firstInstall = ((Get-CoopDesktopRuntimeState) -eq 'missing')
+      if (Install-CoopDesktopRuntime) {
+        if ($firstInstall -and (Set-CoopWindowShortcut)) { Coop-Ok 'added the "coop (window)" shortcut next to "coop"' }
+      } elseif (-not (Get-CoopDesktopElectronExe)) {
+        Coop-Die 'the coop window runtime is not installed (see above)'
+      } else {
+        Coop-Warn 'opening the window on the runtime already installed'
+      }
     }
+    $exe = Get-CoopDesktopElectronExe
+    $exeArgs = @('"' + (Join-Path $script:CoopRoot 'desktop') + '"')
   }
-  $exe = Get-CoopDesktopElectronExe
   $dataDir = Get-CoopDesktopDataDir
   New-Item -ItemType Directory -Force -Path $dataDir -ErrorAction SilentlyContinue | Out-Null
   $env:COOP_DESKTOP_SPEC = $json
   $env:COOP_DESKTOP_DATA = $dataDir
   if ($token) { $env:COOP_FABRIC_MCP_TOKEN = $token }
   try {
-    Start-Process -FilePath $exe -ArgumentList @('"' + (Join-Path $script:CoopRoot 'desktop') + '"') -WorkingDirectory $cwd -ErrorAction Stop | Out-Null
+    if ($exeArgs.Count) { Start-Process -FilePath $exe -ArgumentList $exeArgs -WorkingDirectory $cwd -ErrorAction Stop | Out-Null }
+    else { Start-Process -FilePath $exe -WorkingDirectory $cwd -ErrorAction Stop | Out-Null }
     Coop-Ok "opened the coop window on $cwd"
   } catch {
     Coop-Die "could not open the coop window: $($_.Exception.Message)"

@@ -81,6 +81,17 @@ try {
   if ($missing.Rc -ne 0 -and ($missing.Out + $missing.Err) -match 'folder not found') { Ok 'a missing folder fails before anything starts' } else { Ko "missing folder (rc=$($missing.Rc))" ($missing.Out + $missing.Err) }
   $bogus = Invoke-Coop @('desktop', '--bogus') $work
   if ($bogus.Rc -ne 0 -and ($bogus.Out + $bogus.Err) -match "unknown option '--bogus'") { Ok 'an unknown option is refused' } else { Ko "unknown option (rc=$($bogus.Rc))" ($bogus.Out + $bogus.Err) }
+  # --app <exe> (the installed package, D1c): the exe must exist; the spec is the same.
+  $noApp = Invoke-Coop @('desktop', '--app') $work
+  if ($noApp.Rc -ne 0 -and ($noApp.Out + $noApp.Err) -match '--app needs the window executable') { Ok '--app without an executable is refused' } else { Ko "--app alone (rc=$($noApp.Rc))" ($noApp.Out + $noApp.Err) }
+  $badApp = Invoke-Coop @('desktop', '--app', (Join-Path $t 'no-such-coop.exe')) $work
+  if ($badApp.Rc -ne 0 -and ($badApp.Out + $badApp.Err) -match 'window executable not found') { Ok '--app with a missing executable is refused' } else { Ko "--app missing exe (rc=$($badApp.Rc))" ($badApp.Out + $badApp.Err) }
+  $stubApp = Join-Path $t 'coop-window.exe'
+  [System.IO.File]::WriteAllText($stubApp, 'stub', $utf8)
+  $withApp = Invoke-Coop @('desktop', '--app', $stubApp, '--print-spec') $work
+  $appSpec = $null
+  try { $appSpec = $withApp.Out.Trim() | ConvertFrom-Json } catch { }
+  if ($withApp.Rc -eq 0 -and $appSpec -and $spec -and ((@($appSpec.args) -join "`n") -ceq (@($spec.args) -join "`n"))) { Ok '--app changes nothing in the spec' } else { Ko "--app print-spec (rc=$($withApp.Rc))" ($withApp.Out + $withApp.Err) }
 
   # --- the window runtime helpers ---------------------------------------------
   . (Join-Path $root 'lib\common.ps1')
