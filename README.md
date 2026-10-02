@@ -199,9 +199,12 @@ shows anything still missing.
 | **Managed MCP entries** — `fabric`, `fabric-sqlendpoint`, `powerbi-modeling-mcp`, `azure-devops`, `microsoft-learn` | generated from Coop config with release-manifest pins; npm-backed servers use `npx`. Power BI Modeling is also installed globally. `context-mode` is a native Pi extension, not MCP. |
 | **Windows double-click launcher**: **coop** opens the terminal agent | created on the Start Menu and Desktop, starting in your home folder; `coop update` repairs older shortcuts. A second shortcut, **coop (window)**, appears after your first `coop desktop`. Purely additive: `coop` in any terminal is unchanged. An isolated install (`USERPROFILE` redirected at a sandbox folder) keeps its shortcuts inside that profile and leaves your user PATH alone |
 
-**The coop window package (master plan D1c).** CI builds an unsigned, per-user
-Windows installer of the window alone on every PR (the `coop-window-installer`
-artifact of the `installer (Windows)` job: `coop-window-<version>-win-x64.exe`).
+**The coop window package (master plan D1c).** Every release carries an
+unsigned, per-user Windows installer of the window alone
+(`coop-window-<version>-win-x64.exe` under the release's assets; teammates
+download it from the [newest release](https://github.com/kabukisensei/coop-agent/releases/latest),
+see `docs/install-windows.md` step 6). CI builds the same installer on every PR
+(the `coop-window-installer` artifact of the `installer (Windows)` job).
 It installs under `%LOCALAPPDATA%\Programs\coop` with no administrator prompt,
 adds a **coop (window)** shortcut to the Start Menu and Desktop and an Add/Remove
 Programs entry, and keeps the window's data (`~/.coop/desktop/data`) on

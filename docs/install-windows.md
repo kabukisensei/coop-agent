@@ -150,8 +150,9 @@ coop also runs in its own window: the same agent and rules, drawn as a modern
 app with four themes. Do this after steps 1 to 5, since the window uses the
 terminal coop you just installed.
 
-1. Download `coop-window-<version>-win-x64.exe` from the link Aaron sends (it
-   comes from the coop-agent release page or a CI build).
+1. Download `coop-window-<version>-win-x64.exe` from the newest release at
+   [github.com/kabukisensei/coop-agent/releases/latest](https://github.com/kabukisensei/coop-agent/releases/latest)
+   (under **Assets**).
 2. Double-click it. Windows shows **Windows protected your PC** because the
    installer is not signed: click **More info**, then **Run anyway**. That is
    the only time you see it.

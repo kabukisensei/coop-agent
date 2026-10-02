@@ -22,7 +22,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `coop desktop`; `coop.exe --doctor` prints one JSON line about the package.
   The `installer (Windows)` CI job builds the installer on every PR as the
   `coop-window-installer` artifact, installs it silently, runs `--doctor` and
-  uninstalls (`desktop/scripts/verify-installer.mjs`). Nothing else is bundled
+  uninstalls (`desktop/scripts/verify-installer.mjs`); the release workflow
+  builds it from the tag and attaches it to the GitHub Release, so teammates
+  download it from the release page (`docs/install-windows.md`, step 6). Nothing else is bundled
   yet (D1d) and the package does not update itself (D1e).
 
 ### Changed
