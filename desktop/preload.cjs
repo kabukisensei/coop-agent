@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld("coop", Object.freeze({
   docsLocation: () => ipcRenderer.invoke("coop:docs-location"),
   docsBuild: () => ipcRenderer.invoke("coop:docs-build"),
   docsPage: (page) => ipcRenderer.invoke("coop:docs-page", String(page || "")),
+  docsPages: () => ipcRenderer.invoke("coop:docs-pages"),
   docsPortal: () => ipcRenderer.invoke("coop:docs-portal"),
   onEvent: listen("pi:event"),
   onExit: listen("pi:exit"),

@@ -4,7 +4,7 @@
 // listed); coop-data-doc stays the only writer of coop-data-doc.yml. Build
 // runs `coop-data-doc build` with its output streamed here, and the built
 // Markdown pages open in the pane, with the HTML portal one click away.
-import { el, icon, toast } from "./ui.mjs";
+import { el, fill, icon, toast } from "./ui.mjs";
 import { parseMarkdown, renderBlocks } from "./markdown.mjs";
 
 const MAX_LOG = 400;
@@ -23,6 +23,17 @@ export function resolvePage(current, href) {
 }
 
 /** A link the docs pane opens itself: a relative .md page, no scheme. */
+const MAX_LISTED = 300;
+const MAX_MATCHES = 50;
+
+/** "bronze_table" -> "Bronze tables"; loose pages are "Other pages". */
+export function typeLabel(type) {
+  if (!type || type === "page") return "Other pages";
+  const words = String(type).replace(/[_-]+/g, " ").trim();
+  const label = words.charAt(0).toUpperCase() + words.slice(1);
+  return /s$/i.test(label) ? label : `${label}s`;
+}
+
 export const isDocsLink = (href) => /^(?![a-z][a-z0-9+.-]*:)[^?]*\.md(#.*)?$/i.test(String(href || ""));
 
 /** A built page without its YAML front matter. */
@@ -42,7 +53,7 @@ export function answerLabel(prompt, value) {
 }
 
 export function mountDocs(box, options, { coop, codeBlock }) {
-  const state = { location: null, running: false, prompt: null, answers: [], notices: [], result: null, building: false, log: [], page: "", history: [] };
+  const state = { location: null, running: false, prompt: null, steps: [], result: null, building: false, log: [], page: "", history: [], pages: null, query: "" };
   const summary = el("div", { class: "pane-summary" });
   const actions = el("div", { class: "form-actions" });
   const setup = el("div", { class: "docs-setup", hidden: true });
@@ -54,13 +65,13 @@ export function mountDocs(box, options, { coop, codeBlock }) {
 
   function renderTop() {
     const where = state.location;
-    if (!where) { summary.replaceChildren(el("span", { class: "spinner" }), el("span", { text: " Looking for coop-data-doc.yml" })); actions.replaceChildren(); return; }
-    summary.replaceChildren(
+    if (!where) { fill(summary, el("span", { class: "spinner" }), el("span", { text: " Looking for coop-data-doc.yml" })); fill(actions); return; }
+    fill(summary, 
       where.exists ? el("span", { text: "Lineage docs set up: " }) : el("span", { text: "No lineage docs here yet. Setting them up writes " }),
       el("code", { text: where.config }),
       where.built ? el("span", { class: "chip ok", text: "built" }) : where.exists ? el("span", { class: "chip", text: "not built yet" }) : null);
     const busy = state.running || state.building;
-    actions.replaceChildren(
+    fill(actions, 
       el("button", { type: "button", class: `btn ${where.exists ? "" : "primary"}`, text: where.exists ? "Change the setup" : "Set up the docs", disabled: busy, onclick: startSetup }),
       where.exists ? el("button", { type: "button", class: `btn ${where.exists && !where.built ? "primary" : ""}`, text: where.built ? "Build again" : "Build", disabled: busy, onclick: runBuild }) : null,
       where.built ? el("button", { type: "button", class: "btn", text: "Read the docs", disabled: busy, onclick: () => openPage("index.md") }) : null,
@@ -77,9 +88,11 @@ export function mountDocs(box, options, { coop, codeBlock }) {
   // --- The setup form ----------------------------------------------------------
 
   function renderSetup() {
-    setup.hidden = !(state.running || state.answers.length || state.notices.length || state.result);
-    const done = state.answers.map((a) => el("div", { class: "docs-answer" }, el("span", { class: "docs-question", text: a.message }), el("span", { class: "docs-value", text: a.label })));
-    const notes = state.notices.map((n) => el("div", { class: `notice ${n.level === "error" || n.level === "warning" ? n.level : "info"}` }, n.level === "error" || n.level === "warning" ? icon("warn") : null, el("span", { text: n.message })));
+    setup.hidden = !(state.running || state.steps.length || state.result);
+    // Answers and the wizard's notes, in the order the terminal prints them.
+    const steps = state.steps.map((step) => step.kind === "answer"
+      ? el("div", { class: "docs-answer" }, el("span", { class: "docs-question", text: step.message }), el("span", { class: "docs-value", text: step.answer }))
+      : el("div", { class: `notice ${step.level === "error" || step.level === "warning" ? step.level : "info"}` }, step.level === "error" || step.level === "warning" ? icon("warn") : null, el("span", { text: step.message })));
     let current = null;
     if (state.prompt) current = promptField(state.prompt);
     else if (state.running) current = el("div", { class: "working" }, el("span", { class: "spinner" }), el("span", { text: "coop-data-doc is working" }));
@@ -90,7 +103,7 @@ export function mountDocs(box, options, { coop, codeBlock }) {
         el("p", { text: r.ok ? (r.notRunnable ? r.message : "Saved. The docs are ready to build.") : (r.message || "The setup stopped. Nothing was saved unless a message above says so.") }),
         r.ok && !r.notRunnable ? el("button", { type: "button", class: "btn primary", text: "Build the docs now", onclick: runBuild }) : null);
     }
-    setup.replaceChildren(el("h3", { text: "Setup" }), ...done, ...notes, current, end);
+    fill(setup, el("h3", { text: "Setup" }), ...steps, current, end);
   }
 
   function promptField(prompt) {
@@ -99,7 +112,7 @@ export function mountDocs(box, options, { coop, codeBlock }) {
       const result = await coop.docsAnswer(prompt.id, value);
       if (!result.success) { problem.textContent = result.error || "That answer did not fit."; problem.hidden = false; return; }
       if (!state.prompt || state.prompt.id !== prompt.id) return;
-      state.answers.push({ message: prompt.message, label: answerLabel(prompt, normalizedForLabel(prompt, value)) });
+      state.steps.push({ kind: "answer", message: prompt.message, answer: answerLabel(prompt, normalizedForLabel(prompt, value)) });
       state.prompt = null;
       renderSetup();
     };
@@ -148,7 +161,7 @@ export function mountDocs(box, options, { coop, codeBlock }) {
   }
 
   async function startSetup() {
-    Object.assign(state, { running: true, prompt: null, answers: [], notices: [], result: null });
+    Object.assign(state, { running: true, prompt: null, steps: [], result: null });
     viewer.hidden = true;
     renderTop();
     renderSetup();
@@ -165,7 +178,7 @@ export function mountDocs(box, options, { coop, codeBlock }) {
   function renderBuild(done) {
     build.hidden = !(state.building || state.log.length);
     const pre = el("pre", { class: "output build-log" }, el("code", { text: state.log.join("\n") }));
-    build.replaceChildren(el("h3", {}, state.building ? el("span", { class: "spinner" }) : null, el("span", { text: state.building ? " Building the docs" : "Build" })), pre, done || null);
+    fill(build, el("h3", {}, state.building ? el("span", { class: "spinner" }) : null, el("span", { text: state.building ? " Building the docs" : "Build" })), pre, done || null);
     pre.scrollTop = pre.scrollHeight;
   }
 
@@ -179,6 +192,7 @@ export function mountDocs(box, options, { coop, codeBlock }) {
     if (!result.success) { renderBuild(el("div", { class: "notice error" }, icon("warn"), el("span", { text: result.error || "The build did not run." }))); renderTop(); return; }
     const { code, tail, location } = result.data;
     state.location = location;
+    state.pages = null;
     renderTop();
     if (code === 0) {
       renderBuild(el("div", { class: "notice info" }, icon("check"), el("span", { text: "Data docs built. coop uses them for lineage." })));
@@ -195,6 +209,53 @@ export function mountDocs(box, options, { coop, codeBlock }) {
 
   // --- The built docs ------------------------------------------------------------
 
+  async function pageList() {
+    if (state.pages) return state.pages;
+    const result = await coop.docsPages();
+    state.pages = result.success ? result.data : [];
+    return state.pages;
+  }
+
+  function openListed(entry) {
+    if (entry.portalOnly) openPortal();
+    else openPage(entry.page);
+  }
+
+  function listedItem(entry) {
+    const item = el("li", {},
+      el("a", { href: "#", class: "docs-entry", title: entry.id || entry.page, onclick: (event) => { event.preventDefault(); openListed(entry); } }, entry.title),
+      entry.portalOnly ? el("span", { class: "chip", text: "portal" }) : null);
+    return item;
+  }
+
+  // The overview's list of every object page, by type (coop-data-doc's own
+  // overview does not link them).
+  function pageIndex(pages) {
+    const groups = new Map();
+    for (const entry of pages) {
+      if (!groups.has(entry.type)) groups.set(entry.type, []);
+      groups.get(entry.type).push(entry);
+    }
+    return el("section", { class: "docs-index" },
+      el("h2", { text: `All pages (${pages.length})` }),
+      [...groups].map(([type, entries]) => el("details", { open: groups.size <= 4 },
+        el("summary", { text: `${typeLabel(type)} (${entries.length})` }),
+        el("ul", {}, entries.slice(0, MAX_LISTED).map(listedItem)),
+        entries.length > MAX_LISTED ? el("p", { class: "hint", text: `And ${entries.length - MAX_LISTED} more: use Find a page above.` }) : null)));
+  }
+
+  async function renderMatches(box) {
+    const query = state.query.trim().toLowerCase();
+    if (!query) { fill(box); box.hidden = true; return; }
+    const pages = await pageList();
+    const found = pages.filter((entry) => `${entry.title} ${entry.id} ${entry.page}`.toLowerCase().includes(query));
+    fill(box, found.length
+      ? el("ul", {}, found.slice(0, MAX_MATCHES).map(listedItem))
+      : el("p", { class: "hint", text: "No page matches." }),
+    found.length > MAX_MATCHES ? el("p", { class: "hint", text: `Showing ${MAX_MATCHES} of ${found.length}.` }) : null);
+    box.hidden = false;
+  }
+
   async function openPage(page, { push = true } = {}) {
     const result = await coop.docsPage(page);
     if (!result.success) { toast(result.error || "Could not open that page.", "warning"); return; }
@@ -202,12 +263,26 @@ export function mountDocs(box, options, { coop, codeBlock }) {
     state.page = result.data.page;
     const content = el("div", { class: "md docs-page" });
     renderBlocks(document, parseMarkdown(stripFrontMatter(result.data.text)), content, { codeBlock, localLink: isDocsLink });
-    viewer.replaceChildren(
+    const matches = el("div", { class: "docs-matches", hidden: true });
+    const find = el("input", { class: "field", type: "search", value: state.query, placeholder: "Find a page", "aria-label": "Find a page in the built docs", spellcheck: "false" });
+    find.addEventListener("input", () => { state.query = find.value; renderMatches(matches); });
+    find.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") { const first = matches.querySelector("a.docs-entry"); if (first) { event.preventDefault(); first.click(); } }
+      if (event.key === "Escape" && find.value) { event.preventDefault(); event.stopPropagation(); find.value = ""; state.query = ""; renderMatches(matches); }
+    });
+    fill(viewer,
       el("div", { class: "pane-toolbar" },
         el("button", { type: "button", class: "btn icon", title: "Back", "aria-label": "Back", disabled: !state.history.length, onclick: () => { const prev = state.history.pop(); if (prev) openPage(prev, { push: false }); } }, icon("back")),
         el("button", { type: "button", class: "btn", text: "Overview", disabled: state.page === "index.md", onclick: () => openPage("index.md") }),
-        el("code", { class: "docs-path", text: state.page })),
+        find),
+      matches,
+      el("code", { class: "docs-path", text: state.page }),
       content);
+    if (state.query.trim()) renderMatches(matches);
+    if (state.page === "index.md") {
+      const pages = await pageList();
+      if (pages.length && state.page === "index.md" && content.isConnected) content.append(pageIndex(pages));
+    }
     viewer.hidden = false;
     viewer.scrollIntoView({ block: "start" });
   }
@@ -228,7 +303,7 @@ export function mountDocs(box, options, { coop, codeBlock }) {
 
   coop.onDocs((event) => {
     if (event.type === "prompt") { state.running = true; state.prompt = event.prompt; renderSetup(); }
-    else if (event.type === "notice") { state.notices.push({ level: event.level, message: event.message }); renderSetup(); }
+    else if (event.type === "notice") { state.steps.push({ kind: "notice", level: event.level, message: event.message }); renderSetup(); }
     else if (event.type === "done") {
       Object.assign(state, { running: false, prompt: null, result: { ok: event.ok, notRunnable: Boolean(event.notRunnable), message: event.message || "" } });
       renderSetup();

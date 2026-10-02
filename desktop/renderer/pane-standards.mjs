@@ -2,7 +2,7 @@
 // resolves for this folder, exactly what a task is given (the wiki's main,
 // the last known good copy, the copy shipped with coop, or the project's own
 // override), readable and searchable while coop works. Read-only.
-import { el, icon, relativeTime } from "./ui.mjs";
+import { el, fill, icon, relativeTime } from "./ui.mjs";
 import { parseMarkdown, renderBlocks } from "./markdown.mjs";
 import { createFinder } from "./find.mjs";
 
@@ -52,7 +52,7 @@ export function mountStandards(box, options, { coop, codeBlock }) {
   const finder = createFinder({ root: content, bar, input: findInput, count: findCount, prev, next, close: clear, highlight: "coop-pane-find", fromTop: true, bodyClass: "", onClose: () => { findInput.value = ""; findCount.textContent = ""; bar.hidden = false; } });
 
   function renderChips() {
-    chips.replaceChildren(...state.domains.map((d) => el("button", {
+    fill(chips, ...state.domains.map((d) => el("button", {
       type: "button",
       class: `chip domain${d.domain === state.domain ? " active" : ""}${d.available ? "" : " off"}`,
       role: "tab",
@@ -64,8 +64,8 @@ export function mountStandards(box, options, { coop, codeBlock }) {
   }
 
   function renderMeta(domain) {
-    if (!domain) { meta.replaceChildren(); return; }
-    meta.replaceChildren(
+    if (!domain) { fill(meta); return; }
+    fill(meta, 
       el("span", { class: `state ${domain.state}`, text: STATE_LABELS[domain.state] || domain.state }),
       domain.revision ? el("code", { text: domain.revision }) : null,
       domain.degraded ? el("span", { class: "chip bad", text: "degraded" }) : null);
@@ -76,17 +76,17 @@ export function mountStandards(box, options, { coop, codeBlock }) {
     renderChips();
     const domain = state.domains.find((d) => d.domain === domainId);
     renderMeta(domain);
-    content.replaceChildren(el("div", { class: "working" }, el("span", { class: "spinner" }), el("span", { text: "Reading the articles" })));
+    fill(content, el("div", { class: "working" }, el("span", { class: "spinner" }), el("span", { text: "Reading the articles" })));
     const result = await coop.standardsText(domainId);
     if (state.domain !== domainId) return;
-    if (!result.success) { content.replaceChildren(el("p", { class: "pane-empty", text: result.error || "Could not read these standards." })); articles.replaceChildren(); return; }
+    if (!result.success) { fill(content, el("p", { class: "pane-empty", text: result.error || "Could not read these standards." })); fill(articles); return; }
     const blocks = parseMarkdown(result.data.text);
     const outline = articleOutline(blocks);
-    content.replaceChildren();
+    fill(content);
     renderBlocks(document, blocks, content, { codeBlock });
     if (result.data.truncated) content.append(el("p", { class: "hint", text: "Cut short: the rest is in the terminal's /standards-status sources." }));
     const headings = [...content.querySelectorAll(":scope > h2")];
-    articles.replaceChildren(el("option", { value: "", text: `${outline.length} ${outline.length === 1 ? "article" : "articles"}: jump to one` }),
+    fill(articles, el("option", { value: "", text: `${outline.length} ${outline.length === 1 ? "article" : "articles"}: jump to one` }),
       ...outline.map((a, i) => el("option", { value: String(i), text: a.title })));
     articles.onchange = () => { const h = headings[Number(articles.value)]; if (h) h.scrollIntoView({ block: "start" }); };
     if (findInput.value.trim()) finder.search({ scroll: false });
@@ -95,18 +95,18 @@ export function mountStandards(box, options, { coop, codeBlock }) {
   async function load() {
     if (state.loading) return;
     state.loading = true;
-    head.replaceChildren(el("span", { class: "spinner" }), el("span", { text: " Resolving the standards coop applies here" }));
+    fill(head, el("span", { class: "spinner" }), el("span", { text: " Resolving the standards coop applies here" }));
     const result = await coop.standards();
     state.loading = false;
     if (!result.success) { head.textContent = result.error || "Could not resolve the standards."; return; }
     state.domains = result.data.domains;
     state.source = result.data.source;
-    head.replaceChildren(el("span", { text: sourceLine(state.source) || "Standards" }));
+    fill(head, el("span", { text: sourceLine(state.source) || "Standards" }));
     const wanted = state.domains.find((d) => d.domain === state.domain && d.available);
     const first = wanted || state.domains.find((d) => d.available);
     renderChips();
     if (first) await choose(first.domain);
-    else { renderMeta(null); content.replaceChildren(el("p", { class: "pane-empty", text: "No standards resolve for this folder. Run coop sync when online, or check /standards-status in the terminal." })); }
+    else { renderMeta(null); fill(content, el("p", { class: "pane-empty", text: "No standards resolve for this folder. Run coop sync when online, or check /standards-status in the terminal." })); }
   }
 
   findInput.addEventListener("focus", () => { bar.hidden = false; });

@@ -236,6 +236,17 @@ for the Node tools and extensions; no script builds these paths inline.
    Pi command, keybinding and extension command, and `tests/desktop.test.mjs`
    checks it against a recorded session.
 
+   The window's side pane (master plan D1b2) adds views over what coop already
+   has, never a second policy path: the folder's git diff, the standards
+   `lib/standards-cli.mjs resolve-many` resolves, a form for
+   `.coop/project.yml` and one for `/setup-docs`. Only the two forms write, and
+   only through the code the terminal wizards use: `lib/project-contract.mjs`
+   (the `/setup-project` writer, which keeps unowned fields and writes a
+   backup) and `lib/data-doc-setup.mjs` (the driver for coop-data-doc's JSONL
+   wizard, which stays the only writer of `coop-data-doc.yml`). The main
+   process rebuilds every form answer from an allowlist with the wizard's own
+   checks; `tests/desktop-panes.test.mjs` compares both forms with the wizards.
+
 ## Diagram
 
 ```mermaid

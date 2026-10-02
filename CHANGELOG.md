@@ -43,6 +43,27 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   crashes) and `tests/fixtures/desktop-spec.test.ps1` (`--print-spec` equals
   `launch-spec`, the runtime states). Re-record the session with
   `node desktop/scripts/record-fixture.mjs` after a Pi or extension upgrade.
+- The coop window's side pane (master plan D1b2; Ctrl+\\, the pane button, the
+  command palette, or a link in the conversation). **Changes**: every file
+  changed since the last commit as a diff, unified or side by side, with
+  search; a tool card's View in Changes opens its file. **Standards**: the
+  coop-standards articles coop resolves for the folder (`lib/standards-cli.mjs
+  resolve-many` and `status`, so exactly what a task is given: the wiki, the
+  last copy, the copy shipped with coop or the project's override), with the
+  source, its freshness, an article list and search. **Project**:
+  `.coop/project.yml` as a form with `/setup-project`'s questions and checks;
+  fields the guardrails read are marked, fields nothing reads are never shown,
+  Review shows the YAML diff, and Save writes through the `/setup-project`
+  writer (unowned fields kept, a backup written) and offers a new session.
+  **Docs**: `/setup-docs` as a form that drives coop-data-doc's own wizard,
+  then Build with its output streamed and the built docs readable in the pane
+  (with a list of every object page and Find a page, because coop-data-doc's
+  overview does not link them), the HTML portal one click away. The `/setup-project` writer and the
+  `/setup-docs` driver moved from `extensions/coop-tools/index.ts` into
+  `lib/project-contract.mjs` and `lib/data-doc-setup.mjs`, so the terminal and
+  the window share one implementation; `tests/desktop-panes.test.mjs` checks
+  that both forms write exactly what the terminal wizards write for the same
+  answers. The parity checklist is unchanged.
 
 ## [0.28.0] — 2026-10-02
 

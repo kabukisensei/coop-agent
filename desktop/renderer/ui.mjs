@@ -19,6 +19,12 @@ export function el(tag, props = {}, ...children) {
   return node;
 }
 
+/** Replace a node's children, skipping null, undefined and false (as el() does). */
+export function fill(node, ...children) {
+  node.replaceChildren(...children.flat().filter((child) => child !== undefined && child !== null && child !== false));
+  return node;
+}
+
 // 16x16 line icons; colour comes from CSS (currentColor).
 const ICONS = {
   plus: "M8 3v10M3 8h10",

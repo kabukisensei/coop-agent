@@ -7,7 +7,7 @@
 // After a completed setup, Build runs `coop-data-doc build` with its output
 // streamed to the form, and the built Markdown docs open in a pane.
 import { execFile, spawn } from "node:child_process";
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   DATADOC_CONFIG,
@@ -24,12 +24,13 @@ import { cleanAnswer } from "../../lib/project-contract.mjs";
 const MAX_TEXT = 4000;
 const MAX_CHOICES = 500;
 const MAX_PAGE = 1024 * 1024;
+const MAX_PAGES = 20000;
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
 
 export const MESSAGES = Object.freeze({
   homeFolder: "coop didn't set up lineage docs: this window is open in your home folder, and coop-data-doc.yml belongs in a project folder, so nothing was written. Open the project folder in a coop window (Open folder...), then set up the docs there.",
   noJsonl: "Your coop-data-doc does not support the native JSONL setup wizard. Run `coop update` (requires coop-data-doc 1.1.1+), then retry.",
-  notRunnable: (reason) => `Not building yet: ${reason || "the saved config doesn't validate"}. Run the setup again and choose a folder that exists (or fix the path in ${DATADOC_CONFIG}), then build.`,
+  notRunnable: (reason) => `Not building yet: ${String(reason || "the saved config doesn't validate").replace(/\.+$/, "")}. Run the setup again and choose a folder that exists (or fix the path in ${DATADOC_CONFIG}), then build.`,
 });
 
 const str = (value, max = MAX_TEXT) => (typeof value === "string" ? value.slice(0, max) : "");
@@ -208,6 +209,52 @@ export function readDocsPage(outputDir, page) {
   if (full !== root && !full.startsWith(root + sep)) throw new Error("only the built Markdown docs open here");
   if (statSync(full).size > MAX_PAGE) throw new Error("that page is too large to show here; open the portal instead");
   return { page: relative(root, full).replace(/\\/g, "/"), text: readFileSync(full, "utf8") };
+}
+
+// An object page's id, type and title: its YAML front matter and first heading,
+// from the first 4 KB only.
+function pageSummary(file) {
+  const fd = openSync(file, "r");
+  let head = "";
+  try {
+    const buffer = Buffer.alloc(4096);
+    head = buffer.subarray(0, readSync(fd, buffer, 0, buffer.length, 0)).toString("utf8");
+  } finally {
+    closeSync(fd);
+  }
+  const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(head);
+  const field = (name) => {
+    const match = front && new RegExp(`^${name}:[ \\t]*(.*)$`, "m").exec(front[1]);
+    return match ? match[1].trim().replace(/^(['"])(.*)\1$/, "$2") : "";
+  };
+  const heading = /^#[ \t]+(.+)$/m.exec(front ? head.slice(front[0].length) : head);
+  // Pages drawn by script or SVG (the estate map) only work in the portal.
+  const html = /<(svg|script|iframe)\b/i.test(front ? head.slice(front[0].length) : head);
+  return { id: field("id"), type: field("type") || "page", title: heading ? heading[1].trim() : "", portalOnly: html };
+}
+
+/**
+ * The built pages the viewer can open besides the overview: every .md file in
+ * the docs folder (not assets, dot folders or links), with its object id, type
+ * and title, sorted by type then title. coop-data-doc's overview does not link
+ * its object pages, so this is how the pane reaches them.
+ */
+export function listDocsPages(outputDir) {
+  const pages = [];
+  const walk = (dir, rel) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      if (pages.length >= MAX_PAGES) return;
+      if (entry.name.startsWith(".") || entry.isSymbolicLink()) continue;
+      const path = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) { if (!(rel === "" && entry.name === "assets")) walk(join(dir, entry.name), path); continue; }
+      if (!entry.isFile() || !/\.md$/i.test(entry.name) || path === "index.md") continue;
+      const summary = pageSummary(join(dir, entry.name));
+      pages.push({ page: path, ...summary, title: summary.title || entry.name.replace(/\.md$/i, "") });
+    }
+  };
+  walk(realpathSync(outputDir), "");
+  const order = (page) => (page.type === "page" ? 1 : 0);
+  return pages.sort((a, b) => order(a) - order(b) || a.type.localeCompare(b.type) || a.title.localeCompare(b.title, undefined, { sensitivity: "base" }) || a.page.localeCompare(b.page));
 }
 
 /**

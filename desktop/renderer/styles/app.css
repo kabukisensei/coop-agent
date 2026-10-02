@@ -179,7 +179,7 @@ body.finding .toasts { top: 112px; }
 .md a:hover { text-decoration: underline; }
 .md-table { overflow-x: auto; margin: 0 0 10px; }
 .md table { border-collapse: collapse; font-size: 13.5px; }
-.md th, .md td { border: 1px solid var(--border); padding: 5px 10px; text-align: left; vertical-align: top; }
+.md th, .md td { border: 1px solid var(--border); padding: 5px 10px; text-align: left; vertical-align: top; overflow-wrap: break-word; }
 .md th { background: var(--surface-2); }
 .md [data-align="right"] { text-align: right; }
 .md [data-align="center"] { text-align: center; }
@@ -421,7 +421,7 @@ details.standards .pane-links { margin-top: 8px; }
 .diff-cell { white-space: pre-wrap; overflow-wrap: anywhere; padding-right: 6px; }
 .diff-cell.del { background: var(--diff-del); }
 .diff-cell.add { background: var(--diff-add); }
-.diff-cell.empty { background: var(--surface-2); }
+.diff-cell.blank { background: var(--surface-2); }
 .diff-row.del .em, .diff-cell.del .em { background: color-mix(in srgb, var(--danger) 32%, transparent); border-radius: 2px; }
 .diff-row.add .em, .diff-cell.add .em { background: color-mix(in srgb, var(--success) 32%, transparent); border-radius: 2px; }
 .diff-text .hit { outline: 1px solid var(--accent); background: var(--accent-soft); color: var(--text-strong); }
@@ -481,6 +481,16 @@ pre.output.build-log { max-height: 220px; font-size: 12px; white-space: pre-wrap
 .docs-path { font-size: 12px; color: var(--text-muted); overflow-wrap: anywhere; }
 .md .md-local { color: var(--accent); cursor: pointer; text-decoration: none; }
 .md .md-local:hover { text-decoration: underline; }
+.docs-viewer .pane-toolbar .field { flex: 1; min-width: 120px; }
+.docs-matches { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 4px 8px; max-height: 260px; overflow-y: auto; }
+.docs-matches ul, .docs-index ul { list-style: none; margin: 0; padding: 0; }
+.docs-matches li, .docs-index li { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.docs-entry { color: var(--accent); text-decoration: none; font-family: var(--font-mono); font-size: 12.5px; overflow-wrap: anywhere; }
+.docs-entry:hover, .docs-entry:focus-visible { text-decoration: underline; }
+.docs-index { margin-top: 18px; border-top: 1px solid var(--border); }
+.docs-index details { margin: 6px 0; }
+.docs-index summary { cursor: pointer; color: var(--text-strong); font-weight: 600; }
+.docs-index details ul { padding: 4px 0 0 14px; }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 10px; border: 2px solid var(--bg); }

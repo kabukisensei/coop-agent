@@ -16,7 +16,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
@@ -47,7 +47,7 @@ const docs = await import("../desktop/lib/docs-setup.mjs");
 const { normalizePath } = await import("../desktop/renderer/pane-changes.mjs");
 const { articleOutline, sourceLine, STATE_LABELS } = await import("../desktop/renderer/pane-standards.mjs");
 const { initialValues, formInput, platformHint, ROLE_LABELS } = await import("../desktop/renderer/pane-project.mjs");
-const { resolvePage, isDocsLink, stripFrontMatter, answerLabel } = await import("../desktop/renderer/pane-docs.mjs");
+const { resolvePage, isDocsLink, stripFrontMatter, answerLabel, typeLabel } = await import("../desktop/renderer/pane-docs.mjs");
 const { paneLinksForTool, paneLinksForText } = await import("../desktop/renderer/view.mjs");
 const { parseMarkdown } = await import("../desktop/renderer/markdown.mjs");
 const { KEYS } = await import("../desktop/renderer/commands.mjs");
@@ -700,6 +700,19 @@ await check("docs pane: Build streams output; the built pages open only from the
   try { symlinkSync(join(cwd, "secret.md"), join(where.outputDir, "link.md")); linked = true; } catch { /* no symlinks here */ }
   if (linked) assert.throws(() => docs.readDocsPage(where.outputDir, "link.md"), /only the built Markdown docs/);
 
+  // The page list: coop-data-doc's overview does not link its object pages.
+  mkdirSync(join(where.outputDir, "view"));
+  writeFileSync(join(where.outputDir, "view", "dbo-vsales-1.md"), '---\nid: "view:dbo.vsales"\ntype: "view"\n---\n\n# dbo.vSales\n');
+  writeFileSync(join(where.outputDir, "estate_map.md"), "# Estate Map\n<div><svg></svg></div>\n<script src=\"assets/x.js\"></script>\n");
+  writeFileSync(join(where.outputDir, "notes.md"), "no heading here\n");
+  for (const skipped of ["assets", ".cache"]) { mkdirSync(join(where.outputDir, skipped)); writeFileSync(join(where.outputDir, skipped, "x.md"), "# x\n"); }
+  assert.deepEqual(docs.listDocsPages(where.outputDir), [
+    { page: "view/dbo-vsales-1.md", id: "view:dbo.vsales", type: "view", title: "dbo.vSales", portalOnly: false },
+    { page: "table/sales.md", id: "dbo.Sales", type: "page", title: "dbo.Sales", portalOnly: false },
+    { page: "estate_map.md", id: "", type: "page", title: "Estate Map", portalOnly: true },
+    { page: "notes.md", id: "", type: "page", title: "notes", portalOnly: false },
+  ], "object types first, loose pages last; assets, dot folders and links are skipped");
+
   // A failed build: its last lines, not a crash.
   const failing = () => { const c = new EventEmitter(); c.stdout = new PassThrough(); c.stderr = new PassThrough(); setImmediate(() => { c.stderr.end("Repo 'sql' path does not exist\n"); c.stdout.end(); setImmediate(() => c.emit("close", 2)); }); return c; };
   assert.deepEqual(await docs.runDocsBuild({ cwd, env: process.env, platform: "linux", spawnImpl: failing }), { code: 2, tail: ["Repo 'sql' path does not exist"] });
@@ -718,6 +731,7 @@ await check("docs pane: which links the pane opens itself", () => {
   assert.equal(resolvePage("index.md", "../outside.md"), "", "leaving the docs folder opens nothing");
   assert.equal(resolvePage("table/a.md", "#cols"), "table/a.md");
   assert.equal(stripFrontMatter("no front matter\n---\nx"), "no front matter\n---\nx");
+  assert.deepEqual(["bronze_table", "view", "measures", "page", ""].map(typeLabel), ["Bronze tables", "Views", "Measures", "Other pages", "Other pages"]);
 });
 
 // --- Wiring: entry points, the bridge, styles, parity ------------------------------
@@ -780,6 +794,18 @@ await check("styles: the pane draws in all four themes", () => {
   const app = readFileSync(join(ROOT, "desktop", "renderer", "app.mjs"), "utf8");
   assert.match(app, /changes: \{ label: "Changes since the last commit", keys: "Ctrl\+Shift\+D", pane: true/);
   assert.equal(Object.values(KEYS).some((k) => /Ctrl\+Shift\+[DS]\b|Ctrl\+\\/.test(k.keys)), false);
+});
+
+await check("render: no stray text or borrowed layout in the panes", () => {
+  // replaceChildren() writes a null child as the text "null"; panes use fill().
+  for (const name of readdirSync(join(ROOT, "desktop", "renderer")).filter((f) => /^pane-.*\.mjs$/.test(f))) {
+    const source = readFileSync(join(ROOT, "desktop", "renderer", name), "utf8");
+    assert.equal(/\.replaceChildren\(/.test(source), false, `${name} uses fill(), not replaceChildren()`);
+  }
+  // .empty is the timeline's empty state (12vh of padding), so no pane part may carry it.
+  const diffView = readFileSync(join(ROOT, "desktop", "renderer", "diff-view.mjs"), "utf8");
+  assert.equal(/class: "[^"]*\bempty\b/.test(diffView), false, "the split diff's blank cell is not .empty");
+  assert.equal(docs.MESSAGES.notRunnable("output.dir overlaps source repo 'sql'.").includes(".."), false);
 });
 
 rmSync(temp, { recursive: true, force: true });

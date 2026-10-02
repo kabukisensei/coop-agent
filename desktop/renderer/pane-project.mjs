@@ -4,7 +4,7 @@
 // writer (the main process rebuilds and checks every answer, keeps the fields
 // it does not own and backs up the old file). The fields nothing reads
 // (estate.live_discovery, the mcp.* action lists) never reach the form.
-import { el, icon, openModal, toast } from "./ui.mjs";
+import { el, fill, icon, openModal, toast } from "./ui.mjs";
 import { diffModel, renderDiff } from "./diff-view.mjs";
 
 export const ROLE_LABELS = Object.freeze({ sql: "SQL / Warehouse", powerbi: "Power BI / Semantic models", mixed: "SQL + Power BI / mixed", generic: "General project" });
@@ -150,7 +150,7 @@ export function mountProject(box, options, { coop, newSession }) {
       row({ field: "bpaRulesPath", label: "BPA rules file path", hint: "Optional.", control: text(values, "bpaRulesPath") }));
     const hint = platformHint(data.platform);
     const repos = values.repositories;
-    body.replaceChildren(
+    fill(body, 
       el("div", { class: "pane-summary" },
         el("span", { text: data.exists ? "Editing " : "No contract yet: saving creates " }),
         el("code", { text: data.path })),
@@ -222,7 +222,7 @@ export function mountProject(box, options, { coop, newSession }) {
     }
     const all = body.querySelector(".form-problems");
     if (all) {
-      all.replaceChildren(el("strong", { text: problems.length === 1 ? "One answer needs a fix before saving." : `${problems.length} answers need a fix before saving.` }), ...loose.map((message) => el("div", { text: message })));
+      fill(all, el("strong", { text: problems.length === 1 ? "One answer needs a fix before saving." : `${problems.length} answers need a fix before saving.` }), ...loose.map((message) => el("div", { text: message })));
       all.hidden = false;
     }
     (first || all).scrollIntoView({ block: "center" });
@@ -243,11 +243,11 @@ export function mountProject(box, options, { coop, newSession }) {
     const p = state.preview;
     const back = el("button", { type: "button", class: "btn", text: "Back to the form", onclick: renderForm });
     if (!p.changed) {
-      body.replaceChildren(el("div", { class: "pane-summary", text: "Nothing to save: the file already says this." }), el("div", { class: "form-actions" }, back));
+      fill(body, el("div", { class: "pane-summary", text: "Nothing to save: the file already says this." }), el("div", { class: "form-actions" }, back));
       return;
     }
     const save = el("button", { type: "button", class: "btn primary", text: p.exists ? "Save" : "Create .coop/project.yml", onclick: () => doSave(save) });
-    body.replaceChildren(
+    fill(body, 
       el("div", { class: "pane-summary" }, el("span", { text: p.exists ? "Saving changes " : "Saving creates " }), el("code", { text: p.path })),
       el("p", { class: "hint", text: `Mode: ${p.mode}. The fields the form does not own stay as they are${p.exists ? ", and the old file is backed up" : ""}.` }),
       el("div", { class: "change-diff" }, renderDiff(diffModel(p.diff), { mode: "unified" }).node),
@@ -266,7 +266,7 @@ export function mountProject(box, options, { coop, newSession }) {
   function renderSaved(saved) {
     state.view = "saved";
     state.dirty = false;
-    body.replaceChildren(
+    fill(body, 
       el("div", { class: "pane-summary ok" }, icon("check"), el("span", { text: saved.created ? "Created " : "Saved " }), el("code", { text: saved.path })),
       saved.backup ? el("p", { class: "hint" }, el("span", { text: "Backup: " }), el("code", { text: saved.backup })) : null,
       saved.profileSaved ? el("p", { class: "hint", text: `Saved your profile name (${saved.profileSaved}). coop uses it from the next session.` }) : null,
@@ -288,9 +288,9 @@ export function mountProject(box, options, { coop, newSession }) {
       }));
       if (!ok) return;
     }
-    body.replaceChildren(el("div", { class: "working" }, el("span", { class: "spinner" }), el("span", { text: "Reading .coop/project.yml" })));
+    fill(body, el("div", { class: "working" }, el("span", { class: "spinner" }), el("span", { text: "Reading .coop/project.yml" })));
     const result = await coop.projectLoad();
-    if (!result.success) { body.replaceChildren(el("p", { class: "pane-empty", text: result.error || "Could not read the project contract." })); return; }
+    if (!result.success) { fill(body, el("p", { class: "pane-empty", text: result.error || "Could not read the project contract." })); return; }
     state.data = result.data;
     state.values = initialValues(result.data);
     state.dirty = false;

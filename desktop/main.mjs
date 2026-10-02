@@ -24,7 +24,7 @@ import { loadSettings, saveSettings, THEMES } from "./lib/settings.mjs";
 import { listChanges, fileDiff } from "./lib/changes.mjs";
 import { readStandards, readSnapshot } from "./lib/standards-view.mjs";
 import { loadProject, previewProject, saveProject } from "./lib/project-form.mjs";
-import { DocsSetupRun, AnswerError, docsLocation, pickedPathAnswer, readDocsPage, runDocsBuild } from "./lib/docs-setup.mjs";
+import { DocsSetupRun, AnswerError, docsLocation, listDocsPages, pickedPathAnswer, readDocsPage, runDocsBuild } from "./lib/docs-setup.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RENDERER = join(HERE, "renderer");
@@ -462,6 +462,12 @@ handle("coop:docs-page", (state, page) => {
   const where = docsLocation(state.spec.cwd, toolEnv(state));
   if (!where.built) return { success: false, error: "the docs are not built yet" };
   return { success: true, data: readDocsPage(where.outputDir, page) };
+});
+
+handle("coop:docs-pages", (state) => {
+  const where = docsLocation(state.spec.cwd, toolEnv(state));
+  if (!where.built) return { success: false, error: "the docs are not built yet" };
+  return { success: true, data: listDocsPages(where.outputDir) };
 });
 
 handle("coop:docs-portal", async (state) => {

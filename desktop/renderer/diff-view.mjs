@@ -61,7 +61,7 @@ export function renderDiff(model, { mode = "unified", query = "", active = -1 } 
       if (row.kind === "hunk") { box.append(el("div", { class: "diff-hunk", role: "row", text: row.header })); continue; }
       const side = (line, kind, no) => line
         ? [el("span", { class: "diff-num", text: no === null ? "" : String(no) }), el("span", { class: `diff-cell ${kind}` }, lineText(line, marks(line)))]
-        : [el("span", { class: "diff-num" }), el("span", { class: "diff-cell empty" })];
+        : [el("span", { class: "diff-num" }), el("span", { class: "diff-cell blank" })];
       if (row.kind === "ctx") {
         box.append(el("div", { class: "diff-split-row", role: "row" }, ...side(row.line, "ctx", row.oldNo), ...side(row.line, "ctx", row.newNo)));
       } else {

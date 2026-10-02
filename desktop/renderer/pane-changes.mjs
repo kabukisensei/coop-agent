@@ -1,7 +1,7 @@
 // The changes panel (master plan D1b2): every file changed in the folder
 // since the last commit, as a diff, unified or side by side. Read-only; the
 // list and each diff come from git through the main process.
-import { el, icon, toast } from "./ui.mjs";
+import { el, fill, icon, toast } from "./ui.mjs";
 import { diffModel, renderDiff } from "./diff-view.mjs";
 import { hunkStats } from "./unified-diff.mjs";
 
@@ -40,7 +40,7 @@ export function mountChanges(box, options, { coop, cwd }) {
   }
 
   function renderList() {
-    list.replaceChildren(...state.files.map((file) => {
+    fill(list, ...state.files.map((file) => {
       const item = el("li", { class: `change-file${file.path === state.selected ? " active" : ""}`, role: "option", "aria-selected": file.path === state.selected ? "true" : "false", tabindex: "0", title: file.oldPath ? `${file.oldPath} -> ${file.path}` : file.path },
         el("span", { class: `change-status ${file.status.replace(/\s+/g, "-")}`, text: STATUS_LABEL[file.status] || "M", title: file.status }),
         el("span", { class: "change-path", text: file.path }),
@@ -53,20 +53,20 @@ export function mountChanges(box, options, { coop, cwd }) {
   }
 
   function renderDiffView(scroll = false) {
-    if (!state.diff) { diffBox.replaceChildren(); count.textContent = ""; return; }
+    if (!state.diff) { fill(diffBox); count.textContent = ""; return; }
     const result = state.diff;
     if (result.binary || result.tooLarge || result.gone || result.error) {
       const text = result.error || (result.gone ? "This file is gone." : result.tooLarge ? "This change is too large to show here." : "Binary file: no text diff.");
-      diffBox.replaceChildren(el("p", { class: "pane-empty", text }));
+      fill(diffBox, el("p", { class: "pane-empty", text }));
       count.textContent = "";
       return;
     }
     const model = diffModel(result.diff);
-    if (!model.hunks.length) { diffBox.replaceChildren(el("p", { class: "pane-empty", text: "No line changes (a rename or a mode change)." })); count.textContent = ""; return; }
+    if (!model.hunks.length) { fill(diffBox, el("p", { class: "pane-empty", text: "No line changes (a rename or a mode change)." })); count.textContent = ""; return; }
     const { node, matches } = renderDiff(model, { mode: state.mode, query: state.query, active: state.active });
     state.matches = matches;
     count.textContent = state.query ? (matches.length ? `${Math.min(state.active + 1, matches.length)} of ${matches.length}` : "No matches") : "";
-    diffBox.replaceChildren(node);
+    fill(diffBox, node);
     if (scroll) { const hit = node.querySelector(".hit.active"); if (hit) hit.scrollIntoView({ block: "center" }); }
   }
 
@@ -75,8 +75,8 @@ export function mountChanges(box, options, { coop, cwd }) {
     state.active = 0;
     renderList();
     const file = state.files.find((f) => f.path === path);
-    fileHead.replaceChildren(file ? el("code", { text: file.oldPath ? `${file.oldPath} -> ${file.path}` : file.path }) : "");
-    diffBox.replaceChildren(el("div", { class: "working" }, el("span", { class: "spinner" }), el("span", { text: "Reading the diff" })));
+    fill(fileHead, file ? el("code", { text: file.oldPath ? `${file.oldPath} -> ${file.path}` : file.path }) : "");
+    fill(diffBox, el("div", { class: "working" }, el("span", { class: "spinner" }), el("span", { text: "Reading the diff" })));
     const result = await coop.changeDiff(path);
     if (state.selected !== path) return;
     if (!result.success) { state.diff = { error: result.error || "Could not read the diff." }; renderDiffView(); return; }
@@ -91,7 +91,7 @@ export function mountChanges(box, options, { coop, cwd }) {
   async function load(want) {
     if (state.loading) return;
     state.loading = true;
-    summary.replaceChildren(el("span", { class: "spinner" }), el("span", { text: " Reading changes" }));
+    fill(summary, el("span", { class: "spinner" }), el("span", { text: " Reading changes" }));
     const result = await coop.changes();
     state.loading = false;
     if (!result.success) { summary.textContent = result.error || "Could not read the changes."; return; }
@@ -102,7 +102,7 @@ export function mountChanges(box, options, { coop, cwd }) {
       renderList();
       state.diff = null;
       renderDiffView();
-      fileHead.replaceChildren();
+      fill(fileHead);
       return;
     }
     state.files = data.files;
@@ -112,7 +112,7 @@ export function mountChanges(box, options, { coop, cwd }) {
       : data.files.some((f) => f.path === state.selected) ? state.selected : (data.files[0] && data.files[0].path) || "";
     renderList();
     if (target) await select(target);
-    else { state.diff = null; renderDiffView(); fileHead.replaceChildren(); }
+    else { state.diff = null; renderDiffView(); fill(fileHead); }
     if (want && target !== want) toast(`${want} has no changes since the last commit.`, "info");
   }
 
