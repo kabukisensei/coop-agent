@@ -245,6 +245,27 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
 Check-PipxDist 'coop-data-doc' 'coop-data-doc'
 Check-PipxDist 'ms-fabric-cli' 'fab'
 
+# Retired standalone reviewers (ST1): an install from v0.24.0 or older still has
+# them in pipx, and nothing in coop uses or updates them any more.
+foreach ($retired in @('coop-sql-review', 'coop-dax-review')) {
+  $rv = Get-CoopVenvDistVersion $retired $retired
+  if ($rv) { D-Warn "$retired $rv is retired (coop no longer uses it)" "pipx uninstall $retired" }
+}
+
+# Power BI / Fabric authoring npm tools against their pins, with the probe
+# update --check uses. A missing tool is reported by its own row further down.
+foreach ($pkg in (Coop-ManifestKeys 'npm_tools')) {
+  if ($pkg -eq '@microsoft/powerbi-desktop-bridge-cli' -and $env:OS -ne 'Windows_NT') { continue }
+  $exp = Coop-ManifestGet -Key "npm_tools.$pkg"
+  $cur = Get-CoopNpmToolVersion $pkg
+  if (-not $exp -or -not $cur) { continue }
+  switch (Coop-ManifestStatus -Installed $cur -Expected $exp) {
+    'ok'                { D-Ok "$pkg $cur matches manifest ($exp)" }
+    'newer-than-tested' { D-Warn "$pkg $cur is newer than manifest ($exp)" "coop update   (or: npm install -g $pkg@$exp)" }
+    default             { D-Warn "$pkg $cur differs from manifest ($exp)" "coop update   (or: npm install -g $pkg@$exp)" }
+  }
+}
+
 # The Node minimum (manifest node.min) is prerequisite row 2 above.
 
 # Lingering deprecated Pi package — coop migrated to @earendil-works (Out-String so
