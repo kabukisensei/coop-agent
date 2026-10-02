@@ -5,6 +5,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- The window runtime's size is stated as measured on the first VM run: about
+  150 MB to download and about 400 MB on disk (the install message, `README.md`
+  and the master plan said "about 140 MB", which is the download alone).
+
 ### Removed
 
 - `lib/tool-result.mjs` and `lib/knowledge-read.mjs`, `lib/knowledge-retrieve.mjs`,
