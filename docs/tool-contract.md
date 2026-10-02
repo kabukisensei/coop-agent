@@ -76,11 +76,13 @@ and the native `data_doc` tool appends a `/setup-docs` hint when it sees either.
 - Args are **passed through verbatim** — including the interactive `setup` wizard and
   `init` (coop preserves the terminal, so the prompts work). `coop data-doc` with no
   args defaults to **`build`**.
-- After running, it looks for machine-readable artifacts in this order and
-  summarizes the first found:
-  `data-docs/manifest.json`, `data-docs/graph.json`, `manifest.json`,
-  `graph.json`, `docs/manifest.json`, `docs/graph.json`, `site/manifest.json`,
-  `data-docs-site/manifest.json`. The summary counts nodes
+- After a successful `build`, `update` or `scan`, it asks `coop-data-doc
+  show-config` (passing any `--config`) which config the tool used, then
+  summarizes `graph.json` in that config's `output.dir`, resolved against the
+  config's folder. This follows the tool's own discovery (`--config`, then
+  `COOP_DATA_DOC_CONFIG`, then this folder or a parent), so a build from a
+  subfolder or with a custom output dir reports the graph it wrote. Other
+  subcommands and failed runs print no summary. The summary counts nodes
   (`nodes`/`objects`/`entities`), edges (`edges`/`links`/`lineage`), and docs
   (`documents`/`docs`/`pages`).
 
@@ -90,7 +92,7 @@ and the native `data_doc` tool appends a `/setup-docs` hint when it sees either.
 $ coop data-doc scan
 coop-data-doc scan
 … (tool output) …
-✓ Machine-readable output: graph.json
+✓ Machine-readable output: C:\work\estate\data-docs\graph.json
   214 nodes, 538 edges
 ```
 

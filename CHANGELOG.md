@@ -11,6 +11,23 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   cannot start (Homebrew's formula without its .NET runtime), and the extended
   lane stops with the install command when Python has no `jsonschema`, instead
   of failing dozens of tests one by one (seen on a release check on macOS).
+- `sql_impact`'s pointer to `data_doc lineage` now finds built lineage docs the
+  same way the session-start note does: the nearest `coop-data-doc.yml` in this
+  folder or a parent (or `COOP_DATA_DOC_CONFIG`), with `output.dir` resolved
+  against the config's folder and `graph.json` present. Before, it looked only
+  in the current folder, so a session opened in a subfolder of the estate never
+  got the hint (`builtLineageDir` in `extensions/coop-tools`).
+- `coop data-doc` summarizes the graph the run actually wrote. It asks
+  `coop-data-doc show-config` which config was used (passing any `--config`)
+  and reads `graph.json` from that config's output dir, so a build from a
+  subfolder or with a custom output dir reports the right counts instead of
+  nothing or an unrelated `manifest.json` in the current folder. Failed runs
+  and subcommands that write no graph (`setup`, `check`, `lineage`) print no
+  summary, and the summary reads the graph as UTF-8, so non-ASCII object names
+  no longer silence it on Windows. New gate fixture
+  `tests/fixtures/data-doc-summary.test.ps1`.
+- Master plan: the `coop-data-doc` dependency row and row 11a now say #238 and
+  #235 shipped in v0.26.0 (they still read "unreleased").
 
 ## [0.27.0] — 2026-10-01
 

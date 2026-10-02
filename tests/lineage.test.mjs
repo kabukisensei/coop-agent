@@ -16,7 +16,7 @@ const standardsFixture = realpathSync(mkdtempSync(join(tmpdir(), "coop-lineage-s
 process.env.COOP_STANDARDS_ROOT = join(standardsFixture, "canonical");
 process.env.COOP_STANDARDS_STATE = join(standardsFixture, "status.json");
 process.env.COOP_STANDARDS_SNAPSHOT_ROOT = join(standardsFixture, "snapshots");
-const { default: coopTools } = await import(pathToFileURL(`${dist}/coop-tools.mjs`).href);
+const { default: coopTools, builtLineageDir } = await import(pathToFileURL(`${dist}/coop-tools.mjs`).href);
 
 let n = 0;
 const t = async (name, fn) => {
@@ -175,6 +175,24 @@ await t("a config without built docs, or no config at all, injects no lineage no
   assert.doesNotMatch(note.content, /manifest.json/);
   assert.ok(note, "an unbuilt folder is not marked as announced");
   assert.deepEqual(note.details, { outputDir: "data-docs" });
+});
+
+await t("built-docs detection follows the companion's config discovery from a subfolder", async () => {
+  const root = estate(true, "./docs/lineage");
+  const sub = join(root, "models", "sales");
+  mkdirSync(sub, { recursive: true });
+  const outAbs = join(root, "docs", "lineage");
+  assert.equal(builtLineageDir(sub, {}), outAbs, "a parent's coop-data-doc.yml is found, output.dir resolves against its folder");
+  assert.equal(builtLineageDir(root, { COOP_DATA_DOC_CONFIG: join(sub, "missing.yml") }), null, "an explicit config path wins, even when missing");
+  assert.equal(builtLineageDir(sub, { COOP_DATA_DOC_CONFIG: join(root, "coop-data-doc.yml") }), outAbs);
+  const indexOnly = estate(false);
+  mkdirSync(join(indexOnly, "data-docs"), { recursive: true });
+  writeFileSync(join(indexOnly, "data-docs", "index.md"), "# docs");
+  assert.equal(builtLineageDir(indexOnly, {}), null, "Markdown without graph.json is not a lineage graph");
+  const { handlers } = boot();
+  const note = lineageNote(await before(handlers, sub));
+  assert.ok(note, "the session-start note appears in a subfolder of the estate");
+  assert.deepEqual(note.details, { outputDir: join("..", "..", "docs", "lineage") });
 });
 
 console.log(`  ${n} lineage tests passed`);

@@ -321,15 +321,19 @@ function isBuilt(outAbs: string): boolean {
   return existsSync(join(outAbs, "manifest.json")) || existsSync(join(outAbs, "index.md"));
 }
 
-/** Built lineage docs exist for this folder (same detection as the session-start note). */
-function hasBuiltDocs(cwd: string): boolean {
+/** The output dir holding the built lineage graph (graph.json, what `data_doc
+ *  lineage` reads) for the companion's config (environment, then this folder or
+ *  a parent; output.dir resolves against the config's folder), or null. One
+ *  detection for the session-start note and sql_impact's lineage hint. */
+export function builtLineageDir(cwd: string, env: Record<string, string | undefined> = process.env): string | null {
   try {
-    const ymlPath = join(cwd, DATADOC_CONFIG);
-    if (!existsSync(ymlPath)) return false;
+    const ymlPath = findDataDocConfig(cwd, env);
+    if (!ymlPath || !existsSync(ymlPath)) return null;
     const cfg = parseExisting(safeRead(ymlPath));
-    return isBuilt(resolveRel(cwd, cfg.outputDir || DEFAULT_OUTPUT_DIR));
+    const outAbs = resolveRel(dirname(ymlPath), cfg.outputDir || DEFAULT_OUTPUT_DIR);
+    return existsSync(join(outAbs, "graph.json")) ? outAbs : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -2504,7 +2508,7 @@ export default function coopTools(pi: ExtensionAPI) {
     executionMode: "sequential",
     async execute(_id, params, signal, _onUpdate, ctx) {
       const details = await runFabricSqlHelper(params, signal, ctx.cwd, "sql_impact.py");
-      const docsHint = hasBuiltDocs(ctx.cwd) ? " Built lineage docs exist here: call data_doc (command=\"lineage\") for the same object to cover the rest of the estate." : "";
+      const docsHint = builtLineageDir(ctx.cwd) ? " Built lineage docs exist here: call data_doc (command=\"lineage\") for the same object to cover the rest of the estate." : "";
       const section = (name: string) => {
         const part = details?.[name];
         if (!part || typeof part !== "object") return `${name}: ?`;
@@ -2802,22 +2806,18 @@ export default function coopTools(pi: ExtensionAPI) {
 
       let message: any;
       if (!announcedCwds.has(cwd)) {
-        const ymlPath = findDataDocConfig(cwd) || join(cwd, DATADOC_CONFIG);
-        if (existsSync(ymlPath)) {
-          const cfg = parseExisting(safeRead(ymlPath));
-          const outAbs = resolveRel(dirname(ymlPath), cfg.outputDir || DEFAULT_OUTPUT_DIR);
-          if (existsSync(join(outAbs, "graph.json"))) {
-            announcedCwds.add(cwd);
-            const relOut = relative(cwd, outAbs) || ".";
-            message = {
-              customType: "coop-lineage",
-              display: false,
-              content:
-                `An observed lineage graph is available under ${relOut}: graph.json${existsSync(join(outAbs, "manifest.json")) ? ", manifest.json" : ""}. Its coverage may be partial or unknown; empty lineage does not prove zero impact. ` +
-                `BEFORE analyzing or changing any SQL object, DAX measure, or semantic model, look up its observed up/downstream impact via the data_doc tool (command="lineage", object="<name>"). ${existsSync(join(outAbs, "manifest.json")) ? "Read available object docs via manifest.json and its immediate neighbors. " : "Run data_doc (build) to generate object docs. "}If the graph looks stale, run data_doc (build) to refresh.`,
-              details: { outputDir: relOut },
-            };
-          }
+        const outAbs = builtLineageDir(cwd);
+        if (outAbs) {
+          announcedCwds.add(cwd);
+          const relOut = relative(cwd, outAbs) || ".";
+          message = {
+            customType: "coop-lineage",
+            display: false,
+            content:
+              `An observed lineage graph is available under ${relOut}: graph.json${existsSync(join(outAbs, "manifest.json")) ? ", manifest.json" : ""}. Its coverage may be partial or unknown; empty lineage does not prove zero impact. ` +
+              `BEFORE analyzing or changing any SQL object, DAX measure, or semantic model, look up its observed up/downstream impact via the data_doc tool (command="lineage", object="<name>"). ${existsSync(join(outAbs, "manifest.json")) ? "Read available object docs via manifest.json and its immediate neighbors. " : "Run data_doc (build) to generate object docs. "}If the graph looks stale, run data_doc (build) to refresh.`,
+            details: { outputDir: relOut },
+          };
         }
       }
 
