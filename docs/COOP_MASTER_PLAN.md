@@ -1,6 +1,6 @@
 # Coop master plan — ordered execution roadmap
 
-**Document revision 3.9 · October 1, 2026** (mixed-estate documentation repair authorized by Aaron; section 8.1. Existing phase ordering and the revision 3.8 scope decisions remain.)
+**Document revision 3.10 · October 1, 2026** (Pi 1.0 shipped; the Pi upgrade becomes its own row U2 after U1 and N1, section 6.5 and register row 9c, and the separate 0.99 step is dropped. Revision 3.9 added the mixed-estate documentation repair, section 8.1. Existing phase ordering and the revision 3.8 scope decisions remain.)
 **Product scope: Coop Windows terminal first; an installable Electron desktop returns after the terminal is simplified.**
 
 **Canonical repository location:** `docs/COOP_MASTER_PLAN.md`. This revision keeps the
@@ -395,7 +395,7 @@ is `config/release-manifest.json` at v0.23.5.
 
 | Component | Pinned | Latest | Needed? | Notes |
 | --- | --- | --- | --- | --- |
-| `@earendil-works/pi-coding-agent` | 0.84.3 → **0.87.1** (shipped in v0.24.0, 2026-09-30) | 0.99.1 (Sep 29); **target stays 0.87.1** | **Done** ([#162](https://github.com/kabukisensei/coop-agent/pull/162)) | Pre-qualified read-only on Sep 29 (section 6.1): none of the four extensions or the runner test uses a removed or changed API; the pin move is one manifest line plus fixture versions. Still Node ≥ 22.19. 0.99 is out of reach until the adapter supports it (section 6.3). |
+| `@earendil-works/pi-coding-agent` | 0.84.3 → **0.87.1** (shipped in v0.24.0, 2026-09-30) | 1.0.0 (Oct 1; 0.99.1 on Sep 29); **target stays 0.87.1 until U2** | **Done** ([#162](https://github.com/kabukisensei/coop-agent/pull/162)); 1.0 is row U2 (section 6.5) | Pre-qualified read-only on Sep 29 (section 6.1): none of the four extensions or the runner test uses a removed or changed API; the pin move is one manifest line plus fixture versions. Still Node ≥ 22.19. 0.99 is out of reach until the adapter supports it (section 6.3). |
 | `pi-mcp-adapter` | 2.34.0 → **3.3.0** (shipped in v0.24.0, 2026-09-30) | 3.3.0 (Sep 29) | **Done** (same PR as Pi, [#162](https://github.com/kabukisensei/coop-agent/pull/162)) | 2.34.0's peer range excludes pi-ai 0.87, so it must move with Pi. 3.0 **stopped reading `mcp.json`** (that file now belongs to Pi's built-in MCP); coop's generated file must become `mcp-adapter.json` (section 6.2). |
 | `pi-hermes-memory` | 0.7.17 | 0.9.9 | **Merged** ([#181](https://github.com/kabukisensei/coop-agent/pull/181), 2026-09-30, unreleased; VM qualification pending) | Was "Maybe" until 2026-09-30, when Aaron's `/memory-consolidate` on the client VM failed for every store (`exited with code 1: unknown error`). Cause, from the installed code: 0.7.17 launches its consolidation, background-review, correction-save and session-flush child as `pi.exec("pi", ...)`; Pi's `exec` spawns with `shell: false`, and on Windows `pi` exists only as an npm `.cmd`/`.ps1` shim, so the spawn fails and every full memory store rejects new saves. 0.9.9 resolves `pi.cmd` and launches `node` + Pi's `cli.js` directly, runs those jobs in-process first, lets policy-only writes exceed the Markdown cap, raises the consolidation timeout to 180 s, warns on failed auto-consolidation, and adds `/memory-pin` (`STANDING.md`). Peer floor Pi >= 0.80.6 (met by 0.87.1); `better-sqlite3` was already a dependency in 0.7.17. Still to check on the VM: existing `MEMORY.md`/`USER.md`/`projects-memory` content intact after `coop update`, secret scanning still blocks, `/memory-consolidate` succeeds for every target. |
 | `pi-web-access` | 0.10.7 | 0.33.0 | Maybe | research only; qualify Windows and security changes. |
@@ -584,6 +584,90 @@ the generated layout, supply the approved shared references with equivalent
 integrity checks, and preserve Cooptimize approval and data-access rules over
 upstream execution instructions. This is an implementation prerequisite for the
 future catalog PR, not authorization to enable additional skills now.
+
+### 6.5 Pi 1.0 shipped on October 1: one upgrade row, U2, and no separate 0.99 step (revision 3.10)
+
+Aaron flagged the Pi 1.0 announcement on 2026-10-01. Checked read-only the same
+evening against the published tarballs (`@earendil-works/pi-coding-agent` 0.99.2
+and 1.0.0, npm metadata for `pi-ai`, `pi-tui` and `pi-mcp-adapter`); nothing was
+installed on a workstation and PR [#170](https://github.com/kabukisensei/coop-agent/pull/170)
+stays a held draft.
+
+**What 1.0 is.** `@earendil-works/pi-coding-agent` 1.0.0 was published on
+2026-10-01 (19:15 UTC), one day after 0.99.2. `pi-ai` and `pi-tui` 1.0.0 shipped in
+lockstep, so `lib/_extdeps.py`'s alignment still resolves. Node stays >= 22.19.
+The 1.0 dependencies are all `^1.0.0` (`pi-ai`, `pi-tui`, `pi-agent-core`,
+`pi-codemode`, `pi-mcp`). Headline changes: the TUI is **fullscreen by default**
+(`tuiMode: "regular"` keeps scrollback), codemode uses about 40% fewer prompt
+tokens, `quietStartup` accepts `"header"`, MCP OAuth hardening, Radius and
+Anthropic copy-code sign-in. 0.99.2 (2026-09-30) renamed built-in MCP tool and
+namespace names from `-` to `_` (`mcp__my-server__x` is now `mcp__my_server__x`),
+stopped the first prompt waiting on built-in MCP servers, and added `!command`
+header values resolved once per connect.
+
+**What it means for coop.**
+
+- The extension API coop uses is **unchanged**: `dist/core/extensions/types.d.ts` is
+  byte-identical between 0.99.2 and 1.0.0, so the 0.87.1 to 0.99.1 finding in
+  section 6.3 (additive only) covers 1.0 too. `pi -e`, `PI_CODING_AGENT_DIR`,
+  `ctx.ui.setFooter` and the `"extensions": ["-builtin:mcp"]` setting all remain.
+- **The adapter blocks 1.0 the way it blocked 0.99 a day earlier.** `pi-mcp-adapter`
+  4.0.0 (2026-09-30, the newest) declares `@earendil-works/pi-ai`
+  `^0.84.1 || ^0.85.0 || ^0.86.0 || ^0.87.0 || ^0.99.0`, so Pi 1.0's `pi-ai` 1.0.0
+  is outside it; its changelog has no 1.0 entry and no open issue asks for one.
+  The author added 0.99 support one day after 0.99 shipped.
+- **Fullscreen is the one behavior change coop must decide, not just qualify.**
+  `coop-powerline` renders the footer and splash for the scrollback TUI. The
+  default position is that `coop sync` writes `tuiMode: "regular"` next to
+  `quietStartup` (one more entry in `lib/pi_settings.py`), and fullscreen becomes a
+  later, deliberate row once the footer is seen working in it on the VM.
+- The 0.99.2 `-` to `_` rename only touches Pi's built-in MCP, which coop locks off;
+  the adapter's `mcp` / `mcp__<namespace>` tool shapes are unchanged in 4.0.0.
+  The built-in MCP still has no per-request header hook (0.99.2's
+  `"auth": { "provider": ... }` reads a token on every request, but only a Pi
+  provider's `/login` token, not coop's Azure bearer helper), so the adapter-first
+  answer in the 0.99 runbook (`runbooks/pi-0.99-path.md` in the project files)
+  stands.
+
+**Decision for the plan.** There is no separate 0.99 pin. Row **U2** moves Pi from
+0.87.1 **straight to 1.0.x** in one PR, VM-qualified, carrying the 0.99 runbook's
+steps (#170's guardrail changes for the built-in tool shape and codemode's nested
+calls; pin move across the manifest, `tested_with`, the matrix workflow and the
+fixture versions; `-builtin:mcp` locked by `coop sync`; doctor warns on a stray
+`<agent dir>/mcp.json`; docs) plus `tuiMode: "regular"`, then `node lib/extlock.js
+generate` for the lockfile. It **starts after** `pi-mcp-adapter` publishes a peer
+range that includes `pi-ai` ^1.0.0 and Aaron starts it; until then coop ships 0.87.1
+and #170 stays a draft. Moving coop's servers onto Pi's built-in MCP and turning
+fullscreen on remain separate later rows, as before. U2 sits after U1 and N1,
+before PK1, and must land before D1, because the Electron desktop packages the Pi
+coop ships.
+
+**Not urgent (Aaron, 2026-10-01: "only if it's really worth it", stability and
+capability first).** For coop, 1.0 adds little capability today: the headline
+features (leaner codemode, MCP OAuth, Radius, image generation) sit in parts of Pi
+coop locks off or does not use, and the fullscreen default is a risk to qualify,
+not a gain. 0.87.1 is qualified and running on the fleet, while 1.0 is a day old
+and its adapter does not support it yet. So U2 waits for a reason as well as the
+adapter: a Pi fix or feature coop actually needs, 0.87.x no longer receiving
+fixes, or D1 needing a current Pi to package. It also waits for 1.0 to soak: the
+first 1.0.x patch release, or a week with no regressions reported upstream.
+The row's status is **watch and wait**. Until one of those holds, nothing
+in the current phases moves for it.
+
+**Simplicity and maintainability (Aaron, 2026-10-01).** Today 1.0 adds workarounds
+rather than removing any: the `tuiMode` pin, the `-builtin:mcp` lock, #170's
+guardrail handling of the built-in tool shape and codemode's nested calls, and a
+newer adapter release to track. The upgrade that would **simplify** coop is the
+one that drops the adapter: Pi's built-in MCP is first-party and versioned with
+Pi, so moving coop's servers onto it removes a fast-moving third-party dependency
+(three breaking majors in a week), the `mcp-adapter.json` migration and the
+exclusive-mode environment. It cannot happen yet because the built-in still
+resolves `headers` once per connect (no per-request hook for the Warehouse
+bearer helper) and has no exclusive config source (a trusted repo's
+`.pi/mcp.json` replaces global servers). The worthwhile shape of U2 is therefore
+**Pi 1.x plus the adapter drop in one row**, once Pi offers a per-request header
+command (or coop proves a `!command` header with reconnect on 401) and coop owns
+the trust decision; a Pi pin bump alone is maintenance, not an improvement.
 
 ## 7. Phase 4 — Standards alignment and the reviewer decision
 
@@ -970,8 +1054,9 @@ tags. A stale row is never a reason to re-do work: check the PR list first.
 | 6 | T1 | CI gate/extended split; fixture rules | H1–H3 merged | gate under five minutes, both OS, no weakened assertion | merged ([#132](https://github.com/kabukisensei/coop-agent/pull/132), 2026-09-29) |
 | 7 | S1, S5 | Retire POSIX product path and legacy web | T1 (Aaron started it on 2026-09-30: Mac, Linux and the web are dropped) | one Windows implementation, forwarder kept, tests removed with their surface | S5 merged ([#161](https://github.com/kabukisensei/coop-agent/pull/161), 2026-09-30, shipped in v0.24.0); S1 merged ([#218](https://github.com/kabukisensei/coop-agent/pull/218), 2026-10-01; shipped in v0.26.0), issue [#205](https://github.com/kabukisensei/coop-agent/issues/205) |
 | 8 | S3, S2, S4, S6, S7 | Profile root, lifecycle, token/MCP, dead helpers, docs | S1/S5 | duplication removed; `AGENTS.md` and `CONTRIBUTING.md` no longer require parity/BOM | S3 #221, S2 #223, S4 #225 and S6 #227 merged on main by 2026-10-01; S7 #229 also merged on main. Publication/VM evidence remains per each package. |
-| 9 | U1 | Dependency reconciliation per section 6, one row per PR, qualified on the VM | S-lane (Aaron started U1 ahead of it on 2026-09-30) | exact versions, tests, rollback per PR; keep/drop list closed | in progress: Pi 0.87.1 + `pi-mcp-adapter` 3.3.0 **done (tag v0.24.0, 2026-09-30)**: merged in [#162](https://github.com/kabukisensei/coop-agent/pull/162), VM run passed (matrix 20/20, sync, doctor, `mcp-adapter.json` migration, console checks), Warehouse approval prompt verified live on the released build; Pi 0.99 stays blocked on the adapter's peer range (section 6.3; [#170](https://github.com/kabukisensei/coop-agent/pull/170) is a held draft). Merged 2026-09-30 (unreleased): `pi-hermes-memory` 0.9.9 ([#181](https://github.com/kabukisensei/coop-agent/pull/181)), Fabric skills catalog v0.3.18 ([#175](https://github.com/kabukisensei/coop-agent/pull/175)), shell-issued Fabric REST write approvals ([#176](https://github.com/kabukisensei/coop-agent/pull/176)). Also merged 2026-09-30/10-01 (unreleased, VM steps pending): `@juicesharp/rpiv-ask-user-question` 2.12.0 ([#188](https://github.com/kabukisensei/coop-agent/pull/188)), `@microsoft/fabric-mcp` 1.4.0 ([#189](https://github.com/kabukisensei/coop-agent/pull/189)), `mcp-remote` drop ([#190](https://github.com/kabukisensei/coop-agent/pull/190)), `@azure-devops/mcp` 2.10.0 ([#191](https://github.com/kabukisensei/coop-agent/pull/191)). Power BI pair merged 2026-10-01 (unreleased): `@microsoft/powerbi-report-authoring-cli` 0.4.0 + `@microsoft/powerbi-desktop-bridge-cli` 1.0.0 ([#199](https://github.com/kabukisensei/coop-agent/pull/199); one PR because 0.4.0 depends on Bridge ^1.0.0; its VM step needs Power BI Desktop on the VM, Aaron's). Lockfile merged 2026-10-01 (unreleased, [#200](https://github.com/kabukisensei/coop-agent/pull/200), closes [#152](https://github.com/kabukisensei/coop-agent/issues/152)): `config/extensions-lock.json` pins the isolated tree's transitive dependencies and `coop sync` installs it with `npm ci`; VM run passed (two clean syncs give the same `npm ls --all` output; lock entries carry `gypfile: false` so npm never compiles better-sqlite3 13 on Windows). U1 rows complete except the Power BI pair's Desktop check |
+| 9 | U1 | Dependency reconciliation per section 6, one row per PR, qualified on the VM | S-lane (Aaron started U1 ahead of it on 2026-09-30) | exact versions, tests, rollback per PR; keep/drop list closed | in progress: Pi 0.87.1 + `pi-mcp-adapter` 3.3.0 **done (tag v0.24.0, 2026-09-30)**: merged in [#162](https://github.com/kabukisensei/coop-agent/pull/162), VM run passed (matrix 20/20, sync, doctor, `mcp-adapter.json` migration, console checks), Warehouse approval prompt verified live on the released build; the Pi upgrade continues as row 9c U2 straight to 1.0 (section 6.5; [#170](https://github.com/kabukisensei/coop-agent/pull/170) is a held draft). Merged 2026-09-30 (unreleased): `pi-hermes-memory` 0.9.9 ([#181](https://github.com/kabukisensei/coop-agent/pull/181)), Fabric skills catalog v0.3.18 ([#175](https://github.com/kabukisensei/coop-agent/pull/175)), shell-issued Fabric REST write approvals ([#176](https://github.com/kabukisensei/coop-agent/pull/176)). Also merged 2026-09-30/10-01 (unreleased, VM steps pending): `@juicesharp/rpiv-ask-user-question` 2.12.0 ([#188](https://github.com/kabukisensei/coop-agent/pull/188)), `@microsoft/fabric-mcp` 1.4.0 ([#189](https://github.com/kabukisensei/coop-agent/pull/189)), `mcp-remote` drop ([#190](https://github.com/kabukisensei/coop-agent/pull/190)), `@azure-devops/mcp` 2.10.0 ([#191](https://github.com/kabukisensei/coop-agent/pull/191)). Power BI pair merged 2026-10-01 (unreleased): `@microsoft/powerbi-report-authoring-cli` 0.4.0 + `@microsoft/powerbi-desktop-bridge-cli` 1.0.0 ([#199](https://github.com/kabukisensei/coop-agent/pull/199); one PR because 0.4.0 depends on Bridge ^1.0.0; its VM step needs Power BI Desktop on the VM, Aaron's). Lockfile merged 2026-10-01 (unreleased, [#200](https://github.com/kabukisensei/coop-agent/pull/200), closes [#152](https://github.com/kabukisensei/coop-agent/issues/152)): `config/extensions-lock.json` pins the isolated tree's transitive dependencies and `coop sync` installs it with `npm ci`; VM run passed (two clean syncs give the same `npm ls --all` output; lock entries carry `gypfile: false` so npm never compiles better-sqlite3 13 on Windows). U1 rows complete except the Power BI pair's Desktop check |
 | 9b | N1 | Automatic session naming after a few turns (`@xl0/pi-lovely-rename` trial first, coop-owned fallback; section 10) | U1 rows merged (Aaron scheduled it 2026-09-30) | names appear in footer and title on the VM without breaking manual `/name`; acceptance list in section 10 | merged 2026-10-01 (unreleased, [#198](https://github.com/kabukisensei/coop-agent/pull/198)): upstream `@xl0/pi-lovely-rename` 0.1.5 pinned, three-turn trigger kept (Aaron, 2026-10-01); VM trial passed (generated names show in the resume list and footer, manual `/name` survives, `/rename` regenerates). Coop's own footer is replaced by Pi's on the VM ([#203](https://github.com/kabukisensei/coop-agent/issues/203), pre-existing). Coop-owned namer not needed unless long sessions name badly |
+| 9c | U2 | Pi 1.0.x with a `pi-mcp-adapter` release that accepts `pi-ai` ^1.0.0; replaces the separate 0.99 step (section 6.5) | U1 + N1 merged; adapter peer range includes 1.0; 1.0 soaked (first 1.0.x patch or a week with no regressions reported); a concrete reason (a Pi fix coop needs, 0.87.x unsupported, or D1); explicit start | one PR, VM-qualified: matrix green on 1.0.x, `coop sync` locks `-builtin:mcp` and writes `tuiMode: "regular"`, doctor reports both, footer and Warehouse approval prompt verified live, lockfile regenerated | watch and wait (Aaron, 2026-10-01: little gain for coop yet; blocked on the adapter; [#170](https://github.com/kabukisensei/coop-agent/pull/170) held as a draft carries the guardrail prerequisite) |
 | 10 | ST1 | Standards alignment and reviewer decision | H3 + U1 | resolver data-driven; reviewers retired from coop (decided 2026-09-28), self-check in place | merged 2026-10-01 (unreleased, [#211](https://github.com/kabukisensei/coop-agent/pull/211), f29bd50): wrappers, `coop review`, reviewer-discovered fallback and CI jobs removed; self-check in the workflow with the standards rule (deviate only on a user exception or a stated reason); a bundled copy of the wiki ships in coop as the offline/first-run fallback (Aaron, 2026-10-01); CLI repos archived by Aaron |
 | 11 | SQ1–SQ7 | Azure SQL targets, dev default, live impact, data verification, install-time Fabric/Azure SQL client choice (section 8 item 7) | ST1 | section 8 acceptance | merged 2026-10-01 (shipped in v0.26.0): SQ7 install-time client choice ([#208](https://github.com/kabukisensei/coop-agent/pull/208)), SQ1 `sql_targets` contract section ([#209](https://github.com/kabukisensei/coop-agent/pull/209)), SQ2 executor targets ([#212](https://github.com/kabukisensei/coop-agent/pull/212)), SQ3 guardrail scope ([#214](https://github.com/kabukisensei/coop-agent/pull/214)), SQ4 `sql_impact` ([#215](https://github.com/kabukisensei/coop-agent/pull/215)), SQ5 verify-with-data text ([#216](https://github.com/kabukisensei/coop-agent/pull/216)), SQ6 skill mapping text ([#217](https://github.com/kabukisensei/coop-agent/pull/217)); dev reads without approval ([#230](https://github.com/kabukisensei/coop-agent/pull/230)) and the `sql-formatting` skill ([#231](https://github.com/kabukisensei/coop-agent/pull/231)) followed; live acceptance (dev Azure SQL database + Fabric Warehouse) is Aaron's |
 | 11a | DD1–DD4 | Mixed-estate offline documentation and Coop evidence contract (section 8.1) | DD1 authorized now; later steps follow dependencies in section 8.1 | acceptance matrix, preserved intent/cache, honest scoped impact, Windows contract verification | DD1–DD3 merged in coop-data-doc [#67](https://github.com/kabukisensei/coop-data-doc/pull/67) (supersedes draft #66) and released as v1.3.0 (2026-10-01); coop pin bump [#238](https://github.com/kabukisensei/coop-agent/pull/238); DD4 wrapper contract in [#235](https://github.com/kabukisensei/coop-agent/pull/235) (supersedes draft #233), lands after row 11 and #230/#231. Native Windows and scope-ID migration acceptance pending |
