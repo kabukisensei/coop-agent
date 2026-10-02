@@ -5,6 +5,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- `coop-data-doc` pin 1.3.0 -> 1.3.1 (`config/release-manifest.json`): link
+  decisions saved by coop-data-doc 1.2.0 keep working after the upgrade (the
+  first rebuild no longer flags every unchanged decision, a changed source stays
+  flagged until re-answered, and a stranded table-level answer is named by
+  `cache_key_unmatched`). `coop sync` installs it; `coop doctor` reports an
+  older copy as stale.
+
 ## [0.29.0] — 2026-10-02
 
 ### Removed
