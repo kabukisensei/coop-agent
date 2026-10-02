@@ -2655,7 +2655,25 @@ function Invoke-CoopMaybeOnboard {
 function Start-CoopJob {
   param([scriptblock]$Sb, [object[]]$JobArgs)
   if ($script:UseThreadJob) { Start-ThreadJob -ScriptBlock $Sb -ArgumentList $JobArgs }
-  else                      { Start-Job       -ScriptBlock $Sb -ArgumentList $JobArgs }
+  else {
+    Initialize-CoopJobPersistencePath
+    Start-Job -ScriptBlock $Sb -ArgumentList $JobArgs
+  }
+}
+
+# Windows PowerShell 5.1's process-backed jobs keep their startup data under
+# %LOCALAPPDATA%\Microsoft\Windows\PowerShell. On a profile that has never
+# run a job (a fresh user, or an install whose profile variables point at a new
+# folder) that directory does not exist yet, the first job fails with "The
+# Persistence Path does not exist" and returns nothing — which is how the first
+# install unit (pipx) came back with no result on every fresh profile while pipx
+# itself was fine. Create it before the first job. No-op when LOCALAPPDATA is
+# unset (pwsh on macOS/Linux) or the directory exists.
+function Initialize-CoopJobPersistencePath {
+  if (-not $env:LOCALAPPDATA) { return }
+  $dir = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\PowerShell'
+  if (Test-Path -LiteralPath $dir -PathType Container) { return }
+  New-Item -ItemType Directory -Force -Path $dir -ErrorAction SilentlyContinue | Out-Null
 }
 
 # Coop-Unit <label> <scriptblock> [args]
@@ -2712,6 +2730,16 @@ function Coop-Unit {
   try { $res = Receive-Job $job -ErrorAction SilentlyContinue | Select-Object -Last 1 } catch {}
   $why = if ($null -eq $res) { Get-CoopJobFailure $job } else { '' }
   Remove-Job $job -Force -ErrorAction SilentlyContinue
+  if ($null -eq $res) {
+    # The job came back with nothing: it never started (a job child that could
+    # not load) or died before returning its result. Units are self-contained
+    # and idempotent, so run the same unit once more in this process and report
+    # THAT result — a working tool must not be reported as a failed step because
+    # the job runner broke. Continue, not Stop: a unit's native commands redirect
+    # stderr, which under Stop is a terminating error on Windows PowerShell 5.1.
+    $ErrorActionPreference = 'Continue'
+    try { $res = & $Work @WorkArgs | Select-Object -Last 1 } catch { $res = $null; if (-not $why) { $why = ([string]$_.Exception.Message -replace '\s+', ' ').Trim() } }
+  }
   $ok = $false; $msg = $Label
   if ($null -ne $res) {
     if ($res.PSObject.Properties.Name -contains 'ok')  { $ok  = [bool]$res.ok }

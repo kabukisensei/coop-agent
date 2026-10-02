@@ -584,6 +584,7 @@ print("resume verdict contract OK")
     @{ Name = 'team-skills';            Lane = 'gate';     Head = 'team knowledge skills launch slot (launch-spec --json)' },
     @{ Name = 'desktop-spec';           Lane = 'gate';     Head = 'coop desktop: the window''s launch spec and runtime state (D1b)' },
     @{ Name = 'staleness';              Lane = 'gate';     Head = 'repo staleness nudge (throttled fetch + behind-count)' },
+    @{ Name = 'coop-unit';              Lane = 'gate';     Head = 'Coop-Unit: the 5.1 job persistence path, and a job that returns nothing is re-run in-process' },
     @{ Name = 'doctor-project';         Lane = 'gate';     Head = 'doctor.ps1 project contract rows' },
     @{ Name = 'first-run';              Lane = 'gate';     Head = 'first-run launcher continuation (onboarding gate)' },
     @{ Name = 'profile-root';           Lane = 'gate';     Head = 'one profile root: COOP_DIR parent of .coop, one agent-dir chain (S3, #220)' },
