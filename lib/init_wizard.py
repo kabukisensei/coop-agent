@@ -227,11 +227,6 @@ def build_project_yml(answers: dict) -> str:
     lines.append(
         f"    power_bi: {quote('available' if 'powerbi' in roles or 'mixed' in roles else ('unknown' if 'generic' in roles else 'not_available_yet'))}"
     )
-    lines.append("  live_discovery:")
-    lines.append("    dev_test_metadata: 'read_only_allowed'")
-    lines.append("    dev_test_rows: 'ask_first'")
-    lines.append("    production_metadata: 'ask_first'")
-    lines.append("    production_rows: 'explicit_scope_and_approval'")
     lines.append("")
 
     lines.append("repositories:" if repositories else "repositories: {}")
@@ -334,10 +329,6 @@ def build_project_yml(answers: dict) -> str:
     lines.append("mcp:")
     lines.append("  fabric:")
     lines.append(f"    enabled: {str(answers.get('use_fabric', False)).lower()}")
-    lines.append('    allowed_default_actions: ["list", "read", "inspect"]')
-    lines.append(
-        '    requires_approval_actions: ["create", "update", "delete", "deploy"]'
-    )
     lines.append("  microsoft_learn:")
     lines.append("    enabled: true")
     lines.append('    purpose: "Always-current Microsoft documentation lookups"')
@@ -345,7 +336,6 @@ def build_project_yml(answers: dict) -> str:
     lines.append("    enabled: true")
     lines.append("  fabric_sqlendpoint:")
     lines.append(f"    enabled: {str(answers.get('use_fabric', False)).lower()}")
-    lines.append('    requires_approval_actions: ["executeSQL", "execute_query"]')
     lines.append("")
 
     lines.append("memory:")

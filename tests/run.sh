@@ -46,6 +46,14 @@ if ! command -v pwsh >/dev/null 2>&1; then
   echo "✗ pwsh (PowerShell 7) is required to run the suite: install it, or put it on PATH" >&2
   exit 1
 fi
+# A pwsh that is on PATH but cannot start (Homebrew's formula without its .NET
+# runtime) would otherwise fail dozens of tests one by one with the same message.
+if ! PWSH_PROBE="$(pwsh -NoLogo -NoProfile -Command 'exit 0' 2>&1)"; then
+  echo "✗ pwsh is on PATH but does not start, so the suite cannot run. Its error:" >&2
+  printf '%s\n' "$PWSH_PROBE" | head -n 3 >&2
+  echo "  Fix pwsh first (on macOS: brew reinstall dotnet powershell, or brew install --cask powershell), then re-run." >&2
+  exit 1
+fi
 
 bundle() {
   local ext="$1"; shift
@@ -358,6 +366,16 @@ if [ "${COOP_TEST_EXTENDED:-0}" = "1" ]; then
   # that only the Windows terminal-workstation acceptance workflow creates; that
   # workflow runs it (its "lifecycle" selection). Every other test runs here.
   echo "→ terminal-workstation acceptance harness tests (all but the workflow-only lifecycle test)"
+  # These tests validate evidence against the committed JSON schema, and python
+  # jsonschema is mandatory for them (#133); say so once instead of a traceback per test.
+  # CI names its interpreter in CERT_PYTHON and the test checks that one itself.
+  if [ -z "${CERT_PYTHON:-}" ]; then
+    TW_PY=python3; command -v python3 >/dev/null 2>&1 || TW_PY=python
+    if ! "$TW_PY" -c 'import jsonschema' >/dev/null 2>&1; then
+      echo "✗ the extended lane needs the Python jsonschema module ($TW_PY has none): $TW_PY -m pip install --user jsonschema==4.25.1 (CI's pin), or point CERT_PYTHON at a Python that has it, then re-run" >&2
+      exit 1
+    fi
+  fi
   node --test --test-skip-pattern "native Windows lifecycle faults" "$ROOT/tests/terminal-workstation-acceptance.test.mjs"
 fi
 
