@@ -930,8 +930,9 @@ gate, not the order; it stays last.
 Scoped from the tree at v0.26.0 and the old desktop branches; no app code was
 written and nothing was installed. D1 stays one register row (16) worked as seven
 sub-rows, D1a–D1g, one issue, one branch and one PR each, in this order. **No
-sub-row starts until Aaron approves this breakdown and the decisions in 11.3, and
-starts D1 explicitly** (section 14). Rows 7–12 and 15 accepted, and U2 landed, stay
+sub-row starts until Aaron starts D1 explicitly** (section 14). Aaron decided on
+2026-10-02 that signing is not required for done and that the other 11.3 items
+are decided when the row that needs them starts, not up front. Rows 7–12 and 15 accepted, and U2 landed, stay
 the entry gate for the packaged rows (D1c onward): the package ships the Pi that
 coop ships, so the Pi pin must be settled first (section 6.5). D1b needs only the
 terminal product as it is.
@@ -991,13 +992,13 @@ views) is a later row, not D1.
 
 | Row | Package | Scope | Starts after | Done when |
 | --- | --- | --- | --- | --- |
-| D1a | Decision record and salvage review (docs only) | Record the 11.3 decisions as a plan revision; review the old branches and list what is salvaged (the sandboxed-renderer and Electron fuse settings in `desktop/package.json`, the NSIS block in `electron-builder-installer.cjs` (per-user, no elevation, keep app data), the `coop-launcher.mjs` PowerShell dispatcher resolution, the idea of `verify-windows-installer.mjs`) and what is not (the managed-runtime staging and lock system, bundled Python, the parity and release-evidence schemas, the `coop runtime` HTTP contract, the Ed25519 update service, the Tauri spike); choose the repo location (`desktop/` in coop-agent, recommended, so the app and coop share one tag and one CI) | Aaron approves this breakdown; D1 started | plan revision merged with every 11.3 item answered; salvage list closed; no app code |
+| D1a | Decision record and salvage review (docs only) | Record the 11.3 defaults as a plan revision (each item is confirmed by Aaron when its row starts); review the old branches and list what is salvaged (the sandboxed-renderer and Electron fuse settings in `desktop/package.json`, the NSIS block in `electron-builder-installer.cjs` (per-user, no elevation, keep app data), the `coop-launcher.mjs` PowerShell dispatcher resolution, the idea of `verify-windows-installer.mjs`) and what is not (the managed-runtime staging and lock system, bundled Python, the parity and release-evidence schemas, the `coop runtime` HTTP contract, the Ed25519 update service, the Tauri spike); choose the repo location (`desktop/` in coop-agent, recommended, so the app and coop share one tag and one CI) | D1 started by Aaron | plan revision merged with every 11.3 item answered; salvage list closed; no app code |
 | D1b | `coop desktop`: the window, started from the terminal product | **The first deliverable; needs no installer, no bundled runtime and no certificate.** `desktop/` holds an Electron main process with the renderer sandboxed (context isolation on, Node integration off, navigation and new windows blocked, named preload methods only), one `xterm.js` view and a `node-pty` ConPTY that runs `pi` with the `{bin,args,env}` from `coop launch-spec --json` (the app adds nothing to args and only the profile path to env). `electron`, `xterm` and `node-pty` are pinned in `config/release-manifest.json` and installed by `coop sync` into the isolated tree, like every other extension pin, with the lockfile regenerated; `coop desktop` (new command in `bin/coop.ps1`) runs the same preflight as `coop` and starts the window; `coop install` adds a second shortcut, "coop (window)", next to the terminal one. Window close ends Pi cleanly; unit tests for the spec consumer and the PTY lifecycle run in the gate lane on `windows-latest`; `coop doctor` reports the Electron pin | D1a | on a machine with coop installed, `coop desktop` opens a governed session that matches the terminal (guardrails prompt, `/start`, footer, an approval prompt, an ask-user dialog, resume); `coop launch-spec --json` diff against the spawned command is empty; VM: `coop sync` installs the pins offline from the lock, the shortcut works, the fleet gets it through `coop update` at the next tag |
 | D1c | Unsigned installer of the window alone | electron-builder NSIS **per-user** target (no administrator), Start Menu and Desktop shortcuts with `themes/coop.ico`, Add/Remove entry, silent `/S` install and uninstall, `deleteAppDataOnUninstall: false`; the package still **requires the terminal coop** (it finds `coop.ps1` the way `bin/coop-desktop.ps1` does and runs `coop install` when missing); a `windows-latest` CI job builds the unsigned installer on every PR as an artifact, installs it silently, launches to `coop doctor` and uninstalls. This row proves the exe, NSIS and CI pipeline on its own, which is where the last attempt stalled | D1b | CI job green; manual install, launch, uninstall on the "stable" VM snapshot leaves no trace outside `~/.coop` and the app folder; SmartScreen's "unknown publisher" step recorded (it is one click, not a block) |
 | D1d | Bundled runtime: no terminal, Node or Python knowledge | The build stages a pinned Node (nodejs.org zip, version and SHA-256 in the manifest), the pinned Pi and the `extensions-lock.json` tree pre-installed offline, and a snapshot of this repository (skills, prompts, extensions, `docs/guardrails.md`, standards bundle) under the app's resources; the app uses the same profile root as the terminal (S3) so the two coexist and share sessions, memory and `.coop/project.yml`; first launch runs the H1 table for Git, Python, pipx, Azure CLI and ODBC in the window, prints the exact `winget` lines (or runs them visibly, as `coop install --prereqs auto` does), then the same sync and Azure sign-in the terminal install runs; Node is never a prerequisite for the package. Python and Azure CLI stay prerequisites, not bundled (the last attempt's relocatable Python is not revived) | D1c; U2 landed | blank VM snapshot: install, launch, the prerequisite screen names exactly what is missing, after the printed commands `coop doctor` inside the app is all green; `npm ls --all` of the staged tree equals a clean `coop sync` tree |
 | D1e | Updates and distribution | `electron-updater` with the GitHub Releases provider, release tags only (no edge channel in the app), check on launch, download in the background, install on quit with one prompt; the installer and electron-builder's `latest.yml` are published as assets of the GitHub Release `release.yml` already creates on a tag; inside the app `coop update` says the app updates itself; the staged Pi and extension tree move with the app version, so no npm runs on the user's machine for an update. Works unsigned (electron-updater only verifies a publisher when the running app is signed) | D1d; distribution choice (11.3 item 4) | VM installs vN; vN+1 tagged; the app offers, downloads and applies it; `~/.coop` sessions, memory and project contract intact; `coop doctor` green after the update |
-| D1f | Signing | Sign the installer and the app binaries on tag in `release.yml` with the certificate Aaron supplies (11.3 item 3); record the SmartScreen result and the publisher name teammates see. Last, because every earlier row works unsigned; this row removes the "unknown publisher" click, it does not gate the others | D1e; Aaron's certificate | a teammate downloads the release asset and Windows shows the publisher name with no SmartScreen "unknown publisher" step; `electron-updater` verifies the signed update |
-| D1g | Teammate acceptance and docs | One teammate who is not Aaron installs from the package alone on a machine without coop, Node or Python, following only `docs/install-windows.md`'s new "Desktop app" section (the terminal path stays the first section, unchanged); README, architecture and coop-website pages updated; the old desktop branches deleted after Aaron confirms | D1e (D1f if Aaron makes signing part of done, 11.3 item 8) | the teammate reaches a governed session and runs one workflow from the `/start` menu with no help; row 16 moves to `done (tag)` when Aaron tags |
+| D1f | Signing | Sign the installer and the app binaries on tag in `release.yml` with the certificate Aaron supplies (11.3 item 3); record the SmartScreen result and the publisher name teammates see. Last, because every earlier row works unsigned; this row removes the "unknown publisher" click, it does not gate the others | D1e; Aaron's certificate; optional, not part of row 16's done (Aaron, 2026-10-02) | a teammate downloads the release asset and Windows shows the publisher name with no SmartScreen "unknown publisher" step; `electron-updater` verifies the signed update |
+| D1g | Teammate acceptance and docs | One teammate who is not Aaron installs from the package alone on a machine without coop, Node or Python, following only `docs/install-windows.md`'s new "Desktop app" section (the terminal path stays the first section, unchanged); README, architecture and coop-website pages updated; the old desktop branches deleted after Aaron confirms | D1e (signing is not required: Aaron, 2026-10-02) | the teammate reaches a governed session and runs one workflow from the `/start` menu with no help; row 16 moves to `done (tag)` when Aaron tags |
 
 Rules that hold across every row, on top of section 2:
 
@@ -1031,43 +1032,47 @@ instantly; D1f records what the first teammate sees.
 
 ### 11.3 Decisions only Aaron can make
 
-1. **The window shows Pi's terminal** (`xterm.js` over the launch spec, the
+Aaron, 2026-10-02: item 8 is decided (signing is not required for done); items
+1–7 are decided "when needed", so each is asked at the start of the row that
+needs it (noted per item) and the recommendation is the default until then.
+
+1. **(D1b)** **The window shows Pi's terminal** (`xterm.js` over the launch spec, the
    recommendation and what 11.2 assumes) **or a rendered chat** over `pi --mode
    rpc` (a renderer for every extension dialog; weeks more, and a second UI for the
    same policy). Recommendation: terminal now; a rendered view is its own later row.
    Aaron's 2026-10-02 note that a terminal kick-off is fine is read as agreement
    with D1b's shape, not yet as this decision.
-2. **Installer type:** NSIS per-user via electron-builder (recommended: no
+2. **(D1c)** **Installer type:** NSIS per-user via electron-builder (recommended: no
    administrator, works unsigned and with any code-signing certificate, Add/Remove
    entry, `electron-updater` support) or MSIX (Store-style identity, needs the
    certificate's subject to match the package publisher, sideloading settings on
    some machines, no unsigned path).
-3. **Code-signing certificate.** Aaron owns this input and nothing before D1f
+3. **(D1f)** **Code-signing certificate.** Aaron owns this input and nothing before D1f
    waits on it. Options: Azure Trusted Signing (a subscription resource, signs
    from GitHub Actions with no hardware token, the recommendation), an OV
    certificate on a cloud HSM, or an EV certificate with a hardware token (instant
    SmartScreen reputation but cannot sign from CI without extra setup). To supply:
    the signing account or certificate, and a repository secret or OIDC federation
    for `release.yml`.
-4. **Where the package is published.** `electron-updater`'s GitHub provider
+4. **(D1e)** **Where the package is published.** `electron-updater`'s GitHub provider
    needs the release assets reachable without a token by every teammate. If
    `kabukisensei/coop-agent` stays private, the choice is a public release
    repository for the installer alone, or hosting the installer and `latest.yml`
    on the coop website's VPS with the generic provider. Recommendation: public
    release assets, private source stays private.
-5. **Repository location:** `desktop/` in coop-agent (recommended: one tag, one
+5. **(D1a)** **Repository location:** `desktop/` in coop-agent (recommended: one tag, one
    CI, the package snapshots the repo it lives in) or a separate `coop-desktop`
    repository.
-6. **Git on the user's machine.** The standards wiki and team knowledge are git
+6. **(D1d)** **Git on the user's machine.** The standards wiki and team knowledge are git
    clones. Keep Git in the prerequisite table (one more `winget` line, the
    recommendation) or bundle a portable MinGit (about 50 MB, another pin to
    track).
-7. **Which teammate** does the D1g acceptance, and whether a second blank VM
+7. **(D1g)** **Which teammate** does the D1g acceptance, and whether a second blank VM
    snapshot ("desktop-blank") is kept next to the existing blank and stable ones.
-8. **Is signing part of "done"?** Row 16's done-when is "another user installs
-   from the package alone"; an unsigned per-user installer meets it with one
-   SmartScreen click. Recommendation: D1g accepts on D1e and D1f follows when the
-   certificate exists, so the certificate never blocks the row.
+8. **Decided (Aaron, 2026-10-02): signing is not required.** Row 16's done-when
+   is "another user installs from the package alone"; an unsigned per-user
+   installer meets it with one SmartScreen click. D1g accepts on D1e; D1f follows
+   only if and when a certificate exists, and never blocks the row.
 
 ### 11.4 Out of scope for D1
 
@@ -1134,7 +1139,7 @@ tags. A stale row is never a reason to re-do work: check the PR list first.
 | 14 | B1 | Minimal beta channel | — | — | **skipped** (Aaron, 2026-09-30: seven people update from tags; the VM qualifies upgrades) |
 | 15 | K1, K2, K3 | TeamAI shared knowledge: isolated CLI and read-only recall, reviewed contribution, broader lifecycle | FR1 + explicit start; VM isolation | revision 2.0 section 8 gates, one PR per row | not started (scheduled, revision 3.8) |
 | 15b | J0–J3 | Jev shadow experiments | explicit start | revision 2.0 gates | waiting (Aaron, 2026-09-30) |
-| 16 | D1 | Electron desktop with packaged installer, worked as D1a–D1g (section 11.2): decision record and salvage, `coop desktop` window from the terminal product (first deliverable, no installer or certificate), unsigned installer, bundled runtime, updates, signing last, teammate acceptance | 7–12 and 15 accepted; Aaron approves section 11.3 and starts D1; U2 landed before D1d | another user installs from the package alone (D1g); signing is part of done only if Aaron says so (11.3 item 8) | scoped (revision 3.11, 2026-10-02); not started; waits on the 11.3 decisions |
+| 16 | D1 | Electron desktop with packaged installer, worked as D1a–D1g (section 11.2): decision record and salvage, `coop desktop` window from the terminal product (first deliverable, no installer or certificate), unsigned installer, bundled runtime, updates, signing last, teammate acceptance | 7–12 and 15 accepted; Aaron starts D1; U2 landed before D1d; each 11.3 item decided when its row starts | another user installs from the package alone (D1g); signing not required (Aaron, 2026-10-02) | scoped (revision 3.11, 2026-10-02); not started |
 
 Phase 0 rows can each be released as a patch. Later phases are minor versions.
 Rows become `agent:ready` only when Aaron says so. On September 28 he marked the
