@@ -227,7 +227,7 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop onboard [--edit|--config-only|--reset|--json]` | Configure profile and managed integrations without launching the agent |
 | `coop profile [--edit|--reset|--json]` | Inspect or update the private user profile |
 | `coop context-budget [--json]` | Inspect the active model/context budget |
-| `coop teamai <status\|install\|init\|pull\|recall --query <text>>` | TeamAI shared-knowledge trial (master plan K1): the pinned `teamai-cli` isolated under `~/.coop/teamai`, explicit and bounded, one JSON document per call; off until `knowledge.teamai.enabled` is true |
+| `coop teamai <status\|install\|init\|pull\|recall --query <text>\|contribute --file <draft.md> [--title <text>] [--approve]>` | TeamAI shared-knowledge trial (master plan K1, K2): the pinned `teamai-cli` isolated under `~/.coop/teamai`, explicit and bounded, one JSON document per call; `contribute` previews, and stages a review branch only with `--approve`; off until `knowledge.teamai.enabled` is true |
 | `coop uninstall [--keep-tools] [--yes]` | Remove the launcher/shortcuts/user-PATH entry and isolated agent dir; by default also uninstall Pi, pipx tools/Fabric CLI, Power BI Report Authoring CLI, Power BI Modeling MCP, and the Windows Desktop Bridge. `--keep-tools` preserves all managed npm/pipx tools. Never touches repo clones, work repos, the rest of `~/.coop`, or personal `~/.pi/agent` |
 | `coop install [--edge] [--force] [--yes] [--prereqs auto] [--no-prereqs] [--no-fabric] [--platform fabric\|azure_sql\|both]` | Fresh-install/bootstrap (idempotent). Normal mode uses manifest pins; `--edge` deliberately takes upstream latest and is tools-only here (install never moves the repo). With a source arg, alias of `coop add` |
 | `coop bootstrap` | Same bootstrap as bare `coop install` |
@@ -725,7 +725,19 @@ isolated root, never in your real home, the stable coop profile or another agent
 directory. Launch never touches it. `coop teamai recall --query <text>` returns at
 most five results with repository, revision, file and author provenance and reports
 `no_match`, `partial`, `unavailable` and a `stale` flag honestly; `coop doctor` shows
-the trial's state. Contribution (`teamai push`/`contribute`) is K2 and is not wired.
+the trial's state.
+
+Sharing a learning with the trial repository (K2) keeps the review boundary:
+`/share-learning` saves the reviewed note and runs
+`coop teamai contribute --file <note.md> --title "<title>"`, which sweeps the draft
+(secrets, connection strings, URL credentials, a `client-confidential` or missing
+`sensitivity:` marking keep it local as `refused`), asks the CLI in `--dry-run` for the
+exact `learnings/...` destination and returns a `preview`. Only `--approve`, after the
+person has seen that preview, stages the note on a new `coop/learning/<slug>-<stamp>`
+branch pushed from a disposable clone (`~/.coop/teamai/stage`) and prints the compare
+URL; the pull request is the person's. The CLI's own `teamai contribute` (a direct
+write to the team repo's `learnings` branch) and `teamai push` (a pull request opened
+from inside the CLI) are never run, and the default branch is never written.
 
 ---
 

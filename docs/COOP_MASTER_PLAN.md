@@ -945,6 +945,22 @@ evidence is the development VM run in `E:\coop-sandbox` (recall against a
 sandbox team repository with harmless markers, real paths under the sandbox
 profile, nothing under the real home).
 
+**K2 as built (2026-10-01, in review, stacked on K1).** The CLI's own publication
+does not meet section 8.3: `teamai contribute` commits straight to the team repo's
+`learnings` branch and `teamai push` opens the pull request from inside the CLI.
+`coop teamai contribute --file <draft.md> [--title] [--approve]` therefore runs the
+CLI only in `--dry-run` (for the exact destination), sweeps the draft (secrets,
+connection strings, URL credentials, `client-confidential` or missing
+`sensitivity:` marking keep it local), returns a `preview`, and only `--approve`
+after the person's review stages the note on a new `coop/learning/<slug>-<stamp>`
+branch pushed from a disposable clone, printing the compare URL; the pull request
+is the person's, the default and `learnings` branches are never written, and the
+isolated CLI no longer inherits `GITHUB_TOKEN`/`GH_TOKEN`. `/share-learning` carries
+the route when the user picks the trial repository. Defaults taken: a staged branch
+(not a pull request) is the hand-off; a 64 KiB draft cap; branch names under
+`coop/learning/`. Acceptance evidence is the VM run (K1 runbook, plus one staged
+branch on the sandbox team repository with a harmless marker note).
+
 **B1 is skipped (Aaron, 2026-09-30).** Revision 2.0's isolated beta channel is
 the right design for a fleet too large to reach by hand. Coop's fleet is seven
 people: release-tag updates (H5), the development VM as the qualification machine
@@ -1508,7 +1524,7 @@ tags. A stale row is never a reason to re-do work: check the PR list first.
 | 12 | FR1 | Common-workflows first run | SQ1 (menu items exist) | first launch shows the menu; onboarding no longer blocks | merged ([#241](https://github.com/kabukisensei/coop-agent/pull/241), 2026-10-01; shipped in v0.27.0): first interactive launch opens the seven-item `/start` menu once, the launch never runs the wizard, the name question moved into the project item |
 | 13 | PK1 | `pi-lovely-codex` versus `pi-better-openai`, diagnostics, simplify (naming moved to N1) | U1 + explicit start | one owner of usage stats; adopt/build/defer recorded per candidate | not started |
 | 14 | B1 | Minimal beta channel | — | — | **skipped** (Aaron, 2026-09-30: seven people update from tags; the VM qualifies upgrades) |
-| 15 | K1, K2, K3 | TeamAI shared knowledge: isolated CLI and read-only recall, reviewed contribution, broader lifecycle | FR1 + explicit start; VM isolation | revision 2.0 section 8 gates, one PR per row | K1 in review (PR), 2026-10-01: isolated `teamai-cli` adapter, `coop teamai`, VM acceptance pending; K2, K3 not started |
+| 15 | K1, K2, K3 | TeamAI shared knowledge: isolated CLI and read-only recall, reviewed contribution, broader lifecycle | FR1 + explicit start; VM isolation | revision 2.0 section 8 gates, one PR per row | K1 in review (PR #249), 2026-10-01: isolated `teamai-cli` adapter, `coop teamai`, VM acceptance pending; K2 in review (PR), 2026-10-01: `coop teamai contribute` preview and `--approve` staging on a `coop/learning/...` branch, stacked on K1; K3 not started |
 | 15b | J0–J3 | Jev shadow experiments | explicit start | revision 2.0 gates | waiting (Aaron, 2026-09-30) |
 | 16 | D1 | Electron desktop with packaged installer, worked as D1a–D1g (section 11.2): decision record and salvage, `coop desktop` window from the terminal product (first deliverable, no installer or certificate), unsigned installer, bundled runtime, updates, signing last, teammate acceptance | 7–12 and 15 accepted; Aaron starts D1; U2 landed before D1d; each 11.3 item decided when its row starts | another user installs from the package alone (D1g); signing not required (Aaron, 2026-10-02) | D1a decision record and salvage list in review (PR), revision 3.13, 2026-10-02 (section 11.5); D1b–D1g not started, each waits for Aaron |
 

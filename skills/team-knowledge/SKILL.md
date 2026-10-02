@@ -82,8 +82,9 @@ read-only source next to the local search, never instead of it:
    repository and file for anything you use; `no_match` means this query
    matched nothing, `partial` means the code graph was unavailable, and
    `stale: true` means the clone is older than a week (say so).
-3. Never run `teamai` yourself, never install it, and never ask for
-   `teamai push`/`contribute`: contributions wait for K2.
+3. Never run `teamai` yourself and never install it. Sharing a learning with
+   the trial repository goes through `/share-learning`, which previews with
+   `coop teamai contribute` and stages a branch only on `--approve`.
 
 ## Vault layer guide
 

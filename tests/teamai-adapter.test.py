@@ -23,6 +23,7 @@ ADAPTER = ROOT / "lib" / "teamai.py"
 MANIFEST = json.loads((ROOT / "config" / "release-manifest.json").read_text(encoding="utf-8-sig"))
 PIN = MANIFEST["teamai"]["version"]
 PACKAGE = MANIFEST["teamai"]["package"]
+STAGE_DIR_NAME = "stage"
 
 fails = 0
 
@@ -79,6 +80,14 @@ if (cmd === 'init') {
   fs.writeFileSync(path.join(dir, 'config.yaml'), 'repo:\n  url: ' + rec.argv[1] + '\n  localPath: ' + repo.replace(/\\/g, '/') + '\nagent: claude\n');
   // a "clone" into the isolated home, and a dirty marker the adapter must report through git
   fs.writeFileSync(path.join(repo, 'README.md'), '# sandbox\n');
+  process.exit(0);
+}
+if (cmd === 'contribute') {
+  const i = rec.argv.indexOf('--title');
+  const title = i >= 0 ? rec.argv[i + 1] : 'session-notes';
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50);
+  if (!rec.argv.includes('--dry-run')) { fs.writeFileSync(process.env.COOP_TEST_PUBLISHED_MARKER || path.join(home, 'PUBLISHED'), 'x'); process.exit(0); }
+  process.stdout.write('[dry-run] Would push: learnings/' + slug + '-2026-10-01-ab12cd.md (' + 42 + ' bytes)\n');
   process.exit(0);
 }
 if (cmd === 'pull') { if (mode === 'pull-fail') { process.stderr.write('fatal: could not read from remote\n'); process.exit(1); } process.exit(0); }
@@ -383,6 +392,94 @@ with tempfile.TemporaryDirectory() as raw:
     rc, doc, _ = run(base_env, "status")
     check(doc["state"] == "ok" and any("differs from the manifest pin" in w for w in doc["warnings"]), "status: installed version != pin -> warning, run: coop teamai install")
     install_stub()
+
+    # --- K2: contribute is preview-then-stage, never the CLI's publish ----------------------------
+    published_marker = tmp / "cli-published"
+    base_env["COOP_TEST_PUBLISHED_MARKER"] = str(published_marker)
+    bare = tmp / "team.git"
+    subprocess.run(["git", "init", "--quiet", "--bare", "--initial-branch=main", str(bare)], check=True)
+    seed = tmp / "seed"
+    subprocess.run(["git", "clone", "--quiet", str(bare), str(seed)], check=True, capture_output=True)
+    (seed / "learnings").mkdir()
+    (seed / "learnings" / "existing-note.md").write_text("# existing\n", encoding="utf-8")
+    (seed / "README.md").write_text("# team\n", encoding="utf-8")
+    gid = ["-c", "user.name=Seed", "-c", "user.email=seed@example.invalid"]
+    subprocess.run(["git", *gid, "-C", str(seed), "add", "."], check=True)
+    subprocess.run(["git", *gid, "-C", str(seed), "commit", "--quiet", "-m", "seed"], check=True)
+    subprocess.run(["git", "-C", str(seed), "push", "--quiet", "origin", "main"], check=True, capture_output=True)
+    main_before = subprocess.run(["git", "-C", str(bare), "rev-parse", "main"], capture_output=True, text=True, check=True).stdout.strip()
+    # the isolated clone the CLI "made" at init is replaced by a real clone of the bare repo
+    team_clone = iso_home / ".teamai" / "team"
+    shutil.rmtree(team_clone, ignore_errors=True)
+    subprocess.run(["git", "clone", "--quiet", str(bare), str(team_clone)], check=True, capture_output=True)
+
+    draft = tmp / "draft.md"
+    good = "---\ntitle: Watermark per partition\nauthor: Aaron\ndate: 2026-10-01\ntags: [fabric]\nx-coop:\n  kind: pattern\n  scope: team\n  sensitivity: internal\n  status: proposed\n  confidence: medium\n---\n\n## Context\n\nUse a watermark per partition.\n"
+    draft.write_text(good, encoding="utf-8")
+
+    rc, doc, err = run(base_env, "contribute")
+    check(rc == 2, "contribute without --file -> exit 2")
+    rc, doc, _ = run(base_env, "contribute", "--file", str(draft))
+    check(rc == 0 and doc["state"] == "preview" and doc["approved"] is False and doc["staged"] is False, "contribute: preview by default, nothing staged")
+    check(doc["title"] == "Watermark per partition", "contribute: title taken from the frontmatter when --title is absent")
+    check(doc["destination"].startswith("learnings/watermark-per-partition-") and doc["destination"].endswith(".md"), f"contribute: destination comes from the CLI dry-run ({doc['destination']})")
+    check(doc["branch"].startswith("coop/learning/watermark-per-partition-"), "contribute: planned branch coop/learning/<slug>-<stamp>")
+    crec = [json.loads(l) for l in stub_log.read_text(encoding="utf-8").splitlines()][-1]
+    check(crec["argv"][:2] == ["contribute", "--dry-run"] and "--title" in crec["argv"], "contribute: the CLI ran in --dry-run only")
+    check(not published_marker.exists(), "contribute: the CLI's real contribute (learnings branch publish) never ran")
+    refs = subprocess.run(["git", "-C", str(bare), "for-each-ref", "--format=%(refname:short)"], capture_output=True, text=True, check=True).stdout.split()
+    check(refs == ["main"], "contribute preview: no branch reached the team repo")
+
+    preview_doc = doc
+    rc, doc, err = run(base_env, "contribute", "--file", str(draft), "--approve")
+    check(rc == 0 and doc["state"] == "staged" and doc["staged"] is True, f"contribute --approve: staged ({err.strip()[:160]})")
+    check(doc["destination"] == preview_doc["destination"] and doc["branch"] == preview_doc["branch"] and not doc["warnings"], "contribute --approve: stages exactly the destination and branch the preview showed")
+    branch = doc["branch"]
+    refs = subprocess.run(["git", "-C", str(bare), "for-each-ref", "--format=%(refname:short)"], capture_output=True, text=True, check=True).stdout.split()
+    check(sorted(refs) == sorted(["main", branch]), f"staged: exactly one new branch on the team repo ({refs})")
+    main_after = subprocess.run(["git", "-C", str(bare), "rev-parse", "main"], capture_output=True, text=True, check=True).stdout.strip()
+    check(main_after == main_before, "staged: the default branch is untouched")
+    files = subprocess.run(["git", "-C", str(bare), "diff", "--name-only", f"main..{branch}"], capture_output=True, text=True, check=True).stdout.split()
+    check(files == [doc["destination"]], f"staged: the branch adds exactly the destination file ({files})")
+    body = subprocess.run(["git", "-C", str(bare), "show", f"{branch}:{doc['destination']}"], capture_output=True, text=True, check=True).stdout
+    check(body == good, "staged: the note is byte-for-byte the reviewed draft")
+    msg = subprocess.run(["git", "-C", str(bare), "log", "-1", "--format=%s", branch], capture_output=True, text=True, check=True).stdout.strip()
+    check(msg == "[coop] learning: Watermark per partition", "staged: commit message names the learning")
+    check(not (profile / "teamai" / STAGE_DIR_NAME).exists() or not any((profile / "teamai" / STAGE_DIR_NAME).iterdir()), "staged: the disposable stage clone is removed")
+    check(not published_marker.exists(), "staged: still no CLI publish")
+    st = json.loads((profile / "teamai" / "state.json").read_text(encoding="utf-8"))
+    check(st.get("contributions") and st["contributions"][-1]["branch"] == branch, "staged: state.json records the contribution")
+    draft.write_text(good + "\nEdited after the preview.\n", encoding="utf-8")
+    time.sleep(1.1)  # the branch stamp has one-second resolution
+    rc, doc, _ = run(base_env, "contribute", "--file", str(draft), "--approve")
+    check(doc["state"] == "staged" and doc["branch"] != branch and any("no preview on record" in w for w in doc["warnings"]), "contribute --approve on an edited draft: new names, with a warning that no preview matched")
+    draft.write_text(good, encoding="utf-8")
+    check(doc["compare_url"] == "" , "staged: no compare URL for a non-GitHub remote (local bare repo)")
+    status = subprocess.run(["git", "-C", str(team_clone), "status", "--porcelain", "--branch"], capture_output=True, text=True, check=True).stdout
+    check(status.startswith("## main") and len(status.splitlines()) == 1, "staged: the CLI's own clone is left alone")
+
+    for bad, why in (
+        ("---\ntitle: Leak\nsensitivity: internal\n---\nServer=tcp:client.database.windows.net;Password=hunter22;\n", "connection string"),
+        ("---\ntitle: Leak\nsensitivity: internal\n---\ntoken ghp_abcdefghijklmnopqrstuvwxyz0123\n", "GitHub token"),
+        ("---\ntitle: Leak\nsensitivity: internal\n---\nhttps://user:pass@example.invalid/x\n", "URL credentials"),
+        ("---\ntitle: Client\nsensitivity: client-confidential\n---\nbody\n", "client-confidential"),
+        ("---\ntitle: Unmarked\n---\nbody\n", "missing sensitivity"),
+    ):
+        draft.write_text(bad, encoding="utf-8")
+        rc, doc, _ = run(base_env, "contribute", "--file", str(draft), "--approve")
+        check(rc == 0 and doc["state"] == "refused" and doc["sweep"], f"contribute --approve: {why} -> refused by the sweep, nothing staged")
+    draft.write_text("", encoding="utf-8")
+    rc, doc, _ = run(base_env, "contribute", "--file", str(draft))
+    check(doc["state"] == "refused", "contribute: empty draft -> refused")
+    rc, doc, _ = run(base_env, "contribute", "--file", str(tmp / "missing.md"))
+    check(doc["state"] == "refused", "contribute: missing draft -> refused")
+    draft.write_text("---\nsensitivity: internal\n---\nno title here\n", encoding="utf-8")
+    rc, doc, _ = run(base_env, "contribute", "--file", str(draft))
+    check(doc["state"] == "refused" and any("title" in w for w in doc["warnings"]), "contribute: no title anywhere -> refused")
+    refs = subprocess.run(["git", "-C", str(bare), "for-each-ref", "--format=%(refname:short)"], capture_output=True, text=True, check=True).stdout.split()
+    check(len(refs) == 3, "refused drafts never reached the team repo")
+    rc, doc, _ = run(base_env, "contribute", "--file", str(draft), "--bogus")
+    check(rc == 2, "contribute: unknown argument -> exit 2")
 
     # --- the decoy never ran ---------------------------------------------------------------------
     check(not decoy_marker.exists(), "a `teamai` on PATH was never executed")

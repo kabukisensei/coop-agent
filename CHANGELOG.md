@@ -31,6 +31,23 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   while fetch and pull still work. Tests: `tests/teamai-adapter.test.py` (stub
   CLI, decoy `teamai` on `PATH` must never run, the guard blocks a push) and
   `tests/fixtures/teamai.test.ps1`.
+- `coop teamai contribute --file <draft.md> [--title <text>] [--approve]` (master
+  plan Phase 7, K2: reviewed contribution). The draft is swept first (GitHub,
+  bearer and SAS tokens, private keys, URL credentials, credential assignments,
+  SQL connection strings, a `client-confidential` or missing `sensitivity:`
+  frontmatter marking) and a finding returns `refused` with the note kept local.
+  The CLI runs only in `--dry-run` to name the exact `learnings/...` destination;
+  the default call returns a `preview` with destination, branch and compare URL.
+  `--approve`, after the person has reviewed that preview, stages the note on a
+  new `coop/learning/<slug>-<stamp>` branch pushed from a disposable clone
+  (`<profile dir>/teamai/stage`, removed afterwards) using the person's real git
+  identity, and records it in `state.json`. The CLI's own `teamai contribute`
+  (unreviewed write to the `learnings` branch) and `teamai push` (a pull request
+  from inside the CLI) are never run; `GITHUB_TOKEN`/`GH_TOKEN` are no longer
+  inherited by the isolated CLI. `/share-learning` carries the route for the trial
+  repository; the `team-knowledge` skill points at it. Tests in
+  `tests/teamai-adapter.test.py` (local bare team repo: one branch, one file, main
+  untouched, five refused drafts).
 
 ### Changed
 

@@ -34,14 +34,27 @@ reported state; 2 for a malformed invocation; 1 when the adapter itself fails):
 `disabled`, `not_installed`, `not_initialized`, `ok`, `no_match`, `partial`,
 `unavailable`. `stale` is a flag next to the state, never a state: results are
 still returned, with the age of the last successful pull.
+
+Contribution (K2, revision 2.0 section 8.3) never uses the CLI's own publication:
+`teamai contribute` commits straight to the team repo's `learnings` branch and
+`teamai push` opens a pull request from inside the CLI, neither of which is the
+review boundary coop requires. `contribute --file <draft> --title <t>` therefore
+runs the CLI only in `--dry-run` to learn the exact destination path, sweeps the
+draft for secrets and client-confidential markers, and returns a `preview`.
+With `--approve` it stages the note on a new `coop/learning/...` branch pushed from
+a disposable clone of the team repo (`<profile dir>/teamai/stage`), prints the
+branch and compare URL, and leaves the pull request to the person. The default
+branch and the `learnings` branch are never written.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -190,7 +203,7 @@ def child_env(home: Path) -> dict:
     env = {}
     for k, v in os.environ.items():
         ku = k.upper()
-        if ku.startswith("TEAMAI_") or ku.startswith("CLAUDE_") or ku.startswith("GIT_CONFIG_") or ku in ("HOME", "USERPROFILE", "XDG_CONFIG_HOME", "OPENCLAW_STATE_DIR"):
+        if ku.startswith("TEAMAI_") or ku.startswith("CLAUDE_") or ku.startswith("GIT_CONFIG_") or ku in ("HOME", "USERPROFILE", "XDG_CONFIG_HOME", "OPENCLAW_STATE_DIR", "GITHUB_TOKEN", "GH_TOKEN"):
             continue
         env[k] = v
     env["HOME"] = str(home)
@@ -692,9 +705,246 @@ def cmd_recall(block: dict, package: str, pin: str, query: str) -> dict:
     return doc
 
 
+# --- contribution (K2: reviewed, staged on a branch, never the CLI's publish) ---
+
+STAGE_DIR = "stage"
+DRAFT_MAX_BYTES = 64 * 1024
+SECRET_PATTERNS = [
+    (re.compile(r"gh[pousr]_[A-Za-z0-9]{20,}"), "GitHub token"),
+    (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"), "private key"),
+    (re.compile(r"://[^/\s:@]+:[^/\s@]+@"), "URL with embedded credentials"),
+    (re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._\-]{20,}"), "bearer token"),
+    (re.compile(r"(?i)\b(password|pwd|secret|api[_-]?key|accountkey|sharedaccesskey|client[_-]?secret|sig)\s*[=:]\s*[^\s;'\"]{6,}"), "credential assignment"),
+    (re.compile(r"(?i)\bServer\s*=\s*tcp:[^;\s]+;"), "SQL connection string"),
+    (re.compile(r"(?i)\bsv=\d{4}-\d{2}-\d{2}&"), "SAS token"),
+]
+FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n", re.S)
+WOULD_PUSH_RE = re.compile(r"Would push:\s*(?P<dest>learnings/\S+)")
+
+
+def frontmatter(text: str) -> dict:
+    """The simple `key: value` pairs of a YAML frontmatter block (nested keys
+    are read at any indent; nothing is inferred)."""
+    m = FRONTMATTER_RE.match(text)
+    if not m:
+        return {}
+    out: dict = {}
+    for line in m.group(1).splitlines():
+        km = re.match(r"^\s*([A-Za-z0-9_\-]+)\s*:\s*(.*?)\s*$", line)
+        if km and km.group(2):
+            out.setdefault(km.group(1).lower(), km.group(2).strip().strip("'\""))
+    return out
+
+
+def sweep_draft(text: str) -> list[str]:
+    """Findings that keep a draft local: secrets, client-confidential marking,
+    and a missing sensitivity marking (the /share-learning frontmatter)."""
+    findings: list[str] = []
+    for pat, what in SECRET_PATTERNS:
+        if pat.search(text):
+            findings.append(f"looks like a {what}; remove it before sharing")
+    fm = frontmatter(text)
+    sens = fm.get("sensitivity", "")
+    if sens == "client-confidential":
+        findings.append("frontmatter marks the note client-confidential; it stays local")
+    elif not sens:
+        findings.append("frontmatter has no `sensitivity:` line (set `internal` after the client sweep)")
+    return findings
+
+
+def slugify(title: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    return slug[:48].strip("-") or "learning"
+
+
+def real_git_identity() -> tuple[str, str]:
+    """The person's git identity from their real environment (never the
+    redirected home), falling back to the coop profile name."""
+    git = shutil.which("git")
+    name = email = ""
+    if git:
+        for key in ("user.name", "user.email"):
+            r = run_bounded([git, "config", "--get", key], Path.cwd(), dict(os.environ), 10)
+            v = r["stdout"].strip() if r.get("rc") == 0 else ""
+            if key == "user.name":
+                name = v
+            else:
+                email = v
+    if not name:
+        try:
+            with open(coop_paths.user_profile_path(), "r", encoding="utf-8-sig") as fh:
+                name = str(json.load(fh).get("name") or "").strip()
+        except Exception:
+            name = ""
+    return name or "coop", email or "coop@users.noreply.github.com"
+
+
+def compare_url(remote: str, branch: str) -> str:
+    """A GitHub compare URL for the staged branch ('' for other hosts)."""
+    clean = redact_url(remote)
+    m = re.match(r"^(?:https://github\.com/|git@github\.com:)([^/\s]+)/([^/\s]+?)(?:\.git)?/?$", clean)
+    if not m:
+        return ""
+    return f"https://github.com/{m.group(1)}/{m.group(2)}/compare/{branch}?expand=1"
+
+
+def remove_tree(path: Path) -> None:
+    """rmtree that also clears the read-only bit git sets on pack and object
+    files on Windows (a plain rmtree leaves the stage clone behind there)."""
+
+    def _onerror(func, target, _exc):
+        try:
+            os.chmod(target, stat.S_IWRITE | stat.S_IREAD)
+            func(target)
+        except Exception:
+            pass
+
+    try:
+        shutil.rmtree(path, onerror=_onerror)
+    except Exception:
+        pass
+
+
+def git_cmd(args: list[str], cwd: Path, timeout: int, identity: tuple[str, str] | None = None) -> dict:
+    git = shutil.which("git")
+    if not git:
+        return {"rc": None, "stdout": "", "stderr": "", "timed_out": False, "error": "git is not available"}
+    argv = [git]
+    if identity:
+        argv += ["-c", f"user.name={identity[0]}", "-c", f"user.email={identity[1]}"]
+    return run_bounded(argv + args, cwd, child_env(isolated_home()), timeout)
+
+
+def cmd_contribute(block: dict, package: str, pin: str, file: str, title: str, approve: bool) -> dict:
+    doc = base_doc("contribute", block, package, pin)
+    doc.update({"file": file, "title": title, "approved": approve, "staged": False, "destination": "", "branch": "", "compare_url": "", "sweep": [], "bytes": 0})
+    g = gate(doc, package)
+    if g:
+        doc["state"] = g
+        return doc
+    path = Path(file).expanduser()
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        doc["state"] = "refused"
+        doc["warnings"].append(f"cannot read the draft: {exc}")
+        return doc
+    doc["bytes"] = len(raw)
+    text = raw.decode("utf-8-sig", "replace")
+    if not text.strip():
+        doc["state"] = "refused"
+        doc["warnings"].append("the draft is empty")
+        return doc
+    if len(raw) > DRAFT_MAX_BYTES:
+        doc["state"] = "refused"
+        doc["warnings"].append(f"the draft is {len(raw)} bytes; a learning stays under {DRAFT_MAX_BYTES} (no transcripts or bundles)")
+        return doc
+    if not title:
+        title = frontmatter(text).get("title", "")
+        doc["title"] = title
+    if not title:
+        doc["state"] = "refused"
+        doc["warnings"].append("no title: pass --title or a `title:` frontmatter line")
+        return doc
+    doc["sweep"] = sweep_draft(text)
+    if doc["sweep"]:
+        doc["state"] = "refused"
+        doc["warnings"].append("the draft did not pass the secret and client sweep; it stays local")
+        return doc
+    # The CLI names the destination it would use, in dry-run only. Its real
+    # `contribute` publishes to the learnings branch without review and is never run.
+    r = run_cli(["contribute", "--dry-run", "--file", str(path.resolve()), "--title", title], package)
+    if r["timed_out"] or r["error"] or r["rc"] != 0:
+        doc["state"] = "unavailable"
+        doc["warnings"].append(summarize_failure("teamai contribute --dry-run", r))
+        return doc
+    m = WOULD_PUSH_RE.search(r["stdout"] + r["stderr"])
+    if not m:
+        doc["state"] = "unavailable"
+        doc["warnings"].append("teamai contribute --dry-run did not name a destination (`Would push: learnings/...`)")
+        return doc
+    dest = m.group("dest").strip()
+    if ".." in dest.split("/") or not dest.startswith("learnings/") or not dest.endswith(".md"):
+        doc["state"] = "unavailable"
+        doc["warnings"].append(f"unexpected destination from the CLI: {dest}")
+        return doc
+    # What the person reviewed in the preview is what gets staged: the preview's
+    # destination, branch and stamp are kept in state.json keyed by the draft's
+    # hash, and --approve reuses them while the draft is unchanged.
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    previewed = read_state().get("preview") if approve else None
+    if isinstance(previewed, dict) and previewed.get("sha256") == digest and previewed.get("destination") and previewed.get("branch") and previewed.get("stamp"):
+        dest = str(previewed["destination"])
+        stamp = str(previewed["stamp"])
+    elif approve:
+        doc["warnings"].append("no preview on record for this draft; destination and branch were generated now")
+    branch = f"coop/learning/{slugify(title)}-{stamp}"
+    doc["destination"] = dest
+    doc["branch"] = branch
+    if not approve:
+        write_state({"preview": {"sha256": digest, "destination": dest, "branch": branch, "stamp": stamp, "at": now_iso()}})
+    clone = team_repo_local_path()
+    remote = ""
+    if clone and clone.is_dir():
+        rr = git_cmd(["-C", str(clone), "remote", "get-url", "origin"], clone, 10)
+        remote = rr["stdout"].strip() if rr.get("rc") == 0 else ""
+    if not remote:
+        remote = str(block.get("team_repo") or "").strip()
+    doc["compare_url"] = compare_url(remote, branch)
+    if not approve:
+        doc["state"] = "preview"
+        doc["detail"] = f"would stage {dest} on branch {branch} of {redact_url(remote)}; rerun with --approve after the person has reviewed the note"
+        return doc
+    if not remote:
+        doc["state"] = "unavailable"
+        doc["warnings"].append("no team repository remote to stage on")
+        return doc
+    identity = real_git_identity()
+    stage_root = teamai_root() / STAGE_DIR
+    stage = stage_root / stamp
+    try:
+        stage_root.mkdir(parents=True, exist_ok=True)
+        remove_tree(stage)
+        t = max(timeout_seconds(), 120)
+        steps = [
+            ("clone", git_cmd(["clone", "--quiet", "--depth", "1", "--no-tags", remote, str(stage)], stage_root, t)),
+        ]
+        if steps[-1][1].get("rc") == 0:
+            steps.append(("branch", git_cmd(["-C", str(stage), "checkout", "--quiet", "-b", branch], stage, 30)))
+        if steps[-1][1].get("rc") == 0:
+            target = stage / Path(*dest.split("/"))
+            if target.exists():
+                doc["state"] = "refused"
+                doc["warnings"].append(f"{dest} already exists on the team repo; pick another title")
+                return doc
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(raw if not raw.startswith(b"\xef\xbb\xbf") else raw[3:])
+            steps.append(("add", git_cmd(["-C", str(stage), "add", "--", dest], stage, 30)))
+        if steps[-1][1].get("rc") == 0:
+            steps.append(("commit", git_cmd(["-C", str(stage), "commit", "--quiet", "-m", f"[coop] learning: {title}"], stage, 30, identity)))
+        if steps[-1][1].get("rc") == 0:
+            steps.append(("push", git_cmd(["-C", str(stage), "push", "--quiet", "-u", "origin", branch], stage, t)))
+        name, last = steps[-1]
+        if last.get("rc") != 0:
+            doc["state"] = "unavailable"
+            doc["warnings"].append(summarize_failure(f"git {name}", last))
+            return doc
+    finally:
+        remove_tree(stage)
+    doc["staged"] = True
+    doc["state"] = "staged"
+    doc["detail"] = f"{dest} is on branch {branch}; open the pull request from the compare URL (nothing was written to the default or learnings branch)"
+    st = read_state()
+    hist = [h for h in st.get("contributions", []) if isinstance(h, dict)][-19:]
+    hist.append({"at": now_iso(), "branch": branch, "destination": dest, "title": title})
+    write_state({"contributions": hist})
+    return doc
+
+
 # --- CLI ------------------------------------------------------------------------
 
-USAGE = "usage: teamai.py <status|install|init|pull|recall --query <text>>"
+USAGE = "usage: teamai.py <status|install|init|pull|recall --query <text>|contribute --file <draft.md> [--title <text>] [--approve]>"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -704,7 +954,29 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_USAGE
     command = argv[0]
     query = ""
-    if command == "recall":
+    c_file = c_title = ""
+    c_approve = False
+    if command == "contribute":
+        rest = argv[1:]
+        i = 0
+        while i < len(rest):
+            a = rest[i]
+            if a == "--file" and i + 1 < len(rest):
+                c_file = rest[i + 1]
+                i += 2
+            elif a == "--title" and i + 1 < len(rest):
+                c_title = rest[i + 1]
+                i += 2
+            elif a == "--approve":
+                c_approve = True
+                i += 1
+            else:
+                print(f"error: contribute: unexpected argument {a!r}\n{USAGE}", file=sys.stderr)
+                return EXIT_USAGE
+        if not c_file:
+            print("error: contribute needs --file <draft.md>", file=sys.stderr)
+            return EXIT_USAGE
+    elif command == "recall":
         rest = argv[1:]
         if len(rest) >= 2 and rest[0] == "--query":
             query = " ".join(rest[1:]).strip()
@@ -730,6 +1002,8 @@ def main(argv: list[str] | None = None) -> int:
             doc = cmd_init(block, package, pin)
         elif command == "pull":
             doc = cmd_pull(block, package, pin)
+        elif command == "contribute":
+            doc = cmd_contribute(block, package, pin, c_file, c_title, c_approve)
         else:
             doc = cmd_recall(block, package, pin, query)
     except Exception as exc:  # the adapter itself failed: say so, never a traceback on stdout
