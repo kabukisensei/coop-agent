@@ -79,6 +79,9 @@ partial, or connected project without requiring the user to edit YAML.
    run Tabular Editor BPA (`bpa_review`, the deterministic model check) and
    `fabric-cicd` in validate-only mode. Address findings.
 8. **Diff + summarize.** Show `git diff` and summarize the change in plain language.
+   When built docs exist, call `data_doc` with `command="impact"` and `files` set to
+   the changed source files, and list every downstream object it reports (an empty
+   result is not proof of zero impact).
 9. **Document.** Update Markdown docs, glossary, and lineage; regenerate the site
    (or re-run `coop-data-doc build`) if documentation changed.
 10. **Log.** When `logging.require_task_log` is true, explicitly use the

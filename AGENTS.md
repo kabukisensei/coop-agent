@@ -42,8 +42,9 @@ copy shipped with coop (`config/standards-bundle/`), and coop says so.
 
 `data_doc` wraps `coop-data-doc` with commands `scan` (default; builds the lineage
 graph, read-only), `build` (also writes Markdown docs + portal, indexed by
-`manifest.json`), `check` (CI staleness gate), and `lineage` (returns ONE object's
-upstream/downstream + relationships as JSON from the built graph). **Lineage policy:**
+`manifest.json`), `check` (CI staleness gate), `lineage` (ONE object's
+upstream/downstream + relationships from the built graph), and `impact` (every
+downstream object that changed source files feed). **Lineage policy:**
 BEFORE analyzing or changing any SQL object, DAX measure, or semantic model, look up
 its lineage (`data_doc` with `command="lineage"`, `object="<name>"`) so you know its
 up/downstream impact — don't re-derive it by hand. coop **auto-detects** built docs at

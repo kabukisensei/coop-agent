@@ -105,8 +105,12 @@ lists `["graph.json", "manifest.json"]`.)
 ## Native LLM tools (`extensions/coop-tools`)
 
 Registered with Pi so the model can call them directly. All advisory /
-read-only. Each returns a short text summary in `content` and the full structured
-data in `details`.
+read-only. Pi sends the model a tool's `content` text only; `details` reach the UI
+and the session log, never the model. So each tool renders what the model needs
+(lineage names, impacted objects, catalog items, query rows, BPA findings) into
+`content`, capped at 12,000 characters with a closing line that says how many
+lines were left out and how to narrow the call, and keeps the full structured data
+in `details`.
 
 ### Revision 9 standards resolution
 
@@ -192,7 +196,8 @@ path adds `--rules <absolute path>`. No fix or save flags are passed.
 JSON violations become structured findings with rule IDs, object names, model paths,
 and severity counts. Exit 1 with findings is advisory; invalid output, execution
 failures, or rule evaluation errors are reported as incomplete/failed analysis.
-Raw stdout/stderr and the invoked arguments remain in `details`. Missing TE
+The text lists every finding as `- [severity] rule: message (object)`, errors
+first. Raw stdout/stderr and the invoked arguments remain in `details`. Missing TE
 configuration returns a setup hint. Legacy `TabularEditor.exe` keeps its
 `<model> -A <rules> -V` invocation and requires an explicit rule file.
 
@@ -200,9 +205,11 @@ configuration returns a setup hint. Legacy `TabularEditor.exe` keeps its
 
 | Param | Type | Notes |
 |-------|------|-------|
-| `command` | `"scan" \| "build" \| "check" \| "lineage"` (optional) | Defaults to **`scan`** (read-only). `build` writes docs/portal; `lineage` looks up one object. |
+| `command` | `"scan" \| "build" \| "check" \| "lineage" \| "impact"` (optional) | Defaults to **`scan`** (read-only). `build` writes docs/portal; `lineage` looks up one object; `impact` lists what changed files feed. |
 | `object` | `string` (optional) | **Required when `command === "lineage"`** — the object to look up (e.g. `dbo.fact_sales`, or a table/measure name). Ambiguous names return candidates. |
 | `depth` | `number` (optional) | For `lineage` only: hops up/downstream to include (default 1). |
+| `files` | `string[]` (optional) | For `impact`: the changed source files, relative to the session folder, absolute, or relative to a documented repo root. |
+| `against` | `string` (optional) | For `impact`: a git ref (e.g. `main`) whose committed `graph.json` is the baseline. |
 
 For `scan` / `build` / `check`, invocation is `coop-data-doc <command>` via
 `pi.exec`. Result `content` notes the artifacts: always `graph.json`, plus
@@ -214,17 +221,40 @@ optional and you can still work without them.
 
 For `command === "lineage"`, invocation is `coop-data-doc lineage <object> [--depth N]`.
 It reads the **already-built** `graph.json` (it does not re-parse the repos), so the
-agent can ground a change in an object's immediate lineage. Result `content` is a
-one-liner (`N upstream, M downstream, K relationship(s)`); the full slice is in
+agent can ground a change in an object's immediate lineage. Result `content`
+opens with the counts (`N upstream, M downstream, K relationship(s)`) and the
+evidence state, then the object's doc page and one line per upstream object,
+downstream object and relationship (`- name (type)`). The full slice is in
 `details.lineage` → the parsed JSON `{ object, schema, layer, source_file, upstream[],
-downstream[], relationships[] }` (each up/downstream entry carries `id`, `name`,
-`type`, and `doc`, the per-object Markdown path). An ambiguous `object` returns
-`{ query, ambiguous: true, matches[] }` (re-call with a specific name); when there's
+downstream[], relationships[], evidence }` (each up/downstream entry carries `id`,
+`name`, `type`, and `doc`, the per-object Markdown path). An ambiguous `object`
+lists the candidates (`{ query, ambiguous: true, matches[] }` in details; re-call
+with a specific name); when there's
 no built graph, `content` says so and points at `build` / `/setup-docs` — you can
 still proceed without it. `object` is required: a blank one returns a usage note, not
 an error.
 
-> The model can call `scan` / `build` / `check` / `lineage`. Interactive setup is
+For `command === "impact"`, invocation is `coop-data-doc impact --format=json
+--evidence` plus a baseline and the changed files (each `--files=<path>`, given
+both as passed and relative to every documented repo root it sits in, since the
+graph records source files relative to their repo root):
+
+- With `files` and no `against`, the baseline is the **current built graph**
+  (`--baseline=<output dir>/graph.json`, found the same way as the session-start
+  note). The objects those files define seed the traversal, and their downstream
+  comes from the graph as built, so no rebuild or committed docs are needed. A
+  file the graph does not know (a new object, or a stale graph) matches nothing.
+- With `against` (a git ref name), the baseline is that ref's committed
+  `graph.json` (`--git=<ref>`): after `build`, every added, changed or removed
+  object seeds the traversal, or only the given `files` when set.
+
+`content` lists each changed object and every downstream object it feeds, with the
+evidence state; an empty result says no documented object matched and never
+claims zero impact. `details` → `{ tool, command, files, against, args, exitCode,
+impact, stderr }`. The skills `coop-workflow` (step 8) and `git-helper` (the PR
+description's **Lineage impact**) call it before a change is presented.
+
+> The model can call `scan` / `build` / `check` / `lineage` / `impact`. Interactive setup is
 > user-driven through **`/setup-docs`** or the `/start` menu (the full native
 > wizard over JSONL), or through the same wizard in a shell with `coop data-doc setup`.
 
@@ -234,8 +264,8 @@ an error.
 **Auto-detection (lineage grounding).** When docs already exist, one hook makes
 coop consult lineage without the user asking:
 
-- `before_agent_start` — once per folder, when **built** docs exist (the config's
-  markdown output dir has `manifest.json` or `index.md`), it injects an
+- `before_agent_start` — once per folder, when **built** docs exist (the config
+  coop-data-doc itself would select, then its output dir has `graph.json`), it injects an
   agent-visible, **`display: false`** note (`customType: "coop-lineage"`) telling
   coop to look up an object's up/downstream via `data_doc (command="lineage")`
   before touching it. **Silent when no built docs exist** — the docs are an aid,
@@ -289,7 +319,8 @@ is blocked headlessly); a call carrying any field beyond `object` is blocked. Th
 audit records a fixed label and the environment, never the object name. The tool's
 text output adds a `data_doc` lineage hint when built docs exist in the folder, and
 the `impact-analysis` prompt and the `coop-workflow` skill call `sql_impact` before
-any live SQL edit.
+any live SQL edit. The text lists every item in each section (`- schema.name (type)`,
+unresolved references flagged; columns as `- name type NULL|NOT NULL`).
 
 ---
 
@@ -486,7 +517,8 @@ snapshot as before. The `ok` result carries a `target` summary (`environment`,
 contract's tenant chain so the executor still has a launch identity to pin to.
 It never cascades from MCP automatically. It accepts one plain literal-`TOP` `SELECT`, rejects mutations,
 batches, cross-database names, and unbounded reads before authentication, and returns
-capped structured JSON. Endpoint discovery uses Fabric's documented item APIs:
+capped structured JSON. Its text shows the column names, then one JSON array per
+row, up to the 12,000-character cap. Endpoint discovery uses Fabric's documented item APIs:
 Warehouse `GET /v1/workspaces/{workspaceId}/warehouses/{warehouseId}` reads
 `properties.connectionString`; Lakehouse
 `GET /v1/workspaces/{workspaceId}/lakehouses/{lakehouseId}` uses the source Lakehouse
@@ -530,9 +562,9 @@ row SQ6).
 
 ### Offline data documentation evidence
 
-`data_doc lineage` preserves the companion's complete JSON slice in tool details,
-including coverage, trust and source provenance. The text summary describes observed
-links and their evidence state; zero observed neighbors never proves zero impact
+`data_doc lineage` and `data_doc impact` preserve the companion's complete JSON in
+tool details, including coverage, trust and source provenance. The text names the
+observed links and their evidence state; zero observed neighbors never proves zero impact
 outside the parsed scope. Older companion output without evidence remains unknown.
 A failed scan/build and a read-only `check` do not claim newly generated artifacts.
 Startup announces a graph only when `graph.json` exists and points to object pages

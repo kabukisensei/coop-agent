@@ -60,8 +60,10 @@ workflow calls at step 3 (read target + lineage) and step 9 (document).
 - **`data_doc`** (`coop-data-doc`) — `scan` → `graph.json` (lineage graph,
   read-only); `build` → `manifest.json` + Markdown + portal; `lineage` (with
   `object`, optional `depth`) → one object's upstream/downstream + relationships +
-  doc path as JSON from the built graph (use it **before** touching that object);
-  `check` is a CI staleness gate. Also `init` / `setup` as needed. This is the
+  doc path from the built graph (use it **before** touching that object); `impact`
+  (with `files`, the changed source paths, or `against`, a git ref with committed
+  docs) → every downstream object those changes feed (use it **before** presenting
+  a change); `check` is a CI staleness gate. Also `init` / `setup` as needed. This is the
   primary tool for this skill.
 - **`git`** — `status` / `log` to detect source-vs-doc staleness (read-only).
 - **Microsoft Learn MCP** — current guidance when interpreting Fabric/Power BI

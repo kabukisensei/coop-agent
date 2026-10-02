@@ -128,8 +128,10 @@ local user profile; the other three are below):
 
 - `extensions/coop-tools/index.ts` — registers `data_doc` / `bpa_review` /
   `fabric_sql_query` with `pi.registerTool(...)`. Copy the pattern to wrap another CLI. The
-  `data_doc` tool takes `command` = `scan` / `build` / `check` / `lineage` (the last
-  returns one object's up/downstream + relationships as JSON). It also shows the event
+  `data_doc` tool takes `command` = `scan` / `build` / `check` / `lineage` / `impact`
+  (`lineage` lists one object's up/downstream + relationships, `impact` what changed
+  files feed). Pi gives the model a tool's `content` text only, never `details`, so
+  put what the model needs in the text. It also shows the event
   hook: `before_agent_start` — only when BUILT docs exist — injects an agent-visible,
   human-hidden (`display: false`) note so coop consults the lineage before touching
   an object. Missing docs stay silent; setup is explicitly launched with

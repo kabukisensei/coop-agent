@@ -626,8 +626,12 @@ impact before it touches an object — without you running anything by hand:
 - **Look up lineage.** Before analyzing or changing any SQL object, DAX measure, or
   semantic model, the agent calls the `data_doc` tool with `command="lineage"`,
   `object="<name>"` (optionally a `depth`), which returns that object's upstream
-  inputs, downstream dependents, and relationships as JSON — it reads the focused
+  inputs, downstream dependents, and relationships — it reads the focused
   per-object doc rather than re-deriving lineage by hand.
+- **Check what a change feeds.** Before presenting an edit to SQL, DAX or model
+  source, the agent calls `data_doc` with `command="impact"` and the changed files,
+  and lists every downstream object they feed (also the PR description's
+  **Lineage impact**).
 - **Degrade gracefully.** If the folder has **no** `coop-data-doc.yml` or no built
   graph, lineage is silent and optional — the agent proceeds without it and may
   suggest **`/setup-docs`**. The docs are an aid, not a gate.
