@@ -1555,6 +1555,116 @@ export function fabricWriteLabel(cmd: string): string | null {
   return null;
 }
 
+// --- Power BI Desktop reload guard (S31) ------------------------------------------
+// The Desktop Bridge's `reload` discards unsaved Desktop edits unconditionally (its
+// README says so), and the Report Authoring CLI's `preview` reloads the live window
+// through the same bridge. Until now coop's only protection was the skill text
+// ("run status first; stop on hasUnsavedChanges"). This gate enforces it: before a
+// reload runs, coop reads `powerbi-desktop status` itself and asks (fails closed
+// headlessly) when the targeted instance has unsaved changes, and blocks when the
+// instance cannot be verified at all. Status output is read, never the command.
+
+/** A Desktop reload found in a bash command: which instance it targets (by `--pid`
+ *  or by the preview's `.Report` folder), or null when nothing reloads Desktop. */
+export type DesktopReloadTarget = { label: string; pid: string | null; folder: string | null };
+
+const PREVIEW_NON_RELOAD_FLAGS = new Set(["--status", "--close", "--close-all", "--list-hosts", "--screenshot"]);
+
+export function desktopReloadTarget(cmd: string): DesktopReloadTarget | null {
+  for (const { segment } of splitShellSegments(cmd)) {
+    const toks = tokenizeArgs(segment.trim()).map((t) => t.replace(/^['"]|['"]$/g, ""));
+    let i = 0;
+    while (i < toks.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(toks[i]) || toks[i] === "sudo" || toks[i] === "command" || toks[i] === "npx" || (toks[i - 1] === "npx" && /^(-y|--yes)$/.test(toks[i])))) i++;
+    const prog = (toks[i] || "").split(/[\\/]/).pop()?.toLowerCase().replace(/\.(cmd|exe|ps1)$/, "") || "";
+    const sub = (toks[i + 1] || "").toLowerCase();
+    const rest = toks.slice(i + 2);
+    if (prog === "powerbi-desktop" && sub === "reload") {
+      return { label: "powerbi-desktop reload", pid: optionValue(rest, ["--pid"]), folder: null };
+    }
+    if (prog === "powerbi-report-author" && sub === "preview") {
+      if (rest.some((t) => PREVIEW_NON_RELOAD_FLAGS.has(t) || [...PREVIEW_NON_RELOAD_FLAGS].some((f) => t.startsWith(`${f}=`)))) continue;
+      if ((optionValue(rest, ["--host"]) || "desktop").toLowerCase() !== "desktop") continue;
+      let folder: string | null = null;
+      for (let j = 0; j < rest.length; j++) {
+        const t = rest[j];
+        if (t.startsWith("-")) { if (!t.includes("=") && /^--(host|group|dataset|scale)$/.test(t)) j++; continue; }
+        folder = t;
+        break;
+      }
+      const flag = rest.includes("--reload-with-model") ? " --reload-with-model" : rest.includes("--reload") ? " --reload" : "";
+      return { label: `powerbi-report-author preview${flag}`, pid: null, folder };
+    }
+  }
+  return null;
+}
+
+/** The `.Report` folder name that identifies a report, lower-cased: from a `.Report`
+ *  folder path or a `.pbip`/`.pbix` file path (trailing separators ignored). */
+function reportKey(path: string): string {
+  const base = (path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "").toLowerCase();
+  return base.replace(/\.(pbip|pbix)$/, ".report");
+}
+
+/** How to run `powerbi-desktop status` through `pi.exec` (which spawns without a
+ *  shell). The npm global install on Windows is a `powerbi-desktop.cmd` shim that
+ *  a shell-less spawn cannot start, so locate the shim's package on PATH and run
+ *  its `dist/cli.js` with the node that runs Pi. Elsewhere the shim is a script. */
+export function desktopStatusCommand(
+  pid: string | null,
+  platform: string = process.platform,
+  env: Record<string, string | undefined> = process.env as Record<string, string | undefined>,
+  exists: (path: string) => boolean = existsSync,
+  node: string = process.execPath,
+): { bin: string; args: string[] } {
+  const args = ["status", ...(pid ? ["--pid", pid] : [])];
+  if (platform !== "win32") return { bin: "powerbi-desktop", args };
+  const dirs = String(env.PATH || env.Path || "").split(";").map((d) => d.trim()).filter(Boolean);
+  for (const dir of dirs) {
+    if (!exists(join(dir, "powerbi-desktop.cmd"))) continue;
+    const cli = join(dir, "node_modules", "@microsoft", "powerbi-desktop-bridge-cli", "dist", "cli.js");
+    if (exists(cli)) return { bin: node, args: [cli, ...args] };
+  }
+  return { bin: "powerbi-desktop", args };
+}
+
+export type DesktopReloadDecision =
+  | { action: "allow"; pid: string }
+  | { action: "ask"; pid: string; file: string }
+  | { action: "block"; reason: string };
+
+/** Decide a Desktop reload from `powerbi-desktop status` output. Fails closed: an
+ *  unreadable status, a missing or unconnected instance, or an unstated unsaved
+ *  flag blocks; `hasUnsavedChanges: true` asks; only a connected, clean instance
+ *  passes. Without `--pid` the preview's `.Report` folder picks the instance; when
+ *  nothing identifies one, every connected instance must be clean. */
+export function decideDesktopReload(statusJson: string, target: DesktopReloadTarget): DesktopReloadDecision {
+  let parsed: any;
+  try { parsed = JSON.parse(statusJson); } catch { return { action: "block", reason: "`powerbi-desktop status` printed no readable JSON" }; }
+  const instances: any[] = Array.isArray(parsed?.instances) ? parsed.instances : [];
+  const connected = instances.filter((x) => x && x.bridgeStatus === "connected");
+  const judge = (inst: any): DesktopReloadDecision => {
+    const pid = String(inst.pid);
+    const file = String(inst.currentFilePath || inst.reportDir || "");
+    if (inst.hasUnsavedChanges === true) return { action: "ask", pid, file };
+    if (inst.hasUnsavedChanges === false) return { action: "allow", pid };
+    return { action: "block", reason: `Desktop instance ${pid} did not report its unsaved-changes state` };
+  };
+  if (target.pid) {
+    const inst = instances.find((x) => x && String(x.pid) === String(target.pid));
+    if (!inst) return { action: "block", reason: `no Desktop Bridge instance with pid ${target.pid}` };
+    if (inst.bridgeStatus !== "connected") return { action: "block", reason: `Desktop instance ${target.pid} is ${inst.bridgeStatus || "not connected"}` };
+    return judge(inst);
+  }
+  if (!connected.length) return { action: "block", reason: "no connected Power BI Desktop instance" };
+  if (target.folder) {
+    const want = reportKey(target.folder);
+    const matches = connected.filter((x) => reportKey(String(x.reportDir || "")) === want || reportKey(String(x.currentFilePath || "")) === want);
+    if (matches.length === 1) return judge(matches[0]);
+  }
+  const dirty = connected.map(judge).find((d) => d.action !== "allow");
+  return dirty || { action: "allow", pid: connected.map((x) => String(x.pid)).join(",") };
+}
+
 /** Does this path look like a secret (private key / credential / .env) the agent
  *  shouldn't read or write? Public keys (.pub) and *.example/.sample are excluded. */
 export function isSecretPath(p: string): boolean {
@@ -1968,6 +2078,41 @@ export default function coopGuardrails(pi: ExtensionAPI) {
           return { block: true, reason: `coop guardrails: blocked the ${fabricWrite} command (you declined). Fabric writes need explicit approval; read with \`--method get\` or make the change in the Fabric UX.` };
         }
       }
+
+      // 2c. Power BI Desktop reload (S31) → read `powerbi-desktop status` first; ask
+      // when the targeted instance has unsaved changes (the bridge would discard
+      // them), block when it cannot be verified; fail closed without UI.
+      const reload = desktopReloadTarget(cmd);
+      if (reload) {
+        let decision: DesktopReloadDecision;
+        try {
+          const status = desktopStatusCommand(reload.pid);
+          const res = await pi.exec(status.bin, status.args, { cwd: ctx.cwd });
+          decision = res && res.code === 0 ? decideDesktopReload(String(res.stdout || ""), reload) : { action: "block", reason: `\`powerbi-desktop status\` exited ${res ? res.code : "without a result"}` };
+        } catch {
+          decision = { action: "block", reason: "`powerbi-desktop status` could not run" };
+        }
+        if (decision.action === "block") {
+          audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "blocked", label: "Desktop reload", detail: "status-unverified" });
+          return { block: true, reason: `coop guardrails: blocked ${reload.label}; ${decision.reason}. A reload discards unsaved Desktop edits, so coop only reloads an instance whose status it can read. Run \`powerbi-desktop status\`, pick the right --pid, and retry.` };
+        }
+        if (decision.action === "ask") {
+          if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
+            audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "blocked-headless", label: "Desktop reload", detail: "unsaved-changes" });
+            return { block: true, reason: `coop guardrails: blocked ${reload.label}; Desktop instance ${decision.pid} has unsaved changes and approval is unavailable in headless mode. Ask the user to save or discard in Power BI Desktop first.` };
+          }
+          const ok = await ctx.ui.confirm(
+            "coop guardrails",
+            `Power BI Desktop instance ${decision.pid} has unsaved changes${decision.file ? `:\n  ${decision.file}` : ""}\n  ${cmd.slice(0, 200)}\nA reload discards them. Save or discard in Desktop first, then retry. (Desktop 2.157.627.0 reports a false positive on untouched files.) Reload anyway?`,
+          );
+          audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: ok ? "allowed" : "declined", label: "Desktop reload", detail: "unsaved-changes" });
+          if (!ok) {
+            return { block: true, reason: `coop guardrails: blocked ${reload.label} (you declined); Desktop instance ${decision.pid} has unsaved changes. Ask the user to save or discard in Power BI Desktop, then retry.` };
+          }
+        } else {
+          audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "allowed", label: "Desktop reload", detail: "clean" });
+        }
+      }
     } catch {
       // An approval/policy failure is not permission. Never forward exception text:
       // it can contain command arguments, credentials, or private tool payloads.
@@ -2038,6 +2183,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         "  • secret files — confirms read/edit/write AND bash access (cat .env etc.) of .env / keys / credentials",
         `  • live data — allows dev/test metadata and one plain bounded SELECT on the dev target; elsewhere bounded matching reads may reuse one session grant (${liveReadGrant ? "active" : "none"}; /coop-live-read status|revoke)`,
         "  • mutating MCP actions — confirms create/update/delete/deploy/publish-looking Fabric/Power BI/MCP tool calls (best-effort)",
+        "  • Power BI Desktop reloads — reads `powerbi-desktop status` before `powerbi-desktop reload` / `powerbi-report-author preview`; asks on unsaved changes, blocks when the instance can't be verified",
         `  • edit approvals — approving an edit can cover that server for the session; deletes, drops and production still ask (${editApprovals.size ? `${editApprovals.size} active` : "none"}; /coop-approvals status|revoke)`,
         "  • managed updates — blocks ctx_upgrade so the manifest-pinned fleet moves together",
         "Advisory rules live in docs/guardrails.md. Disable with COOP_NO_GUARDRAILS=1.",

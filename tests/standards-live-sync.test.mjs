@@ -200,8 +200,31 @@ try {
       if (args[0] === "clone") { fetches++; return { status: 1, stdout: "", stderr: "" }; }
       return spawnSync("git", ["-c", "core.hooksPath=/dev/null", ...args], { cwd: run.cwd || undefined, encoding: "utf8", timeout: run.timeout });
     } }));
-    assert.equal(failed.ok, false); assert.equal(failed.skipped, undefined); assert.equal(fetches, 1);
+    // Two clones: the refresh really ran (not the shortcut) and retried the failure once.
+    assert.equal(failed.ok, false); assert.equal(failed.skipped, undefined); assert.equal(fetches, 2);
     assert.equal(refreshCanonical(options()).ok, true);
+  });
+  test("a clone that fails once is retried, and a repeated failure carries git's reason", () => {
+    const passthrough = (args, run) => spawnSync("git", ["-c", "core.hooksPath=/dev/null", ...args], { cwd: run.cwd || undefined, encoding: "utf8", timeout: run.timeout });
+    let clones = 0; now += 1;
+    const recovered = refreshCanonical(options({ force: true, runner: (args, run) => {
+      if (args[0] === "clone" && clones++ === 0) return { status: 128, stdout: "", stderr: "fatal: unable to access the remote: transient\n" };
+      return passthrough(args, run);
+    } }));
+    assert.equal(recovered.ok, true, JSON.stringify(recovered)); assert.equal(clones, 2);
+    clones = 0; now += 1;
+    const failed = refreshCanonical(options({ force: true, runner: (args, run) => {
+      if (args[0] === "clone") { clones++; return { status: 128, stdout: "", stderr: "warning: ignored\nfatal: could not read Username for 'https://github.com': terminal prompts disabled\n" }; }
+      return passthrough(args, run);
+    } }));
+    assert.equal(failed.ok, false); assert.equal(clones, 2);
+    assert.equal(failed.detail, "canonical remote unavailable or authentication required (fatal: could not read Username for 'https://github.com': terminal prompts disabled)");
+    const timedOut = refreshCanonical(options({ force: true, runner: (args, run) => {
+      if (args[0] === "clone") { clones++; return { status: null, error: Object.assign(new Error("timed out"), { code: "ETIMEDOUT" }), stdout: "", stderr: "" }; }
+      return passthrough(args, run);
+    } }));
+    assert.equal(timedOut.ok, false); assert.equal(clones, 3, "a timeout is not retried"); assert.equal(timedOut.detail, "canonical refresh timed out");
+    assert.equal(refreshCanonical(options({ force: true })).ok, true);
   });
   test("one task pin constrains every domain and late resolution", () => {
     const pinned = pinStandardsTask(["sql", "dax"], options({ refresh: false })); assert.equal(pinned.resolutions.every((r) => r.revision === r2), true);

@@ -5,6 +5,72 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- coop-guardrails: Power BI Desktop reload guard (S31). Before `powerbi-desktop
+  reload` and before a `powerbi-report-author preview` that reloads the live
+  window, coop reads `powerbi-desktop status` itself: an instance with unsaved
+  changes asks first (blocked headlessly), an instance that cannot be verified is
+  blocked, only a connected clean instance reloads. The rule used to be skill
+  prose only; it is now enforced in code and tested against a stubbed bridge.
+
+- First run shows the common workflows, not a wizard (master plan FR1, Phase 6).
+  The first interactive `coop` launch on a machine opens the Start Here menu once
+  (`bin/coop.ps1` hands coop-tools `COOP_FIRST_RUN=1` and writes
+  `<profile dir>/first-run`); `/start` opens it any time and later launches go
+  straight to the prompt. The menu is the plan's seven workflows: check SQL, DAX or
+  a model against the standards; trace the impact of a change (`sql_impact`, then
+  `data_doc lineage`); fix or edit an object on dev with approval (`/spec-first`,
+  `/slice-next`); document a warehouse or semantic model; start a client project
+  (`/setup-project`); write today's log or a handoff; sign in or check health
+  (`coop doctor`, `az login`). While the local profile is missing, *Start a client
+  project* asks the name coop calls you by and saves `user.json` with the balanced
+  preset (`coop onboard` still edits the full profile).
+
+### Changed
+
+- A plain `coop` launch never runs the onboarding wizard any more and nothing in
+  first-run setup can stop the launch (previously a missing or failed
+  `scripts/onboard.py` run stopped it); an incomplete profile gets one line that
+  names the menu item and `coop onboard`. `coop install` keeps its interactive
+  "Personalize Coop" step. The Fabric workspace review left the `/start` menu
+  (still `/fabric-architecture-review`).
+### Fixed
+
+- The Azure sign-in preflight no longer reports `Azure token check failed ...
+  (not an auth error)` for a signed-in tenant on Linux and macOS. pwsh's
+  `Start-Process` writes `-RedirectStandardInput` into the child's stdin only
+  after the child has started, so an `az` that exited first (the fixture's fake
+  az in CI, about 1 run in 100) failed that write with `Broken pipe` and
+  `Invoke-CoopAz` lost the process (Rc 127). Off Windows the helper now starts
+  `az` through .NET directly, closes stdin at once and drains stdout and stderr
+  itself; Windows PowerShell keeps its `Start-Process` path unchanged.
+- A canonical standards refresh whose `git clone` fails once is retried once
+  before the source is marked degraded (a timeout is not retried), and the
+  failure detail now carries git's last stderr line, so a transient clone
+  failure on a loaded CI runner neither fails the live-sync test nor hides why.
+- `tests/standards-lock-simple.test.mjs` (extended lane) no longer fails on macOS
+  with `timed out waiting for .../serialized/A-entered`: its fixture root is now
+  resolved to its real path, as the other standards tests do, because macOS keeps
+  `tmpdir()` under the `/var -> /private/var` symlink that the standards
+  storage-root check rejects, so the lock worker exited at once and the marker
+  never appeared. The wait now also fails at once with the worker's stderr when
+  the worker exits first, instead of reporting a timeout.
+- The install/update busy guard (`Test-CoopPiConvergeAllowed`, issue #234) counts
+  only coop/pi sessions run from the npm tree this install converges
+  (`Get-CoopNpmGlobalRoots`), so an isolated install (a redirected profile on
+  another drive) converges Pi in place and exits 0 while coop is open from a
+  different install on the same machine. A session from the same install still
+  skips the convergence with the same warning; with no npm root known, every
+  session counts as before. `tests/fixtures/pi-busy-guard.test.ps1` (gate lane)
+  covers both cases with fake process rows.
+- `coop doctor` no longer calls the MCP set, or `powerbi-modeling-mcp`, read-only:
+  the section header, the `powerbi-mcp-server` hint and the no-config hint now say
+  that Fabric and Microsoft Learn are read-only while the Power BI Modeling, Azure
+  DevOps and Warehouse SQL servers are approval-gated (every edit asks first). The
+  `coop-workflow` and `power-bi-impact-analysis` skills and `.coop/project.example.yml`
+  use the same wording (#194).
+
 ## [0.26.0] — 2026-10-01
 
 ### Added
@@ -620,7 +686,6 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   and the install says so), and `coop update` / `coop uninstall` look in the same
   folders. A normal install still uses the shell folders, so a OneDrive-redirected
   Desktop keeps working. Windows only; the bash installer never had the problem.
-
 
 ## [0.24.0] — 2026-09-30
 

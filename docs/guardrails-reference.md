@@ -32,6 +32,10 @@ Destructive commands require confirmation. This includes `rm -rf`, `git push --f
 
 Fabric and Azure REST writes issued from the shell ask the same way: `az rest` with a non-GET `--method`, `fab api -X post|patch|put|delete`, and the Fabric CLI's mutating subcommands (`fab deploy`, `mkdir`, `rm`, `cp`, `mv`, `set`, `import`, `assign`, `unassign`, `job`, `acl`, `label`, `start`, `stop`, `ln`). The official Microsoft Fabric skills drive item create/update/deploy/delete this way, outside the MCP mutation gate. Reads (`--method get`, `fab api <path>`, `fab ls`/`get`/`exists`/`export`) pass. Headless runs fail closed.
 
+### Power BI Desktop reloads
+
+Before `powerbi-desktop reload` or a `powerbi-report-author preview` that reloads the live Desktop window (a bare preview, `--reload`, `--reload-with-model`), coop runs `powerbi-desktop status` itself. The Desktop Bridge discards unsaved Desktop edits on reload, so an instance reporting `hasUnsavedChanges: true` asks first and headless runs are blocked; an instance coop cannot verify (status fails, not connected, `--pid` not listed, flag unstated) is blocked. `--pid` selects the instance, otherwise the preview's `.Report` folder does; with neither, every connected instance must be clean. `--status`, `--screenshot`, `--close` and `--host service` never reload and pass.
+
 ### PowerShell commands
 
 Pi's optional `powershell` tool is off by default. When it is on, **every** PowerShell command asks first and shows the command, because the checks above parse bash, not PowerShell. There is no session approval, and headless runs are blocked. Prefer the `bash` tool (Git Bash on Windows), which those checks cover.
