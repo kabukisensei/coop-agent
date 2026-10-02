@@ -119,6 +119,19 @@ Pinned `pi-mcp-adapter` 3.3.0 runs COOP's exact request-header helper for every
 outbound request, and the managed entry sets its supported `requestTimeoutMs` to
 60 seconds. The fresh bearer must match the launch identity before it is returned.
 
+### Contract fields the guardrails read
+
+Only these `.coop/project.yml` fields change what the guardrails allow:
+
+- `repositories.<name>.local_path`, `agent_allowed_to_commit` and `agent_never_commit`
+  (plus the top-level `agent_allowed_to_commit`): which paths a commit may stage.
+- `sql_targets`, `profile.client` and `fabric.tenant_id`: the live-read scope above.
+
+The dev/test/production and approval rules are fixed in the guardrails, so editing
+any other contract field never changes an approval. Older contracts may still
+carry `estate.live_discovery` or `mcp.<server>.allowed_default_actions` /
+`requires_approval_actions`; nothing reads them, and they can be deleted.
+
 ### Audit log
 
 Recorded blocks and confirmations (allowed or declined) are appended best-effort as one JSON line to `$PI_CODING_AGENT_DIR/guardrails-audit.jsonl` (default `~/.coop/agent/…`): timestamp, working folder, kind, decision, and a fixed classification (or offending paths for source/secret-file gates). Command text and arguments are not persisted. The secret gate records only the matched path, never file contents; the MCP gate records fixed COOP labels, never remote server strings or raw arguments. Run `/coop-guardrails` to see the last ~10 decisions and the log path. An enforcement exception returns a fixed blocking result without logging its error payload.
