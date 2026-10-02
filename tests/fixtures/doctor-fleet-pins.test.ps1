@@ -35,7 +35,8 @@ try {
   [System.IO.File]::WriteAllText($manifest, ('{"schema_version":1,"python_tools":{"coop-data-doc":"1.3.0"},' +
     '"npm_tools":{"' + $report + '":"0.4.0","' + $modeling + '":"1.0.0","' + $bridge + '":"1.0.0"}}'), $utf8)
 
-  # Fake npm: `npm ls -g --depth=0 <pkg>` answers the fixture versions (the
+  # Fake npm (cmd splits `--depth=0` at the `=`, so the package is %5 there):
+  # `npm ls -g --depth=0 <pkg>` answers the fixture versions (the
   # modeling MCP and the bridge are off their pins); anything else prints nothing.
   Write-Shim -Dir $bin -Name 'npm' -Sh (@(
       'case "$*" in',
@@ -44,9 +45,9 @@ try {
       ('  "ls -g --depth=0 ' + $bridge + '") echo "/g"; echo "+-- ' + $bridge + '@0.1.2" ;;'),
       'esac',
       'exit 0') -join "`n") -Cmd (@(
-      ('if "%~4"=="' + $report + '" (echo C:\g& echo +-- ' + $report + '@0.4.0& exit /b 0)'),
-      ('if "%~4"=="' + $modeling + '" (echo C:\g& echo +-- ' + $modeling + '@0.9.0& exit /b 0)'),
-      ('if "%~4"=="' + $bridge + '" (echo C:\g& echo +-- ' + $bridge + '@0.1.2& exit /b 0)'),
+      ('if "%~5"=="' + $report + '" (echo C:\g& echo +-- ' + $report + '@0.4.0& exit /b 0)'),
+      ('if "%~5"=="' + $modeling + '" (echo C:\g& echo +-- ' + $modeling + '@0.9.0& exit /b 0)'),
+      ('if "%~5"=="' + $bridge + '" (echo C:\g& echo +-- ' + $bridge + '@0.1.2& exit /b 0)'),
       'exit /b 0') -join "`r`n")
 
   # Fake pipx: only coop-sql-review has a venv (0.15.2); everything else fails.
