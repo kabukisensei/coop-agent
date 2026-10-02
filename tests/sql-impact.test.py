@@ -138,8 +138,20 @@ assert [c for c in cursor.calls if c[0] is si.COLUMNS_SQL][0][1] == ("dbo", "vw_
 blob = json.dumps(out)
 assert AZ_HOST not in blob and "ODBC Driver" not in blob
 
+# --- Fabric Warehouse: no referencing DMV, dependents come from the dependency rows -
+fabric_answers = dict(answers)
+fabric_answers[si.DOWNSTREAM_CATALOG_SQL] = [("finance", "ForecastVersion", "VIEW")]
+fabric = FakeCursor(fabric_answers, failing={si.DOWNSTREAM_SQL})
+with mock.patch.object(sq, "open_connection", return_value=(FakeConnection(fabric), target("fabric_warehouse"), "d", None)):
+    out = si.execute({"object": "dbo.vw_Sales"})
+assert out["downstream"]["state"] == "ok", out["downstream"]
+assert out["downstream"]["items"] == [{"schema": "finance", "name": "ForecastVersion", "type": "VIEW"}]
+fallback = [c for c in fabric.calls if c[0] is si.DOWNSTREAM_CATALOG_SQL]
+assert fallback and fallback[0][1] == ("[dbo].[vw_Sales]",), "the fallback binds the name too"
+assert out["upstream"]["state"] == "ok" and out["columns"]["state"] == "ok"
+
 # --- a missing catalog view is "unavailable", never an empty list ------------------
-failing = FakeCursor(answers, failing={si.DOWNSTREAM_SQL, si.COLUMNS_SQL})
+failing = FakeCursor(answers, failing={si.DOWNSTREAM_SQL, si.DOWNSTREAM_CATALOG_SQL, si.COLUMNS_SQL})
 with mock.patch.object(sq, "open_connection", return_value=(FakeConnection(failing), target("fabric_warehouse", "test"), "d", None)):
     out = si.execute({"object": "dbo.vw_Sales"})
 assert out["ok"] and out["downstream"]["state"] == "unavailable" and out["downstream"]["items"] == []

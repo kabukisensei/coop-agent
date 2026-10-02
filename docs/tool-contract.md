@@ -297,7 +297,7 @@ catalog queries with the name bound through `OBJECT_ID(?)`, never spliced in:
 
 | Section | Query | Notes |
 | --- | --- | --- |
-| `downstream` | `sys.dm_sql_referencing_entities(?, 'OBJECT')` joined to `sys.objects` | who references the object, resolved at call time |
+| `downstream` | `sys.dm_sql_referencing_entities(?, 'OBJECT')` joined to `sys.objects` | who references the object, resolved at call time; where the target rejects that function (Fabric Warehouse), the `sys.sql_expression_dependencies` rows whose `referenced_id` is the object |
 | `upstream` | `sys.sql_expression_dependencies` for the object's referenced entities, joined to `sys.objects` | each item carries `resolved`; an unresolved or ambiguous one (dropped, cross-database) adds `mentioned_in_definition` from a `sys.sql_modules` `LIKE` check |
 | `columns` | `INFORMATION_SCHEMA.COLUMNS` | name, type, nullability, position, so a before/after comparison knows what to count |
 

@@ -6,7 +6,9 @@ exactly as lib/sql_query.py does and run three fixed, parameterized catalog
 queries, never free text:
 
 - downstream (who references this object): `sys.dm_sql_referencing_entities`
-  joined to `sys.objects`, resolved at call time;
+  joined to `sys.objects`, resolved at call time; where a target lacks that
+  function (Fabric Warehouse), the same catalog's `sys.sql_expression_dependencies`
+  rows whose `referenced_id` is this object;
 - upstream (what this object references): `sys.sql_expression_dependencies`
   for the object's own referenced entities, with a `sys.sql_modules` text check
   for each dependency the catalog could not resolve (a dropped or cross-database
@@ -55,6 +57,16 @@ UPSTREAM_SQL = (
     "LEFT JOIN sys.objects AS o ON o.object_id = d.referenced_id "
     "WHERE d.referencing_id = OBJECT_ID(?) "
     "ORDER BY d.referenced_schema_name, d.referenced_entity_name"
+)
+# Dependents from the stored dependency rows, for targets without the DMV above
+# (Fabric Warehouse rejects sys.dm_sql_referencing_entities).
+DOWNSTREAM_CATALOG_SQL = (
+    f"SELECT DISTINCT TOP ({MAX_DEPENDENCIES + 1}) s.name, o.name, o.type_desc "
+    "FROM sys.sql_expression_dependencies AS d "
+    "JOIN sys.objects AS o ON o.object_id = d.referencing_id "
+    "JOIN sys.schemas AS s ON s.schema_id = o.schema_id "
+    "WHERE d.referenced_id = OBJECT_ID(?) "
+    "ORDER BY s.name, o.name"
 )
 MODULE_MENTION_SQL = (
     "SELECT TOP (1) 1 FROM sys.sql_modules WHERE object_id = OBJECT_ID(?) AND definition LIKE ? ESCAPE '\\'"
@@ -128,17 +140,24 @@ def trace(cursor: Any, kind: str, schema: str, name: str) -> dict[str, Any]:
     if "downstream" in limits:
         sections["downstream"] = _unavailable(limits["downstream"])
     else:
-        try:
-            rows = _rows(cursor, DOWNSTREAM_SQL, (qualified,), MAX_DEPENDENCIES)
+        rows = None
+        for sql in (DOWNSTREAM_SQL, DOWNSTREAM_CATALOG_SQL):
+            try:
+                rows = _rows(cursor, sql, (qualified,), MAX_DEPENDENCIES)
+                break
+            except Exception:
+                continue
+        if rows is None:
+            sections["downstream"] = _unavailable(
+                f"sys.dm_sql_referencing_entities and sys.sql_expression_dependencies queries failed on this {kind} "
+                "target; dependents could not be looked up"
+            )
+        else:
             items = [
                 {"schema": _text(r[0]), "name": _text(r[1]), "type": _text(r[2]) or "unknown"}
                 for r in rows[:MAX_DEPENDENCIES]
             ]
             sections["downstream"] = _section(items, len(rows) > MAX_DEPENDENCIES)
-        except Exception:
-            sections["downstream"] = _unavailable(
-                f"sys.dm_sql_referencing_entities query failed on this {kind} target; dependents could not be looked up"
-            )
 
     try:
         rows = _rows(cursor, UPSTREAM_SQL, (qualified,), MAX_DEPENDENCIES)
