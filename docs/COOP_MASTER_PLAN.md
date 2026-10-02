@@ -409,7 +409,7 @@ is `config/release-manifest.json` at v0.23.5.
 | `@azure-devops/mcp` | 2.9.0 | 2.10.0 | **Merged** ([#191](https://github.com/kabukisensei/coop-agent/pull/191), 2026-10-01, unreleased; VM step pending) | B0 found 2.10.0 already at the executable path. Read-only check of both published packages on 2026-09-30: the same 37 tool names, the same domain list (coop passes `core work work-items search`), and `--authentication azcli` unchanged; 2.10.0 raises `@azure/identity` and `@azure/msal-node` and adds `@azure/msal-node-extensions` and `open` for its interactive sign-in path, which coop does not use. The README's tool-rename warning refers to the consolidation before 2.9.0. VM step: `coop sync`, then one work-item query through the MCP. |
 | `mcp-remote` | 0.1.38 | 0.14.3 | **Dropped** ([#190](https://github.com/kabukisensei/coop-agent/pull/190), 2026-10-01, unreleased; VM step pending) | only the Microsoft Learn entry used it; the exact replacement entry and proof test are in section 6.2. The draft generates the direct entry, replaces a managed `command`/`args` Learn entry wholesale on regeneration, and removes the package from the manifest and the skills manifest. VM step: live tools-list against learn.microsoft.com through the adapter. |
 | `powerbi-mcp-server` | 0.1.0 | 0.1.0 | **Dropped** ([#116](https://github.com/kabukisensei/coop-agent/pull/116)) | `--readonly` is silently ignored and `refresh_dataset` (a write) is exposed while coop documents it as read-only: [#93](https://github.com/kabukisensei/coop-agent/issues/93). Official `@microsoft/powerbi-modeling-mcp` 1.0.0 replaces it. |
-| `coop-data-doc` / `coop-sql-review` / `coop-dax-review` | 1.2.0 / 0.15.2 / 0.22.0 | 1.3.0 / retired / retired | coop-data-doc: **Merged** (pin bump PR, 2026-10-01, unreleased) | coop-data-doc v1.3.0 (released 2026-10-01) carries the mixed-estate lineage fixes (section 8.1, coop-data-doc #67); the reviewers retired with ST1 (section 7). |
+| `coop-data-doc` / `coop-sql-review` / `coop-dax-review` | 1.2.0 / 0.15.2 / 0.22.0 | 1.3.0 / retired / retired | coop-data-doc: **Merged** ([#238](https://github.com/kabukisensei/coop-agent/pull/238), 2026-10-01, shipped in v0.26.0) | coop-data-doc v1.3.0 (released 2026-10-01) carries the mixed-estate lineage fixes (section 8.1, coop-data-doc #67); the reviewers retired with ST1 (section 7). |
 | `ms-fabric-cli` / `fabric-cicd` / `pyodbc` | 1.7.0 / 1.3.0 / 5.3.0 | same | No | unchanged. |
 | `microsoft/skills-for-fabric` catalog | v0.3.10 | v0.3.18 (Sep 25) | **Merged** ([#175](https://github.com/kabukisensei/coop-agent/pull/175), 2026-09-30, unreleased) | v0.3.12 merged the two pinned `sqldw-*` skills into `sqldw-cli`; v0.3.17 unified `powerbi-report-cli`; new `sqldb-cli` targets Fabric SQL database. Aaron widened the row on 2026-09-30 to the **full** skill set (Eventhouses are in use). The merged PR pins v0.3.18, enables all 25 skills as baseline, and ships the shared `common/` tree the skills link (the reference-closure prerequisite in section 6.4). |
 | `microsoft/skills` (`kql`, `microsoft-docs`) | commit 903dc62 | 3495f50 (Sep 29) | Low — merged with it | `kql` and `microsoft-docs` are byte-identical between the two commits. |
@@ -922,6 +922,63 @@ separate from shared knowledge, and the old local search/sync path removed only
 after TeamAI covers its supported workflows. Isolation is the development VM (or
 a separate Windows account), since there is no beta channel. Each K row is its
 own PR with its own acceptance evidence.
+
+**K1 as built (2026-10-01, in review).** The isolation is a home redirect, not a
+vendor patch: `lib/teamai.py` installs the pinned `teamai-cli` with
+`npm install --prefix` into `<profile dir>/teamai/pkg` and runs it with
+`HOME`/`USERPROFILE` set to `<profile dir>/teamai/home`, a disposable
+`<profile dir>/teamai/workspace`, `TEAMAI_HOOKS_DISABLED`, `TEAMAI_RECALL_DISABLED`,
+`--dry-run` recall, no inherited `TEAMAI_*`/`CLAUDE_*` variables, no stdin, a
+hard timeout and a git push guard (`pushInsteadOf=no-push://` for every push URL
+the CLI's git sees; the VM run showed `teamai init` trying to register the member
+on the `teamai-reports` branch), so the CLI's data home and every AI-tool
+destination it would inject into land inside that root and nothing it does can
+write to the team repository. `coop teamai` is the only entry
+(`status|install|init|pull|recall --query`), launch never calls it, `coop sync`
+converges it only when `knowledge.teamai.enabled` is true, and results are
+capped at five with repository, revision, file and author provenance plus the
+`no_match`/`partial`/`unavailable`/`stale` distinctions. Defaults taken: off by
+default; the sandbox team repository URL is Aaron's input
+(`knowledge.teamai.team_repo`); the local search and `/share-learning` stay as
+they are (section 8.5 removal waits for K3); contribution is K2. Acceptance
+evidence is the development VM run in `E:\coop-sandbox` (recall against a
+sandbox team repository with harmless markers, real paths under the sandbox
+profile, nothing under the real home).
+
+**K2 as built (2026-10-01, in review, stacked on K1).** The CLI's own publication
+does not meet section 8.3: `teamai contribute` commits straight to the team repo's
+`learnings` branch and `teamai push` opens the pull request from inside the CLI.
+`coop teamai contribute --file <draft.md> [--title] [--approve]` therefore runs the
+CLI only in `--dry-run` (for the exact destination), sweeps the draft (secrets,
+connection strings, URL credentials, `client-confidential` or missing
+`sensitivity:` marking keep it local), returns a `preview`, and only `--approve`
+after the person's review stages the note on a new `coop/learning/<slug>-<stamp>`
+branch pushed from a disposable clone, printing the compare URL; the pull request
+is the person's, the default and `learnings` branches are never written, and the
+isolated CLI no longer inherits `GITHUB_TOKEN`/`GH_TOKEN`. `/share-learning` carries
+the route when the user picks the trial repository. Defaults taken: a staged branch
+(not a pull request) is the hand-off; a 64 KiB draft cap; branch names under
+`coop/learning/`. Acceptance evidence is the VM run (K1 runbook, plus one staged
+branch on the sandbox team repository with a harmless marker note).
+
+**K3 as built (2026-10-01, in review, stacked on K2).** The broader lifecycle is
+three read-only views behind the same `coop teamai` entry. `skills` lists the team
+repository's `skills/*/SKILL.md`; a new `knowledge.teamai.skills` flag (off by
+default, asked by `coop onboard --config-only`) lets `launch-spec` load them through
+the existing subordinate team-skills slot, with the clone path read from
+`state.json` so the launcher still never runs the CLI and a Cooptimize skill wins
+every name or folder clash. `maintenance` reports stale learnings
+(`knowledge.teamai.stale_days`, default 180), proposals older than 90 days,
+malformed notes and duplicate titles and writes nothing; clean-up is a pull request
+on the team repository, never an automatic prune. `compare --query` runs the bundled
+local search and the isolated recall side by side and reports the overlap: that is
+the section 8.5 evidence, and the local search, `coop sync` knowledge clones and
+`/share-learning` all stay (nothing is removed by K3). Not adopted: the CLI's
+`digest`, codebase extraction, session sharing, `recall maintenance --prune` and
+multi-project mode, each a write path or a hook outside the isolation. Acceptance
+evidence is the VM run (K1 runbook: `skills`, `maintenance` and `compare` against
+the sandbox team repository, a launch with `knowledge.teamai.skills` true showing
+the clone skill in `coop launch-spec --json` and absent from a Cooptimize clash).
 
 **B1 is skipped (Aaron, 2026-09-30).** Revision 2.0's isolated beta channel is
 the right design for a fleet too large to reach by hand. Coop's fleet is seven
@@ -1482,11 +1539,11 @@ tags. A stale row is never a reason to re-do work: check the PR list first.
 | 9c | U2 | Pi 1.0.x with a `pi-mcp-adapter` release that accepts `pi-ai` ^1.0.0; replaces the separate 0.99 step (section 6.5) | U1 + N1 merged; adapter peer range includes 1.0; 1.0 soaked (first 1.0.x patch or a week with no regressions reported); a concrete reason (a Pi fix coop needs, 0.87.x unsupported, or D1); explicit start | one PR, VM-qualified: matrix green on 1.0.x, `coop sync` locks `-builtin:mcp` and writes `tuiMode: "regular"`, doctor reports both, footer and Warehouse approval prompt verified live, lockfile regenerated | watch and wait (Aaron, 2026-10-01: little gain for coop yet; blocked on the adapter; [#170](https://github.com/kabukisensei/coop-agent/pull/170) held as a draft carries the guardrail prerequisite) |
 | 10 | ST1 | Standards alignment and reviewer decision | H3 + U1 | resolver data-driven; reviewers retired from coop (decided 2026-09-28), self-check in place | merged 2026-10-01 (unreleased, [#211](https://github.com/kabukisensei/coop-agent/pull/211), f29bd50): wrappers, `coop review`, reviewer-discovered fallback and CI jobs removed; self-check in the workflow with the standards rule (deviate only on a user exception or a stated reason); a bundled copy of the wiki ships in coop as the offline/first-run fallback (Aaron, 2026-10-01); CLI repos archived by Aaron |
 | 11 | SQ1–SQ7 | Azure SQL targets, dev default, live impact, data verification, install-time Fabric/Azure SQL client choice (section 8 item 7) | ST1 | section 8 acceptance | merged 2026-10-01 (shipped in v0.26.0): SQ7 install-time client choice ([#208](https://github.com/kabukisensei/coop-agent/pull/208)), SQ1 `sql_targets` contract section ([#209](https://github.com/kabukisensei/coop-agent/pull/209)), SQ2 executor targets ([#212](https://github.com/kabukisensei/coop-agent/pull/212)), SQ3 guardrail scope ([#214](https://github.com/kabukisensei/coop-agent/pull/214)), SQ4 `sql_impact` ([#215](https://github.com/kabukisensei/coop-agent/pull/215)), SQ5 verify-with-data text ([#216](https://github.com/kabukisensei/coop-agent/pull/216)), SQ6 skill mapping text ([#217](https://github.com/kabukisensei/coop-agent/pull/217)); dev reads without approval ([#230](https://github.com/kabukisensei/coop-agent/pull/230)) and the `sql-formatting` skill ([#231](https://github.com/kabukisensei/coop-agent/pull/231)) followed; live acceptance (dev Azure SQL database + Fabric Warehouse) is Aaron's |
-| 11a | DD1–DD4 | Mixed-estate offline documentation and Coop evidence contract (section 8.1) | DD1 authorized now; later steps follow dependencies in section 8.1 | acceptance matrix, preserved intent/cache, honest scoped impact, Windows contract verification | DD1–DD3 merged in coop-data-doc [#67](https://github.com/kabukisensei/coop-data-doc/pull/67) (supersedes draft #66) and released as v1.3.0 (2026-10-01); coop pin bump [#238](https://github.com/kabukisensei/coop-agent/pull/238); DD4 wrapper contract in [#235](https://github.com/kabukisensei/coop-agent/pull/235) (supersedes draft #233), lands after row 11 and #230/#231. Native Windows and scope-ID migration acceptance pending |
+| 11a | DD1–DD4 | Mixed-estate offline documentation and Coop evidence contract (section 8.1) | DD1 authorized now; later steps follow dependencies in section 8.1 | acceptance matrix, preserved intent/cache, honest scoped impact, Windows contract verification | DD1–DD3 merged in coop-data-doc [#67](https://github.com/kabukisensei/coop-data-doc/pull/67) (supersedes draft #66) and released as v1.3.0 (2026-10-01); coop pin bump [#238](https://github.com/kabukisensei/coop-agent/pull/238) and DD4 wrapper contract [#235](https://github.com/kabukisensei/coop-agent/pull/235) (supersedes draft #233) merged 2026-10-01 and shipped in v0.26.0. Native Windows and scope-ID migration acceptance pending |
 | 12 | FR1 | Common-workflows first run | SQ1 (menu items exist) | first launch shows the menu; onboarding no longer blocks | merged ([#241](https://github.com/kabukisensei/coop-agent/pull/241), 2026-10-01; shipped in v0.27.0): first interactive launch opens the seven-item `/start` menu once, the launch never runs the wizard, the name question moved into the project item |
 | 13 | PK1 | `pi-lovely-codex` versus `pi-better-openai`, diagnostics, simplify (naming moved to N1) | U1 + explicit start | one owner of usage stats; adopt/build/defer recorded per candidate | not started |
 | 14 | B1 | Minimal beta channel | — | — | **skipped** (Aaron, 2026-09-30: seven people update from tags; the VM qualifies upgrades) |
-| 15 | K1, K2, K3 | TeamAI shared knowledge: isolated CLI and read-only recall, reviewed contribution, broader lifecycle | FR1 + explicit start; VM isolation | revision 2.0 section 8 gates, one PR per row | not started (scheduled, revision 3.8) |
+| 15 | K1, K2, K3 | TeamAI shared knowledge: isolated CLI and read-only recall, reviewed contribution, broader lifecycle | FR1 + explicit start; VM isolation | revision 2.0 section 8 gates, one PR per row | K1 in review (PR #249), 2026-10-01: isolated `teamai-cli` adapter, `coop teamai`, VM acceptance pending; K2 in review (PR), 2026-10-01: `coop teamai contribute` preview and `--approve` staging on a `coop/learning/...` branch, stacked on K1; K3 in review (PR), 2026-10-01: `coop teamai skills|maintenance|compare`, optional team-skills loading at launch, read-only maintenance report, local-vs-recall comparison, stacked on K2 |
 | 15b | J0–J3 | Jev shadow experiments | explicit start | revision 2.0 gates | waiting (Aaron, 2026-09-30) |
 | 16 | D1 | Electron desktop with packaged installer, worked as D1a–D1g (section 11.2): decision record and salvage, `coop desktop` window from the terminal product (first deliverable, no installer or certificate), unsigned installer, bundled runtime, updates, signing last, teammate acceptance | 7–12 and 15 accepted; Aaron starts D1; U2 landed before D1d; each 11.3 item decided when its row starts | another user installs from the package alone (D1g); signing not required (Aaron, 2026-10-02) | D1a decision record and salvage list in review (PR), revision 3.13, 2026-10-02 (section 11.5); D1b–D1g not started, each waits for Aaron |
 
