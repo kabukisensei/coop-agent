@@ -1,6 +1,6 @@
 ---
 name: power-bi-impact-analysis
-description: Assess the downstream and upstream impact of a proposed change to a Power BI semantic model, measure, column, table, or report. Maps dependencies and lineage via data_doc and the read-only Power BI MCP, then lists affected reports, apps, and consumers. Advisory only; never edits a model or report.
+description: Assess the downstream and upstream impact of a proposed change to a Power BI semantic model, measure, column, table, or report. Maps dependencies and lineage via data_doc and the Power BI Modeling MCP (reads only; its edits ask for approval), then lists affected reports, apps, and consumers. Advisory only; never edits a model or report.
 ---
 
 # Power BI Impact Analysis
