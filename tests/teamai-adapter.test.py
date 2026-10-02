@@ -87,6 +87,15 @@ if (cmd === 'recall') {
   if (mode === 'none') { process.stdout.write('No learnings available. Run `teamai pull` first.\n'); process.exit(0); }
   if (mode === 'crash') { process.stderr.write('Error: index corrupt\n'); process.exit(1); }
   if (mode === 'partial') { process.stderr.write('warn: code graph retrieval unavailable\n'); }
+  if (mode === 'abs') {
+    // teamai-cli 0.26.0's real shape: an absolute File path into the isolated home, no Snippet line
+    const dir = path.join(home, '.teamai', 'learnings');
+    fs.mkdirSync(dir, { recursive: true });
+    const f = path.join(dir, 'k2-marker-note.md');
+    fs.writeFileSync(f, '---\ntitle: K2 marker note\n---\n\n## Context\n\nIntro line.\ncoop-k2-marker-7731: a throwaway note.\n');
+    process.stdout.write('--- [teamai:recall:start] --- (1 result)\n\n[1/1] [learnings] K2 marker note [user]\nAuthor: Aaron | Date: 2026-10-02 | Score: 8.3\nFile: ' + f + '\n\n--- [teamai:recall:end] ---\n');
+    process.exit(0);
+  }
   const n = mode === 'results' || mode === 'partial' ? 7 : 2;
   let out = '--- [teamai:recall:start] --- (' + n + ' results)\n';
   for (let i = 1; i <= n; i++) {
@@ -335,6 +344,11 @@ with tempfile.TemporaryDirectory() as raw:
     check(recall_rec["argv"] == ["recall", "--dry-run", "marker alpha"], "recall: teamai recall --dry-run <query> (no auto-upvote writes)")
     check(recall_rec["home"] == str(iso_home) and recall_rec["cwd"] == str(workspace), "recall: isolated home and workspace again")
 
+    stub_mode.write_text("abs", encoding="utf-8")
+    rc, doc, _ = run(base_env, "recall", "--query", "coop-k2-marker-7731")
+    r0 = doc["results"][0] if doc and doc["results"] else {}
+    check(r0.get("file") == "learnings/k2-marker-note.md" and Path(r0.get("local_path", "")).is_absolute(), f"recall: an absolute CLI path is reported relative, absolute kept as local_path ({r0.get('file')!r})")
+    check(r0.get("snippet", "").startswith("coop-k2-marker-7731"), f"recall: an empty snippet is filled from the matching line of the file ({r0.get('snippet')!r})")
     stub_mode.write_text("none", encoding="utf-8")
     rc, doc, _ = run(base_env, "recall", "--query", "nothing")
     check(doc["state"] == "no_match" and doc["results"] == [] and any("has no learnings yet" in w and "run: coop teamai pull" not in w for w in doc["warnings"]), "recall: 'No learnings available' after a pull -> no_match, warning names the empty repo, not a pull")
