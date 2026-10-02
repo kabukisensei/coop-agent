@@ -1206,7 +1206,7 @@ or changes it; a changed default is a plan revision in that row's PR.
 | 8 Signing | D1f | Not required for done; D1f is optional and blocks nothing | Aaron, 2026-10-02 |
 | Audience | all | Internal only: the seven teammates, nothing official, no public download, store identity or publisher reputation | Aaron, 2026-10-02 |
 | 1 Window shape | D1b | A rendered, modern UI with every terminal capability (like the Codex app, PiChamber, Supernova), over `pi --mode rpc`; four themes: Modern Dark, Modern Light, Retro Dark, Retro Light (Windows 95/98, like the coop website) | Aaron, 2026-10-02 |
-| Build or fork | D1b | Default: coop builds its own renderer and borrows UX patterns. pi-gui, PiChamber and Supernova (all MIT) embed Pi in-process through the SDK, which would add a second Pi and a second way to load coop's policy | recommendation |
+| Build or fork | D1b | Coop builds its own renderer and borrows UX patterns. pi-gui, PiChamber and Supernova (all MIT) embed Pi in-process through the SDK, which would add a second Pi and a second way to load coop's policy | Aaron, 2026-10-02 |
 | 2 Installer type | D1c | Default: NSIS per-user via electron-builder, no administrator | recommendation |
 | 3 Certificate | D1f | None; Azure Trusted Signing is the default only if Aaron later wants the SmartScreen click gone | follows item 8 |
 | 4 Distribution | D1e | Default: the release page of `kabukisensei/coop-agent`, downloaded by a signed-in teammate; reinstall over the old version is the update path, with a one-line in-app notice when behind | recommendation, follows the audience |
