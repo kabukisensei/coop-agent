@@ -1,6 +1,6 @@
 # Coop master plan — ordered execution roadmap
 
-**Document revision 3.12 · October 2, 2026** (D1a, the desktop decision record and salvage list: Aaron chose a rendered, modern UI with four themes over a terminal in a window, D1b is re-scoped to it, every other section 11.3 item has a recorded default, and the September desktop branches are reviewed file by file; sections 11.1–11.5 and register row 16. Revision 3.11 scoped Phase 8 D1 into rows D1a–D1g, sections 11.1–11.4; revision 3.10 added the Pi 1.0 row U2, section 6.5; revision 3.9 added the mixed-estate documentation repair, section 8.1. Existing phase ordering and the revision 3.8 scope decisions remain.)
+**Document revision 3.13 · October 2, 2026** (D1a, the desktop decision record and salvage list: Aaron chose a rendered, modern UI with four themes over a terminal in a window, D1b is re-scoped to it, every other section 11.3 item has a recorded default, and the September desktop branches are reviewed file by file; sections 11.1–11.5 and register row 16. Revision 3.12 added an explore and research watch list, section 12.1, starting with PiG, the Go port of Pi: watched, not scheduled. Revision 3.11 scoped Phase 8 D1 into rows D1a–D1g, sections 11.1–11.4; revision 3.10 added the Pi 1.0 row U2, section 6.5; revision 3.9 added the mixed-estate documentation repair, section 8.1. Existing phase ordering and the revision 3.8 scope decisions remain.)
 **Product scope: Coop Windows terminal first; an installable Electron desktop returns after the terminal is simplified.**
 
 **Canonical repository location:** `docs/COOP_MASTER_PLAN.md`. This revision keeps the
@@ -1013,7 +1013,8 @@ gate, not the order; it stays last.
 
 Scoped from the tree at v0.26.0 and the old desktop branches; no app code was
 written and nothing was installed. D1 stays one register row (16) worked as seven
-sub-rows, D1a–D1g, one issue, one branch and one PR each, in this order. **No
+sub-rows, D1a–D1g (plus the optional D1b2 added in revision 3.13), one issue,
+one branch and one PR each, in this order. **No
 sub-row starts until Aaron starts D1 explicitly** (section 14). Aaron decided on
 2026-10-02 that signing is not required for done and that the other 11.3 items
 are decided when the row that needs them starts, not up front. He also said the
@@ -1135,7 +1136,7 @@ D1f records what the first teammate sees.
 Aaron, 2026-10-02: items 1 (a rendered UI) and 8 (signing is not required for
 done) are decided; items 2–7 are decided "when needed", so each is asked at the start of the row that
 needs it (noted per item) and the recommendation is the default until then.
-Section 11.5 records the answer or default for every item (D1a, revision 3.12).
+Section 11.5 records the answer or default for every item (D1a, revision 3.13).
 
 1. **Decided (Aaron, 2026-10-02): a rendered, modern UI** with all the
    terminal's capabilities and four themes (Modern Dark, Modern Light, Retro
@@ -1188,7 +1189,7 @@ platform (staged Python, parity schemas, the `coop runtime` HTTP contract, the
 Ed25519 update service) is not revived; the one Pi and one profile root rule from
 Phase 2 holds.
 
-### 11.5 D1a: decision record and salvage list (revision 3.12, October 2, 2026)
+### 11.5 D1a: decision record and salvage list (revision 3.13, October 2, 2026)
 
 Docs only; no app code. D1a is the one D1 row that needs no start beyond this
 record, because it writes nothing but the plan. D1b and every later row still
@@ -1376,6 +1377,49 @@ Not requested, offered for Aaron's decision. None is scheduled.
   plan should not depend on a specific machine's drive letters; B1's E: proposal is
   Aaron's workstation preference, not a product path.
 
+### 12.1 Explore and research: a watch list (revision 3.12)
+
+Things worth knowing about that nobody has scheduled. An entry here is never a
+register row: it becomes one only when its "worth adopting when" holds and Aaron
+starts it. Each entry is judged on stability, capability, simplicity and
+maintainability, the same lens that parked U2 (section 6.5).
+
+**PiG, Pi in Go ([pi-in-go.dev](https://pi-in-go.dev)).** Aaron flagged it on
+2026-10-02. Read the same day from its repository
+([MichaelKinsy/PiG](https://github.com/MichaelKinsy/PiG), MIT); nothing was
+installed.
+
+- **What it is.** A third-party Go port of Pi, shipped as one native `pig` binary,
+  that treats Pi's behavior as the contract. It pins Pi **0.87.1**, the Pi coop ships
+  today, and checks its core paths against it with paired parity scenarios. First
+  release 0.2.0 on 2026-09-25, newest 0.3.1 on 2026-09-30. Its README says the Pi
+  maintainers do not endorse it.
+- **What it offers.** Pi's TypeScript extension API runs unchanged, extensions can
+  also be written in Go, Rust or Python, and the core starts fast without Node.
+- **Why not now.**
+  - *Stability:* Windows support is a preview (source builds only until its native
+    release verification passes), the project is a week old, and its own README says
+    edge cases are still hardening. Its 0.3.x changelog is still fixing
+    `pi-mcp-adapter` behavior coop depends on (the `/mcp` panel, tool cards, the
+    tool list the adapter reads).
+  - *Simplicity:* coop's four extensions and its npm extensions (`pi-mcp-adapter`,
+    `pi-hermes-memory` and the rest) are Node extensions, and PiG runs Node
+    extensions in isolated Node processes. Coop would keep Node and gain a second
+    runtime layer, not lose one.
+  - *Maintainability:* the names differ (`pig`, `~/.pig/agent`,
+    `PIG_CODING_AGENT_DIR`), so the launcher, isolation, `lib/_extdeps.py`
+    alignment, doctor and the extension lock would all fork. Coop would also trail Pi
+    twice (Pi's release, then PiG's port of it), which works against U2's move to
+    Pi 1.0.
+  - *Capability:* nothing coop needs is missing from Pi.
+- **Worth adopting when all of these hold.** (1) Windows is release-supported with
+  native verification. (2) PiG tracks the Pi coop ships (1.0.x once U2 lands) within
+  a release or two. (3) Coop's own extension set, including `pi-mcp-adapter` with the
+  Azure bearer header and the guardrails' approval prompts, passes the VM matrix
+  under `pig` with no coop-side shims. (4) A concrete gain coop can name: a
+  materially smaller or simpler D1d bundle, or startup time teammates notice.
+  Re-check at U2 or D1d, whichever starts first; until then it stays here.
+
 ## 13. Ordered work register
 
 Status values: `not started`, `issue open`, `in progress (branch)`, `in review
@@ -1406,7 +1450,7 @@ tags. A stale row is never a reason to re-do work: check the PR list first.
 | 14 | B1 | Minimal beta channel | — | — | **skipped** (Aaron, 2026-09-30: seven people update from tags; the VM qualifies upgrades) |
 | 15 | K1, K2, K3 | TeamAI shared knowledge: isolated CLI and read-only recall, reviewed contribution, broader lifecycle | FR1 + explicit start; VM isolation | revision 2.0 section 8 gates, one PR per row | not started (scheduled, revision 3.8) |
 | 15b | J0–J3 | Jev shadow experiments | explicit start | revision 2.0 gates | waiting (Aaron, 2026-09-30) |
-| 16 | D1 | Electron desktop with packaged installer, worked as D1a–D1g (section 11.2): decision record and salvage, `coop desktop` window from the terminal product (first deliverable, no installer or certificate), unsigned installer, bundled runtime, updates, signing last, teammate acceptance | 7–12 and 15 accepted; Aaron starts D1; U2 landed before D1d; each 11.3 item decided when its row starts | another user installs from the package alone (D1g); signing not required (Aaron, 2026-10-02) | D1a decision record and salvage list in review (PR), revision 3.12, 2026-10-02 (section 11.5); D1b–D1g not started, each waits for Aaron |
+| 16 | D1 | Electron desktop with packaged installer, worked as D1a–D1g (section 11.2): decision record and salvage, `coop desktop` window from the terminal product (first deliverable, no installer or certificate), unsigned installer, bundled runtime, updates, signing last, teammate acceptance | 7–12 and 15 accepted; Aaron starts D1; U2 landed before D1d; each 11.3 item decided when its row starts | another user installs from the package alone (D1g); signing not required (Aaron, 2026-10-02) | D1a decision record and salvage list in review (PR), revision 3.13, 2026-10-02 (section 11.5); D1b–D1g not started, each waits for Aaron |
 
 Phase 0 rows can each be released as a patch. Later phases are minor versions.
 Rows become `agent:ready` only when Aaron says so. On September 28 he marked the
