@@ -32,6 +32,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   CLI, decoy `teamai` on `PATH` must never run, the guard blocks a push) and
   `tests/fixtures/teamai.test.ps1`.
 
+### Changed
+
+- Project contracts no longer carry policy fields that nothing enforced (#98):
+  `coop init`, `/setup-project` and the sample contracts stop writing
+  `estate.live_discovery` and `mcp.<server>.allowed_default_actions` /
+  `requires_approval_actions`. The guardrails always hard-coded those rules, and
+  `dev_test_rows: ask_first` contradicted dev reads running without approval.
+  Guardrail behavior is unchanged. Migration: nothing reads these fields, so
+  existing contracts keep working; delete them at your convenience.
+  `docs/guardrails-reference.md` lists the contract fields that do change behavior.
+
 ### Fixed
 
 - `tests/run.sh` stops at once with one clear line when `pwsh` is on PATH but
