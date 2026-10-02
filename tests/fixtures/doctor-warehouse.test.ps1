@@ -120,7 +120,7 @@ try {
   # user-owned entry is left in place, so doctor warns and names the reason.
   $pbiReason = 'powerbi-mcp-server is not read-only: it ignores --readonly and exposes refresh_dataset, a write (coop-agent#93)'
   $pbi = @($rows | Where-Object { ([string]$_.name).Contains($pbiReason) })
-  if ($pbi.Count -ne 1 -or $pbi[0].status -ne 'warn' -or -not ([string]$pbi[0].hint).StartsWith('remove that entry from ')) {
+  if ($pbi.Count -ne 1 -or $pbi[0].status -ne 'warn' -or -not ([string]$pbi[0].hint).StartsWith('remove that entry from ') -or -not ([string]$pbi[0].hint).EndsWith("coop's Power BI MCP is powerbi-modeling-mcp (its edits ask for approval)")) {
     Ko 'doctor.ps1 must warn on a user-owned powerbi-mcp-server entry and name the reason' (@($rows | Where-Object { ([string]$_.name).Contains('powerbi') } | ForEach-Object { "$($_.status) | $($_.name) | $($_.hint)" }) -join "`n")
   } else { Ok 'doctor.ps1 warns on a user-owned powerbi-mcp-server entry and names the reason' }
   if ($null -ne (Find-Row $rows 'powerbi server configured')) {

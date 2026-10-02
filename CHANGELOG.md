@@ -5,6 +5,36 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- coop-guardrails: Power BI Desktop reload guard (S31). Before `powerbi-desktop
+  reload` and before a `powerbi-report-author preview` that reloads the live
+  window, coop reads `powerbi-desktop status` itself: an instance with unsaved
+  changes asks first (blocked headlessly), an instance that cannot be verified is
+  blocked, only a connected clean instance reloads. The rule used to be skill
+  prose only; it is now enforced in code and tested against a stubbed bridge.
+
+- First run shows the common workflows, not a wizard (master plan FR1, Phase 6).
+  The first interactive `coop` launch on a machine opens the Start Here menu once
+  (`bin/coop.ps1` hands coop-tools `COOP_FIRST_RUN=1` and writes
+  `<profile dir>/first-run`); `/start` opens it any time and later launches go
+  straight to the prompt. The menu is the plan's seven workflows: check SQL, DAX or
+  a model against the standards; trace the impact of a change (`sql_impact`, then
+  `data_doc lineage`); fix or edit an object on dev with approval (`/spec-first`,
+  `/slice-next`); document a warehouse or semantic model; start a client project
+  (`/setup-project`); write today's log or a handoff; sign in or check health
+  (`coop doctor`, `az login`). While the local profile is missing, *Start a client
+  project* asks the name coop calls you by and saves `user.json` with the balanced
+  preset (`coop onboard` still edits the full profile).
+
+### Changed
+
+- A plain `coop` launch never runs the onboarding wizard any more and nothing in
+  first-run setup can stop the launch (previously a missing or failed
+  `scripts/onboard.py` run stopped it); an incomplete profile gets one line that
+  names the menu item and `coop onboard`. `coop install` keeps its interactive
+  "Personalize Coop" step. The Fabric workspace review left the `/start` menu
+  (still `/fabric-architecture-review`).
 ### Fixed
 
 - The Azure sign-in preflight no longer reports `Azure token check failed ...
@@ -26,6 +56,20 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   storage-root check rejects, so the lock worker exited at once and the marker
   never appeared. The wait now also fails at once with the worker's stderr when
   the worker exits first, instead of reporting a timeout.
+- The install/update busy guard (`Test-CoopPiConvergeAllowed`, issue #234) counts
+  only coop/pi sessions run from the npm tree this install converges
+  (`Get-CoopNpmGlobalRoots`), so an isolated install (a redirected profile on
+  another drive) converges Pi in place and exits 0 while coop is open from a
+  different install on the same machine. A session from the same install still
+  skips the convergence with the same warning; with no npm root known, every
+  session counts as before. `tests/fixtures/pi-busy-guard.test.ps1` (gate lane)
+  covers both cases with fake process rows.
+- `coop doctor` no longer calls the MCP set, or `powerbi-modeling-mcp`, read-only:
+  the section header, the `powerbi-mcp-server` hint and the no-config hint now say
+  that Fabric and Microsoft Learn are read-only while the Power BI Modeling, Azure
+  DevOps and Warehouse SQL servers are approval-gated (every edit asks first). The
+  `coop-workflow` and `power-bi-impact-analysis` skills and `.coop/project.example.yml`
+  use the same wording (#194).
 
 ## [0.26.0] — 2026-10-01
 
@@ -1534,6 +1578,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   manifest-pinned `fabric-cicd` library.
 
 ## [0.22.5] — 2026-08-25
+
+### Fixed
+- Windows Python bootstrap: install/update try the Python launcher / install
+  manager (`py install 3.12`) before winget, and the Fabric Python finder
+  discovers side-by-side interpreters that are not on `PATH` (Python install
+  manager `%LOCALAPPDATA%\Python\bin`, winget user and machine scopes), so
+  pymanager-only machines find 3.12/3.13 and reject 3.14 (#46).
+- pipx ownership check: pipx 1.x on Windows lists apps with their extension
+  (`fab.exe`), so every healthy tool warned "does not belong to its pipx
+  environment"; the check now matches both forms (#46).
+- `coop update` surfaces pip's last `ERROR` line when a `fabric-cicd` inject fails
+  (for example `Requires-Python <3.14` against a 3.14 venv) instead of failing
+  silently (#46).
 
 ## [0.22.4] — 2026-08-25
 

@@ -2,18 +2,21 @@
 # The launcher's first-run
 # control flow in bin/coop.ps1 / lib/common.ps1, without a PTY.
 #   A. Onboarding gate (in-process, stdin redirected): Test-CoopUserProfileMissing /
-#      Test-CoopOnboardingMissing per state; Invoke-CoopMaybeOnboard never starts
-#      the wizard without an interactive terminal, warns "Run: coop onboard" and
-#      reports rc 0 so the launch continues.
+#      Test-CoopOnboardingMissing per state; the launch gate Set-CoopFirstRunLaunch
+#      never starts the wizard, warns "Run: coop onboard" without a terminal and
+#      reports rc 0 so the launch continues; the installer's Invoke-CoopMaybeOnboard
+#      still never starts the wizard without an interactive terminal.
+#   A2. First-run menu handoff (master plan FR1), in-process with -Interactive
+#      passed explicitly: an interactive first launch sets COOP_FIRST_RUN=1 and
+#      writes the <profile dir>\first-run stamp (once); a later launch sets nothing;
+#      a non-interactive launch sets nothing and writes no stamp.
 #   B. End-to-end `coop` (no args) with a stub pi on a fresh home: the launcher
 #      continues into pi (coop-profile extension loaded), prints the incomplete-
-#      onboarding warning, creates no profile, does not prime the model login
-#      (stdin/stdout are redirected) and exits 0; with a complete profile the
-#      warning is gone.
-# Dropped (need a PTY: tests/pty_drive.py drove the wizard): F1's wizard run
-# ("Setup complete. Starting Coop", user.json/config/mcp-adapter.json written,
-# prime-login=1) and all of F2 (a failing wizard stops the launcher) - the
-# PowerShell wizard path only runs when [Console]::IsInputRedirected is false.
+#      onboarding warning, creates no profile and no first-run stamp, hands pi no
+#      COOP_FIRST_RUN, does not prime the model login (stdin/stdout are redirected)
+#      and exits 0; with a complete profile the warning is gone.
+# The wizard itself (scripts/onboard.py) is covered by tests/onboard.test.sh; the
+# launch never runs it any more.
 # Sandboxed HOME/USERPROFILE/agent dir, never ~/.coop; COOP_SKIP_AZ=1, no network
 # (fresh fetch stamp in the sandbox agent dir).
 $ErrorActionPreference = 'Stop'
@@ -27,7 +30,7 @@ $marker = Join-Path $t 'marker'
 $bin = Join-Path $t 'bin'
 
 $saved = Save-Env @('PATH','HOME','USERPROFILE','COOP_DIR','COOP_AGENT_DIR','PI_CODING_AGENT_DIR','COOP_NO_ISOLATE','COOP_SKIP_AZ','COOP_AZ_BIN',
-           'COOP_SKIP_EXT_CHECK','COOP_NO_ONBOARD','COOP_NO_MODEL_LOGIN','COOP_PRIME_MODEL_LOGIN','COOP_ONBOARD_FROM_LAUNCH','NO_COLOR',
+           'COOP_SKIP_EXT_CHECK','COOP_NO_ONBOARD','COOP_NO_MODEL_LOGIN','COOP_PRIME_MODEL_LOGIN','COOP_FIRST_RUN','NO_COLOR',
            'COOP_STANDARDS_ROOT','COOP_STANDARDS_STATE','COOP_STANDARDS_SNAPSHOT_ROOT')
 try {
   New-Item -ItemType Directory -Force -Path $sandboxHome, $agent, $marker, $bin | Out-Null
@@ -43,7 +46,7 @@ try {
   $env:COOP_SKIP_EXT_CHECK = '1'
   $env:NO_COLOR = '1'
   foreach ($n in @('COOP_DIR','PI_CODING_AGENT_DIR','COOP_NO_ISOLATE','COOP_NO_ONBOARD','COOP_NO_MODEL_LOGIN','COOP_PRIME_MODEL_LOGIN',
-                   'COOP_ONBOARD_FROM_LAUNCH','COOP_STANDARDS_ROOT','COOP_STANDARDS_STATE','COOP_STANDARDS_SNAPSHOT_ROOT')) {
+                   'COOP_FIRST_RUN','COOP_STANDARDS_ROOT','COOP_STANDARDS_STATE','COOP_STANDARDS_SNAPSHOT_ROOT')) {
     Remove-Item -LiteralPath "Env:\$n" -ErrorAction SilentlyContinue
   }
 
@@ -56,6 +59,7 @@ import os, sys
 m = r'''$marker'''
 open(os.path.join(m, 'pi-args'), 'w', encoding='utf-8').write(' '.join(sys.argv[1:]) + '\n')
 open(os.path.join(m, 'pi-prime-login'), 'w', encoding='utf-8').write(os.environ.get('COOP_PRIME_MODEL_LOGIN', '') + '\n')
+open(os.path.join(m, 'pi-first-run'), 'w', encoding='utf-8').write(os.environ.get('COOP_FIRST_RUN', '') + '\n')
 open(os.path.join(m, 'pi-ran'), 'w').close()
 print('STUB-PI-READY')
 sys.exit(0)
@@ -82,6 +86,7 @@ sys.exit(0)
     $p.WaitForExit()
     return [pscustomobject]@{ Rc = $p.ExitCode; Out = [System.IO.File]::ReadAllText($so); Err = [System.IO.File]::ReadAllText($se) }
   }
+  function Get-CoopFirstRunStampFileAt([string]$Base) { return (Join-Path $Base '.coop\first-run') }
   function Reset-Home {
     Remove-Item -LiteralPath (Join-Path $sandboxHome '.coop') -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force -Path (Join-Path $sandboxHome '.coop') | Out-Null
@@ -101,8 +106,12 @@ sys.exit(0)
     "Write-Output ('profileMissing=' + (Test-CoopUserProfileMissing))",
     "Write-Output ('onboardingMissing=' + (Test-CoopOnboardingMissing))",
     "Write-Output ('inputRedirected=' + [Console]::IsInputRedirected)",
-    "Invoke-CoopMaybeOnboard",
+    "Set-CoopFirstRunLaunch",
     "Write-Output ('rc=' + `$script:CoopOnboardRc)",
+    "Write-Output ('firstRunFlag=' + `$env:COOP_FIRST_RUN)",
+    "Write-Output ('stamp=' + (Test-Path -LiteralPath (Get-CoopFirstRunStampFile) -PathType Leaf))",
+    "Invoke-CoopMaybeOnboard",
+    "Write-Output ('installRc=' + `$script:CoopOnboardRc)",
     "exit 0") -join "`n") + "`n", $utf8)
   function Get-GateValue([string]$Out, [string]$Key) {
     $line = @($Out -split "`r?`n" | Where-Object { $_.StartsWith("$Key=") }) | Select-Object -First 1
@@ -125,12 +134,49 @@ sys.exit(0)
     if ((Get-GateValue $r.Out 'profileMissing') -ne $state.Profile) { $problems += "profileMissing=$(Get-GateValue $r.Out 'profileMissing')" }
     if ((Get-GateValue $r.Out 'onboardingMissing') -ne $state.Missing) { $problems += "onboardingMissing=$(Get-GateValue $r.Out 'onboardingMissing')" }
     if ((Get-GateValue $r.Out 'rc') -ne '0') { $problems += "CoopOnboardRc=$(Get-GateValue $r.Out 'rc')" }
+    if ((Get-GateValue $r.Out 'installRc') -ne '0') { $problems += "installer gate rc=$(Get-GateValue $r.Out 'installRc')" }
+    if ((Get-GateValue $r.Out 'firstRunFlag') -ne '') { $problems += 'COOP_FIRST_RUN set without a terminal' }
+    if ((Get-GateValue $r.Out 'stamp') -ne 'False') { $problems += 'first-run stamp written without a terminal' }
     if ($all.Contains($warnText) -ne $state.Warn) { $problems += "warning present=$($all.Contains($warnText))" }
     if ($state.Warn -and -not $all.Contains('coop onboard')) { $problems += 'warning does not name coop onboard' }
     if (Test-Path -LiteralPath (Join-Path $marker 'wizard-ran')) { $problems += 'the wizard ran without a terminal' }
     if ($problems.Count -eq 0) { Ok "gate ($($state.Label)): missing=$($state.Missing), warns=$($state.Warn), rc 0, no wizard" }
     else { Ko "gate ($($state.Label)): $($problems -join '; ')" $all }
   }
+
+  # --- A2. first-run menu handoff with an explicit interactive flag -----------------
+  $hand = Join-Path $t 'handoff.ps1'
+  [System.IO.File]::WriteAllText($hand, (@(
+    "`$ErrorActionPreference = 'Continue'",
+    ". '$((Join-Path $root 'lib\common.ps1').Replace("'", "''"))'",
+    "function Get-CoopPython { return '$($wizardPy.Replace("'", "''"))' }",
+    "Set-CoopFirstRunLaunch -Interactive ([bool]::Parse(`$args[0]))",
+    "Write-Output ('rc=' + `$script:CoopOnboardRc)",
+    "Write-Output ('firstRunFlag=' + `$env:COOP_FIRST_RUN)",
+    "Write-Output ('stamp=' + (Test-Path -LiteralPath (Get-CoopFirstRunStampFile) -PathType Leaf))",
+    "exit 0") -join "`n") + "`n", $utf8)
+  Reset-Home
+  Clear-Markers
+  $r = Invoke-Redirected $hand @('True')
+  $all = $r.Out + $r.Err
+  if ((Get-GateValue $r.Out 'firstRunFlag') -eq '1' -and (Get-GateValue $r.Out 'stamp') -eq 'True' -and (Get-GateValue $r.Out 'rc') -eq '0') { Ok 'interactive first launch: COOP_FIRST_RUN=1, stamp written, rc 0' }
+  else { Ko "interactive first launch: flag=$(Get-GateValue $r.Out 'firstRunFlag') stamp=$(Get-GateValue $r.Out 'stamp') rc=$(Get-GateValue $r.Out 'rc')" $all }
+  if ($all.Contains('First run') -and $all.Contains('coop onboard') -and -not $all.Contains($warnText)) { Ok 'interactive first launch: one info line names the menu item and coop onboard' }
+  else { Ko 'interactive first launch: info line missing or the non-interactive warning printed' $all }
+  if (-not (Test-Path -LiteralPath (Join-Path $marker 'wizard-ran'))) { Ok 'interactive first launch: the wizard never ran' } else { Ko 'interactive first launch: the wizard ran' }
+  if (-not (Test-Path -LiteralPath (Join-Path $sandboxHome '.coop\user.json'))) { Ok 'interactive first launch: no profile written' } else { Ko 'interactive first launch: user.json was written' }
+  $r = Invoke-Redirected $hand @('True')
+  if ((Get-GateValue $r.Out 'firstRunFlag') -eq '' -and (Get-GateValue $r.Out 'stamp') -eq 'True') { Ok 'second interactive launch: stamp present, no COOP_FIRST_RUN' }
+  else { Ko "second interactive launch: flag=$(Get-GateValue $r.Out 'firstRunFlag') stamp=$(Get-GateValue $r.Out 'stamp')" ($r.Out + $r.Err) }
+  Write-Profile $true $true
+  $r = Invoke-Redirected $hand @('True')
+  $all = $r.Out + $r.Err
+  if ((Get-GateValue $r.Out 'firstRunFlag') -eq '1' -and -not $all.Contains('First run') -and -not $all.Contains($warnText)) { Ok 'complete profile, no stamp: menu handoff without any onboarding line' }
+  else { Ko "complete profile, no stamp: flag=$(Get-GateValue $r.Out 'firstRunFlag')" $all }
+  Reset-Home
+  $r = Invoke-Redirected $hand @('False')
+  if ((Get-GateValue $r.Out 'firstRunFlag') -eq '' -and (Get-GateValue $r.Out 'stamp') -eq 'False') { Ok 'non-interactive launch: no COOP_FIRST_RUN, no stamp' }
+  else { Ko "non-interactive launch: flag=$(Get-GateValue $r.Out 'firstRunFlag') stamp=$(Get-GateValue $r.Out 'stamp')" ($r.Out + $r.Err) }
 
   # --- B. end-to-end: plain `coop` on a fresh home continues into pi ----------------
   $coop = Join-Path $root 'bin\coop.ps1'
@@ -147,6 +193,8 @@ sys.exit(0)
   if ($all.Contains($warnText) -and $all.Contains('coop onboard')) { Ok 'fresh home: incomplete-onboarding warning names coop onboard' } else { Ko 'fresh home: no incomplete-onboarding warning' $all }
   if (-not (Test-Path -LiteralPath (Join-Path $sandboxHome '.coop\user.json'))) { Ok 'fresh home: no profile written without a terminal' } else { Ko 'fresh home: user.json was written' }
   if ((Read-Marker 'pi-prime-login') -eq '') { Ok 'redirected launch does not prime the model login' } else { Ko "redirected launch primed the model login: $(Read-Marker 'pi-prime-login')" }
+  if ((Read-Marker 'pi-first-run') -eq '') { Ok 'redirected launch hands pi no COOP_FIRST_RUN' } else { Ko "redirected launch set COOP_FIRST_RUN: $(Read-Marker 'pi-first-run')" }
+  if (-not (Test-Path -LiteralPath (Get-CoopFirstRunStampFileAt $sandboxHome))) { Ok 'fresh home: no first-run stamp written without a terminal' } else { Ko 'fresh home: first-run stamp was written' }
   if (-not (Test-Path -LiteralPath (Join-Path $marker 'wizard-ran'))) { Ok 'fresh home: the wizard never ran' } else { Ko 'fresh home: the wizard ran' }
 
   # --- B2. complete profile: no warning, pi still launched ---------------------------
