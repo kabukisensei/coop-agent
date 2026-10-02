@@ -1,6 +1,6 @@
 # Coop master plan — ordered execution roadmap
 
-**Document revision 3.12 · October 2, 2026** (D1a, the desktop decision record and salvage list: every section 11.3 item has a recorded answer or default, and the September desktop branches are reviewed file by file; section 11.5 and register row 16. Revision 3.11 scoped Phase 8 D1 into rows D1a–D1g, sections 11.1–11.4; revision 3.10 added the Pi 1.0 row U2, section 6.5; revision 3.9 added the mixed-estate documentation repair, section 8.1. Existing phase ordering and the revision 3.8 scope decisions remain.)
+**Document revision 3.12 · October 2, 2026** (D1a, the desktop decision record and salvage list: Aaron chose a rendered, modern UI with four themes over a terminal in a window, D1b is re-scoped to it, every other section 11.3 item has a recorded default, and the September desktop branches are reviewed file by file; sections 11.1–11.5 and register row 16. Revision 3.11 scoped Phase 8 D1 into rows D1a–D1g, sections 11.1–11.4; revision 3.10 added the Pi 1.0 row U2, section 6.5; revision 3.9 added the mixed-estate documentation repair, section 8.1. Existing phase ordering and the revision 3.8 scope decisions remain.)
 **Product scope: Coop Windows terminal first; an installable Electron desktop returns after the terminal is simplified.**
 
 **Canonical repository location:** `docs/COOP_MASTER_PLAN.md`. This revision keeps the
@@ -1066,23 +1066,36 @@ the terminal is acceptable.
   "double-click" path (phase 1 in `docs/history/ui-strategy.md`); D1 adds a window
   next to it and leaves the terminal install unchanged.
 
-**Shape the rows assume (Aaron confirms in 11.3, item 1).** The window is the
-terminal: Electron hosts an `xterm.js` view over a `node-pty` ConPTY running the
-exact launch spec, so Pi's own TUI, the coop-powerline footer and splash, the
-`/start` menu, the ask-user dialogs and every approval prompt render unchanged.
-The alternative, a rendered chat over `pi --mode rpc`, needs a second
-implementation of every extension dialog (the footer, `/start`, ask-user,
-approvals are TUI components) and so breaks "never carry a second policy
-implementation"; `docs/history/ui-strategy.md` records the RPC lessons for the day
-a rendered view is wanted. The experience-friction work (rendered diffs, review
-views) is a later row, not D1.
+**Shape the rows assume (decided by Aaron, 2026-10-02; 11.3 item 1).** The window
+is a rendered, modern UI in the spirit of the Codex app, PiChamber and Supernova,
+with **every capability of the terminal**, and four themes: Modern Dark, Modern
+Light, and Retro Dark and Retro Light in the Windows 95/98 style of the coop
+website. Electron's main process spawns `pi --mode rpc` with the `{bin, args,
+env}` from `coop launch-spec --json` plus the trust flag `docs/history/ui-strategy.md`
+requires (`-a`), and the renderer draws Pi's event stream. Revision 3.11 judged
+this the expensive option because every extension dialog would need a second
+implementation; the D1a review found that wrong for coop. Pi's RPC extension UI
+protocol (`docs/rpc-extension-ui.md` in Pi 0.87.1) carries `select`, `confirm`,
+`input`, `editor`, `notify`, `setStatus`, `setWidget` and `setTitle`, and
+coop's own extensions use only those for every approval prompt, the `/start`
+menu, `/setup-project` and `/setup-docs`. `@juicesharp/rpiv-ask-user-question`
+2.12.0 has its own RPC path (sequential `select`/`input` dialogs instead of its
+tabbed overlay). So the app renders four generic dialogs once, never one per
+extension, and policy stays in the extensions. What RPC does not carry is
+cosmetic or rare: the coop-powerline footer and splash (`setFooter`,
+`setHeader` and `setWorkingMessage` are no-ops; the app draws its own status
+bar from `setStatus` and session state), `custom()` TUI components, and the
+first-run model sign-in, which is TUI-only today and runs through a terminal
+handoff. This shape also removes 3.11's biggest risk: no `node-pty` native
+module and no `xterm.js`.
 
 ### 11.2 The rows
 
 | Row | Package | Scope | Starts after | Done when |
 | --- | --- | --- | --- | --- |
 | D1a | Decision record and salvage review (docs only) | Record the 11.3 defaults as a plan revision (each item is confirmed by Aaron when its row starts); review the old branches and list what is salvaged (the sandboxed-renderer and Electron fuse settings in `desktop/package.json`, the NSIS block in `electron-builder-installer.cjs` (per-user, no elevation, keep app data), the `coop-launcher.mjs` PowerShell dispatcher resolution, the idea of `verify-windows-installer.mjs`) and what is not (the managed-runtime staging and lock system, bundled Python, the parity and release-evidence schemas, the `coop runtime` HTTP contract, the Ed25519 update service, the Tauri spike); choose the repo location (`desktop/` in coop-agent, recommended, so the app and coop share one tag and one CI) | D1 started by Aaron | plan revision merged with every 11.3 item answered; salvage list closed; no app code |
-| D1b | `coop desktop`: the window, started from the terminal product | **The first deliverable; needs no installer, no bundled runtime and no certificate.** `desktop/` holds an Electron main process with the renderer sandboxed (context isolation on, Node integration off, navigation and new windows blocked, named preload methods only), one `xterm.js` view and a `node-pty` ConPTY that runs `pi` with the `{bin,args,env}` from `coop launch-spec --json` (the app adds nothing to args and only the profile path to env). `electron`, `xterm` and `node-pty` are pinned in `config/release-manifest.json` and installed by `coop sync` into the isolated tree, like every other extension pin, with the lockfile regenerated; `coop desktop` (new command in `bin/coop.ps1`) runs the same preflight as `coop` and starts the window; `coop install` adds a second shortcut, "coop (window)", next to the terminal one. Window close ends Pi cleanly; unit tests for the spec consumer and the PTY lifecycle run in the gate lane on `windows-latest`; `coop doctor` reports the Electron pin | D1a | on a machine with coop installed, `coop desktop` opens a governed session that matches the terminal (guardrails prompt, `/start`, footer, an approval prompt, an ask-user dialog, resume); `coop launch-spec --json` diff against the spawned command is empty; VM: `coop sync` installs the pins offline from the lock, the shortcut works, the fleet gets it through `coop update` at the next tag |
+| D1b | `coop desktop`: the rendered window, started from the terminal product | **The first deliverable; needs no installer, no bundled runtime and no certificate.** `desktop/` holds an Electron main process that spawns `pi --mode rpc` with the `{bin,args,env}` from `coop launch-spec --json` plus `-a` (the app adds nothing else to args and only the profile path to env), frames Pi's JSONL with a `\n`-only splitter, and builds every RPC command field by field; the renderer is sandboxed (context isolation on, Node integration off, navigation and new windows blocked, named preload methods only) and talks to the main process over IPC, with no listening port. The renderer has terminal parity: a streaming timeline (messages, thinking, tool calls with collapsible output, file edits as diffs), a composer with slash-command completion from `get_commands`, model and thinking pickers, session list, resume and new session, the four generic extension dialogs (`select`, `confirm`, `input`, `editor`) plus `notify` toasts, `setWidget` lines and a status bar built from `setStatus` and session stats, and the four themes (Modern Dark, Modern Light, Retro Dark, Retro Light) switched without a reload; anything RPC cannot show (model sign-in, a `custom()` component) opens the same session in a terminal window. `electron` is pinned in `config/release-manifest.json` and installed by `coop sync` into the isolated tree, like every other extension pin, with the lockfile regenerated; `coop desktop` (new command in `bin/coop.ps1`) runs the same preflight as `coop` and starts the window; `coop install` adds a second shortcut, "coop (window)", next to the terminal one. Window close ends Pi and its children cleanly; unit tests for the spec consumer, the JSONL framing, the dialog round trip and event rendering from a recorded RPC fixture run in the gate lane on `windows-latest`; `coop doctor` reports the Electron pin | D1a; Aaron starts it | on a machine with coop installed, `coop desktop` opens a governed session that matches the terminal (guardrails prompt, `/start` menu, an approval prompt, an ask-user question, a model switch, resume) in all four themes; the spawned command equals `coop launch-spec --json` plus `--mode rpc -a`; VM: `coop sync` installs the pin offline from the lock, the shortcut works, the fleet gets it through `coop update` at the next tag |
+| D1b2 | Richer views | The parts of the Codex-style experience beyond parity, each small and optional: a changes panel (working-tree diff, unified or side by side), a command palette, and per-turn checkpoints if Pi's session tree supports them without a git reset. Starts only when Aaron asks; never gates D1c | D1b; Aaron asks | each view ships behind no flag, read-only, tested from a fixture |
 | D1c | Unsigned installer of the window alone | electron-builder NSIS **per-user** target (no administrator), Start Menu and Desktop shortcuts with `themes/coop.ico`, Add/Remove entry, silent `/S` install and uninstall, `deleteAppDataOnUninstall: false`; the package still **requires the terminal coop** (it finds `coop.ps1` the way `bin/coop-desktop.ps1` does and runs `coop install` when missing); a `windows-latest` CI job builds the unsigned installer on every PR as an artifact, installs it silently, launches to `coop doctor` and uninstalls. This row proves the exe, NSIS and CI pipeline on its own, which is where the last attempt stalled | D1b | CI job green; manual install, launch, uninstall on the "stable" VM snapshot leaves no trace outside `~/.coop` and the app folder; SmartScreen's "unknown publisher" step recorded (it is one click, not a block) |
 | D1d | Bundled runtime: no terminal, Node or Python knowledge | The build stages a pinned Node (nodejs.org zip, version and SHA-256 in the manifest), the pinned Pi and the `extensions-lock.json` tree pre-installed offline, and a snapshot of this repository (skills, prompts, extensions, `docs/guardrails.md`, standards bundle) under the app's resources; the app uses the same profile root as the terminal (S3) so the two coexist and share sessions, memory and `.coop/project.yml`; first launch runs the H1 table for Git, Python, pipx, Azure CLI and ODBC in the window, prints the exact `winget` lines (or runs them visibly, as `coop install --prereqs auto` does), then the same sync and Azure sign-in the terminal install runs; Node is never a prerequisite for the package. Python and Azure CLI stay prerequisites, not bundled (the last attempt's relocatable Python is not revived) | D1c; U2 landed | blank VM snapshot: install, launch, the prerequisite screen names exactly what is missing, after the printed commands `coop doctor` inside the app is all green; `npm ls --all` of the staged tree equals a clean `coop sync` tree |
 | D1e | Updates and distribution | The installer is published as an asset of the GitHub Release `release.yml` already creates on a tag; internal only (Aaron, 2026-10-02), so teammates download it signed in and the floor is "install the new installer over the old one" (NSIS per-user upgrades in place and keeps `~/.coop`), with the app showing one line when the installed version is behind the newest tag. `electron-updater` (GitHub provider, release tags only, download in the background, install on quit) is added only if it works without putting a token in the app, which on a private repository it does not; otherwise the in-app notice plus reinstall is the row. The staged Pi and extension tree move with the app version, so no npm runs on the user's machine for an update. Works unsigned | D1d; distribution choice (11.3 item 4) | VM installs vN; vN+1 tagged; the app offers, downloads and applies it; `~/.coop` sessions, memory and project contract intact; `coop doctor` green after the update |
@@ -1107,31 +1120,28 @@ Rules that hold across every row, on top of section 2:
 - The VM gates acceptance, not the start of work (section 14): rows begin on green
   CI; D1b and D1c are accepted on the "stable" snapshot, D1d–D1g on "blank".
 
-**Risks named now.** `node-pty` is a native module compiled against Electron's
-ABI (electron-builder and `@electron/rebuild` handle it; prebuilt binaries exist
-for current releases, and D1b's `coop sync` install must run that rebuild or pin a
-release with prebuilds); if it fails on the VM, the fallback is the existing
-shortcut path (the window launches `coop` in Windows Terminal) and D1b is
-re-scoped before D1c. Electron's npm install downloads about 100 MB into the
-isolated tree on every machine for D1b; the lockfile must carry the binary's
-integrity. Pi 1.0's fullscreen default (section 6.5) is the TUI mode the window
-would show; D1b qualifies `tuiMode: "regular"` against `xterm.js` scrollback on
-the VM. An OV certificate earns SmartScreen reputation over downloads rather than
-instantly; D1f records what the first teammate sees.
+**Risks named now.** RPC mode is Pi's contract with clients, but a Pi upgrade
+(U2, Pi 1.0) can change event or command shapes; D1b's recorded RPC fixture
+test is the tripwire, and U2 re-records it. A third-party extension that relies
+on `custom()` without an RPC fallback shows nothing in the window; D1b lists the
+pinned extensions' RPC behavior and opens the session in a terminal for any gap.
+Electron's npm install downloads about 100 MB into the isolated tree on every
+machine for D1b; the lockfile must carry the binary's integrity. An OV
+certificate earns SmartScreen reputation over downloads rather than instantly;
+D1f records what the first teammate sees.
 
 ### 11.3 Decisions only Aaron can make
 
-Aaron, 2026-10-02: item 8 is decided (signing is not required for done); items
-1–7 are decided "when needed", so each is asked at the start of the row that
+Aaron, 2026-10-02: items 1 (a rendered UI) and 8 (signing is not required for
+done) are decided; items 2–7 are decided "when needed", so each is asked at the start of the row that
 needs it (noted per item) and the recommendation is the default until then.
 Section 11.5 records the answer or default for every item (D1a, revision 3.12).
 
-1. **(D1b)** **The window shows Pi's terminal** (`xterm.js` over the launch spec, the
-   recommendation and what 11.2 assumes) **or a rendered chat** over `pi --mode
-   rpc` (a renderer for every extension dialog; weeks more, and a second UI for the
-   same policy). Recommendation: terminal now; a rendered view is its own later row.
-   Aaron's 2026-10-02 note that a terminal kick-off is fine is read as agreement
-   with D1b's shape, not yet as this decision.
+1. **Decided (Aaron, 2026-10-02): a rendered, modern UI** with all the
+   terminal's capabilities and four themes (Modern Dark, Modern Light, Retro
+   Dark, Retro Light in the coop website's Windows 95/98 style), not Pi's
+   terminal in a window. Section 11.1 records why this is cheaper than 3.11
+   assumed.
 2. **(D1c)** **Installer type:** NSIS per-user via electron-builder (recommended: no
    administrator, works unsigned and with any code-signing certificate, Add/Remove
    entry, `electron-updater` support) or MSIX (Store-style identity, needs the
@@ -1169,7 +1179,8 @@ Section 11.5 records the answer or default for every item (D1a, revision 3.12).
 
 ### 11.4 Out of scope for D1
 
-A rendered chat or review UI, macOS and ARM packages, a per-machine install,
+Side-by-side agent threads and worktrees, scheduled tasks, remote or mobile
+access to a session, macOS and ARM packages, a per-machine install,
 bundled Python or Azure CLI, a beta or edge channel in the app, Power BI Desktop
 automation beyond what the terminal already does, and any change to the terminal
 product's install, update or profile layout. The old branches' managed-runtime
@@ -1193,7 +1204,8 @@ or changes it; a changed default is a plan revision in that row's PR.
 | Launch | D1b | Starting the window from the terminal product (`coop desktop`, a shortcut next to the terminal one) is fine; no installer is needed first | Aaron, 2026-10-02 |
 | 8 Signing | D1f | Not required for done; D1f is optional and blocks nothing | Aaron, 2026-10-02 |
 | Audience | all | Internal only: the seven teammates, nothing official, no public download, store identity or publisher reputation | Aaron, 2026-10-02 |
-| 1 Window shape | D1b | Default: Pi's own terminal in the window (`xterm.js` over `node-pty`, running the launch spec); a rendered chat is a later row | recommendation |
+| 1 Window shape | D1b | A rendered, modern UI with every terminal capability (like the Codex app, PiChamber, Supernova), over `pi --mode rpc`; four themes: Modern Dark, Modern Light, Retro Dark, Retro Light (Windows 95/98, like the coop website) | Aaron, 2026-10-02 |
+| Build or fork | D1b | Default: coop builds its own renderer and borrows UX patterns. pi-gui, PiChamber and Supernova (all MIT) embed Pi in-process through the SDK, which would add a second Pi and a second way to load coop's policy | recommendation |
 | 2 Installer type | D1c | Default: NSIS per-user via electron-builder, no administrator | recommendation |
 | 3 Certificate | D1f | None; Azure Trusted Signing is the default only if Aaron later wants the SmartScreen click gone | follows item 8 |
 | 4 Distribution | D1e | Default: the release page of `kabukisensei/coop-agent`, downloaded by a signed-in teammate; reinstall over the old version is the update path, with a one-line in-app notice when behind | recommendation, follows the audience |
@@ -1201,17 +1213,18 @@ or changes it; a changed default is a plan revision in that row's PR.
 | 6 Git | D1d | Default: Git stays a prerequisite in the H1 table (one more `winget` line); no bundled MinGit | recommendation |
 | 7 Acceptance | D1g | Default: Aaron names the teammate when D1g starts; a "desktop-blank" VM snapshot is kept only if D1d needs a second blank machine | recommendation |
 
-**What the review found.** The September branches never had a terminal in the
-window: the app was a rendered chat (the Coop Web single-page app) over a
-`coop runtime` HTTP server, and its "native terminal" opened a separate console
-window. No `xterm.js` or `node-pty` code exists on any of the ten branches, so
-D1b's core (the PTY host and the terminal view) is new code. What carries over is
-the hardening and packaging around a window. Paths below are on
-`desktop/candidate-2026-09-20` (head `ed516b2`, September 13) unless a branch is
-named; `feature/coop-desktop-windows-validation-gui` is at `0f96d2e`. The other
-eight `feature/coop-desktop-*` branches add validation fixes, diagnostics and
-handoff notes for the parts left behind below, and nothing to salvage. Salvage means copying the idea or a few
-reviewed lines into the new `desktop/`, never merging a branch.
+**What the review found.** The September line was already a rendered app: the
+Coop Web single-page app (vanilla JavaScript, no build step) in an Electron
+shell, talking to a `coop runtime` HTTP server that wrapped `pi --mode rpc`, with
+three themes (Modern Dark, Modern Light and a "Retro Messenger" variant). With
+Aaron's choice of a rendered UI, its renderer pieces are now worth reading
+closely; its server, contracts and managed runtime are still the part that
+stalled it. Paths below are on `desktop/candidate-2026-09-20` (head `ed516b2`,
+September 13) unless a branch is named; `feature/coop-desktop-windows-validation-gui`
+is at `0f96d2e`. The other eight `feature/coop-desktop-*` branches add
+validation fixes, diagnostics and handoff notes for the parts left behind
+below, and nothing to salvage. Salvage means copying the idea or a few reviewed
+lines into the new `desktop/`, never merging a branch.
 
 **Salvage: reuse in D1b.**
 
@@ -1231,13 +1244,40 @@ reviewed lines into the new `desktop/`, never merging a branch.
 - *Ending the process tree* (`desktop/src/runtime-supervisor.mjs`,
   `terminateWindowsRuntimeTree`): `taskkill /PID <pid> /T /F` from `SystemRoot`
   with a timeout, then wait for the pipes to close. D1b's "window close ends Pi
-  cleanly" needs this after `node-pty`'s own kill, because Pi starts MCP servers
-  and other children that a ConPTY kill can leave running.
+  cleanly" needs this after closing Pi's stdin, because Pi starts MCP servers
+  and other children that killing Pi alone can leave running.
 - *Preload shape* (`desktop/src/preload.cjs`): a frozen `contextBridge` object of
   named methods. Keep the pattern, not the methods: D1b's preload exposes only
-  terminal input, output, resize and exit.
+  what the renderer needs (send a command, receive events, answer a dialog,
+  read and set the theme).
+- *Strict RPC commands* (`web/rpc-adapter.mjs`): renderer input is untrusted, so
+  each Pi command is built field by field with allowlists (thinking levels,
+  queue modes, image types and size limits) and an unknown slash command never
+  becomes a prompt. Re-check the field names against Pi 0.87.1's
+  `docs/rpc-commands.md`; the file was written for 0.84.3.
+- *Transcript replay* (`web/transcript-replay.mjs`, `projectTranscriptMessages`):
+  rebuilds a resumed session's timeline from Pi's messages, pairing tool results
+  with their calls and clipping thinking and output. D1b's resume.
+- *Theme system* (`web/public/theme-system.js` and the token layer of
+  `web/public/style.css`): one DOM, an allowlist of theme ids, a
+  `data-theme` attribute, semantic tokens for surface, text, accent, type,
+  radius and elevation, WCAG AA contrast checks, reduced-motion and
+  forced-colors rules. Keep the mechanism and the two Modern palettes; replace
+  Retro Messenger with Retro Dark and Retro Light built from the coop website's
+  `css/styles.css` tokens (the dark Win98 desktop and the `[data-theme="light"]`
+  classic silver, each text token already measured against WCAG AA).
+- *Model sign-in handoff* (`desktop/src/native-terminal.mjs`, the Windows
+  `windowsConsoleProcess` path and `buildNativeModelLoginProcess`): opens a real
+  console for the TUI-only sign-in, passing paths only through environment
+  variables. D1b's handoff for sign-in and for anything `custom()` would draw;
+  drop the macOS and Linux branches and the clone and move modes.
 
-**Salvage: reuse in D1c and D1d.**
+**Salvage: reuse in D1b2, D1c and D1d.**
+
+- *Diff view* (`web/public/diff.js` and `diffview.js`): a DOM-free unified-diff
+  model (pairing, intraline emphasis, split rows) and a read-only changes panel,
+  unified or side by side. D1b2's changes panel; D1b's inline edit diffs can use
+  the model alone.
 
 - *Electron fuses* (`desktop/package.json`, `build.electronFuses`): run-as-node
   off, `NODE_OPTIONS` and inspect arguments off, embedded asar integrity on, load
@@ -1279,17 +1319,23 @@ reviewed lines into the new `desktop/`, never merging a branch.
   `config/desktop-release-*.json`, `config/desktop-update*.json`,
   `config/runtime-event.schema.json`, `scripts/desktop-release-gate.mjs` and
   `docs/desktop-extension-contracts.md`;
-- the `coop runtime` HTTP contract and its clients: `web/runtime-*.mjs`,
-  `lib/rpc-questionnaire.mjs` (on `feature/coop-desktop-windows-validation-interaction`) and the Coop Web renderer (D1b shows Pi's own TUI,
-  so no extension dialog is re-implemented);
+- the `coop runtime` HTTP server and its clients: `web/server.mjs`,
+  `web/runtime-*.mjs`, `web/sse-writer.mjs`, the `web/*-service.mjs` modules and
+  `lib/rpc-questionnaire.mjs` (on `feature/coop-desktop-windows-validation-interaction`);
+  Electron IPC replaces the port, the token and the server-side services, and
+  Pi's own dialog protocol replaces the questionnaire bridge;
+- the renderer monolith `web/public/app.js` (190 KB, built around that HTTP
+  contract and Mission Control) and the Mission Control, findings, lineage,
+  knowledge and usage models: D1b writes a smaller renderer around Pi's event
+  stream and reuses the pieces listed above;
 - the Ed25519 update service: the twenty-two `desktop/src/update-*` files
   (JavaScript, Python and PowerShell) and their trust key and feed (D1e uses
   reinstall, or `electron-updater` only if it needs no token);
-- renderer features: workspace selection and leases, the three themes, session
-  restoration and HTML export, and terminal clone, move and model-login handoffs
-  (`native-terminal.mjs`, `workspace-selection.mjs`, `session-*.mjs`,
-  `desktop-state.mjs`); the window opens in the folder `coop desktop` was started
-  from, and Pi's own `/resume` and `/export` cover the rest;
+- workspace leases and selection, desktop session restoration and HTML export,
+  and the terminal clone and move handoffs (`workspace-selection.mjs`,
+  `session-*.mjs`, `desktop-state.mjs`, most of `native-terminal.mjs`): the window
+  opens in the folder `coop desktop` was started from, and Pi's own session
+  list, resume and `/export` cover the rest;
 - the Windows validation diagnostics: `desktop/scripts/diagnose-windows-shell.mjs`,
   `electron-builder-windows-validation.cjs`, the "Defect D" `Start-Job` work and
   the `docs/agent/*` notes. Their cause was the managed dispatcher launching coop
