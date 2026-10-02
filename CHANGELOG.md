@@ -64,6 +64,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   and `coop doctor` name the real next step; `coop onboard --config-only` clears
   a saved TeamAI repo or role with `-`. Tests: `tests/teamai-adapter.test.py`
   (K3 section) and `tests/fixtures/teamai.test.ps1` (launch-spec slot).
+- `data_doc` command `impact`: every downstream object that changed source files
+  feed, from coop-data-doc's own `impact` command (`--evidence`, so the evidence
+  state comes with it). With `files` it reads the current built graph, so it
+  needs no rebuild or committed docs; with `against` (a git ref) it diffs a
+  rebuilt graph against that ref's committed `graph.json`. File paths reach the
+  companion both as given and relative to each documented repo root. The
+  `coop-workflow` skill (step 8) and `git-helper` (the PR description's
+  **Lineage impact**) now call it before a change is presented.
 
 ### Changed
 
@@ -78,10 +86,35 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- The model now sees what `data_doc lineage`, `sql_impact`, `fabric_sql_query`
+  and `bpa_review` found. Pi sends a tool's `content` text to the model and keeps
+  `details` for the UI and session log only, and these tools put their results
+  in `details`: the model got counts ("2 upstream, 1 downstream", "5 row(s)
+  returned", "3 finding(s)") but never the object names, rows or rules. Each now
+  renders them into the text (lineage and catalog items one per line, query rows
+  as JSON arrays, BPA findings errors first), capped at 12,000 characters with a
+  line saying how much was left out.
 - `tests/run.sh` stops at once with one clear line when `pwsh` is on PATH but
   cannot start (Homebrew's formula without its .NET runtime), and the extended
   lane stops with the install command when Python has no `jsonschema`, instead
   of failing dozens of tests one by one (seen on a release check on macOS).
+- `sql_impact`'s pointer to `data_doc lineage` now finds built lineage docs the
+  same way the session-start note does: the nearest `coop-data-doc.yml` in this
+  folder or a parent (or `COOP_DATA_DOC_CONFIG`), with `output.dir` resolved
+  against the config's folder and `graph.json` present. Before, it looked only
+  in the current folder, so a session opened in a subfolder of the estate never
+  got the hint (`builtLineageDir` in `extensions/coop-tools`).
+- `coop data-doc` summarizes the graph the run actually wrote. It asks
+  `coop-data-doc show-config` which config was used (passing any `--config`)
+  and reads `graph.json` from that config's output dir, so a build from a
+  subfolder or with a custom output dir reports the right counts instead of
+  nothing or an unrelated `manifest.json` in the current folder. Failed runs
+  and subcommands that write no graph (`setup`, `check`, `lineage`) print no
+  summary, and the summary reads the graph as UTF-8, so non-ASCII object names
+  no longer silence it on Windows. New gate fixture
+  `tests/fixtures/data-doc-summary.test.ps1`.
+- Master plan: the `coop-data-doc` dependency row and row 11a now say #238 and
+  #235 shipped in v0.26.0 (they still read "unreleased").
 
 ## [0.27.0] — 2026-10-01
 

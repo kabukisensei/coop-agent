@@ -14,9 +14,11 @@ rule 4) — a human does — so the job here is to make the human's commit effor
 1. `git status` and `git diff --stat` — the shape of the change.
 2. `git diff` for the files that matter; use `git diff -- <paths>` to separate
    source changes from docs/logs/site changes.
-3. If SQL / DAX / semantic-model objects changed, note the lineage impact
-   (`data_doc` tool, `command="lineage"`) and any standards self-check findings
-   (any deviation and its user exception or stated reason) from this session.
+3. If SQL / DAX / semantic-model objects changed, get what the change feeds:
+   `data_doc` with `command="impact"` and `files` set to the changed source paths
+   from `git diff --name-only` (or `against="main"` after a rebuild, when the docs
+   are committed). Note any standards self-check findings (any deviation and its
+   user exception or stated reason) from this session.
 
 ## Commit message (Conventional Commits)
 
@@ -32,7 +34,9 @@ Output a draft with these sections:
 
 - **Summary** — what changed and why, in plain language.
 - **Changes** — a bullet per file/object.
-- **Lineage impact** — upstream/downstream objects affected (from `data_doc`).
+- **Lineage impact** — every downstream object the changed files feed (from
+  `data_doc` impact) and its evidence confidence. "None observed" is not proof of
+  zero impact; say so when coverage is partial or unknown.
 - **Standards & validation** — standards self-check outcome (rules not met, if any),
   Tabular Editor BPA / `fabric-cicd` validate results and any tests run.
 - **Rollback** — how to revert safely (backups, `git checkout` of uncommitted edits).

@@ -4,8 +4,9 @@
  * Registers read-only / advisory tools that shell out to the standalone Coop
  * CLIs and return machine-readable JSON the model can reason over:
  *
- *   data_doc    -> coop-data-doc <scan|build|check|lineage>      (lineage graph + manifest.json;
- *                                                                lineage = one object's up/downstream)
+ *   data_doc    -> coop-data-doc <scan|build|check|lineage|impact> (lineage graph + manifest.json;
+ *                                                                lineage = one object's up/downstream,
+ *                                                                impact = what changed files feed)
  *   bpa_review  -> Tabular Editor BPA over semantic-model files  (advisory; never edits/blocks)
  *
  * These let the agent call the documentation/model-check tools directly instead
@@ -61,10 +62,10 @@ const REVIEW_PARAMS = Type.Object({
 const DATADOC_PARAMS = Type.Object({
   command: Type.Optional(
     Type.Union(
-      [Type.Literal("scan"), Type.Literal("build"), Type.Literal("check"), Type.Literal("lineage")],
+      [Type.Literal("scan"), Type.Literal("build"), Type.Literal("check"), Type.Literal("lineage"), Type.Literal("impact")],
       {
         description:
-          "coop-data-doc subcommand. 'scan' (default) builds the lineage graph (read-only); 'build' also writes Markdown docs + portal; 'check' is a CI staleness gate; 'lineage' returns ONE object's upstream/downstream + relationships as JSON from the built graph — call it BEFORE touching that object.",
+          "coop-data-doc subcommand. 'scan' (default) builds the lineage graph (read-only); 'build' also writes Markdown docs + portal; 'check' is a CI staleness gate; 'lineage' lists ONE object's upstream/downstream + relationships from the built graph — call it BEFORE touching that object; 'impact' lists every downstream object fed by changed source files — call it before presenting a change.",
       },
     ),
   ),
@@ -76,6 +77,18 @@ const DATADOC_PARAMS = Type.Object({
   ),
   depth: Type.Optional(
     Type.Number({ description: "For command='lineage': hops up/downstream to include (default 1)." }),
+  ),
+  files: Type.Optional(
+    Type.Array(Type.String(), {
+      description:
+        "For command='impact': the changed SQL/DAX/model source files (relative to the current folder, absolute, or relative to a documented repo root).",
+    }),
+  ),
+  against: Type.Optional(
+    Type.String({
+      description:
+        "For command='impact': a git ref (e.g. 'main') whose committed graph.json is the baseline, to diff a rebuilt graph against it. Omit to use the current built graph with `files`.",
+    }),
   ),
 });
 
@@ -233,9 +246,163 @@ function summarizeReview(bin: string, parsed: any, stdout: string, code: number)
   }
   return (
     `${bin}: ${findings.length} finding(s) — ` +
-    `${sev.error} error, ${sev.warning} warning, ${sev.info} info (exit ${code}). ` +
-    `Full structured report is in this tool result's details.`
+    `${sev.error} error, ${sev.warning} warning, ${sev.info} info (exit ${code}).`
   );
+}
+
+// --- Model-visible results ----------------------------------------------------
+// Pi hands the model a tool's `content` text only; `details` reach the UI and the
+// session log, never the model (pi-ai's provider adapters serialize toolResult
+// content, not details). So the names, rows and findings the model must act on
+// are rendered into the text, capped so one call cannot flood the context; the
+// full structured payload stays in details for the human.
+export const MODEL_TEXT_CAP = 12_000;
+
+/** `head`, then as many `lines` as fit in `cap` characters; a last line says how
+ *  many were left out and what to do about it. */
+export function modelText(head: string, lines: string[], omittedHint: string, cap = MODEL_TEXT_CAP): string {
+  let out = head;
+  let shown = 0;
+  for (const line of lines) {
+    if (out.length + 1 + line.length > cap) break;
+    out += `\n${line}`;
+    shown++;
+  }
+  const left = lines.length - shown;
+  return left > 0 ? `${out}\n… ${left} more line(s) not shown: ${omittedHint}` : out;
+}
+
+/** "name (type)" for a coop-data-doc node reference (or a bare id). */
+function refLabel(ref: any): string {
+  if (ref === null || typeof ref !== "object") return String(ref);
+  const name = ref.name || ref.id || "?";
+  return ref.type ? `${name} (${ref.type})` : String(name);
+}
+
+function evidenceText(evidence: any): string {
+  return `Evidence confidence: ${evidence?.state || "unknown"}; states: ${(evidence?.states || ["unknown"]).join(", ")}. Empty results do not prove zero impact.`;
+}
+
+/** The model-facing text for one `coop-data-doc lineage` slice. */
+export function lineageText(parsed: any, query: string): string {
+  if (parsed?.ambiguous) {
+    const matches: any[] = parsed.matches || [];
+    return modelText(
+      `'${query}' is ambiguous — ${matches.length} matches; re-call lineage with one of these names:`,
+      matches.map((m) => `- ${refLabel(m)}`),
+      "use a more specific name",
+    );
+  }
+  const up: any[] = parsed?.upstream || [];
+  const down: any[] = parsed?.downstream || [];
+  const rels: any[] = parsed?.relationships || [];
+  const head =
+    `Observed lineage for ${refLabel(parsed?.object || query)}: ${up.length} upstream, ${down.length} downstream, ${rels.length} relationship(s). ` +
+    evidenceText(parsed?.evidence) +
+    (parsed?.object?.doc ? `\nDoc: ${parsed.object.doc}` : "");
+  const lines: string[] = [];
+  for (const [label, items] of [["Upstream", up], ["Downstream", down]] as const) {
+    lines.push(items.length ? `${label}:` : `${label}: none observed`);
+    for (const item of items) lines.push(`- ${refLabel(item)}`);
+  }
+  if (rels.length) {
+    lines.push("Relationships:");
+    for (const rel of rels) lines.push(`- ${typeof rel === "string" ? rel : JSON.stringify(rel)}`);
+  }
+  return modelText(head, lines, "read the object's doc page, or re-call with a smaller depth");
+}
+
+/** The model-facing text for `coop-data-doc impact --evidence --format json`. */
+export function impactText(parsed: any, seededBy: string): string {
+  const impacts: Record<string, string[]> = parsed?.impacts && typeof parsed.impacts === "object" ? parsed.impacts : {};
+  const seeds = Object.keys(impacts);
+  if (!seeds.length) {
+    return (
+      `No documented object matched ${seededBy}. The built graph records each object's source file relative to its repo root, ` +
+      "so check the paths; a new object, or a graph built before these edits, needs data_doc (build) first. " +
+      evidenceText(parsed?.evidence)
+    );
+  }
+  const reached = new Set<string>();
+  for (const seed of seeds) for (const d of impacts[seed] || []) reached.add(d);
+  const lines: string[] = [];
+  for (const seed of seeds) {
+    const down = impacts[seed] || [];
+    lines.push(down.length ? `- ${seed} feeds ${down.length}:` : `- ${seed}: no observed downstream`);
+    for (const d of down) lines.push(`  - ${d}`);
+  }
+  return modelText(
+    `Observed downstream impact of ${seededBy}: ${seeds.length} changed object(s) feed ${reached.size} downstream object(s). ${evidenceText(parsed?.evidence)}`,
+    lines,
+    "call data_doc lineage for the objects that matter most",
+  );
+}
+
+/** The `--files` values for `coop-data-doc impact`: each path as given (POSIX
+ *  separators) plus its form relative to every documented repo root it sits in,
+ *  since the graph records source files relative to their repo root. */
+export function impactFileArgs(files: string[], cwd: string, env: Record<string, string | undefined> = process.env): string[] {
+  const out = new Set<string>();
+  const roots: string[] = [];
+  const ymlPath = findDataDocConfig(cwd, env);
+  if (ymlPath && existsSync(ymlPath)) {
+    const cfg = parseExisting(safeRead(ymlPath));
+    for (const repo of [cfg.sqlPath, cfg.pbiPath]) if (repo) roots.push(resolveRel(dirname(ymlPath), repo));
+  }
+  for (const file of files) {
+    const given = file.trim();
+    if (!given) continue;
+    out.add(given.replace(/\\/g, "/").replace(/^\.\//, ""));
+    const abs = resolveRel(cwd, given);
+    for (const root of roots) {
+      const rel = relative(root, abs);
+      if (rel && !rel.startsWith("..") && !isAbsolute(rel)) out.add(rel.replace(/\\/g, "/"));
+    }
+  }
+  return [...out];
+}
+
+/** The model-facing lines for sql_impact's three catalog sections. */
+export function sqlImpactLines(details: any): string[] {
+  const lines: string[] = [];
+  for (const name of ["downstream", "upstream", "columns"]) {
+    const part = details?.[name];
+    const label = name[0].toUpperCase() + name.slice(1);
+    if (!part || typeof part !== "object") continue;
+    if (part.state !== "ok") {
+      lines.push(`${label}: unavailable (${part.reason || "not reported"})`);
+      continue;
+    }
+    lines.push(`${label} (${part.count}${part.truncated ? "+, capped" : ""}):`);
+    for (const item of part.items || []) {
+      if (name === "columns") {
+        lines.push(`- ${item.name} ${item.type}${item.nullable ? " NULL" : " NOT NULL"}`);
+        continue;
+      }
+      const qualified = [item.server, item.database, item.schema, item.name].filter(Boolean).join(".");
+      const flags = item.resolved === false
+        ? `, unresolved${item.mentioned_in_definition === false ? ", not named in the definition" : ""}`
+        : "";
+      lines.push(`- ${qualified} (${item.type || "unknown"}${flags})`);
+    }
+  }
+  return lines;
+}
+
+/** The model-facing lines for fabric_sql_query: the column names, then one JSON array per row. */
+export function sqlRowLines(details: any): string[] {
+  const lines = [`Columns: ${JSON.stringify(details?.columns || [])}`];
+  for (const row of details?.rows || []) lines.push(JSON.stringify(row));
+  return lines;
+}
+
+const SEVERITY_ORDER: Record<string, number> = { error: 0, warning: 1, info: 2 };
+
+/** The model-facing lines for bpa_review findings, errors first. */
+export function bpaFindingLines(findings: any[], multipleModels: boolean): string[] {
+  return [...findings]
+    .sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 3) - (SEVERITY_ORDER[b.severity] ?? 3))
+    .map((f) => `- [${f.severity}] ${f.rule}: ${f.message} (${f.object}${multipleModels && f.file ? ` in ${basename(f.file)}` : ""})`);
 }
 
 // --- coop-data-doc setup wizard (JSONL bridge to the companion) ---------------
@@ -246,6 +413,7 @@ function summarizeReview(bin: string, parsed: any, stdout: string, code: number)
 // changes, mirror it here.
 const DATADOC_CONFIG = "coop-data-doc.yml";
 const DEFAULT_OUTPUT_DIR = "./data-docs";
+const NO_GRAPH_TEXT = "No built lineage graph yet — run data_doc (build) first, or /setup-docs to set it up. (You can still work without it.)";
 
 /** Match the companion's environment-first, ancestor config discovery. */
 export function findDataDocConfig(cwd: string, env: Record<string, string | undefined> = process.env): string | null {
@@ -321,15 +489,19 @@ function isBuilt(outAbs: string): boolean {
   return existsSync(join(outAbs, "manifest.json")) || existsSync(join(outAbs, "index.md"));
 }
 
-/** Built lineage docs exist for this folder (same detection as the session-start note). */
-function hasBuiltDocs(cwd: string): boolean {
+/** The output dir holding the built lineage graph (graph.json, what `data_doc
+ *  lineage` reads) for the companion's config (environment, then this folder or
+ *  a parent; output.dir resolves against the config's folder), or null. One
+ *  detection for the session-start note and sql_impact's lineage hint. */
+export function builtLineageDir(cwd: string, env: Record<string, string | undefined> = process.env): string | null {
   try {
-    const ymlPath = join(cwd, DATADOC_CONFIG);
-    if (!existsSync(ymlPath)) return false;
+    const ymlPath = findDataDocConfig(cwd, env);
+    if (!ymlPath || !existsSync(ymlPath)) return null;
     const cfg = parseExisting(safeRead(ymlPath));
-    return isBuilt(resolveRel(cwd, cfg.outputDir || DEFAULT_OUTPUT_DIR));
+    const outAbs = resolveRel(dirname(ymlPath), cfg.outputDir || DEFAULT_OUTPUT_DIR);
+    return existsSync(join(outAbs, "graph.json")) ? outAbs : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -1406,7 +1578,7 @@ export function dailyLogToolEffect(toolName: string, input: Record<string, unkno
     return samePath(target, logPath) ? "log" : "meaningful";
   }
   if (toolName === "bpa_review") return "meaningful";
-  if (toolName === "data_doc") return input.command === "lineage" ? "none" : "meaningful";
+  if (toolName === "data_doc") return input.command === "lineage" || input.command === "impact" ? "none" : "meaningful";
   if (toolName === "bash" || toolName === "powershell") {
     const command = typeof input.command === "string" ? input.command : "";
     if (!command) return "none";
@@ -2492,14 +2664,18 @@ export default function coopTools(pi: ExtensionAPI) {
     executionMode: "sequential",
     async execute(_id, params, signal, _onUpdate, ctx) {
       const details = await runFabricSqlHelper(params, signal, ctx.cwd, "sql_impact.py");
-      const docsHint = hasBuiltDocs(ctx.cwd) ? " Built lineage docs exist here: call data_doc (command=\"lineage\") for the same object to cover the rest of the estate." : "";
+      const docsHint = builtLineageDir(ctx.cwd) ? " Built lineage docs exist here: call data_doc (command=\"lineage\") for the same object to cover the rest of the estate." : "";
       const section = (name: string) => {
         const part = details?.[name];
         if (!part || typeof part !== "object") return `${name}: ?`;
         return part.state === "ok" ? `${name}: ${part.count}${part.truncated ? "+" : ""}` : `${name}: unavailable`;
       };
       const text = details?.ok
-        ? `sql_impact: ${details.object?.schema}.${details.object?.name} (${details.object?.type}) on ${details.target?.kind} ${details.target?.environment}: ${["downstream", "upstream", "columns"].map(section).join(", ")}. Structured items are in details.${docsHint}`
+        ? modelText(
+          `sql_impact: ${details.object?.schema}.${details.object?.name} (${details.object?.type}) on ${details.target?.kind} ${details.target?.environment}: ${["downstream", "upstream", "columns"].map(section).join(", ")}.${docsHint}`,
+          sqlImpactLines(details),
+          "query sys.dm_sql_referencing_entities or INFORMATION_SCHEMA.COLUMNS with fabric_sql_query for the rest",
+        )
         : `sql_impact unavailable: ${String(details?.state || "internal_error")}.`;
       return { content: [{ type: "text" as const, text }], details };
     },
@@ -2519,7 +2695,11 @@ export default function coopTools(pi: ExtensionAPI) {
     async execute(_id, params, signal, _onUpdate, ctx) {
       const details = await runFabricSqlHelper(params, signal, ctx.cwd);
       const text = details?.ok
-        ? `fabric_sql_query: ${details.row_count} row(s) returned${details.truncated ? " (capped)" : ""}. Structured rows are in details.`
+        ? modelText(
+          `fabric_sql_query: ${details.row_count} row(s) returned${details.truncated ? " (capped)" : ""}.`,
+          sqlRowLines(details),
+          "narrow the SELECT (fewer columns or a smaller TOP) to see them",
+        )
         : `fabric_sql_query unavailable: ${String(details?.state || "internal_error")}.`;
       return { content: [{ type: "text" as const, text }], details };
     },
@@ -2604,7 +2784,14 @@ export default function coopTools(pi: ExtensionAPI) {
       const report = { findings: allFindings, summary: allSummary, ruleErrors };
       const scopeLine = `Scope: ${models.join(", ")}`;
       return {
-        content: [{ type: "text" as const, text: `${summarizeReview("bpa_review", report, allStdout, finalCode)}\n${scopeLine}${ruleErrors ? `\nBPA could not evaluate ${ruleErrors} rule(s); results are incomplete.` : ""}` }],
+        content: [{
+          type: "text" as const,
+          text: modelText(
+            `${summarizeReview("bpa_review", report, allStdout, finalCode)}\n${scopeLine}${ruleErrors ? `\nBPA could not evaluate ${ruleErrors} rule(s); results are incomplete.` : ""}`,
+            bpaFindingLines(allFindings, models.length > 1),
+            "fix the errors shown, then re-run bpa_review",
+          ),
+        }],
         details: { tool: "bpa_review", analysisFailed: ruleErrors > 0, invocations, report, exitCode: finalCode, stdout: allStdout, stderr: allStderr },
       };
     },
@@ -2619,18 +2806,18 @@ export default function coopTools(pi: ExtensionAPI) {
     name: "data_doc",
     label: "Data Documentation",
     description:
-      "Understand and document whatever SQL and/or Power BI source is currently available with coop-data-doc. Commands: 'scan' (default) writes the lineage graph (graph.json, read-only); 'build' also writes Markdown docs (per-object docs + lineage) and a searchable portal, indexed by manifest.json; 'check' is a CI staleness gate; 'lineage' returns ONE object's upstream inputs + downstream dependents + relationships as JSON from the built graph. Use 'lineage' (or read the object's <slug>.md via manifest.json) BEFORE analyzing or changing any object so you know its up/downstream consequences. No source, one side, partial folders, and both sides are valid stages. If the folder has no coop-data-doc.yml or built graph, these degrade gracefully — the docs are an aid, not a requirement; you can proceed without them and optionally suggest /setup-docs. Documentation outputs are committable; source is never touched.",
-    promptSnippet: "Understand a SQL+PowerBI estate: lineage graph + per-object up/downstream (use before touching an object)",
+      "Understand and document whatever SQL and/or Power BI source is available with coop-data-doc. Commands: 'scan' (default) writes the lineage graph (graph.json); 'build' also writes per-object Markdown docs and a portal, indexed by manifest.json; 'check' is a CI staleness gate; 'lineage' lists ONE object's upstream inputs, downstream dependents and relationships from the built graph; 'impact' lists every downstream object that changed source files feed. No source, one side, partial folders and both sides are valid stages. Without a coop-data-doc.yml or built graph, proceed without it (an aid, not a gate) and optionally suggest /setup-docs. Outputs are committable; source is never touched.",
+    promptSnippet: "Understand a SQL+PowerBI estate: lineage graph, one object's up/downstream, and what a change feeds",
     promptGuidelines: [
-      "BEFORE analyzing or changing any SQL object, DAX measure, or semantic model, look up its lineage: call data_doc with command='lineage', object='<name>' to get its upstream inputs, downstream dependents, and relationships. Don't reconstruct lineage by hand when the docs already have it.",
-      "Use data_doc to understand relationships and existing documentation before planning changes. After scan/build, read the focused per-object Markdown (find it via manifest.json), not the whole tree.",
-      "Default to 'scan'/'lineage' (read-only). Only run 'build' when the user wants the Markdown docs/portal regenerated.",
-      "If the estate has no coop-data-doc.yml or built graph (lineage reports 'no built graph'), proceed without it — the lineage is an aid, not a gate — and, if useful, suggest /setup-docs.",
+      "BEFORE analyzing or changing any SQL object, DAX measure, or semantic model, call data_doc with command='lineage', object='<name>' for its upstream inputs, downstream dependents, and relationships. Don't reconstruct lineage by hand.",
+      "After editing SQL, DAX or model source files and before presenting the change, call data_doc with command='impact', files=[the changed paths] and report every downstream object it lists.",
+      "Default to 'scan', 'lineage' and 'impact' (read-only); run 'build' only when the user wants the docs regenerated. Read the focused per-object Markdown via manifest.json, not the whole tree.",
+      "Without a coop-data-doc.yml or built graph ('no built graph'), proceed without it and, if useful, suggest /setup-docs.",
     ],
     parameters: DATADOC_PARAMS,
     executionMode: "sequential",
     async execute(_id, params, signal, _onUpdate, ctx) {
-      const p = params as { command?: string; object?: string; depth?: number };
+      const p = params as { command?: string; object?: string; depth?: number; files?: string[]; against?: string };
       const command = p.command || "scan";
 
       // --- lineage: one object's up/downstream from the BUILT graph (read-only) ---
@@ -2664,15 +2851,73 @@ export default function coopTools(pi: ExtensionAPI) {
         const noGraph = /no built graph/i.test(res.stderr + res.stdout);
         const text =
           res.code === 0 && parsed
-            ? parsed.ambiguous
-              ? `'${p.object}' is ambiguous — ${(parsed.matches || []).length} matches; re-call lineage with a specific name (candidates in details).`
-              : `Observed lineage for ${parsed.object?.name || p.object}: ${(parsed.upstream || []).length} upstream, ${(parsed.downstream || []).length} downstream, ${(parsed.relationships || []).length} relationship(s). Evidence confidence: ${parsed.evidence?.state || "unknown"}; states: ${(parsed.evidence?.states || ["unknown"]).join(", ")}. Empty results do not prove zero impact. Coverage, trust, provenance, full slice and doc path in details.`
+            ? lineageText(parsed, p.object)
             : noGraph
-              ? "No built lineage graph yet — run data_doc (build) first, or /setup-docs to set it up. (You can still work without it.)"
+              ? NO_GRAPH_TEXT
               : `lineage failed (exit ${res.code}): ${(res.stderr || res.stdout).trim().slice(0, 300)}`;
         return {
           content: [{ type: "text" as const, text }],
           details: { tool: "coop-data-doc", command, object: p.object, exitCode: res.code, lineage: parsed ?? res.stdout, stderr: res.stderr },
+        };
+      }
+
+      // --- impact: every downstream object the changed files feed (read-only) ---
+      if (command === "impact") {
+        const files = (p.files || []).map((f) => String(f).trim()).filter(Boolean);
+        const against = String(p.against || "").trim();
+        if (!files.length && !against) {
+          return {
+            content: [{ type: "text" as const, text: "data_doc impact needs `files` (the changed source files) or `against` (a git ref whose committed graph.json is the baseline)." }],
+            details: { tool: "coop-data-doc", command },
+          };
+        }
+        if (against && (against.startsWith("-") || !/^[\w./~^@{}-]+$/.test(against))) {
+          return {
+            content: [{ type: "text" as const, text: `data_doc impact: '${against}' is not a git ref name.` }],
+            details: { tool: "coop-data-doc", command, against },
+          };
+        }
+        // `--opt=value` keeps a value that starts with '-' from being read as a flag.
+        const args = ["impact", "--format=json", "--evidence"];
+        if (against) args.push(`--git=${against}`);
+        else {
+          // Without a ref the current built graph is its own baseline: the
+          // changed files seed the impact, and their objects' downstream is read
+          // from the graph as built.
+          const graphDir = builtLineageDir(ctx.cwd);
+          if (!graphDir) {
+            return { content: [{ type: "text" as const, text: NO_GRAPH_TEXT }], details: { tool: "coop-data-doc", command } };
+          }
+          args.push(`--baseline=${join(graphDir, "graph.json")}`);
+        }
+        for (const file of impactFileArgs(files, ctx.cwd)) args.push(`--files=${file}`);
+        let res;
+        try {
+          res = await pi.exec("coop-data-doc", args, { cwd: ctx.cwd, signal });
+        } catch (e: any) {
+          return {
+            content: [{ type: "text" as const, text: `coop-data-doc could not run: ${errMsg(e)}. Is it installed? (coop install)` }],
+            details: { tool: "coop-data-doc", command, error: errMsg(e) },
+          };
+        }
+        let parsed: any = null;
+        try {
+          parsed = JSON.parse(res.stdout);
+        } catch {
+          /* leave parsed null */
+        }
+        const seededBy = files.length
+          ? `${files.length} changed file(s)${against ? ` against ${against}` : ""}`
+          : `the rebuilt graph against ${against}`;
+        const text =
+          res.code === 0 && parsed
+            ? impactText(parsed, seededBy)
+            : /no built graph/i.test(res.stderr + res.stdout)
+              ? NO_GRAPH_TEXT
+              : `impact failed (exit ${res.code}): ${(res.stderr || res.stdout).trim().slice(0, 300)}`;
+        return {
+          content: [{ type: "text" as const, text }],
+          details: { tool: "coop-data-doc", command, files, against, args, exitCode: res.code, impact: parsed ?? res.stdout, stderr: res.stderr },
         };
       }
 
@@ -2790,22 +3035,18 @@ export default function coopTools(pi: ExtensionAPI) {
 
       let message: any;
       if (!announcedCwds.has(cwd)) {
-        const ymlPath = findDataDocConfig(cwd) || join(cwd, DATADOC_CONFIG);
-        if (existsSync(ymlPath)) {
-          const cfg = parseExisting(safeRead(ymlPath));
-          const outAbs = resolveRel(dirname(ymlPath), cfg.outputDir || DEFAULT_OUTPUT_DIR);
-          if (existsSync(join(outAbs, "graph.json"))) {
-            announcedCwds.add(cwd);
-            const relOut = relative(cwd, outAbs) || ".";
-            message = {
-              customType: "coop-lineage",
-              display: false,
-              content:
-                `An observed lineage graph is available under ${relOut}: graph.json${existsSync(join(outAbs, "manifest.json")) ? ", manifest.json" : ""}. Its coverage may be partial or unknown; empty lineage does not prove zero impact. ` +
-                `BEFORE analyzing or changing any SQL object, DAX measure, or semantic model, look up its observed up/downstream impact via the data_doc tool (command="lineage", object="<name>"). ${existsSync(join(outAbs, "manifest.json")) ? "Read available object docs via manifest.json and its immediate neighbors. " : "Run data_doc (build) to generate object docs. "}If the graph looks stale, run data_doc (build) to refresh.`,
-              details: { outputDir: relOut },
-            };
-          }
+        const outAbs = builtLineageDir(cwd);
+        if (outAbs) {
+          announcedCwds.add(cwd);
+          const relOut = relative(cwd, outAbs) || ".";
+          message = {
+            customType: "coop-lineage",
+            display: false,
+            content:
+              `An observed lineage graph is available under ${relOut}: graph.json${existsSync(join(outAbs, "manifest.json")) ? ", manifest.json" : ""}. Its coverage may be partial or unknown; empty lineage does not prove zero impact. ` +
+              `BEFORE analyzing or changing any SQL object, DAX measure, or semantic model, look up its observed up/downstream impact via the data_doc tool (command="lineage", object="<name>"). ${existsSync(join(outAbs, "manifest.json")) ? "Read available object docs via manifest.json and its immediate neighbors. " : "Run data_doc (build) to generate object docs. "}If the graph looks stale, run data_doc (build) to refresh.`,
+            details: { outputDir: relOut },
+          };
         }
       }
 
