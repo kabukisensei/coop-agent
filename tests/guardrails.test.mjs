@@ -454,6 +454,23 @@ await t("Fabric / Azure REST writes from the shell ask; reads pass", async () =>
   assert.equal(fabricWriteLabel('echo "az rest --method post"'), null);
   assert.equal(fabricWriteLabel("grep -r 'fab deploy' docs/"), null);
   assert.equal(fabricWriteLabel("azcopy copy src dst"), null);
+  // Rayfin (Fabric Apps): deploys ask; dry runs, status and local work pass.
+  assert.equal(fabricWriteLabel("npx rayfin up --workspace-id w --item-name app --output json"), "rayfin up");
+  assert.equal(fabricWriteLabel("npx -y @microsoft/rayfin-cli@1.36.2 up --yes"), "rayfin up");
+  assert.equal(fabricWriteLabel("node_modules/.bin/rayfin.cmd up"), "rayfin up");
+  assert.equal(fabricWriteLabel("npm exec -- rayfin up db apply"), "rayfin up db");
+  assert.equal(fabricWriteLabel("pnpm rayfin up staticapp deploy"), "rayfin up staticapp");
+  assert.equal(fabricWriteLabel("npx rayfin up functions deploy"), "rayfin up functions");
+  assert.equal(fabricWriteLabel("RAYFIN_TELEMETRY_OPTOUT=1 npx rayfin secret set API_KEY --from-env"), "rayfin secret set");
+  assert.equal(fabricWriteLabel("npx rayfin secret delete API_KEY"), "rayfin secret delete");
+  assert.equal(fabricWriteLabel("npx rayfin up --dry-run --workspace-id w"), null);
+  assert.equal(fabricWriteLabel("npx rayfin up -n"), null);
+  assert.equal(fabricWriteLabel("npx rayfin up status && npx rayfin up list"), null);
+  assert.equal(fabricWriteLabel("npx rayfin secret list"), null);
+  assert.equal(fabricWriteLabel("npx rayfin connector search sales --json && npx rayfin init ai-files install --yes"), null);
+  assert.equal(fabricWriteLabel("npx rayfin login status; npm run dev"), null);
+  assert.equal(fabricWriteLabel("npm create @microsoft/rayfin@latest my-app -- --template todoapp"), null);
+  assert.equal(fabricWriteLabel('echo "npx rayfin up"'), null);
   assert.equal(blocked(await call('az rest --method get --url "https://api.fabric.microsoft.com/v1/workspaces"', { confirm: false })), false);
   assert.equal(blocked(await call('az rest --method post --url "https://api.fabric.microsoft.com/v1/workspaces/w/items"', { confirm: false })), true);
   assert.equal(blocked(await call('az rest --method post --url "https://api.fabric.microsoft.com/v1/workspaces/w/items"', { confirm: true })), false);
@@ -2031,6 +2048,40 @@ await t("reload guard: COOP_NO_GUARDRAILS=1 disables it like every other gate", 
     assert.equal(blocked(await reloadCall("powerbi-desktop reload --pid 19284", { status: { code: 0, stdout: statusJson(inst(19284, true)) } })), false);
   } finally { delete process.env.COOP_NO_GUARDRAILS; }
   assert.deepEqual(statusCalls(), []);
+});
+
+await t("Fabric Apps (FA1): rayfin deploys ask and name the contract's dev workspace", async () => {
+  const WS = "11111111-2222-4333-8444-555555555555";
+  const OTHER = "99999999-2222-4333-8444-555555555555";
+  assert.equal(cg.parseDevWorkspaceId("profile:\n  client: Contoso\n"), "");
+  assert.equal(cg.parseDevWorkspaceId(`fabric:\n  default_workspace_name: Dev\n  default_workspace_id: "${WS.toUpperCase()}"   # dev\n`), WS);
+  assert.equal(cg.parseDevWorkspaceId('fabric:\n  default_workspace_id: "TODO: dev workspace id"\n'), "");
+  assert.equal(cg.rayfinWorkspaceTarget(`npx rayfin up --workspace-id ${WS} --output json`), WS);
+  assert.equal(cg.rayfinWorkspaceTarget("npx rayfin up"), null);
+  assert.doesNotMatch(cg.rayfinTargetNote(`npx rayfin up --workspace-id ${WS}`, WS), /WARNING/);
+  assert.match(cg.rayfinTargetNote(`npx rayfin up --workspace-id ${OTHER}`, WS), /WARNING: that is not the contract's dev workspace/);
+  assert.match(cg.rayfinTargetNote("npx rayfin up", ""), /\(not set\); command targets: its recorded deployment, or a new workspace/);
+  const up = { toolName: "bash", input: { command: `npx rayfin up --workspace-id ${WS} --item-name sales-app` } };
+  try {
+    writeContract(`fabric:\n  default_workspace_id: ${WS}\n`);
+    resetSessionGovernance();
+    confirmAnswer = false; confirmCount = 0; lastConfirm = "";
+    assert.equal(blocked(await handle(up, liveCtx)), true, "declined");
+    assert.equal(confirmCount, 1);
+    assert.match(lastConfirm, new RegExp(`Contract dev workspace: ${WS}; command targets: ${WS}`));
+    confirmAnswer = true;
+    assert.equal(blocked(await handle(up, liveCtx)), false, "approved");
+    confirmCount = 0;
+    assert.equal(blocked(await handle({ toolName: "bash", input: { command: "npx rayfin up --dry-run" } }, liveCtx)), false);
+    assert.equal(confirmCount, 0, "a dry run never asks");
+    removeContract();
+    resetSessionGovernance();
+    confirmAnswer = false;
+    assert.equal(blocked(await handle(up, liveCtx)), true, "no contract: still asks, declined blocks");
+  } finally {
+    removeContract();
+    resetSessionGovernance();
+  }
 });
 
 console.log(`  ${n} guardrails tests passed`);

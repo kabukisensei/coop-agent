@@ -60,7 +60,8 @@ for the Node tools and extensions; no script builds these paths inline.
      source, MCP read-only, never expose secrets.
    - **Skills** — `skills/`, including `coop-workflow` (the principles-first
      Cooptimize workflow) that the task skills run inside: `data-doc-analysis`, `power-bi-impact-analysis`,
-     `fabric-workspace-review`, `daily-logger`, `setup-docs` (the in-agent
+     `fabric-workspace-review`, `fabric-apps` (builds and deploys a Fabric App
+     with Rayfin to the dev workspace), `daily-logger`, `setup-docs` (the in-agent
      coop-data-doc wizard driven via `ask-user-question` + coop-data-doc's
      non-interactive commands), and `git-helper` (drafts Conventional-Commits
      messages + PR descriptions from the diff — drafts only, never commits) —
