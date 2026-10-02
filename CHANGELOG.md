@@ -22,6 +22,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   result on machines where pipx then worked, v0.23.5 through v0.29.0). A unit
   whose job dies or returns nothing now names the reason instead of printing a
   bare `! pipx`.
+- The cause of that empty job: Windows PowerShell 5.1's first background job
+  fails with "The Persistence Path does not exist" on a profile where
+  `%LOCALAPPDATA%\Microsoft\Windows\PowerShell` does not exist yet (a fresh
+  user, or an install whose profile variables point at a new folder). coop now
+  creates that directory before its first job, and any install or update unit
+  whose job returns nothing is run once more in-process so its real result is
+  reported.
 
 ### Changed
 
