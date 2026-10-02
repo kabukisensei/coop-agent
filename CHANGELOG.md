@@ -44,6 +44,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `launch-spec`, the runtime states). Re-record the session with
   `node desktop/scripts/record-fixture.mjs` after a Pi or extension upgrade.
 
+### Fixed
+
+- coop's footer wraps instead of cutting off the usage data. Since the footer
+  fix in 0.26.0 it was one line clipped at the terminal edge, so in a narrower
+  window (Windows Terminal at half screen, for example) the model, token and
+  cost numbers and pi-better-openai's 5h/7d plan limits were lost off the
+  right. It is still one line when everything fits; otherwise the left side
+  keeps line 1 and the right side wraps onto right-aligned lines below,
+  breaking between fields. Wide characters (CJK, emoji) in a session name now
+  count as two columns, so they cannot push a line past the edge.
+
 ## [0.28.0] — 2026-10-02
 
 ### Added
