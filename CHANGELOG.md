@@ -7,6 +7,26 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- Teams mobile access (master plan M1, `extensions/coop-mobile`, `/mobile`):
+  approve guardrail prompts and steer a running session from the phone through
+  the Teams app, in the chat with yourself. `/mobile setup` records the
+  Cooptimize tenant and the app registration's client id in
+  `<profile>/mobile.json`; `/mobile login` signs the machine in once with the
+  device-code flow (delegated `Chat.ReadWrite`, `User.Read`, `offline_access`;
+  the refresh token is DPAPI-protected in `<profile>/mobile-auth.json`);
+  `/mobile on` (a confirm in the terminal, or `auto_on: true` in `mobile.json`)
+  polls the self-chat over outbound HTTPS only, posts every reply there, and
+  mirrors each `confirm`/`select`/`input` dialog as a numbered message: the
+  first answer from the terminal or the phone wins and the other dialog is
+  aborted, a timeout stays a decline, and only an explicit number, "yes"/"no" or
+  an option's text counts. Only messages by the signed-in user, written after
+  `/mobile on`, are read; other text becomes a prompt (a follow-up while the
+  agent is busy); `/stop`, `/status` and `/mobile off` work from the phone.
+  A reply older than the question (by Graph's clock) is never an answer, and
+  tokens, keys, signatures and `password=` values are redacted before anything
+  is posted.
+  `coop doctor` shows the setup state. Setup values and the risk list:
+  `docs/mobile.md`. Gate tests: `tests/mobile.test.mjs`.
 - The coop window's first minutes (desktop UX review, Aaron 2026-10-03, six
   items). **Set-up card**: a fresh machine's launch notices (no model sign-in,
   `coop onboard`, `az login`) are one card on the empty screen and one banner

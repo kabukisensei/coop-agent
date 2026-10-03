@@ -14,8 +14,8 @@ first; this section adds architecture detail for working ON this repo.
   `bin/coop` call it) assembles Pi's launch flags from one shared builder
   (`coop launch-spec --json`) and execs `pi` against the isolated agent dir
   (`~/.coop/agent`). There is no bash product path (master plan S1).
-- The four companion extensions (`extensions/coop-powerline`, `coop-tools`,
-  `coop-guardrails`, `coop-profile`) are **loaded at launch** via `pi -e` straight
+- The five companion extensions (`extensions/coop-powerline`, `coop-tools`,
+  `coop-guardrails`, `coop-profile`, `coop-mobile`) are **loaded at launch** via `pi -e` straight
   from this repo — nothing is built or installed for them.
 - `lib/_extdeps.py` aligns the `@earendil-works/pi-ai` / `pi-tui` versions
   between the Pi agent and coop's isolated extension tree. **Drift means Pi

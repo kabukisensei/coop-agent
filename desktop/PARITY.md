@@ -195,6 +195,7 @@ dialogs as cards and lists.
 | Command | Extension | Maps to | In the window |
 | --- | --- | --- | --- |
 | `/start` | coop-tools | Pi | The Start Here menu, as a list. The empty window offers it too, and the first launch on a profile (`COOP_FIRST_RUN`, as the terminal) opens it once. |
+| `/mobile` | coop-mobile | Pi | Teams mobile access: `setup` and `login` ask their questions as dialogs; `on` asks a confirm card; `status` is a toast. With mobile on, a dialog the phone answers closes its card through Pi's abort (M1, `docs/mobile.md`). |
 | `/setup-project` | coop-tools | Pi | The project wizard's questions, one dialog each. |
 | `/setup-docs` | coop-tools | Pi | The docs wizard's questions, or a notice when coop-data-doc lacks the native wizard. |
 | `/standards-status` | coop-tools | Pi | A notice and the JSON status in the conversation. |

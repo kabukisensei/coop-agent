@@ -710,6 +710,21 @@ switch (Get-CoopDesktopRuntimeState) {
   default { D-Ok "coop window: not installed (optional; coop desktop installs Electron $desktopPin and pdf.js $desktopPdfPin on first use)" }
 }
 
+# Teams mobile access (master plan M1): optional, per machine, never on by itself.
+$mobileCfg = Join-Path (Get-CoopProfileDir) 'mobile.json'
+$mobileAuth = Join-Path (Get-CoopProfileDir) 'mobile-auth.json'
+if (Test-Path -LiteralPath $mobileCfg) {
+  if (Test-Path -LiteralPath $mobileAuth) {
+    $mobileWho = ''
+    try { $mobileWho = ((Get-Content -LiteralPath $mobileAuth -Raw) | ConvertFrom-Json).upn } catch { $mobileWho = '' }
+    D-Ok "Teams mobile: set up and signed in$(if ($mobileWho) { " as $mobileWho" }) (off until /mobile on, or auto_on in mobile.json)"
+  } else {
+    D-Warn 'Teams mobile: set up but not signed in' 'in coop, run: /mobile login'
+  }
+} else {
+  D-Ok 'Teams mobile: not set up (optional; in coop, run: /mobile setup)'
+}
+
 D-Head 'Project contract'
 $proj = Find-CoopProjectYml
 if ($proj) {

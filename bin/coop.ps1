@@ -357,6 +357,9 @@ function Build-CoopPiArgs {
   if (Test-Path -LiteralPath $extGuardrails) { $piArgs += @('-e', $extGuardrails) }
   $extProfile = Join-Path $script:CoopRoot 'extensions\coop-profile'
   if (Test-Path -LiteralPath $extProfile) { $piArgs += @('-e', $extProfile) }
+  # Teams mobile access (master plan M1): off until /mobile on or auto_on in mobile.json.
+  $extMobile = Join-Path $script:CoopRoot 'extensions\coop-mobile'
+  if (Test-Path -LiteralPath $extMobile) { $piArgs += @('-e', $extMobile) }
   # Coop owns fleet updates. Hide Pi's upstream self-update banner so users do not
   # drift Pi away from the release-manifest pins; Invoke-CoopUpdateNudge still
   # reports when THIS checkout is behind and directs the user to `coop update`.
