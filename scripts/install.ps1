@@ -184,7 +184,12 @@ $prereqMissing = Show-CoopPrereqs $prereqRows
 # launcher (#112). Checked before --prereqs auto can widen PATH.
 $installCmd = 'coop install'
 $rerunHint = 'run: coop install'
-if (-not (Test-Have 'coop')) {
+if (Test-CoopBundledRuntime) {
+  # The coop window package (master plan D1d) runs this from its first launch:
+  # the window's shortcut is the way back in, not a clone's Install coop.cmd.
+  $installCmd = "& `"$(Join-Path $script:CoopRoot 'bin\coop.cmd')`" install"
+  $rerunHint = 'start the coop window again (its shortcut), which runs this setup once more'
+} elseif (-not (Test-Have 'coop')) {
   $installCmd = "& `"$(Join-Path $script:CoopRoot 'bin\coop.cmd')`" install"
   $rerunHint = "double-click Install coop.cmd again (or run: $installCmd)"
 }

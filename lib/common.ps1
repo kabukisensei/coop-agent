@@ -318,6 +318,9 @@ function Get-CoopPipxCmd {
 
 function Get-CoopVenvDistVersion([string]$Venv, [string]$Distribution) {
   $pipx = Get-CoopPipxCmd
+  # No pipx yet (a fresh machine, the coop window package before its first
+  # setup): no version, and no raw "term 'pipx' is not recognized" on the console.
+  if (-not (Get-Command $pipx -ErrorAction SilentlyContinue)) { return '' }
   $out = (& $pipx runpip $Venv show $Distribution 2>$null | Out-String)
   if (-not $out) { return '' }
   foreach ($line in ($out -split "`r?`n")) {
