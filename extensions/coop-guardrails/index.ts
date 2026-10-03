@@ -2038,12 +2038,15 @@ export default function coopGuardrails(pi: ExtensionAPI) {
           const sqlEditKey = decision.kind === "ddl-dml-destructive" && (trustedSqlEnvironment === "dev" || trustedSqlEnvironment === "test")
             ? sessionApprovalKey(event, trustedSqlEnvironment)
             : null;
+          // A write is recorded as a write: "live read" on an approved CREATE/ALTER
+          // misread the audit trail (SQ live acceptance, 2026-10-03).
+          const auditLabel = decision.kind === "ddl-dml-destructive" ? "Warehouse SQL write" : "live read";
           if (sqlEditKey && editApprovals.has(sqlEditKey)) {
-            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: "allowed", label: "live read", detail: "session-approval" });
+            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: "allowed", label: auditLabel, detail: "session-approval" });
             return;
           }
           if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
-            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: "blocked-headless", label: "live read", detail: decision.kind || "live-read" });
+            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: "blocked-headless", label: auditLabel, detail: decision.kind || "live-read" });
             return { block: true, reason: `coop guardrails: blocked ${decision.kind || "live-read"} access through ${decision.label || "the governed tool"}; explicit approval is unavailable in headless mode.` };
           }
           const production = decision.environment === "production" || decision.scope?.environment === "production" || trustedSqlEnvironment === "production";
@@ -2071,7 +2074,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
           const choice = await askEditApproval(ctx, "coop live-data guardrail", prompt, sqlEditKey);
           const ok = choice !== "declined";
           if (choice === "session" && sqlEditKey) editApprovals.add(sqlEditKey);
-          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: ok ? "allowed" : "declined", label: "live read", detail: choice === "session" ? "session-approval-granted" : decision.kind || "live-read" });
+          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: ok ? "allowed" : "declined", label: auditLabel, detail: choice === "session" ? "session-approval-granted" : decision.kind || "live-read" });
           if (!ok) {
             return { block: true, reason: `coop guardrails: blocked ${decision.kind || "live-read"} access through ${decision.label || "the governed tool"} (you declined).` };
           }

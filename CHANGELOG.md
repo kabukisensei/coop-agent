@@ -5,6 +5,22 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Follow-ups from the SQ live acceptance on the client's dev Warehouse
+  (2026-10-03):
+  - The guardrails audit log records an approved Warehouse SQL write as
+    `Warehouse SQL write`, not `live read` (the scope word was already
+    `ddl-dml-destructive`).
+  - `coop onboard --platform <fabric|azure_sql|both>` on an onboarded machine now
+    switches the client platform without re-asking the integration questions
+    (the hint `coop doctor` and `coop install` print); a fresh machine still runs
+    onboarding with that answer.
+  - Fabric endpoint discovery for `fabric_sql_query` and `sql_impact` retries one
+    transient REST failure; sign-in and target errors are not retried.
+  - `tests/guardrails.test.mjs` counts the Power BI bridge's status read when the
+    real `powerbi-desktop` shim is on PATH (the guard then calls it through node).
+
 ## [0.30.0] — 2026-10-03
 
 ### Added
