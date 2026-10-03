@@ -28,6 +28,106 @@ $env:COOP_VERSION = $script:CoopVersion
 $script:CoopReleaseManifest = if ($env:COOP_RELEASE_MANIFEST) { $env:COOP_RELEASE_MANIFEST } else { Join-Path $script:CoopRoot 'config\release-manifest.json' }
 $env:COOP_RELEASE_MANIFEST = $script:CoopReleaseManifest
 
+# --- The coop window package's bundled runtime (master plan D1d) --------------
+# The installed window package carries a snapshot of this repository under
+# <app>\resources\coop and, beside it, <app>\resources\runtime: the pinned Node
+# (runtime\node), an npm global prefix holding the pinned Pi and the Power BI
+# tools (runtime\npm) and the extension tree installed from the shipped lock
+# (runtime\extensions), named by runtime\coop-runtime.json. When this library
+# runs from such a snapshot, that Node and that prefix come first on PATH and
+# npm's global prefix is the bundled one, so `node`, `npm`, `pi` and every helper
+# below resolve to the package's own copies and nothing is downloaded for them.
+# Detected by location (the runtime folder beside the checkout);
+# COOP_BUNDLED_RUNTIME names another folder for the tests.
+$script:CoopBundledRuntime = ''
+$script:CoopBundledRuntimeInfo = $null
+$script:CoopWindowExe = ''
+function Initialize-CoopBundledRuntime {
+  $dir = if ($env:COOP_BUNDLED_RUNTIME) { $env:COOP_BUNDLED_RUNTIME } else { Join-Path (Split-Path -Parent $script:CoopRoot) 'runtime' }
+  $marker = Join-Path $dir 'coop-runtime.json'
+  if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) { return }
+  $info = $null
+  try { $info = Get-Content -LiteralPath $marker -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop } catch { return }
+  if (-not $info -or $info.schema -ne 1 -or -not $info.node -or -not $info.npm) { return }
+  $nodeDir = Join-Path $dir ([string]$info.node.dir)
+  $prefix = Join-Path $dir ([string]$info.npm.prefix)
+  if (-not (Test-Path -LiteralPath $nodeDir -PathType Container) -or -not (Test-Path -LiteralPath $prefix -PathType Container)) { return }
+  $script:CoopBundledRuntime = $dir
+  $script:CoopBundledRuntimeInfo = $info
+  $sep = [System.IO.Path]::PathSeparator
+  foreach ($d in @($nodeDir, $prefix)) {
+    if (($env:PATH -split $sep) -notcontains $d) { $env:PATH = "$d$sep$env:PATH" }
+  }
+  $env:npm_config_prefix = $prefix
+  # The package's own window: coop.exe two levels above the snapshot
+  # (<app>\resources\coop), which `coop desktop` opens instead of a runtime tree.
+  $exe = Join-Path (Split-Path -Parent (Split-Path -Parent $script:CoopRoot)) 'coop.exe'
+  if (Test-Path -LiteralPath $exe -PathType Leaf) { $script:CoopWindowExe = $exe }
+}
+Initialize-CoopBundledRuntime
+function Test-CoopBundledRuntime { return [bool]$script:CoopBundledRuntime }
+# A terminal install that already owns the `coop` command and the "coop"
+# double-click launcher keeps them when the coop window package (D1d) runs its
+# first-launch install from the snapshot: the package never retargets either at
+# itself. The link is %LOCALAPPDATA%\coop\bin\coop.cmd forwarding to
+# <root>\bin\coop.cmd (scripts\install.ps1); it belongs to another install when
+# that target exists and is not this checkout's.
+function Get-CoopLinkedLauncherTarget {
+  param([string]$LauncherDir = (Join-Path $env:LOCALAPPDATA 'coop\bin'))
+  if (-not $LauncherDir) { return $null }
+  $launcher = Join-Path $LauncherDir 'coop.cmd'
+  if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) { return $null }
+  $body = ''
+  try { $body = [System.IO.File]::ReadAllText($launcher) } catch { return $null }
+  if ($body -match 'call\s+"([^"]+)"') {
+    $target = $Matches[1]
+    if (Test-Path -LiteralPath $target -PathType Leaf) { return $target }
+  }
+  return $null
+}
+function Test-CoopForeignLauncherLink {
+  param([string]$LauncherDir = (Join-Path $env:LOCALAPPDATA 'coop\bin'))
+  $target = Get-CoopLinkedLauncherTarget -LauncherDir $LauncherDir
+  if (-not $target) { return $false }
+  $mine = Join-Path $script:CoopRoot 'bin\coop.cmd'
+  return ((ConvertTo-CoopComparablePath $target) -ne (ConvertTo-CoopComparablePath $mine))
+}
+# The "coop" shortcut (Start Menu or Desktop) of another install: one that exists
+# and does not start this checkout's bin\coop-desktop.ps1.
+function Test-CoopForeignTerminalShortcut {
+  if ($env:OS -ne 'Windows_NT') { return $false }
+  $mine = ConvertTo-CoopComparablePath (Join-Path $script:CoopRoot 'bin\coop-desktop.ps1')
+  $ws = $null
+  foreach ($dir in (Get-CoopShortcutDirs)) {
+    if (-not $dir) { continue }
+    $lnk = Join-Path $dir 'coop.lnk'
+    if (-not (Test-Path -LiteralPath $lnk -PathType Leaf)) { continue }
+    try {
+      if (-not $ws) { $ws = New-Object -ComObject WScript.Shell }
+      $args = [string]$ws.CreateShortcut($lnk).Arguments
+    } catch { continue }
+    if ($args -match '-File\s+"([^"]+)"') {
+      if ((ConvertTo-CoopComparablePath $Matches[1]) -ne $mine) { return $true }
+    } elseif ($args) { return $true }
+  }
+  return $false
+}
+# The package's first launch on this profile: the agent dir does not carry this
+# release's extension lock yet (a fresh machine, or a profile an older coop set
+# up), so `coop desktop` runs the install first (D1d).
+function Test-CoopBundledSetupPending {
+  if (-not $script:CoopBundledRuntime) { return $false }
+  return (Test-CoopExtensionsLockPending -AgentDir (Get-CoopPiAgentDir) -PiVersion (Get-CoopPiVersion))
+}
+# npm's global package root inside the bundled prefix (npm's own layout:
+# <prefix>\node_modules on Windows, <prefix>/lib/node_modules elsewhere).
+function Get-CoopBundledNpmRoot {
+  if (-not $script:CoopBundledRuntime) { return '' }
+  $prefix = Join-Path $script:CoopBundledRuntime ([string]$script:CoopBundledRuntimeInfo.npm.prefix)
+  if ($env:OS -eq 'Windows_NT') { return (Join-Path $prefix 'node_modules') }
+  return (Join-Path $prefix 'lib/node_modules')
+}
+
 function Coop-ManifestGet([string]$Key, [string]$Default = '') {
   try {
     $m = Get-Content -LiteralPath $script:CoopReleaseManifest -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
@@ -218,6 +318,9 @@ function Get-CoopPipxCmd {
 
 function Get-CoopVenvDistVersion([string]$Venv, [string]$Distribution) {
   $pipx = Get-CoopPipxCmd
+  # No pipx yet (a fresh machine, the coop window package before its first
+  # setup): no version, and no raw "term 'pipx' is not recognized" on the console.
+  if (-not (Get-Command $pipx -ErrorAction SilentlyContinue)) { return '' }
   $out = (& $pipx runpip $Venv show $Distribution 2>$null | Out-String)
   if (-not $out) { return '' }
   foreach ($line in ($out -split "`r?`n")) {
@@ -766,6 +869,57 @@ function Install-CoopExtensionsLock([string]$AgentDir, [string]$Npm, [string]$Pi
   return $false
 }
 
+# Copy a folder tree: robocopy on Windows (it copies tens of thousands of
+# node_modules files far faster than Copy-Item; exit codes below 8 are success),
+# Copy-Item elsewhere. Returns $true when the copy succeeded.
+function Copy-CoopTree([string]$Source, [string]$Destination) {
+  if ($env:OS -eq 'Windows_NT' -and (Test-Have 'robocopy')) {
+    & robocopy $Source $Destination /E /NFL /NDL /NJH /NJS /NP /R:2 /W:1 *> $null
+    return ($LASTEXITCODE -lt 8)
+  }
+  try { Copy-Item -LiteralPath $Source -Destination $Destination -Recurse -Force -ErrorAction Stop; return $true } catch { return $false }
+}
+
+# Seed the isolated extension tree from the window package (master plan D1d):
+# when the package's bundled tree was installed from THIS release's lock and the
+# agent dir does not carry that lock yet, copy package.json, package-lock.json
+# and node_modules into <agent dir>\npm and declare each manifest extension in
+# settings.json the way `pi install` records it, so Pi loads the tree without
+# a network or an npm run. Returns $true when the tree was seeded; $false when
+# there is no bundle, it was built for another lock, or the tree already carries
+# the lock (nothing to do; the regular convergence then sees every pin in place).
+function Restore-CoopBundledExtensions([string]$AgentDir) {
+  if (-not $script:CoopBundledRuntime -or -not $script:CoopBundledRuntimeInfo.extensions) { return $false }
+  $src = Join-Path $script:CoopBundledRuntime ([string]$script:CoopBundledRuntimeInfo.extensions.dir)
+  $lock = Join-Path $script:CoopRoot 'config\extensions-lock.json'
+  if (-not (Test-Path -LiteralPath (Join-Path $src 'node_modules') -PathType Container) -or -not (Test-Path -LiteralPath $lock -PathType Leaf)) { return $false }
+  if ((Get-CoopFileSha256 (Join-Path $src 'package-lock.json')) -ne (Get-CoopFileSha256 $lock)) { return $false }
+  if (-not (Test-CoopExtensionsLockPending -AgentDir $AgentDir -PiVersion (Get-CoopPiVersion))) { return $false }
+  $npmDir = Join-Path $AgentDir 'npm'
+  Coop-Info "seeding the extension tree from the coop window package into $npmDir..."
+  try {
+    New-Item -ItemType Directory -Force -Path $npmDir | Out-Null
+    Remove-Item -LiteralPath (Join-Path $npmDir 'node_modules') -Recurse -Force -ErrorAction SilentlyContinue
+    if (-not (Copy-CoopTree (Join-Path $src 'node_modules') (Join-Path $npmDir 'node_modules'))) { throw 'the copy failed' }
+    Copy-Item -LiteralPath (Join-Path $src 'package.json') -Destination (Join-Path $npmDir 'package.json') -Force -ErrorAction Stop
+    Copy-Item -LiteralPath (Join-Path $src 'package-lock.json') -Destination (Join-Path $npmDir 'package-lock.json') -Force -ErrorAction Stop
+    Remove-Item -LiteralPath (Join-Path $npmDir '.coop-lock-failed.json') -Force -ErrorAction SilentlyContinue
+  } catch {
+    Coop-Warn "could not seed the extension tree from the package: $($_.Exception.Message)" 'coop sync installs it from the lock instead'
+    return $false
+  }
+  $sources = @()
+  foreach ($ext in (Get-CoopFleetPlan).Extensions) { if ($ext.Spec) { $sources += [string]$ext.Spec } }
+  $py = Get-CoopPython
+  if (-not $py) { Coop-Warn 'could not declare the bundled extensions in settings.json (Python not found)' 'run: coop sync'; return $false }
+  if ($sources.Count -gt 0) {
+    & $py (Join-Path $script:CoopRoot 'lib\pi_settings.py') ensure-packages (Join-Path $AgentDir 'settings.json') @sources
+    if ($LASTEXITCODE -ne 0) { Coop-Warn 'could not declare the bundled extensions in settings.json' 'run: coop sync'; return $false }
+  }
+  Coop-Ok "extension tree seeded from the coop window package ($($sources.Count) extension(s) at their pins)"
+  return $true
+}
+
 # Version of an installed Pi extension inside an isolated agent dir, read from
 # its package.json. Empty when absent or unreadable — callers treat that as a
 # failed postcondition, never as success.
@@ -1034,6 +1188,8 @@ function Get-CoopPrereqs([bool]$NoFabric = $false) {
     if ($nv -and ([version]$nv -ge [version]$nodeMin)) { $nodeOk = $true; $nodeDet = $nv }
     else { $nodeDet = "$(if ($nv) { $nv } else { 'unknown version' }) is older than $nodeMin" }
   }
+  # The window package carries its own Node (D1d), so the row is never a fix there.
+  if ($nodeOk -and (Test-CoopBundledRuntime)) { $nodeDet = "$nodeDet, bundled with the coop window" }
   $rows += & $row 2 "Node.js $nodeMin or newer" $true $nodeOk $nodeDet $fix.node
 
   # The Fabric CLI cannot run on 3.14, so it needs 3.10-3.13. A pipx that can
@@ -1313,6 +1469,9 @@ function Sync-CoopExtensionFleet {
       return 1
     }
     $failures += Remove-CoopRetiredExtensions -AgentDir $AgentDir
+    # The window package ships the tree installed from the lock (D1d): seeded
+    # here, every pin below is already in place and no `pi install` runs.
+    [void](Restore-CoopBundledExtensions -AgentDir $AgentDir)
     $fleetSpecs = @(); $fleetNames = @(); $fleetPins = @(); $preVers = @{}
     foreach ($ext in (Get-CoopFleetPlan).Extensions) {
       if (-not $ext.Spec -or -not $ext.Pin) { Coop-Warn "manifest pin missing for $($ext.Name)"; $failures++; continue }
@@ -2095,6 +2254,9 @@ $script:CoopConvergeUnit = {
 # while a session is open.
 function Get-CoopNpmGlobalRoots {
   $roots = @()
+  # The window package's bundled prefix holds its Pi (D1d): no npm call needed.
+  $bundledRoot = Get-CoopBundledNpmRoot
+  if ($bundledRoot) { $roots += $bundledRoot }
   try { $r = (& npm root -g 2>$null | Select-Object -First 1); if ($r) { $roots += $r.Trim() } } catch { }
   if ($env:APPDATA) { $roots += (Join-Path $env:APPDATA 'npm\node_modules') }
   return @($roots | Where-Object { $_ } | Select-Object -Unique)
@@ -2771,10 +2933,24 @@ function Coop-Unit {
 
 # Run a sibling coop script (sync/doctor) in a CHILD process so its `exit` cannot
 # abort the caller. Returns the child's exit code.
+# The child is pwsh when PATH has it, else the host running this script (its
+# own executable, which exists whatever PATH says: the coop window package
+# starts coop.ps1 with a PATH of its own). A child that could not start is a
+# failure (1), never a stale $LASTEXITCODE.
 function Invoke-CoopScript {
   param([string]$ScriptPath, [string[]]$ScriptArgs = @())
-  $psExe = if (Get-Command pwsh -ErrorAction SilentlyContinue) { 'pwsh' } else { 'powershell' }
-  & $psExe -NoProfile -ExecutionPolicy Bypass -File $ScriptPath @ScriptArgs
+  $psExe = $null
+  if (Get-Command pwsh -ErrorAction SilentlyContinue) { $psExe = 'pwsh' }
+  if (-not $psExe) { try { $psExe = (Get-Process -Id $PID -ErrorAction Stop).Path } catch { $psExe = $null } }
+  if (-not $psExe) { $psExe = 'powershell' }
+  $global:LASTEXITCODE = $null
+  try {
+    & $psExe -NoProfile -ExecutionPolicy Bypass -File $ScriptPath @ScriptArgs
+  } catch {
+    Coop-Warn "could not run $(Split-Path -Leaf $ScriptPath): $($_.Exception.Message)"
+    return 1
+  }
+  if ($null -eq $LASTEXITCODE) { return 1 }
   return $LASTEXITCODE
 }
 

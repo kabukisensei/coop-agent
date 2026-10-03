@@ -700,6 +700,12 @@ Check 'jq' 'optional' 'nice-to-have for JSON in your own scripts (coop uses pyth
 # runtime, `coop sync` keeps an installed one on the release's pin.
 $desktopPin = Get-CoopDesktopElectronPin
 $desktopPdfPin = Get-CoopDesktopPdfjsPin
+if (Test-CoopBundledRuntime) {
+  # Run from the window package's own snapshot (D1d): Node, Pi and the
+  # extension tree are the package's; no runtime tree is ever installed.
+  $bundled = $script:CoopBundledRuntimeInfo
+  D-Ok "coop window: this package (Electron $desktopPin, pdf.js $desktopPdfPin) with Node $($bundled.node.version) and Pi $($bundled.pi) bundled in $($script:CoopBundledRuntime)"
+} else {
 switch (Get-CoopDesktopRuntimeState) {
   'current' { D-Ok "coop window: Electron $desktopPin, pdf.js $desktopPdfPin in $(Get-CoopDesktopRuntimeDir)" }
   'stale' {
@@ -708,6 +714,7 @@ switch (Get-CoopDesktopRuntimeState) {
     D-Warn "coop window: the runtime is $(if ($desktopHave) { "Electron $desktopHave" } else { 'incomplete' })$(if ($desktopHave -and $desktopPdfHave) { ", pdf.js $desktopPdfHave" } elseif ($desktopHave) { ', no pdf.js' }), this release pins Electron $desktopPin and pdf.js $desktopPdfPin" 'close every coop window, then run: coop sync'
   }
   default { D-Ok "coop window: not installed (optional; coop desktop installs Electron $desktopPin and pdf.js $desktopPdfPin on first use)" }
+}
 }
 
 D-Head 'Project contract'
@@ -777,6 +784,10 @@ if ((Test-CoopGitCheckout $script:CoopRoot) -and (Test-Have 'git')) {
   $null = Invoke-CoopRepoFetchThrottled
   $repoRow = Get-CoopRepoDoctorRow
   if ($repoRow.Level -ceq 'ok') { D-Ok $repoRow.Message } else { D-Warn $repoRow.Message $repoRow.Hint }
+} elseif (Test-CoopBundledRuntime) {
+  # The window package's snapshot (D1d): skills, prompts and guardrails move
+  # with the package version, through a newer installer, never through git.
+  D-Ok "coop window package v$($script:CoopVersion): skills, prompts and guardrails ship with the package; a newer installer from https://github.com/kabukisensei/coop-agent/releases/latest updates them"
 } else {
   # A zip/shared-drive copy: everything above still updates, but the repo layer
   # (skills/prompts/guardrails/themes/scripts) is frozen at whatever the zip held.

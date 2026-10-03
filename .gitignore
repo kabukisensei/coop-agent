@@ -49,3 +49,6 @@ skills/_microsoft_fabric/*/
 # installer electron-builder writes; desktop/installer/node_modules is covered above
 desktop/installer/stage/
 desktop/installer/dist/
+desktop/installer/runtime/
+desktop/installer/coop/
+desktop/installer/cache/

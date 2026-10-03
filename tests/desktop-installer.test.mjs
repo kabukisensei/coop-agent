@@ -1,25 +1,29 @@
 /**
- * The coop window package (master plan D1c): the installed package's bootstrap
- * (finding the terminal coop, the console that asks it for a window, the
- * --doctor report, the unpacked paths), the electron-builder configuration
- * against the plan's NSIS and fuse decisions, the staged app (every file the
- * window imports, the version, pdf.js as the one dependency) and the
- * acceptance script's NSIS invocation and host guard.
+ * The coop window package (master plan D1c, D1d): the installed package's
+ * bootstrap (the bundled coop first, then the terminal coop; the console that
+ * asks it for a window; the --doctor report with the bundled runtime; the
+ * unpacked paths), the electron-builder configuration against the plan's NSIS
+ * and fuse decisions plus the D1d extraResources, the staged app (every file
+ * the window imports, the version, pdf.js as the one dependency), the runtime
+ * stage's pure parts (the Node download the manifest pins, the prefix specs,
+ * the snapshot filter, the marker) and the acceptance script's NSIS
+ * invocation, host guard and package paths.
  *
  * Gate lane: no Electron, no electron-builder, no npm, no network. The stage
- * is written without `npm ci` (install: false) into a temp folder.
+ * is written without `npm ci` (install: false) into a temp folder; the runtime
+ * is never staged here (it downloads Node and installs with it on Windows).
  */
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { bootstrapProcess, doctorReport, findCoop, folderArgument, launcherPath, packagedPaths } from "../desktop/lib/bootstrap.mjs";
+import { bootstrapProcess, bundledCoop, doctorReport, findCoop, folderArgument, launcherPath, packagedPaths, packagedRuntime } from "../desktop/lib/bootstrap.mjs";
 import { consoleProcess } from "../desktop/lib/terminal.mjs";
 import { loadSettings, saveSettings } from "../desktop/lib/settings.mjs";
-import { readVersion, shippedPackage, stage, stageEntries, stagePackage } from "../desktop/scripts/build-installer.mjs";
+import { NODE_SHIMS_DROPPED, longestPath, nodeDownload, prefixPackages, prunable, pruneTree, readVersion, runtimeMarker, shippedPackage, snapshotIncludes, stage, stageEntries, stagePackage } from "../desktop/scripts/build-installer.mjs";
 import { assertDisposableInstallerHost, nsisInvocation, packagePaths } from "../desktop/scripts/verify-installer.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -52,6 +56,33 @@ await check("findCoop: coop.cmd on PATH wins, then the install's launcher, else 
   assert.equal(findCoop(env, (p) => p === launcher), launcher);
   assert.equal(findCoop(env, () => false), "");
   assert.equal(findCoop({}, () => true), "");
+});
+
+await check("findCoop: the package's own coop snapshot (D1d) answers before any terminal coop", () => {
+  const resources = "C:\\Users\\me\\AppData\\Local\\Programs\\coop\\resources";
+  const bundled = join(resources, "coop", "bin", "coop.ps1");
+  const env = { PATH: "C:\\tools", LOCALAPPDATA: "C:\\Users\\me\\AppData\\Local" };
+  assert.equal(bundledCoop(resources, (p) => p === bundled), bundled);
+  assert.equal(bundledCoop(resources, () => false), "");
+  assert.equal(bundledCoop("", () => true), "");
+  assert.equal(findCoop(env, () => true, resources), bundled);
+  assert.equal(findCoop(env, (p) => p === join("C:\\tools", "coop.cmd"), resources), join("C:\\tools", "coop.cmd"));
+  assert.equal(findCoop(env, () => true), join("C:\\tools", "coop.cmd"));
+});
+
+await check("packagedRuntime: the marker names Node, Pi and the extension tree; a package without one is null", () => {
+  const resources = "C:\\p\\resources";
+  const runtime = join(resources, "runtime");
+  const marker = JSON.stringify({ schema: 1, coop: "0.30.0", node: { version: "22.19.0", dir: "node" }, npm: { prefix: "npm" }, pi: "0.87.1", extensions: { dir: "extensions", lockSha256: "ab" } });
+  const have = new Set([join(runtime, "coop-runtime.json"), join(runtime, "node", "node.exe"), join(runtime, "npm", "pi.cmd"), join(runtime, "extensions", "node_modules")]);
+  const full = packagedRuntime(resources, { exists: (p) => have.has(p), read: () => marker });
+  assert.deepEqual(full, { node: "22.19.0", pi: "0.87.1", extensions: true, coop: "0.30.0" });
+  const bare = packagedRuntime(resources, { exists: (p) => p === join(runtime, "coop-runtime.json"), read: () => marker });
+  assert.deepEqual(bare, { node: "", pi: "", extensions: false, coop: "0.30.0" });
+  assert.equal(packagedRuntime(resources, { exists: () => false, read: () => marker }), null);
+  assert.equal(packagedRuntime(resources, { exists: () => true, read: () => "{" }), null);
+  assert.equal(packagedRuntime(resources, { exists: () => true, read: () => JSON.stringify({ schema: 2 }) }), null);
+  assert.equal(packagedRuntime("", { exists: () => true, read: () => marker }), null);
 });
 
 await check("bootstrapProcess: a console running `coop desktop --app <exe>`, paths only in the environment", () => {
@@ -104,8 +135,9 @@ await check("folderArgument: the last plain absolute argument that exists", () =
 await check("doctorReport: one JSON-able line naming the package, coop and pdf.js", () => {
   const resources = "C:\\p\\resources";
   const report = doctorReport({ version: "0.29.0", packaged: true, execPath: "C:\\p\\coop.exe", env: { PATH: "", LOCALAPPDATA: "C:\\nowhere" }, resourcesPath: resources });
-  assert.deepEqual(report, { product: "coop window", version: "0.29.0", packaged: true, exe: "C:\\p\\coop.exe", coop: "", pdfjs: false, pdfScript: false });
+  assert.deepEqual(report, { product: "coop window", version: "0.29.0", packaged: true, exe: "C:\\p\\coop.exe", coop: "", pdfjs: false, pdfScript: false, runtime: null });
   assert.doesNotThrow(() => JSON.parse(JSON.stringify(report)));
+  assert.equal(doctorReport({ version: "0.29.0", packaged: false, execPath: "C:\\e.exe", env: { PATH: "", LOCALAPPDATA: "C:\\nowhere" }, resourcesPath: resources }).runtime, null);
 });
 
 await check("settings keep the last folder for the package's picker", () => {
@@ -135,6 +167,13 @@ await check("electron-builder: NSIS per-user, no elevation, data kept, shortcuts
   assert.equal(config.nsis.shortcutName, "coop (window)");
   assert.match(config.artifactName, /^coop-window-\$\{version\}-\$\{os\}-\$\{arch\}\.\$\{ext\}$/);
   assert.equal(config.nsis.artifactName, config.artifactName);
+  // D1d: the uninstaller drops the first launch's `coop` link and "coop"
+  // shortcuts through the snapshot's scripts/window-uninstall.ps1.
+  assert.equal(config.nsis.include, join(ROOT, "desktop", "installer", "resources", "installer.nsh"));
+  const nsh = readFileSync(config.nsis.include, "utf8");
+  assert.match(nsh, /!macro customUnInstall/);
+  assert.match(nsh, /resources\\coop\\scripts\\window-uninstall\.ps1" "\$INSTDIR"/);
+  assert.ok(existsSync(join(ROOT, "scripts", "window-uninstall.ps1")) && snapshotIncludes("scripts/window-uninstall.ps1"));
   for (const icon of [config.win.icon, config.nsis.installerIcon, config.nsis.uninstallerIcon]) {
     assert.equal(icon, join(ROOT, "themes", "coop.ico"));
     assert.ok(existsSync(icon));
@@ -143,6 +182,94 @@ await check("electron-builder: NSIS per-user, no elevation, data kept, shortcuts
   assert.equal(config.asar, true);
   assert.deepEqual(config.asarUnpack, ["node_modules/pdfjs-dist/**", "desktop/scripts/pdf-text.mjs"]);
   assert.equal(config.directories.app, join(ROOT, "desktop", "installer", "stage"));
+  // D1d: the runtime and the coop snapshot ride beside the asar as plain folders.
+  assert.deepEqual(config.extraResources, [
+    { from: join(ROOT, "desktop", "installer", "runtime"), to: "runtime" },
+    { from: join(ROOT, "desktop", "installer", "coop"), to: "coop" },
+  ]);
+});
+
+// --- the bundled runtime (D1d) ----------------------------------------------------
+await check("runtime: the manifest pins the nodejs.org win-x64 zip by version and SHA-256", () => {
+  const node = nodeDownload(MANIFEST);
+  assert.equal(node.version, MANIFEST.desktop.node.version);
+  assert.equal(node.url, `https://nodejs.org/dist/v${node.version}/node-v${node.version}-win-x64.zip`);
+  assert.equal(node.file, `node-v${node.version}-win-x64.zip`);
+  assert.match(node.sha256, /^[0-9a-f]{64}$/);
+  // The bundled Node satisfies the terminal's own floor.
+  assert.ok(node.version.localeCompare(MANIFEST.node.min, undefined, { numeric: true }) >= 0, `bundled ${node.version} >= node.min ${MANIFEST.node.min}`);
+  assert.throws(() => nodeDownload({ desktop: {} }), /desktop\.node/);
+  assert.throws(() => nodeDownload({ desktop: { node: { version: "22.19.0", sha256: "short" } } }), /desktop\.node/);
+});
+
+await check("runtime: only the Node zip's PowerShell shims are dropped (PowerShell must reach npm.cmd)", () => {
+  assert.deepEqual(NODE_SHIMS_DROPPED, ["npm.ps1", "npx.ps1"]);
+});
+
+await check("runtime: pruning drops declarations, source maps and dist-types, keeps sources, JavaScript and licenses", () => {
+  for (const [name, dir] of [["index.d.ts", false], ["index.d.mts", false], ["index.d.cts", false], ["index.js.map", false], ["styles.css.map", false], ["dist-types", true]]) {
+    assert.ok(prunable(name, dir), `${name} is pruned`);
+  }
+  for (const [name, dir] of [["index.ts", false], ["index.js", false], ["index.mjs", false], ["package.json", false], ["LICENSE", false], ["README.md", false], ["SKILL.md", false], ["types.d.ts.txt", false], ["dist", true], ["types", true], ["dist-types", false], ["src", true]]) {
+    assert.ok(!prunable(name, dir), `${name} stays`);
+  }
+  const tree = mkdtempSync(join(tmpdir(), "coop-prune-"));
+  try {
+    const pkg = join(tree, "node_modules", "@aws-sdk", "client");
+    mkdirSync(join(pkg, "dist-types", "deep", "deeper"), { recursive: true });
+    mkdirSync(join(pkg, "dist-cjs"), { recursive: true });
+    mkdirSync(join(tree, "node_modules", "ext", "src"), { recursive: true });
+    writeFileSync(join(pkg, "dist-types", "deep", "deeper", "x.d.ts"), "");
+    writeFileSync(join(pkg, "dist-cjs", "index.js"), "");
+    writeFileSync(join(pkg, "dist-cjs", "index.js.map"), "");
+    writeFileSync(join(pkg, "dist-cjs", "index.d.ts"), "");
+    writeFileSync(join(pkg, "package.json"), "{}");
+    writeFileSync(join(tree, "node_modules", "ext", "src", "index.ts"), "");
+    writeFileSync(join(tree, "node_modules", "ext", "README.md"), "");
+    const before = longestPath(join(tree, "node_modules"));
+    assert.equal(before.path, "@aws-sdk/client/dist-types/deep/deeper/x.d.ts");
+    const removed = pruneTree(join(tree, "node_modules"));
+    assert.deepEqual(removed, { files: 2, dirs: 1 });
+    assert.ok(!existsSync(join(pkg, "dist-types")) && !existsSync(join(pkg, "dist-cjs", "index.js.map")) && !existsSync(join(pkg, "dist-cjs", "index.d.ts")));
+    assert.ok(existsSync(join(pkg, "dist-cjs", "index.js")) && existsSync(join(pkg, "package.json")) && existsSync(join(tree, "node_modules", "ext", "src", "index.ts")) && existsSync(join(tree, "node_modules", "ext", "README.md")));
+    const after = longestPath(join(tree, "node_modules"));
+    assert.equal(after.path, "@aws-sdk/client/dist-cjs/index.js");
+    assert.equal(after.length, after.path.length);
+    assert.deepEqual(longestPath(join(tree, "missing")), { length: 0, path: "" });
+    assert.deepEqual(pruneTree(join(tree, "missing")), { files: 0, dirs: 0 });
+  } finally {
+    rmSync(tree, { recursive: true, force: true });
+  }
+});
+
+await check("runtime: the bundled prefix holds the manifest's Pi and every npm tool at its pin", () => {
+  const specs = prefixPackages(MANIFEST);
+  assert.equal(specs[0], `${MANIFEST.pi.package}@${MANIFEST.pi.version}`);
+  for (const [name, pin] of Object.entries(MANIFEST.npm_tools)) assert.ok(specs.includes(`${name}@${pin}`), `${name}@${pin}`);
+  assert.equal(specs.length, 1 + Object.keys(MANIFEST.npm_tools).length);
+});
+
+await check("runtime: the marker lib/common.ps1 reads names the folders, the pins and the lock", () => {
+  const marker = runtimeMarker({ manifest: MANIFEST, version: "0.30.0", lockSha256: "ab".repeat(32) });
+  assert.deepEqual(marker, {
+    schema: 1,
+    coop: "0.30.0",
+    node: { version: MANIFEST.desktop.node.version, dir: "node" },
+    npm: { prefix: "npm" },
+    pi: MANIFEST.pi.version,
+    extensions: { dir: "extensions", lockSha256: "ab".repeat(32) },
+  });
+});
+
+await check("snapshot: coop's own files ship, the development-only ones do not", () => {
+  for (const file of ["bin/coop.ps1", "bin/coop.cmd", "lib/common.ps1", "scripts/install.ps1", "config/release-manifest.json", "config/extensions-lock.json", "docs/guardrails.md", "skills/coop-workflow/SKILL.md", "extensions/coop-tools/index.ts", "themes/coop.ico", "vibes/x.txt", "VERSION", "README.md", ".coop/project.example.yml", "Install coop.cmd"]) {
+    assert.ok(snapshotIncludes(file), `${file} ships`);
+  }
+  for (const file of ["tests/run.sh", "tests/fixtures/_common.ps1", "desktop/main.mjs", "desktop/installer/electron-builder.cjs", ".github/workflows/ci.yml", ".agents/skills/x/SKILL.md", ".specify/memory/constitution.md", "docs/history/old-plan.md", "acceptance/x.md", ".gitignore", ".gitattributes", ".coop/project.yml"]) {
+    assert.ok(!snapshotIncludes(file), `${file} stays out`);
+  }
+  // Windows separators are the same decision.
+  assert.ok(!snapshotIncludes("tests\\run.sh") && snapshotIncludes("bin\\coop.ps1"));
 });
 
 await check("electron-builder: the September fuse policy (run-as-node off, asar integrity on, asar only)", () => {
@@ -262,6 +389,12 @@ await check("verify-installer: the package's paths follow electron-builder's per
   assert.match(paths.desktopShortcut, /Desktop[\\/]coop \(window\)\.lnk$/);
   assert.equal(paths.profileData, join("C:\\Users\\me", ".coop", "desktop", "data"));
   assert.equal(paths.electronAppData, join("C:\\Users\\me\\AppData\\Roaming", "coop"));
+  // D1d: the runtime and the snapshot beside the asar.
+  assert.equal(paths.runtime, join(paths.installDir, "resources", "runtime"));
+  assert.equal(paths.nodeExe, join(paths.runtime, "node", "node.exe"));
+  assert.equal(paths.piShim, join(paths.runtime, "npm", "pi.cmd"));
+  assert.equal(paths.extensions, join(paths.runtime, "extensions"));
+  assert.equal(paths.coopPs1, join(paths.installDir, "resources", "coop", "bin", "coop.ps1"));
 });
 
 rmSync(temp, { recursive: true, force: true });

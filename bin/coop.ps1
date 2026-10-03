@@ -83,8 +83,8 @@ function Add-CoopRuntimePaths {
   }
   $dirs += (Join-Path $HOME '.local\bin')                    # pipx default PIPX_BIN_DIR
   foreach ($d in $dirs) {
-    if ($d -and (Test-Path -LiteralPath $d) -and (($env:PATH -split ';') -notcontains $d)) {
-      $env:PATH = "$d;$env:PATH"
+    if ($d -and (Test-Path -LiteralPath $d) -and (($env:PATH -split $script:PathSep) -notcontains $d)) {
+      $env:PATH = "$d$($script:PathSep)$env:PATH"
     }
   }
 }
@@ -599,7 +599,12 @@ function Invoke-CoopLaunchSpec {
 # --app <exe> opens the window in that executable instead of the runtime tree:
 # the installed package (master plan D1c, the unsigned per-user installer)
 # passes itself here, so it gets the same spec and token without a second
-# Electron; nothing is installed for it.
+# Electron; nothing is installed for it. Run from the package's own coop
+# snapshot (D1d: Node, Pi and the extension tree ship with it), the package's
+# exe is the default window, and the first launch on a profile without this
+# release's extension tree runs `coop install` in this console first (the
+# prerequisite table with its winget lines, the pipx tools, the sync and the
+# sign-ins, exactly as the terminal install), then opens the window.
 function Invoke-CoopDesktop {
   param([string[]] $DesktopArgs = @())
   $usage = 'usage: coop desktop [folder] [--print-spec] [--app <exe>]'
@@ -625,6 +630,13 @@ function Invoke-CoopDesktop {
   $cwd = (Resolve-Path -LiteralPath $folder).ProviderPath
   # The project contract, tenant and Microsoft skill selection are read from here.
   Set-Location -LiteralPath $cwd
+  if (-not $appExe -and $script:CoopWindowExe) { $appExe = $script:CoopWindowExe }
+  if (-not $printSpec -and (Test-CoopBundledSetupPending)) {
+    Coop-Head 'First launch of the coop window: setting up this computer'
+    Coop-Info 'the checklist below names anything still missing; the window opens once setup finishes'
+    $setupRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\install.ps1')
+    if ($setupRc -ne 0) { Coop-Die 'setup did not finish: do what the lines above say, then start the coop window again' }
+  }
   if (-not (Test-Have 'pi')) { Coop-Die 'pi is not installed. Run: coop install   (installs the release''s tested Pi)' }
   # The window starts node directly (no shell), so on Windows only node.exe will do.
   $nodeCmd = Get-Command node -CommandType Application -ErrorAction SilentlyContinue |
