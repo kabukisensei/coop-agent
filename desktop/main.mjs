@@ -14,7 +14,7 @@ import { dirname, join, basename, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseSpec, piArgv, piEnv } from "./lib/spec.mjs";
 import { PiSession } from "./lib/pi-session.mjs";
-import { buildCommand, buildUiResponse } from "./lib/rpc-commands.mjs";
+import { IMAGE_LIMITS, buildCommand, buildUiResponse } from "./lib/rpc-commands.mjs";
 import { listSessions, isSessionPath } from "./lib/sessions.mjs";
 import { consoleProcess } from "./lib/terminal.mjs";
 import { resolveAsset, isAppUrl, CSP, APP_ORIGIN } from "./lib/serve.mjs";
@@ -30,6 +30,7 @@ import { loadSplash } from "./lib/splash.mjs";
 import { vibesDir, loadVibes, vibeSets, userName, fillVibe, pickVibe } from "./lib/vibes.mjs";
 import { bootstrapProcess, doctorReport, findCoop, folderArgument, packagedPaths } from "./lib/bootstrap.mjs";
 import { menuTemplate, notificationFor } from "./lib/menu.mjs";
+import { restartOnce } from "./lib/restart.mjs";
 import { profileDir } from "../lib/paths.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -178,7 +179,7 @@ function windowInfo(state) {
     splash: splashArt,
     vibe: vibeFor(state),
     vibeSets: vibeSets(vibesDir(REPO)),
-    attachLimits: { perMessage: ATTACH_LIMITS.perMessage, images: ATTACH_LIMITS.images },
+    attachLimits: { perMessage: ATTACH_LIMITS.perMessage, images: ATTACH_LIMITS.images, imageBytes: IMAGE_LIMITS.maxImageBytes, imageTotalBytes: IMAGE_LIMITS.maxTotalBytes },
     pdfReady: Boolean(pdfjsDir),
   };
 }
@@ -369,12 +370,15 @@ handle("coop:open-folder", async (state) => {
   return { success: true };
 });
 
-handle("coop:restart", async (state) => {
+// One restart at a time per window (#286): a second request during the
+// shutdown gets the same restart, and a window closed meanwhile starts nothing.
+handle("coop:restart", (state) => restartOnce(state, async () => {
   const sessionFile = await currentSessionFile(state);
   if (state.pi) await state.pi.stop();
+  if (state.win.isDestroyed()) return { success: false, error: "the window closed during the restart" };
   startPi(state, sessionFile && existsSync(sessionFile) ? ["--session", sessionFile] : []);
   return { success: true };
-});
+}));
 
 handle("coop:theme", (state, theme) => {
   if (!THEMES.includes(theme)) return { success: false, error: "unknown theme" };

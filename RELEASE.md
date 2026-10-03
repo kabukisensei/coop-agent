@@ -204,7 +204,9 @@ Never push the tag on its own.
   checkout. Recovery: `git -C <coop-agent> checkout main`, then `coop update`.
 - **A release that changes `scripts/update.*` takes effect on the second
   update after it lands**: the first run still executes the updater that was
-  already loaded. If a release breaks `coop update` itself, teammates recover
+  already loaded. (A release that changes only the manifest pins and the
+  extension lock converges in one run: the updater re-reads the fleet plan after
+  the checkout moves.) If a release breaks `coop update` itself, teammates recover
   with `git -C <coop-agent> fetch origin`, then
   `git -C <coop-agent> merge --ff-only vX.Y.(Z+1)`, then `coop update`.
 - **Never start tracking a path that `.gitignore` ignores** in a release. The

@@ -69,8 +69,9 @@ if (!pwsh.error || pwsh.error.code !== "ENOENT") {
 }
 
 const tools = new Map();
+const hooks = {};
 const pi = {
-  on() {},
+  on(event, handler) { hooks[event] = handler; },
   registerTool(tool) { tools.set(tool.name, tool); },
   registerCommand() {},
   sendUserMessage() {},
@@ -100,6 +101,26 @@ try {
   assert.equal(result.details.state, "ok");
   assert.equal(result.details.row_count, 0);
   assert.equal(existsSync(marker), true);
+
+  // #284: the contract native SQL runs against is the one the session started
+  // with. A `.coop/project.yml` that appears or changes mid-session gets
+  // contract_changed (no helper spawn, no connection); a new session re-reads it.
+  rmSync(marker);
+  mkdirSync(join(root, ".coop"), { recursive: true });
+  writeFileSync(join(root, ".coop", "project.yml"), "sql_targets:\n  default_environment: test\n");
+  const changed = await tool.execute("1b", { query: "SELECT TOP (1) x FROM dbo.t" }, undefined, undefined, { cwd: root });
+  assert.equal(changed.details.state, "contract_changed");
+  assert.match(changed.content[0].text, /changed during this session[\s\S]*\/new/);
+  assert.equal(existsSync(marker), false, "a changed contract never reaches the helper");
+  const impactChanged = await impactTool.execute("1c", { object: "dbo.t" }, undefined, undefined, { cwd: root });
+  assert.equal(impactChanged.details.state, "contract_changed", "sql_impact shares the same contract check");
+  assert.equal(mod.contractChangedSince(mod.contractSnapshotFor(root), root), false);
+  assert.equal(typeof hooks.session_start, "function", "session_start re-reads the contract (noteContractSnapshot)");
+  mod.noteContractSnapshot(root);
+  const reread = await tool.execute("1d", { query: "SELECT TOP (1) x FROM dbo.t" }, undefined, undefined, { cwd: root });
+  assert.equal(reread.details.state, "ok", "a new session uses the contract it starts with");
+  rmSync(join(root, ".coop"), { recursive: true, force: true });
+  mod.noteContractSnapshot(root);
 
   rmSync(marker);
   const preAborted = new AbortController();

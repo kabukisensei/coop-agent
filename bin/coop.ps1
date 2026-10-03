@@ -367,6 +367,14 @@ function Build-CoopPiArgs {
   # this, pi-mcp-adapter also merges a work repo's .mcp.json / .pi/mcp.json and
   # other tools' configs, so a repo could add a server or redefine a coop one.
   $env:PI_MCP_CONFIG_MODE = 'exclusive'
+  # Pi's built-in /bug uploads a report (optionally the whole session transcript)
+  # to Earendil's gateway at radius.pi.dev. coop runs on client VMs where no
+  # session content may leave for a third-party service, so point the gateway at
+  # a host that never resolves (.invalid, RFC 6761): the upload fails fast and Pi
+  # offers its local "Export as Zip" instead. An explicit PI_RADIUS_GATEWAY wins.
+  if (-not $env:PI_RADIUS_GATEWAY) {
+    $env:PI_RADIUS_GATEWAY = 'https://radius.coop.invalid'
+  }
   # Point the extension at our vibe files and brand splash.
   $env:COOP_VIBES_DIR = Join-Path $script:CoopRoot 'vibes'
   $env:COOP_SPLASH_FILE = Join-Path $script:CoopRoot 'extensions\coop-powerline\assets\splash.ansi'
@@ -549,6 +557,7 @@ function Get-CoopLaunchEnvMap {
   if ($env:PI_CODING_AGENT_DIR) { $envMap['PI_CODING_AGENT_DIR'] = $env:PI_CODING_AGENT_DIR }
   if ($env:PI_SKIP_VERSION_CHECK) { $envMap['PI_SKIP_VERSION_CHECK'] = $env:PI_SKIP_VERSION_CHECK }
   if ($env:PI_MCP_CONFIG_MODE)    { $envMap['PI_MCP_CONFIG_MODE']    = $env:PI_MCP_CONFIG_MODE }
+  if ($env:PI_RADIUS_GATEWAY)     { $envMap['PI_RADIUS_GATEWAY']     = $env:PI_RADIUS_GATEWAY }
   if ($env:COOP_VIBES_DIR)      { $envMap['COOP_VIBES_DIR']      = $env:COOP_VIBES_DIR }
   if ($env:COOP_SPLASH_FILE)    { $envMap['COOP_SPLASH_FILE']    = $env:COOP_SPLASH_FILE }
   return $envMap

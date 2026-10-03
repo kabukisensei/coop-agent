@@ -122,6 +122,14 @@ if ((Test-CoopGitCheckout $script:CoopRoot) -and (Test-Have 'git')) {
   Coop-Warn "this coop-agent is not a git checkout — skills/prompts/guardrails will NEVER update — fix: git clone the repo, then run .\bin\coop.cmd install from the clone (your ~/.coop settings carry over)"
 }
 
+# The checkout may have just moved to a newer release: re-read the fleet plan from
+# the manifest it now carries, so Pi, the pipx tools and the npm tools converge to
+# THAT release's pins in this same run (a plan read before the move left them one
+# release behind until the next update; #280). Only the manifest is re-read; the
+# updater code running here stays the loaded version (RELEASE.md's second-update
+# note covers releases that change the updater itself).
+$PLAN = Get-CoopFleetPlan -Edge:$EDGE -NoFabric:$NO_FABRIC
+
 # Busy guard (shared with install): clear any leftover staging dir from a prior
 # interrupted update, and refuse the in-place Pi convergence while a coop/pi
 # session has the agent files open (Windows locks open files). This decides

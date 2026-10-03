@@ -80,17 +80,16 @@ carry the detail and align with it.
 
 ### Current roadmap — the master plan, phase by phase
 
-The official forward plan is the [Coop master plan](docs/COOP_MASTER_PLAN.md):
-Phase 0 rollout hotfixes on stable (installer prerequisites, automatic Azure
-sign-in, project contract aligned with the Cooptimize standards repos) are done;
-Phase 2, the Windows-first simplification, has every row S1-S7 in review as PRs
-#218, #221, #223, #225, #227 and the S7 PR (one implementation in PowerShell, one
-manifest, one BOM check, simplified tests and docs). Then dependency
-reconciliation, standards alignment and the reviewer decision, Azure SQL breadth
-with dev-by-default and live impact tracing, common-workflows first run, then
-TeamAI shared knowledge (the beta channel is skipped and Jev waits, revision 3.8),
-the optional package trial, and last an installable Electron desktop. **It is the
-only plan.** The earlier Windows terminal plan (revision 2.0) and every prior plan,
+The official forward plan is the [Coop master plan](docs/COOP_MASTER_PLAN.md).
+Its section 13 register is the one current-state record: each row names its PR
+and the first tag that shipped it, so this summary stays non-volatile. Phase 0
+rollout hotfixes, Phase 2 (the Windows-first simplification: one implementation in
+PowerShell, one manifest, one BOM check), dependency reconciliation, standards
+alignment and the reviewer decision, Azure SQL breadth with dev-by-default and
+live impact tracing, the common-workflows first run and TeamAI shared knowledge
+have all merged and shipped (the beta channel is skipped and Jev waits, revision
+3.8); the optional package trial has not started; the installable Electron desktop
+(Phase 8) is in progress. **It is the only plan.** The earlier Windows terminal plan (revision 2.0) and every prior plan,
 handoff, and receipt live under `docs/history/` as read-only reference; the master
 plan wins where they differ, and new planning is a new revision of the master plan,
 never a new file. Aaron starts each phase explicitly. **No phase is started by the
