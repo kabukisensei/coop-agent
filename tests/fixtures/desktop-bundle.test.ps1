@@ -132,6 +132,18 @@ try {
   # --- C. the library in process: detection, prefix, seeding --------------------
   . (Join-Path $snapshot 'lib\common.ps1')
   if (Test-CoopBundledRuntime) { Ok 'lib/common.ps1 detects the runtime folder beside the snapshot' } else { Ko 'bundled runtime not detected' }
+  # An existing terminal install keeps the `coop` command: its link forwards elsewhere.
+  $otherRoot = Join-Path $t 'other-coop-agent'
+  New-Item -ItemType Directory -Force -Path (Join-Path $otherRoot 'bin') | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $otherRoot 'bin\coop.cmd'), "@echo off`r`n", $utf8)
+  $linkDir = Join-Path $t 'localbin'
+  New-Item -ItemType Directory -Force -Path $linkDir | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $linkDir 'coop.cmd'), "@echo off`r`ncall `"$(Join-Path $otherRoot 'bin\coop.cmd')`" %*`r`n", $utf8)
+  if (Test-CoopForeignLauncherLink -LauncherDir $linkDir) { Ok 'a coop link that forwards to another install is foreign (the package leaves it)' } else { Ko 'foreign link not detected' }
+  [System.IO.File]::WriteAllText((Join-Path $linkDir 'coop.cmd'), "@echo off`r`ncall `"$(Join-Path $snapshot 'bin\coop.cmd')`" %*`r`n", $utf8)
+  if (-not (Test-CoopForeignLauncherLink -LauncherDir $linkDir)) { Ok 'a coop link that forwards to the snapshot is the package''s own' } else { Ko 'own link read as foreign' }
+  Remove-Item -LiteralPath (Join-Path $linkDir 'coop.cmd') -Force
+  if (-not (Test-CoopForeignLauncherLink -LauncherDir $linkDir)) { Ok 'no coop link: nothing foreign' } else { Ko 'missing link read as foreign' }
   if ([System.IO.Path]::GetFullPath($env:npm_config_prefix) -eq [System.IO.Path]::GetFullPath($prefix)) { Ok 'npm''s global prefix is the bundled one' } else { Ko "npm_config_prefix: $($env:npm_config_prefix)" }
   $pathDirs = @($env:PATH -split $sep)
   if (($pathDirs.IndexOf($nodeDir) -ge 0) -and ($pathDirs.IndexOf($nodeDir) -lt $pathDirs.IndexOf((Split-Path -Parent $realNode))) -and ($pathDirs -contains $prefix)) { Ok 'the bundled node precedes the machine''s node on PATH, with the prefix' } else { Ko "PATH: $($pathDirs -join ', ')" }

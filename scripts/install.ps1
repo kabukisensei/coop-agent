@@ -288,7 +288,13 @@ $oemEnc = [System.Text.Encoding]::GetEncoding(
 $existing = if (Test-Path -LiteralPath $launcher -PathType Leaf) {
   [System.IO.File]::ReadAllText($launcher, $oemEnc)
 } else { '' }
-if ($existing -ne $launcherBody) {
+# The coop window package (master plan D1d) running this from its snapshot leaves
+# a terminal install's `coop` command alone: that install keeps `coop update`.
+$keepLink = (Test-CoopBundledRuntime) -and (Test-CoopForeignLauncherLink -LauncherDir $LOCALBIN)
+if ($keepLink) {
+  $linkedRoot = Split-Path -Parent (Split-Path -Parent (Get-CoopLinkedLauncherTarget -LauncherDir $LOCALBIN))
+  Coop-Info "``coop`` in your terminal stays the install at $linkedRoot; the window uses its own bundled copy"
+} elseif ($existing -ne $launcherBody) {
   [System.IO.File]::WriteAllText($launcher, $launcherBody, $oemEnc)
   $roundTrip = [System.IO.File]::ReadAllText($launcher, $oemEnc)
   if ($roundTrip -eq $launcherBody) {
@@ -348,7 +354,9 @@ if (($env:PATH -split ';') -notcontains $LOCALBIN) {
 # shortcuts too. An isolated install (redirected profile) gets its shortcuts inside
 # the sandbox profile, never on the real Desktop / Start Menu.
 try {
-  if (Set-CoopDesktopShortcuts) {
+  if ((Test-CoopBundledRuntime) -and (Test-CoopForeignTerminalShortcut)) {
+    Coop-Info 'the "coop" double-click launcher stays with your terminal install'
+  } elseif (Set-CoopDesktopShortcuts) {
     $where = if (Test-CoopProfileRedirected) { "in the isolated profile $(Get-CoopProfileInUse)" } else { 'Start Menu + Desktop' }
     Coop-Ok "created the `"coop`" double-click launcher ($where)"
   }

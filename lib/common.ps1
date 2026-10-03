@@ -66,6 +66,52 @@ function Initialize-CoopBundledRuntime {
 }
 Initialize-CoopBundledRuntime
 function Test-CoopBundledRuntime { return [bool]$script:CoopBundledRuntime }
+# A terminal install that already owns the `coop` command and the "coop"
+# double-click launcher keeps them when the coop window package (D1d) runs its
+# first-launch install from the snapshot: the package never retargets either at
+# itself. The link is %LOCALAPPDATA%\coop\bin\coop.cmd forwarding to
+# <root>\bin\coop.cmd (scripts\install.ps1); it belongs to another install when
+# that target exists and is not this checkout's.
+function Get-CoopLinkedLauncherTarget {
+  param([string]$LauncherDir = (Join-Path $env:LOCALAPPDATA 'coop\bin'))
+  if (-not $LauncherDir) { return $null }
+  $launcher = Join-Path $LauncherDir 'coop.cmd'
+  if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) { return $null }
+  $body = ''
+  try { $body = [System.IO.File]::ReadAllText($launcher) } catch { return $null }
+  if ($body -match 'call\s+"([^"]+)"') {
+    $target = $Matches[1]
+    if (Test-Path -LiteralPath $target -PathType Leaf) { return $target }
+  }
+  return $null
+}
+function Test-CoopForeignLauncherLink {
+  param([string]$LauncherDir = (Join-Path $env:LOCALAPPDATA 'coop\bin'))
+  $target = Get-CoopLinkedLauncherTarget -LauncherDir $LauncherDir
+  if (-not $target) { return $false }
+  $mine = Join-Path $script:CoopRoot 'bin\coop.cmd'
+  return ((ConvertTo-CoopComparablePath $target) -ne (ConvertTo-CoopComparablePath $mine))
+}
+# The "coop" shortcut (Start Menu or Desktop) of another install: one that exists
+# and does not start this checkout's bin\coop-desktop.ps1.
+function Test-CoopForeignTerminalShortcut {
+  if ($env:OS -ne 'Windows_NT') { return $false }
+  $mine = ConvertTo-CoopComparablePath (Join-Path $script:CoopRoot 'bin\coop-desktop.ps1')
+  $ws = $null
+  foreach ($dir in (Get-CoopShortcutDirs)) {
+    if (-not $dir) { continue }
+    $lnk = Join-Path $dir 'coop.lnk'
+    if (-not (Test-Path -LiteralPath $lnk -PathType Leaf)) { continue }
+    try {
+      if (-not $ws) { $ws = New-Object -ComObject WScript.Shell }
+      $args = [string]$ws.CreateShortcut($lnk).Arguments
+    } catch { continue }
+    if ($args -match '-File\s+"([^"]+)"') {
+      if ((ConvertTo-CoopComparablePath $Matches[1]) -ne $mine) { return $true }
+    } elseif ($args) { return $true }
+  }
+  return $false
+}
 # The package's first launch on this profile: the agent dir does not carry this
 # release's extension lock yet (a fresh machine, or a profile an older coop set
 # up), so `coop desktop` runs the install first (D1d).

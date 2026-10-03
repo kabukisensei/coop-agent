@@ -147,10 +147,15 @@ PowerShell or double-click the **coop** icon: either opens the same screen.
 ## 6. The coop window: one download
 
 coop also runs in its own window: the same agent and rules, drawn as a modern
-app with four themes. The window installer brings Node, Pi and coop with it, so
-you can start here instead of steps 1 to 5 if you only want the window. Git,
-Python, pipx, the Azure CLI and the ODBC driver from step 1 are still needed;
-the first launch tells you which of them are missing.
+app with four themes. The window installer brings Node, Pi and coop with it.
+
+- **New to coop:** download and run the window installer below; that is the
+  whole install. Git, Python, pipx, the Azure CLI and the ODBC driver from
+  step 1 are still needed, and the first launch tells you which are missing.
+- **Already have coop:** run `coop update` in PowerShell, then run the same
+  installer. Your sessions, memory, settings and sign-ins stay where they are,
+  and `coop` in the terminal keeps working as before. The update comes first
+  because both installs share one extension set, which must be the same release.
 
 1. Download `coop-window-<version>-win-x64.exe` from the newest release at
    [github.com/kabukisensei/coop-agent/releases/latest](https://github.com/kabukisensei/coop-agent/releases/latest)
@@ -166,8 +171,11 @@ the first launch tells you which of them are missing.
    sign-ins): follow what it prints, then start the window again if it stopped.
    After that the console only shows coop's launch checks and closes on its own.
 
-Typing `coop` in PowerShell keeps working if you also did steps 1 to 5; the
-window uses its own bundled copy either way. To remove the window, use **Add or
+With the terminal coop from steps 1 to 5 as well, the window shares your
+`~/.coop` settings, sign-ins and sessions, leaves your `coop` command and the
+"coop" icon with the terminal install, and uses its own bundled copy of coop.
+Keep both at the same release: `coop update` for the terminal, then the newer
+installer for the window. To remove the window, use **Add or
 remove programs** and pick **coop (window)**; your settings under `~/.coop`
 stay. A newer window comes as a newer installer: run it over the old one.
 

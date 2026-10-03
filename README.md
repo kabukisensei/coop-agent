@@ -224,7 +224,11 @@ launch runs `scripts\install.ps1` in that console (Git, Python, pipx, the Azure
 CLI and ODBC are still prerequisites; Node is not) and stops with the exact
 lines to fix if anything is missing; `coop sync` then copies the bundled
 extension tree into `~/.coop/agent` instead of downloading it. `coop doctor`
-names the bundled versions on its coop window row. Updates with D1e; until then
+names the bundled versions on its coop window row. On a machine that already
+has the terminal coop, the package shares `~/.coop` (settings, sign-ins,
+sessions) and leaves the `coop` command and the "coop" shortcut with that
+install (`Test-CoopForeignLauncherLink`); the two should stay at the same
+release, since they share one extension lock. Updates with D1e; until then
 install the newer exe over the old one. Build it yourself with `npm ci` in
 `desktop/installer` and `node desktop/scripts/build-installer.mjs` on Windows
 (it downloads the pinned Node zip, checks its SHA-256 and stages Pi, the
