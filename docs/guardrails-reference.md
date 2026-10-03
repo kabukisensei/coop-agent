@@ -52,6 +52,8 @@ A Fabric/Power BI/MCP tool call whose name looks like a **mutation** (create/upd
 
 MCP servers come only from coop's managed `~/.coop/agent/mcp-adapter.json`: coop launches the adapter with `PI_MCP_CONFIG_MODE=exclusive`, so a work repo's `.mcp.json` or `.pi/mcp.json`, and other tools' MCP configs, cannot add a server or redefine a coop one.
 
+Pi's built-in `/bug` cannot upload from a coop session: coop sets `PI_RADIUS_GATEWAY` to an unresolvable host, so the report (and any session transcript) stays on the machine as a local zip instead of reaching `radius.pi.dev`.
+
 The adapter's `mcpScript` tool is off and blocked. It runs JavaScript that calls MCP tools inside the adapter, where no guardrail can see or gate those calls. Coop's generated MCP config sets `settings.scriptMode: false`, and the guardrail blocks `mcpScript` if a project or user config turns it back on. Call MCP tools one at a time through `mcp`.
 
 The adapter's direct tools (`directTools` on a server entry, registering every server tool as `<server>_<tool>`) are off on coop's managed servers, and `coop sync` switches a user-enabled flag back off. If one is on anyway, the guardrail maps a direct `fabric_onelake`, `fabric_core`, `azure-devops_…` or `powerbi-modeling-mcp_…` call to its server and remote tool and gates it exactly like the proxied call.
