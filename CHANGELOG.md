@@ -5,6 +5,36 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- The coop window's first minutes (desktop UX review, Aaron 2026-10-03, six
+  items). **Set-up card**: a fresh machine's launch notices (no model sign-in,
+  `coop onboard`, `az login`) are one card on the empty screen and one banner
+  line once the conversation has content, each item with its command and an
+  Open in terminal button, instead of a warning toast per notice
+  (`desktop/renderer/welcome.mjs`). **First-run Start menu**: the first launch on
+  a profile (`COOP_FIRST_RUN`, as the terminal) opens `/start` once in the
+  window too. **Approval cards**: a guardrails confirm shows the command or SQL
+  as a code block, the question last, the Yes button labelled with its verb
+  ("Run it", "Allow") and No as the default with the focus; the extension's
+  decision and the answer it receives are unchanged
+  (`desktop/renderer/dialogs.mjs`). **Question cards**: an `ask_user_question`
+  (its RPC form numbers the options) shows each option's label and description
+  on two lines with the header as the title, and a multi-select shows checkboxes
+  plus a free-text field; the values sent back are the strings the extension
+  offered. **Example prompts**: three chips on the empty screen, each a Start
+  menu task in one sentence, fill the prompt. **Background notifications**: a
+  Windows notification and a taskbar flash when a turn ends or coop asks a
+  question while the window is not focused (Settings > Notify in the
+  background; `desktop/lib/menu.mjs`). **Menu bar**: File, Edit, View, Session
+  and Help, every entry one of the window's existing actions, with Theme as
+  radios and View > Menu bar to hide it (Alt shows it again). Polish from the
+  same review: the composer hint no longer repeats the placeholder, the `/` list
+  shows a source only for extension, prompt and skill commands, the Auto-retry
+  setting reflects what the window last set, and the Open folder toast says
+  what the console is for. `desktop/PARITY.md` has the new rows; master plan
+  revision 3.18 records the statuses and the follow-up rows D1h–D1j.
+
 ### Fixed
 
 - `sql_impact` lists a view's dependents on a Fabric Warehouse. The Warehouse

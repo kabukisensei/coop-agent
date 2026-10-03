@@ -217,6 +217,16 @@ else yet (Node, Pi and this repository come with D1d; updates with D1e: reinstal
 the newer exe). Build it yourself with `npm ci` in `desktop/installer` and
 `node desktop/scripts/build-installer.mjs` (Windows, or any OS with Wine).
 
+**Inside the window.** A fresh machine's set-up (model sign-in, `coop onboard`,
+`az login`) is one card on the empty screen with an Open in terminal button per
+item; the first launch opens the Start menu; approvals show the command or SQL as
+code with No as the default; `ask_user_question` questions are cards; three
+example prompts fill the composer; a Windows notification and taskbar flash
+arrive when coop finishes or asks while the window is in the background
+(Settings); and a File, Edit, View, Session and Help menu bar carries every
+window action (View > Menu bar hides it, Alt shows it). `desktop/PARITY.md` maps
+all of it to the terminal.
+
 > `pi-powerline-footer` is **not** used. coop renders its own footer and splash via
 > `extensions/coop-powerline` (see [Footer & splash](#footer--splash)).
 

@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld("coop", Object.freeze({
   copy: (text) => ipcRenderer.invoke("coop:copy", text),
   openExternal: (url) => ipcRenderer.invoke("coop:open-external", url),
   zoom: (step) => ipcRenderer.invoke("coop:zoom", step),
+  // Window preferences kept by the main process (notifications, menu bar).
+  setPref: (key, value) => ipcRenderer.invoke("coop:pref", String(key || ""), value),
   // Panes (D1b2).
   changes: () => ipcRenderer.invoke("coop:changes"),
   changeDiff: (path) => ipcRenderer.invoke("coop:change-diff", String(path || "")),
@@ -57,5 +59,6 @@ contextBridge.exposeInMainWorld("coop", Object.freeze({
   onExit: listen("pi:exit"),
   onNotice: listen("pi:notice"),
   onTheme: listen("coop:theme"),
+  onMenu: listen("coop:menu"),
   onDocs: listen("coop:docs"),
 }));
