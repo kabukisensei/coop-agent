@@ -144,11 +144,13 @@ a personal one. The installer then carries on by itself. If it could not show th
 screen (for example, the install ended with **Something went wrong**), type `coop` in
 PowerShell or double-click the **coop** icon: either opens the same screen.
 
-## 6. Add the coop window (optional)
+## 6. The coop window: one download
 
 coop also runs in its own window: the same agent and rules, drawn as a modern
-app with four themes. Do this after steps 1 to 5, since the window uses the
-terminal coop you just installed.
+app with four themes. The window installer brings Node, Pi and coop with it, so
+you can start here instead of steps 1 to 5 if you only want the window. Git,
+Python, pipx, the Azure CLI and the ODBC driver from step 1 are still needed;
+the first launch tells you which of them are missing.
 
 1. Download `coop-window-<version>-win-x64.exe` from the newest release at
    [github.com/kabukisensei/coop-agent/releases/latest](https://github.com/kabukisensei/coop-agent/releases/latest)
@@ -158,13 +160,15 @@ terminal coop you just installed.
    the only time you see it.
 3. Click **Next** and **Install**. No administrator password is asked; it
    installs for your user only, under `%LOCALAPPDATA%\Programs\coop`.
-4. Double-click the new **coop (window)** icon on your Desktop or Start Menu,
-   pick the project folder, and the window opens on it. A small console shows
-   coop's launch checks first and closes on its own.
+4. Double-click the new **coop (window)** icon on your Desktop or Start Menu
+   and pick the project folder. The first time, a console runs the same
+   checklist as `coop install` (prerequisites, tools, the Azure and OpenAI
+   sign-ins): follow what it prints, then start the window again if it stopped.
+   After that the console only shows coop's launch checks and closes on its own.
 
-If the window says coop is not installed, finish steps 1 to 5 first and start it
-again. To remove the window, use **Add or remove programs** and pick
-**coop (window)**; the terminal coop and your settings stay. A newer window comes
-as a newer installer: run it over the old one.
+Typing `coop` in PowerShell keeps working if you also did steps 1 to 5; the
+window uses its own bundled copy either way. To remove the window, use **Add or
+remove programs** and pick **coop (window)**; your settings under `~/.coop`
+stay. A newer window comes as a newer installer: run it over the old one.
 
 Next: [onboarding](onboarding.md) has a safe first task and the day-to-day commands.

@@ -7,6 +7,31 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- One install for the coop window (master plan D1d; Aaron 2026-10-03). The
+  window package now carries coop itself: `resources\runtime` holds the
+  pinned Node (the nodejs.org win-x64 zip, version and SHA-256 in the
+  manifest's new `desktop.node`), an npm prefix with the pinned Pi and the
+  Power BI tools, and the extension tree installed from
+  `config/extensions-lock.json`; `resources\coop` is a snapshot of this
+  repository (skills, prompts, extensions, guardrails, standards bundle,
+  scripts). A teammate downloads the one installer and nothing else is
+  installed for Node, Pi or the extensions: `lib/common.ps1` run from the
+  snapshot finds the runtime beside it and puts the bundled Node and Pi first
+  on PATH (`Initialize-CoopBundledRuntime`), the package's `coop desktop`
+  opens its own exe, and the first launch on a profile without this release's
+  lock runs `coop install` in the console first (the prerequisite checklist
+  with its `winget` lines, with Node shown as bundled; the pipx tools; the
+  sync; the Azure and model sign-ins). `coop sync` seeds the agent dir's tree
+  from the bundle (`Restore-CoopBundledExtensions`) and declares the
+  extensions in `settings.json` as `pi install` would (`lib/pi_settings.py
+  ensure-packages`), so no npm runs on the machine; `coop doctor` reports the
+  package in place of the "not a git checkout" warning; `coop update` points
+  at the release page for a newer package; `coop uninstall` leaves the
+  package's Pi and tools to Add or remove programs. The `installer (Windows)`
+  CI job checks the bundled Node, Pi, tools and tree at their pins and runs
+  the snapshot's `coop version` on the bundled Pi
+  (`desktop/scripts/build-installer.mjs`, `desktop/scripts/verify-installer.mjs`,
+  `desktop/lib/bootstrap.mjs`; master plan revision 3.19).
 - The coop window's first minutes (desktop UX review, Aaron 2026-10-03, six
   items). **Set-up card**: a fresh machine's launch notices (no model sign-in,
   `coop onboard`, `az login`) are one card on the empty screen and one banner

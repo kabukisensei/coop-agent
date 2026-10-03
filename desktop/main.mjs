@@ -659,9 +659,11 @@ if (process.argv.includes("--doctor")) {
 // with the spec; that process hands it over through the single-instance lock
 // (second-instance below) and this one opens the window.
 async function bootstrap() {
-  const coop = findCoop(process.env);
+  // The package's own coop snapshot (D1d) answers first; a terminal coop only
+  // for a package that carries none.
+  const coop = findCoop(process.env, existsSync, process.resourcesPath);
   if (!coop) {
-    dialog.showErrorBox("coop", "The coop window needs the terminal coop, which is not installed on this computer yet.\n\nInstall coop first (README: clone coop-agent and double-click \"Install coop.cmd\"), then start the window again.");
+    dialog.showErrorBox("coop", "This coop window package carries no coop of its own and the terminal coop is not installed on this computer.\n\nInstall the newest coop window from the release page (it includes everything), then start it again.");
     app.quit();
     return;
   }

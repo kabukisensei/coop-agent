@@ -235,15 +235,28 @@ for the Node tools and extensions; no script builds these paths inline.
    (`desktop/installer/electron-builder.cjs`, staged by
    `desktop/scripts/build-installer.mjs`: `desktop/`, the `lib/*.mjs` modules it
    imports, the vibes, the splash and the icon in an asar, pdf.js and its reader
-   script unpacked beside it, the September fuse policy applied). Started from
-   its shortcut it has no spec, so it finds the terminal's `coop.cmd` the way
-   `bin/coop-desktop.ps1` does and runs `coop desktop --app <its exe>`
-   (`desktop/lib/bootstrap.mjs`); coop.ps1 starts the exe again with the spec,
+   script unpacked beside it, the September fuse policy applied). Since D1d it
+   also carries, as electron-builder `extraResources`, `resources\runtime`
+   (the pinned Node from nodejs.org, `desktop.node` in the manifest; an npm
+   prefix with Pi and the manifest's npm tools; the extension tree installed
+   from `config/extensions-lock.json`; and `coop-runtime.json` describing them)
+   and `resources\coop`, a snapshot of this repository without tests, desktop
+   sources and history. Started from its shortcut it has no spec, so it runs the
+   bundled `coop desktop --app <its exe>` (`desktop/lib/bootstrap.mjs`, falling
+   back to a terminal `coop.cmd`); coop.ps1 starts the exe again with the spec,
    and that process hands it to the first through Electron's single-instance
-   lock. Child processes cannot read an asar, so the package runs the standards
-   reader on the terminal's checkout. `coop.exe --doctor` prints one JSON line
-   and exits; the `installer (Windows)` CI job builds the installer, installs it
-   silently, runs that and uninstalls (`desktop/scripts/verify-installer.mjs`). What only the terminal can show (model sign-in, `custom()` screens,
+   lock. The bundled coop.ps1 detects the runtime by location
+   (`Initialize-CoopBundledRuntime` in `lib/common.ps1`, override
+   `COOP_BUNDLED_RUNTIME`): it prepends the Node dir and the npm prefix to
+   `PATH`, sets `npm_config_prefix`, runs `scripts/install.ps1` in the console
+   on the first launch while the extension lock is pending, and
+   `Sync-CoopExtensionFleet` seeds `~/.coop/agent` from the bundled tree
+   (`Restore-CoopBundledExtensions`) instead of running `npm ci`. Child
+   processes cannot read an asar, so the package runs the standards reader on
+   the bundled snapshot. `coop.exe --doctor` prints one JSON line and exits; the
+   `installer (Windows)` CI job builds the installer, installs it silently, runs
+   that, runs the bundled `coop.ps1 version` and uninstalls
+   (`desktop/scripts/verify-installer.mjs`). What only the terminal can show (model sign-in, `custom()` screens,
    `/trust`) opens the same session in a terminal; `desktop/PARITY.md` maps every
    Pi command, keybinding and extension command, and `tests/desktop.test.mjs`
    checks it against a recorded session.

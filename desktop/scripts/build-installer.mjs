@@ -1,25 +1,40 @@
 #!/usr/bin/env node
-// Build the coop window package (master plan D1c): the unsigned NSIS per-user
-// installer of the window alone, Windows x64.
+// Build the coop window package (master plan D1c and D1d): the unsigned NSIS
+// per-user installer of the window with Node, Pi, the extension tree and a
+// snapshot of this repository inside, Windows x64. One download is the whole
+// coop (D1d, Aaron 2026-10-03): nothing else is installed for Node, Pi, the
+// extensions or coop's own files.
 //
-//   node desktop/scripts/build-installer.mjs              stage, then electron-builder
-//   node desktop/scripts/build-installer.mjs --stage-only  stage only (any OS, no network)
+//   node desktop/scripts/build-installer.mjs                stage, then electron-builder
+//   node desktop/scripts/build-installer.mjs --stage-only   stage only (any OS)
+//   node desktop/scripts/build-installer.mjs --stage-only --no-install --no-runtime
+//                                                           the window's files alone, no network
 //
-// Stage: desktop/installer/stage holds exactly what ships, at the same relative
-// paths as in this checkout, so the window's imports (`../lib/paths.mjs`, the
-// vibes, the splash, the icon) resolve inside the asar as they do here:
-//   desktop/     main.mjs, preload.cjs, lib/, renderer/, scripts/pdf-text.mjs
-//   lib/*.mjs    the modules the window imports (standards, paths, contract...)
-//   config/standards-registry.json and config/standards-bundle/ (lib/standards.mjs)
-//   vibes/, themes/coop.ico, extensions/coop-powerline/assets/splash.ansi
-//   node_modules/pdfjs-dist from config/desktop-lock.json (npm ci, no scripts)
-// The staged package.json names the window's version (VERSION) and pdf.js as
-// its one dependency. electron-builder (pinned in desktop/installer/package.json,
-// `npm ci` there first) packs the stage with the manifest's Electron into
-// desktop/installer/dist/coop-window-<version>-win-x64.exe. Nothing here
-// touches the user's profile or the window runtime tree.
+// Three stages under desktop/installer/, each exactly what ships:
+//   stage/    the app (packed into the asar): desktop/ (main.mjs, preload.cjs,
+//             lib/, renderer/, scripts/pdf-text.mjs), lib/*.mjs (the modules the
+//             window imports), config/standards-registry.json and the standards
+//             bundle, vibes/, themes/coop.ico, the splash, and pdf.js from
+//             config/desktop-lock.json (npm ci, no scripts; Electron's shim is
+//             dropped because electron-builder supplies the manifest's Electron).
+//   runtime/  resources\runtime in the package (D1d): node/ (the nodejs.org
+//             win-x64 zip the manifest pins by version and SHA-256), npm/ (an
+//             npm global prefix holding the manifest's Pi and the Power BI tools,
+//             installed with that Node), extensions/ (the agent dir's npm tree
+//             installed from config/extensions-lock.json with `npm ci`, as coop
+//             sync does), and coop-runtime.json naming them.
+//   coop/     resources\coop in the package (D1d): the tracked files of this
+//             checkout except tests, desktop/, the workflows, docs/history and
+//             the repo's own dotfiles. bin/coop.ps1 runs from here; lib/common.ps1
+//             finds the runtime folder beside it and puts the bundled Node and
+//             Pi first on PATH.
+// electron-builder (pinned in desktop/installer/package.json, `npm ci` there
+// first) packs the stage with the manifest's Electron and copies runtime/ and
+// coop/ as extraResources into desktop/installer/dist/coop-window-<version>-win-x64.exe.
+// Nothing here touches the user's profile or a window runtime tree.
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -27,6 +42,9 @@ export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..")
 export const INSTALLER = join(ROOT, "desktop", "installer");
 export const STAGE = join(INSTALLER, "stage");
 export const DIST = join(INSTALLER, "dist");
+export const RUNTIME = join(INSTALLER, "runtime");
+export const SNAPSHOT = join(INSTALLER, "coop");
+export const CACHE = join(INSTALLER, "cache");
 
 /** Files and folders that ship, relative to the checkout (folders end with /). */
 export function stageEntries(root = ROOT) {
@@ -73,9 +91,15 @@ export function readVersion(root = ROOT) {
   return readFileSync(join(root, "VERSION"), "utf8").trim();
 }
 
-function run(command, args, cwd) {
-  const result = spawnSync(command, args, { cwd, stdio: "inherit", shell: process.platform === "win32" && /\.(cmd|bat)$/i.test(command) });
+function run(command, args, cwd, env = process.env) {
+  const result = spawnSync(command, args, { cwd, env, stdio: "inherit", shell: process.platform === "win32" && /\.(cmd|bat)$/i.test(command) });
   if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed (${result.status === null ? result.signal : result.status})`);
+}
+
+function capture(command, args, cwd) {
+  const result = spawnSync(command, args, { cwd, encoding: "utf8", shell: process.platform === "win32" && /\.(cmd|bat)$/i.test(command) });
+  if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed (${result.status === null ? result.signal : result.status}): ${(result.stderr || "").trim().split("\n").slice(-3).join(" | ")}`);
+  return result.stdout;
 }
 
 const NPM = process.platform === "win32" ? "npm.cmd" : "npm";
@@ -107,8 +131,160 @@ export function stage({ root = ROOT, stageDir = STAGE, install = true } = {}) {
   return { stageDir, version, manifest };
 }
 
-function build() {
+// --- the bundled runtime (D1d) -------------------------------------------------
+
+/** The nodejs.org archive the manifest pins (desktop.node): Windows x64 zip. */
+export function nodeDownload(manifest) {
+  const node = manifest.desktop && manifest.desktop.node;
+  if (!node || !/^\d+\.\d+\.\d+$/.test(node.version || "") || !/^[0-9a-f]{64}$/.test(node.sha256 || "")) {
+    throw new Error("the release manifest has no desktop.node { version, sha256 } pin");
+  }
+  const folder = `node-v${node.version}-win-x64`;
+  return { version: node.version, sha256: node.sha256, folder, file: `${folder}.zip`, url: `https://nodejs.org/dist/v${node.version}/${folder}.zip` };
+}
+
+/** Pi and the Power BI tools, as `npm install -g` specs, into the bundled prefix. */
+export function prefixPackages(manifest) {
+  const specs = [`${manifest.pi.package}@${manifest.pi.version}`];
+  for (const [name, version] of Object.entries(manifest.npm_tools || {})) specs.push(`${name}@${version}`);
+  return specs;
+}
+
+/**
+ * Which tracked files of the checkout ship as the package's coop snapshot
+ * (resources\coop): everything coop runs from (bin, lib, scripts, config,
+ * skills, prompts, extensions, docs, themes, vibes, VERSION, the Markdown at
+ * the root) and nothing that only develops it.
+ */
+export function snapshotIncludes(file) {
+  const posix = file.split(/[\\/]/).join("/");
+  if (/^(tests|desktop|acceptance|\.github|\.agents|\.specify)\//.test(posix)) return false;
+  if (/^docs\/history\//.test(posix)) return false;
+  if (posix === ".gitignore" || posix === ".gitattributes" || posix === ".coop/project.yml") return false;
+  return true;
+}
+
+/** resources\runtime\coop-runtime.json: what lib/common.ps1 reads to find the bundle. */
+export function runtimeMarker({ manifest, version, lockSha256 }) {
+  return {
+    schema: 1,
+    coop: version,
+    node: { version: manifest.desktop.node.version, dir: "node" },
+    npm: { prefix: "npm" },
+    pi: manifest.pi.version,
+    extensions: { dir: "extensions", lockSha256 },
+  };
+}
+
+export function sha256File(file) {
+  return createHash("sha256").update(readFileSync(file)).digest("hex");
+}
+
+async function download(url, file) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+  writeFileSync(file, Buffer.from(await response.arrayBuffer()));
+}
+
+/** bsdtar (Windows 10+, macOS) opens a zip; GNU tar does not, so Linux falls back to unzip. */
+function extractZip(zip, into) {
+  mkdirSync(into, { recursive: true });
+  const tar = spawnSync("tar", ["-xf", zip, "-C", into], { stdio: "inherit" });
+  if (tar.status === 0) return;
+  const unzip = spawnSync("unzip", ["-q", zip, "-d", into], { stdio: "inherit" });
+  if (unzip.status !== 0) throw new Error(`could not extract ${zip} (tar ${tar.status}, unzip ${unzip.status})`);
+}
+
+/**
+ * Stage resources\runtime: the pinned Node (downloaded once into
+ * desktop/installer/cache and checked against the manifest's SHA-256), the npm
+ * prefix with Pi and the Power BI tools, the extension tree from the lock, and
+ * the marker. Needs the network and, for a tree whose packages fetch prebuilt
+ * binaries (better-sqlite3 under pi-hermes-memory), the target platform: the
+ * CI job runs it on windows-latest.
+ */
+export async function stageRuntime({ root = ROOT, runtimeDir = RUNTIME, cacheDir = CACHE } = {}) {
+  const manifest = JSON.parse(readFileSync(join(root, "config", "release-manifest.json"), "utf8"));
+  const version = readVersion(root);
+  const node = nodeDownload(manifest);
+  rmSync(runtimeDir, { recursive: true, force: true });
+  mkdirSync(runtimeDir, { recursive: true });
+  mkdirSync(cacheDir, { recursive: true });
+
+  const zip = join(cacheDir, node.file);
+  if (!existsSync(zip) || sha256File(zip) !== node.sha256) {
+    console.log(`downloading ${node.url}`);
+    await download(node.url, zip);
+  }
+  const sum = sha256File(zip);
+  if (sum !== node.sha256) throw new Error(`${node.file}: SHA-256 ${sum} does not match the manifest's ${node.sha256}`);
+  const unpack = join(runtimeDir, "node-unpack");
+  extractZip(zip, unpack);
+  const nodeDir = join(runtimeDir, "node");
+  renameSync(join(unpack, node.folder), nodeDir);
+  rmSync(unpack, { recursive: true, force: true });
+  if (!existsSync(join(nodeDir, "node.exe")) || !existsSync(join(nodeDir, "npm.cmd"))) throw new Error(`${node.file} did not unpack to node.exe and npm.cmd`);
+  console.log(`staged Node ${node.version} (${node.file}, SHA-256 verified)`);
+
+  // Everything below runs the bundled Node (so a prebuilt binary matches its ABI)
+  // and only on Windows, where that Node runs.
+  if (process.platform !== "win32") throw new Error("the runtime stage installs packages with the bundled Windows Node: run it on Windows (--no-runtime skips it)");
+  const env = { ...process.env, PATH: `${nodeDir};${process.env.PATH || ""}` };
+  const npm = join(nodeDir, "npm.cmd");
+
+  const prefix = join(runtimeDir, "npm");
+  mkdirSync(prefix, { recursive: true });
+  run(npm, ["install", "-g", "--no-audit", "--no-fund", ...prefixPackages(manifest)], runtimeDir, { ...env, npm_config_prefix: prefix });
+  const piPkg = join(prefix, "node_modules", manifest.pi.package, "package.json");
+  if (!existsSync(piPkg) || JSON.parse(readFileSync(piPkg, "utf8")).version !== manifest.pi.version) throw new Error(`Pi ${manifest.pi.version} is not in the bundled prefix`);
+  if (!existsSync(join(prefix, "pi.cmd"))) throw new Error("the bundled prefix has no pi.cmd shim");
+  console.log(`staged Pi ${manifest.pi.version} and ${Object.keys(manifest.npm_tools || {}).length} npm tool(s) in the bundled prefix`);
+
+  const extensions = join(runtimeDir, "extensions");
+  mkdirSync(extensions, { recursive: true });
+  const treePackage = capture(process.execPath, [join(root, "lib", "extlock.js"), "package-json", join(root, "config", "release-manifest.json")], root);
+  writeFileSync(join(extensions, "package.json"), treePackage);
+  const lock = join(root, "config", "extensions-lock.json");
+  cpSync(lock, join(extensions, "package-lock.json"));
+  // Lifecycle scripts run as in coop sync (Install-CoopExtensionsLock).
+  run(npm, ["ci", "--no-audit", "--no-fund"], extensions, { ...env, npm_config_prefix: prefix });
+  for (const [name, pin] of Object.entries(manifest.extensions || {})) {
+    const pkg = join(extensions, "node_modules", name, "package.json");
+    if (!existsSync(pkg) || JSON.parse(readFileSync(pkg, "utf8")).version !== pin) throw new Error(`${name}@${pin} is not in the bundled extension tree`);
+  }
+  const lockSha256 = sha256File(lock);
+  if (sha256File(join(extensions, "package-lock.json")) !== lockSha256) throw new Error("npm ci rewrote the extension lock");
+  console.log(`staged the extension tree (${Object.keys(manifest.extensions || {}).length} extension(s) from config/extensions-lock.json)`);
+
+  writeFileSync(join(runtimeDir, "coop-runtime.json"), JSON.stringify(runtimeMarker({ manifest, version, lockSha256 }), null, 2) + "\n");
+  return { runtimeDir, version, manifest };
+}
+
+/** Stage resources\coop: the tracked files of the checkout that ship (snapshotIncludes). */
+export function stageSnapshot({ root = ROOT, snapshotDir = SNAPSHOT } = {}) {
+  const listed = capture("git", ["-C", root, "ls-files", "-z"], root).split("\0").filter(Boolean);
+  if (listed.length < 50) throw new Error(`git ls-files listed ${listed.length} file(s): the snapshot needs a git checkout`);
+  rmSync(snapshotDir, { recursive: true, force: true });
+  let count = 0;
+  for (const file of listed) {
+    if (!snapshotIncludes(file)) continue;
+    const from = join(root, file);
+    if (!existsSync(from)) continue;
+    mkdirSync(dirname(join(snapshotDir, file)), { recursive: true });
+    cpSync(from, join(snapshotDir, file));
+    count += 1;
+  }
+  for (const required of ["bin/coop.ps1", "lib/common.ps1", "scripts/install.ps1", "config/release-manifest.json", "config/extensions-lock.json", "docs/guardrails.md", "VERSION"]) {
+    if (!existsSync(join(snapshotDir, required))) throw new Error(`snapshot: ${required} is missing`);
+  }
+  console.log(`staged the coop snapshot (${count} files)`);
+  return { snapshotDir, count };
+}
+
+async function build() {
   const { version } = stage();
+  await stageRuntime();
+  stageSnapshot();
   const builder = join(INSTALLER, "node_modules", "electron-builder", "cli.js");
   if (!existsSync(builder)) throw new Error("electron-builder is not installed: run `npm ci` in desktop/installer first");
   rmSync(DIST, { recursive: true, force: true });
@@ -123,8 +299,12 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     if (process.argv.includes("--stage-only")) {
       const { stageDir } = stage({ install: !process.argv.includes("--no-install") });
       console.log(`staged ${stageDir}`);
+      if (!process.argv.includes("--no-runtime")) {
+        await stageRuntime();
+        stageSnapshot();
+      }
     } else {
-      build();
+      await build();
     }
   } catch (error) {
     console.error(error.message);

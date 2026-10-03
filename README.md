@@ -199,8 +199,13 @@ shows anything still missing.
 | **Managed MCP entries** — `fabric`, `fabric-sqlendpoint`, `powerbi-modeling-mcp`, `azure-devops`, `microsoft-learn` | generated from Coop config with release-manifest pins; npm-backed servers use `npx`. Power BI Modeling is also installed globally. `context-mode` is a native Pi extension, not MCP. |
 | **Windows double-click launcher**: **coop** opens the terminal agent | created on the Start Menu and Desktop, starting in your home folder; `coop update` repairs older shortcuts. A second shortcut, **coop (window)**, appears after your first `coop desktop`. Purely additive: `coop` in any terminal is unchanged. An isolated install (`USERPROFILE` redirected at a sandbox folder) keeps its shortcuts inside that profile and leaves your user PATH alone |
 
-**The coop window package (master plan D1c).** Every release carries an
-unsigned, per-user Windows installer of the window alone
+**The coop window package (master plan D1c, D1d).** Every release carries an
+unsigned, per-user Windows installer of the window with coop inside: the
+pinned Node, Pi and extension tree (`resources\runtime`) and a snapshot of
+this repository (`resources\coop`), so a teammate needs the one download and
+no terminal install, Node or Pi; the first launch runs `coop install` in its
+console (the prerequisite checklist, the tools, the sign-ins) and `coop sync`
+seeds the extension tree from the bundle. It is the installer of the window
 (`coop-window-<version>-win-x64.exe` under the release's assets; teammates
 download it from the [newest release](https://github.com/kabukisensei/coop-agent/releases/latest),
 see `docs/install-windows.md` step 6). CI builds the same installer on every PR
@@ -209,13 +214,22 @@ It installs under `%LOCALAPPDATA%\Programs\coop` with no administrator prompt,
 adds a **coop (window)** shortcut to the Start Menu and Desktop and an Add/Remove
 Programs entry, and keeps the window's data (`~/.coop/desktop/data`) on
 uninstall. SmartScreen shows "unknown publisher" once (one click; signing is
-D1f, optional). The package still needs the terminal coop: its shortcut asks for
-a folder, then runs `coop desktop --app <its exe>` in a console, so the window
-gets the same launch checks, spec and token as `coop desktop`; without the
-terminal coop it says so and points at the install steps. It bundles nothing
-else yet (Node, Pi and this repository come with D1d; updates with D1e: reinstall
-the newer exe). Build it yourself with `npm ci` in `desktop/installer` and
-`node desktop/scripts/build-installer.mjs` (Windows, or any OS with Wine).
+D1f, optional). Its shortcut asks for a folder, then runs the bundled
+`coop desktop --app <its exe>` in a console, so the window gets the same launch
+checks, spec and token as `coop desktop`. The bundled coop finds its runtime by
+location (`resources\runtime\coop-runtime.json` next to `resources\coop`): it
+puts the bundled Node and the npm prefix holding Pi first on its `PATH`, so a
+terminal `coop` installed later and the package never fight over Pi. The first
+launch runs `scripts\install.ps1` in that console (Git, Python, pipx, the Azure
+CLI and ODBC are still prerequisites; Node is not) and stops with the exact
+lines to fix if anything is missing; `coop sync` then copies the bundled
+extension tree into `~/.coop/agent` instead of downloading it. `coop doctor`
+names the bundled versions on its coop window row. Updates with D1e; until then
+install the newer exe over the old one. Build it yourself with `npm ci` in
+`desktop/installer` and `node desktop/scripts/build-installer.mjs` on Windows
+(it downloads the pinned Node zip, checks its SHA-256 and stages Pi, the
+extension tree and the repository snapshot under `desktop/installer/`;
+`--stage-only` stops before electron-builder).
 
 **Inside the window.** A fresh machine's set-up (model sign-in, `coop onboard`,
 `az login`) is one card on the empty screen with an Open in terminal button per

@@ -1,8 +1,11 @@
 #!/usr/bin/env node
-// Installer acceptance for the coop window package (master plan D1c): install
-// the built NSIS installer silently as the current user, check the Add/Remove
-// entry and the shortcuts, run `coop.exe --doctor`, uninstall silently and
-// check nothing of the package is left while the profile is untouched.
+// Installer acceptance for the coop window package (master plan D1c, D1d):
+// install the built NSIS installer silently as the current user, check the
+// Add/Remove entry and the shortcuts, run `coop.exe --doctor`, check the
+// bundled runtime (the pinned Node answers, Pi and every extension are at
+// their pins, the lock is the shipped one) and the coop snapshot (its
+// `coop version` runs the bundled Pi), uninstall silently and check nothing of
+// the package is left while the profile is untouched.
 //
 // It MUTATES the machine it runs on (an install, registry entries, shortcuts),
 // so it runs only on a disposable GitHub-hosted Windows runner that opted in
@@ -42,10 +45,18 @@ export function nsisInvocation(executable, directory, { uninstall = false } = {}
 /** The places the package touches (electron-builder's per-user NSIS layout). */
 export function packagePaths(env = process.env) {
   const installDir = join(env.LOCALAPPDATA, "Programs", "coop");
+  const runtime = join(installDir, "resources", "runtime");
   return {
     installDir,
     exe: join(installDir, "coop.exe"),
     uninstaller: join(installDir, "Uninstall coop.exe"),
+    // D1d: the bundled runtime and the coop snapshot beside the asar.
+    runtime,
+    nodeExe: join(runtime, "node", "node.exe"),
+    piPackage: join(runtime, "npm", "node_modules", "@earendil-works", "pi-coding-agent", "package.json"),
+    piShim: join(runtime, "npm", "pi.cmd"),
+    extensions: join(runtime, "extensions"),
+    coopPs1: join(installDir, "resources", "coop", "bin", "coop.ps1"),
     startMenuShortcut: join(env.APPDATA, "Microsoft", "Windows", "Start Menu", "Programs", `${PRODUCT}.lnk`),
     desktopShortcut: join(env.USERPROFILE, "Desktop", `${PRODUCT}.lnk`),
     // Electron's default appData folder for the product; the window keeps its
@@ -103,6 +114,9 @@ async function main(argv) {
   if (installers.length !== 1) throw new Error(`expected one coop-window-*.exe in ${dist}, found ${installers.length}`);
   const installer = join(dist, installers[0]);
   const version = readFileSync(join(ROOT, "VERSION"), "utf8").trim();
+  const manifest = JSON.parse(readFileSync(join(ROOT, "config", "release-manifest.json"), "utf8"));
+  const lockSha256 = sha256(join(ROOT, "config", "extensions-lock.json"));
+  const powershell = win32.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const paths = packagePaths();
   const report = { ok: false, installer: installers[0], installerSha256: sha256(installer), version, steps: [] };
   const step = (name, detail) => { report.steps.push({ name, ...detail }); console.log(`  ✓ ${name}${detail && detail.note ? `: ${detail.note}` : ""}`); };
@@ -142,8 +156,36 @@ async function main(argv) {
     try { doctor = JSON.parse(doctorLine); } catch { throw new Error(`coop.exe --doctor printed no JSON: ${doctorOut.slice(-300)}`); }
     if (doctor.product !== "coop window" || doctor.version !== version || doctor.packaged !== true) throw new Error(`doctor report: ${doctorLine}`);
     if (!doctor.pdfjs || !doctor.pdfScript) throw new Error(`the package lacks pdf.js or its script: ${doctorLine}`);
-    if (doctor.coop !== "") throw new Error(`doctor found a terminal coop on a runner that has none: ${doctor.coop}`);
+    if (doctor.coop.toLowerCase() !== paths.coopPs1.toLowerCase()) throw new Error(`doctor names ${doctor.coop || "no coop"}, not the bundled ${paths.coopPs1}`);
+    if (!doctor.runtime || doctor.runtime.node !== manifest.desktop.node.version || doctor.runtime.pi !== manifest.pi.version || doctor.runtime.extensions !== true) {
+      throw new Error(`doctor's runtime is not the manifest's Node ${manifest.desktop.node.version}, Pi ${manifest.pi.version} and extension tree: ${doctorLine}`);
+    }
     step("coop.exe --doctor", { note: doctorLine, doctor });
+
+    // D1d: the bundled runtime answers and is exactly what the manifest pins.
+    const nodeOut = (await runOwned(paths.nodeExe, ["--version"], { windowsHide: true }, 60000)).trim();
+    if (nodeOut !== `v${manifest.desktop.node.version}`) throw new Error(`bundled node.exe --version printed ${nodeOut}`);
+    const piPkg = JSON.parse(readFileSync(paths.piPackage, "utf8"));
+    if (piPkg.version !== manifest.pi.version || !existsSync(paths.piShim)) throw new Error(`bundled Pi is ${piPkg.version}, shim ${existsSync(paths.piShim)}`);
+    for (const [name, pin] of Object.entries(manifest.npm_tools || {})) {
+      const pkg = join(paths.runtime, "npm", "node_modules", name, "package.json");
+      if (!existsSync(pkg) || JSON.parse(readFileSync(pkg, "utf8")).version !== pin) throw new Error(`bundled ${name} is not ${pin}`);
+    }
+    if (sha256(join(paths.extensions, "package-lock.json")) !== lockSha256) throw new Error("the bundled extension tree's lock is not config/extensions-lock.json");
+    for (const [name, pin] of Object.entries(manifest.extensions || {})) {
+      const pkg = join(paths.extensions, "node_modules", name, "package.json");
+      if (!existsSync(pkg) || JSON.parse(readFileSync(pkg, "utf8")).version !== pin) throw new Error(`bundled ${name} is not ${pin}`);
+    }
+    step("bundled Node, Pi, npm tools and the extension tree at the manifest's pins", { note: `Node ${nodeOut}, Pi ${piPkg.version}` });
+
+    // The coop snapshot runs on the bundled runtime: `coop version` resolves the
+    // bundled pi.cmd (lib/common.ps1 puts the runtime first on PATH) even though
+    // this runner has its own Node and no Pi.
+    const versionOut = await runOwned(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", paths.coopPs1, "version"], { windowsHide: true, cwd: paths.installDir }, 120000);
+    const coopLine = versionOut.split(/\r?\n/).find((line) => /^coop \d/.test(line.trim())) || "";
+    const piLine = versionOut.split(/\r?\n/).find((line) => /^pi\s/.test(line.trim())) || "";
+    if (!coopLine.includes(`coop ${version}`) || !piLine.includes(manifest.pi.version)) throw new Error(`bundled coop version printed: ${versionOut.trim().slice(-300)}`);
+    step("bundled coop.ps1 version runs the bundled Pi", { note: `${coopLine.trim()}; ${piLine.trim()}` });
 
     if (readFileSync(sentinelFile, "utf8") !== sentinel) throw new Error("install or doctor changed the profile's window data");
     if (existsSync(paths.electronAppData)) throw new Error(`${paths.electronAppData} appeared: the window's data left the coop profile`);
@@ -154,7 +196,7 @@ async function main(argv) {
     installed = false;
     // The uninstaller removes itself last; give the file system a moment.
     for (let waited = 0; existsSync(paths.uninstaller) && waited < 30; waited++) await new Promise((done) => setTimeout(done, 1000));
-    if (existsSync(paths.exe) || existsSync(join(paths.installDir, "resources"))) throw new Error("uninstall left the package installed");
+    if (existsSync(paths.exe) || existsSync(join(paths.installDir, "resources")) || existsSync(paths.runtime)) throw new Error("uninstall left the package installed");
     if ((await registryEntries()).length) throw new Error(`uninstall left ${PRODUCT} in Add/Remove Programs`);
     for (const file of [paths.startMenuShortcut, paths.desktopShortcut]) {
       if (existsSync(file)) throw new Error(`uninstall left a shortcut: ${file}`);

@@ -112,6 +112,10 @@ if ((Test-CoopGitCheckout $script:CoopRoot) -and (Test-Have 'git')) {
     # Renamed or removed origin: warn with the fix (Get-CoopRepoStranded names it).
     if (-not (Write-CoopRepoStranded)) { Coop-Warn "no 'origin' remote configured — skipping repo update" }
   }
+} elseif (Test-CoopBundledRuntime) {
+  # The window package's snapshot (D1d): coop-agent, Node and Pi move together
+  # with the package version; the tools below still converge.
+  Coop-Info "this coop is the coop window package v$($script:CoopVersion): a newer installer from https://github.com/kabukisensei/coop-agent/releases/latest updates coop-agent, Node and Pi together"
 } else {
   # A zip/shared-drive copy: Pi + pipx tools above still update, but the repo layer
   # (skills/prompts/guardrails/themes/scripts) is frozen forever — say so loudly.
