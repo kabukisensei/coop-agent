@@ -651,6 +651,17 @@ def ask_platform(current: str, *, forced: str = "", skip_saved: bool = False) ->
     return default
 
 
+def _profile_is_valid() -> bool:
+    """True when ~/.coop/user.json exists and holds a usable name."""
+    if not USER_JSON.exists():
+        return False
+    try:
+        validate_name(str(load_user().get("name", "")))
+    except Exception:
+        return False
+    return True
+
+
 def cmd_platform(args: argparse.Namespace) -> int:
     """Show or set the machine's client platform without re-running onboarding.
 
@@ -832,6 +843,27 @@ def cmd_onboard(args: argparse.Namespace) -> int:
             )
             return 2
         os.environ[PLATFORM_ENV] = args.platform
+        # On a machine that is already onboarded, `coop onboard --platform X` is a
+        # switch: save the answer and leave the profile and integrations alone,
+        # instead of walking the integration questions again. A fresh machine
+        # still runs the whole onboarding, with this answer filled in.
+        if (
+            not args.config_only
+            and not args.edit
+            and "integrations" in existing_config
+            and _profile_is_valid()
+        ):
+            config = dict(existing_config)
+            client = dict(config.get("client")) if isinstance(config.get("client"), dict) else {}
+            value = normalize_platform(args.platform)
+            client["platform"] = value
+            config["client"] = client
+            save_config(config)
+            sys.stderr.write(
+                f"Client platform: {PLATFORM_LABELS[value]} (saved to {CONFIG_JSON}). "
+                "Integrations are unchanged; review them with `coop onboard --config-only`.\n"
+            )
+            return 0
 
     if args.config_only:
         profile = load_user()

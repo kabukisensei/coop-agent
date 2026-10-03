@@ -474,4 +474,15 @@ PY
 HOME="$dp4" COOP_DIR="$dp4" "$PY" "$ROOT/scripts/onboard.py" platform --set both >/dev/null 2>&1
 cfg_json "$dp4/.coop/config" | grep -q 'kb.git' && ok "platform --set preserves the other config keys" || ko "platform --set dropped other keys"
 
+# (p5) On an onboarded machine `onboard --platform X` is a one-line switch: no
+# question is asked, the profile and integrations stay as they were.
+before="$(cfg_json "$dp4/.coop/config" | "$PY" -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["integrations"], sort_keys=True))')"
+HOME="$dp4" COOP_DIR="$dp4" COOP_AZ_BIN=/nonexistent/az "$PY" "$ROOT/scripts/onboard.py" onboard --platform azure_sql </dev/null >/dev/null 2>"$dp4/stderr5.txt"
+rc=$?
+[ "$rc" = 0 ] && [ "$(platform_of "$dp4")" = "azure_sql" ] && ok "onboard --platform switches an onboarded machine without a prompt" || ko "onboard --platform switch failed (rc $rc): $(cat "$dp4/stderr5.txt")"
+after="$(cfg_json "$dp4/.coop/config" | "$PY" -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["integrations"], sort_keys=True))')"
+[ "$before" = "$after" ] && ok "the switch leaves integrations alone" || ko "the switch changed integrations"
+grep -q "Integrations are unchanged" "$dp4/stderr5.txt" && ok "the switch says how to review integrations" || ko "switch message missing"
+cfg_json "$dp4/.coop/config" | grep -q 'kb.git' && ok "the switch preserves the other config keys" || ko "the switch dropped other keys"
+
 exit $fail
