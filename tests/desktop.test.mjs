@@ -26,6 +26,9 @@ import { consoleProcess } from "../desktop/lib/terminal.mjs";
 import { listFiles, rankFiles } from "../desktop/lib/files.mjs";
 import { PiSession, endLeftovers, killTree } from "../desktop/lib/pi-session.mjs";
 import { BUILTINS, KEYS, TERMINAL_ONLY, completions, parseInput } from "../desktop/renderer/commands.mjs";
+import { setupItems, setupSummary, EXAMPLES } from "../desktop/renderer/welcome.mjs";
+import { parseConfirm, confirmLabels, parseQuestionSelect, parseQuestionMulti, multiAnswer } from "../desktop/renderer/dialogs.mjs";
+import { menuTemplate, notificationFor } from "../desktop/lib/menu.mjs";
 import { activitySummary, applyEvent, createTimeline, finishBash, loadMessages, startBash, toolSummary, turnOf, turns } from "../desktop/renderer/timeline.mjs";
 import { isSafeLink, parseMarkdown } from "../desktop/renderer/markdown.mjs";
 import { diffStats, parseEditDiff } from "../desktop/renderer/diff.mjs";
@@ -292,6 +295,78 @@ await check("composer: / completion lists built-ins, then Pi's commands from the
   assert.deepEqual(completions("tree", list), []);
 });
 
+// --- Welcome, dialogs and menu (desktop UX review, 2026-10-03) -----------------
+
+await check("welcome: set-up items come from the sign-in flag and the launch notices, with their command", () => {
+  const items = setupItems({ loginPresent: false, notices: [
+    "COOP onboarding is incomplete (user.json or config missing). Run: coop onboard",
+    "Fabric Warehouse MCP unavailable: Azure authentication is required; run az login",
+    "  ", "Standards wiki offline; using the bundled copy",
+  ] });
+  assert.deepEqual(items.map((item) => item.id), ["login", "onboard", "azure", "notice:Standards wiki offline; using the bundled copy"]);
+  assert.deepEqual(items.map((item) => item.command), ["/login", "coop onboard", "az login", ""]);
+  assert.deepEqual(setupItems({ loginPresent: true, notices: [] }), []);
+  assert.deepEqual(setupItems({ loginPresent: false, notices: ["No model sign-in yet: run /login"] }).length, 1, "the sign-in notice and the flag are one item");
+  assert.match(setupSummary(items), /^4 set-up items, 3 need a terminal\.$/);
+  assert.equal(setupSummary(items.slice(0, 1)), items[0].text);
+  assert.equal(EXAMPLES.length, 3);
+  for (const example of EXAMPLES) { assert.ok(example.label.length <= 40); assert.ok(example.prompt.length > 20); }
+});
+
+await check("dialogs: a guardrails confirm becomes blocks, a question and verb buttons", () => {
+  const message = "Destructive command (rm -rf):\n  rm -rf build\nRun it?";
+  assert.deepEqual(parseConfirm(message), { blocks: [{ kind: "text", text: "Destructive command (rm -rf):" }, { kind: "code", text: "rm -rf build" }], question: "Run it?" });
+  const sql = parseConfirm("Warehouse SQL write (one INSERT, UPDATE, CREATE or ALTER):\n  CREATE VIEW dbo.v AS\n  SELECT 1 AS x\nDeletes, drops, merges, EXEC, batches and production always ask. Run it?");
+  assert.equal(sql.blocks[1].text, "CREATE VIEW dbo.v AS\nSELECT 1 AS x");
+  assert.equal(sql.blocks.length, 2, "the closing sentence is the question");
+  assert.equal(sql.question, "Deletes, drops, merges, EXEC, batches and production always ask. Run it?");
+  assert.equal(confirmLabels({ title: "coop guardrails", question: sql.question, message: "" }).yes, "Run it");
+  assert.deepEqual(confirmLabels({ title: "coop guardrails", question: "Run it?", message }), { yes: "Run it", no: "No", risky: true });
+  assert.deepEqual(confirmLabels({ title: "coop", question: "Allow this once?", message: "Allow this once?" }), { yes: "Allow", no: "No", risky: false });
+  assert.deepEqual(confirmLabels({ title: "coop", question: "", message: "Save the project contract?" }), { yes: "Save it", no: "No", risky: false });
+  assert.deepEqual(parseConfirm("Plain question?"), { blocks: [{ kind: "text", text: "Plain question?" }], question: "" });
+});
+
+await check("dialogs: ask_user_question's RPC select and multi-select are read into cards, values unchanged", () => {
+  const options = ["1. Keep the view — no change to the SQL", "2. Rewrite it — a new CTE-based view", "3. Type something."];
+  const single = parseQuestionSelect("[Approach] How should the view change?\n\n--- 2. Rewrite it preview ---\nWITH x AS (...)", options);
+  assert.equal(single.header, "Approach");
+  assert.equal(single.question, "How should the view change?");
+  assert.deepEqual(single.previews, ["--- 2. Rewrite it preview ---\nWITH x AS (...)"]);
+  assert.deepEqual(single.options.map((o) => [o.label, o.description, o.other, o.value]), [
+    ["Keep the view", "no change to the SQL", false, options[0]],
+    ["Rewrite it", "a new CTE-based view", false, options[1]],
+    ["Type something.", "", true, options[2]],
+  ]);
+  // The Start menu and other selects keep the plain list.
+  assert.equal(parseQuestionSelect("Welcome to coop", ["🔎  Check SQL", "🧭  Trace"]), null);
+  assert.equal(parseQuestionSelect("Pick", ["1. a", "2. b"]), null, "numbered options without descriptions are a plain list");
+  const multi = parseQuestionMulti("[Features] Which features do you want?\n\n1. Search — full text\n2. Export — HTML\n3. Charts — small graphs\n\nEnter the numbers of all that apply, comma-separated (e.g. \"1,3\"), or type a custom answer as plain text.");
+  assert.equal(multi.header, "Features");
+  assert.equal(multi.question, "Which features do you want?");
+  assert.deepEqual(multi.options.map((o) => [o.index, o.label, o.description]), [[1, "Search", "full text"], [2, "Export", "HTML"], [3, "Charts", "small graphs"]]);
+  assert.equal(parseQuestionMulti("Name this session"), null);
+  assert.equal(multiAnswer(new Set([3, 1]), ""), "1,3");
+  assert.equal(multiAnswer(new Set([1]), " my own answer "), "my own answer");
+  assert.equal(multiAnswer(new Set(), ""), "");
+});
+
+await check("menu: the template runs window actions, themes are radios, notifications name the event", () => {
+  const ran = [];
+  const themes = ["auto", "modern-dark", "modern-light", "retro-dark", "retro-light"];
+  const template = menuTemplate({ run: (id) => ran.push(id), setTheme() {}, theme: "retro-dark", themes, menuBar: true, toggleMenuBar() {}, openExternal() {}, about() {} });
+  assert.deepEqual(template.map((menu) => menu.label), ["&File", "&Edit", "&View", "&Session", "&Help"]);
+  const view = template[2].submenu;
+  const theme = view.find((item) => item.label === "Theme");
+  assert.deepEqual(theme.submenu.map((item) => [item.label, item.checked]), [["Match Windows", false], ["Modern dark", false], ["Modern light", false], ["Retro dark", true], ["Retro light", false]]);
+  for (const menu of template) for (const item of menu.submenu) if (item.click && item.label && !item.role && !item.submenu && item.type !== "checkbox" && !/Install guide|About/.test(item.label)) item.click();
+  assert.ok(ran.includes("new") && ran.includes("hotkeys") && ran.includes("start") && ran.includes("pane"));
+  assert.equal(notificationFor({ type: "agent_end" }, { folder: "work" }), "coop finished in work.");
+  assert.equal(notificationFor({ type: "extension_ui_request", method: "confirm", title: "coop guardrails" }), "coop is waiting for your answer: coop guardrails");
+  assert.equal(notificationFor({ type: "extension_ui_request", method: "setStatus" }), "");
+  assert.equal(notificationFor({ type: "message_update" }), "");
+});
+
 await check("composer: @ file ranking", () => {
   const paths = ["build/", "build/out.txt", "docs/", "docs/report-notes.md", "report.sql", "src/", "src/reports/", "src/reports/daily.sql"];
   assert.deepEqual(rankFiles(paths, "rep").slice(0, 3), ["report.sql", "src/reports/", "docs/report-notes.md"]);
@@ -357,7 +432,7 @@ await check("settings: unknown values fall back, the four themes and auto are ke
   assert.deepEqual(THEMES, ["auto", "modern-dark", "modern-light", "retro-dark", "retro-light"]);
   const file = join(temp, "settings", "window.json");
   assert.equal(loadSettings(file).theme, "auto");
-  assert.deepEqual(saveSettings(file, { theme: "retro-light", width: 99999, height: 900, maximized: "yes", extra: 1 }), { theme: "retro-light", width: 1280, height: 900, maximized: false, lastFolder: "" });
+  assert.deepEqual(saveSettings(file, { theme: "retro-light", width: 99999, height: 900, maximized: "yes", extra: 1 }), { theme: "retro-light", width: 1280, height: 900, maximized: false, lastFolder: "", notify: true, menuBar: true });
   assert.equal(loadSettings(file).theme, "retro-light");
   writeFileSync(file, "{not json");
   assert.equal(loadSettings(file).theme, "auto");

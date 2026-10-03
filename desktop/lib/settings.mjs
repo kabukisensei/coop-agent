@@ -6,7 +6,7 @@ import { dirname } from "node:path";
 // "auto" follows Windows' light or dark setting with the modern pair.
 export const THEMES = Object.freeze(["auto", "modern-dark", "modern-light", "retro-dark", "retro-light"]);
 
-const DEFAULTS = Object.freeze({ theme: "auto", width: 1280, height: 860, maximized: false, lastFolder: "" });
+const DEFAULTS = Object.freeze({ theme: "auto", width: 1280, height: 860, maximized: false, lastFolder: "", notify: true, menuBar: true });
 
 function size(value, fallback, min, max) {
   return Number.isInteger(value) && value >= min && value <= max ? value : fallback;
@@ -21,6 +21,10 @@ function normalize(value) {
     maximized: raw.maximized === true,
     // The folder the installed package's picker opens on (the last window's).
     lastFolder: typeof raw.lastFolder === "string" && !/[\0\r\n]/.test(raw.lastFolder) ? raw.lastFolder.slice(0, 1024) : DEFAULTS.lastFolder,
+    // A Windows notification and a taskbar flash when coop finishes or asks
+    // while the window is in the background; the menu bar's visibility.
+    notify: raw.notify !== false,
+    menuBar: raw.menuBar !== false,
   };
 }
 

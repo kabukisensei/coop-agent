@@ -5,7 +5,7 @@
 // terminal uses. The renderer is untrusted: it is sandboxed, sees only the
 // small bridge in preload.cjs, and every command it sends is rebuilt from an
 // allowlist (lib/rpc-commands.mjs) before it reaches Pi.
-import { app, BrowserWindow, ipcMain, protocol, session, dialog, shell, clipboard, nativeTheme, Menu } from "electron";
+import { app, BrowserWindow, ipcMain, protocol, session, dialog, shell, clipboard, nativeTheme, Menu, Notification } from "electron";
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
@@ -29,6 +29,7 @@ import { attach, forget, pruneStore, findPdfjs, LIMITS as ATTACH_LIMITS } from "
 import { loadSplash } from "./lib/splash.mjs";
 import { vibesDir, loadVibes, vibeSets, userName, fillVibe, pickVibe } from "./lib/vibes.mjs";
 import { bootstrapProcess, doctorReport, findCoop, folderArgument, packagedPaths } from "./lib/bootstrap.mjs";
+import { menuTemplate, notificationFor } from "./lib/menu.mjs";
 import { profileDir } from "../lib/paths.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -119,6 +120,7 @@ function startPi(state, extraArgs = []) {
       if (title && !state.win.isDestroyed()) state.win.setTitle(title);
       return;
     }
+    notifyInBackground(state, message);
     send(state, "pi:event", message);
   });
   pi.on("protocol-error", (text) => send(state, "pi:notice", { level: "error", message: String(text) }));
@@ -136,6 +138,23 @@ function startPi(state, extraArgs = []) {
   }
 }
 
+// A finished turn or a question while the window is in the background: one
+// Windows notification (clicking it brings the window up) and a taskbar flash,
+// cleared when the window gets focus. Off with the Settings toggle.
+function notifyInBackground(state, message) {
+  if (!settings.notify || state.win.isDestroyed() || state.win.isFocused()) return;
+  const body = notificationFor(message, { folder: basename(state.spec.cwd) });
+  if (!body) return;
+  try {
+    state.win.flashFrame(true);
+    if (Notification.isSupported()) {
+      const note = new Notification({ title: "coop", body, silent: false });
+      note.on("click", () => { if (!state.win.isDestroyed()) { state.win.show(); state.win.focus(); } });
+      note.show();
+    }
+  } catch { /* a desktop without notifications */ }
+}
+
 function windowInfo(state) {
   const { spec } = state;
   return {
@@ -151,6 +170,11 @@ function windowInfo(state) {
     canOpenFolder: Boolean(spec.coop),
     loginPresent: spec.loginPresent,
     notices: state.noticesShown ? [] : spec.notices,
+    // The first interactive launch per profile (coop.ps1 sets COOP_FIRST_RUN):
+    // the window opens the Start menu once, as the terminal does.
+    firstRun: !state.noticesShown && /^(1|true|yes|on)$/i.test(String(spec.env.COOP_FIRST_RUN || "")),
+    notify: settings.notify,
+    menuBar: settings.menuBar,
     splash: splashArt,
     vibe: vibeFor(state),
     vibeSets: vibeSets(vibesDir(REPO)),
@@ -182,7 +206,7 @@ function openWindow(rawSpec, token) {
     title: `coop - ${basename(spec.cwd) || spec.cwd}`,
     show: false,
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#0f1318" : "#f6f7f9",
-    autoHideMenuBar: true,
+    autoHideMenuBar: !settings.menuBar,
     icon: existsSync(join(HERE, "..", "themes", "coop.ico")) ? join(HERE, "..", "themes", "coop.ico") : undefined,
     webPreferences: {
       preload: join(HERE, "preload.cjs"),
@@ -199,6 +223,7 @@ function openWindow(rawSpec, token) {
   if (settings.lastFolder !== spec.cwd) { try { settings = saveSettings(settingsFile, { ...settings, lastFolder: spec.cwd }); } catch { /* keep going */ } }
   if (settings.maximized) win.maximize();
   win.once("ready-to-show", () => win.show());
+  win.on("focus", () => { try { win.flashFrame(false); } catch { /* gone */ } });
   win.on("close", () => {
     if (windows.size === 1) {
       const maximized = win.isMaximized();
@@ -355,7 +380,16 @@ handle("coop:theme", (state, theme) => {
   if (!THEMES.includes(theme)) return { success: false, error: "unknown theme" };
   settings = saveSettings(settingsFile, { ...settings, theme });
   broadcast("coop:theme", { theme, systemDark: nativeTheme.shouldUseDarkColors });
+  installMenu();
   return { success: true };
+});
+
+// Window preferences: notifications in the background, the menu bar.
+handle("coop:pref", (state, key, value) => {
+  if (key === "notify") settings = saveSettings(settingsFile, { ...settings, notify: value !== false });
+  else if (key === "menuBar") setMenuBar(value !== false);
+  else return { success: false, error: "unknown preference" };
+  return { success: true, data: { notify: settings.notify, menuBar: settings.menuBar } };
 });
 
 handle("coop:copy", (state, text) => {
@@ -549,6 +583,43 @@ handle("coop:docs-portal", async (state) => {
   return error ? { success: false, error } : { success: true };
 });
 
+// --- Menu bar ------------------------------------------------------------------
+
+/** The window the menu acts on: the focused one, else the only one. */
+function focusedState() {
+  const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  return win ? windows.get(win.webContents.id) : undefined;
+}
+
+function installMenu() {
+  const template = menuTemplate({
+    run: (action) => { const state = focusedState(); if (state) send(state, "coop:menu", { action }); },
+    setTheme: (theme) => { if (THEMES.includes(theme)) { settings = saveSettings(settingsFile, { ...settings, theme }); broadcast("coop:theme", { theme, systemDark: nativeTheme.shouldUseDarkColors }); } },
+    theme: settings.theme,
+    themes: THEMES,
+    menuBar: settings.menuBar,
+    toggleMenuBar: () => setMenuBar(!settings.menuBar),
+    openExternal: (url) => { if (/^https:\/\/github\.com\//.test(url)) shell.openExternal(url); },
+    about: () => {
+      const state = focusedState();
+      const version = state ? state.spec.version : app.getVersion();
+      dialog.showMessageBox(state ? state.win : undefined, { type: "info", title: "About coop", message: `coop ${version}`, detail: PACKAGED ? "The coop window (installed package)." : "The coop window." });
+    },
+    isMac: process.platform === "darwin",
+  });
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+function setMenuBar(visible) {
+  settings = saveSettings(settingsFile, { ...settings, menuBar: visible });
+  for (const state of windows.values()) {
+    if (state.win.isDestroyed()) continue;
+    state.win.setAutoHideMenuBar(!visible);
+    state.win.setMenuBarVisibility(visible);
+  }
+  installMenu();
+}
+
 // --- App lifecycle -----------------------------------------------------------
 
 function harden() {
@@ -628,7 +699,7 @@ if (!app.requestSingleInstanceLock({ spec: initial.spec, token: initial.token })
     if (data && typeof data.spec === "string" && data.spec) openWindow(data.spec, typeof data.token === "string" ? data.token : "");
   });
   app.whenReady().then(() => {
-    Menu.setApplicationMenu(null);
+    installMenu();
     harden();
     nativeTheme.on("updated", () => broadcast("coop:theme", { theme: settings.theme, systemDark: nativeTheme.shouldUseDarkColors }));
     if (!initial.spec && PACKAGED) bootstrap();

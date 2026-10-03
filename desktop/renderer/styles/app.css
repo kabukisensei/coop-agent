@@ -380,6 +380,22 @@ details.divider .md { text-align: left; margin-top: 10px; padding: 10px 12px; ba
 .modal-buttons { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 16px 14px; border-top: 1px solid var(--border); }
 .modal.confirm .modal-buttons .btn { min-width: 80px; }
 .dialog-message { margin: 0 0 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Approval cards: the command or SQL apart from the prose, the question last. */
+.dialog-code { margin: 0 0 12px; padding: 10px 12px; border-radius: var(--radius); background: var(--code-bg); border: 1px solid var(--border); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow: auto; }
+.dialog-question { margin: 4px 0 8px; font-weight: 600; color: var(--text-strong); }
+.modal.risky .dialog-code { border-color: var(--danger); }
+.modal-title-text { display: inline-flex; align-items: center; gap: 8px; }
+.modal-title-text .icon { width: 16px; height: 16px; }
+/* Question cards (ask_user_question): label and description on two lines. */
+.picker .option { flex-direction: column; align-items: stretch; gap: 2px; }
+.picker .option-detail { white-space: normal; overflow: visible; }
+.picker .option.other .option-label { color: var(--text-muted); font-style: italic; }
+.check-list { display: flex; flex-direction: column; gap: 4px; margin: 0 0 10px; }
+.check-row { display: flex; align-items: flex-start; gap: 10px; padding: 6px 8px; border-radius: var(--radius); cursor: pointer; }
+.check-row:hover { background: var(--surface-2); }
+.check-row input { margin-top: 4px; accent-color: var(--accent); }
+.check-text { display: flex; flex-direction: column; gap: 2px; }
+.check-text .option-detail { white-space: normal; }
 .dialog-text .field + .hint { margin: 6px 0 0; }
 .picker { display: flex; flex-direction: column; gap: 10px; }
 .pick-list { list-style: none; margin: 0; padding: 0; max-height: 52vh; overflow-y: auto; }
@@ -464,6 +480,24 @@ details.standards .pane-links { margin-top: 8px; }
 .notice .pane-links { margin-left: auto; padding-left: 8px; }
 .notice.report .pane-links { margin: 8px 0 0; padding: 0; }
 .empty-links { display: flex; justify-content: center; flex-wrap: wrap; gap: 6px; margin-top: 18px; }
+/* Example prompts on the empty screen: each fills the prompt. */
+.examples { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin: 0 auto 18px; max-width: 720px; }
+.btn.example { height: auto; padding: 7px 12px; border-radius: 999px; gap: 8px; white-space: normal; text-align: left; }
+.btn.example .icon { color: var(--accent-2); flex: none; }
+/* Set-up: what the machine owes before coop works fully, with its command. */
+.setup { text-align: left; margin: 0 auto 20px; max-width: 640px; padding: 12px 14px; border: 1px solid var(--warning); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); }
+.setup-head { display: flex; align-items: center; gap: 8px; font-weight: 650; color: var(--text-strong); margin-bottom: 8px; }
+.setup-head .icon { color: var(--warning); }
+.setup-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.setup-item { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border-radius: var(--radius); background: var(--surface-2); }
+.setup-item > .icon { flex: none; margin-top: 3px; color: var(--warning); }
+.setup-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.setup-command { align-self: flex-start; padding: 1px 7px; border-radius: 5px; background: var(--code-bg); border: 1px solid var(--border); font-size: 12.5px; }
+.setup-item .btn { flex: none; }
+.setup-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.setup-actions .hint { flex: 1; min-width: 160px; }
+.modal .setup { margin: 0; border: 0; padding: 0; background: transparent; }
+.modal .setup-head { display: none; }
 
 /* changes panel */
 .change-list {

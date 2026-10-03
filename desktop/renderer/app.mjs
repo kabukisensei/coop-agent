@@ -15,6 +15,8 @@ import { makeResizer, sidebarMaxWidth } from "./resize.mjs";
 import { attachmentNote } from "./attach-note.mjs";
 import { widgetView } from "./widgets.mjs";
 import { COLLAPSE_KEY, TODO_TOOL, applyTodoResult, createTodos, startTurn, todoLines, todosFromMessages } from "./todos.mjs";
+import { setupItems, setupSummary, EXAMPLES } from "./welcome.mjs";
+import { parseConfirm, confirmLabels, parseQuestionSelect, parseQuestionMulti, multiAnswer } from "./dialogs.mjs";
 
 const coop = window.coop;
 const $ = (id) => document.getElementById(id);
@@ -39,6 +41,7 @@ const app = {
   todos: createTodos(), // the todo panel, rebuilt from the session's `todo` tool results (todos.mjs)
   attachments: [], // { kind: image | text | office | pdf | pending, ... } from lib/attachments.mjs
   vibe: "", // the tip under the splash and on the working line; a fresh one each turn
+  setup: [], // what this machine still owes before coop works fully (welcome.mjs)
   history: [],
   historyIndex: -1,
   draft: "",
@@ -54,6 +57,9 @@ const app = {
     // working, expandable); activityOpen remembers each line the user opened.
     activityFold: true,
     activityOpen: new Map(),
+    // Pi's auto-retry default is on; get_state does not report it, so the
+    // window remembers what it last set here.
+    autoRetry: true,
     outputs: new Map(),
     outputState(key) {
       if (!this.outputs.has(key)) this.outputs.set(key, { all: false, redraw: () => {} });
@@ -212,26 +218,62 @@ function showDialog(request) {
   let modal;
   if (request.method === "select") {
     const options = Array.isArray(request.options) ? request.options.map(String) : [];
+    // An ask_user_question (its RPC form numbers the options): a card with the
+    // label and description on two lines, the header as a chip.
+    const question = parseQuestionSelect(title, options);
     pickFrom({
-      title: "coop",
-      message: title,
-      items: options.map((option) => ({ label: clean(option), value: option })),
-      filter: options.length > 12,
+      title: question ? (question.header ? `Question: ${clean(question.header)}` : "Question") : "coop",
+      message: question ? clean(question.question) : title,
+      detail: question && question.previews.length ? question.previews.map(clean).join("\n\n") : "",
+      items: question
+        ? question.options.map((option) => ({ label: clean(option.label), detail: clean(option.description), value: option.value, className: option.other ? "other" : "" }))
+        : options.map((option) => ({ label: clean(option), value: option })),
+      filter: !question && options.length > 12,
     }).then((value) => reply(value === undefined ? { cancelled: true } : { value }));
   } else if (request.method === "confirm") {
-    const body = el("div", { class: "dialog-text" }, el("p", { class: "dialog-message", text: clean(request.message) }));
+    // An approval card: what is being approved stands apart as code, the
+    // question is the last line, and No is the default. The decision stays
+    // with the extension (coop-guardrails); only the drawing is the window's.
+    const message = clean(request.message);
+    const parsed = parseConfirm(message);
+    const labels = confirmLabels({ title, question: parsed.question, message });
+    const body = el("div", { class: "dialog-text" },
+      parsed.blocks.map((block) => (block.kind === "code"
+        ? el("pre", { class: "dialog-code" }, el("code", { text: block.text }))
+        : el("p", { class: "dialog-message", text: block.text }))),
+      parsed.question ? el("p", { class: "dialog-question", text: parsed.question }) : null);
     modal = openModal({
       title: title || "coop",
+      titleIcon: /guardrail/i.test(title) ? "shield" : "",
       body,
-      className: "confirm",
+      className: `confirm ${labels.risky ? "risky" : ""}`,
       onCancel: () => reply({ cancelled: true }),
       buttons: [
-        { label: "Yes", kind: "primary", onClick: () => reply({ confirmed: true }) },
-        { label: "No", onClick: () => reply({ confirmed: false }) },
+        { label: labels.yes, kind: labels.risky ? "danger" : "", onClick: () => reply({ confirmed: true }) },
+        { label: labels.no, kind: "primary", onClick: () => reply({ confirmed: false }) },
       ],
     });
-    // The safe answer has the focus: Enter alone never approves.
+    // The safe answer has the focus and the primary style: Enter alone never approves.
     requestAnimationFrame(() => { const no = modal.root.querySelectorAll(".modal-buttons .btn")[1]; if (no) no.focus(); });
+  } else if (request.method === "input" && parseQuestionMulti(title)) {
+    // An ask_user_question multi-select, which the RPC form asks as a text of
+    // numbers: checkboxes instead, plus the "type something" field. The answer
+    // sent is the same comma-separated numbers (or the typed text).
+    const question = parseQuestionMulti(title);
+    const selected = new Set();
+    const typed = el("input", { class: "field", type: "text", placeholder: "Or type your own answer" });
+    const rows = question.options.map((option) => el("label", { class: "check-row" },
+      el("input", { type: "checkbox", onchange: (event) => { if (event.target.checked) selected.add(option.index); else selected.delete(option.index); } }),
+      el("span", { class: "check-text" }, el("span", { class: "option-label", text: clean(option.label) }), option.description ? el("span", { class: "option-detail", text: clean(option.description) }) : null)));
+    const submit = () => reply({ value: multiAnswer(selected, typed.value) });
+    typed.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); submit(); modal.close(); } });
+    modal = openModal({
+      title: question.header ? `Question: ${clean(question.header)}` : "Question",
+      body: el("div", { class: "dialog-text" }, el("p", { class: "dialog-message", text: clean(question.question) }), el("div", { class: "check-list" }, rows), typed, el("p", { class: "hint", text: "Tick all that apply, or type an answer." })),
+      wide: true,
+      onCancel: () => reply({ cancelled: true }),
+      buttons: [{ label: "Answer", kind: "primary", onClick: submit }, { label: "Cancel", onClick: () => reply({ cancelled: true }) }],
+    });
   } else {
     const multi = request.method === "editor";
     const field = multi
@@ -286,6 +328,7 @@ function flush() {
   }
   app.dirty.clear();
   renderEmpty();
+  if (app.setup.length && app.tl.items.length && !app.setupBannerShown) renderSetup();
   if (stick) box.scrollTop = box.scrollHeight;
   if (app.finder) app.finder.refresh();
 }
@@ -355,19 +398,61 @@ function renderEmpty({ fresh = false } = {}) {
   const art = app.info && app.info.splash && app.info.splash.width ? splashArt(app.info.splash) : null;
   const start = el("button", { type: "button", class: "btn primary", text: "Open the Start menu", onclick: () => sendPrompt("/start") });
   const link = (id, label, glyph) => el("button", { type: "button", class: "btn ghost", onclick: () => openPane(id) }, icon(glyph), el("span", { text: label }));
+  const ready = !app.setup.some((item) => item.id === "login");
   box.append(el("div", { class: "empty" },
     art,
     wordmark(),
     el("p", { class: "tagline", text: "worker-owned analytics engineering" }),
     el("p", { class: "tagline dim", text: "Microsoft Fabric \u00b7 Power BI \u00b7 D365 \u00b7 SQL \u00b7 DAX" }),
     app.vibe ? vibeLine() : null,
-    el("p", { class: "lead", text: `coop is ready in ${app.info ? app.info.folder : "this folder"}. Ask a question, type / for commands, or pick a common task from the Start menu.` }),
+    app.setup.length ? setupCard() : null,
+    el("p", { class: "lead", text: ready
+      ? `coop is ready in ${app.info ? app.info.folder : "this folder"}. Try one of these, ask your own question, or pick a task from the Start menu.`
+      : "Finish the set-up above, then ask coop anything about this folder." }),
+    el("div", { class: "examples" }, EXAMPLES.map((example) => el("button", { type: "button", class: "btn example", title: example.prompt, onclick: () => setPrompt(example.prompt) }, icon("spark"), el("span", { text: example.label })))),
     start,
     el("div", { class: "empty-links" },
       link("changes", "Changes", "diff"),
       link("standards", "Standards", "shield"),
       link("project", "Project settings", "form"),
       link("docs", "Lineage docs", "graph"))));
+}
+
+/**
+ * What this machine still owes (welcome.mjs): sign-in, the COOP profile, Azure.
+ * Each line has the command and a button that opens the terminal on this
+ * session to run it; Restart picks the result up. Shown as a card on the empty
+ * screen and as one banner line once the conversation has content.
+ */
+function setupCard() {
+  const rows = app.setup.map((item) => el("li", { class: "setup-item" },
+    icon(item.command ? "warn" : "more"),
+    el("div", { class: "setup-text" },
+      el("span", { text: item.text }),
+      item.command ? el("code", { class: "setup-command", text: item.command }) : null,
+      item.detail && item.detail !== item.text ? el("span", { class: "hint", text: item.detail }) : null),
+    item.command && app.info && app.info.canOpenTerminal
+      ? el("button", { type: "button", class: "btn", text: "Open in terminal", onclick: () => openTerminal(`Run ${item.command} there, then click Restart here.`) })
+      : null));
+  return el("section", { class: "setup", "aria-label": "Set-up" },
+    el("div", { class: "setup-head" }, icon("shield"), el("span", { text: "Before coop can do everything here" })),
+    el("ul", { class: "setup-list" }, rows),
+    el("div", { class: "setup-actions" },
+      el("button", { type: "button", class: "btn primary", onclick: restart }, icon("restart"), el("span", { text: "Restart coop" })),
+      el("button", { type: "button", class: "btn ghost", text: "Dismiss", onclick: () => { app.setup = []; renderSetup(); } }),
+      el("span", { class: "hint", text: "Each item runs once in the terminal; Restart picks it up here." })));
+}
+
+function renderSetup() {
+  const banner = $("banner");
+  if (!app.setup.length) { if (banner.className.includes("setup")) banner.hidden = true; renderEmpty({ fresh: true }); return; }
+  renderEmpty({ fresh: true });
+  if (!app.tl.items.length) { banner.hidden = true; return; }
+  app.setupBannerShown = true;
+  showBanner("warning setup", setupSummary(app.setup), [
+    { label: "Show set-up", kind: "primary", onClick: () => openModal({ title: "Set-up", body: setupCard(), wide: true, buttons: [{ label: "Close", kind: "primary" }] }) },
+    { label: "Restart", onClick: restart },
+  ]);
 }
 
 /** A new vibe for this turn (or set, after /coop-vibe <set>); the splash and the working line follow. */
@@ -568,7 +653,7 @@ function renderCompletions() {
 }
 
 function sourceLabel(source) {
-  return { window: "window", extension: "coop", prompt: "prompt", skill: "skill", file: "file", folder: "folder" }[source] || source;
+  return { window: "", extension: "coop", prompt: "prompt", skill: "skill", file: "file", folder: "folder" }[source] ?? source;
 }
 
 function acceptCompletion(index) {
@@ -751,7 +836,7 @@ function renderBusy() {
   $("queueButton").title = "Wait until coop finishes (Alt+Enter)";
   $("composerHint").textContent = busy
     ? "Enter sends it to coop mid-task, Alt+Enter waits until coop finishes, Esc stops"
-    : app.bashItem ? "A shell command is running. Esc stops it" : "Enter sends, Shift+Enter adds a line, / lists commands, ! runs a shell command";
+    : app.bashItem ? "A shell command is running. Esc stops it" : "Shift+Enter adds a line";
   prompt().disabled = !app.running;
   const queue = app.tl.queue;
   const queued = [...queue.steering.map((text) => ["Steering", text]), ...queue.followUp.map((text) => ["Queued", text])];
@@ -866,6 +951,8 @@ async function openTerminal(hint) {
 
 async function restart() {
   $("banner").hidden = true;
+  app.setup = [];
+  renderEmpty({ fresh: true });
   app.running = true;
   app.statuses.clear();
   app.widgets.clear();
@@ -1091,11 +1178,13 @@ function settingsPanel() {
   const body = el("div", { class: "settings" },
     row("Theme", select(Object.entries(THEME_LABELS), app.info.theme, (v) => coop.setTheme(v))),
     row("Auto-compact", toggle(Boolean(s.autoCompactionEnabled), async (v) => { await cmdOrToast({ type: "set_auto_compaction", enabled: v }, "Could not change auto-compact"); refreshState(); }), "Compact the conversation when the context is nearly full"),
-    row("Auto-retry", toggle(true, (v) => cmdOrToast({ type: "set_auto_retry", enabled: v }, "Could not change auto-retry")), "Retry a failed model call"),
+    row("Auto-retry", toggle(app.prefs.autoRetry, async (v) => { const r = await cmdOrToast({ type: "set_auto_retry", enabled: v }, "Could not change auto-retry"); if (r.success) app.prefs.autoRetry = v; }), "Retry a failed model call (on when the window opens)"),
     row("Steering", select([["one-at-a-time", "One message at a time"], ["all", "All at once"]], s.steeringMode, async (v) => { await cmdOrToast({ type: "set_steering_mode", mode: v }, "Could not change steering"); refreshState(); }), "How messages you send while coop works are delivered"),
     row("Follow-ups", select([["one-at-a-time", "One message at a time"], ["all", "All at once"]], s.followUpMode, async (v) => { await cmdOrToast({ type: "set_follow_up_mode", mode: v }, "Could not change follow-ups"); refreshState(); })),
     row("Show thinking", toggle(app.prefs.showThinking, (v) => { app.prefs.showThinking = v; app.prefs.thinkingOpen.clear(); rerenderAll(); }), "Ctrl+T"),
     row("Expand tool output", toggle(app.prefs.expandTools, (v) => { app.prefs.expandTools = v; app.prefs.toolOpen.clear(); rerenderAll(); }), "Ctrl+O"),
+    row("Notify in the background", toggle(app.info.notify !== false, async (v) => { const r = await coop.setPref("notify", v); if (r && r.success) app.info.notify = v; }), "A Windows notification and a taskbar flash when coop finishes or asks while you are elsewhere"),
+    row("Menu bar", toggle(app.info.menuBar !== false, async (v) => { const r = await coop.setPref("menuBar", v); if (r && r.success) app.info.menuBar = v; }), "File, Edit, View, Session and Help above the window (Alt shows it when hidden)"),
     el("p", { class: "hint", text: "Pi's other settings (default model, scoped models, terminal display) are in the terminal's /settings." }));
   openModal({ title: "Settings", body, wide: true, buttons: [{ label: "Open in terminal", onClick: () => { openTerminal("Run /settings there."); } }, { label: "Done", kind: "primary" }] });
 }
@@ -1118,7 +1207,7 @@ function hotkeys() {
 
 async function openFolder() {
   const result = await coop.openFolder();
-  if (result.success) toast("Opening that folder in a new coop window. Its sign-in checks run in a console first.", "info");
+  if (result.success) toast("Opening that folder in a new coop window. A console shows coop's launch checks first, then the window opens.", "info");
   else if (!result.cancelled) toast(result.error || "Could not open the folder.", "warning");
 }
 
@@ -1148,6 +1237,10 @@ const ACTIONS = {
   project: { label: "Project settings (.coop/project.yml)", pane: true, run: () => openPane("project") },
   docs: { label: "Lineage docs: set up, build, read", pane: true, run: () => openPane("docs") },
   pane: { label: "Show or hide the side pane", keys: "Ctrl+\\", pane: true, run: () => togglePane(app.lastPane) },
+  // Menu bar entries with no slash command of their own.
+  find: { label: "Find in the conversation", keys: "Ctrl+F", menu: true, run: () => app.finder.open() },
+  sidebar: { label: "Show or hide the sessions list", menu: true, run: () => document.body.classList.toggle("no-sidebar") },
+  palette: { label: "Commands", keys: "Ctrl+K", menu: true, run: () => palette() },
 };
 
 async function runAction(id, arg = "", name = "") {
@@ -1169,7 +1262,7 @@ async function pickSession() {
 
 async function palette() {
   const items = [
-    ...Object.entries(ACTIONS).filter(([id]) => id !== "terminal").map(([id, action]) => ({ label: action.label, hint: action.keys || "", value: { action: id } })),
+    ...Object.entries(ACTIONS).filter(([id]) => id !== "terminal" && id !== "palette").map(([id, action]) => ({ label: action.label, hint: action.keys || "", value: { action: id } })),
     { label: "Open in terminal", hint: "", value: { action: "terminal" } },
     ...BUILTINS.filter((c) => c.action === "terminal").map((c) => ({ label: `/${c.name}`, detail: c.description, value: { action: "terminal", name: c.name } })),
     ...app.commands.map((c) => ({ label: `/${c.name}`, detail: String(c.description || "").replace(/^#+\s*/, "").split("\n")[0], hint: sourceLabel(c.source), value: { insert: `/${c.name} ` } })),
@@ -1347,21 +1440,21 @@ async function boot() {
   coop.onExit(onExit);
   coop.onNotice((notice) => toast(clean(notice.message), notice.level || "info"));
   coop.onTheme((theme) => applyTheme(theme));
+  coop.onMenu((menu) => { if (menu && typeof menu.action === "string") runAction(menu.action); });
   app.info = await coop.ready();
   app.vibe = String(app.info.vibe || "");
   applyTheme(app.info);
   renderHeader();
   renderBusy();
   renderStatus();
+  // Sign-in, the COOP profile and Azure, each with its command, in one place
+  // instead of a toast per launch notice (welcome.mjs).
+  app.setup = setupItems({ loginPresent: app.info.loginPresent, notices: (app.info.notices || []).map(clean) });
   renderEmpty();
-  if (app.info.loginPresent === false) {
-    showBanner("warning", "No model sign-in yet. Open coop in a terminal and run /login once; then restart this window.", app.info.canOpenTerminal ? [
-      { label: "Open in terminal", kind: "primary", onClick: () => openTerminal("Run /login there.") },
-      { label: "Restart", onClick: restart },
-    ] : [{ label: "Restart", onClick: restart }]);
-  }
-  for (const text of app.info.notices || []) toast(clean(text), "warning", { timeout: 0 });
   await refreshAll();
+  renderSetup();
+  // The first launch on this profile opens the Start menu, as the terminal does.
+  if (app.info.firstRun && app.running && !app.tl.items.length && app.info.loginPresent !== false) sendPrompt("/start");
   prompt().focus();
 }
 
