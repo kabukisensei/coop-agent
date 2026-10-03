@@ -7,6 +7,7 @@
       "name": "pi-extensions",
       "dependencies": {
         "@juicesharp/rpiv-ask-user-question": "2.12.0",
+        "@juicesharp/rpiv-todo": "2.12.0",
         "@xl0/pi-lovely-rename": "0.1.5",
         "pi-better-openai": "0.1.22",
         "pi-hermes-memory": "0.9.9",
@@ -3046,6 +3047,27 @@
       "license": "MIT",
       "peerDependencies": {
         "typebox": "*"
+      }
+    },
+    "node_modules/@juicesharp/rpiv-todo": {
+      "version": "2.12.0",
+      "resolved": "https://registry.npmjs.org/@juicesharp/rpiv-todo/-/rpiv-todo-2.12.0.tgz",
+      "integrity": "sha512-bTILerGqMGrWMUkahHzXTuYa4iPkRX/LTl12HPppcCdPg7pGwrC1K7/ZtPfp7Xi4cXzqEoyZpeUM6IA8y5gtEQ==",
+      "license": "MIT",
+      "dependencies": {
+        "@juicesharp/rpiv-config": "^2.12.0"
+      },
+      "peerDependencies": {
+        "@earendil-works/pi-ai": "*",
+        "@earendil-works/pi-coding-agent": "*",
+        "@earendil-works/pi-tui": "*",
+        "@juicesharp/rpiv-i18n": "*",
+        "typebox": "*"
+      },
+      "peerDependenciesMeta": {
+        "@juicesharp/rpiv-i18n": {
+          "optional": true
+        }
       }
     },
     "node_modules/@mixmark-io/domino": {

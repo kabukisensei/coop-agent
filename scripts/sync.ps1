@@ -87,6 +87,8 @@ if ($env:COOP_SKIP_FABRIC_SYNC -ne '1' -and ($env:COOP_FABRIC_PYTHON -or (Get-Co
 Coop-Info "Coop keeps its extensions in $PI_AGENT and pins the versions tested"
 Coop-Info "together with this Coop release. Your personal Pi extensions are unchanged."
 $script:SyncFailures += [int](Sync-CoopExtensionFleet -AgentDir $PI_AGENT)
+# The todo panel's collapse key (Set-CoopTodoConfig): seeded once, never rewritten.
+if (Set-CoopTodoConfig) { Coop-Ok 'Todo panel key set to Alt+T (~/.config/rpiv-todo/config.json)' }
 
 # --- 4c. The coop window's runtime (master plan D1b; only where installed) ----
 # `coop desktop` installs Electron on first use. Sync keeps an installed runtime
