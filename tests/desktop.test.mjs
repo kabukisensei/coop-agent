@@ -26,7 +26,7 @@ import { consoleProcess } from "../desktop/lib/terminal.mjs";
 import { listFiles, rankFiles } from "../desktop/lib/files.mjs";
 import { PiSession, endLeftovers, killTree } from "../desktop/lib/pi-session.mjs";
 import { BUILTINS, KEYS, TERMINAL_ONLY, completions, parseInput } from "../desktop/renderer/commands.mjs";
-import { setupItems, setupSummary, EXAMPLES } from "../desktop/renderer/welcome.mjs";
+import { setupItems, setupItem, setupSummary, EXAMPLES } from "../desktop/renderer/welcome.mjs";
 import { parseConfirm, confirmLabels, parseQuestionSelect, parseQuestionMulti, multiAnswer } from "../desktop/renderer/dialogs.mjs";
 import { menuTemplate, notificationFor } from "../desktop/lib/menu.mjs";
 import { restartOnce } from "../desktop/lib/restart.mjs";
@@ -311,6 +311,26 @@ await check("welcome: set-up items come from the sign-in flag and the launch not
   assert.equal(setupSummary(items.slice(0, 1)), items[0].text);
   assert.equal(EXAMPLES.length, 3);
   for (const example of EXAMPLES) { assert.ok(example.label.length <= 40); assert.ok(example.prompt.length > 20); }
+});
+
+await check("welcome: the MCP adapter's 401 report is the Azure sign-in item, and a start notice never hides the welcome", () => {
+  // What the window showed on the VM (D1c acceptance, 2026-10-03): the adapter's
+  // report when the Warehouse endpoint answers 401 without a token.
+  const report = "MCP: Failed to connect to fabric-sqlendpoint: HTTP request headers command timed out after 10000ms — probe: endpoint returned application/json (401) — authentication may be required; MCP endpoint shape could not be determined";
+  const item = setupItem(report);
+  assert.equal(item.id, "azure");
+  assert.equal(item.command, "az login");
+  assert.equal(item.detail, report);
+  assert.equal(setupItem("   "), null);
+  assert.equal(setupItem("Standards wiki offline; using the bundled copy").command, "");
+  assert.deepEqual(setupItems({ notices: [report, "Fabric Warehouse MCP unavailable: Azure authentication is required; run az login"] }).map((i) => i.id), ["azure"]);
+  // The renderer decides "conversation has content" by prompts and answers, not
+  // by notices, so a report Pi posts at start leaves the welcome and the
+  // first-run Start menu alone.
+  const app = readFileSync(join(ROOT, "desktop", "renderer", "app.mjs"), "utf8");
+  assert.ok(app.includes("function conversationEmpty()"), "app.mjs has conversationEmpty");
+  assert.ok(!/tl\.items\.length/.test(app), "app.mjs never gates the welcome on the raw item count");
+  assert.ok(/firstRun && app\.running && conversationEmpty\(\)/.test(app), "the first-run Start menu checks conversationEmpty");
 });
 
 await check("dialogs: a guardrails confirm becomes blocks, a question and verb buttons", () => {

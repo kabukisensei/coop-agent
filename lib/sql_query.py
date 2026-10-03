@@ -247,6 +247,10 @@ def _discover_server(target: wmcp.SqlEndpointTarget, token: str) -> tuple[str, s
         f"{collection}/{source_id}"
     )
     item, state = wmcp.fabric_get_json(url, token)
+    if state == "unavailable":
+        # One retry: the live acceptance on a dev Warehouse saw a transient REST
+        # failure here that passed on the next call. Auth and target errors are final.
+        item, state = wmcp.fabric_get_json(url, token)
     if state != "ok":
         return "", state
     if not isinstance(item, dict):

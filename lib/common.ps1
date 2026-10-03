@@ -2764,11 +2764,16 @@ function Get-CoopFirstRunStampFile { return (Join-Path (Get-CoopProfileDir) 'fir
 # COOP_FIRST_RUN=1 so coop-tools opens the Start Here menu once Pi is up; the
 # stamp keeps later launches at the plain prompt (`/start` any time).
 # $Interactive defaults to the real terminal state; fixtures pass it explicitly.
+# -Window is `coop desktop`: a person is about to see the window whatever this
+# console's stdin is (the installed package starts coop with no console input),
+# so the first launch counts as interactive, and the onboarding line goes out as
+# a warning because the window's set-up card is built from the launch warnings.
 function Set-CoopFirstRunLaunch {
-  param([bool] $Interactive = (-not [Console]::IsInputRedirected))
+  param([bool] $Interactive = (-not [Console]::IsInputRedirected), [switch] $Window)
   $script:CoopOnboardRc = 0
+  if ($Window) { $Interactive = $true }
   if (Test-CoopOnboardingMissing) {
-    if ($Interactive) {
+    if ($Interactive -and -not $Window) {
       Coop-Info 'First run: no COOP profile yet. Pick "Start a client project" in the menu to set your name, or run: coop onboard'
     } else {
       Coop-Warn 'COOP onboarding is incomplete (user.json or config missing). Run: coop onboard'

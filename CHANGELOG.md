@@ -33,6 +33,46 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   (`desktop/scripts/build-installer.mjs`, `desktop/scripts/verify-installer.mjs`,
   `desktop/lib/bootstrap.mjs`; master plan revision 3.19).
 
+### Changed
+
+- **New shortcut icon** — `themes/coop.ico` is now a pixel-art tile: the logo's lime
+  C and red dot on a navy square, drawn on a 16 px grid so it stays readable at
+  taskbar size (the spy fedora blurred into a blob at 16 and 32 px). Classic BMP
+  frames at 16, 24, 32, 48, 64 and 128 px plus a 256 px PNG frame. It is picked up
+  by the Desktop and Start Menu shortcuts, the coop window and the installer; run
+  `coop install` (or reinstall the window) to refresh existing shortcuts.
+
+### Fixed
+
+- The installed coop window (D1c) opens its first launch like the terminal
+  does: the Start menu once, and the welcome with the set-up card. Two causes
+  from the v0.30.0 acceptance on the client VM: the package starts `coop desktop`
+  with no console input, so the launch never counted as interactive and
+  `COOP_FIRST_RUN` was never set (`coop desktop` now treats every launch as
+  interactive, since a person is about to see the window; the onboarding line
+  goes out as the warning the set-up card reads); and the MCP adapter's long
+  connection report at start (the Warehouse endpoint answering 401 without an
+  Azure token) landed in the conversation as a report, which the renderer took
+  for conversation content and dropped the whole welcome, including the set-up
+  card, the example prompts and the first-run menu. Notices no longer count as
+  content, and before the conversation starts a notice that names a sign-in
+  joins the set-up card as the `az login` item with the raw text as its detail
+  (`desktop/renderer/welcome.mjs`, `desktop/renderer/app.mjs`,
+  `Set-CoopFirstRunLaunch -Window`).
+- Follow-ups from the SQ live acceptance on the client's dev Warehouse
+  (2026-10-03):
+  - The guardrails audit log records an approved Warehouse SQL write as
+    `Warehouse SQL write`, not `live read` (the scope word was already
+    `ddl-dml-destructive`).
+  - `coop onboard --platform <fabric|azure_sql|both>` on an onboarded machine now
+    switches the client platform without re-asking the integration questions
+    (the hint `coop doctor` and `coop install` print); a fresh machine still runs
+    onboarding with that answer.
+  - Fabric endpoint discovery for `fabric_sql_query` and `sql_impact` retries one
+    transient REST failure; sign-in and target errors are not retried.
+  - `tests/guardrails.test.mjs` counts the Power BI bridge's status read when the
+    real `powerbi-desktop` shim is on PATH (the guard then calls it through node).
+
 ## [0.30.0] — 2026-10-03
 
 ### Added
