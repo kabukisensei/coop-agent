@@ -4,7 +4,7 @@
 # master plan S1). tests/run.sh holds the Node/Python logic tests and the bash
 # harness suites; this file drives coop.ps1, lib/common.ps1 and scripts/*.ps1:
 #   0. scripts/check-bom.ps1 (every .ps1 keeps its UTF-8 BOM) runs first
-#   1. coop.ps1 launch-spec resolves guardrails, prompts, theme, all 4 extensions
+#   1. coop.ps1 launch-spec resolves guardrails, prompts, theme, all 5 extensions
 #   2. coop.ps1 --no-launch exits 0 + prints the spec; --no-launch --json emits {bin,args,env}
 #   3. update.ps1 --check is a dry-run that reports current/expected and exits 0;
 #      --pi-latest warns that it is deprecated and keeps that read-only path
@@ -281,10 +281,10 @@ try {
   $spec = (& $coop launch-spec 2>&1 | Out-String) -replace '\\', '/'
   $miss = $false
   foreach ($needle in @('docs/guardrails.md', '--prompt-template', 'themes/cooptimize.json',
-                        'extensions/coop-powerline', 'extensions/coop-tools', 'extensions/coop-guardrails', 'extensions/coop-profile')) {
+                        'extensions/coop-powerline', 'extensions/coop-tools', 'extensions/coop-guardrails', 'extensions/coop-profile', 'extensions/coop-mobile')) {
     if ($spec -notlike "*$needle*") { Ko "launch-spec missing: $needle"; $miss = $true }
   }
-  if (-not $miss) { Ok 'launch-spec resolves guardrails, prompts, theme, and all 4 extensions' }
+  if (-not $miss) { Ok 'launch-spec resolves guardrails, prompts, theme, and all 5 extensions' }
 
   # --- 1b. launch-spec includes team skills from configured knowledge repo ---
   $kbTmp = Join-Path $stub "team-kb"

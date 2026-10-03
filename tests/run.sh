@@ -70,6 +70,7 @@ echo "→ bundling extensions for test…"
 bundle coop-tools --alias:typebox="$ROOT/tests/typebox-stub.mjs"
 bundle coop-guardrails
 bundle coop-profile
+bundle coop-mobile
 bundle coop-powerline
 
 # Gate-lane home (#96 fixture rules). Every gate test below gets a fresh temp home:
@@ -188,6 +189,8 @@ COOP_TEST_DIST="$TMP" node "$ROOT/tests/compaction-transport.test.mjs"
 
 echo "→ coop-profile tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/coop-profile.test.mjs"
+echo "→ coop-mobile tests"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/mobile.test.mjs"
 
 echo "→ isolated Pi settings tests"
 python3 "$ROOT/tests/pi-settings.test.py"
@@ -205,7 +208,7 @@ echo "→ Git Bash forwarder: bin/coop forwards to coop.ps1 (launch-spec) and re
 # coop.ps1 prints Windows paths under Git Bash; compare with one separator.
 SPEC="$(bash "$ROOT/bin/coop" launch-spec | tr '\\' '/')"
 for needle in "docs/guardrails.md" "--prompt-template" "themes/cooptimize.json" \
-              "extensions/coop-powerline" "extensions/coop-tools" "extensions/coop-guardrails" "extensions/coop-profile"; do
+              "extensions/coop-powerline" "extensions/coop-tools" "extensions/coop-guardrails" "extensions/coop-profile" "extensions/coop-mobile"; do
   case "$SPEC" in
     *"$needle"*) ;;
     *) echo "  ✗ launch-spec missing: $needle"; exit 1 ;;

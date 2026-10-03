@@ -118,6 +118,11 @@ for the Node tools and extensions; no script builds these paths inline.
      Coop user profile (`user.json`, written by `coop onboard`) as a small hidden
      instruction at session start, so the agent addresses the member by name and
      in their preferred style without the profile ever appearing in the chat.
+   - **`coop-mobile` extension** — `extensions/coop-mobile/`: Teams mobile access
+     (master plan M1). Off until `/mobile on`; then it polls the user's Teams
+     self-chat over outbound HTTPS, mirrors every `ctx.ui` dialog (the guardrails'
+     approvals above all) as a numbered message, lets the first answer from the
+     terminal or the phone win, and posts each reply. `docs/mobile.md`.
    - **`coop-guardrails` extension** — `extensions/coop-guardrails/`: **enforces**
      governance at runtime via a `tool_call` hook (blocks the agent committing
      source; confirms destructive commands). Complements the advisory

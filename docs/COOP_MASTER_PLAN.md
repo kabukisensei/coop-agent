@@ -1,6 +1,6 @@
 # Coop master plan — ordered execution roadmap
 
-**Document revision 3.17 · October 2, 2026** (D1c as built: the coop window package is electron-builder's NSIS per-user installer of the same `desktop/` code, staged with the `lib/*.mjs` modules it imports, the vibes, the splash and the icon into an asar (pdf.js and its reader unpacked beside it, the September fuse policy applied); it still needs the terminal coop, finds `coop.cmd` the way `bin/coop-desktop.ps1` does and asks it for the window with the new `coop desktop --app <exe>`, which hands the spec over through Electron's single-instance lock; `coop.exe --doctor` prints one JSON line; the `installer (Windows)` CI job builds, installs silently, runs `--doctor` and uninstalls on every PR; 11.3 item 2 decided as NSIS per-user; register row 16. Revision 3.16 added Pi Durable to the section 12.1 watch list: the experimental durable agent-harness library published beside Pi 1.0, watched, not scheduled; Aaron asked on 2026-10-02. Revision 3.15 was D1b2 as built: one side pane beside the timeline with four views, Changes, Standards, Project and Docs, opened from tool cards, the standards chip, setup notices, the command palette and Ctrl+\; the `/setup-project` writer and the `/setup-docs` driver moved out of `extensions/coop-tools/index.ts` into `lib/project-contract.mjs` and `lib/data-doc-setup.mjs` so the window calls the same code; the docs form shows coop-data-doc's prompts one at a time, as its wizard asks them, and the built docs open as Markdown in the pane, with a list of every object page because coop-data-doc's overview does not link them, and the HTML portal in the browser. Aaron's second D1b2 batch, same day: file attachments in the composer (images with the prompt as in the terminal; text by path; Word, Excel, PowerPoint read to Markdown by coop's own readers and PDF by pdf.js in a time-limited process, every document referenced by path so coop reads it through its guarded read tool), pdf.js pinned next to Electron as the runtime's second package, every pane draggable, the Cooptimize splash logo and the vibes in the window, the thinking and tool calls between replies folded into one expandable line with nothing removed from the session, and a readability pass over all four themes; register row 16. Revision 3.14 was D1b as built: the window runs coop's launch arguments with `--mode rpc` and no `-a`, because the recorded session shows coop's guardrails, standards and skills load without it and `-a` would only trust a work repo's own `.pi` files, which the terminal asks about first; Electron installs into its own runtime tree on the first `coop desktop`, not into the extension tree on every machine; the first `coop desktop` adds the "coop (window)" shortcut; register row 16. Revision 3.13 was D1a, the desktop decision record and salvage list: Aaron chose a rendered, modern UI with four themes over a terminal in a window, D1b is re-scoped to it with a terminal parity rule, a changes panel, a standards pane, a project form and a docs setup form go into D1b2 with a list of proposed enhancements (section 11.6), every other section 11.3 item has a recorded default, and the September desktop branches are reviewed file by file; sections 11.1–11.6 and register row 16. Revision 3.12 added an explore and research watch list, section 12.1, starting with PiG, the Go port of Pi: watched, not scheduled. Revision 3.11 scoped Phase 8 D1 into rows D1a–D1g, sections 11.1–11.4; revision 3.10 added the Pi 1.0 row U2, section 6.5; revision 3.9 added the mixed-estate documentation repair, section 8.1. Existing phase ordering and the revision 3.8 scope decisions remain.)
+**Document revision 3.18 · October 3, 2026** (M1, Teams mobile access, section 12.3: Aaron asked for mobile support on October 2, parked it over client-data isolation, then on October 3 accepted Teams in the Cooptimize tenant, which already carries client data, and started the row; a fifth companion extension, `coop-mobile`, signs the machine in once through an Entra app registration, polls the user's Teams self-chat over outbound HTTPS and mirrors every dialog, the guardrails' approvals above all, so the first answer from the terminal or the phone wins; register row 18. Revision 3.17 was D1c as built: the coop window package is electron-builder's NSIS per-user installer of the same `desktop/` code, staged with the `lib/*.mjs` modules it imports, the vibes, the splash and the icon into an asar (pdf.js and its reader unpacked beside it, the September fuse policy applied); it still needs the terminal coop, finds `coop.cmd` the way `bin/coop-desktop.ps1` does and asks it for the window with the new `coop desktop --app <exe>`, which hands the spec over through Electron's single-instance lock; `coop.exe --doctor` prints one JSON line; the `installer (Windows)` CI job builds, installs silently, runs `--doctor` and uninstalls on every PR; 11.3 item 2 decided as NSIS per-user; register row 16. Revision 3.16 added Pi Durable to the section 12.1 watch list: the experimental durable agent-harness library published beside Pi 1.0, watched, not scheduled; Aaron asked on 2026-10-02. Revision 3.15 was D1b2 as built: one side pane beside the timeline with four views, Changes, Standards, Project and Docs, opened from tool cards, the standards chip, setup notices, the command palette and Ctrl+\; the `/setup-project` writer and the `/setup-docs` driver moved out of `extensions/coop-tools/index.ts` into `lib/project-contract.mjs` and `lib/data-doc-setup.mjs` so the window calls the same code; the docs form shows coop-data-doc's prompts one at a time, as its wizard asks them, and the built docs open as Markdown in the pane, with a list of every object page because coop-data-doc's overview does not link them, and the HTML portal in the browser. Aaron's second D1b2 batch, same day: file attachments in the composer (images with the prompt as in the terminal; text by path; Word, Excel, PowerPoint read to Markdown by coop's own readers and PDF by pdf.js in a time-limited process, every document referenced by path so coop reads it through its guarded read tool), pdf.js pinned next to Electron as the runtime's second package, every pane draggable, the Cooptimize splash logo and the vibes in the window, the thinking and tool calls between replies folded into one expandable line with nothing removed from the session, and a readability pass over all four themes; register row 16. Revision 3.14 was D1b as built: the window runs coop's launch arguments with `--mode rpc` and no `-a`, because the recorded session shows coop's guardrails, standards and skills load without it and `-a` would only trust a work repo's own `.pi` files, which the terminal asks about first; Electron installs into its own runtime tree on the first `coop desktop`, not into the extension tree on every machine; the first `coop desktop` adds the "coop (window)" shortcut; register row 16. Revision 3.13 was D1a, the desktop decision record and salvage list: Aaron chose a rendered, modern UI with four themes over a terminal in a window, D1b is re-scoped to it with a terminal parity rule, a changes panel, a standards pane, a project form and a docs setup form go into D1b2 with a list of proposed enhancements (section 11.6), every other section 11.3 item has a recorded default, and the September desktop branches are reviewed file by file; sections 11.1–11.6 and register row 16. Revision 3.12 added an explore and research watch list, section 12.1, starting with PiG, the Go port of Pi: watched, not scheduled. Revision 3.11 scoped Phase 8 D1 into rows D1a–D1g, sections 11.1–11.4; revision 3.10 added the Pi 1.0 row U2, section 6.5; revision 3.9 added the mixed-estate documentation repair, section 8.1. Existing phase ordering and the revision 3.8 scope decisions remain.)
 **Product scope: Coop Windows terminal first; an installable Electron desktop returns after the terminal is simplified.**
 
 **Canonical repository location:** `docs/COOP_MASTER_PLAN.md`. This revision keeps the
@@ -1583,6 +1583,58 @@ no Rayfin skill yet.
   uses `rayfin docs search` and the docs in `node_modules`).
 
 
+### 12.3 Teams mobile access: row M1 (October 3, 2026)
+
+Aaron asked on 2026-10-02 whether coop could get mobile support, through Telegram or
+a native app, then Teams. The same day he parked it: "client data needs to stay
+isolated as much as possible". On 2026-10-03 he lifted that for the Cooptimize
+tenant ("we use Teams already from Cooptimize tenant even with client data, just
+needs to be secure") and started the row. The research and the rejected options
+are in the project runbook `mobile-options-2026-10-02.md`; the short form:
+
+- **Telegram** (ready-made Pi extensions exist): every prompt, reply and file would
+  sit on a consumer service outside any tenant. Rejected for client work.
+- **Native app, or a phone web view of the D1 window:** both need a relay or a
+  tunnel coop would host, with its own key management. Deferred; the Teams path
+  needs neither.
+- **Microsoft Teams, Cooptimize tenant:** nothing to host, Entra MFA already
+  protects the account, the Teams app is already on the phone, and the data stays
+  in a tenant under business terms and retention. Chosen.
+
+**What M1 builds.** A fifth companion extension, `extensions/coop-mobile`, loaded
+like the other four. `/mobile setup` records the tenant and the app registration's
+client id; `/mobile login` signs the machine in once with the device-code flow
+(delegated `Chat.ReadWrite`, `User.Read`, `offline_access`; the refresh token is
+DPAPI-protected under the coop profile); `/mobile on`, a confirm in the terminal
+or `auto_on` in `mobile.json`, polls the user's Teams self-chat (`48:notes`) over
+outbound HTTPS only, posts every reply there, and mirrors every `confirm`,
+`select` and `input` dialog raised in the process as a numbered message. The
+dialog stays open in the terminal; the first answer from either side wins and the
+other dialog is aborted through Pi's `AbortSignal`, a timeout stays a decline, and
+only an explicit number, "yes"/"no" or an option's text counts. Only messages by
+the signed-in user id, written after `/mobile on`, are read; other text becomes a
+prompt under the same guardrails. `coop doctor` shows the state; `docs/mobile.md`
+has the app registration values and the risk list.
+
+- **Stability:** nothing listens on the machine, no new pin, no relay, and the
+  session never blocks on Teams: an unreachable Graph stops mobile with a notice.
+- **Simplicity:** one extension and two JSON files; the phone side is the Teams
+  app as it is. Adaptive Card buttons through an Azure Bot would need an inbound
+  endpoint per machine and are not in M1.
+- **Maintainability:** the mirror sits on Pi's public `ctx.ui` and `AbortSignal`
+  contract, the same one the window (D1b) answers dialogs through, so a Pi
+  upgrade that changes it fails the gate tests, not the user.
+- **Security review before client use (Aaron's condition):** the Graph token can
+  read and write the user's chats, so the scopes stay minimal, the cache is per
+  Windows account and revocable from Entra, and a prompt from the phone runs with
+  the session's rights, as one typed in the terminal would.
+- **Acceptance:** gate tests in `tests/mobile.test.mjs` (answer parsing, sender
+  and time filters, the dialog race both ways, the token store, the device-code
+  and Graph clients against a fake fetch, the extension end to end); on a
+  machine with the app registered: `/mobile login`, `/mobile on`, approve a
+  guarded write from the phone and from the terminal, send a prompt from the
+  phone, `/mobile logout`.
+
 ## 13. Ordered work register
 
 Status values: `not started`, `issue open`, `in progress (branch)`, `in review
@@ -1615,6 +1667,7 @@ tags. A stale row is never a reason to re-do work: check the PR list first.
 | 15b | J0–J3 | Jev shadow experiments | explicit start | revision 2.0 gates | waiting (Aaron, 2026-09-30) |
 | 16 | D1 | Electron desktop with packaged installer, worked as D1a–D1g (section 11.2): decision record and salvage, `coop desktop` window from the terminal product (first deliverable, no installer or certificate), unsigned installer, bundled runtime, updates, signing last, teammate acceptance | 7–12 and 15 accepted; Aaron starts D1; U2 landed before D1d; each 11.3 item decided when its row starts | another user installs from the package alone (D1g); signing not required (Aaron, 2026-10-02) | D1a decision record and salvage list merged ([#255](https://github.com/kabukisensei/coop-agent/pull/255), revision 3.13, section 11.5); D1b `coop desktop` window merged ([#260](https://github.com/kabukisensei/coop-agent/pull/260), 2026-10-02), VM acceptance in `E:\coop-sandbox\d1b` pending; D1b2 side pane, attachments, draggable panes, splash and vibes, concise activity view merged ([#265](https://github.com/kabukisensei/coop-agent/pull/265), v0.29.0); D1c unsigned per-user installer built (revision 3.17; Aaron started it 2026-10-02), CI job on every PR, VM acceptance open; D1d–D1g not started, each waits for Aaron (D1d and D1e after U2) |
 | 17 | FA1 | Fabric Apps with Rayfin (section 12.2): `fabric-apps` skill and a Rayfin deploy gate | Aaron started it 2026-10-02 | gate tests in the gate lane; acceptance on a tenant with Fabric Apps (preview) on: scaffold the todo template, connect one semantic model, deploy to a throwaway dev workspace through the prompt, delete the item in Fabric | in review (PR), 2026-10-02 |
+| 18 | M1 | Teams mobile access (section 12.3): `coop-mobile` extension, `/mobile`, dialogs mirrored to the user's Teams self-chat | Aaron started it 2026-10-03 | gate tests; on a machine with the app registered, approve a guarded write from the phone and from the terminal | in review (PR), 2026-10-03: [#274](https://github.com/kabukisensei/coop-agent/issues/274) |
 
 Phase 0 rows can each be released as a patch. Later phases are minor versions.
 Rows become `agent:ready` only when Aaron says so. On September 28 he marked the
