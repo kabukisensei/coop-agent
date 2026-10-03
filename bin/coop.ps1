@@ -499,10 +499,12 @@ function Invoke-CoopPiProcess {
 # The launch preparation `coop` and `coop desktop` share, in this order. Nothing
 # here can stop a launch except the skew guard's own abort.
 function Initialize-CoopLaunch {
+  param([switch] $Window)
   # First launch (master plan FR1): no wizard and nothing that can stop the launch.
   # The first interactive launch hands coop-tools COOP_FIRST_RUN=1 so the Start
   # Here menu of common workflows opens once Pi is up; `coop onboard` stays on demand.
-  Set-CoopFirstRunLaunch
+  # -Window (`coop desktop`) counts as interactive whatever stdin is.
+  Set-CoopFirstRunLaunch -Window:$Window
 
   # Guard against launching into a known-broken extension load (agent/extension skew).
   Invoke-CoopLaunchPreflight
@@ -634,7 +636,7 @@ function Invoke-CoopDesktop {
   $script:CoopWarnSink = New-Object System.Collections.Generic.List[string]
   $token = ''
   if (-not $printSpec) {
-    Initialize-CoopLaunch
+    Initialize-CoopLaunch -Window
     Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue
     $token = Get-CoopFabricMcpToken
   }

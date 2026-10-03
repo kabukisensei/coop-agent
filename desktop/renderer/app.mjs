@@ -13,7 +13,7 @@ import { mountProject } from "./pane-project.mjs";
 import { mountDocs } from "./pane-docs.mjs";
 import { makeResizer, sidebarMaxWidth } from "./resize.mjs";
 import { attachmentNote } from "./attach-note.mjs";
-import { setupItems, setupSummary, EXAMPLES } from "./welcome.mjs";
+import { setupItems, setupItem, setupSummary, EXAMPLES } from "./welcome.mjs";
 import { parseConfirm, confirmLabels, parseQuestionSelect, parseQuestionMulti, multiAnswer } from "./dialogs.mjs";
 import { imageBudgetProblem, restoreDraft } from "./draft.mjs";
 
@@ -166,6 +166,16 @@ function onUiRequest(request) {
       const level = ["info", "warning", "error"].includes(request.notifyType) ? request.notifyType : "info";
       const text = clean(request.message).trim();
       if (!text) break;
+      // Before the conversation starts, a notice that names a set-up step
+      // (the MCP adapter reporting the Warehouse endpoint's 401, for one) joins
+      // the set-up card with its command instead of landing as a raw report.
+      if (conversationEmpty()) {
+        const item = setupItem(text);
+        if (item && item.command) {
+          if (!app.setup.some((known) => known.id === item.id)) { app.setup.push(item); renderSetup(); }
+          break;
+        }
+      }
       // Reports (several lines, like /mcp or /ctx-stats) go in the conversation,
       // where the terminal prints them too; one-liners are toasts.
       if (text.includes("\n") || text.length > 200) redraw(notice(app.tl, level, text, { markdown: true }));
@@ -318,7 +328,7 @@ function flush() {
   }
   app.dirty.clear();
   renderEmpty();
-  if (app.setup.length && app.tl.items.length && !app.setupBannerShown) renderSetup();
+  if (app.setup.length && !conversationEmpty() && !app.setupBannerShown) renderSetup();
   if (stick) box.scrollTop = box.scrollHeight;
   if (app.finder) app.finder.refresh();
 }
@@ -378,12 +388,23 @@ function vibeLine() {
   return el("div", { class: "vibe" }, el("span", { class: "vibe-mark", "aria-hidden": "true", text: "\u2b21" }), el("span", { text: app.vibe }));
 }
 
+/**
+ * Whether the conversation has no content yet: no prompt sent, no answer. A
+ * notice Pi posted on its own (an MCP connection report at start) is not
+ * content, so it never takes the welcome, the set-up card or the first-run
+ * Start menu away.
+ */
+function conversationEmpty() {
+  return !app.tl.items.some((item) => item.kind !== "notice");
+}
+
 /** The splash on an empty conversation: the logo, wordmark, tagline and a vibe, as the terminal opens. */
 function renderEmpty({ fresh = false } = {}) {
   const box = $("timeline");
   const empty = box.querySelector(".empty");
-  if (app.tl.items.length) { if (empty) empty.remove(); return; }
-  if (empty && !fresh) return;
+  if (!conversationEmpty()) { if (empty) empty.remove(); return; }
+  // The welcome stays below any notice already drawn.
+  if (empty && !fresh) { box.append(empty); return; }
   if (empty) empty.remove();
   const art = app.info && app.info.splash && app.info.splash.width ? splashArt(app.info.splash) : null;
   const start = el("button", { type: "button", class: "btn primary", text: "Open the Start menu", onclick: () => sendPrompt("/start") });
@@ -437,7 +458,7 @@ function renderSetup() {
   const banner = $("banner");
   if (!app.setup.length) { if (banner.className.includes("setup")) banner.hidden = true; renderEmpty({ fresh: true }); return; }
   renderEmpty({ fresh: true });
-  if (!app.tl.items.length) { banner.hidden = true; return; }
+  if (conversationEmpty()) { banner.hidden = true; return; }
   app.setupBannerShown = true;
   showBanner("warning setup", setupSummary(app.setup), [
     { label: "Show set-up", kind: "primary", onClick: () => openModal({ title: "Set-up", body: setupCard(), wide: true, buttons: [{ label: "Close", kind: "primary" }] }) },
@@ -1467,7 +1488,7 @@ async function boot() {
   await refreshAll();
   renderSetup();
   // The first launch on this profile opens the Start menu, as the terminal does.
-  if (app.info.firstRun && app.running && !app.tl.items.length && app.info.loginPresent !== false) sendPrompt("/start");
+  if (app.info.firstRun && app.running && conversationEmpty() && app.info.loginPresent !== false) sendPrompt("/start");
   prompt().focus();
 }
 
