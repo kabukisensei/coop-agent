@@ -2879,10 +2879,24 @@ function Coop-Unit {
 
 # Run a sibling coop script (sync/doctor) in a CHILD process so its `exit` cannot
 # abort the caller. Returns the child's exit code.
+# The child is pwsh when PATH has it, else the host running this script (its
+# own executable, which exists whatever PATH says: the coop window package
+# starts coop.ps1 with a PATH of its own). A child that could not start is a
+# failure (1), never a stale $LASTEXITCODE.
 function Invoke-CoopScript {
   param([string]$ScriptPath, [string[]]$ScriptArgs = @())
-  $psExe = if (Get-Command pwsh -ErrorAction SilentlyContinue) { 'pwsh' } else { 'powershell' }
-  & $psExe -NoProfile -ExecutionPolicy Bypass -File $ScriptPath @ScriptArgs
+  $psExe = $null
+  if (Get-Command pwsh -ErrorAction SilentlyContinue) { $psExe = 'pwsh' }
+  if (-not $psExe) { try { $psExe = (Get-Process -Id $PID -ErrorAction Stop).Path } catch { $psExe = $null } }
+  if (-not $psExe) { $psExe = 'powershell' }
+  $global:LASTEXITCODE = $null
+  try {
+    & $psExe -NoProfile -ExecutionPolicy Bypass -File $ScriptPath @ScriptArgs
+  } catch {
+    Coop-Warn "could not run $(Split-Path -Leaf $ScriptPath): $($_.Exception.Message)"
+    return 1
+  }
+  if ($null -eq $LASTEXITCODE) { return 1 }
   return $LASTEXITCODE
 }
 
