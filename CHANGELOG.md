@@ -22,6 +22,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   an option's text counts. Only messages by the signed-in user, written after
   `/mobile on`, are read; other text becomes a prompt (a follow-up while the
   agent is busy); `/stop`, `/status` and `/mobile off` work from the phone.
+  A reply older than the question (by Graph's clock) is never an answer, and
+  tokens, keys, signatures and `password=` values are redacted before anything
+  is posted.
   `coop doctor` shows the setup state. Setup values and the risk list:
   `docs/mobile.md`. Gate tests: `tests/mobile.test.mjs`.
 

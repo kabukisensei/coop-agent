@@ -262,6 +262,22 @@ export function truncateForPost(text: string, max = MAX_POST_CHARS): string {
   return text.slice(0, max - note.length).trimEnd() + note;
 }
 
+/** Secrets that tool output or a prompt can carry never reach Teams. Patterns,
+ *  not understanding: a JWT, a SAS signature, key=value credentials, well-known
+ *  token prefixes. The terminal still shows the real text. */
+const SECRET_PATTERNS: Array<[RegExp, string]> = [
+  [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, "[jwt redacted]"],
+  [/\b(sig|sv)=[A-Za-z0-9%+/=_-]{8,}/gi, "$1=[redacted]"],
+  [/\b(AccountKey|SharedAccessKey|SharedAccessSignature)=[^;\s"']+/gi, "$1=[redacted]"],
+  [/\b(password|pwd|passwd|secret|client[_-]?secret|token|api[_-]?key|access[_-]?key|bearer)(\s*[=:]\s*|\s+)(?!\[)[^\s"',;]{6,}/gi, "$1$2[redacted]"],
+  [/\b(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})\b/g, "[token redacted]"],
+];
+export function redactSecrets(text: string): string {
+  let out = text;
+  for (const [re, sub] of SECRET_PATTERNS) out = out.replace(re, sub);
+  return out;
+}
+
 /** Race the terminal dialog against the phone. The loser is aborted through its
  *  signal; the dialog's own timeout and outer signal keep working. */
 export async function raceDialog<T>(
@@ -337,13 +353,19 @@ export class GraphClient {
   private expiresAt = 0;
   constructor(
     private readonly auth: MobileAuth,
-    private readonly refreshToken: string,
+    private refreshToken: string,
     private readonly f: Fetch = fetch,
+    /** Entra rotates refresh tokens; the newest one is the one to keep. */
+    private readonly onRefreshToken?: (token: string) => void,
   ) {}
 
   private async token(): Promise<string> {
     if (this.accessToken && Date.now() < this.expiresAt - 60000) return this.accessToken;
     const t: any = await refreshAccessToken(this.auth, this.refreshToken, this.f);
+    if (typeof t.refresh_token === "string" && t.refresh_token && t.refresh_token !== this.refreshToken) {
+      this.refreshToken = t.refresh_token;
+      try { this.onRefreshToken?.(t.refresh_token); } catch { /* keep going on the in-memory token */ }
+    }
     this.accessToken = t.access_token;
     this.expiresAt = Date.now() + (Number(t.expires_in) || 3600) * 1000;
     return this.accessToken;
@@ -374,9 +396,9 @@ export class GraphClient {
     const r = await this.request("GET", `/me/chats/${encodeURIComponent(chatId)}/messages?$top=${top}`);
     return Array.isArray(r?.value) ? r.value : [];
   }
-  async post(chatId: string, text: string): Promise<string> {
-    const r = await this.request("POST", `/chats/${encodeURIComponent(chatId)}/messages`, { body: { contentType: "text", content: truncateForPost(text) } });
-    return String(r?.id ?? "");
+  async post(chatId: string, text: string): Promise<{ id: string; createdDateTime: string }> {
+    const r = await this.request("POST", `/chats/${encodeURIComponent(chatId)}/messages`, { body: { contentType: "text", content: truncateForPost(redactSecrets(text)) } });
+    return { id: String(r?.id ?? ""), createdDateTime: String(r?.createdDateTime ?? "") };
   }
 }
 
@@ -392,7 +414,8 @@ interface Session {
   seen: Set<string>;
   timer: ReturnType<typeof setTimeout> | null;
   stopped: boolean;
-  pending: { dialog: PendingDialog; resolve: (v: { answered: true; value: any }) => void; messageId: string } | null;
+  /** askedAt: Graph's time for the question post; answers must be newer. Empty until posted. */
+  pending: { dialog: PendingDialog; resolve: (v: { answered: true; value: any }) => void; messageId: string; askedAt: string } | null;
   toolCount: number;
 }
 
@@ -410,13 +433,13 @@ export default function coopMobile(pi: ExtensionAPI) {
   const post = async (text: string) => {
     if (!session || session.stopped) return "";
     try {
-      session.ownTexts.add(truncateForPost(text));
-      const id = await session.graph.post(session.config.chat_id, text);
-      if (id) session.ownIds.add(id);
-      return id;
+      session.ownTexts.add(truncateForPost(redactSecrets(text)));
+      const posted = await session.graph.post(session.config.chat_id, text);
+      if (posted.id) session.ownIds.add(posted.id);
+      return posted;
     } catch (err: any) {
       notify(ctxRef, `coop mobile: could not post to Teams (${err?.message ?? err})`, "warning");
-      return "";
+      return { id: "", createdDateTime: "" };
     }
   };
 
@@ -447,9 +470,9 @@ export default function coopMobile(pi: ExtensionAPI) {
   const askPhone = <T,>(dialog: PendingDialog, signal: AbortSignal): Promise<{ answered: true; value: T } | { answered: false }> =>
     new Promise((resolve) => {
       if (!session || session.stopped || session.pending) return resolve({ answered: false });
-      const entry = { dialog, resolve: resolve as any, messageId: "" };
+      const entry = { dialog, resolve: resolve as any, messageId: "", askedAt: "" };
       session.pending = entry;
-      void post(buildDialogMessage(dialog)).then((id) => { entry.messageId = id; });
+      void post(buildDialogMessage(dialog)).then((posted) => { entry.messageId = posted.id; entry.askedAt = posted.createdDateTime || new Date().toISOString(); });
       signal.addEventListener("abort", () => {
         if (session?.pending === entry) {
           session.pending = null;
@@ -459,31 +482,39 @@ export default function coopMobile(pi: ExtensionAPI) {
       }, { once: true });
     });
 
-  const handleIncoming = async (m: IncomingMessage) => {
-    if (!session) return;
+  const handleIncoming = async (m: IncomingMessage): Promise<"done" | "defer"> => {
+    if (!session) return "done";
     const text = messageText(m);
-    if (!text) return;
+    if (!text) return "done";
     if (session.pending) {
+      // The question must be in the chat before an answer can count: a reply
+      // written earlier (to a hint, or by accident) is never an approval.
+      if (!session.pending.askedAt) return "defer";
+      if (Date.parse(m.createdDateTime) <= Date.parse(session.pending.askedAt)) {
+        await post(`Ignored "${text.slice(0, 40)}": it was written before the question above.`);
+        return "done";
+      }
       const parsed = parseAnswer(session.pending.dialog, text);
-      if (!parsed.ok) { await post(parsed.hint); return; }
+      if (!parsed.ok) { await post(parsed.hint); return "done"; }
       const entry = session.pending;
       session.pending = null;
       entry.resolve({ answered: true, value: parsed.value });
       await post(`Got it: ${typeof parsed.value === "boolean" ? (parsed.value ? "yes" : "no") : (parsed.value ?? "cancelled")}`);
-      return;
+      return "done";
     }
     const lower = text.toLowerCase();
     if (lower === "/stop") {
       if (ctxRef && !ctxRef.isIdle()) { ctxRef.abort(); await post("Stopping the current turn."); }
       else await post("Nothing is running.");
-      return;
+      return "done";
     }
-    if (lower === "/status") { await post(statusLine()); return; }
-    if (lower === "/mobile off") { await stop("from the phone"); return; }
-    if (lower.startsWith("/")) { await post("Only /stop, /status and /mobile off work from the phone; other commands run in the terminal."); return; }
+    if (lower === "/status") { await post(statusLine()); return "done"; }
+    if (lower === "/mobile off") { await stop("from the phone"); return "done"; }
+    if (lower.startsWith("/")) { await post("Only /stop, /status and /mobile off work from the phone; other commands run in the terminal."); return "done"; }
     const busy = ctxRef ? !ctxRef.isIdle() : false;
     pi.sendUserMessage(text, busy ? { deliverAs: "followUp" } : undefined);
     await post(busy ? "Queued as a follow-up." : "Sent.");
+    return "done";
   };
 
   const poll = async () => {
@@ -492,8 +523,8 @@ export default function coopMobile(pi: ExtensionAPI) {
     try {
       const messages = await session.graph.listMessages(session.config.chat_id, 10);
       for (const m of filterIncoming(messages, { userId: session.auth.user_id, since: session.since, ownIds: session.ownIds, ownTexts: session.ownTexts, seen: session.seen })) {
+        if ((await handleIncoming(m)) === "defer") break;
         session.seen.add(m.id);
-        await handleIncoming(m);
       }
     } catch (err: any) {
       notify(ctxRef, `coop mobile: ${err?.message ?? err}`, "warning");
@@ -517,7 +548,9 @@ export default function coopMobile(pi: ExtensionAPI) {
     let refreshToken: string;
     try { refreshToken = unprotectSecret(auth.refresh_token, auth.protection); }
     catch (err: any) { notify(ctx, `coop mobile: cannot read the saved sign-in (${err?.message ?? err}); run /mobile login`, "warning"); return false; }
-    const graph = new GraphClient(auth, refreshToken);
+    const graph = new GraphClient(auth, refreshToken, fetch, (rotated) => {
+      try { saveAuth({ ...auth, refresh_token: rotated }); } catch { /* next login rewrites it */ }
+    });
     session = { config, auth, graph, since: new Date().toISOString(), ownIds: new Set(), ownTexts: new Set(), seen: new Set(), timer: null, stopped: false, pending: null, toolCount: 0 };
     ctxRef = ctx;
     try {
@@ -528,7 +561,9 @@ export default function coopMobile(pi: ExtensionAPI) {
       return false;
     }
     patchUi(ctx);
-    await post(`coop mobile on (${how}) in ${ctx.cwd}. Type a prompt, /status or /stop. Approvals arrive here as numbered messages.`);
+    const hello = await post(`coop mobile on (${how}) in ${ctx.cwd}. Type a prompt, /status or /stop. Approvals arrive here as numbered messages.`);
+    // Graph's clock, not the VM's, decides what "after /mobile on" means.
+    if (hello.createdDateTime) session.since = hello.createdDateTime;
     session.timer = setTimeout(poll, config.poll_ms);
     notify(ctx, `coop mobile: on as ${auth.upn}; Teams chat ${config.chat_id}`);
     return true;

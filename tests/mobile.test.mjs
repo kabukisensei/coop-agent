@@ -78,6 +78,17 @@ await check("filterIncoming: only the pinned user, after the start, not our own 
   assert.deepEqual(picked.map((m) => m.id), ["early", "late"]);
 });
 
+await check("redactSecrets: tokens, keys and key=value credentials never reach Teams", () => {
+  const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+  assert.equal(mod.redactSecrets(`Authorization: Bearer ${jwt}`), "Authorization: Bearer [jwt redacted]");
+  assert.equal(mod.redactSecrets("Server=x;Password=Sup3r$ecret1;Database=y"), "Server=x;Password=[redacted];Database=y");
+  assert.equal(mod.redactSecrets("AccountKey=abc123def456==;EndpointSuffix=core"), "AccountKey=[redacted];EndpointSuffix=core");
+  assert.equal(mod.redactSecrets("https://x.blob.core.windows.net/c?sv=2024-01-01&sig=AbCdEf123456%2B"), "https://x.blob.core.windows.net/c?sv=[redacted]&sig=[redacted]");
+  assert.equal(mod.redactSecrets("found ghp_abcdefghijklmnopqrstuvwxyz0123456789"), "found [token redacted]");
+  assert.equal(mod.redactSecrets("Tidy report.sql and commit"), "Tidy report.sql and commit", "ordinary text is untouched");
+  assert.equal(mod.redactSecrets("the password field is required"), "the password field is required", "prose about passwords is untouched");
+});
+
 await check("truncateForPost: long replies are cut with a note", () => {
   const long = "x".repeat(mod.MAX_POST_CHARS + 100);
   const cut = mod.truncateForPost(long);
@@ -200,6 +211,17 @@ await check("device code flow: pending, slow_down, then tokens", async () => {
   }
 });
 
+await check("GraphClient: a rotated refresh token is handed back to be saved", async () => {
+  let rotatedTo = null;
+  const f = async (url) => url.includes("/oauth2/v2.0/token")
+    ? jsonResponse(200, { access_token: "at", refresh_token: "rt-2", expires_in: 3600 })
+    : jsonResponse(200, { id: "me", userPrincipalName: "u" });
+  const auth = { schema_version: 1, tenant_id: "t", client_id: "c", user_id: "me", upn: "u", protection: "file", refresh_token: "", signed_in_at: "" };
+  const g = new mod.GraphClient(auth, "rt-1", f, (t) => { rotatedTo = t; });
+  await g.me();
+  assert.equal(rotatedTo, "rt-2");
+});
+
 await check("GraphClient: refreshes once, retries a 429 with retry-after, surfaces failures", async () => {
   const log = [];
   let refreshes = 0;
@@ -225,7 +247,7 @@ await check("GraphClient: refreshes once, retries a 429 with retry-after, surfac
   assert.equal(me.id, "me");
   const msgs = await g.listMessages("48:notes");
   assert.equal(msgs.length, 1);
-  assert.equal(await g.post("48:notes", "hello"), "posted-1");
+  assert.deepEqual(await g.post("48:notes", "hello"), { id: "posted-1", createdDateTime: "" });
   assert.equal(refreshes, 1, "one refresh serves every call");
   await assert.rejects(() => g.request("GET", "/missing"), /404/);
 });
@@ -305,12 +327,14 @@ await check("extension: on, a guardrail confirm answered from the phone, a promp
       const content = JSON.parse(init.body).body.content;
       posted.push(content);
       const id = `own-${++postCounter}`;
-      inbox.push({ id, createdDateTime: new Date().toISOString(), from: { user: { id: "me" } }, body: { contentType: "text", content } });
-      return jsonResponse(201, { id });
+      // Graph's clock: the "mobile on" post is backdated a minute so a reply can sit between it and the question.
+      const createdDateTime = new Date(Date.now() - (postCounter === 1 ? 60000 : 0)).toISOString();
+      inbox.push({ id, createdDateTime, from: { user: { id: "me" } }, body: { contentType: "text", content } });
+      return jsonResponse(201, { id, createdDateTime });
     }
     return jsonResponse(404, { error: "unexpected " + url });
   };
-  const fromPhone = (text, who = "me") => inbox.push({ id: `phone-${inbox.length}`, createdDateTime: new Date(Date.now() + 1000).toISOString(), from: { user: { id: who } }, body: { contentType: "html", content: `<p>${text}</p>` } });
+  const fromPhone = (text, who = "me", offsetMs = 1000) => inbox.push({ id: `phone-${inbox.length}`, createdDateTime: new Date(Date.now() + offsetMs).toISOString(), from: { user: { id: who } }, body: { contentType: "html", content: `<p>${text}</p>` } });
   try {
     const { pi, handlers, commands, sent } = makePi();
     const ext = mod.default(pi);
@@ -336,6 +360,10 @@ await check("extension: on, a guardrail confirm answered from the phone, a promp
     fromPhone("maybe");
     await ext.pollNow();
     assert.match(posted.at(-1), /Reply 1 \(yes\) or 2 \(no\)/, "an ambiguous reply gets a hint, not an answer");
+    fromPhone("1", "me", -5000);
+    await ext.pollNow();
+    assert.match(posted.at(-1), /Ignored "1": it was written before the question/, "a yes older than the question is never an approval");
+    assert.ok(!terminal.aborted, "the dialog is still open");
     fromPhone("1");
     await ext.pollNow();
     assert.equal(await pending, true);
@@ -355,8 +383,8 @@ await check("extension: on, a guardrail confirm answered from the phone, a promp
     await ext.pollNow();
     assert.deepEqual(sent, [["tidy report.sql", undefined]]);
     await handlers.tool_execution_end({}, ctx);
-    await handlers.agent_end({ messages: [{ role: "user", content: [{ type: "text", text: "tidy report.sql" }] }, { role: "assistant", content: [{ type: "text", text: "Done: report.sql tidied." }] }] }, ctx);
-    assert.equal(posted.at(-1), "Done: report.sql tidied. (1 tool call)");
+    await handlers.agent_end({ messages: [{ role: "user", content: [{ type: "text", text: "tidy report.sql" }] }, { role: "assistant", content: [{ type: "text", text: "Done: report.sql tidied. Connection uses Password=Hunter2!x" }] }] }, ctx);
+    assert.equal(posted.at(-1), "Done: report.sql tidied. Connection uses Password=[redacted] (1 tool call)");
 
     // /status and an unknown slash command from the phone.
     fromPhone("/status");

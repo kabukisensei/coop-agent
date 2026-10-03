@@ -80,16 +80,23 @@ approval with its number (or `yes`/`no`), or type a prompt.
   approve and steer coop. Keep the device lock and MFA on; revoke as above.
 - **The machine holds a Graph refresh token** that can read and write your chats
   (not your mail or files). It is DPAPI-protected for your Windows account in
-  `<profile>\mobile-auth.json`, so another user on the VM cannot read it, and it
-  is revocable from Entra.
+  `<profile>\mobile-auth.json`, so another user on the VM cannot read it; any
+  program running as you could, as with every DPAPI secret. Entra rotates the
+  token on use and coop keeps the newest. It is revocable from Entra.
 - **Session text lives in Teams** under the tenant's retention policy: coop's
   replies, the approval prompts (which name files and commands) and your
   prompts. File contents never post; only coop's reply text does.
 - **A prompt from the phone runs with the session's rights** on the machine, as
   one typed in the terminal would. The guardrails ask the same questions.
-- **Approvals are explicit.** Only `1`/`2`, `yes`/`no`, an option number or an
-  option's exact text counts; anything else gets a hint. No reply means the
-  dialog waits in the terminal or times out as declined.
+- **Approvals are explicit and cannot be replayed.** Only `1`/`2`, `yes`/`no`,
+  an option number or an option's exact text counts; anything else gets a hint.
+  A reply written before the question was posted (by Graph's clock) is ignored
+  and says so. No reply means the dialog waits in the terminal or times out as
+  declined.
+- **Secrets are redacted before posting.** Tokens, keys, signatures and
+  `password=`-style values in a reply or a prompt are replaced with
+  `[redacted]` in Teams; the terminal still shows the real text. Patterns, not
+  understanding: do not rely on it for a value it has never seen.
 - Graph throttling (HTTP 429) slows polling down; the session itself is never
   blocked by Teams being unreachable, mobile just stops with a notice.
 
