@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.30.0] — 2026-10-03
+
 ### Added
 
 - The coop window's first minutes (desktop UX review, Aaron 2026-10-03, six
