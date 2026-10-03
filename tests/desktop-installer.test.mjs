@@ -284,8 +284,9 @@ await check("check-installer-report: publishes only the exe whose SHA-256 the pa
 });
 
 await check("release.yml: the tag build runs the acceptance on the release bytes and publishes only a verified exe (#277)", () => {
-  const release = readFileSync(join(ROOT, ".github", "workflows", "release.yml"), "utf8");
-  const ci = readFileSync(join(ROOT, ".github", "workflows", "ci.yml"), "utf8");
+  // A Windows checkout may carry CRLF: normalise before matching line-anchored text.
+  const release = readFileSync(join(ROOT, ".github", "workflows", "release.yml"), "utf8").replace(/\r\n/g, "\n");
+  const ci = readFileSync(join(ROOT, ".github", "workflows", "ci.yml"), "utf8").replace(/\r\n/g, "\n");
   const jobs = release.split(/^  (?=[a-z-]+:\s*$)/m);
   const installer = jobs.find((job) => job.startsWith("installer:"));
   const publish = jobs.find((job) => job.startsWith("release:"));
