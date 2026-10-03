@@ -18,11 +18,15 @@
 //             config/desktop-lock.json (npm ci, no scripts; Electron's shim is
 //             dropped because electron-builder supplies the manifest's Electron).
 //   runtime/  resources\runtime in the package (D1d): node/ (the nodejs.org
-//             win-x64 zip the manifest pins by version and SHA-256), npm/ (an
-//             npm global prefix holding the manifest's Pi and the Power BI tools,
-//             installed with that Node), extensions/ (the agent dir's npm tree
-//             installed from config/extensions-lock.json with `npm ci`, as coop
-//             sync does), and coop-runtime.json naming them.
+//             win-x64 zip the manifest pins by version and SHA-256, minus its
+//             npm.ps1 and npx.ps1: PowerShell would pick those over npm.cmd and
+//             the zip's copies answer `npm prefix -g` with "Unknown command"),
+//             npm/ (an npm global prefix holding the manifest's Pi and the Power
+//             BI tools, installed with that Node), extensions/ (the agent dir's
+//             npm tree installed from config/extensions-lock.json with `npm ci`,
+//             as coop sync does), and coop-runtime.json naming them. Both npm
+//             trees are pruned of what nothing runs (pruneTree below), which
+//             halves the file count and keeps every path under Windows' limit.
 //   coop/     resources\coop in the package (D1d): the tracked files of this
 //             checkout except tests, desktop/, the workflows, docs/history and
 //             the repo's own dotfiles. bin/coop.ps1 runs from here; lib/common.ps1
@@ -34,7 +38,7 @@
 // Nothing here touches the user's profile or a window runtime tree.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -196,6 +200,61 @@ function extractZip(zip, into) {
 }
 
 /**
+ * What the bundled npm trees carry that nothing runs: TypeScript declarations
+ * (`.d.ts`, `.d.mts`, `.d.cts`, whole `dist-types` folders) and source maps.
+ * Pi loads the extensions' TypeScript sources without type-checking, so the
+ * declarations are dead weight: they are about half of the tree's files, and
+ * the AWS SDK's `dist-types` folders hold the only paths long enough to break
+ * the 260-character limit in a user's profile (and robocopy's seeding of the
+ * agent dir). `.ts` sources, JavaScript, JSON, licenses and docs stay.
+ */
+export function prunable(name, isDirectory) {
+  if (isDirectory) return name === "dist-types";
+  return /\.d\.(ts|mts|cts)$/.test(name) || /\.map$/.test(name);
+}
+
+/** Remove the prunable entries under an npm tree; returns what was removed. */
+export function pruneTree(dir) {
+  const removed = { files: 0, dirs: 0 };
+  if (!existsSync(dir)) return removed;
+  const walk = (folder) => {
+    for (const entry of readdirSync(folder, { withFileTypes: true })) {
+      const full = join(folder, entry.name);
+      if (entry.isDirectory()) {
+        if (prunable(entry.name, true)) { rmSync(full, { recursive: true, force: true }); removed.dirs += 1; }
+        else walk(full);
+      } else if (entry.isFile() && prunable(entry.name, false)) {
+        rmSync(full, { force: true });
+        removed.files += 1;
+      }
+    }
+  };
+  walk(dir);
+  return removed;
+}
+
+/** The Node zip's PowerShell shims, dropped from the bundled Node (see the header). */
+export const NODE_SHIMS_DROPPED = ["npm.ps1", "npx.ps1"];
+
+/**
+ * The longest path under a folder, relative to it, as `{ length, path }`:
+ * the package's files must stay under Windows' 260-character limit once
+ * installed in a user's profile (verify-installer.mjs asserts it).
+ */
+export function longestPath(dir) {
+  let longest = { length: 0, path: "" };
+  const walk = (folder, rel) => {
+    for (const entry of readdirSync(folder, { withFileTypes: true })) {
+      const relPath = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) walk(join(folder, entry.name), relPath);
+      else if (relPath.length > longest.length) longest = { length: relPath.length, path: relPath };
+    }
+  };
+  if (existsSync(dir) && statSync(dir).isDirectory()) walk(dir, "");
+  return longest;
+}
+
+/**
  * Stage resources\runtime: the pinned Node (downloaded once into
  * desktop/installer/cache and checked against the manifest's SHA-256), the npm
  * prefix with Pi and the Power BI tools, the extension tree from the lock, and
@@ -224,7 +283,12 @@ export async function stageRuntime({ root = ROOT, runtimeDir = RUNTIME, cacheDir
   renameSync(join(unpack, node.folder), nodeDir);
   rmSync(unpack, { recursive: true, force: true });
   if (!existsSync(join(nodeDir, "node.exe")) || !existsSync(join(nodeDir, "npm.cmd"))) throw new Error(`${node.file} did not unpack to node.exe and npm.cmd`);
-  console.log(`staged Node ${node.version} (${node.file}, SHA-256 verified)`);
+  // PowerShell resolves `& npm` to npm.ps1 ahead of npm.cmd, and the zip's
+  // npm.ps1 answers `npm prefix -g` with 'Unknown command: "pm"' (seen on the
+  // D1d VM check): lib/common.ps1 and scripts/install.ps1 call `& npm`, so only
+  // the .cmd shims ship.
+  for (const shim of NODE_SHIMS_DROPPED) rmSync(join(nodeDir, shim), { force: true });
+  console.log(`staged Node ${node.version} (${node.file}, SHA-256 verified; ${NODE_SHIMS_DROPPED.join(", ")} dropped)`);
 
   // Everything below runs the bundled Node (so a prebuilt binary matches its ABI)
   // and only on Windows, where that Node runs.
@@ -238,7 +302,8 @@ export async function stageRuntime({ root = ROOT, runtimeDir = RUNTIME, cacheDir
   const piPkg = join(prefix, "node_modules", manifest.pi.package, "package.json");
   if (!existsSync(piPkg) || JSON.parse(readFileSync(piPkg, "utf8")).version !== manifest.pi.version) throw new Error(`Pi ${manifest.pi.version} is not in the bundled prefix`);
   if (!existsSync(join(prefix, "pi.cmd"))) throw new Error("the bundled prefix has no pi.cmd shim");
-  console.log(`staged Pi ${manifest.pi.version} and ${Object.keys(manifest.npm_tools || {}).length} npm tool(s) in the bundled prefix`);
+  const prunedPrefix = pruneTree(join(prefix, "node_modules"));
+  console.log(`staged Pi ${manifest.pi.version} and ${Object.keys(manifest.npm_tools || {}).length} npm tool(s) in the bundled prefix (${prunedPrefix.files} declaration/map file(s) and ${prunedPrefix.dirs} dist-types folder(s) pruned)`);
 
   const extensions = join(runtimeDir, "extensions");
   mkdirSync(extensions, { recursive: true });
@@ -254,7 +319,9 @@ export async function stageRuntime({ root = ROOT, runtimeDir = RUNTIME, cacheDir
   }
   const lockSha256 = sha256File(lock);
   if (sha256File(join(extensions, "package-lock.json")) !== lockSha256) throw new Error("npm ci rewrote the extension lock");
-  console.log(`staged the extension tree (${Object.keys(manifest.extensions || {}).length} extension(s) from config/extensions-lock.json)`);
+  const prunedTree = pruneTree(join(extensions, "node_modules"));
+  const longest = longestPath(runtimeDir);
+  console.log(`staged the extension tree (${Object.keys(manifest.extensions || {}).length} extension(s) from config/extensions-lock.json; ${prunedTree.files} declaration/map file(s) and ${prunedTree.dirs} dist-types folder(s) pruned; longest path ${longest.length} chars: ${longest.path})`);
 
   writeFileSync(join(runtimeDir, "coop-runtime.json"), JSON.stringify(runtimeMarker({ manifest, version, lockSha256 }), null, 2) + "\n");
   return { runtimeDir, version, manifest };

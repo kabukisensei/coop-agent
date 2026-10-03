@@ -177,6 +177,8 @@ With the terminal coop from steps 1 to 5 as well, the window shares your
 Keep both at the same release: `coop update` for the terminal, then the newer
 installer for the window. To remove the window, use **Add or
 remove programs** and pick **coop (window)**; your settings under `~/.coop`
-stay. A newer window comes as a newer installer: run it over the old one.
+stay, and so do a terminal install's `coop` command and "coop" icon (the ones
+the window wrote for itself go with it). A newer window comes as a newer
+installer: run it over the old one.
 
 Next: [onboarding](onboarding.md) has a safe first task and the day-to-day commands.

@@ -16,9 +16,10 @@
 //   node desktop/scripts/verify-installer.mjs [--dist <dir>] [--output <report.json>]
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
+import { NODE_SHIMS_DROPPED, longestPath } from "./build-installer.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const PRODUCT = "coop (window)";
@@ -49,10 +50,17 @@ export function packagePaths(env = process.env) {
   return {
     installDir,
     exe: join(installDir, "coop.exe"),
+    // The package's first launch writes these (scripts/install.ps1 in bundled
+    // mode); the uninstaller removes them when they point into installDir.
+    launcherLink: join(env.LOCALAPPDATA, "coop", "bin", "coop.cmd"),
+    terminalShortcut: join(env.USERPROFILE, "Desktop", "coop.lnk"),
+    startMenuTerminalShortcut: join(env.APPDATA, "Microsoft", "Windows", "Start Menu", "Programs", "coop.lnk"),
     uninstaller: join(installDir, "Uninstall coop.exe"),
     // D1d: the bundled runtime and the coop snapshot beside the asar.
     runtime,
+    nodeDir: join(runtime, "node"),
     nodeExe: join(runtime, "node", "node.exe"),
+    npmPrefix: join(runtime, "npm"),
     piPackage: join(runtime, "npm", "node_modules", "@earendil-works", "pi-coding-agent", "package.json"),
     piShim: join(runtime, "npm", "pi.cmd"),
     extensions: join(runtime, "extensions"),
@@ -103,6 +111,14 @@ async function registryEntries() {
   return Array.isArray(parsed) ? parsed : [parsed];
 }
 
+/** Write a "coop" shortcut the way scripts/install.ps1 does (powershell.exe -File <launcher>). */
+async function writeTerminalShortcut(file, launcher) {
+  const powershell = win32.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const script = `$ws = New-Object -ComObject WScript.Shell; $sc = $ws.CreateShortcut($env:COOP_LNK); $sc.TargetPath = '${powershell.replace(/'/g, "''")}'; $sc.Arguments = ('-NoLogo -NoProfile -ExecutionPolicy Bypass -File "' + $env:COOP_LAUNCHER + '"'); $sc.Save()`;
+  await runOwned(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { windowsHide: true, env: { ...process.env, COOP_LNK: file, COOP_LAUNCHER: launcher } }, 60000);
+  if (!existsSync(file)) throw new Error(`could not write ${file}`);
+}
+
 function sha256(file) {
   return createHash("sha256").update(readFileSync(file)).digest("hex");
 }
@@ -130,6 +146,9 @@ async function main(argv) {
   if ((await registryEntries()).length) throw new Error(`${PRODUCT} is already registered on this runner`);
   if (existsSync(paths.installDir)) throw new Error(`${paths.installDir} already exists on this runner`);
   if (existsSync(paths.electronAppData)) throw new Error(`${paths.electronAppData} already exists on this runner`);
+  for (const file of [paths.launcherLink, paths.terminalShortcut, paths.startMenuTerminalShortcut]) {
+    if (existsSync(file)) throw new Error(`${file} already exists on this runner`);
+  }
   // The profile's window data: a sentinel that must survive install, doctor and uninstall.
   mkdirSync(paths.profileData, { recursive: true });
   const sentinelFile = join(paths.profileData, "installer-acceptance-sentinel.txt");
@@ -186,6 +205,26 @@ async function main(argv) {
     }
     step("bundled Node, Pi, npm tools and the extension tree at the manifest's pins", { note: `Node ${nodeOut}, Pi ${piPkg.version}` });
 
+    // The Node zip's npm.ps1 answered `npm prefix -g` with 'Unknown command'
+    // (D1d VM check): PowerShell must resolve `& npm` to the bundled npm.cmd,
+    // with the bundled Node first on PATH as lib/common.ps1 puts it.
+    for (const shim of NODE_SHIMS_DROPPED) {
+      if (existsSync(join(paths.nodeDir, shim))) throw new Error(`the bundled Node still carries ${shim}`);
+    }
+    const npmScript = "$env:PATH = $env:COOP_NODE_DIR + ';' + $env:PATH; $env:npm_config_prefix = $env:COOP_NPM_PREFIX; & npm prefix -g";
+    const npmOut = (await runOwned(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", npmScript], { windowsHide: true, env: { ...process.env, COOP_NODE_DIR: paths.nodeDir, COOP_NPM_PREFIX: paths.npmPrefix } }, 120000)).trim();
+    if (npmOut.toLowerCase() !== paths.npmPrefix.toLowerCase()) throw new Error(`\`& npm prefix -g\` under PowerShell printed ${npmOut || "nothing"}, not the bundled prefix ${paths.npmPrefix}`);
+    step("PowerShell's `& npm` runs the bundled npm.cmd", { note: npmOut });
+
+    // Every bundled file must fit Windows' 260-character path limit in a
+    // teammate's profile: the runner's install dir is a short one, so allow
+    // for a longer user name (C:\Users\<name>\AppData\Local\Programs\coop is
+    // the per-user default; 64 characters covers it).
+    const longest = longestPath(join(paths.installDir, "resources"));
+    const worst = "resources/".length + longest.length + 64;
+    if (worst >= 260) throw new Error(`the package's longest path is ${longest.length} characters under resources (${longest.path}): ${worst} in a long profile path, over Windows' limit`);
+    step("bundled paths fit Windows' path limit", { note: `longest ${longest.length} chars under resources: ${longest.path}`, longestPath: longest });
+
     // The coop snapshot runs on the bundled runtime: `coop version` resolves the
     // bundled pi.cmd (lib/common.ps1 puts the runtime first on PATH) even though
     // this runner has its own Node and no Pi.
@@ -198,6 +237,17 @@ async function main(argv) {
     if (readFileSync(sentinelFile, "utf8") !== sentinel) throw new Error("install or doctor changed the profile's window data");
     if (existsSync(paths.electronAppData)) throw new Error(`${paths.electronAppData} appeared: the window's data left the coop profile`);
     step("profile untouched by install and doctor");
+
+    // What the package's first launch writes (scripts/install.ps1 in bundled
+    // mode): the `coop` link and "coop" shortcut pointing into the package,
+    // which the uninstaller must remove, beside a terminal install's own
+    // shortcut pointing elsewhere, which it must keep.
+    mkdirSync(dirname(paths.launcherLink), { recursive: true });
+    writeFileSync(paths.launcherLink, `@call "${join(paths.installDir, "resources", "coop", "bin", "coop.cmd")}" %*\r\n`, { flag: "wx" });
+    await writeTerminalShortcut(paths.terminalShortcut, join(paths.installDir, "resources", "coop", "bin", "coop-desktop.ps1"));
+    const foreignLauncher = join(process.env.USERPROFILE, "coop-agent-elsewhere", "bin", "coop-desktop.ps1");
+    await writeTerminalShortcut(paths.startMenuTerminalShortcut, foreignLauncher);
+    step("first-launch link and shortcuts written for the uninstall check");
 
     const uninstall = nsisInvocation(paths.uninstaller, paths.installDir, { uninstall: true });
     const uninstallStarted = Date.now();
@@ -213,10 +263,16 @@ async function main(argv) {
     }
     if (readFileSync(sentinelFile, "utf8") !== sentinel) throw new Error("uninstall removed or changed the profile's window data");
     if (existsSync(paths.electronAppData)) throw new Error(`${paths.electronAppData} appeared during uninstall`);
-    step("silent uninstall leaves no package, entry or shortcut; profile data kept", { note: `${uninstallSeconds}s`, seconds: uninstallSeconds });
+    for (const file of [paths.launcherLink, paths.terminalShortcut]) {
+      if (existsSync(file)) throw new Error(`uninstall left the package's ${file}`);
+    }
+    if (!existsSync(paths.startMenuTerminalShortcut)) throw new Error("uninstall removed a terminal install's own \"coop\" shortcut");
+    rmSync(paths.startMenuTerminalShortcut, { force: true });
+    step("silent uninstall leaves no package, entry, shortcut, link or first-launch shortcut; profile data and a foreign shortcut kept", { note: `${uninstallSeconds}s`, seconds: uninstallSeconds });
     report.ok = true;
   } catch (error) {
     report.error = error.message;
+    for (const file of [paths.launcherLink, paths.terminalShortcut, paths.startMenuTerminalShortcut]) rmSync(file, { force: true });
     if (installed && existsSync(paths.uninstaller)) {
       try {
         const uninstall = nsisInvocation(paths.uninstaller, paths.installDir, { uninstall: true });

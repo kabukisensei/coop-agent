@@ -15,7 +15,7 @@
  */
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import { bootstrapProcess, bundledCoop, doctorReport, findCoop, folderArgument, launcherPath, packagedPaths, packagedRuntime } from "../desktop/lib/bootstrap.mjs";
 import { consoleProcess } from "../desktop/lib/terminal.mjs";
 import { loadSettings, saveSettings } from "../desktop/lib/settings.mjs";
-import { nodeDownload, prefixPackages, readVersion, runtimeMarker, shippedPackage, snapshotIncludes, stage, stageEntries, stagePackage } from "../desktop/scripts/build-installer.mjs";
+import { NODE_SHIMS_DROPPED, longestPath, nodeDownload, prefixPackages, prunable, pruneTree, readVersion, runtimeMarker, shippedPackage, snapshotIncludes, stage, stageEntries, stagePackage } from "../desktop/scripts/build-installer.mjs";
 import { assertDisposableInstallerHost, nsisInvocation, packagePaths } from "../desktop/scripts/verify-installer.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -167,6 +167,13 @@ await check("electron-builder: NSIS per-user, no elevation, data kept, shortcuts
   assert.equal(config.nsis.shortcutName, "coop (window)");
   assert.match(config.artifactName, /^coop-window-\$\{version\}-\$\{os\}-\$\{arch\}\.\$\{ext\}$/);
   assert.equal(config.nsis.artifactName, config.artifactName);
+  // D1d: the uninstaller drops the first launch's `coop` link and "coop"
+  // shortcuts through the snapshot's scripts/window-uninstall.ps1.
+  assert.equal(config.nsis.include, join(ROOT, "desktop", "installer", "resources", "installer.nsh"));
+  const nsh = readFileSync(config.nsis.include, "utf8");
+  assert.match(nsh, /!macro customUnInstall/);
+  assert.match(nsh, /resources\\coop\\scripts\\window-uninstall\.ps1" "\$INSTDIR"/);
+  assert.ok(existsSync(join(ROOT, "scripts", "window-uninstall.ps1")) && snapshotIncludes("scripts/window-uninstall.ps1"));
   for (const icon of [config.win.icon, config.nsis.installerIcon, config.nsis.uninstallerIcon]) {
     assert.equal(icon, join(ROOT, "themes", "coop.ico"));
     assert.ok(existsSync(icon));
@@ -193,6 +200,46 @@ await check("runtime: the manifest pins the nodejs.org win-x64 zip by version an
   assert.ok(node.version.localeCompare(MANIFEST.node.min, undefined, { numeric: true }) >= 0, `bundled ${node.version} >= node.min ${MANIFEST.node.min}`);
   assert.throws(() => nodeDownload({ desktop: {} }), /desktop\.node/);
   assert.throws(() => nodeDownload({ desktop: { node: { version: "22.19.0", sha256: "short" } } }), /desktop\.node/);
+});
+
+await check("runtime: only the Node zip's PowerShell shims are dropped (PowerShell must reach npm.cmd)", () => {
+  assert.deepEqual(NODE_SHIMS_DROPPED, ["npm.ps1", "npx.ps1"]);
+});
+
+await check("runtime: pruning drops declarations, source maps and dist-types, keeps sources, JavaScript and licenses", () => {
+  for (const [name, dir] of [["index.d.ts", false], ["index.d.mts", false], ["index.d.cts", false], ["index.js.map", false], ["styles.css.map", false], ["dist-types", true]]) {
+    assert.ok(prunable(name, dir), `${name} is pruned`);
+  }
+  for (const [name, dir] of [["index.ts", false], ["index.js", false], ["index.mjs", false], ["package.json", false], ["LICENSE", false], ["README.md", false], ["SKILL.md", false], ["types.d.ts.txt", false], ["dist", true], ["types", true], ["dist-types", false], ["src", true]]) {
+    assert.ok(!prunable(name, dir), `${name} stays`);
+  }
+  const tree = mkdtempSync(join(tmpdir(), "coop-prune-"));
+  try {
+    const pkg = join(tree, "node_modules", "@aws-sdk", "client");
+    mkdirSync(join(pkg, "dist-types", "deep", "deeper"), { recursive: true });
+    mkdirSync(join(pkg, "dist-cjs"), { recursive: true });
+    mkdirSync(join(tree, "node_modules", "ext", "src"), { recursive: true });
+    writeFileSync(join(pkg, "dist-types", "deep", "deeper", "x.d.ts"), "");
+    writeFileSync(join(pkg, "dist-cjs", "index.js"), "");
+    writeFileSync(join(pkg, "dist-cjs", "index.js.map"), "");
+    writeFileSync(join(pkg, "dist-cjs", "index.d.ts"), "");
+    writeFileSync(join(pkg, "package.json"), "{}");
+    writeFileSync(join(tree, "node_modules", "ext", "src", "index.ts"), "");
+    writeFileSync(join(tree, "node_modules", "ext", "README.md"), "");
+    const before = longestPath(join(tree, "node_modules"));
+    assert.equal(before.path, "@aws-sdk/client/dist-types/deep/deeper/x.d.ts");
+    const removed = pruneTree(join(tree, "node_modules"));
+    assert.deepEqual(removed, { files: 2, dirs: 1 });
+    assert.ok(!existsSync(join(pkg, "dist-types")) && !existsSync(join(pkg, "dist-cjs", "index.js.map")) && !existsSync(join(pkg, "dist-cjs", "index.d.ts")));
+    assert.ok(existsSync(join(pkg, "dist-cjs", "index.js")) && existsSync(join(pkg, "package.json")) && existsSync(join(tree, "node_modules", "ext", "src", "index.ts")) && existsSync(join(tree, "node_modules", "ext", "README.md")));
+    const after = longestPath(join(tree, "node_modules"));
+    assert.equal(after.path, "@aws-sdk/client/dist-cjs/index.js");
+    assert.equal(after.length, after.path.length);
+    assert.deepEqual(longestPath(join(tree, "missing")), { length: 0, path: "" });
+    assert.deepEqual(pruneTree(join(tree, "missing")), { files: 0, dirs: 0 });
+  } finally {
+    rmSync(tree, { recursive: true, force: true });
+  }
 });
 
 await check("runtime: the bundled prefix holds the manifest's Pi and every npm tool at its pin", () => {

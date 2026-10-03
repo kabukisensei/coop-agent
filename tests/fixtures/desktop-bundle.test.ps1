@@ -183,6 +183,35 @@ try {
   $winRow = Find-Row $rows 'coop window: this package'
   if ($winRow -and $winRow.status -eq 'ok' -and $winRow.name -like ('*Node ' + [string]$manifest.desktop.node.version + '*') -and $winRow.name -like ('*Pi ' + $piVer + '*')) { Ok 'doctor: the window row names the bundled Node and Pi' } else { Ko 'doctor window row' (Show-Rows $rows 'coop window') }
   if (-not (Find-Row $rows 'NEVER update')) { Ok 'doctor: no "not a git checkout" warning for the package' } else { Ko 'doctor still warns about git' }
+  # --- D. the uninstaller's cleanup: scripts\window-uninstall.ps1 removes the
+  # first launch's `coop` link (and "coop" shortcut) only when it points into
+  # the package; a terminal install's own stays.
+  $la = Join-Path $t 'localappdata'
+  $linkFile = Join-Path (Join-Path (Join-Path $la 'coop') 'bin') 'coop.cmd'
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $linkFile) | Out-Null
+  $env:LOCALAPPDATA = $la
+  $env:APPDATA = Join-Path $t 'appdata'
+  $env:USERPROFILE = Join-Path $t 'profile'
+  $unlink = Join-Path $snapshot 'scripts\window-uninstall.ps1'
+  [System.IO.File]::WriteAllText($linkFile, "@echo off`r`ncall `"$(Join-Path $otherRoot 'bin\coop.cmd')`" %*`r`n", $utf8)
+  $u = Invoke-Coop $unlink @($app) $t
+  if ($u.Rc -eq 0 -and (Test-Path -LiteralPath $linkFile)) { Ok 'window-uninstall keeps a coop link that forwards to another install' } else { Ko "foreign link (rc=$($u.Rc), exists=$(Test-Path -LiteralPath $linkFile))" ($u.Out + $u.Err) }
+  [System.IO.File]::WriteAllText($linkFile, "@echo off`r`ncall `"$(Join-Path $snapshot 'bin\coop.cmd')`" %*`r`n", $utf8)
+  $u = Invoke-Coop $unlink @($app) $t
+  if ($u.Rc -eq 0 -and -not (Test-Path -LiteralPath $linkFile)) { Ok 'window-uninstall removes the coop link that forwards into the package' } else { Ko "package link (rc=$($u.Rc), exists=$(Test-Path -LiteralPath $linkFile))" ($u.Out + $u.Err) }
+  $u = Invoke-Coop $unlink @() $t
+  if ($u.Rc -eq 0) { Ok 'window-uninstall without an install dir does nothing and exits 0' } else { Ko "no-arg run rc=$($u.Rc)" ($u.Out + $u.Err) }
+  if ($env:OS -eq 'Windows_NT') {
+    $deskDir = Join-Path $env:USERPROFILE 'Desktop'
+    New-Item -ItemType Directory -Force -Path $deskDir | Out-Null
+    $ws = New-Object -ComObject WScript.Shell
+    $psExeWin = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    foreach ($pair in @(@('coop.lnk', (Join-Path $snapshot 'bin\coop-desktop.ps1')), @('coop (terminal).lnk', (Join-Path $otherRoot 'bin\coop-desktop.ps1')))) {
+      $sc = $ws.CreateShortcut((Join-Path $deskDir $pair[0])); $sc.TargetPath = $psExeWin; $sc.Arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$($pair[1])`""; $sc.Save()
+    }
+    $u = Invoke-Coop $unlink @($app) $t
+    if ($u.Rc -eq 0 -and -not (Test-Path -LiteralPath (Join-Path $deskDir 'coop.lnk')) -and (Test-Path -LiteralPath (Join-Path $deskDir 'coop (terminal).lnk'))) { Ok 'window-uninstall removes the "coop" shortcut into the package and keeps a foreign one' } else { Ko "shortcuts (rc=$($u.Rc))" ($u.Out + $u.Err) }
+  }
 }
 finally {
   Restore-Env $saved

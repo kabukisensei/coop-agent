@@ -31,7 +31,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   CI job checks the bundled Node, Pi, tools and tree at their pins and runs
   the snapshot's `coop version` on the bundled Pi
   (`desktop/scripts/build-installer.mjs`, `desktop/scripts/verify-installer.mjs`,
-  `desktop/lib/bootstrap.mjs`; master plan revision 3.19).
+  `desktop/lib/bootstrap.mjs`; master plan revision 3.19). From the VM check
+  of the first package: the bundled Node ships without the zip's `npm.ps1`
+  and `npx.ps1` (PowerShell picked them over `npm.cmd` and they answered
+  `npm prefix -g` with "Unknown command", so the first launch skipped its
+  tool steps); the bundled npm trees are pruned of type declarations,
+  `dist-types` folders and source maps (about half the files, and every
+  path over Windows' 260-character limit, which the uninstaller could not
+  remove); and uninstalling the window also removes the `coop` link and
+  "coop" shortcuts its first launch wrote, leaving a terminal install's own
+  (`scripts/window-uninstall.ps1` via `desktop/installer/resources/installer.nsh`).
+  The CI job now checks all three.
 
 ### Changed
 

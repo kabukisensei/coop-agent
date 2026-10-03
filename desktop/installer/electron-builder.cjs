@@ -71,6 +71,9 @@ module.exports = {
     uninstallDisplayName: "coop (window)",
     installerIcon: icon,
     uninstallerIcon: icon,
+    // D1d: the uninstaller also drops the `coop` link and "coop" shortcuts the
+    // package's first launch wrote (resources/installer.nsh).
+    include: join(__dirname, "resources", "installer.nsh"),
     artifactName: "coop-window-${version}-${os}-${arch}.${ext}",
   },
 };

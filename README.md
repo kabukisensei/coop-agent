@@ -228,11 +228,17 @@ names the bundled versions on its coop window row. On a machine that already
 has the terminal coop, the package shares `~/.coop` (settings, sign-ins,
 sessions) and leaves the `coop` command and the "coop" shortcut with that
 install (`Test-CoopForeignLauncherLink`); the two should stay at the same
-release, since they share one extension lock. Updates with D1e; until then
+release, since they share one extension lock. Without a terminal install, the
+first launch writes the `coop` command and the "coop" shortcut for the package,
+and uninstalling the window removes them again (`scripts/window-uninstall.ps1`,
+run by the uninstaller; a terminal install's own stay). Updates with D1e; until then
 install the newer exe over the old one. Build it yourself with `npm ci` in
 `desktop/installer` and `node desktop/scripts/build-installer.mjs` on Windows
-(it downloads the pinned Node zip, checks its SHA-256 and stages Pi, the
-extension tree and the repository snapshot under `desktop/installer/`;
+(it downloads the pinned Node zip, checks its SHA-256, drops the zip's
+`npm.ps1` and `npx.ps1` so PowerShell's `& npm` reaches `npm.cmd`, stages Pi,
+the extension tree and the repository snapshot under `desktop/installer/`, and
+prunes the two npm trees of type declarations, `dist-types` folders and source
+maps, which nothing runs and which held the only paths over Windows' limit;
 `--stage-only` stops before electron-builder).
 
 **Inside the window.** A fresh machine's set-up (model sign-in, `coop onboard`,

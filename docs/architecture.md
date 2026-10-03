@@ -237,9 +237,11 @@ for the Node tools and extensions; no script builds these paths inline.
    imports, the vibes, the splash and the icon in an asar, pdf.js and its reader
    script unpacked beside it, the September fuse policy applied). Since D1d it
    also carries, as electron-builder `extraResources`, `resources\runtime`
-   (the pinned Node from nodejs.org, `desktop.node` in the manifest; an npm
-   prefix with Pi and the manifest's npm tools; the extension tree installed
-   from `config/extensions-lock.json`; and `coop-runtime.json` describing them)
+   (the pinned Node from nodejs.org, `desktop.node` in the manifest, without
+   the zip's `npm.ps1`/`npx.ps1` so PowerShell's `& npm` reaches `npm.cmd`; an
+   npm prefix with Pi and the manifest's npm tools; the extension tree installed
+   from `config/extensions-lock.json`, both trees pruned of type declarations,
+   `dist-types` and source maps; and `coop-runtime.json` describing them)
    and `resources\coop`, a snapshot of this repository without tests, desktop
    sources and history. Started from its shortcut it has no spec, so it runs the
    bundled `coop desktop --app <its exe>` (`desktop/lib/bootstrap.mjs`, falling
@@ -255,8 +257,13 @@ for the Node tools and extensions; no script builds these paths inline.
    processes cannot read an asar, so the package runs the standards reader on
    the bundled snapshot. `coop.exe --doctor` prints one JSON line and exits; the
    `installer (Windows)` CI job builds the installer, installs it silently, runs
-   that, runs the bundled `coop.ps1 version` and uninstalls
-   (`desktop/scripts/verify-installer.mjs`). What only the terminal can show (model sign-in, `custom()` screens,
+   that, runs the bundled `coop.ps1 version`, checks that PowerShell's `& npm`
+   answers from the bundled `npm.cmd` and that every bundled path fits Windows'
+   limit, and uninstalls (`desktop/scripts/verify-installer.mjs`). The
+   uninstaller's `customUnInstall` (`desktop/installer/resources/installer.nsh`)
+   runs the snapshot's `scripts/window-uninstall.ps1`, which removes the `coop`
+   link and "coop" shortcuts the first launch wrote only when they point into
+   the package. What only the terminal can show (model sign-in, `custom()` screens,
    `/trust`) opens the same session in a terminal; `desktop/PARITY.md` maps every
    Pi command, keybinding and extension command, and `tests/desktop.test.mjs`
    checks it against a recorded session.
