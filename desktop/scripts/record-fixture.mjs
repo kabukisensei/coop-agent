@@ -58,8 +58,10 @@ const ASK = {
 };
 const STEPS = [
   { reasoning: "The user wants report.sql tidied and the build folder cleared. Ask which layout first.", text: "One question before I change the file.", tools: [{ name: "ask_user_question", args: ASK }] },
+  // The todo panel (rpiv-todo): one task created, so the fixture carries its setWidget lines.
+  { text: "Two steps: format the query, then clear the build folder.", tools: [{ name: "todo", args: { action: "create", subject: "Format report.sql", activeForm: "formatting report.sql" } }] },
   { text: "I will format the query in the Cooptimize style.", tools: [{ name: "edit", args: { path: "report.sql", edits: [{ oldText: "select id,name from customers", newText: "SELECT\n    id,\n    name\nFROM customers;" }] } }] },
-  { text: "Now the build folder.", tools: [{ name: "bash", args: { command: "rm -rf build" } }] },
+  { text: "Now the build folder.", tools: [{ name: "todo", args: { action: "update", id: 1, status: "completed" } }, { name: "bash", args: { command: "rm -rf build" } }] },
   { reasoning: "The removal was declined, so report what changed.", text: "Done.\n\n- `report.sql` now follows the Cooptimize SQL style.\n- The build folder was **kept** because you declined.\n\n| Object | Change |\n|---|---|\n| `report.sql` | formatted |\n| `build/` | kept |\n\n```sql\nSELECT\n    id,\n    name\nFROM customers;\n```" },
   { text: "## Goal\nTidy report.sql and clear the build folder.\n\n## Done\n- report.sql formatted in the Cooptimize style.\n- build/ kept (removal declined)." },
 ];

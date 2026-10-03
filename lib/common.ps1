@@ -1282,6 +1282,30 @@ function Remove-CoopRetiredExtensions([string]$AgentDir) {
   return $failures
 }
 
+# --- The todo panel's key (@juicesharp/rpiv-todo) --------------------------------
+# rpiv-todo collapses its task panel with Ctrl+Shift+T by default, which is also
+# Pi's `app.session.tree` key; Pi's editor runs extension shortcuts first, so the
+# tree would never open from that key in a coop terminal. The extension reads only
+# `~/.config/rpiv-todo/config.json` (no agent-dir setting), so sync seeds that file
+# once with Alt+T, free in Pi, Windows Terminal and the coop window, which binds
+# the same key (desktop/PARITY.md). A file the user already has is never
+# rewritten. Best-effort: returns $true only when it wrote the file.
+function Set-CoopTodoConfig {
+  param([string]$HomeDir = $HOME)
+  $dir = Join-Path (Join-Path $HomeDir '.config') 'rpiv-todo'
+  $file = Join-Path $dir 'config.json'
+  if (Test-Path -LiteralPath $file) { return $false }
+  try {
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    $json = "{`n  `"collapseKey`": `"alt+t`"`n}`n"
+    [System.IO.File]::WriteAllText($file, $json, (New-Object System.Text.UTF8Encoding $false))
+    return $true
+  } catch {
+    Coop-Warn "could not write $file ($($_.Exception.Message))" 'the todo panel keeps Ctrl+Shift+T until collapseKey is set there'
+    return $false
+  }
+}
+
 # --- Extension fleet convergence (the ONE `pi install` path; S2, #222) ---------
 # Converge every manifest extension INTO the isolated agent dir, idempotently:
 #   1. `pi install <npm:name@pin>` for each extension whose installed version

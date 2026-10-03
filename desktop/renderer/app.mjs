@@ -13,6 +13,8 @@ import { mountProject } from "./pane-project.mjs";
 import { mountDocs } from "./pane-docs.mjs";
 import { makeResizer, sidebarMaxWidth } from "./resize.mjs";
 import { attachmentNote } from "./attach-note.mjs";
+import { widgetView } from "./widgets.mjs";
+import { COLLAPSE_KEY, TODO_TOOL, applyTodoResult, createTodos, startTurn, todoLines, todosFromMessages } from "./todos.mjs";
 import { setupItems, setupSummary, EXAMPLES } from "./welcome.mjs";
 import { parseConfirm, confirmLabels, parseQuestionSelect, parseQuestionMulti, multiAnswer } from "./dialogs.mjs";
 
@@ -35,6 +37,8 @@ const app = {
   sessions: [],
   statuses: new Map(),
   widgets: new Map(),
+  widgetsCollapsed: false, // Alt+T: the widgets above the prompt show only their first line
+  todos: createTodos(), // the todo panel, rebuilt from the session's `todo` tool results (todos.mjs)
   attachments: [], // { kind: image | text | office | pdf | pending, ... } from lib/attachments.mjs
   vibe: "", // the tip under the splash and on the working line; a fresh one each turn
   setup: [], // what this machine still owes before coop works fully (welcome.mjs)
@@ -110,6 +114,7 @@ async function refreshCommands() {
 /** Reload everything from Pi: after start, a session switch, new, fork. */
 async function refreshAll() {
   const [state, messages] = await Promise.all([cmd({ type: "get_state" }), cmd({ type: "get_messages" })]);
+  const previousSession = app.state ? app.state.sessionId : undefined;
   if (state.success && state.data) {
     app.state = state.data;
     app.tl.sessionName = state.data.sessionName;
@@ -117,6 +122,11 @@ async function refreshAll() {
   }
   if (messages.success && messages.data) {
     loadMessages(app.tl, messages.data.messages);
+    // The todo panel follows the session: a compaction leaves the list in the
+    // session branch but out of get_messages, so the same session keeps its panel.
+    const todos = todosFromMessages(messages.data.messages);
+    if (todos.found || !app.state || app.state.sessionId !== previousSession) app.todos = todos;
+    renderWidgets();
     app.tl.busy = Boolean(app.state && app.state.isStreaming);
     app.tl.sessionName = app.state ? app.state.sessionName : undefined;
     app.tl.thinkingLevel = app.state ? app.state.thinkingLevel : undefined;
@@ -137,7 +147,8 @@ function onEvent(event) {
   const { changed, status } = applyEvent(app.tl, event);
   for (const id of changed) redraw(id);
   if (status) { renderBusy(); renderHeader(); }
-  if (event.type === "agent_start") freshVibe();
+  if (event.type === "agent_start") { freshVibe(); startTurn(app.todos); renderWidgets(); }
+  if (event.type === "tool_execution_end" && event.toolName === TODO_TOOL && applyTodoResult(app.todos, event.result)) renderWidgets();
   if (event.type === "agent_settled") {
     refreshState(); refreshStats(); loadSessions();
     // The changes pane follows coop's edits.
@@ -858,8 +869,12 @@ function renderWidgets() {
   for (const placement of ["above", "below"]) {
     const box = $(placement === "above" ? "widgetsAbove" : "widgetsBelow");
     const widgets = [...app.widgets.entries()].filter(([, widget]) => widget.placement === placement);
+    const collapsed = placement === "above" && app.widgetsCollapsed;
+    // The todo panel first, as the extension's overlay sits right above the prompt.
+    const todo = placement === "above" ? todoLines(app.todos, { collapsed, rows: app.prefs.expandTools ? Infinity : undefined }) : [];
+    if (todo.length) widgets.unshift(["coop-todos", { lines: todo, placement, rendered: true }]);
     box.hidden = !widgets.length;
-    box.replaceChildren(...widgets.map(([key, widget]) => el("pre", { class: "widget", title: key }, el("code", { text: widget.lines.join("\n") }))));
+    box.replaceChildren(...widgets.map(([key, widget]) => el("pre", { class: `widget${collapsed ? " collapsed" : ""}${key === "coop-todos" ? " todos" : ""}`, title: key }, el("code", { text: (widget.rendered ? widget.lines : widgetView(widget, collapsed)).join("\n") }))));
   }
 }
 
@@ -941,6 +956,7 @@ async function restart() {
   app.running = true;
   app.statuses.clear();
   app.widgets.clear();
+  app.todos = createTodos();
   renderWidgets();
   const result = await coop.restart();
   if (!result.success) { toast(result.error || "Could not restart coop.", "error"); return; }
@@ -1179,6 +1195,8 @@ function hotkeys() {
     // The tree view's own controls are listed in that view, not here.
     ...Object.entries(KEYS).filter(([id, k]) => !id.startsWith("app.tree.") && k.keys && k.keys !== "native" && k.keys !== "terminal").map(([, k]) => [k.keys, k.does]),
     ["Ctrl+= / Ctrl+-", "Zoom in or out (Ctrl+0 resets)"],
+    // The same key collapses the todo panel in the terminal (coop sync seeds it).
+    [COLLAPSE_KEY, "Collapse or expand the panels above the prompt (the todo list)"],
     // The side pane is the window's own; it has no terminal key to map.
     ...Object.values(ACTIONS).filter((action) => action.pane && action.keys).map((action) => [action.keys, action.label]),
   ];
@@ -1317,6 +1335,7 @@ function onGlobalKey(event) {
   if (modalOpen()) return;
   if (ctrl && !event.shiftKey && !event.altKey && (event.key === "\\" || event.code === "Backslash")) { event.preventDefault(); togglePane(app.lastPane); return; }
   if (ctrl && !event.shiftKey && key === "f") { event.preventDefault(); app.finder.open(); return; }
+  if (event.altKey && !ctrl && !event.shiftKey && key === "t") { event.preventDefault(); app.widgetsCollapsed = !app.widgetsCollapsed; renderWidgets(); return; }
   if (ctrl && (event.key === "ArrowUp" || event.key === "ArrowDown")) { event.preventDefault(); jumpPrompt(event.key === "ArrowUp" ? -1 : 1); return; }
   // Page keys scroll the conversation from the prompt, as in the terminal,
   // unless the prompt itself is long enough to need them.

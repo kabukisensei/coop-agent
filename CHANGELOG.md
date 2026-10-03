@@ -7,6 +7,30 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- `@juicesharp/rpiv-todo` **2.12.0** joins the pinned extensions (Aaron, 2026-10-03,
+  from the pi.dev package review): a `todo` tool and a live task panel above the
+  prompt, so a multi-step session shows what coop is doing, what is done and what
+  is queued; `/todos` prints the list. The list is rebuilt from the session's
+  own `todo` tool results (nothing on disk), so it survives `/reload`, compaction
+  and resume. The extension draws the panel as a TUI component, which Pi's RPC
+  mode drops, so the coop window draws the same panel itself from those tool
+  results (`desktop/renderer/todos.mjs`: on load from `get_messages`, then from
+  every `todo` result, with the overlay's glyphs, row budget and the rule that
+  completed rows leave at the next turn). Same author, monorepo and
+  `rpiv-config` dependency as the pinned `rpiv-ask-user-question`, so the
+  extension tree gains no new dependency family (`config/extensions-lock.json`
+  regenerated). The tool adds one schema and eight guideline bullets to the
+  model's tool list, roughly 700 tokens by the `ceil(chars/4)` estimate; the
+  injected prompt files are unchanged.
+- The todo panel's collapse key is **Alt+T** in both the terminal and the window.
+  The extension's default, Ctrl+Shift+T, is Pi's own tree key, and Pi runs
+  extension shortcuts first, so `coop sync` seeds `~/.config/rpiv-todo/config.json`
+  with `collapseKey: "alt+t"` once (`Set-CoopTodoConfig` in `lib/common.ps1`; a
+  file the user already has is never rewritten). The window binds the same Alt+T
+  to collapse every widget above the prompt to its first line and a count
+  (`desktop/renderer/widgets.mjs`), and lists it under `/hotkeys`. The desktop
+  RPC fixture is re-recorded with the extension loaded and now carries one
+  `todo` create and one update, so the window tests build the panel from them.
 - The coop window's first minutes (desktop UX review, Aaron 2026-10-03, six
   items). **Set-up card**: a fresh machine's launch notices (no model sign-in,
   `coop onboard`, `az login`) are one card on the empty screen and one banner

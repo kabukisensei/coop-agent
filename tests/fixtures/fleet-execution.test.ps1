@@ -42,7 +42,7 @@ if (-not $realPy) { throw 'a Python 3.10-3.13 is required for the fleet fixtures
 $psDir = Split-Path -Parent $psExe
 
 $extSpecs = @('npm:pi-mcp-adapter@3.3.0', 'npm:pi-hermes-memory@0.9.9', 'npm:pi-better-openai@0.1.22', 'npm:pi-web-access@0.35.0',
-              'npm:@juicesharp/rpiv-ask-user-question@2.12.0', 'npm:@xl0/pi-lovely-rename@0.1.5')
+              'npm:@juicesharp/rpiv-ask-user-question@2.12.0', 'npm:@juicesharp/rpiv-todo@2.12.0', 'npm:@xl0/pi-lovely-rename@0.1.5')
 
 # A Python string literal for a path (backslashes and quotes escaped).
 function ConvertTo-PyString([string]$S) { return "'" + $S.Replace('\', '\\').Replace("'", "\'") + "'" }
