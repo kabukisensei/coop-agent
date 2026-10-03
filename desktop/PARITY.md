@@ -194,7 +194,7 @@ dialogs as cards and lists.
 
 | Command | Extension | Maps to | In the window |
 | --- | --- | --- | --- |
-| `/start` | coop-tools | Pi | The Start Here menu, as a list. The empty window offers it too. |
+| `/start` | coop-tools | Pi | The Start Here menu, as a list. The empty window offers it too, and the first launch on a profile (`COOP_FIRST_RUN`, as the terminal) opens it once. |
 | `/mobile` | coop-mobile | Pi | Teams mobile access: `setup` and `login` ask their questions as dialogs; `on` asks a confirm card; `status` is a toast. With mobile on, a dialog the phone answers closes its card through Pi's abort (M1, `docs/mobile.md`). |
 | `/setup-project` | coop-tools | Pi | The project wizard's questions, one dialog each. |
 | `/setup-docs` | coop-tools | Pi | The docs wizard's questions, or a notice when coop-data-doc lacks the native wizard. |
@@ -243,9 +243,9 @@ Pi's `docs/rpc-extension-ui.md`: what an extension can ask the window to show.
 
 | Request | Maps to | In the window |
 | --- | --- | --- |
-| `select` | window | A list card with filtering; Esc cancels. |
-| `confirm` | window | A card with Yes and No; No has the focus. |
-| `input` | window | A card with a text field. |
+| `select` | window | A list card with filtering; Esc cancels. An `ask_user_question` (its RPC form numbers the options) shows as a question card: header, question, each option with its description; the value sent back is the option text as offered. |
+| `confirm` | window | An approval card: the message's indented lines (the command or SQL) as a code block, the closing question last, the Yes button labelled with its verb ("Run it", "Allow"), No as the default with the focus. The answer is the same confirmed true or false. |
+| `input` | window | A card with a text field. An `ask_user_question` multi-select (asked in RPC as "enter the numbers") shows as checkboxes plus a free-text field; the value sent back is the same comma-separated numbers or the typed text. |
 | `editor` | window | A card with a multi-line editor. |
 | `notify` | window | One-line notices are toasts; longer reports join the conversation. |
 | `setStatus` | window | The status bar. |
@@ -256,6 +256,17 @@ Pi's `docs/rpc-extension-ui.md`: what an extension can ask the window to show.
 
 ## Model sign-in
 
-The window never handles provider credentials. When no stored login exists it
-shows a banner whose button opens the terminal on the same session, where
-`/login` runs; Restart then picks the login up.
+The window never handles provider credentials. When no stored login exists the
+set-up card on the empty screen (and a banner once the conversation has
+content) lists it with the other launch notices (`coop onboard`, `az login`),
+each with a button that opens the terminal on the same session, where `/login`
+runs; Restart then picks the login up.
+
+## Menu bar and notifications
+
+The window's own additions, no terminal counterpart: a File, Edit, View,
+Session and Help menu bar (`desktop/lib/menu.mjs`; every entry runs one of the
+window's actions above; View > Menu bar hides it, Alt shows it again) and a
+Windows notification plus taskbar flash when a turn ends (`agent_end`) or an
+extension asks a question while the window is in the background (Settings >
+Notify in the background).
