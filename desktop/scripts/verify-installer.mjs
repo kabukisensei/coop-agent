@@ -217,13 +217,13 @@ async function main(argv) {
     step("PowerShell's `& npm` runs the bundled npm.cmd", { note: npmOut });
 
     // Every bundled file must fit Windows' 260-character path limit in a
-    // teammate's profile: the runner's install dir is a short one, so allow
-    // for a longer user name (C:\Users\<name>\AppData\Local\Programs\coop is
-    // the per-user default; 64 characters covers it).
+    // teammate's profile: the runner's user name is short, so measure against
+    // the per-user default C:\Users\<name>\AppData\Local\Programs\coop\resources\
+    // with a 20-character name (the longest a Windows account name can be).
     const longest = longestPath(join(paths.installDir, "resources"));
-    const worst = "resources/".length + longest.length + 64;
-    if (worst >= 260) throw new Error(`the package's longest path is ${longest.length} characters under resources (${longest.path}): ${worst} in a long profile path, over Windows' limit`);
-    step("bundled paths fit Windows' path limit", { note: `longest ${longest.length} chars under resources: ${longest.path}`, longestPath: longest });
+    const worst = "C:\\Users\\".length + 20 + "\\AppData\\Local\\Programs\\coop\\resources\\".length + longest.length;
+    if (worst >= 260) throw new Error(`the package's longest path is ${longest.length} characters under resources (${longest.path}): ${worst} with a 20-character user name, over Windows' limit`);
+    step("bundled paths fit Windows' path limit", { note: `longest ${longest.length} chars under resources (${worst} with a 20-character user name): ${longest.path}`, longestPath: longest, worstCase: worst });
 
     // The coop snapshot runs on the bundled runtime: `coop version` resolves the
     // bundled pi.cmd (lib/common.ps1 puts the runtime first on PATH) even though
