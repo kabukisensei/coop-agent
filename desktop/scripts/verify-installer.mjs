@@ -66,6 +66,12 @@ export function packagePaths(env = process.env) {
   };
 }
 
+// The package carries the bundled runtime (D1d: Node, Pi, the extension tree,
+// the repository snapshot), so NSIS unpacks tens of thousands of files; a
+// GitHub-hosted runner needs well over three minutes for that.
+const INSTALL_TIMEOUT_MS = 900000;
+const UNINSTALL_TIMEOUT_MS = 600000;
+
 function runOwned(command, args, options = {}, timeoutMs = 180000) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, args, { ...options, stdio: ["ignore", "pipe", "pipe"] });
@@ -133,10 +139,12 @@ async function main(argv) {
   let installed = false;
   try {
     const install = nsisInvocation(installer, paths.installDir);
-    await runOwned(install.command, install.args, install.options);
+    const installStarted = Date.now();
+    await runOwned(install.command, install.args, install.options, INSTALL_TIMEOUT_MS);
     installed = true;
+    const installSeconds = Math.round((Date.now() - installStarted) / 1000);
     if (!existsSync(paths.exe) || !existsSync(paths.uninstaller)) throw new Error(`install left no ${paths.exe} or uninstaller`);
-    step("silent per-user install", { note: paths.installDir });
+    step("silent per-user install", { note: `${paths.installDir} (${installSeconds}s)`, seconds: installSeconds });
 
     const entries = await registryEntries();
     if (entries.length !== 1) throw new Error(`expected one Add/Remove entry for ${PRODUCT}, found ${entries.length}`);
@@ -192,8 +200,10 @@ async function main(argv) {
     step("profile untouched by install and doctor");
 
     const uninstall = nsisInvocation(paths.uninstaller, paths.installDir, { uninstall: true });
-    await runOwned(uninstall.command, uninstall.args, uninstall.options);
+    const uninstallStarted = Date.now();
+    await runOwned(uninstall.command, uninstall.args, uninstall.options, UNINSTALL_TIMEOUT_MS);
     installed = false;
+    const uninstallSeconds = Math.round((Date.now() - uninstallStarted) / 1000);
     // The uninstaller removes itself last; give the file system a moment.
     for (let waited = 0; existsSync(paths.uninstaller) && waited < 30; waited++) await new Promise((done) => setTimeout(done, 1000));
     if (existsSync(paths.exe) || existsSync(join(paths.installDir, "resources")) || existsSync(paths.runtime)) throw new Error("uninstall left the package installed");
@@ -203,14 +213,14 @@ async function main(argv) {
     }
     if (readFileSync(sentinelFile, "utf8") !== sentinel) throw new Error("uninstall removed or changed the profile's window data");
     if (existsSync(paths.electronAppData)) throw new Error(`${paths.electronAppData} appeared during uninstall`);
-    step("silent uninstall leaves no package, entry or shortcut; profile data kept");
+    step("silent uninstall leaves no package, entry or shortcut; profile data kept", { note: `${uninstallSeconds}s`, seconds: uninstallSeconds });
     report.ok = true;
   } catch (error) {
     report.error = error.message;
     if (installed && existsSync(paths.uninstaller)) {
       try {
         const uninstall = nsisInvocation(paths.uninstaller, paths.installDir, { uninstall: true });
-        await runOwned(uninstall.command, uninstall.args, uninstall.options);
+        await runOwned(uninstall.command, uninstall.args, uninstall.options, UNINSTALL_TIMEOUT_MS);
         report.cleanup = "uninstalled";
       } catch (cleanupError) { report.cleanup = cleanupError.message; }
     }

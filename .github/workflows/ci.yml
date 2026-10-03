@@ -252,7 +252,7 @@ jobs:
     # (desktop/scripts/verify-installer.mjs refuses to run anywhere else).
     name: installer (Windows)
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
