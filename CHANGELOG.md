@@ -37,6 +37,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- Pi's built-in `/bug` can no longer upload a report or session transcript from a
+  coop session to Earendil's gateway (`radius.pi.dev`), which would have moved
+  client data to a third-party service. coop launches Pi with `PI_RADIUS_GATEWAY`
+  pointed at an unresolvable host, so the upload fails at once and Pi offers its
+  local "Export as Zip" instead; an explicit `PI_RADIUS_GATEWAY` in the
+  environment still wins. The launch-spec test checks it.
 - `sql_impact` lists a view's dependents on a Fabric Warehouse. The Warehouse
   rejects `sys.dm_sql_referencing_entities`, so every trace there reported
   `downstream` as unavailable (found in the SQ live acceptance on the client's dev

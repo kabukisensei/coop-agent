@@ -397,6 +397,9 @@ print("resume verdict contract OK")
     # #165: MCP comes only from coop's agent-dir mcp-adapter.json, never a repo's .mcp.json.
     if ($jsonData.env.PI_MCP_CONFIG_MODE -eq 'exclusive') { Ok "launch spec pins MCP config to coop's agent dir (PI_MCP_CONFIG_MODE=exclusive)" }
     else { Ko 'launch spec does not set PI_MCP_CONFIG_MODE=exclusive' }
+    # Client data isolation: Pi's /bug upload must never reach radius.pi.dev from a coop session.
+    if ($jsonData.env.PI_RADIUS_GATEWAY -eq 'https://radius.coop.invalid') { Ok 'launch spec blocks the Pi /bug upload (PI_RADIUS_GATEWAY points at an unresolvable host)' }
+    else { Ko "launch spec does not block the Pi /bug upload (PI_RADIUS_GATEWAY='$($jsonData.env.PI_RADIUS_GATEWAY)')" }
   } catch { Ko "--no-launch --json update-policy check failed: $_" }
 
   # --- 2b. coop web is retired (S5): it warns and starts the terminal agent ----
