@@ -10,6 +10,10 @@
 #      passed explicitly: an interactive first launch sets COOP_FIRST_RUN=1 and
 #      writes the <profile dir>\first-run stamp (once); a later launch sets nothing;
 #      a non-interactive launch sets nothing and writes no stamp.
+#   A3. The window launch (-Window, what `coop desktop` passes): with stdin
+#      redirected it still sets COOP_FIRST_RUN=1 and writes the stamp, and the
+#      incomplete-onboarding line is the warning (the window's set-up card reads
+#      the launch warnings), never the interactive info line.
 #   B. End-to-end `coop` (no args) with a stub pi on a fresh home: the launcher
 #      continues into pi (coop-profile extension loaded), prints the incomplete-
 #      onboarding warning, creates no profile and no first-run stamp, hands pi no
@@ -177,6 +181,31 @@ sys.exit(0)
   $r = Invoke-Redirected $hand @('False')
   if ((Get-GateValue $r.Out 'firstRunFlag') -eq '' -and (Get-GateValue $r.Out 'stamp') -eq 'False') { Ok 'non-interactive launch: no COOP_FIRST_RUN, no stamp' }
   else { Ko "non-interactive launch: flag=$(Get-GateValue $r.Out 'firstRunFlag') stamp=$(Get-GateValue $r.Out 'stamp')" ($r.Out + $r.Err) }
+
+  # --- A3. the window launch counts as interactive whatever stdin is ----------------
+  $win = Join-Path $t 'window.ps1'
+  [System.IO.File]::WriteAllText($win, (@(
+    "`$ErrorActionPreference = 'Continue'",
+    ". '$((Join-Path $root 'lib\common.ps1').Replace("'", "''"))'",
+    "function Get-CoopPython { return '$($wizardPy.Replace("'", "''"))' }",
+    "Write-Output ('inputRedirected=' + [Console]::IsInputRedirected)",
+    "Set-CoopFirstRunLaunch -Window",
+    "Write-Output ('rc=' + `$script:CoopOnboardRc)",
+    "Write-Output ('firstRunFlag=' + `$env:COOP_FIRST_RUN)",
+    "Write-Output ('stamp=' + (Test-Path -LiteralPath (Get-CoopFirstRunStampFile) -PathType Leaf))",
+    "exit 0") -join "`n") + "`n", $utf8)
+  Reset-Home
+  Clear-Markers
+  $r = Invoke-Redirected $win
+  $all = $r.Out + $r.Err
+  if ((Get-GateValue $r.Out 'inputRedirected') -eq 'True' -and (Get-GateValue $r.Out 'firstRunFlag') -eq '1' -and (Get-GateValue $r.Out 'stamp') -eq 'True' -and (Get-GateValue $r.Out 'rc') -eq '0') { Ok 'window first launch without a terminal: COOP_FIRST_RUN=1, stamp written, rc 0' }
+  else { Ko "window first launch: redirected=$(Get-GateValue $r.Out 'inputRedirected') flag=$(Get-GateValue $r.Out 'firstRunFlag') stamp=$(Get-GateValue $r.Out 'stamp') rc=$(Get-GateValue $r.Out 'rc')" $all }
+  if ($all.Contains($warnText) -and $all.Contains('coop onboard') -and -not $all.Contains('First run')) { Ok 'window first launch: the onboarding line is the warning the set-up card reads' }
+  else { Ko 'window first launch: warning missing or the interactive info line printed' $all }
+  if (-not (Test-Path -LiteralPath (Join-Path $marker 'wizard-ran'))) { Ok 'window first launch: the wizard never ran' } else { Ko 'window first launch: the wizard ran' }
+  $r = Invoke-Redirected $win
+  if ((Get-GateValue $r.Out 'firstRunFlag') -eq '' -and (Get-GateValue $r.Out 'stamp') -eq 'True') { Ok 'second window launch: stamp present, no COOP_FIRST_RUN' }
+  else { Ko "second window launch: flag=$(Get-GateValue $r.Out 'firstRunFlag') stamp=$(Get-GateValue $r.Out 'stamp')" ($r.Out + $r.Err) }
 
   # --- B. end-to-end: plain `coop` on a fresh home continues into pi ----------------
   $coop = Join-Path $root 'bin\coop.ps1'

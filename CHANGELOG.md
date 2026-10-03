@@ -7,6 +7,21 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- The installed coop window (D1c) opens its first launch like the terminal
+  does: the Start menu once, and the welcome with the set-up card. Two causes
+  from the v0.30.0 acceptance on the client VM: the package starts `coop desktop`
+  with no console input, so the launch never counted as interactive and
+  `COOP_FIRST_RUN` was never set (`coop desktop` now treats every launch as
+  interactive, since a person is about to see the window; the onboarding line
+  goes out as the warning the set-up card reads); and the MCP adapter's long
+  connection report at start (the Warehouse endpoint answering 401 without an
+  Azure token) landed in the conversation as a report, which the renderer took
+  for conversation content and dropped the whole welcome, including the set-up
+  card, the example prompts and the first-run menu. Notices no longer count as
+  content, and before the conversation starts a notice that names a sign-in
+  joins the set-up card as the `az login` item with the raw text as its detail
+  (`desktop/renderer/welcome.mjs`, `desktop/renderer/app.mjs`,
+  `Set-CoopFirstRunLaunch -Window`).
 - Follow-ups from the SQ live acceptance on the client's dev Warehouse
   (2026-10-03):
   - The guardrails audit log records an approved Warehouse SQL write as
