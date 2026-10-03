@@ -76,7 +76,7 @@ const stack = [];
  * close button; buttons: [{ label, kind, onClick }] (onClick returning false
  * keeps it open).
  */
-export function openModal({ title, body, buttons = [], onCancel, wide = false, className = "" }) {
+export function openModal({ title, titleIcon = "", body, buttons = [], onCancel, wide = false, className = "" }) {
   const root = layer();
   const previous = document.activeElement;
   let closed = false;
@@ -97,7 +97,7 @@ export function openModal({ title, body, buttons = [], onCancel, wide = false, c
   }))) : null;
   const box = el("div", { class: `modal ${wide ? "wide" : ""} ${className}`, role: "dialog", "aria-modal": "true", "aria-label": title || "coop" },
     el("div", { class: "modal-title" },
-      el("span", { class: "modal-title-text", text: title || "coop" }),
+      el("span", { class: "modal-title-text" }, titleIcon ? icon(titleIcon) : null, el("span", { text: title || "coop" })),
       el("button", { type: "button", class: "btn icon title-close", title: "Close (Esc)", onclick: cancel }, icon("close", "Close"))),
     el("div", { class: "modal-body" }, body),
     footer);
@@ -133,7 +133,7 @@ function trapFocus(box, event) {
  * A filterable list (model picker, sessions, palette, extension selects).
  * items: [{ label, detail, value, hint }]. Resolves with the value or undefined.
  */
-export function pickFrom({ title, items, placeholder = "Type to filter", filter = true, message = "", current }) {
+export function pickFrom({ title, items, placeholder = "Type to filter", filter = true, message = "", detail = "", current }) {
   return new Promise((resolve) => {
     let done = false;
     const finish = (value) => { if (!done) { done = true; resolve(value); } };
@@ -143,7 +143,7 @@ export function pickFrom({ title, items, placeholder = "Type to filter", filter 
     let active = Math.max(0, items.findIndex((item) => item.value === current));
     const render = () => {
       list.replaceChildren(...shown.map((item, index) => el("li", {
-        class: `option ${index === active ? "active" : ""} ${item.value === current ? "current" : ""}`,
+        class: `option ${index === active ? "active" : ""} ${item.value === current ? "current" : ""} ${item.className || ""}`,
         role: "option",
         tabindex: filter ? "-1" : "0",
         "aria-selected": index === active ? "true" : "false",
@@ -170,7 +170,8 @@ export function pickFrom({ title, items, placeholder = "Type to filter", filter 
       input.addEventListener("keydown", onKey);
     }
     list.addEventListener("keydown", onKey);
-    const body = el("div", { class: "picker" }, message ? el("p", { class: "dialog-message", text: message }) : null, input, list);
+    const body = el("div", { class: "picker" }, message ? el("p", { class: "dialog-message", text: message }) : null,
+      detail ? el("pre", { class: "dialog-code" }, el("code", { text: detail })) : null, input, list);
     const modal = openModal({ title, body, onCancel: () => finish(undefined), wide: true });
     render();
     if (!filter) requestAnimationFrame(() => { const node = list.children[active]; if (node) node.focus(); });
