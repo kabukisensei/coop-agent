@@ -37,6 +37,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- `release.yml` publishes the coop window installer only after the same
+  acceptance the PR job runs has passed on the exact bytes it publishes
+  (#277): the tag's `installer` job now runs `desktop/scripts/verify-installer.mjs`
+  (silent install, `coop.exe --doctor`, silent uninstall, profile untouched) on
+  its disposable runner, keeps the report (installer SHA-256, package version,
+  every step) as an artifact on success and failure, and the `release` job
+  refuses to publish unless `desktop/scripts/check-installer-report.mjs` finds
+  the report ok and its SHA-256 equal to the downloaded executable's. The report
+  is attached to the GitHub Release beside the installer. A failed acceptance
+  fails the tag run before anything is published.
+
 - Guardrails: `git add <source> && git commit` (and `;`, newline, `git stage`,
   `git rm`, `git mv`, `add -A`, `add .`, `add -u` forms) no longer passes the
   never-commit-source gate on an empty or docs-only index. The gate now folds in

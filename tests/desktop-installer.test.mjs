@@ -11,7 +11,8 @@
  */
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,6 +22,7 @@ import { consoleProcess } from "../desktop/lib/terminal.mjs";
 import { loadSettings, saveSettings } from "../desktop/lib/settings.mjs";
 import { readVersion, shippedPackage, stage, stageEntries, stagePackage } from "../desktop/scripts/build-installer.mjs";
 import { assertDisposableInstallerHost, nsisInvocation, packagePaths } from "../desktop/scripts/verify-installer.mjs";
+import { verifiedInstaller } from "../desktop/scripts/check-installer-report.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const MANIFEST = JSON.parse(readFileSync(join(ROOT, "config", "release-manifest.json"), "utf8"));
@@ -262,6 +264,48 @@ await check("verify-installer: the package's paths follow electron-builder's per
   assert.match(paths.desktopShortcut, /Desktop[\\/]coop \(window\)\.lnk$/);
   assert.equal(paths.profileData, join("C:\\Users\\me", ".coop", "desktop", "data"));
   assert.equal(paths.electronAppData, join("C:\\Users\\me\\AppData\\Roaming", "coop"));
+});
+
+await check("check-installer-report: publishes only the exe whose SHA-256 the passing report names (#277)", () => {
+  const dir = join(temp, "release-installer");
+  mkdirSync(dir, { recursive: true });
+  const exe = join(dir, "coop-window-9.9.9-win-x64.exe");
+  writeFileSync(exe, "not really an installer");
+  const sha = createHash("sha256").update(readFileSync(exe)).digest("hex");
+  const report = { ok: true, installer: "coop-window-9.9.9-win-x64.exe", installerSha256: sha, version: "9.9.9", steps: [] };
+  assert.deepEqual(verifiedInstaller(report, dir, "9.9.9"), { file: exe, sha256: sha, version: "9.9.9" });
+  assert.throws(() => verifiedInstaller({ ...report, ok: false, error: "uninstall left the package installed" }, dir, "9.9.9"), /does not say ok: uninstall left/);
+  assert.throws(() => verifiedInstaller({ ...report, installerSha256: "0".repeat(64) }, dir, "9.9.9"), /the acceptance passed on 0{64}/);
+  assert.throws(() => verifiedInstaller({ ...report, version: "9.9.8" }, dir, "9.9.9"), /ran on version 9\.9\.8, this release is 9\.9\.9/);
+  assert.throws(() => verifiedInstaller({ ...report, installerSha256: undefined }, dir, "9.9.9"), /no installer SHA-256/);
+  assert.throws(() => verifiedInstaller(null, dir, "9.9.9"), /not an object/);
+  writeFileSync(join(dir, "coop-window-9.9.9-other.exe"), "a second build");
+  assert.throws(() => verifiedInstaller(report, dir, "9.9.9"), /expected one coop-window-\*\.exe .* found 2/);
+});
+
+await check("release.yml: the tag build runs the acceptance on the release bytes and publishes only a verified exe (#277)", () => {
+  const release = readFileSync(join(ROOT, ".github", "workflows", "release.yml"), "utf8");
+  const ci = readFileSync(join(ROOT, ".github", "workflows", "ci.yml"), "utf8");
+  const jobs = release.split(/^  (?=[a-z-]+:\s*$)/m);
+  const installer = jobs.find((job) => job.startsWith("installer:"));
+  const publish = jobs.find((job) => job.startsWith("release:"));
+  assert.ok(installer && publish, "release.yml has installer and release jobs");
+  // The PR job's verifier step, same opt-in, same script, on the tag build.
+  assert.match(installer, /COOP_INSTALLER_TEST: '1'/, "the tag installer job opts the disposable runner in");
+  assert.match(installer, /run: node desktop\/scripts\/verify-installer\.mjs --output "\$env:RUNNER_TEMP\\installer-acceptance\.json"/, "the tag installer job runs the same verifier as ci.yml");
+  assert.match(ci, /run: node desktop\/scripts\/verify-installer\.mjs --output "\$env:RUNNER_TEMP\\installer-acceptance\.json"/, "ci.yml still runs the verifier the same way");
+  assert.doesNotMatch(installer, /continue-on-error/, "a failed acceptance fails the installer job");
+  assert.match(installer, /if: always\(\)\s+with:\s+name: coop-window-installer-acceptance\s+path: \$\{\{ runner\.temp \}\}\/installer-acceptance\.json\s+if-no-files-found: error/, "the report is uploaded on success and failure");
+  // The release job depends on the installer job, so a failed acceptance publishes nothing.
+  assert.match(publish, /needs: \[installer\]/, "release needs the installer job");
+  assert.doesNotMatch(publish, /if: always\(\)|if: \$\{\{ always/, "release does not run past a failed installer job");
+  assert.match(publish, /name: coop-window-installer-acceptance\s+path: installer/, "release downloads the report beside the exe");
+  const order = [publish.indexOf("name: coop-window-installer\n"), publish.indexOf("check-installer-report.mjs installer/installer-acceptance.json installer"), publish.indexOf("Create GitHub Release")];
+  assert.ok(order.every((i) => i >= 0) && order[0] < order[1] && order[1] < order[2], "download, then the report check, then publish");
+  assert.match(publish, /files: \|\s+installer\/coop-window-\*\.exe\s+installer\/installer-acceptance\.json\s+fail_on_unmatched_files: true/, "the release carries the exe and its acceptance report");
+  // The ancestry and VERSION guard is still the first step of the release job.
+  assert.match(publish, /Refuse a tag that isn't VERSION or isn't on origin\/main/, "the tag guard stays");
+  assert.ok(publish.indexOf("Refuse a tag that isn't VERSION") < publish.indexOf("Refuse an installer the acceptance did not pass on"), "tag guard runs before the installer check");
 });
 
 rmSync(temp, { recursive: true, force: true });
