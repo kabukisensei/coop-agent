@@ -304,12 +304,23 @@ catalog queries with the name bound through `OBJECT_ID(?)`, never spliced in:
 Each section is `{"state": "ok", "items": [...], "count", "truncated"}` or
 `{"state": "unavailable", "reason": ...}` when that catalog view is missing on the
 target (Synapse serverless never exposes `sys.dm_sql_referencing_entities`, so its
-`downstream` section says so without asking the server), so an empty list always
-means "no dependents" and never "could not look". Dependencies are capped at 500
-per section and columns at 1000. The result also carries the executor's `target`
+`downstream` section says so without asking the server), so an empty list never
+means "could not look". A successful `downstream` section also carries `coverage`
+(this database only, dependents whose definitions this principal can read), because
+`sys.dm_sql_referencing_entities` returns partial results when `VIEW DEFINITION` is
+missing on some referencing objects and never sees dynamic SQL or other databases:
+an empty list means "none visible", and the tool's text says so instead of "no
+dependents". Dependencies are capped at 500 per section and columns at 1000. The result also carries the executor's `target`
 summary and the resolved `object` (schema, name, type); `object_not_found`,
 `object_invalid` and `input_invalid` are the tool's own states, every other state is
 the executor's. Driver error text, hosts and tokens never appear.
+
+Both native SQL tools run against the contract the session started with: the
+extension notes the text of `.coop/project.yml` at `session_start` (or on the first
+native SQL call) and compares the file on every call. A contract edited mid-session,
+by hand or by `/setup-project`, gets `contract_changed` and connects nowhere until
+`/new` or a restart re-reads it, so the executor can never connect to a target the
+guardrails' trusted snapshot did not authorize.
 
 Governance (`extensions/coop-guardrails`): `sql_impact` is a metadata read, so it
 runs without a prompt when the trusted contract snapshot resolves a dev or test

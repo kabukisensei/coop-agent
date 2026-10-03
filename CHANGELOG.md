@@ -37,6 +37,55 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- Guardrails: `git add <source> && git commit` (and `;`, newline, `git stage`,
+  `git rm`, `git mv`, `add -A`, `add .`, `add -u` forms) no longer passes the
+  never-commit-source gate on an empty or docs-only index. The gate now folds in
+  what the earlier staging segments of the same command put into the index, and
+  refuses a commit whose future index it cannot read (interactive and
+  `--pathspec-from-file` staging). Compound docs-only staging and commits still
+  work ([#282](https://github.com/kabukisensei/coop-agent/issues/282)).
+- Guardrails: a Warehouse write on a managed **production** target no longer
+  offers "Allow edits for this session" when its SQL happens not to contain the
+  word "prod". The session option now depends on the environment coop's own
+  managed-server config gives the Warehouse (dev or test only); production and
+  unresolved targets ask for every write, and the prompt says PRODUCTION
+  ([#283](https://github.com/kabukisensei/coop-agent/issues/283)).
+- Native SQL (`fabric_sql_query`, `sql_impact`) runs against the project contract
+  the session started with. The extension notes `.coop/project.yml` at session
+  start and compares it on every call; a contract edited mid-session (by hand or
+  `/setup-project`) gets `contract_changed` and connects nowhere until `/new` or a
+  restart, so the executor can never reach a target the guardrails' trusted
+  snapshot did not authorize
+  ([#284](https://github.com/kabukisensei/coop-agent/issues/284)).
+- `sql_impact` no longer presents an empty dependents list as "no dependents": a
+  successful `downstream` section carries its `coverage` (this database only,
+  dependents whose definitions the principal can read) and the tool text says
+  "none visible" with the reasons a dependent would be missing
+  ([#285](https://github.com/kabukisensei/coop-agent/issues/285)).
+- `coop update` re-reads the fleet plan after the checkout moves to the new
+  release, so one run converges Pi, the pipx tools and the npm tools to that
+  release's pins instead of leaving them one release behind when only the
+  manifest and the extension lock changed
+  ([#280](https://github.com/kabukisensei/coop-agent/issues/280)).
+- The coop window restarts Pi once per request: two overlapping Restart
+  requests (the palette reopened during the shutdown) used to each start a
+  replacement Pi, with the first running on unseen until the app quit. The main
+  process now coalesces them and starts nothing for a window closed meanwhile
+  (`desktop/lib/restart.mjs`,
+  [#286](https://github.com/kabukisensei/coop-agent/issues/286)).
+- The coop window keeps a refused draft whole: when Pi does not take a message,
+  the text and every attachment chip come back (ahead of anything attached
+  meanwhile, nothing doubled), and the image limits the RPC boundary enforces
+  (five images, 4 MB each, 8 MB together) are checked before the draft is
+  cleared, with a message that says which image to remove
+  (`desktop/renderer/draft.mjs`,
+  [#281](https://github.com/kabukisensei/coop-agent/issues/281)).
+- Master plan register and `AGENTS.md` reconciled with the shipped tags: rows
+  U1, N1, ST1, 11a, 15 and FA1 name the PR and the first tag that shipped them,
+  the Phase 0 rows say which VM receipts are not recorded instead of "pending",
+  and the `AGENTS.md` roadmap summary points at the register instead of
+  repeating volatile statuses
+  ([#278](https://github.com/kabukisensei/coop-agent/issues/278)).
 - Pi's built-in `/bug` can no longer upload a report or session transcript from a
   coop session to Earendil's gateway (`radius.pi.dev`), which would have moved
   client data to a third-party service. coop launches Pi with `PI_RADIUS_GATEWAY`

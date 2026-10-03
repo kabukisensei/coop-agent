@@ -15,6 +15,7 @@ import { makeResizer, sidebarMaxWidth } from "./resize.mjs";
 import { attachmentNote } from "./attach-note.mjs";
 import { setupItems, setupSummary, EXAMPLES } from "./welcome.mjs";
 import { parseConfirm, confirmLabels, parseQuestionSelect, parseQuestionMulti, multiAnswer } from "./dialogs.mjs";
+import { imageBudgetProblem, restoreDraft } from "./draft.mjs";
 
 const coop = window.coop;
 const $ = (id) => document.getElementById(id);
@@ -494,16 +495,22 @@ function pushHistory(text) {
 }
 
 async function sendPrompt(text, { followUp = false } = {}) {
-  const images = app.attachments.filter((file) => file.kind === "image").map((image) => ({ type: "image", data: image.data, mimeType: image.mimeType }));
-  const input = { type: "prompt", message: text + attachmentNote(app.attachments) };
+  const attachments = app.attachments;
+  const images = attachments.filter((file) => file.kind === "image").map((image) => ({ type: "image", data: image.data, mimeType: image.mimeType }));
+  const input = { type: "prompt", message: text + attachmentNote(attachments) };
   if (images.length) input.images = images;
   if (app.tl.busy) input.streamingBehavior = followUp ? "followUp" : "steer";
   pushHistory(text);
   clearPrompt();
   const result = await cmd(input);
   if (!result.success) {
+    // The draft comes back whole (#281): the text unless something new was typed,
+    // and every attachment ahead of anything attached meanwhile.
     toast(`coop did not take that message: ${result.error || "unknown error"}`, "error");
-    if (!prompt().value) setPrompt(text);
+    const draft = restoreDraft({ text: prompt().value, attachments: app.attachments }, { text, attachments });
+    if (draft.text !== prompt().value) setPrompt(draft.text);
+    app.attachments = draft.attachments;
+    renderAttachments();
   }
 }
 
@@ -512,6 +519,10 @@ async function submit({ followUp = false } = {}) {
   if (!text.trim() && !app.attachments.length) return;
   if (!app.running) { toast("coop is not running in this window. Restart it first.", "warning"); return; }
   if (app.attachments.some((file) => file.kind === "pending")) { toast("Still reading an attached file; one moment.", "info"); return; }
+  // The same image limits the RPC boundary enforces, checked before the draft
+  // is cleared (#281); the boundary still enforces them.
+  const budget = imageBudgetProblem(app.attachments, attachLimits());
+  if (budget) { toast(budget, "warning"); return; }
   const parsed = parseInput(text);
   // /coop-vibe <set> changes Pi's pool in the terminal; the window's own pool follows.
   const vibe = /^\/coop-vibe(?:\s+(\S+))?\s*$/.exec(text.trim());
@@ -684,7 +695,15 @@ function readImage(file) {
 }
 
 function attachLimits() {
-  return (app.info && app.info.attachLimits) || { perMessage: 10, images: 5 };
+  return (app.info && app.info.attachLimits) || { perMessage: 10, images: 5, imageBytes: 4 * 1024 * 1024, imageTotalBytes: 8 * 1024 * 1024 };
+}
+
+/** Add an image to the draft when it fits the image budget; otherwise say why. */
+function addImage(image) {
+  const problem = imageBudgetProblem([...app.attachments, image], attachLimits());
+  if (problem) { toast(problem, "warning"); return false; }
+  app.attachments.push(image);
+  return true;
 }
 
 function modelReadsImages() {
@@ -709,7 +728,7 @@ async function addImages(files) {
   for (const file of files) {
     if (!roomFor("image")) break;
     const image = await readImage(file);
-    if (image) app.attachments.push({ kind: "image", ...image });
+    if (image && !addImage({ kind: "image", name: file.name, ...image })) break;
   }
   renderAttachments();
 }
@@ -729,7 +748,12 @@ async function addPaths(paths) {
     if (result.success) {
       const file = result.data;
       if (file.kind === "image") file.url = `data:${file.mimeType};base64,${file.data}`;
-      app.attachments.splice(index, 1, file);
+      app.attachments.splice(index, 1);
+      if (file.kind === "image") {
+        if (!addImage(file)) { if (file.id) coop.forgetAttachment(file.id); }
+      } else {
+        app.attachments.push(file);
+      }
     } else {
       app.attachments.splice(index, 1);
       toast(result.error || `${pending.name} could not be attached.`, "warning");
@@ -935,6 +959,14 @@ async function openTerminal(hint) {
 }
 
 async function restart() {
+  // One restart at a time (#286): the main process coalesces overlapping
+  // requests; the window just does not reset its view twice.
+  if (app.restarting) { toast("coop is already restarting.", "info"); return; }
+  app.restarting = true;
+  try { await restartNow(); } finally { app.restarting = false; }
+}
+
+async function restartNow() {
   $("banner").hidden = true;
   app.setup = [];
   renderEmpty({ fresh: true });

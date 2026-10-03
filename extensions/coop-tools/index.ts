@@ -239,8 +239,37 @@ async function resolveFabricSqlPython(signal: AbortSignal | undefined): Promise<
   });
 }
 
+// The guardrails authorize native SQL from their trusted session snapshot of
+// `.coop/project.yml`, while `lib/sql_query.py` reads the contract from disk when
+// it connects. The two must name the same target, so the contract's text is noted
+// when the session starts (or on the first native SQL call) and every call compares
+// the file against it: a contract edited mid-session (by hand or by
+// /setup-project) gets `contract_changed` until `/new` or a restart re-reads it,
+// and a target the snapshot never approved is never connected (#284).
+let contractSnapshot: { path: string | null; text: string } | null = null;
+
+export function contractSnapshotFor(cwd: string): { path: string | null; text: string } {
+  const path = findProjectYml(cwd);
+  return { path, text: path ? safeRead(path) : "" };
+}
+
+export function noteContractSnapshot(cwd: string): void {
+  contractSnapshot = contractSnapshotFor(cwd);
+}
+
+/** True when the contract on disk differs from the session's snapshot. */
+export function contractChangedSince(snapshot: { path: string | null; text: string } | null, cwd: string): boolean {
+  if (!snapshot) return false;
+  const now = contractSnapshotFor(cwd);
+  return now.path !== snapshot.path || now.text !== snapshot.text;
+}
+
+export const CONTRACT_CHANGED_HINT = "the project contract (.coop/project.yml) changed during this session; coop keeps native SQL on the target the session started with. Start a new session (/new) to use the edited contract.";
+
 async function runFabricSqlHelper(params: any, signal: AbortSignal | undefined, cwd: string, helper: SqlHelper = "sql_query.py"): Promise<any> {
   if (signal?.aborted) return { ok: false, state: "aborted" };
+  if (!contractSnapshot) noteContractSnapshot(cwd);
+  else if (contractChangedSince(contractSnapshot, cwd)) return { ok: false, state: "contract_changed" };
   const selected = await resolveFabricSqlPython(signal);
   if (!selected.python) return { ok: false, state: selected.state || "selected_python_unavailable" };
   if (signal?.aborted) return { ok: false, state: "aborted" };
@@ -433,7 +462,10 @@ export function sqlImpactLines(details: any): string[] {
       lines.push(`${label}: unavailable (${part.reason || "not reported"})`);
       continue;
     }
-    lines.push(`${label} (${part.count}${part.truncated ? "+, capped" : ""}):`);
+    lines.push(`${label} (${part.count}${part.truncated ? "+, capped" : ""}${name === "downstream" && part.coverage ? `; ${part.coverage}` : ""}):`);
+    if (name === "downstream" && part.state === "ok" && !part.count) {
+      lines.push("- none visible: a dependent whose definition this principal cannot read, a dynamic SQL reference or another database would not appear here; built lineage docs cover the rest of the estate");
+    }
     for (const item of part.items || []) {
       if (name === "columns") {
         lines.push(`- ${item.name} ${item.type}${item.nullable ? " NULL" : " NOT NULL"}`);
@@ -1828,7 +1860,7 @@ export default function coopTools(pi: ExtensionAPI) {
   pi.registerTool({
     name: "sql_impact",
     label: "SQL impact (live catalog trace)",
-    description: "Read-only live impact trace of ONE SQL object on the contract's default dev/test sql_targets entry: three fixed, parameterized catalog queries (never free text) for downstream dependents, upstream references and columns. A section marked unavailable means the target could not be asked; an empty list means 'no dependents', never 'could not look'. Accepts only `object`.",
+    description: "Read-only live impact trace of ONE SQL object on the contract's default dev/test sql_targets entry: three fixed, parameterized catalog queries (never free text) for downstream dependents, upstream references and columns. A section marked unavailable means the target could not be asked; an empty downstream list means 'no dependents visible to this principal in this database' (a dependent whose definition this principal cannot view, dynamic SQL and other databases are outside what the catalog shows), never 'could not look'. Accepts only `object`.",
     promptSnippet: "Live catalog trace of one SQL object's dependents, references and columns",
     promptGuidelines: [
       "Before planning or editing a live SQL object, call sql_impact with its name, then data_doc lineage for the same object when built docs exist, and report drift between them. Metadata only: use fabric_sql_query for rows.",
@@ -1841,7 +1873,7 @@ export default function coopTools(pi: ExtensionAPI) {
       const section = (name: string) => {
         const part = details?.[name];
         if (!part || typeof part !== "object") return `${name}: ?`;
-        return part.state === "ok" ? `${name}: ${part.count}${part.truncated ? "+" : ""}` : `${name}: unavailable`;
+        return part.state === "ok" ? `${name}: ${part.count}${part.truncated ? "+" : ""}${name === "downstream" ? " visible" : ""}` : `${name}: unavailable`;
       };
       const text = details?.ok
         ? modelText(
@@ -1849,7 +1881,7 @@ export default function coopTools(pi: ExtensionAPI) {
           sqlImpactLines(details),
           "query sys.dm_sql_referencing_entities or INFORMATION_SCHEMA.COLUMNS with fabric_sql_query for the rest",
         )
-        : `sql_impact unavailable: ${String(details?.state || "internal_error")}.`;
+        : `sql_impact unavailable: ${String(details?.state || "internal_error")}.${details?.state === "contract_changed" ? ` ${CONTRACT_CHANGED_HINT}` : ""}`;
       return { content: [{ type: "text" as const, text }], details };
     },
   });
@@ -1873,7 +1905,7 @@ export default function coopTools(pi: ExtensionAPI) {
           sqlRowLines(details),
           "narrow the SELECT (fewer columns or a smaller TOP) to see them",
         )
-        : `fabric_sql_query unavailable: ${String(details?.state || "internal_error")}.`;
+        : `fabric_sql_query unavailable: ${String(details?.state || "internal_error")}.${details?.state === "contract_changed" ? ` ${CONTRACT_CHANGED_HINT}` : ""}`;
       return { content: [{ type: "text" as const, text }], details };
     },
   });
@@ -2136,6 +2168,9 @@ export default function coopTools(pi: ExtensionAPI) {
   );
 
   pi.on("session_start", async (_event: SessionStartEvent, ctx: ExtensionContext) => {
+    // The contract native SQL runs against is the one this session starts with
+    // (#284); /new, /resume and /fork re-read it here.
+    noteContractSnapshot(ctx.cwd);
     // Learning-nudge lifecycle is per SESSION: reset the failure tally, the
     // dedupe set, and the once-only flags so a fresh session can be nudged
     // again. Turns within one session accumulate (two failures across two
