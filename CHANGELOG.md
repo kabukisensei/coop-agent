@@ -5,6 +5,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **New shortcut icon** — `themes/coop.ico` is now a pixel-art tile: the logo's lime
+  C and red dot on a navy square, drawn on a 16 px grid so it stays readable at
+  taskbar size (the spy fedora blurred into a blob at 16 and 32 px). Classic BMP
+  frames at 16, 24, 32, 48, 64 and 128 px plus a 256 px PNG frame. It is picked up
+  by the Desktop and Start Menu shortcuts, the coop window and the installer; run
+  `coop install` (or reinstall the window) to refresh existing shortcuts.
+
 ### Fixed
 
 - Follow-ups from the SQ live acceptance on the client's dev Warehouse
