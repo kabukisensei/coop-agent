@@ -31,10 +31,13 @@ weekly. Run it inside the `coop-workflow` skill (spec, plan, approval).
 
 ## Build
 
-1. Scaffold in a new folder, with telemetry off (set it in every Rayfin shell):
-   `RAYFIN_TELEMETRY_OPTOUT=1 npm create @microsoft/rayfin@latest <app> -- --template <name>`
-   (`npx rayfin init --list-templates` lists names). The CLI is a project dev
-   dependency; never install it globally.
+1. Scaffold in a new folder, with telemetry off (`$env:RAYFIN_TELEMETRY_OPTOUT = '1'`
+   in every Rayfin shell):
+   `npx --yes @microsoft/create-rayfin@latest <app> --project-name <app> --template <name>`
+   (`npx --yes @microsoft/rayfin-cli@latest init --list-templates` lists the names;
+   the sample app is `todoapp`). Do not use the `npm create ... -- --template` form:
+   PowerShell drops the `--` and the scaffolder stops with "--project-name is
+   required". The CLI is a project dev dependency; never install it globally.
 2. `npx rayfin init ai-files install --yes` writes the project's `AGENTS.md` and
    Rayfin skills under `.agents/skills/`. Pi asks once to trust the project; after
    that they load in a new session. coop ignores the project `.mcp.json` it also

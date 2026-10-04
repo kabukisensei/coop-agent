@@ -82,6 +82,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
     transient REST failure; sign-in and target errors are not retried.
   - `tests/guardrails.test.mjs` counts the Power BI bridge's status read when the
     real `powerbi-desktop` shim is on PATH (the guard then calls it through node).
+- `fabric-apps` skill: the scaffold step now gives the command that works from
+  PowerShell (`npx --yes @microsoft/create-rayfin@latest <app> --project-name <app>
+  --template todoapp`); the former `npm create ... -- --template` form lost the `--`
+  and the sample template is `todoapp`, not `todo` (found in the FA1 live check on
+  the client VM, 2026-10-04).
 
 ## [0.30.0] — 2026-10-03
 
