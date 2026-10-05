@@ -372,14 +372,40 @@ function evidenceText(evidence: any): string {
   return `Evidence confidence: ${evidence?.state || "unknown"}; states: ${(evidence?.states || ["unknown"]).join(", ")}. Empty results do not prove zero impact.`;
 }
 
+/** The "Loaded by" lines for a lineage answer: the Power BI tables whose
+ *  partition names the object (coop-data-doc 1.3.2+ `loaded_by`), each with the
+ *  source string the model names and whether the graph holds the resolved link. */
+function loadedByLines(parsed: any): string[] {
+  const hits: any[] = Array.isArray(parsed?.loaded_by) ? parsed.loaded_by : [];
+  if (!hits.length) return [];
+  const lines = ["Loaded by (Power BI tables whose partition names this object):"];
+  for (const hit of hits) {
+    const source = Array.isArray(hit?.source) ? hit.source.join(", ") : hit?.source;
+    lines.push(`- ${refLabel(hit?.table ?? hit)}${source ? ` loads ${source}` : ""}${hit?.linked === false ? " (by name only; SQL object not documented or not linked)" : ""}`);
+  }
+  return lines;
+}
+
 /** The model-facing text for one `coop-data-doc lineage` slice. */
 export function lineageText(parsed: any, query: string): string {
   if (parsed?.ambiguous) {
     const matches: any[] = parsed.matches || [];
     return modelText(
       `'${query}' is ambiguous — ${matches.length} matches; re-call lineage with one of these names:`,
-      matches.map((m) => `- ${refLabel(m)}`),
+      [...matches.map((m) => `- ${refLabel(m)}`), ...loadedByLines(parsed)],
       "use a more specific name",
+    );
+  }
+  const loadedBy = loadedByLines(parsed);
+  if (parsed?.undocumented_source && !parsed?.object) {
+    // The object is not in the docs (its database is not a documented source),
+    // but a semantic model's partition names it: that is the Power BI blast radius.
+    const n = (parsed.loaded_by || []).length;
+    return modelText(
+      `'${query}' is not a documented object, but ${n} Power BI table(s) load it by name (the SQL side is not in the docs; use sql_impact for its SQL dependents). ` +
+        evidenceText(parsed?.evidence),
+      loadedBy,
+      "read the Power BI tables' doc pages",
     );
   }
   const up: any[] = parsed?.upstream || [];
@@ -398,6 +424,7 @@ export function lineageText(parsed: any, query: string): string {
     lines.push("Relationships:");
     for (const rel of rels) lines.push(`- ${typeof rel === "string" ? rel : JSON.stringify(rel)}`);
   }
+  lines.push(...loadedBy);
   return modelText(head, lines, "read the object's doc page, or re-call with a smaller depth");
 }
 

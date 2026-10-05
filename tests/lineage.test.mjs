@@ -222,6 +222,59 @@ await t("lineage names the object's type and doc page, and says when a side is e
   assert.match(text, /\nUpstream:\n- dbo\.sales \(silver_table\)\nDownstream: none observed$/);
 });
 
+await t("lineage lists the Power BI tables that load the object, and says when only the name links them", async () => {
+  const slice = {
+    object: { name: "sales.v_orders_star", type: "view", doc: "view/sales-v-orders-star.md" },
+    upstream: [],
+    downstream: [{ id: "pbi_table:sales.orders_native", name: "Sales.Orders Native", type: "pbi_table" }],
+    relationships: [],
+    loaded_by: [
+      { table: { id: "pbi_table:sales.orders_native", name: "Sales.Orders Native", type: "pbi_table" }, source: "sales.v_orders_star", linked: true },
+      { table: { id: "pbi_table:finance.orders", name: "Finance.Orders", type: "pbi_table" }, source: ["sales.v_orders_star", "dbo.v_orders_star"], linked: false },
+    ],
+    evidence: { state: "partial", states: ["partial"] },
+  };
+  const { tools } = boot(() => ({ code: 0, stdout: JSON.stringify(slice), stderr: "" }));
+  const text = (await lineage(tools, { command: "lineage", object: "v_orders_star" })).content[0].text;
+  assert.match(text, /\nDownstream:\n- Sales\.Orders Native \(pbi_table\)\nLoaded by \(Power BI tables whose partition names this object\):\n/);
+  assert.match(text, /\n- Sales\.Orders Native \(pbi_table\) loads sales\.v_orders_star\n/);
+  assert.match(text, /\n- Finance\.Orders \(pbi_table\) loads sales\.v_orders_star, dbo\.v_orders_star \(by name only; SQL object not documented or not linked\)$/);
+});
+
+await t("lineage of a view the docs do not hold names the Power BI tables that load it instead of failing", async () => {
+  // coop-data-doc 1.3.2+: the SQL repo is not a documented source, but a model's
+  // partition names the view, so `lineage` answers with object: null + loaded_by.
+  const slice = {
+    query: "dbo.vSales",
+    object: null,
+    undocumented_source: true,
+    loaded_by: [{ table: { id: "pbi_table:sales.vsales", name: "Sales.vSales", type: "pbi_table" }, source: "dbo.vsales", linked: false }],
+    upstream: [],
+    downstream: [{ id: "pbi_table:sales.vsales", name: "Sales.vSales", type: "pbi_table" }],
+    evidence: { state: "missing", states: ["missing", "unresolved"] },
+  };
+  const { tools } = boot(() => ({ code: 0, stdout: JSON.stringify(slice), stderr: "" }));
+  const r = await lineage(tools, { command: "lineage", object: "dbo.vSales" });
+  assert.equal(r.content[0].text, [
+    "'dbo.vSales' is not a documented object, but 1 Power BI table(s) load it by name (the SQL side is not in the docs; use sql_impact for its SQL dependents). Evidence confidence: missing; states: missing, unresolved. Empty results do not prove zero impact.",
+    "Loaded by (Power BI tables whose partition names this object):",
+    "- Sales.vSales (pbi_table) loads dbo.vsales (by name only; SQL object not documented or not linked)",
+  ].join("\n"));
+  assert.deepEqual(r.details.lineage, slice);
+});
+
+await t("an ambiguous lineage answer still names the tables that load the object", async () => {
+  const out = {
+    ambiguous: true,
+    matches: [{ name: "sales.dim_customer", type: "view" }, { name: "Sales.dim_customer", type: "pbi_table" }],
+    loaded_by: [{ table: { name: "Sales.dim_customer", type: "pbi_table" }, source: "sales.dim_customer", linked: true }],
+  };
+  const { tools } = boot(() => ({ code: 0, stdout: JSON.stringify(out), stderr: "" }));
+  const text = (await lineage(tools, { command: "lineage", object: "dim_customer" })).content[0].text;
+  assert.match(text, /^'dim_customer' is ambiguous — 2 matches/);
+  assert.match(text, /\nLoaded by \(Power BI tables whose partition names this object\):\n- Sales\.dim_customer \(pbi_table\) loads sales\.dim_customer$/);
+});
+
 // --- impact: what the changed files feed ------------------------------------
 
 const IMPACT = {
