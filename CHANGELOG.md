@@ -103,6 +103,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   the EULA per user (#305), and the installer license-file check and the skills
   catalog LICENSE copies are parked (#306, #307).
 
+- A machine-level profile for the team's VMs (master plan P1, demo of
+  2026-10-05): every client is its own Windows user there and one person owns the
+  machine, so `coop onboard --machine` writes the person's name and communication
+  preference once per machine to `%ProgramData%\coop\user.json` (`/etc/coop` off
+  Windows; `COOP_MACHINE_DIR` for tests and sandboxes; one elevated terminal,
+  once). coop-profile, the vibes, the window's set-up card and `/setup-project`'s
+  name question read it when the per-user `~/.coop/user.json` is missing, and the
+  per-user file wins field by field when both exist. `coop profile` and
+  `coop doctor` name the file that supplied the name. The machine file carries
+  only the name and the communication preference, never a client, tenant,
+  workspace, contract, memory or session: everything client-shaped stays in the
+  client's Windows user, and nothing in coop reads another user's profile.
 - The project contract declares what coop used to assume about a client's layout
   (master plan C2, from the 2026-10-05 demo: "I don't want the tool to assume
   anything"). `power_bi.table_mapping` states how a semantic-model table maps to

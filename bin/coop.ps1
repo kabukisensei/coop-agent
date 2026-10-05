@@ -304,6 +304,7 @@ $(Coop-Bold)Usage$(Coop-Rst)
   coop uninstall            Remove coop from this machine (--keep-tools spares pi + tools)
   coop sync                 Ensure Pi extensions + place read-only MCP config + verify assets
   coop onboard              First-run global onboarding (creates ~/.coop/user.json)
+  coop onboard --machine    Write the machine-level profile (name, communication) once per VM, from an elevated terminal
   coop onboard --platform <fabric|azure_sql|both>   Switch the client platform (a fresh machine onboards with that answer)
   coop profile              Show your COOP user profile
   coop profile edit         Edit your COOP user profile

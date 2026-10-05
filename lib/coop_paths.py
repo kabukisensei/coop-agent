@@ -54,6 +54,24 @@ def user_profile_path() -> Path:
     return profile_dir() / "user.json"
 
 
+def machine_profile_dir() -> Path:
+    """The machine-level profile folder (master plan P1): COOP_MACHINE_DIR, else
+    `%ProgramData%\\coop` on Windows and `/etc/coop` elsewhere. Mirror of
+    lib/paths.mjs machineProfileDir."""
+    configured = _env("COOP_MACHINE_DIR")
+    if configured:
+        return Path(configured).expanduser()
+    if os.name == "nt":
+        return Path(_env("ProgramData") or r"C:\ProgramData") / "coop"
+    return Path("/etc/coop")
+
+
+def machine_profile_path() -> Path:
+    """The machine-level profile file: `<machine dir>/user.json` (name and
+    communication preference only; the per-user file wins field by field)."""
+    return machine_profile_dir() / "user.json"
+
+
 def coop_agent_dir() -> Path:
     """coop's ISOLATED Pi agent dir: COOP_AGENT_DIR, else `<profile dir>/agent`.
 
