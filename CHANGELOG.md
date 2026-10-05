@@ -27,6 +27,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   install were refused (seen 2026-10-05). A working folder that contains the
   home (the home itself, the users folder, a drive root) is not a work repo and
   keeps them; `lib/warehouse_mcp.py` and `lib/fabric_request_headers.mjs`.
+- The terminal install and the coop window package share one
+  `mcp-adapter.json`, and each `coop sync` writes its own
+  `fabric_request_headers.mjs` path into the managed Warehouse entry; the other
+  install then called the configuration invalid ("managed configuration is
+  invalid; run coop sync") and the two took turns breaking the Warehouse MCP.
+  `sqlendpoint_config_status` now accepts the other install's helper when it
+  is byte-identical to its own (the same release); a different file is still
+  refused.
 - `release.yml` publishes the coop window installer only after the same
   acceptance the PR job runs has passed on the exact bytes it publishes
   (#277): the tag's `installer` job now runs `desktop/scripts/verify-installer.mjs`

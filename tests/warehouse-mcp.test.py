@@ -96,6 +96,25 @@ for forbidden in (
     candidate = entry()
     candidate.update(forbidden)
     assert wmcp.sqlendpoint_config_status(candidate) == "unavailable"
+# Another coop install's copy of the same helper (the terminal install and the
+# window package share one mcp-adapter.json) is accepted when byte-identical;
+# a different file of the same name, or another name, is not.
+with tempfile.TemporaryDirectory() as other_install:
+    other_lib = Path(other_install) / "resources" / "coop" / "lib"
+    other_lib.mkdir(parents=True)
+    other_helper = other_lib / "fabric_request_headers.mjs"
+    shutil.copyfile(wmcp.REQUEST_HEADERS_HELPER, other_helper)
+    twin = entry()
+    twin["requestHeadersCommand"]["args"] = [str(other_helper), wmcp.GLOBAL_SQL_ENDPOINT_URL]
+    assert wmcp.sqlendpoint_config_status(twin) == "registered", "the other install's identical helper is registered"
+    other_helper.write_bytes(other_helper.read_bytes() + b"\n// tampered\n")
+    assert wmcp.sqlendpoint_config_status(twin) == "unavailable", "a changed helper is refused"
+    renamed = other_lib / "fabric_request_headers_copy.mjs"
+    shutil.copyfile(wmcp.REQUEST_HEADERS_HELPER, renamed)
+    twin["requestHeadersCommand"]["args"] = [str(renamed), wmcp.GLOBAL_SQL_ENDPOINT_URL]
+    assert wmcp.sqlendpoint_config_status(twin) == "unavailable", "another file name is refused"
+    twin["requestHeadersCommand"]["args"] = [str(other_helper)]
+    assert wmcp.sqlendpoint_config_status(twin) == "unavailable", "a one-item args list is refused"
 for spelling in (
     "executeSQL",
     "execute_query",

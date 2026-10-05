@@ -170,5 +170,11 @@ Get-Location
 project folder in the dialog, never the home folder). From 0.30.2 a folder that
 contains the home is not treated as a work repo.
 
+A second message, `managed configuration is invalid; run coop sync`, means the
+other install (terminal or window) wrote the shared `mcp-adapter.json` last:
+before 0.30.2 each refused the other's helper path. Run `coop sync` from the
+install you are about to use, in the project folder, so the managed entry also
+carries that project's Warehouse target.
+
 **Verify.** The launch shows no Warehouse line and a `SELECT TOP 1 1` runs.
 
