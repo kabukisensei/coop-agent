@@ -197,7 +197,7 @@ dialogs as cards and lists.
 | `/start` | coop-tools | Pi | The Start Here menu, as a list. The empty window offers it too, and the first launch on a profile (`COOP_FIRST_RUN`, as the terminal) opens it once. |
 | `/setup-project` | coop-tools | Pi | The project wizard's questions, one dialog each. |
 | `/setup-docs` | coop-tools | Pi | The docs wizard's questions, or a notice when coop-data-doc lacks the native wizard. |
-| `/standards-status` | coop-tools | Pi | A notice and the JSON status in the conversation. |
+| `/standards-status` | coop-tools | Pi | A notice and the JSON status in the conversation. The Standards pane (Ctrl+Shift+S) shows the same status's domains and its team knowledge sources (`cooptimize/incremental-bi`, `cooptimize/coop-team-knowledge`), the notes of each clone readable one at a time; the terminal reads those clones through the team-knowledge skill's search. |
 | `/coop-live-read` | coop-tools | Pi | The live-read grant, or its revocation (`/coop-live-read revoke`). |
 | `/coop-approvals` | coop-tools | Pi | Edit approvals (`status`, `revoke`). |
 | `/coop-guardrails` | coop-guardrails | Pi | What the guardrails enforce. |

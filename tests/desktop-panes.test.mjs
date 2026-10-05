@@ -41,11 +41,11 @@ const tools = await import(pathToFileURL(join(dist, "coop-tools.mjs")).href);
 const { parseUnifiedDiff, pairAndEmphasize, buildSplitRows, computeMatches, hunkStats } = await import("../desktop/renderer/unified-diff.mjs");
 const { unifiedDiff } = await import("../desktop/lib/text-diff.mjs");
 const { listChanges, fileDiff, parseNameStatus, parseNumstat, newFileDiff } = await import("../desktop/lib/changes.mjs");
-const { readStandards, readSnapshot, domainView, DOMAINS } = await import("../desktop/lib/standards-view.mjs");
+const { readStandards, readSnapshot, readNote, listNotes, knowledgeView, domainView, DOMAINS, KNOWLEDGE_LABELS } = await import("../desktop/lib/standards-view.mjs");
 const { loadProject, previewProject, saveProject, settingsFromForm } = await import("../desktop/lib/project-form.mjs");
 const docs = await import("../desktop/lib/docs-setup.mjs");
 const { normalizePath } = await import("../desktop/renderer/pane-changes.mjs");
-const { articleOutline, sourceLine, STATE_LABELS } = await import("../desktop/renderer/pane-standards.mjs");
+const { articleOutline, sourceLine, noteLabel, isKnowledgeId, STATE_LABELS, KNOWLEDGE_STATE_LABELS } = await import("../desktop/renderer/pane-standards.mjs");
 const { initialValues, formInput, platformHint, ROLE_LABELS } = await import("../desktop/renderer/pane-project.mjs");
 const { resolvePage, isDocsLink, stripFrontMatter, answerLabel, typeLabel } = await import("../desktop/renderer/pane-docs.mjs");
 const { paneLinksForTool, paneLinksForText } = await import("../desktop/renderer/view.mjs");
@@ -264,6 +264,51 @@ await check("standards: resolve-many then status, paths stay in the main process
   for (const state of ["canonical", "project_override", "stale_last_known_good", "bundled", "auth_required", "unavailable"]) assert.ok(STATE_LABELS[state], state);
   // A resolver failure is an error the pane shows, not a crash.
   await assert.rejects(readStandards({ node: process.execPath, repoRoot: ROOT, cwd: temp, env: process.env, execFileImpl: (f, a, o, cb) => cb(new Error("x"), "", "registry unreadable\n") }), /registry unreadable/);
+});
+
+await check("standards: the team knowledge repositories from status, one note at a time, paths stay in the main process", async () => {
+  // Mirrors cooptimize/incremental-bi: layer folders, `title:` front matter, an unlayered guide, a non-Markdown file.
+  const clone = join(temp, "knowledge", "incremental-bi");
+  mkdirSync(join(clone, "Gold"), { recursive: true });
+  mkdirSync(join(clone, ".obsidian"), { recursive: true });
+  writeFileSync(join(clone, "AGENTS.md"), "# Writing and editing this wiki\nEditing guide.\n");
+  writeFileSync(join(clone, "Gold", "Fact Partition Rebuild.md"), "\uFEFF---\ntitle: \"Fact partition rebuild\"\nlayer: gold\n---\n## Rebuild the partition\nDrop and reload the window.\n");
+  writeFileSync(join(clone, "Gold", "notes.txt"), "not a note");
+  writeFileSync(join(clone, ".obsidian", "hidden.md"), "# Hidden\n");
+  const listing = listNotes(clone);
+  assert.deepEqual(listing.notes.map((n) => [n.path, n.title, n.folder]), [["AGENTS.md", "Writing and editing this wiki", ""], ["Gold/Fact Partition Rebuild.md", "Fact partition rebuild", "Gold"]]);
+  assert.equal(listing.truncated, false);
+  assert.equal(noteLabel(listing.notes[1]), "Gold / Fact partition rebuild");
+  const execFileImpl = (file, args, options, callback) => {
+    const out = args[1] === "resolve-many"
+      ? { sql: { state: "unavailable", path: null } }
+      : { repository: "https://github.com/cooptimize/coop-standards.git", authoritative_branch: "main", freshness: "fresh", sources: [
+        { id: "cooptimize-formal-standards", authority_class: "formal_standard", state: "available", path: join(temp, "canonical") },
+        { id: "cooptimize/incremental-bi", authority_class: "approved_pattern", state: "dirty_preserved", revision: "0123456789abcdef0123", path: clone },
+        { id: "cooptimize/coop-team-knowledge", authority_class: "team_knowledge", state: "unavailable", revision: null, path: null },
+      ] };
+    setImmediate(() => callback(null, JSON.stringify(out), ""));
+  };
+  const result = await readStandards({ node: process.execPath, repoRoot: ROOT, cwd: temp, env: process.env, execFileImpl });
+  assert.deepEqual(result.knowledge.map((k) => [k.id, k.label, k.state, k.available, k.revision, k.notes.length]), [
+    ["cooptimize/incremental-bi", "Incremental BI", "dirty_preserved", true, "0123456789ab", 2],
+    ["cooptimize/coop-team-knowledge", "Team knowledge", "unavailable", false, "", 0],
+  ]);
+  assert.equal(JSON.stringify(result.knowledge).includes(temp), false, "no clone path crosses to the window");
+  assert.deepEqual([...result.roots.keys()], ["cooptimize/incremental-bi"]);
+  const note = await readNote(result.roots.get("cooptimize/incremental-bi"), "Gold/Fact Partition Rebuild.md");
+  assert.equal(note.text, "## Rebuild the partition\nDrop and reload the window.\n", "front matter and BOM dropped");
+  assert.equal(note.truncated, false);
+  await assert.rejects(readNote(clone, "../outside.md"), /not in the knowledge repository/);
+  await assert.rejects(readNote(clone, ""), /not in the knowledge repository/);
+  await assert.rejects(readNote(clone, join(temp, "canonical", "x.md")), /not in the knowledge repository/);
+  assert.equal(knowledgeView({ id: "cooptimize/other-kb", authority_class: "team_knowledge", state: "available", path: clone }, listing).label, "other-kb");
+  assert.ok(isKnowledgeId("knowledge:cooptimize/incremental-bi") && !isKnowledgeId("sql"));
+  for (const id of Object.keys(KNOWLEDGE_LABELS)) assert.ok(KNOWLEDGE_LABELS[id], id);
+  for (const state of ["available", "dirty_preserved", "unavailable"]) assert.ok(KNOWLEDGE_STATE_LABELS[state], state);
+  // No status at all (an older resolver): no knowledge row, no crash.
+  const bare = await readStandards({ node: process.execPath, repoRoot: ROOT, cwd: temp, env: process.env, execFileImpl: (f, a, o, cb) => setImmediate(() => cb(a[1] === "status" ? new Error("x") : null, a[1] === "status" ? "" : "{}", "")) });
+  assert.deepEqual(bare.knowledge, []);
 });
 
 // --- The project form -------------------------------------------------------------
@@ -752,7 +797,7 @@ await check("bridge: every pane call in preload.cjs has a handler in main.mjs", 
   const main = readFileSync(join(ROOT, "desktop", "main.mjs"), "utf8");
   const invoked = [...preload.matchAll(/ipcRenderer\.invoke\("(coop:[a-z-]+)"/g)].map((m) => m[1]);
   const handled = new Set([...main.matchAll(/handle\("(coop:[a-z-]+)"/g)].map((m) => m[1]));
-  for (const channel of ["coop:changes", "coop:change-diff", "coop:standards", "coop:standards-text", "coop:project-load", "coop:project-preview", "coop:project-save", "coop:pick-folder", "coop:docs-start", "coop:docs-answer", "coop:docs-cancel", "coop:docs-build", "coop:docs-page", "coop:docs-portal"]) {
+  for (const channel of ["coop:changes", "coop:change-diff", "coop:standards", "coop:standards-text", "coop:knowledge-note", "coop:project-load", "coop:project-preview", "coop:project-save", "coop:pick-folder", "coop:docs-start", "coop:docs-answer", "coop:docs-cancel", "coop:docs-build", "coop:docs-page", "coop:docs-portal"]) {
     assert.ok(invoked.includes(channel), `preload exposes ${channel}`);
   }
   for (const channel of invoked) assert.ok(handled.has(channel), `main handles ${channel}`);
