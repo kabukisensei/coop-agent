@@ -649,6 +649,45 @@ if ($catPy) {
   D-Warn 'Microsoft skills catalog status unavailable' 'Python is required'
 }
 
+D-Head 'Prompts and skills'
+# The three tiers (master plan PR1) in precedence order, shipped > client >
+# personal, and every name a lower tier loses to a higher one: the launcher
+# skips a shadowed skill and Pi keeps the first /prompt it loads, so a shadowed
+# file is silent at launch unless doctor names it here.
+$tierSkillOwner = @{}
+$tierPromptOwner = @{}
+foreach ($tier in (Get-CoopResourceTiers)) {
+  $tierSkills = @(Get-CoopTierSkills $tier.Skills)
+  $tierPrompts = @(Get-CoopTierPrompts $tier.Prompts)
+  $where = if ($tier.Tier -eq 'client') { "beside the contract, $($tier.Root)" } else { $tier.Root }
+  if ($tier.Tier -ne 'shipped' -and -not (Test-Path -LiteralPath $tier.Skills -PathType Container) -and -not (Test-Path -LiteralPath $tier.Prompts -PathType Container)) {
+    $folders = if ($tier.Tier -eq 'client') { '.coop\skills or .coop\prompts' } else { 'skills or prompts folder' }
+    D-Ok "$($tier.Tier) tier: none (no $folders at $($tier.Root))"
+  } else {
+    D-Ok "$($tier.Tier) tier: $($tierSkills.Count) skill(s), $($tierPrompts.Count) prompt(s) ($where)"
+  }
+  foreach ($ts in $tierSkills) {
+    $owner = $null
+    if ($tierSkillOwner.ContainsKey($ts.Name)) { $owner = $tierSkillOwner[$ts.Name] } elseif ($tierSkillOwner.ContainsKey($ts.Folder)) { $owner = $tierSkillOwner[$ts.Folder] }
+    if ($owner) {
+      D-Warn "$($tier.Tier) skill '$($ts.Folder)' is not loaded: the $owner tier already has '$($ts.Name)'" "rename it (name: in SKILL.md and the folder), or delete the copy you do not want"
+      continue
+    }
+    $tierSkillOwner[$ts.Name] = $tier.Tier
+    $tierSkillOwner[$ts.Folder] = $tier.Tier
+  }
+  foreach ($tp in $tierPrompts) {
+    if ($tierPromptOwner.ContainsKey($tp.Name)) {
+      D-Warn "$($tier.Tier) prompt '/$($tp.Name)' is not loaded: the $($tierPromptOwner[$tp.Name]) tier already has it" "rename the file, or delete the copy you do not want"
+      continue
+    }
+    $tierPromptOwner[$tp.Name] = $tier.Tier
+  }
+}
+if (-not (Get-CoopResourceTiers | Where-Object { $_.Tier -eq 'client' })) {
+  D-Ok 'client tier: no committed .coop/project.yml above this folder, so nothing to load'
+}
+
 D-Head 'Standards'
 if (Test-Have 'node') {
   $standardsCli = Join-Path $env:COOP_ROOT 'lib\standards-cli.mjs'

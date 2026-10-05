@@ -298,8 +298,8 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | **Authoring** | |
 | `coop init [dir] [--seed-docs] [--template] [--ci github|ado] [--yes]` | Guided minimal project-contract wizard (default `.`); beside several repositories it creates the client home repository `<client>-coop` and puts the file there; `--template` explicitly selects the full legacy template and `--seed-docs` generates/patches `coop-data-doc.yml` |
 | `coop project status\|get\|share [--root <dir>] [--force]` | The shared project file from a shell: compare `.coop/project.yml` with the team's copy on origin, get the team's version (a fast-forward pull when nothing else would move, else only that file with a backup), or share yours (commits only that file and pushes the current branch; `--force` from a branch other than the default). Same code as `/project-get`, `/project-share` and the window's Project pane |
-| `coop new-skill <name>` | Scaffold `skills/<name>/SKILL.md` |
-| `coop new-prompt <name>` | Scaffold `prompts/<name>.md` |
+| `coop new-skill <name> [--client\|--personal]` | Scaffold `skills/<name>/SKILL.md` here, or in the client tier (`.coop/skills/` beside the committed contract) or your personal tier (`~/.coop/skills/`) |
+| `coop new-prompt <name> [--client\|--personal]` | Scaffold `prompts/<name>.md` here, or in the client tier (`.coop/prompts/`) or your personal tier (`~/.coop/prompts/`) |
 | `coop release [patch\|minor\|major] [--yes] [--no-push] [--no-check]` | Cut a release — bump version, roll CHANGELOG, commit + tag, then push `main` and the tag atomically (default `patch`). Runs only on `main` at `origin/main`. Build-checks the extensions first (skip with `--no-check`); `--no-push` tags locally only; `--yes` skips the confirm |
 | **Pi management (aliased under coop)** | |
 | `coop list` | List installed Pi extensions (`pi list`) |
@@ -1014,4 +1014,7 @@ Coworkers can add their own skills, prompts, themes, and tools — see
 **[docs/extending.md](docs/extending.md)**. In short: a new skill is just a
 `skills/<name>/SKILL.md` file; a new prompt is a `prompts/<name>.md`; both load
 automatically on the next `coop`. Commit and push; teammates get it with the next release
-tag (maintainers: `coop update --edge`).
+tag (maintainers: `coop update --edge`). A prompt or skill can also live with one
+client (`.coop/prompts/`, `.coop/skills/` beside the committed contract) or with you
+alone (`~/.coop/prompts/`, `~/.coop/skills/`); the shipped copy wins a name clash,
+then the client's, then yours, and `coop doctor` lists what loaded from where.

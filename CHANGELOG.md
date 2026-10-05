@@ -132,6 +132,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   to read as no dependents; `sql_impact` adds the same expectation to an empty
   downstream list. A contract without the block declares nothing and is checked
   against nothing.
+- **Personal, client and shipped prompts and skills** (master plan PR1, section
+  12.3). coop loads three tiers at launch, shipped first, then the client's
+  `.coop/prompts/` and `.coop/skills/` beside the committed contract, then your
+  `~/.coop/prompts/` and `~/.coop/skills/`; a name clash resolves in that order
+  (a shadowed skill is skipped with a warning, Pi keeps the first `/prompt`).
+  `coop doctor` gains a "Prompts and skills" section listing each tier and every
+  shadowed name; `coop new-skill` and `coop new-prompt` take `--client` or
+  `--personal`; `docs/extending.md` section 8 documents the layout.
 - `@juicesharp/rpiv-todo` **2.12.0** joins the pinned extensions (Aaron, 2026-10-03,
   from the pi.dev package review): a `todo` tool and a live task panel above the
   prompt, so a multi-step session shows what coop is doing, what is done and what

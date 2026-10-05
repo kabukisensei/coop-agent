@@ -2889,6 +2889,58 @@ function Find-CoopProjectYml {
   return ''
 }
 
+# Prompt and skill tiers (master plan PR1). Three places hold prompts and
+# skills, with one precedence rule, shipped > client > personal:
+#   shipped  — this repository's prompts\ and skills\ (as always)
+#   client   — .coop\prompts and .coop\skills beside the committed contract (C1),
+#              so a client's own travel with its repository
+#   personal — <profile>\prompts and <profile>\skills (~/.coop by default)
+# Returns the tiers in precedence order. The client tier is listed only when a
+# real contract is found (the bundled .coop/project.yml is coop's own, not a
+# client's). A tier's folders may be missing; callers test them.
+function Get-CoopResourceTiers {
+  param([string]$StartDir = (Get-Location).Path)
+  $tiers = @()
+  $tiers += [pscustomobject]@{ Tier = 'shipped'; Root = $script:CoopRoot; Skills = (Join-Path $script:CoopRoot 'skills'); Prompts = (Join-Path $script:CoopRoot 'prompts') }
+  $proj = Find-CoopProjectYml -StartDir $StartDir
+  $bundled = [System.IO.Path]::GetFullPath((Join-Path $script:CoopRoot '.coop\project.yml'))
+  if ($proj -and ([System.IO.Path]::GetFullPath($proj) -ne $bundled)) {
+    $coopDir = Split-Path -Parent $proj
+    $tiers += [pscustomobject]@{ Tier = 'client'; Root = (Split-Path -Parent $coopDir); Skills = (Join-Path $coopDir 'skills'); Prompts = (Join-Path $coopDir 'prompts') }
+  }
+  $profileDir = Get-CoopProfileDir
+  $tiers += [pscustomobject]@{ Tier = 'personal'; Root = $profileDir; Skills = (Join-Path $profileDir 'skills'); Prompts = (Join-Path $profileDir 'prompts') }
+  return @($tiers)
+}
+
+# The skills one tier folder holds: every <dir>\SKILL.md, as @{ Folder; Dir; Name }
+# where Name is the frontmatter name, or the folder name when the file has none
+# (Pi falls back the same way). Subordinate slot folders are never a tier skill.
+function Get-CoopTierSkills {
+  param([string]$SkillsDir)
+  $out = @()
+  if (-not (Test-Path -LiteralPath $SkillsDir -PathType Container)) { return @() }
+  foreach ($d in (Get-ChildItem -LiteralPath $SkillsDir -Directory | Where-Object { $_.Name -notin @('_microsoft', '_microsoft_fabric') })) {
+    $sk = Join-Path $d.FullName 'SKILL.md'
+    if (-not (Test-Path -LiteralPath $sk -PathType Leaf)) { continue }
+    $fm = Get-CoopSkillName $sk
+    $out += [pscustomobject]@{ Folder = $d.Name; Dir = $d.FullName; Name = $(if ($fm) { $fm } else { $d.Name }) }
+  }
+  return @($out)
+}
+
+# The prompt templates one tier folder holds: every top-level *.md, as
+# @{ Name; File } where Name is the /command (the file name without .md).
+function Get-CoopTierPrompts {
+  param([string]$PromptsDir)
+  $out = @()
+  if (-not (Test-Path -LiteralPath $PromptsDir -PathType Container)) { return @() }
+  foreach ($f in (Get-ChildItem -LiteralPath $PromptsDir -File -Filter '*.md')) {
+    $out += [pscustomobject]@{ Name = ($f.Name -replace '\.md$', ''); File = $f.FullName }
+  }
+  return @($out)
+}
+
 # The nearest folder at or above $StartDir with a .git entry, or ''.
 function Find-CoopGitRoot {
   param([string]$StartDir = (Get-Location).Path)
