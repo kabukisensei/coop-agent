@@ -524,8 +524,9 @@ details.standards .pane-links { margin-top: 8px; }
 .change-diff { flex: 1; min-height: 120px; overflow: auto; border-radius: var(--radius); background: var(--code-bg); }
 .project-form .change-diff { flex: none; min-height: 0; max-height: 60vh; }
 .diff-view { font-family: var(--font-mono); font-size: 12.5px; line-height: 1.5; padding: 4px 0; }
-.diff-view.unified { min-width: max-content; }
-.diff-view.unified .diff-row { grid-template-columns: 3.2em 3.2em 1.4em 1fr; }
+/* Unified mode wraps long lines (asked 2026-10-05); side by side already wraps per cell. */
+.diff-view.unified .diff-row { grid-template-columns: 3.2em 3.2em 1.4em minmax(0, 1fr); white-space: pre-wrap; }
+.diff-view.unified .diff-text { overflow-wrap: anywhere; padding-right: 6px; }
 .diff-view .diff-hunk { padding: 2px 10px; color: var(--accent); background: var(--accent-soft); white-space: pre-wrap; overflow-wrap: anywhere; }
 .diff-split-row { display: grid; grid-template-columns: 3.2em minmax(0, 1fr) 3.2em minmax(0, 1fr); }
 .diff-split-row .diff-num:nth-child(3) { border-left: 1px solid var(--border); }

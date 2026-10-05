@@ -11,6 +11,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   chosen theme (dark for the dark themes, light for the light ones, the OS
   setting for "auto") instead of always taking the OS colours (asked
   2026-10-05 after v0.30.3).
+- coop window: the Changes pane's unified diff wraps long lines instead of
+  running past the pane's right edge; side by side already wrapped per cell
+  (asked 2026-10-05).
 
 ## [0.30.3] — 2026-10-05
 
