@@ -153,6 +153,12 @@ for the Node tools and extensions; no script builds these paths inline.
      the web tools when it needs them.
    - `@juicesharp/rpiv-ask-user-question` — lets the model put a structured,
      typed-option question to the user instead of guessing (fits consent rounds).
+   - `@juicesharp/rpiv-todo` — gives the model a `todo` tool and shows the task
+     list above the prompt (Alt+T collapses it, `/todos` prints it). The list is
+     rebuilt from the session's own `todo` tool results, so it survives
+     `/reload`, compaction and resume with no file on disk. The window draws the
+     same panel itself from those results (`desktop/renderer/todos.mjs`), since
+     the extension's TUI widget does not cross Pi's RPC.
    - `@xl0/pi-lovely-rename` — names an unnamed session after three user turns
      (`/rename` regenerates; a manual `/name` always wins). The name shows in
      coop's footer and terminal title.
@@ -329,6 +335,7 @@ flowchart TD
       bopenai["pi-better-openai\nplan usage limits (5h/7d)"]
       webacc["pi-web-access"]
       askq["rpiv-ask-user-question"]
+      todo["rpiv-todo"]
       rename["pi-lovely-rename"]
     end
     pi --> PIEXT

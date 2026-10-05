@@ -58,7 +58,7 @@ assert '@microsoft/powerbi-modeling-mcp' in m['npm_tools']
 # (master plan section 6): the global Bridge pin must satisfy that range.
 assert m['npm_tools']['@microsoft/powerbi-desktop-bridge-cli'] == '1.0.0'
 assert m['npm_tools']['@microsoft/powerbi-report-authoring-cli'] == '0.4.0'
-for p in ['pi-mcp-adapter','pi-hermes-memory','pi-better-openai','pi-web-access','@juicesharp/rpiv-ask-user-question','@xl0/pi-lovely-rename']:
+for p in ['pi-mcp-adapter','pi-hermes-memory','pi-better-openai','pi-web-access','@juicesharp/rpiv-ask-user-question','@juicesharp/rpiv-todo','@xl0/pi-lovely-rename']:
     assert p in m['extensions']
 # context-mode is retired (U1): Remove-CoopRetiredExtensions uninstalls it.
 assert 'context-mode' not in m['extensions']

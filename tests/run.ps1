@@ -273,6 +273,24 @@ try {
     }
   }
 
+  # --- 0e. The todo panel's key is seeded once and never rewritten ---------------
+  # Set-CoopTodoConfig (lib/common.ps1): rpiv-todo's default collapse key is Pi's
+  # tree key, so sync writes ~/.config/rpiv-todo/config.json with Alt+T when the
+  # file is absent, and leaves a user's own file alone.
+  Head 'Todo panel key (Set-CoopTodoConfig)'
+  $todoHome = Join-Path $stub 'todo-home'
+  New-Item -ItemType Directory -Path $todoHome -Force | Out-Null
+  $todoFile = Join-Path (Join-Path (Join-Path $todoHome '.config') 'rpiv-todo') 'config.json'
+  $wroteFirst = Set-CoopTodoConfig -HomeDir $todoHome
+  $todoJson = if (Test-Path -LiteralPath $todoFile) { (Get-Content -LiteralPath $todoFile -Raw | ConvertFrom-Json) } else { $null }
+  if ($wroteFirst -eq $true -and $todoJson -and $todoJson.collapseKey -ceq 'alt+t') { Ok 'an absent config is seeded with collapseKey alt+t' } else { Ko "first call returned [$wroteFirst]; file: $(if (Test-Path -LiteralPath $todoFile) { Get-Content -LiteralPath $todoFile -Raw } else { 'missing' })" }
+  $todoBytes = [System.IO.File]::ReadAllBytes($todoFile)
+  if ($todoBytes.Length -gt 3 -and -not ($todoBytes[0] -eq 0xEF -and $todoBytes[1] -eq 0xBB -and $todoBytes[2] -eq 0xBF)) { Ok 'the config is UTF-8 without a BOM (node reads it as JSON)' } else { Ko 'the config carries a BOM or is empty' }
+  [System.IO.File]::WriteAllText($todoFile, "{`n  `"collapseKey`": `"ctrl+]`"`n}`n")
+  $wroteAgain = Set-CoopTodoConfig -HomeDir $todoHome
+  $kept = (Get-Content -LiteralPath $todoFile -Raw | ConvertFrom-Json).collapseKey
+  if ($wroteAgain -eq $false -and $kept -ceq 'ctrl+]') { Ok "a user's own config is never rewritten" } else { Ko "second call returned [$wroteAgain]; collapseKey is now [$kept]" }
+
   # --- 1. launch-spec resolves the governed pi invocation --------------------
   Head 'launch-spec (shared launch builder) test'
   # Join-Path emits native separators, so on Windows PowerShell 5.1 the spec paths

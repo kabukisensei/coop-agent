@@ -226,6 +226,7 @@ dialogs as cards and lists.
 | `/google-account` | pi-web-access | Pi | Answers in the conversation. |
 | `/search` | pi-web-access | Pi | Stored results, as a list or a notice. |
 | `/rename` | pi-lovely-rename | Pi | Names the session from the conversation. |
+| `/todos` | rpiv-todo | Pi | The task list grouped by status, as a notice (it joins the conversation when it is longer than a line). The live panel is the window's own (see Extension UI): the extension draws it as a TUI component, which RPC drops, so the window rebuilds the same panel from the `todo` tool results in the session (`desktop/renderer/todos.mjs`). Alt+T collapses it in both. |
 | `/llama` | Pi | terminal | The llama.cpp manager is interactive-mode only (Pi says so). |
 
 ## Prompt templates and skills
@@ -248,7 +249,7 @@ Pi's `docs/rpc-extension-ui.md`: what an extension can ask the window to show.
 | `editor` | window | A card with a multi-line editor. |
 | `notify` | window | One-line notices are toasts; longer reports join the conversation. |
 | `setStatus` | window | The status bar. |
-| `setWidget` | window | Lines above or below the prompt. |
+| `setWidget` | window | Lines above or below the prompt. Alt+T collapses the ones above the prompt to their first line and a count. The todo panel (`rpiv-todo`) is the one exception: it uses the factory form, which Pi drops in RPC (only its removal arrives), so the window draws that panel itself from the session's `todo` tool results, on load from `get_messages` and then from every `todo` result, with the overlay's glyphs, row budget and "completed rows leave at the next turn" rule; after a compaction the same session keeps its panel, and a reload after one starts it at the next `todo` call. Alt+T collapses it to the heading, the key `coop sync` seeds for the terminal panel (`~/.config/rpiv-todo/config.json`; the extension's default, Ctrl+Shift+T, is Pi's tree key). |
 | `setTitle` | window | The window title. |
 | `set_editor_text` | window | Fills the prompt. |
 | `custom()`, `setFooter`, `setHeader`, `setEditorComponent`, `onTerminalInput` | terminal | Terminal-only drawing. Pi makes them no-ops in RPC; each pinned extension's use is listed under Extension commands, and those screens open in the terminal. |

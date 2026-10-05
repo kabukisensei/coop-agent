@@ -181,6 +181,7 @@ You have these tools. Know they exist and reach for the right one.
 - **Memory** (pi-hermes-memory) — durable facts, preferences, and corrections across sessions; never store secrets.
 - **Web access** (`pi-web-access`) — search the web, fetch URLs, clone a GitHub repo, extract PDFs/videos. Read-only, so it fits read-only-first. Prefer the **Microsoft Learn MCP** for Microsoft/Fabric/Power BI docs; use web access for everything else.
 - **Ask the user** (`@juicesharp/rpiv-ask-user-question`) — when you would otherwise **guess**, put a structured, typed-option question to the user instead. Reach for it at **consent rounds** and plan-and-approve decision points.
+- **Track the work** (`@juicesharp/rpiv-todo`) — for work with three or more steps, keep the plan as `todo` tasks: one `in_progress` at a time, marked `completed` as each step lands, never completed while a check fails. The list shows above the prompt in the terminal and the window, so the user sees where coop is without asking.
 
 ## Read focused — protect the context window
 

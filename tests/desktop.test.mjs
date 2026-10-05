@@ -35,6 +35,8 @@ import { activitySummary, applyEvent, createTimeline, finishBash, loadMessages, 
 import { isSafeLink, parseMarkdown } from "../desktop/renderer/markdown.mjs";
 import { diffStats, parseEditDiff } from "../desktop/renderer/diff.mjs";
 import { matchOffsets } from "../desktop/renderer/find.mjs";
+import { widgetView } from "../desktop/renderer/widgets.mjs";
+import { COLLAPSE_KEY, MAX_ROWS, applyTodoResult, createTodos, startTurn, todoLines, todosFromMessages } from "../desktop/renderer/todos.mjs";
 import { lockProblems, runtimePackageJson } from "../desktop/scripts/runtime-lock.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -222,13 +224,13 @@ function shape(tl) {
 await check("replay: the live events build the conversation the terminal shows", () => {
   const tl = replay();
   const { kinds, tools } = shape(tl);
-  assert.deepEqual(kinds, ["user", "standards", "assistant", "assistant", "assistant", "assistant"]);
-  assert.deepEqual(tools, ["ask_user_question:done", "edit:done", "bash:error"]);
+  assert.deepEqual(kinds, ["user", "standards", "assistant", "assistant", "assistant", "assistant", "assistant"]);
+  assert.deepEqual(tools, ["ask_user_question:done", "todo:done", "edit:done", "todo:done", "bash:error"]);
   assert.equal(tl.items.find((i) => i.kind === "user").text, "Tidy report.sql and clear the build folder");
   const answers = tl.items.filter((i) => i.kind === "assistant");
   assert.ok(answers.every((item) => !item.streaming));
   assert.ok(answers[0].blocks.some((b) => b.type === "thinking" && b.text.includes("Ask which layout first")));
-  assert.match(answers[3].blocks.find((b) => b.type === "text").text, /\| Object \| Change \|/);
+  assert.match(answers[4].blocks.find((b) => b.type === "text").text, /\| Object \| Change \|/);
   const bashTool = [...tl.tools.values()].find((t) => t.name === "bash");
   assert.match(bashTool.result.text, /blocked the rm -rf command \(you declined\)/);
   assert.equal(toolSummary("bash", bashTool.args), "rm -rf build");
@@ -249,7 +251,7 @@ await check("replay: the edit's diff, the shell command and the compaction notic
   assert.equal(shell.running, false);
   const compacted = tl.items.filter((i) => i.kind === "notice");
   assert.equal(compacted.length, 1);
-  assert.match(compacted[0].text, /^Compacted the conversation: about 2k tokens down to \d+k\.$/);
+  assert.match(compacted[0].text, /^Compacted the conversation: about \dk tokens down to \d+k\.$/);
 });
 
 await check("replay: a saved conversation (get_messages) loads the same as the live one", () => {
@@ -690,6 +692,80 @@ await check("turns: consecutive assistant messages are one turn, anything else b
   const tl = createTimeline();
   for (const line of out((m) => typeof m.type === "string")) applyEvent(tl, line);
   for (const turn of turns(tl.items).filter((t) => t[0].kind === "assistant")) assert.ok(turn.every((item) => item.kind === "assistant") && turnOf(tl.items, turn[0].id).length === turn.length);
+});
+
+// --- The todo panel (desktop/renderer/todos.mjs) -------------------------------
+// rpiv-todo draws its panel as a TUI component, which Pi's RPC mode drops (the
+// recording carries only its setWidget removal), so the window rebuilds the
+// panel from the `todo` tool results, live and on load.
+await check("todos: the recording carries the todo tool's results, not a widget, and the live events build the panel", () => {
+  const widgets = out((m) => m.type === "extension_ui_request" && m.method === "setWidget" && m.widgetKey === "rpiv-todos");
+  assert.ok(widgets.every((m) => m.widgetLines === undefined), "RPC now forwards rpiv-todo's panel: render it from setWidget instead");
+  const state = createTodos();
+  const lines = [];
+  for (const { dir, msg } of FIXTURE) {
+    if (dir !== "out") continue;
+    if (msg.type === "agent_start") startTurn(state);
+    if (msg.type === "tool_execution_end" && msg.toolName === "todo" && applyTodoResult(state, msg.result)) lines.push(todoLines(state));
+  }
+  assert.deepEqual(lines, [
+    ["● Todos (0/1)", "└─ ○ Format report.sql"],
+    ["○ Todos (1/1)", "└─ ✓ Format report.sql"],
+  ]);
+  // The completed row leaves the panel when the next turn starts.
+  startTurn(state);
+  assert.deepEqual(todoLines(state), []);
+});
+
+await check("todos: a saved conversation (get_messages) loads the list; after a compaction the same session keeps it", () => {
+  const [before, after] = response("get_messages");
+  const loaded = todosFromMessages(before.data.messages);
+  assert.equal(loaded.found, true);
+  assert.deepEqual(loaded.tasks.map((t) => [t.id, t.status]), [[1, "completed"]]);
+  assert.deepEqual(todoLines(loaded), [], "rows completed in an earlier turn stay out of the way on a resume");
+  const compacted = todosFromMessages(after.data.messages);
+  assert.equal(compacted.found, false);
+  assert.deepEqual(compacted.tasks, []);
+  assert.deepEqual(todosFromMessages(undefined).tasks, []);
+});
+
+await check("todos: the panel's lines follow the terminal overlay (glyphs, activeForm, dependencies, ids, budget, collapse)", () => {
+  const state = createTodos();
+  const task = (id, status, extra = {}) => ({ id, subject: `Task ${id}`, status, ...extra });
+  applyTodoResult(state, { details: { nextId: 4, tasks: [task(1, "completed"), task(2, "in_progress", { activeForm: "doing two" }), task(3, "pending")] } });
+  assert.deepEqual(todoLines(state), ["● Todos (1/3)", "├─ ✓ Task 1", "├─ ◐ Task 2 (doing two)", "└─ ○ Task 3"]);
+  assert.deepEqual(todoLines(state, { collapsed: true }), ["● Todos (1/3)", `└─ collapsed, ${COLLAPSE_KEY} expands`]);
+  // Ids show only when a dependency points at them; deleted tasks never show.
+  applyTodoResult(state, { details: { nextId: 5, tasks: [task(1, "deleted"), task(2, "in_progress"), task(3, "pending", { blockedBy: [2] }), task(4, "pending")] } });
+  assert.deepEqual(todoLines(state), ["● Todos (0/3)", "├─ ◐ #2 Task 2", "├─ ○ #3 Task 3 ⛓ #2", "└─ ○ #4 Task 4"]);
+  // A result without the snapshot changes nothing; a `clear` resets the hidden set.
+  assert.equal(applyTodoResult(state, { details: { error: "nope" } }), false);
+  assert.equal(applyTodoResult(state, undefined), false);
+  assert.equal(todoLines(state).length, 4);
+  // Budget: completed rows drop first, then the tail of the unfinished ones.
+  const many = Array.from({ length: 15 }, (_, i) => task(i + 1, i < 5 ? "completed" : "pending"));
+  applyTodoResult(state, { details: { nextId: 16, tasks: many } });
+  const full = todoLines(state);
+  assert.equal(full.length, MAX_ROWS);
+  assert.equal(full[0], "○ Todos (5/15)".replace("○", "●"));
+  // Eleven body rows, one of them the summary: the ten unfinished rows fill it and every completed row drops.
+  assert.equal(full[full.length - 1], "└─ +5 more (5 completed)");
+  assert.equal(todoLines(state, { rows: Infinity }).length, 16);
+  const unfinished = Array.from({ length: 15 }, (_, i) => task(i + 1, "pending"));
+  applyTodoResult(state, { details: { nextId: 16, tasks: unfinished } });
+  assert.equal(todoLines(state)[MAX_ROWS - 1], "└─ +5 more (5 pending)");
+  assert.equal(COLLAPSE_KEY, "Alt+T");
+  assert.match(PARITY, /Alt\+T collapses/);
+});
+
+await check("widgets: Alt+T collapses a widget to its heading and a count; a one-line widget stays as it is", () => {
+  const panel = { lines: ["● Todos (0/1)", "└─ ○ Format report.sql", ""] };
+  assert.deepEqual(widgetView(panel, false), panel.lines);
+  assert.deepEqual(widgetView(panel, true), ["● Todos (0/1)", "  … 1 more line (Alt+T expands)"]);
+  assert.deepEqual(widgetView({ lines: ["heading", "a", "b", "c"] }, true)[1], "  … 3 more lines (Alt+T expands)");
+  assert.deepEqual(widgetView({ lines: ["only a heading"] }, true), ["only a heading"]);
+  assert.deepEqual(widgetView({ lines: ["heading", "", " "] }, true), ["heading"]);
+  assert.deepEqual(widgetView({}, true), []);
 });
 
 // --- Terminal parity (desktop/PARITY.md) -------------------------------------------
