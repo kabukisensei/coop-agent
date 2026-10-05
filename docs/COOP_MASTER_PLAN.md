@@ -1791,6 +1791,32 @@ an answer; Windows/auth dialogs use full remote desktop.
 | MC3 | Build the installable responsive web companion for iOS/Android: chat, status, stop and supported questions, using existing dialog semantics and four themes | MC2 contract stable; phone browser/install tests on both OSes; readable exact commands/options, keyboard and screen-reader access, sufficient contrast and touch targets in every theme; unsupported UI gives desktop fallback |
 | MC4 | Qualify on the running Windows VM and document pairing, access, revocation, recovery and remote-desktop fallback | MC2 + MC3; acceptance matrix below passes with sanitized evidence; security review and Aaron's acceptance before enabling for teammates; update operational docs only for capabilities actually shipped |
 
+**Agent assignment and conflict boundaries.** Implementation is **not started**.
+Once Aaron explicitly starts a row, agents can work in isolated branches with
+synthetic sessions and mock authentication; no real credentials, listeners,
+network rules or tenant/device provisioning are required for that development.
+MC1 must settle the protocol before MC2 and MC3 begin. These are prospective file
+ownership boundaries, not new files or commands already available in the tree:
+
+| Assignment | Likely ownership | Dependencies / parallelization |
+| --- | --- | --- |
+| MC1 protocol/security owner | Section 12.4 and reviewed protocol/identity decisions in the existing architecture docs; define shared request/event/question types and fixtures | First; obtain Aaron's review of the contract and security choices. One owner edits shared types and the master plan; other agents review without overlapping edits |
+| MC2 VM adapter owner | Future mobile adapter modules and protocol fixtures; narrow changes to `desktop/main.mjs`, `desktop/lib/pi-session.mjs` and `desktop/lib/rpc-commands.mjs` only where the live-session contract requires them | After MC1; owns shared dialog arbitration and desktop integration, including reconciliation with M1 #275. No concurrent agent changes these files or guardrails for this task |
+| MC3 web UI owner | Future companion UI/assets and phone tests; reuse `desktop/renderer/dialogs.mjs` and `desktop/renderer/styles/themes.css` semantics/tokens | After MC1, parallel with MC2 against a mock adapter and frozen contract. Coordinate any changes to shared desktop renderer/theme files with their current owner; do not fork policy into the UI |
+| MC4 qualification/docs owner | Acceptance evidence, README, architecture and desktop parity updates; fixtures coordinated with MC2/MC3 | After integrated MC2/MC3 and approved provisioning. One owner updates the register; retain unrelated row statuses and rebase on fresh main before each focused PR |
+
+**Provisioning gate versus build work.** Aaron/admin must select and authorize the
+private access mechanism and application identity/enrollment approach, provision
+any required private network/identity resources and device grants, confirm the
+actual provider account's permitted use, and name a reviewer and VM acceptance
+user. Agents can prepare the MC1 contract and, after its review, build MC2/MC3 with
+mocks; they cannot assume those grants exist or enable real access as part of
+coding. MC4 live qualification waits for approved provisioning and the identified
+client Windows user/running session. This roadmap grants no permission to modify
+infrastructure, security settings, production policy or provider credentials.
+Resolve protocol changes through the MC1 owner, then update both consumers before
+integration. Native packaging/push are not parallel first-version assignments.
+
 **Acceptance matrix (MC4, also drives MC2 fixtures).** Verify normal chat,
 stream/status, stop and each confirm/select/input/editor/questionnaire form against
 the same desktop session. Suspend the phone, lose the network, reconnect with
