@@ -586,6 +586,7 @@ print("resume verdict contract OK")
     @{ Name = 'extensions-lock';        Lane = 'gate';     Head = 'extension lockfile applied through the helpers (#152)' },
     @{ Name = 'team-skills';            Lane = 'gate';     Head = 'team knowledge skills launch slot (launch-spec --json)' },
     @{ Name = 'desktop-spec';           Lane = 'gate';     Head = 'coop desktop: the window''s launch spec and runtime state (D1b)' },
+    @{ Name = 'desktop-bundle';         Lane = 'gate';     Head = 'coop window package: the bundled Node, Pi and extension tree (D1d)' },
     @{ Name = 'staleness';              Lane = 'gate';     Head = 'repo staleness nudge (throttled fetch + behind-count)' },
     @{ Name = 'coop-unit';              Lane = 'gate';     Head = 'Coop-Unit: the 5.1 job persistence path, and a job that returns nothing is re-run in-process' },
     @{ Name = 'doctor-project';         Lane = 'gate';     Head = 'doctor.ps1 project contract rows' },

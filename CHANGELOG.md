@@ -18,6 +18,91 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   is attached to the GitHub Release beside the installer. A failed acceptance
   fails the tag run before anything is published.
 
+## [0.30.1] — 2026-10-05
+
+### Added
+
+- One install for the coop window (master plan D1d; Aaron 2026-10-03). The
+  window package now carries coop itself: `resources\runtime` holds the
+  pinned Node (the nodejs.org win-x64 zip, version and SHA-256 in the
+  manifest's new `desktop.node`), an npm prefix with the pinned Pi and the
+  Power BI tools, and the extension tree installed from
+  `config/extensions-lock.json`; `resources\coop` is a snapshot of this
+  repository (skills, prompts, extensions, guardrails, standards bundle,
+  scripts). A teammate downloads the one installer and nothing else is
+  installed for Node, Pi or the extensions: `lib/common.ps1` run from the
+  snapshot finds the runtime beside it and puts the bundled Node and Pi first
+  on PATH (`Initialize-CoopBundledRuntime`), the package's `coop desktop`
+  opens its own exe, and the first launch on a profile without this release's
+  lock runs `coop install` in the console first (the prerequisite checklist
+  with its `winget` lines, with Node shown as bundled; the pipx tools; the
+  sync; the Azure and model sign-ins). `coop sync` seeds the agent dir's tree
+  from the bundle (`Restore-CoopBundledExtensions`) and declares the
+  extensions in `settings.json` as `pi install` would (`lib/pi_settings.py
+  ensure-packages`), so no npm runs on the machine; `coop doctor` reports the
+  package in place of the "not a git checkout" warning; `coop update` points
+  at the release page for a newer package; `coop uninstall` leaves the
+  package's Pi and tools to Add or remove programs. The `installer (Windows)`
+  CI job checks the bundled Node, Pi, tools and tree at their pins and runs
+  the snapshot's `coop version` on the bundled Pi
+  (`desktop/scripts/build-installer.mjs`, `desktop/scripts/verify-installer.mjs`,
+  `desktop/lib/bootstrap.mjs`; master plan revision 3.19). From the VM check
+  of the first package: the bundled Node ships without the zip's `npm.ps1`
+  and `npx.ps1` (PowerShell picked them over `npm.cmd` and they answered
+  `npm prefix -g` with "Unknown command", so the first launch skipped its
+  tool steps); the bundled npm trees are pruned of type declarations,
+  `dist-types` folders and source maps (about half the files, and every
+  path over Windows' 260-character limit, which the uninstaller could not
+  remove); and uninstalling the window also removes the `coop` link and
+  "coop" shortcuts its first launch wrote, leaving a terminal install's own
+  (`scripts/window-uninstall.ps1` via `desktop/installer/resources/installer.nsh`).
+  The CI job now checks all three.
+
+### Changed
+
+- **New shortcut icon** — `themes/coop.ico` is now a pixel-art tile: the logo's lime
+  C and red dot on a navy square, drawn on a 16 px grid so it stays readable at
+  taskbar size (the spy fedora blurred into a blob at 16 and 32 px). Classic BMP
+  frames at 16, 24, 32, 48, 64 and 128 px plus a 256 px PNG frame. It is picked up
+  by the Desktop and Start Menu shortcuts, the coop window and the installer; run
+  `coop install` (or reinstall the window) to refresh existing shortcuts.
+
+### Fixed
+
+- The installed coop window (D1c) opens its first launch like the terminal
+  does: the Start menu once, and the welcome with the set-up card. Two causes
+  from the v0.30.0 acceptance on the client VM: the package starts `coop desktop`
+  with no console input, so the launch never counted as interactive and
+  `COOP_FIRST_RUN` was never set (`coop desktop` now treats every launch as
+  interactive, since a person is about to see the window; the onboarding line
+  goes out as the warning the set-up card reads); and the MCP adapter's long
+  connection report at start (the Warehouse endpoint answering 401 without an
+  Azure token) landed in the conversation as a report, which the renderer took
+  for conversation content and dropped the whole welcome, including the set-up
+  card, the example prompts and the first-run menu. Notices no longer count as
+  content, and before the conversation starts a notice that names a sign-in
+  joins the set-up card as the `az login` item with the raw text as its detail
+  (`desktop/renderer/welcome.mjs`, `desktop/renderer/app.mjs`,
+  `Set-CoopFirstRunLaunch -Window`).
+- Follow-ups from the SQ live acceptance on the client's dev Warehouse
+  (2026-10-03):
+  - The guardrails audit log records an approved Warehouse SQL write as
+    `Warehouse SQL write`, not `live read` (the scope word was already
+    `ddl-dml-destructive`).
+  - `coop onboard --platform <fabric|azure_sql|both>` on an onboarded machine now
+    switches the client platform without re-asking the integration questions
+    (the hint `coop doctor` and `coop install` print); a fresh machine still runs
+    onboarding with that answer.
+  - Fabric endpoint discovery for `fabric_sql_query` and `sql_impact` retries one
+    transient REST failure; sign-in and target errors are not retried.
+  - `tests/guardrails.test.mjs` counts the Power BI bridge's status read when the
+    real `powerbi-desktop` shim is on PATH (the guard then calls it through node).
+- `fabric-apps` skill: the scaffold step now gives the command that works from
+  PowerShell (`npx --yes @microsoft/create-rayfin@latest <app> --project-name <app>
+  --template todoapp`); the former `npm create ... -- --template` form lost the `--`
+  and the sample template is `todoapp`, not `todo` (found in the FA1 live check on
+  the client VM, 2026-10-04).
+
 ## [0.30.0] — 2026-10-03
 
 ### Added

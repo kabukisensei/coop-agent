@@ -19,7 +19,7 @@ jobs:
     # the unsigned per-user NSIS installer of the window, from this tag.
     name: build the coop window installer
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:

@@ -856,9 +856,13 @@ await t("a Warehouse SQL write approval lasts for the session; DELETE still asks
     select: async (_t, options) => { asked++; return pick === "session" ? options[1] : options[2]; } };
   const c = { ...ctx, ui };
   const sql = (query) => ({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify({ query }) } });
+  clearAudit();
   assert.equal(blocked(await handle(sql("INSERT INTO dbo.T (a) VALUES (1)"), c)), false);
   assert.equal(blocked(await handle(sql("UPDATE dbo.T SET a = 2 WHERE id = 1"), c)), false);
   assert.equal(asked, 1, "the second write rides the session approval");
+  const writes = readAudit().filter((x) => x.tool === "governed-live-read");
+  assert.equal(writes.length, 2);
+  for (const rec of writes) assert.equal(rec.label, "Warehouse SQL write", "an approved write is not audited as a read");
   pick = "decline";
   assert.equal(blocked(await handle(sql("DELETE FROM dbo.T WHERE id = 1"), c)), true);
   assert.equal(asked, 2, "a DELETE still asks");
@@ -1938,7 +1942,12 @@ const inst = (pid, hasUnsavedChanges, file = `E:\\coop-sandbox\\tmp\\pbip-copy\\
 const statusJson = (...instances) => JSON.stringify({ status: instances.some((i) => i.bridgeStatus === "connected") ? "ready" : "not_connected", instances }, null, 2);
 const withStatus = (status, fn) => { desktopStatus = status; return fn().finally(() => { desktopStatus = null; }); };
 const reloadCall = (command, opts) => withStatus(opts?.status ?? null, () => call(command, opts));
-const statusCalls = () => execLog.filter((e) => e.bin === "powerbi-desktop").map((e) => e.args.join(" "));
+// On Windows with the real bridge installed the guard runs `node <cli.js> status ...`
+// (desktopStatusCommand); count both shapes as one bridge call.
+const isBridgeCli = (e) => e.bin === process.execPath && /powerbi-desktop-bridge-cli/.test(String(e.args[0]));
+const statusCalls = () => execLog
+  .filter((e) => e.bin === "powerbi-desktop" || isBridgeCli(e))
+  .map((e) => (isBridgeCli(e) ? e.args.slice(1) : e.args).join(" "));
 
 await t("reload guard: status runs through the npm shim's cli.js on Windows (spawn has no shell)", async () => {
   assert.deepEqual(desktopStatusCommand("19284", "linux", { PATH: "/usr/bin" }, () => true, "/node"), { bin: "powerbi-desktop", args: ["status", "--pid", "19284"] });

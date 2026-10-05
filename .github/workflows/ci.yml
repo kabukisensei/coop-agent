@@ -244,13 +244,15 @@ jobs:
         run: powershell -NoProfile -File tests\run.ps1
 
   installer:
-    # The coop window package (master plan D1c): build the unsigned NSIS
-    # per-user installer on every PR as an artifact, then install it silently
-    # on this disposable runner, run `coop.exe --doctor`, and uninstall
+    # The coop window package (master plan D1c, D1d): stage the pinned Node,
+    # Pi, the extension tree and the repository snapshot, build the unsigned
+    # NSIS per-user installer on every PR as an artifact, then install it
+    # silently on this disposable runner, run `coop.exe --doctor`, check the
+    # bundled runtime, run the bundled `coop.ps1 version` and uninstall
     # (desktop/scripts/verify-installer.mjs refuses to run anywhere else).
     name: installer (Windows)
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5

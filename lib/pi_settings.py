@@ -91,15 +91,67 @@ def ensure_coop_footer(path: Path) -> bool:
     return True
 
 
+def ensure_packages(path: Path, sources: list[str]) -> bool:
+    """Declare npm packages in `packages` the way `pi install` records them.
+
+    The coop window package (master plan D1d) ships the extension tree already
+    installed, so no `pi install` runs to write the `npm:<name>@<pin>` entries Pi
+    loads packages from. Each source is such an entry: an existing entry for the
+    same package (any pin) is replaced in place, a missing one is appended, and
+    every other entry, git or local, is kept. Returns True when the file changed.
+    """
+
+    settings, existing_mode = _read_json_object(path)
+    packages = settings.get("packages")
+    if not isinstance(packages, list):
+        packages = []
+    wanted = {}
+    for source in sources:
+        if not source.startswith("npm:") or "@" not in source[4:].lstrip("@"):
+            raise ValueError(f"not an npm package pin: {source}")
+        wanted[_npm_package_name(source)] = source
+    merged = []
+    seen = set()
+    for entry in packages:
+        name = _npm_package_name(entry) if isinstance(entry, str) and entry.startswith("npm:") else None
+        if name in wanted:
+            if name not in seen:
+                merged.append(wanted[name])
+                seen.add(name)
+            continue
+        merged.append(entry)
+    for name, source in wanted.items():
+        if name not in seen:
+            merged.append(source)
+    if merged == packages:
+        return False
+    settings["packages"] = merged
+    _write_json_object(path, settings, existing_mode)
+    return True
+
+
+def _npm_package_name(source: str) -> str:
+    """`npm:@scope/name@1.2.3` -> `@scope/name`; `npm:name` -> `name`."""
+
+    spec = source[len("npm:"):].strip()
+    scoped = spec.startswith("@")
+    body = spec[1:] if scoped else spec
+    name = body.split("@", 1)[0]
+    return ("@" + name) if scoped else name
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Converge Coop-owned Pi settings")
-    parser.add_argument("command", choices=("ensure-quiet-startup", "ensure-coop-footer"))
+    parser.add_argument("command", choices=("ensure-quiet-startup", "ensure-coop-footer", "ensure-packages"))
     parser.add_argument("settings", type=Path)
+    parser.add_argument("sources", nargs="*", help="ensure-packages: npm:<name>@<pin> entries")
     args = parser.parse_args(argv)
 
     try:
         if args.command == "ensure-coop-footer":
             ensure_coop_footer(args.settings)
+        elif args.command == "ensure-packages":
+            ensure_packages(args.settings, list(args.sources))
         else:
             ensure_quiet_startup(args.settings)
     except ValueError as exc:

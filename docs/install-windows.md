@@ -144,11 +144,18 @@ a personal one. The installer then carries on by itself. If it could not show th
 screen (for example, the install ended with **Something went wrong**), type `coop` in
 PowerShell or double-click the **coop** icon: either opens the same screen.
 
-## 6. Add the coop window (optional)
+## 6. The coop window: one download
 
 coop also runs in its own window: the same agent and rules, drawn as a modern
-app with four themes. Do this after steps 1 to 5, since the window uses the
-terminal coop you just installed.
+app with four themes. The window installer brings Node, Pi and coop with it.
+
+- **New to coop:** download and run the window installer below; that is the
+  whole install. Git, Python, pipx, the Azure CLI and the ODBC driver from
+  step 1 are still needed, and the first launch tells you which are missing.
+- **Already have coop:** run `coop update` in PowerShell, then run the same
+  installer. Your sessions, memory, settings and sign-ins stay where they are,
+  and `coop` in the terminal keeps working as before. The update comes first
+  because both installs share one extension set, which must be the same release.
 
 1. Download `coop-window-<version>-win-x64.exe` from the newest release at
    [github.com/kabukisensei/coop-agent/releases/latest](https://github.com/kabukisensei/coop-agent/releases/latest)
@@ -158,13 +165,20 @@ terminal coop you just installed.
    the only time you see it.
 3. Click **Next** and **Install**. No administrator password is asked; it
    installs for your user only, under `%LOCALAPPDATA%\Programs\coop`.
-4. Double-click the new **coop (window)** icon on your Desktop or Start Menu,
-   pick the project folder, and the window opens on it. A small console shows
-   coop's launch checks first and closes on its own.
+4. Double-click the new **coop (window)** icon on your Desktop or Start Menu
+   and pick the project folder. The first time, a console runs the same
+   checklist as `coop install` (prerequisites, tools, the Azure and OpenAI
+   sign-ins): follow what it prints, then start the window again if it stopped.
+   After that the console only shows coop's launch checks and closes on its own.
 
-If the window says coop is not installed, finish steps 1 to 5 first and start it
-again. To remove the window, use **Add or remove programs** and pick
-**coop (window)**; the terminal coop and your settings stay. A newer window comes
-as a newer installer: run it over the old one.
+With the terminal coop from steps 1 to 5 as well, the window shares your
+`~/.coop` settings, sign-ins and sessions, leaves your `coop` command and the
+"coop" icon with the terminal install, and uses its own bundled copy of coop.
+Keep both at the same release: `coop update` for the terminal, then the newer
+installer for the window. To remove the window, use **Add or
+remove programs** and pick **coop (window)**; your settings under `~/.coop`
+stay, and so do a terminal install's `coop` command and "coop" icon (the ones
+the window wrote for itself go with it). A newer window comes as a newer
+installer: run it over the old one.
 
 Next: [onboarding](onboarding.md) has a safe first task and the day-to-day commands.

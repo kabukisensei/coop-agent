@@ -655,3 +655,18 @@ with tempfile.TemporaryDirectory() as az_tmp:
 temp.cleanup()
 lake_temp.cleanup()
 print("sql-query tests passed")
+
+# --- endpoint discovery retries one transient REST failure, never an auth error ---
+_calls = []
+def _flaky(url, token):
+    _calls.append(url)
+    return ({}, "unavailable") if len(_calls) == 1 else ({}, "auth_required")
+with mock.patch.object(fsq.wmcp, "fabric_get_json", side_effect=_flaky):
+    assert fsq._discover_server(lake_target, FABRIC_TOKEN)[1] == "auth_required"
+assert len(_calls) == 2, "one retry after unavailable"
+_calls.clear()
+with mock.patch.object(fsq.wmcp, "fabric_get_json", side_effect=lambda u, t: (_calls.append(u), ({}, "auth_required"))[1]):
+    assert fsq._discover_server(lake_target, FABRIC_TOKEN)[1] == "auth_required"
+assert len(_calls) == 1, "an auth error is not retried"
+print("sql_query discovery retry tests passed")
+
