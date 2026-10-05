@@ -568,7 +568,12 @@ you intentionally want the full legacy template.
 Fabric projects may use two workspaces per environment. Record Warehouse/Lakehouse
 DEV/TEST/PROD workspaces in `fabric.environment_names` and semantic-model
 DEV/TEST/PROD workspaces in `power_bi.environment_names`; keep both default workspace
-entries pointed at DEV. Coop install and update refresh the bundled template but do
+entries pointed at DEV. The contract also declares what coop would otherwise assume:
+`fabric.layout` (which Fabric item kinds hold the SQL) and `power_bi.table_mapping`
+(how a semantic-model table maps to the SQL object it loads, `same_name` or `prefix`,
+with `overrides` for the exceptions); `data_doc lineage` and `sql_impact` check the
+mapping and report a mismatch instead of "no dependents" (`docs/tool-contract.md`).
+Coop install and update refresh the bundled template but do
 not overwrite an existing client's `.coop/project.yml`.
 
 `logging.require_task_log: true` makes that log step a completion postcondition for

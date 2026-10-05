@@ -47,10 +47,16 @@ import { agentDir as coopAgentDir, configPath as coopConfigPath, userProfilePath
 // lib/ so the coop window's forms run the same code (master plan D1b2).
 import {
   CANONICAL_UUID,
+  FABRIC_LAYOUTS,
   PROJECT_MESSAGES,
   SQL_TARGET_DISCOVERED_KINDS,
   SQL_TARGET_KINDS,
+  TABLE_MAPPING_RULES,
   applyProjectWizardSettings,
+  mappingCheckLines,
+  mappingExpectationLine,
+  proposedFabricLayout,
+  tableMappingFromContract,
   boolValue,
   canonicalProjectUuid,
   cleanAnswer,
@@ -406,8 +412,25 @@ function loadedByLines(parsed: any): string[] {
   return lines;
 }
 
-/** The model-facing text for one `coop-data-doc lineage` slice. */
-export function lineageText(parsed: any, query: string): string {
+/** The semantic-model table names a lineage slice says load the object. */
+function loadedByTables(parsed: any): string[] {
+  const hits: any[] = Array.isArray(parsed?.loaded_by) ? parsed.loaded_by : [];
+  return hits.map((hit) => {
+    const ref = hit?.table ?? hit;
+    return ref && typeof ref === "object" ? String(ref.name || ref.id || "") : String(ref || "");
+  }).filter(Boolean);
+}
+
+/** True when a lineage slice is about a SQL object (the side the mapping predicts a model table for). */
+function isSqlObjectSlice(parsed: any, query: string): boolean {
+  const type = String(parsed?.object?.type || parsed?.object?.kind || "").toLowerCase();
+  if (type) return /view|table|function|procedure|sql/.test(type) && !/measure|report|semantic|dataset|column/.test(type);
+  return /\./.test(String(parsed?.object?.name || query || ""));
+}
+
+/** The model-facing text for one `coop-data-doc lineage` slice; `mapping` is the contract's declared table mapping (C2), checked when present. */
+export function lineageText(parsed: any, query: string, mapping?: ReturnType<typeof tableMappingFromContract> | null): string {
+  const check = (name: string) => (mapping && isSqlObjectSlice(parsed, query) ? mappingCheckLines(mapping, name, loadedByTables(parsed)) : []);
   if (parsed?.ambiguous) {
     const matches: any[] = parsed.matches || [];
     return modelText(
@@ -424,7 +447,7 @@ export function lineageText(parsed: any, query: string): string {
     return modelText(
       `'${query}' is not a documented object, but ${n} Power BI table(s) load it by name (the SQL side is not in the docs; use sql_impact for its SQL dependents). ` +
         evidenceText(parsed?.evidence),
-      loadedBy,
+      [...loadedBy, ...check(query)],
       "read the Power BI tables' doc pages",
     );
   }
@@ -445,6 +468,7 @@ export function lineageText(parsed: any, query: string): string {
     for (const rel of rels) lines.push(`- ${typeof rel === "string" ? rel : JSON.stringify(rel)}`);
   }
   lines.push(...loadedBy);
+  lines.push(...check(String(parsed?.object?.name || query)));
   return modelText(head, lines, "read the object's doc page, or re-call with a smaller depth");
 }
 
@@ -498,8 +522,9 @@ export function impactFileArgs(files: string[], cwd: string, env: Record<string,
   return [...out];
 }
 
-/** The model-facing lines for sql_impact's three catalog sections. */
-export function sqlImpactLines(details: any): string[] {
+/** The model-facing lines for sql_impact's three catalog sections; with a declared
+ *  `mapping` (C2), an empty downstream list also says what the Power BI side is expected to hold. */
+export function sqlImpactLines(details: any, mapping?: ReturnType<typeof tableMappingFromContract> | null): string[] {
   const lines: string[] = [];
   for (const name of ["downstream", "upstream", "columns"]) {
     const part = details?.[name];
@@ -512,6 +537,8 @@ export function sqlImpactLines(details: any): string[] {
     lines.push(`${label} (${part.count}${part.truncated ? "+, capped" : ""}${name === "downstream" && part.coverage ? `; ${part.coverage}` : ""}):`);
     if (name === "downstream" && part.state === "ok" && !part.count) {
       lines.push("- none visible: a dependent whose definition this principal cannot read, a dynamic SQL reference or another database would not appear here; built lineage docs cover the rest of the estate");
+      const expectation = mappingExpectationLine(mapping, details?.object?.schema || "", details?.object?.name || "");
+      if (expectation) lines.push(`- ${expectation}`);
     }
     for (const item of part.items || []) {
       if (name === "columns") {
@@ -1192,6 +1219,17 @@ export interface ProjectWizardSettings {
   sqlTargetKind: string;
   sqlTargetServer: string;
   sqlTargetDatabase: string;
+  /** fabric.layout and power_bi.table_mapping (master plan C2). */
+  fabricLayout?: string;
+  tableMappingRule?: string;
+  tableMappingSchema?: string;
+  tableMappingPrefix?: string;
+}
+
+/** The declared mapping of the contract above `cwd`, or an undeclared one. */
+function contractTableMapping(cwd: string): ReturnType<typeof tableMappingFromContract> {
+  const contract = findProjectContract(cwd);
+  return tableMappingFromContract(contract ? safeRead(contract) : "");
 }
 
 export interface DailyLogRequirement {
@@ -1486,6 +1524,44 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
     if (pbiName === null) return false;
     const pbiId = await askText(ctx, "Default Power BI workspace ID (optional)", settings.powerBiWorkspaceId);
     if (pbiId === null) return false;
+    // The declared layout and mapping (C2): the contract states what coop would
+    // otherwise assume, and lineage checks it.
+    const layout = await askText(ctx, `Fabric layout: which items hold the SQL (${FABRIC_LAYOUTS.join(", ")}; optional)`, settings.fabricLayout || proposedFabricLayout(endpointType, settings.sqlTargetKind));
+    if (layout === null) return false;
+    const layoutValue = layout.trim().toLowerCase();
+    if (layoutValue && !(FABRIC_LAYOUTS as readonly string[]).includes(layoutValue)) {
+      notify(ctx, PROJECT_MESSAGES.fabricLayout, "error");
+      return false;
+    }
+    const rule = await askText(ctx, "Semantic-model table to SQL object rule: same_name (a table is named like its view) or prefix (table <name> loads <schema>.<prefix><name>)", settings.tableMappingRule || "same_name");
+    if (rule === null) return false;
+    const ruleValue = rule.trim().toLowerCase();
+    if (!(TABLE_MAPPING_RULES as readonly string[]).includes(ruleValue)) {
+      notify(ctx, PROJECT_MESSAGES.mappingRule, "error");
+      return false;
+    }
+    const schema = await askText(ctx, "Default schema for a model table named without one", settings.tableMappingSchema || "dbo");
+    if (schema === null) return false;
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(schema.trim())) {
+      notify(ctx, PROJECT_MESSAGES.mappingSchema, "error");
+      return false;
+    }
+    let prefix = settings.tableMappingPrefix || "";
+    if (ruleValue === "prefix") {
+      const typed = await askText(ctx, "View prefix the model table names drop (for example v_)", prefix);
+      if (typed === null) return false;
+      prefix = typed.trim();
+      if (!/^[A-Za-z0-9_]*$/.test(prefix)) {
+        notify(ctx, PROJECT_MESSAGES.mappingPrefix, "error");
+        return false;
+      }
+    }
+    Object.assign(settings, {
+      fabricLayout: layoutValue,
+      tableMappingRule: ruleValue,
+      tableMappingSchema: schema.trim(),
+      tableMappingPrefix: ruleValue === "prefix" ? prefix : "",
+    });
     Object.assign(settings, {
       tenantId: tenant,
       fabricWorkspaceName: fwName,
@@ -2063,7 +2139,7 @@ export default function coopTools(pi: ExtensionAPI) {
       const text = details?.ok
         ? modelText(
           `sql_impact: ${details.object?.schema}.${details.object?.name} (${details.object?.type}) on ${details.target?.kind} ${details.target?.environment}: ${["downstream", "upstream", "columns"].map(section).join(", ")}.${docsHint}`,
-          sqlImpactLines(details),
+          sqlImpactLines(details, contractTableMapping(ctx.cwd)),
           "query sys.dm_sql_referencing_entities or INFORMATION_SCHEMA.COLUMNS with fabric_sql_query for the rest",
         )
         : `sql_impact unavailable: ${String(details?.state || "internal_error")}.${details?.state === "contract_changed" ? ` ${CONTRACT_CHANGED_HINT}` : ""}`;
@@ -2241,7 +2317,7 @@ export default function coopTools(pi: ExtensionAPI) {
         const noGraph = /no built graph/i.test(res.stderr + res.stdout);
         const text =
           res.code === 0 && parsed
-            ? lineageText(parsed, p.object)
+            ? lineageText(parsed, p.object, contractTableMapping(ctx.cwd))
             : noGraph
               ? NO_GRAPH_TEXT
               : `lineage failed (exit ${res.code}): ${(res.stderr || res.stdout).trim().slice(0, 300)}`;

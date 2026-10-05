@@ -26,6 +26,8 @@ const {
   sqlTargetsBlock,
 } = await import(pathToFileURL(`${dist}/coop-tools.mjs`).href);
 const { findProjectContract } = await import(pathToFileURL(join(REPO_ROOT, "lib", "standards.mjs")).href);
+// The contract module itself, for the C2 mapping helpers the bundle does not re-export.
+const lib = await import(pathToFileURL(join(REPO_ROOT, "lib", "project-contract.mjs")).href);
 
 let n = 0;
 const skips = [];
@@ -127,6 +129,10 @@ const settings = {
   sqlTargetKind: "fabric_warehouse",
   sqlTargetServer: "",
   sqlTargetDatabase: "Contoso Warehouse",
+  fabricLayout: "warehouse",
+  tableMappingRule: "same_name",
+  tableMappingSchema: "dbo",
+  tableMappingPrefix: "",
 };
 
 await t("new-project renderer produces a parseable, governed contract", () => {
@@ -647,6 +653,91 @@ await t("editing through /setup-project writes a backup and keeps custom setting
   assert.ok(existsSync(`${contract}.bak`));
   assert.equal(readFileSync(`${contract}.bak`, "utf8"), original);
   assert.match(readFileSync(contract, "utf8"), /custom_section:\n  keep: 'yes'/);
+});
+
+// --- C2: the declared layout and the semantic-model-to-SQL mapping -----------------
+
+await t("C2: a new contract declares fabric.layout and power_bi.table_mapping; parse and apply round-trip", () => {
+  const { FABRIC_LAYOUTS, TABLE_MAPPING_RULES, proposedFabricLayout, tableMappingFromContract, projectYamlMapping, projectSettingsProblems, PROJECT_MESSAGES } = lib;
+  assert.deepEqual([...FABRIC_LAYOUTS], ["warehouse", "lakehouse", "sql_database", "mixed"]);
+  assert.deepEqual([...TABLE_MAPPING_RULES], ["same_name", "prefix"]);
+  assert.equal(proposedFabricLayout("Warehouse", ""), "warehouse");
+  assert.equal(proposedFabricLayout("", "fabric_lakehouse"), "lakehouse");
+  assert.equal(proposedFabricLayout("", "fabric_sql_database"), "sql_database");
+  assert.equal(proposedFabricLayout("", "azure_sql"), "");
+
+  const text = renderProjectWizardSettings(settings);
+  assert.equal(projectYamlScalar(text, ["fabric", "layout"]), "warehouse");
+  assert.match(text, /^  warehouse_names: \['Contoso Warehouse'\]$/m, "the default endpoint item seeds warehouse_names");
+  assert.match(text, /^  lakehouse_names: \[\]$/m);
+  assert.equal(projectYamlScalar(text, ["power_bi", "table_mapping", "rule"]), "same_name");
+  assert.equal(projectYamlScalar(text, ["power_bi", "table_mapping", "default_schema"]), "dbo");
+  assert.match(text, /^    overrides: \{\}$/m);
+  const parsed = parseProjectWizardSettings(text, "/p");
+  assert.equal(parsed.fabricLayout, "warehouse");
+  assert.equal(parsed.tableMappingRule, "same_name");
+  assert.equal(parsed.tableMappingSchema, "dbo");
+  assert.equal(parsed.tableMappingPrefix, "");
+  const mapping = tableMappingFromContract(text);
+  assert.equal(mapping.declared, true);
+  assert.deepEqual(mapping.overrides, {});
+
+  // An older contract without the block: applying the wizard adds it once, and
+  // hand-written overrides survive a later edit.
+  const older = text.split("\n").filter((line) => !/table_mapping|^    (rule|default_schema|view_prefix|overrides):|^  layout:/.test(line)).join("\n");
+  assert.equal(tableMappingFromContract(older).declared, false, "no block, nothing declared");
+  const applied = applyProjectWizardSettings(older, { ...parsed, repositories: [], tableMappingRule: "prefix", tableMappingPrefix: "v_", fabricLayout: "mixed" });
+  assert.equal(projectYamlScalar(applied, ["fabric", "layout"]), "mixed");
+  assert.equal(projectYamlScalar(applied, ["power_bi", "table_mapping", "rule"]), "prefix");
+  assert.equal(projectYamlScalar(applied, ["power_bi", "table_mapping", "view_prefix"]), "v_");
+  assert.match(applied, /^    overrides: \{\}$/m, "an empty overrides mapping is written as a flow mapping, not a quoted string");
+  const withOverrides = applied.replace("    overrides: {}", "    overrides:\n      Sales: 'dbo.vFactSales'\n      'Date Table': 'dim.vDate'");
+  assert.deepEqual(projectYamlMapping(withOverrides, ["power_bi", "table_mapping", "overrides"]), { Sales: "dbo.vFactSales", "Date Table": "dim.vDate" });
+  const reapplied = applyProjectWizardSettings(withOverrides, { ...parsed, repositories: [], tableMappingRule: "same_name" });
+  assert.deepEqual(tableMappingFromContract(reapplied).overrides, { Sales: "dbo.vFactSales", "Date Table": "dim.vDate" }, "overrides are never rewritten");
+  assert.equal(projectYamlScalar(reapplied, ["power_bi", "table_mapping", "view_prefix"]), "", "a same_name rule drops the prefix");
+
+  // The wizard's checks, the same words in the terminal and the form.
+  const bad = projectSettingsProblems({ ...settings, fabricLayout: "onelake", tableMappingRule: "regex", tableMappingSchema: "1dbo" });
+  assert.deepEqual(bad.map((p) => p.field), ["fabricLayout", "tableMappingRule", "tableMappingSchema"]);
+  assert.equal(bad[0].message, PROJECT_MESSAGES.fabricLayout);
+  assert.deepEqual(projectSettingsProblems({ ...settings, tableMappingRule: "prefix", tableMappingPrefix: "v-" }).map((p) => p.field), ["tableMappingPrefix"]);
+  assert.deepEqual(projectSettingsProblems({ ...settings, tableMappingRule: "prefix", tableMappingPrefix: "v_" }), []);
+  assert.deepEqual(projectSettingsProblems({ ...settings, fabricEnabled: false, fabricLayout: "onelake" }), [], "the Fabric block is checked only when Fabric is on");
+});
+
+await t("C2: the mapping predicts model tables and SQL objects, and names a mismatch instead of 'no dependents'", () => {
+  const { expectedModelTables, expectedSqlObject, mappingCheckLines, mappingExpectationLine } = lib;
+  const same = { declared: true, rule: "same_name", defaultSchema: "dbo", viewPrefix: "", overrides: { Calendar: "dim.vDate" } };
+  assert.deepEqual(expectedModelTables(same, "dbo", "vSales"), ["vSales", "dbo.vSales"]);
+  assert.deepEqual(expectedModelTables(same, "fin", "vGL"), ["fin.vGL"], "another schema needs the qualified name");
+  assert.deepEqual(expectedModelTables(same, "dim", "vDate"), ["Calendar"], "an override wins over the rule");
+  assert.equal(expectedSqlObject(same, "vSales"), "dbo.vSales");
+  assert.equal(expectedSqlObject(same, "fin.vGL"), "fin.vGL");
+  assert.equal(expectedSqlObject(same, "calendar"), "dim.vDate", "overrides match case-insensitively");
+
+  const prefix = { declared: true, rule: "prefix", defaultSchema: "dbo", viewPrefix: "v_", overrides: {} };
+  assert.deepEqual(expectedModelTables(prefix, "dbo", "v_Sales"), ["Sales"]);
+  assert.deepEqual(expectedModelTables(prefix, "dbo", "FactSales"), [], "no prefix, no predicted table");
+  assert.equal(expectedSqlObject(prefix, "Sales"), "dbo.v_Sales");
+
+  assert.deepEqual(mappingCheckLines({ declared: false }, "dbo.vSales", []), [], "nothing declared, nothing said");
+  const [holds] = mappingCheckLines(same, "dbo.vSales", ["vSales"]);
+  assert.match(holds, /^Declared mapping holds .*'vSales' loads dbo\.vSales/);
+  const [none] = mappingCheckLines(same, "dbo.vSales", []);
+  assert.match(none, /^Declared mapping does not match/);
+  assert.match(none, /'vSales' or 'dbo\.vSales' would load dbo\.vSales, and none is documented/);
+  assert.match(none, /do not read this as "no Power BI dependents"/);
+  const [other] = mappingCheckLines(same, "dbo.vSales", ["Sales Facts"]);
+  assert.match(other, /^Declared mapping does not match .*loaded by 'Sales Facts', which rule same_name.*does not predict \(expected 'vSales' or 'dbo\.vSales'\)/);
+  const [noPrefix] = mappingCheckLines(prefix, "dbo.FactSales", []);
+  assert.match(noPrefix, /does not carry the prefix 'v_'/);
+  const [withExtra] = mappingCheckLines(same, "dbo.vSales", ["vSales", "Budget"]);
+  assert.match(withExtra, /Also loaded by 'Budget', outside the rule/);
+
+  assert.equal(mappingExpectationLine({ declared: false }, "dbo", "vSales"), "");
+  assert.match(mappingExpectationLine(same, "dbo", "vSales"), /a semantic-model table named 'vSales' or 'dbo\.vSales' is expected to load dbo\.vSales; .*confirm with data_doc lineage/);
+  assert.match(mappingExpectationLine(prefix, "dbo", "FactSales"), /no semantic-model table is expected to load dbo\.FactSales/);
 });
 
 cleanupFixtures();

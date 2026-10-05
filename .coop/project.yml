@@ -49,6 +49,8 @@ fabric:
   tenant_id: "TODO: tenant id"
   default_workspace_name: "TODO: dev Warehouse / Lakehouse workspace name"
   default_workspace_id: "TODO: dev Warehouse / Lakehouse workspace id"
+  # The Fabric item kinds that hold this client's SQL (master plan C2).
+  layout: ""
   # Optional Warehouse/Lakehouse SQL endpoint MCP target. Leave IDs blank unless
   # copied from Fabric. Lakehouse targets use sqlEndpointProperties.id.
   default_sql_endpoint:
@@ -66,6 +68,12 @@ fabric:
 power_bi:
   default_workspace_name: "TODO: dev semantic-model workspace name"
   default_workspace_id: "TODO: dev semantic-model workspace id"
+  # How a semantic-model table maps to the SQL object it loads (master plan C2).
+  table_mapping:
+    rule: "same_name"
+    default_schema: "dbo"
+    view_prefix: ""
+    overrides: {}
   # Semantic-model workspace for each deployment environment.
   environment_names:
     dev:  "TODO: dev semantic-model workspace"

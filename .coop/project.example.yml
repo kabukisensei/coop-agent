@@ -68,6 +68,9 @@ fabric:
   tenant_id: "TODO: tenant id (Azure sign-in at launch; overrides ~/.coop/config azure.tenant_id)"
   default_workspace_name: "TODO: dev Warehouse / Lakehouse workspace name"
   default_workspace_id: "TODO: dev Warehouse / Lakehouse workspace id"
+  # The Fabric item kinds that hold this client's SQL: warehouse, lakehouse,
+  # sql_database or mixed (master plan C2). coop assumes nothing beyond it.
+  layout: "warehouse"
   lakehouse_names: ["TODO: lakehouse"]
   warehouse_names: ["TODO: warehouse"]
   # Optional Warehouse/Lakehouse SQL endpoint MCP target. Leave IDs blank unless
@@ -111,6 +114,16 @@ sql_targets:
 power_bi:
   default_workspace_name: "TODO: dev semantic-model workspace name"
   default_workspace_id: "TODO: dev semantic-model workspace id"
+  # How a semantic-model table maps to the SQL object it loads (master plan C2).
+  # rule same_name: the table is named like the view (dbo.vSales or vSales loads
+  # dbo.vSales); rule prefix: table <name> loads default_schema.<view_prefix><name>.
+  # overrides win over the rule: model table name -> schema.object. data_doc
+  # lineage and sql_impact check this and report a mismatch, never "no dependents".
+  table_mapping:
+    rule: "same_name"
+    default_schema: "dbo"
+    view_prefix: ""
+    overrides: {}
   # Semantic-model workspace for each deployment environment.
   environment_names:
     dev:  "TODO: dev semantic-model workspace"
