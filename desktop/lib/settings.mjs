@@ -6,7 +6,9 @@ import { dirname } from "node:path";
 // "auto" follows Windows' light or dark setting with the modern pair.
 export const THEMES = Object.freeze(["auto", "modern-dark", "modern-light", "retro-dark", "retro-light"]);
 
-const DEFAULTS = Object.freeze({ theme: "auto", width: 1280, height: 860, maximized: false, lastFolder: "", notify: true, menuBar: true });
+const DEFAULTS = Object.freeze({ theme: "auto", width: 1280, height: 860, maximized: false, lastFolder: "", notify: true, menuBar: true, projects: [], openNextTime: "" });
+
+const folderString = (value) => (typeof value === "string" && !/[\0\r\n]/.test(value) ? value.slice(0, 1024) : "");
 
 function size(value, fallback, min, max) {
   return Number.isInteger(value) && value >= min && value <= max ? value : fallback;
@@ -25,6 +27,10 @@ function normalize(value) {
     // while the window is in the background; the menu bar's visibility.
     notify: raw.notify !== false,
     menuBar: raw.menuBar !== false,
+    // The project picker (D1m): the folders opened before, newest first, and
+    // the one the icon opens without asking ("" asks).
+    projects: Array.isArray(raw.projects) ? raw.projects.map(folderString).filter(Boolean).slice(0, 12) : [],
+    openNextTime: folderString(raw.openNextTime),
   };
 }
 

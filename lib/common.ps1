@@ -3316,15 +3316,14 @@ function Get-CoopShortcutDirs {
   return $dirs
 }
 
-# --- Double-click launcher (Start Menu + Desktop) ------------------------------
-# One "coop" shortcut on the Start Menu and Desktop opens the terminal agent through
-# bin\coop-desktop.ps1 (its own console, home folder, coop.ico). Before S5 the "coop"
-# shortcut ran `coop web` in a minimized console, and "coop (terminal)" was the
-# terminal. install writes the shortcut; update rewrites it only where a coop
-# shortcut already exists (-OnlyIfPresent), so old shortcuts are repaired and a
-# removed one stays removed. The target folders come from Get-CoopShortcutDirs, so
-# an isolated install (redirected profile) writes into its sandbox, never onto the
-# real Desktop. Best-effort: returns $true when a shortcut was written.
+# The double-click launchers (master plan D1m: the icon is the front door).
+# "coop" opens the window once the window runtime is installed (or the installed
+# package wrote its own "coop" shortcut, which is left alone) and the terminal
+# until then; "coop (terminal)" always opens the terminal, for daily terminal
+# work. Both run bin\coop-desktop.ps1 in a console so the launch checks show and
+# stay readable on an error. Same folders either way (Get-CoopShortcutDirs); an
+# isolated install keeps them inside its profile. Best-effort: returns $true when
+# a shortcut was written. -OnlyIfPresent (update) refreshes only what exists.
 function Set-CoopDesktopShortcuts {
   param([switch]$OnlyIfPresent)
   if ($env:OS -ne 'Windows_NT') { return $false }
@@ -3332,67 +3331,69 @@ function Set-CoopDesktopShortcuts {
   if (-not (Test-Path -LiteralPath $desktopLauncher)) { return $false }
   $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
   $icon  = Join-Path $script:CoopRoot 'themes\coop.ico'
+  $window = Test-CoopWindowAvailable
   $ws = New-Object -ComObject WScript.Shell
   $wrote = $false
   foreach ($dir in (Get-CoopShortcutDirs)) {
     if (-not $dir) { continue }
     $main = Join-Path $dir 'coop.lnk'
-    $legacyTerminal = Join-Path $dir 'coop (terminal).lnk'
-    $present = (Test-Path -LiteralPath $main) -or (Test-Path -LiteralPath $legacyTerminal)
+    $terminal = Join-Path $dir 'coop (terminal).lnk'
+    $legacyWindow = Join-Path $dir 'coop (window).lnk'
+    $present = (Test-Path -LiteralPath $main) -or (Test-Path -LiteralPath $terminal) -or (Test-Path -LiteralPath $legacyWindow)
     if ($OnlyIfPresent -and -not $present) { continue }
     # A fresh sandbox profile has no Desktop / Start Menu folder yet.
     if (-not (Test-Path -LiteralPath $dir -PathType Container)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    # "coop": the window when there is one, else the terminal. The installed
+    # window package (D1c) writes a "coop" shortcut that starts its own exe;
+    # that one belongs to its installer and stays.
     $sc = $ws.CreateShortcut($main)
-    $sc.TargetPath       = $psExe
-    $sc.Arguments        = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$desktopLauncher`""
-    $sc.WorkingDirectory = $HOME
-    $sc.Description      = 'coop - the Cooptimize analytics agent'
-    $sc.WindowStyle      = 1
-    # ',0' = explicit icon index; some shells show a generic icon without it.
-    if (Test-Path -LiteralPath $icon) { $sc.IconLocation = "$icon,0" }
-    $sc.Save()
+    $packaged = (Test-Path -LiteralPath $main) -and $sc.TargetPath -and ($sc.TargetPath -notlike '*powershell.exe')
+    if (-not $packaged) {
+      $sc.TargetPath       = $psExe
+      $sc.Arguments        = if ($window) { "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$desktopLauncher`" desktop" } else { "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$desktopLauncher`"" }
+      $sc.WorkingDirectory = $HOME
+      $sc.Description      = if ($window) { 'coop - the Cooptimize analytics agent, in a window' } else { 'coop - the Cooptimize analytics agent' }
+      $sc.WindowStyle      = 1
+      # ',0' = explicit icon index; some shells show a generic icon without it.
+      if (Test-Path -LiteralPath $icon) { $sc.IconLocation = "$icon,0" }
+      $sc.Save()
+      $wrote = $true
+    }
+    # "coop (terminal)": always the terminal.
+    $tc = $ws.CreateShortcut($terminal)
+    $tc.TargetPath       = $psExe
+    $tc.Arguments        = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$desktopLauncher`""
+    $tc.WorkingDirectory = $HOME
+    $tc.Description      = 'coop - the Cooptimize analytics agent, in a terminal'
+    $tc.WindowStyle      = 1
+    if (Test-Path -LiteralPath $icon) { $tc.IconLocation = "$icon,0" }
+    $tc.Save()
     $wrote = $true
-    if (Test-Path -LiteralPath $legacyTerminal) { Remove-Item -LiteralPath $legacyTerminal -Force -ErrorAction SilentlyContinue }
+    # The older "coop (window)" shortcut this script wrote is folded into "coop";
+    # the package's own (an exe target) stays.
+    if (Test-Path -LiteralPath $legacyWindow) {
+      $lc = $ws.CreateShortcut($legacyWindow)
+      if (-not $lc.TargetPath -or ($lc.TargetPath -like '*powershell.exe')) { Remove-Item -LiteralPath $legacyWindow -Force -ErrorAction SilentlyContinue }
+    }
   }
-  # The window shortcut, only where one exists (Set-CoopWindowShortcut, below).
-  [void](Set-CoopWindowShortcut -OnlyIfPresent)
   return $wrote
 }
 
-# The "coop (window)" shortcut beside "coop": the same bin\coop-desktop.ps1 front
-# door with `desktop`, so the console shows the launch checks and stays open on an
-# error. The window is opt-in while it is new (master plan D1b): the first
-# `coop desktop` that installs the window runtime writes this shortcut, and
-# install/update rewrite it only where it already exists. Same folders as
-# Set-CoopDesktopShortcuts. Best-effort: returns $true when a shortcut was written.
+# The window runtime is on this profile (Electron's binary in ~/.coop/desktop), or
+# this coop is the installed window package's own snapshot (D1d): "coop" opens the window.
+function Test-CoopWindowAvailable {
+  if ($script:CoopBundledRuntime) { return $true }
+  try { return [bool](Get-CoopDesktopElectronExe) } catch { return $false }
+}
+
+# After the first `coop desktop` installed the window runtime (master plan D1b,
+# D1m): "coop" now opens the window and "coop (terminal)" the terminal, in the
+# folders that already have a "coop" shortcut (the install wrote it) or, with
+# none, both folders. Best-effort: returns $true when a shortcut was written.
 function Set-CoopWindowShortcut {
   param([switch]$OnlyIfPresent)
   if ($env:OS -ne 'Windows_NT') { return $false }
-  $desktopLauncher = Join-Path $script:CoopRoot 'bin\coop-desktop.ps1'
-  if (-not (Test-Path -LiteralPath $desktopLauncher)) { return $false }
-  $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-  $icon  = Join-Path $script:CoopRoot 'themes\coop.ico'
-  $ws = New-Object -ComObject WScript.Shell
-  $wrote = $false
-  foreach ($dir in (Get-CoopShortcutDirs)) {
-    if (-not $dir) { continue }
-    $lnk = Join-Path $dir 'coop (window).lnk'
-    if ($OnlyIfPresent -and -not (Test-Path -LiteralPath $lnk)) { continue }
-    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-    $sc = $ws.CreateShortcut($lnk)
-    # The installed window package (master plan D1c) writes a shortcut of the
-    # same name that starts its own exe; leave that one to its installer.
-    if ((Test-Path -LiteralPath $lnk) -and $sc.TargetPath -and ($sc.TargetPath -notlike '*powershell.exe')) { continue }
-    $sc.TargetPath       = $psExe
-    $sc.Arguments        = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$desktopLauncher`" desktop"
-    $sc.WorkingDirectory = $HOME
-    $sc.Description      = 'coop - the Cooptimize analytics agent, in a window'
-    $sc.WindowStyle      = 1
-    if (Test-Path -LiteralPath $icon) { $sc.IconLocation = "$icon,0" }
-    $sc.Save()
-    $wrote = $true
-  }
-  return $wrote
+  return (Set-CoopDesktopShortcuts -OnlyIfPresent:$OnlyIfPresent)
 }
 
 # --- coop desktop: the window's runtime (master plan D1b) ---------------------

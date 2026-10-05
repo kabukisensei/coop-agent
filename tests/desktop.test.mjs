@@ -20,6 +20,7 @@ import { SpecError, parseSpec, piArgv, piEnv } from "../desktop/lib/spec.mjs";
 import { CommandError, IMAGE_LIMITS, buildCommand, buildUiResponse } from "../desktop/lib/rpc-commands.mjs";
 import { CSP, isAppUrl, resolveAsset } from "../desktop/lib/serve.mjs";
 import { THEMES, loadSettings, saveSettings } from "../desktop/lib/settings.mjs";
+import { MAX_PROJECTS, describeProject, forgetProject, projectEntries, rememberProject, startFolder, teamWord, windowTitle } from "../desktop/lib/projects.mjs";
 import { isSessionPath, listSessions, sessionFolderName } from "../desktop/lib/sessions.mjs";
 import { readBranch } from "../desktop/lib/git.mjs";
 import { consoleProcess } from "../desktop/lib/terminal.mjs";
@@ -445,7 +446,7 @@ await check("menu: the template runs window actions, themes are radios, notifica
   const theme = view.find((item) => item.label === "Theme");
   assert.deepEqual(theme.submenu.map((item) => [item.label, item.checked]), [["Match Windows", false], ["Modern dark", false], ["Modern light", false], ["Retro dark", true], ["Retro light", false]]);
   for (const menu of template) for (const item of menu.submenu) if (item.click && item.label && !item.role && !item.submenu && item.type !== "checkbox" && !/Install guide|About/.test(item.label)) item.click();
-  assert.ok(ran.includes("new") && ran.includes("hotkeys") && ran.includes("start") && ran.includes("pane"));
+  assert.ok(ran.includes("new") && ran.includes("hotkeys") && ran.includes("start") && ran.includes("pane") && ran.includes("switch"), "File > Switch project runs the picker action (D1m)");
   assert.equal(notificationFor({ type: "agent_end" }, { folder: "work" }), "coop finished in work.");
   assert.equal(notificationFor({ type: "extension_ui_request", method: "confirm", title: "coop guardrails" }), "coop is waiting for your answer: coop guardrails");
   assert.equal(notificationFor({ type: "extension_ui_request", method: "setStatus" }), "");
@@ -517,10 +518,61 @@ await check("settings: unknown values fall back, the four themes and auto are ke
   assert.deepEqual(THEMES, ["auto", "modern-dark", "modern-light", "retro-dark", "retro-light"]);
   const file = join(temp, "settings", "window.json");
   assert.equal(loadSettings(file).theme, "auto");
-  assert.deepEqual(saveSettings(file, { theme: "retro-light", width: 99999, height: 900, maximized: "yes", extra: 1 }), { theme: "retro-light", width: 1280, height: 900, maximized: false, lastFolder: "", notify: true, menuBar: true });
+  assert.deepEqual(saveSettings(file, { theme: "retro-light", width: 99999, height: 900, maximized: "yes", extra: 1 }), { theme: "retro-light", width: 1280, height: 900, maximized: false, lastFolder: "", notify: true, menuBar: true, projects: [], openNextTime: "" });
   assert.equal(loadSettings(file).theme, "retro-light");
+  assert.deepEqual(saveSettings(file, { projects: ["C:\\work\\a", 7, "bad\nname", "C:\\work\\b"], openNextTime: "C:\\work\\a" }).projects, ["C:\\work\\a", "C:\\work\\b"]);
+  assert.equal(loadSettings(file).openNextTime, "C:\\work\\a");
   writeFileSync(file, "{not json");
   assert.equal(loadSettings(file).theme, "auto");
+});
+
+await check("D1m projects: the picker's list, the folder the icon opens, the team word and the title", () => {
+  let settings = { projects: [], openNextTime: "" };
+  settings = rememberProject(settings, "C:\\work\\contoso-analytics", "win32");
+  settings = rememberProject(settings, "C:\\work\\fabrikam", "win32");
+  settings = rememberProject(settings, "c:\\WORK\\contoso-analytics", "win32");
+  assert.deepEqual(settings.projects, ["c:\\WORK\\contoso-analytics", "C:\\work\\fabrikam"], "newest first, one entry per folder whatever the case on Windows");
+  for (let i = 0; i < 20; i += 1) settings = rememberProject(settings, `/work/p${i}`, "linux");
+  assert.equal(settings.projects.length, MAX_PROJECTS);
+  settings = rememberProject({ projects: ["/a", "/b"], openNextTime: "/b" }, "/c", "linux");
+  assert.equal(startFolder(settings, () => true), "/b");
+  assert.equal(startFolder(settings, () => false), "", "a folder that is gone asks again");
+  assert.equal(startFolder({ projects: [], openNextTime: "" }, () => true), "");
+  settings = forgetProject(settings, "/b", "linux");
+  assert.deepEqual([settings.projects, settings.openNextTime], [["/c", "/a"], ""], "forgetting the default clears it");
+  assert.equal(teamWord({ state: "not-shared" }), "Not shared yet");
+  assert.equal(teamWord({ state: "no-remote", localExists: true }), "Not shared yet");
+  assert.equal(teamWord({ state: "no-remote", localExists: false }), "");
+  assert.equal(teamWord({ state: "team-newer" }), "The team has a newer file");
+  assert.equal(teamWord({ state: "shared" }), "");
+  assert.equal(teamWord(null), "");
+
+  const root = join(temp, "picker");
+  const home = join(root, "contoso-coop");
+  const analytics = join(root, "contoso-analytics");
+  mkdirSync(join(home, ".coop"), { recursive: true });
+  mkdirSync(analytics, { recursive: true });
+  writeFileSync(join(home, ".coop", "project.yml"), "profile:\n  client: 'Contoso Retail'\nrepositories:\n  analytics:\n    local_path: '../contoso-analytics'\n");
+  const readers = {
+    contractFor: (folder) => (folder === analytics || folder === home ? join(home, ".coop", "project.yml") : null),
+    branch: (folder) => (folder === analytics ? "main" : ""),
+    team: (dir) => ({ state: dir === home ? "not-shared" : "shared", localExists: true }),
+  };
+  const fromSource = describeProject(analytics, readers);
+  assert.deepEqual(fromSource, { path: analytics, name: "contoso-analytics", exists: true, contract: join(home, ".coop", "project.yml"), root: home, client: "Contoso Retail", home: true, branch: "main", team: "Not shared yet" }, "a source repository shows the client from the home repository beside it");
+  const fromHome = describeProject(home, readers);
+  assert.deepEqual([fromHome.client, fromHome.home, fromHome.branch], ["Contoso Retail", false, ""]);
+  const plain = describeProject(join(root, "plain"), readers);
+  assert.equal(plain.exists, false);
+  mkdirSync(join(root, "plain"));
+  assert.deepEqual([describeProject(join(root, "plain"), readers).client, describeProject(join(root, "plain"), readers).contract], ["", ""], "a folder with no project file is listed without a client");
+  const entries = projectEntries({ projects: [analytics, join(root, "gone"), home] }, readers);
+  assert.deepEqual(entries.map((entry) => entry.name), ["contoso-analytics", "contoso-coop"], "a folder that is gone is dropped");
+  assert.equal(windowTitle(fromSource), "coop - Contoso Retail · contoso-analytics");
+  assert.equal(windowTitle(describeProject(join(root, "plain"), readers)), "coop - plain");
+  assert.equal(resolveAsset(join(ROOT, "desktop", "renderer"), "coop://app/picker.html").type, "text/html; charset=utf-8", "the picker page is served like the main one");
+  const preload = readFileSync(join(ROOT, "desktop", "preload.cjs"), "utf8");
+  for (const name of ["switchProject", "pickerList", "pickerOpen", "pickerBrowse", "pickerForget", "pickerCancel", "pickerTheme"]) assert.ok(preload.includes(`${name}:`), `preload exposes ${name}`);
 });
 
 await check("sessions: Pi's folder naming, listing and the switch guard", () => {

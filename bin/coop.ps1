@@ -773,7 +773,7 @@ function Invoke-CoopDesktop {
     if ((Get-CoopDesktopRuntimeState) -ne 'current') {
       $firstInstall = ((Get-CoopDesktopRuntimeState) -eq 'missing')
       if (Install-CoopDesktopRuntime) {
-        if ($firstInstall -and (Set-CoopWindowShortcut)) { Coop-Ok 'added the "coop (window)" shortcut next to "coop"' }
+        if ($firstInstall -and (Set-CoopWindowShortcut)) { Coop-Ok 'the "coop" shortcut now opens the window; "coop (terminal)" opens the terminal' }
       } elseif (-not (Get-CoopDesktopElectronExe)) {
         Coop-Die 'the coop window runtime is not installed (see above)'
       } else {

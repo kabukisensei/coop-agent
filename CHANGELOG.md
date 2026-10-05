@@ -7,6 +7,21 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- **The icon is the front door** (D1m, master plan section 12.3; Aaron,
+  2026-10-05). One **coop** icon on the Desktop and in the Start Menu opens the
+  window (once the window runtime is installed, or from the window package,
+  whose shortcut is now plain "coop"); **coop (terminal)** opens the terminal
+  for daily terminal work, and `coop` in any terminal is unchanged. Started from
+  the icon with no folder, the window shows a project picker instead of the OS
+  folder dialog: the folders opened before, newest first, each with the client
+  its `.coop/project.yml` names (found above the folder or in the client home
+  repository beside it), the Git branch and "Not shared yet" or "The team has a
+  newer file" when the project file is out of step, a Browse button, and "Open
+  this one next time", which makes the icon open straight on that project; a
+  folder with no project file is listed as such (`/setup-project` creates one).
+  The window title and header name the client and the folder, and File > Switch
+  project opens the same picker for another window. `coop desktop` from a
+  terminal keeps opening the current folder.
 - **The shared project file** (C1, master plan section 12.3; Joel, Eric and
   Aaron in the 2026-10-05 demo; the design Aaron approved the same evening,
   `demo/c1-shared-contract-design.md`). Every client has one `.coop/project.yml`,

@@ -29,6 +29,7 @@ import { attach, forget, pruneStore, findPdfjs, LIMITS as ATTACH_LIMITS } from "
 import { loadSplash } from "./lib/splash.mjs";
 import { vibesDir, loadVibes, vibeSets, userName, fillVibe, pickVibe } from "./lib/vibes.mjs";
 import { bootstrapProcess, doctorReport, findCoop, folderArgument, packagedPaths } from "./lib/bootstrap.mjs";
+import { describeProject, forgetProject, projectEntries, rememberProject, startFolder, windowTitle } from "./lib/projects.mjs";
 import { menuTemplate, notificationFor } from "./lib/menu.mjs";
 import { restartOnce } from "./lib/restart.mjs";
 import { profileDir } from "../lib/paths.mjs";
@@ -116,6 +117,8 @@ function send(state, channel, payload) {
 
 function broadcast(channel, payload) {
   for (const state of windows.values()) send(state, channel, payload);
+  // The project picker follows the theme too.
+  if (picker.win && !picker.win.isDestroyed()) { try { picker.win.webContents.send(channel, payload); } catch { /* gone */ } }
 }
 
 function startPi(state, extraArgs = []) {
@@ -171,11 +174,16 @@ function notifyInBackground(state, message) {
 
 function windowInfo(state) {
   const { spec } = state;
+  if (!state.project) state.project = describeProject(spec.cwd);
   return {
     version: spec.version,
     cwd: spec.cwd,
     folder: basename(spec.cwd) || spec.cwd,
     branch: readBranch(spec.cwd),
+    // The project file coop reads here and the client it names (D1m).
+    client: state.project.client,
+    contract: state.project.contract,
+    projectHome: state.project.home,
     platform: process.platform,
     theme: settings.theme,
     themes: THEMES,
@@ -217,7 +225,8 @@ function openWindow(rawSpec, token) {
     height: settings.height,
     minWidth: 640,
     minHeight: 420,
-    title: `coop - ${basename(spec.cwd) || spec.cwd}`,
+    // The client the project file names, then the folder (D1m).
+    title: windowTitle(describeProject(spec.cwd)),
     show: false,
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#0f1318" : "#f6f7f9",
     autoHideMenuBar: !settings.menuBar,
@@ -234,7 +243,8 @@ function openWindow(rawSpec, token) {
   });
   const state = { win, spec, token, pi: null, ready: false, queue: [], sessionFile: "", changes: [], snapshots: new Map(), knowledgeRoots: new Map(), docs: null, build: null, vibeSet: "" };
   windows.set(win.webContents.id, state);
-  if (settings.lastFolder !== spec.cwd) { try { settings = saveSettings(settingsFile, { ...settings, lastFolder: spec.cwd }); } catch { /* keep going */ } }
+  // The picker remembers every folder a window opened (D1m), newest first.
+  try { settings = saveSettings(settingsFile, rememberProject({ ...settings, lastFolder: spec.cwd }, spec.cwd)); } catch { /* keep going */ }
   if (settings.maximized) win.maximize();
   win.once("ready-to-show", () => win.show());
   win.on("focus", () => { try { win.flashFrame(false); } catch { /* gone */ } });
@@ -368,11 +378,8 @@ handle("coop:open-terminal", async (state) => {
   return { success: true };
 });
 
-handle("coop:open-folder", async (state) => {
-  if (!state.spec.coop) return { success: false, error: "this window was not started by coop desktop" };
-  const result = await dialog.showOpenDialog(state.win, { title: "Open a folder in a new coop window", defaultPath: state.spec.cwd, properties: ["openDirectory"] });
-  if (result.canceled || !result.filePaths.length) return { success: false, cancelled: true };
-  const folder = result.filePaths[0];
+/** Another folder in a new window: the same `coop desktop` the icon runs. */
+function openFolderWindow(state, folder) {
   if (process.platform === "win32") {
     const proc = consoleProcess({ mode: "window", coop: state.spec.coop, cwd: folder, env: process.env, app: PACKAGED ? process.execPath : "" });
     spawn(proc.command, proc.args, proc.options).unref();
@@ -381,7 +388,90 @@ handle("coop:open-folder", async (state) => {
     spawn("pwsh", ["-NoLogo", "-NoProfile", "-File", state.spec.coop, "desktop"], { cwd: folder, env: process.env, detached: true, stdio: "ignore" }).unref();
   }
   return { success: true };
+}
+
+handle("coop:open-folder", async (state) => {
+  if (!state.spec.coop) return { success: false, error: "this window was not started by coop desktop" };
+  const result = await dialog.showOpenDialog(state.win, { title: "Open a folder in a new coop window", defaultPath: state.spec.cwd, properties: ["openDirectory"] });
+  if (result.canceled || !result.filePaths.length) return { success: false, cancelled: true };
+  return openFolderWindow(state, result.filePaths[0]);
 });
+
+// File > Switch project (D1m): the same picker the icon shows, then a new window.
+handle("coop:switch-project", async (state) => {
+  if (!state.spec.coop) return { success: false, error: "this window was not started by coop desktop" };
+  const folder = await pickProject(state.win);
+  if (!folder) return { success: false, cancelled: true };
+  return openFolderWindow(state, folder);
+});
+
+// --- The project picker (D1m) ------------------------------------------------
+// One small window: the folders opened before with their client, branch and
+// team state, Browse, and "open this one next time". It resolves the folder
+// picked or "" (Cancel, Escape, or the window closed). Its page is served
+// like the main one; its IPC answers only that page.
+const picker = { win: null, resolve: null, awaitingSpec: false };
+
+function pickerState(event) {
+  if (!picker.win || picker.win.isDestroyed() || event.sender.id !== picker.win.webContents.id || !event.senderFrame || !isAppUrl(event.senderFrame.url)) throw new Error("not the project picker");
+  return picker;
+}
+
+function finishPicker(folder) {
+  const done = picker.resolve;
+  picker.resolve = null;
+  if (picker.win && !picker.win.isDestroyed()) picker.win.close();
+  picker.win = null;
+  if (done) done(folder || "");
+}
+
+function pickProject(parent) {
+  if (picker.win && !picker.win.isDestroyed()) { picker.win.focus(); return new Promise((resolve) => { const previous = picker.resolve; picker.resolve = (folder) => { if (previous) previous(folder); resolve(folder); }; }); }
+  return new Promise((resolve) => {
+    picker.resolve = resolve;
+    picker.win = new BrowserWindow({
+      width: 560,
+      height: 600,
+      minWidth: 420,
+      minHeight: 360,
+      parent: parent && !parent.isDestroyed() ? parent : undefined,
+      title: "coop - open a project",
+      show: false,
+      backgroundColor: nativeTheme.shouldUseDarkColors ? "#0f1318" : "#f6f7f9",
+      autoHideMenuBar: true,
+      icon: existsSync(join(HERE, "..", "themes", "coop.ico")) ? join(HERE, "..", "themes", "coop.ico") : undefined,
+      webPreferences: { preload: join(HERE, "preload.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, devTools: process.env.COOP_DESKTOP_DEVTOOLS === "1" },
+    });
+    picker.win.once("ready-to-show", () => picker.win.show());
+    picker.win.on("closed", () => { picker.win = null; const done = picker.resolve; picker.resolve = null; if (done) done(""); });
+    picker.win.loadURL(`${APP_ORIGIN}/picker.html`);
+  });
+}
+
+function pickerHandle(channel, fn) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    try { return { success: true, data: await fn(pickerState(event), ...args) }; } catch (error) { return { success: false, error: error && error.message ? error.message : String(error) }; }
+  });
+}
+
+pickerHandle("coop:picker-list", () => ({ entries: projectEntries(settings), openNextTime: startFolder(settings) }));
+pickerHandle("coop:picker-theme", () => ({ theme: settings.theme, systemDark: nativeTheme.shouldUseDarkColors }));
+pickerHandle("coop:picker-open", (_picker, path, openNextTime) => {
+  const folder = typeof path === "string" && isAbsolute(path) && !/[\0\r\n]/.test(path) && existsSync(path) ? path : "";
+  if (!folder) throw new Error("that folder does not exist any more");
+  settings = saveSettings(settingsFile, rememberProject({ ...settings, openNextTime: openNextTime === true ? folder : "" }, folder));
+  finishPicker(folder);
+  return folder;
+});
+pickerHandle("coop:picker-browse", async (state) => {
+  const result = await dialog.showOpenDialog(state.win, { title: "Open a folder in coop", defaultPath: settings.lastFolder && existsSync(settings.lastFolder) ? settings.lastFolder : app.getPath("home"), properties: ["openDirectory"], buttonLabel: "Choose" });
+  if (result.canceled || !result.filePaths.length) return "";
+  const folder = result.filePaths[0];
+  settings = saveSettings(settingsFile, rememberProject(settings, folder));
+  return folder;
+});
+pickerHandle("coop:picker-forget", (_picker, path) => { settings = saveSettings(settingsFile, forgetProject(settings, String(path || ""))); return true; });
+pickerHandle("coop:picker-cancel", () => { finishPicker(""); return true; });
 
 // One restart at a time per window (#286): a second request during the
 // shutdown gets the same restart, and a window closed meanwhile starts nothing.
@@ -702,11 +792,13 @@ async function bootstrap() {
     app.quit();
     return;
   }
-  let folder = folderArgument(process.argv.slice(1));
+  // The icon is the front door (D1m): `coop.exe <folder>` names the folder,
+  // "open this one next time" skips the question, else the project picker.
+  let folder = folderArgument(process.argv.slice(1)) || startFolder(settings);
   if (!folder) {
-    const picked = await dialog.showOpenDialog({ title: "Open a folder in coop", defaultPath: settings.lastFolder && existsSync(settings.lastFolder) ? settings.lastFolder : app.getPath("home"), properties: ["openDirectory"], buttonLabel: "Open in coop" });
-    if (picked.canceled || !picked.filePaths.length) { app.quit(); return; }
-    folder = picked.filePaths[0];
+    picker.awaitingSpec = true;
+    folder = await pickProject();
+    if (!folder) { picker.awaitingSpec = false; app.quit(); return; }
   }
   let proc;
   try {
@@ -733,6 +825,7 @@ if (!app.requestSingleInstanceLock({ spec: initial.spec, token: initial.token })
   app.quit();
 } else {
   app.on("second-instance", (_event, _argv, _cwd, data) => {
+    picker.awaitingSpec = false;
     if (data && typeof data.spec === "string" && data.spec) openWindow(data.spec, typeof data.token === "string" ? data.token : "");
   });
   app.whenReady().then(() => {
@@ -745,7 +838,9 @@ if (!app.requestSingleInstanceLock({ spec: initial.spec, token: initial.token })
   });
 }
 
-app.on("window-all-closed", () => app.quit());
+// Closing the picker after a choice leaves no window until coop.ps1 hands
+// the spec over (bootstrap below); the child's exit timer quits if none comes.
+app.on("window-all-closed", () => { if (!picker.awaitingSpec) app.quit(); });
 
 let stopping = false;
 app.on("before-quit", (event) => {
