@@ -18,7 +18,7 @@ try {
   $env:NO_COLOR = '1'
   $file = Join-Path (Join-Path $t '.coop') 'prod-unlock.json'
 
-  $out = (& $psExe -NoProfile -File $coop unlock-prod Contoso --minutes 15 2>&1 | Out-String)
+  $out = (Invoke-Native { & $psExe -NoProfile -File $coop unlock-prod Contoso --minutes 15 2>&1 } | Out-String)
   if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $file)) { Ok 'unlock-prod <client> --minutes 15 writes the grant and exits 0' } else { Ko 'unlock-prod must write the grant and exit 0' $out }
   if ($out -match 'UNLOCKED for Contoso for 15 min \(grant [0-9a-f]{8}') { Ok 'the message names the client, the minutes and the grant id' } else { Ko 'message must name client, minutes and grant id' $out }
   $g = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json
@@ -32,24 +32,24 @@ try {
   $bytes = [System.IO.File]::ReadAllBytes($file)
   if (-not ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)) { Ok 'the file has no BOM (JSON.parse in the guardrail reads it as is)' } else { Ko 'the unlock file must not carry a BOM' }
 
-  $out = (& $psExe -NoProfile -File $coop unlock-prod --status 2>&1 | Out-String)
+  $out = (Invoke-Native { & $psExe -NoProfile -File $coop unlock-prod --status 2>&1 } | Out-String)
   if ($LASTEXITCODE -eq 0 -and $out -match 'UNLOCKED for Contoso: grant [0-9a-f]{8}, \d+ min left') { Ok '--status reports the active grant with minutes left' } else { Ko '--status must report the active grant' $out }
 
   foreach ($bad in @(@('Contoso', '--minutes', '900'), @('Contoso', '--minutes', 'soon'), @('--minutes', '5'), @('Contoso', '--force'), @('Contoso', 'Fabrikam'))) {
     $before = Get-Content -LiteralPath $file -Raw
-    $out = (& $psExe -NoProfile -File $coop unlock-prod @bad 2>&1 | Out-String)
+    $out = (Invoke-Native { & $psExe -NoProfile -File $coop unlock-prod @bad 2>&1 } | Out-String)
     $after = Get-Content -LiteralPath $file -Raw
     if ($LASTEXITCODE -ne 0 -and $before -eq $after) { Ok "unlock-prod $($bad -join ' ') exits 1 and leaves the grant untouched" } else { Ko "unlock-prod $($bad -join ' ') must exit 1 and change nothing" $out }
   }
 
-  $out = (& $psExe -NoProfile -File $coop unlock-prod --revoke 2>&1 | Out-String)
+  $out = (Invoke-Native { & $psExe -NoProfile -File $coop unlock-prod --revoke 2>&1 } | Out-String)
   if ($LASTEXITCODE -eq 0 -and -not (Test-Path -LiteralPath $file) -and $out -match 'blocked again') { Ok '--revoke deletes the grant' } else { Ko '--revoke must delete the grant and say so' $out }
-  $out = (& $psExe -NoProfile -File $coop unlock-prod --status 2>&1 | Out-String)
+  $out = (Invoke-Native { & $psExe -NoProfile -File $coop unlock-prod --status 2>&1 } | Out-String)
   if ($LASTEXITCODE -eq 0 -and $out -match 'blocked \(no unlock\)') { Ok '--status without a grant says production writes are blocked' } else { Ko '--status without a grant' $out }
-  $out = (& $psExe -NoProfile -File $coop unlock-prod --revoke 2>&1 | Out-String)
+  $out = (Invoke-Native { & $psExe -NoProfile -File $coop unlock-prod --revoke 2>&1 } | Out-String)
   if ($LASTEXITCODE -eq 0) { Ok '--revoke with no grant is a no-op that exits 0' } else { Ko '--revoke with no grant must exit 0' $out }
 
-  $out = (& $psExe -NoProfile -File $coop help 2>&1 | Out-String)
+  $out = (Invoke-Native { & $psExe -NoProfile -File $coop help 2>&1 } | Out-String)
   if ($out -notmatch 'unlock-prod') { Ok 'coop help does not list unlock-prod (human-only, documented in guardrails-reference.md)' } else { Ko 'coop help must not list unlock-prod' }
 } finally {
   Restore-Env $saved
