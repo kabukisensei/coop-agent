@@ -38,11 +38,21 @@ touches an object — see [Start Here menu](#start-here-menu-start),
 Users do not need to know `coop init` or manually edit YAML. Run `/setup-project`
 or choose *Start a client project* from `/start` whenever the project is ready to
 configure. Normal Coop startup does not open the wizard. The contract is one
-committed team file at the client's Git root (the folder that holds the client's
-repositories): a contract found above the current folder is edited in place, never
-shadowed by a second copy, and a new one is proposed at that root, with the
-reminder to commit it (a human does; coop never commits it) and to open coop at or
-below it. While the local user
+committed team file per client, in a repository the team clones (master plan C1):
+a contract found above the current folder, or in the client home repository
+`<client>-coop` beside it, is edited in place, never shadowed by a second copy.
+When origin has the file and this checkout does not, the wizard first offers
+**Get the team's project file** (`lib/project-share.mjs`: a fast-forward pull when
+nothing else would move, else only that file with a backup). A new contract goes
+at the repository root, or, beside several repositories, in the home repository
+the wizard creates after the client's name (`git init`, README from
+`templates/client-home/`, every sibling listed as `../<name>`). Saving ends with
+**Share with the team?**: one yes, then coop commits only `.coop/project.yml`
+(`coop: project file updated by <name>`) and pushes the current branch, audited as
+`project-share`; `/project-share` and `/project-get` do the same any time, and the
+`session_start` hook says one line when the team's copy is newer, this copy is
+unshared, or the team has a file this checkout lacks (`COOP_PROJECT_SYNC=0`
+silences it). While the local user
 profile (`<profile dir>/user.json`) is missing, the wizard first asks the name coop
 calls the user by and saves it there with the balanced communication preset (the
 launch no longer runs the onboarding wizard, master plan FR1); the name never goes

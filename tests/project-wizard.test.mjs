@@ -17,12 +17,15 @@ const {
   runProjectWizard,
   contractCreatedNote,
   contractLocationNote,
+  findSiblingContract,
   proposeContractRoot,
+  siblingRepositoryEntries,
   estateMode,
   dataDocPrefillFromProject,
   proposedSqlTargetKind,
   sqlTargetsBlock,
 } = await import(pathToFileURL(`${dist}/coop-tools.mjs`).href);
+const { findProjectContract } = await import(pathToFileURL(join(REPO_ROOT, "lib", "standards.mjs")).href);
 
 let n = 0;
 const skips = [];
@@ -467,16 +470,19 @@ await t("normal startup goes straight to the prompt while setup commands remain 
   }
 });
 
-await t("C1: proposeContractRoot names the folder that holds the client's repositories", () => {
+await t("C1: proposeContractRoot names the client home repository beside several repositories, the repository when alone", () => {
   const client = trackFixture(mkdtempSync(join(tmpdir(), "coop-c1-root-")));
   skipIfContaminated(client);
   for (const name of ["analytics", "reports"]) mkdirSync(join(client, name, ".git"), { recursive: true });
   mkdirSync(join(client, "analytics", "src"));
   mkdirSync(join(client, "notes"));
-  const shared = proposeContractRoot(join(client, "analytics", "src"));
-  assert.deepEqual([shared.kind, shared.root, shared.repos], ["repos-folder", client, ["analytics", "reports"]]);
-  assert.equal(shared.path, join(client, ".coop", "project.yml"));
-  assert.match(contractLocationNote(shared), /holds 2 repositories \(analytics, reports\)/);
+  const pending = proposeContractRoot(join(client, "analytics", "src"));
+  assert.deepEqual([pending.kind, pending.root, pending.repos, pending.parent, pending.pending], ["home-repo", join(client, "<client>-coop"), ["analytics", "reports"], client, true]);
+  assert.match(contractLocationNote(pending), /is one of 2 side by side \(analytics, reports\)/);
+  assert.match(contractLocationNote(pending), /The folder between the repositories is never used/);
+  const named = proposeContractRoot(join(client, "analytics", "src"), { existing: null, client: "Contoso Retail" });
+  assert.deepEqual([named.kind, named.root, named.path, named.pending], ["home-repo", join(client, "contoso-retail-coop"), join(client, "contoso-retail-coop", ".coop", "project.yml"), false]);
+  assert.deepEqual(siblingRepositoryEntries(named.repos, "main").map((r) => [r.name, r.role, r.localPath]), [["analytics", "generic", "../analytics"], ["reports", "generic", "../reports"]]);
   const alone = proposeContractRoot(join(client, "analytics", "src"), { existing: null, repository: true });
   assert.deepEqual([alone.kind, alone.root], ["git-root", join(client, "analytics")]);
   const single = isolatedRoot("coop-c1-single-");
@@ -485,12 +491,26 @@ await t("C1: proposeContractRoot names the folder that holds the client's reposi
   assert.deepEqual([proposeContractRoot(join(single, "sub")).kind, proposeContractRoot(join(single, "sub")).root], ["git-root", single]);
   const plain = proposeContractRoot(join(client, "notes"));
   assert.deepEqual([plain.kind, plain.root], ["folder", join(client, "notes")]);
+  // A home repository beside the repositories whose contract lists this one: found from inside it.
+  mkdirSync(join(client, "contoso-coop", ".coop"), { recursive: true });
+  mkdirSync(join(client, "contoso-coop", ".git"));
+  writeFileSync(join(client, "contoso-coop", ".coop", "project.yml"), "profile:\n  client: 'Contoso'\nrepositories:\n  analytics:\n    role: 'sql'\n    local_path: '../analytics'\n");
+  assert.equal(findSiblingContract(join(client, "analytics", "src")), join(client, "contoso-coop", ".coop", "project.yml"));
+  assert.equal(findSiblingContract(join(client, "reports")), null, "a repository the home does not list is not covered");
+  assert.equal(findSiblingContract(join(client, "notes")), null, "outside Git there is no sibling");
+  const viaHome = proposeContractRoot(join(client, "analytics", "src"));
+  assert.deepEqual([viaHome.kind, viaHome.root, viaHome.sibling], ["existing", join(client, "contoso-coop"), true]);
+  assert.match(contractLocationNote(viaHome), /the client home repository beside it lists this folder/);
+  assert.equal(findProjectContract(join(client, "analytics", "src"), {}), join(client, "contoso-coop", ".coop", "project.yml"), "the standards finder takes the sibling home too");
+  // The launcher's answer wins for the other finders.
+  assert.equal(findProjectContract(join(client, "reports"), { COOP_PROJECT_YML: join(client, "contoso-coop", ".coop", "project.yml") }), join(client, "contoso-coop", ".coop", "project.yml"));
+  // A contract above cwd still wins over everything.
   mkdirSync(join(client, ".coop"));
   writeFileSync(join(client, ".coop", "project.yml"), "profile:\n  client: 'Contoso'\n");
   const existing = proposeContractRoot(join(client, "reports"));
-  assert.deepEqual([existing.kind, existing.root, existing.path], ["existing", client, join(client, ".coop", "project.yml")]);
+  assert.deepEqual([existing.kind, existing.root, existing.path, existing.sibling], ["existing", client, join(client, ".coop", "project.yml"), false]);
   assert.match(contractLocationNote(existing), /never writes a second copy/);
-  assert.match(contractCreatedNote(client), /Commit \.coop\/project\.yml .* Open coop at or below /);
+  assert.match(contractCreatedNote(client), /Share \.coop\/project\.yml with the team .*Open coop at or below /);
 });
 
 await t("C1: /setup-project below a committed root contract edits that contract and writes no copy", async () => {
@@ -518,16 +538,18 @@ await t("C1: /setup-project below a committed root contract edits that contract 
   assert.equal(projectYamlScalar(readFileSync(contract, "utf8"), ["profile", "client"]), "Fabrikam");
   assert.equal(existsSync(join(client, "analytics", ".coop")), false, "no second contract below the root");
   assert.equal(existsSync(join(client, "analytics", "sql", ".coop")), false);
-  assert.ok(titles.some((text) => text.startsWith("Where the contract goes")) === false, "an existing contract is never re-located");
+  assert.ok(titles.some((text) => text.startsWith("Where the project file goes")) === false, "an existing contract is never re-located");
   assert.ok(titles.some((text) => text.includes(`Update ${contract} for Fabrikam?`)), titles.join("\n---\n"));
   assert.ok(notes.some((text) => text.includes("A contract already covers this folder") && text.includes(contract)), notes.join("\n"));
+  assert.ok(notes.some((text) => text.includes("not shared yet") && text.includes("is not a Git repository")), "outside Git the share is explained, never attempted: " + notes.join("\n"));
 });
 
-await t("C1: with no contract, /setup-project proposes the folder holding the client's repositories and says to commit it", async () => {
+await t("C1: with no contract beside other repositories, /setup-project creates the client home repository and lists the siblings", async () => {
   const client = trackFixture(mkdtempSync(join(tmpdir(), "coop-c1-new-")));
   skipIfContaminated(client);
   for (const name of ["analytics", "reports"]) mkdirSync(join(client, name, ".git"), { recursive: true });
-  const confirms = [true, false, false, false, false, true]; // shared folder, no local source, add repo, Fabric, TE, write
+  // home repo yes, local source yes, edit analytics no, edit reports no, add repo no, Fabric no, TE no, write yes
+  const confirms = [true, true, false, false, false, false, false, true];
   const titles = [];
   const notes = [];
   const ctx = {
@@ -541,15 +563,25 @@ await t("C1: with no contract, /setup-project proposes the folder holding the cl
     },
   };
   assert.equal(await runProjectWizard({}, ctx), true);
-  const contract = join(client, ".coop", "project.yml");
-  assert.ok(existsSync(contract), "the contract goes at the folder holding the repositories");
+  const home = join(client, "contoso-coop");
+  const contract = join(home, ".coop", "project.yml");
+  assert.ok(existsSync(contract), "the contract goes in the client home repository beside the repositories");
+  assert.ok(existsSync(join(home, ".git")), "the home repository is initialized");
+  assert.match(readFileSync(join(home, "README.md"), "utf8"), /^# contoso-coop\n/);
+  assert.equal(existsSync(join(client, ".coop")), false, "the folder between the repositories is never used");
   assert.equal(existsSync(join(client, "analytics", ".coop")), false);
-  assert.match(titles[0], /^Where the contract goes\nCreate \.coop\/project\.yml at .*, covering analytics, reports\?/);
+  assert.match(titles[0], /^Where the project file goes\nCreate the client home repository .*contoso-coop beside analytics, reports/);
   assert.ok(titles.some((text) => text.includes(`Create ${contract} for Contoso?`)), titles.join("\n---\n"));
-  assert.ok(notes.some((text) => text.startsWith("Commit .coop/project.yml with the repository") && text.includes(client)), notes.join("\n"));
-  assert.match(readFileSync(contract, "utf8"), /^# One committed team file at the client's Git root/m);
+  const text = readFileSync(contract, "utf8");
+  assert.equal(projectYamlScalar(text, ["repositories", "analytics", "local_path"]), "../analytics");
+  assert.equal(projectYamlScalar(text, ["repositories", "reports", "local_path"]), "../reports");
+  assert.match(text, /^# One committed team file per client/m);
+  assert.ok(notes.some((text) => text.startsWith("Created the client home repository") && text.includes(home)), notes.join("\n"));
+  assert.ok(notes.some((text) => text.startsWith("Share .coop/project.yml with the team") && text.includes(home)), notes.join("\n"));
+  // From inside a listed repository the home's contract is the one coop finds.
+  assert.equal(findSiblingContract(join(client, "reports")), contract);
 
-  // Declining the shared folder keeps the contract to the repository.
+  // Declining the home repository keeps the contract to the repository.
   const other = trackFixture(mkdtempSync(join(tmpdir(), "coop-c1-decline-")));
   skipIfContaminated(other);
   for (const name of ["analytics", "reports"]) mkdirSync(join(other, name, ".git"), { recursive: true });
@@ -558,6 +590,7 @@ await t("C1: with no contract, /setup-project proposes the folder holding the cl
   assert.equal(await runProjectWizard({}, ctx2), true);
   assert.ok(existsSync(join(other, "reports", ".coop", "project.yml")));
   assert.equal(existsSync(join(other, ".coop")), false);
+  assert.equal(existsSync(join(other, "contoso-coop")), false);
 });
 
 await t("editing through /setup-project writes a backup and keeps custom settings", async () => {

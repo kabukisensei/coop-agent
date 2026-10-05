@@ -2845,18 +2845,98 @@ function Find-CoopProjectYml {
     if ($parent -eq $dir -or -not $parent) { break }
     $dir = $parent
   }
+  # C1: the contract this launch resolved, else the client home repository
+  # beside this one (its contract lists this repository).
+  if ($env:COOP_PROJECT_YML -and (Test-Path -LiteralPath $env:COOP_PROJECT_YML -PathType Leaf)) { return $env:COOP_PROJECT_YML }
+  $sibling = Find-CoopSiblingContract $StartDir
+  if ($sibling) { return $sibling }
   $bundled = Join-Path $script:CoopRoot '.coop\project.yml'
   if (Test-Path -LiteralPath $bundled -PathType Leaf) { return $bundled }
   return ''
 }
 
-# Confirm a potentially-destructive action unless --yes / COOP_ASSUME_YES is set.
-# C1: where a project contract belongs for a folder (one committed contract at the
-# client's Git root, the folder that holds the client's repositories). Mirrors
-# proposeContractRoot in lib/project-contract.mjs. Returns a hashtable with Kind
-# ('existing' | 'repos-folder' | 'git-root' | 'folder'), Root, Path and Repos.
-function Get-CoopContractRootProposal {
+# The nearest folder at or above $StartDir with a .git entry, or ''.
+function Find-CoopGitRoot {
   param([string]$StartDir = (Get-Location).Path)
+  $dir = [System.IO.Path]::GetFullPath($StartDir).TrimEnd('\', '/')
+  while ($dir) {
+    if (Test-Path -LiteralPath (Join-Path $dir '.git')) { return $dir }
+    $parent = Split-Path -Parent $dir
+    if ($parent -eq $dir -or -not $parent) { break }
+    $dir = $parent
+  }
+  return ''
+}
+
+# The `repositories.*.local_path` values of a block-YAML contract (a line scan:
+# no Python needed at launch), quotes stripped.
+function Get-CoopContractLocalPaths {
+  param([string]$File)
+  $paths = @()
+  $inRepos = $false
+  foreach ($line in (Get-Content -LiteralPath $File -ErrorAction SilentlyContinue)) {
+    if ($line -match '^\S') { $inRepos = ($line -match '^repositories:\s*(#.*)?$'); continue }
+    if (-not $inRepos) { continue }
+    if ($line -match '^\s+local_path:\s*(.+?)\s*$') {
+      $value = $Matches[1].Trim()
+      if ($value.Length -ge 2 -and (($value[0] -eq '"' -and $value[-1] -eq '"') -or ($value[0] -eq "'" -and $value[-1] -eq "'"))) { $value = $value.Substring(1, $value.Length - 2) }
+      if ($value -and $value -notmatch '^TODO') { $paths += $value }
+    }
+  }
+  return $paths
+}
+
+# C1: the client home repository beside the repository holding $StartDir, when
+# its .coop/project.yml lists that repository (one level up only; the folder
+# between the repositories is never a home). Returns the contract path or ''.
+function Find-CoopSiblingContract {
+  param([string]$StartDir = (Get-Location).Path)
+  $gitRoot = Find-CoopGitRoot $StartDir
+  if (-not $gitRoot) { return '' }
+  $parent = Split-Path -Parent $gitRoot
+  if (-not $parent -or $parent -eq $gitRoot) { return '' }
+  $target = [System.IO.Path]::GetFullPath($gitRoot).TrimEnd('\', '/')
+  foreach ($child in (Get-ChildItem -LiteralPath $parent -Directory -ErrorAction SilentlyContinue | Where-Object { -not $_.Name.StartsWith('.') } | Sort-Object Name)) {
+    if ($child.FullName -eq $gitRoot) { continue }
+    $contract = Join-Path $child.FullName '.coop\project.yml'
+    if (-not (Test-Path -LiteralPath $contract -PathType Leaf)) { continue }
+    foreach ($rel in (Get-CoopContractLocalPaths $contract)) {
+      $expanded = $rel
+      if ($expanded -match '^~([\\/]|$)') { $expanded = (Join-Path $HOME $expanded.Substring(1).TrimStart('\', '/')) }
+      $resolved = [System.IO.Path]::GetFullPath((Join-Path $child.FullName $expanded)).TrimEnd('\', '/')
+      if ($resolved -eq $target) { return $contract }
+    }
+  }
+  return ''
+}
+
+# Hand the resolved contract to Pi and the window (COOP_PROJECT_YML) when it
+# lives in the client home repository beside the launch folder, so every finder
+# (coop-tools, the guardrails, the Python helpers) reads the same file.
+function Set-CoopProjectYmlEnv {
+  param([string]$StartDir = (Get-Location).Path)
+  Remove-Item Env:COOP_PROJECT_YML -ErrorAction SilentlyContinue
+  $dir = $StartDir
+  while ($dir) {
+    if (Test-Path -LiteralPath (Join-Path $dir '.coop\project.yml') -PathType Leaf) { return '' }
+    $parent = Split-Path -Parent $dir
+    if ($parent -eq $dir -or -not $parent) { break }
+    $dir = $parent
+  }
+  $sibling = Find-CoopSiblingContract $StartDir
+  if ($sibling) { $env:COOP_PROJECT_YML = $sibling }
+  return $sibling
+}
+
+# Confirm a potentially-destructive action unless --yes / COOP_ASSUME_YES is set.
+# C1: where a project contract belongs for a folder (the shared project file
+# design: one committed contract per client, in a repository the team clones).
+# Mirrors proposeContractRoot in lib/project-contract.mjs. Returns a hashtable
+# with Kind ('existing' | 'home-repo' | 'git-root' | 'folder'), Root, Path, Repos
+# and, for home-repo, Parent (the folder holding the repositories; Root is the
+# home repository <Parent>\<client>-coop once -Client is known, else a placeholder).
+function Get-CoopContractRootProposal {
+  param([string]$StartDir = (Get-Location).Path, [string]$Client = '')
   $start = [System.IO.Path]::GetFullPath($StartDir).TrimEnd('\', '/')
   if (-not $start) { $start = $StartDir }
   $dir = $start
@@ -2864,12 +2944,16 @@ function Get-CoopContractRootProposal {
   while ($dir) {
     $candidate = Join-Path $dir '.coop\project.yml'
     if (Test-Path -LiteralPath $candidate -PathType Leaf) {
-      return @{ Kind = 'existing'; Root = $dir; Path = $candidate; Repos = @() }
+      return @{ Kind = 'existing'; Root = $dir; Path = $candidate; Repos = @(); Sibling = $false }
     }
     if (-not $gitRoot -and (Test-Path -LiteralPath (Join-Path $dir '.git'))) { $gitRoot = $dir }
     $parent = Split-Path -Parent $dir
     if ($parent -eq $dir -or -not $parent) { break }
     $dir = $parent
+  }
+  $sibling = Find-CoopSiblingContract $start
+  if ($sibling) {
+    return @{ Kind = 'existing'; Root = (Split-Path -Parent (Split-Path -Parent $sibling)); Path = $sibling; Repos = @(); Sibling = $true }
   }
   if ($gitRoot) {
     $parent = Split-Path -Parent $gitRoot
@@ -2878,12 +2962,46 @@ function Get-CoopContractRootProposal {
         Where-Object { -not $_.Name.StartsWith('.') -and (Test-Path -LiteralPath (Join-Path $_.FullName '.git')) } |
         Sort-Object Name | ForEach-Object { $_.Name })
       if ($repos.Count -ge 2 -and $repos -contains (Split-Path -Leaf $gitRoot)) {
-        return @{ Kind = 'repos-folder'; Root = $parent; Path = (Join-Path $parent '.coop\project.yml'); Repos = $repos }
+        $slug = Get-CoopClientSlug $Client
+        $homeRepo = if ($Client) { Join-Path $parent ($slug + '-coop') } else { Join-Path $parent '<client>-coop' }
+        $others = @($repos | Where-Object { $_ -ne (Split-Path -Leaf $homeRepo) })
+        return @{ Kind = 'home-repo'; Root = $homeRepo; Path = (Join-Path $homeRepo '.coop\project.yml'); Repos = $others; Parent = $parent; Pending = (-not $Client) }
       }
     }
     return @{ Kind = 'git-root'; Root = $gitRoot; Path = (Join-Path $gitRoot '.coop\project.yml'); Repos = @() }
   }
   return @{ Kind = 'folder'; Root = $start; Path = (Join-Path $start '.coop\project.yml'); Repos = @() }
+}
+
+# A short, safe slug of the client name for folder names (mirrors clientSlug).
+function Get-CoopClientSlug {
+  param([string]$Client)
+  $slug = ([string]$Client).ToLowerInvariant() -replace '[^a-z0-9]+', '-'
+  $slug = $slug.Trim('-')
+  if (-not $slug) { $slug = 'client' }
+  return $slug
+}
+
+# Create the client home repository (folder, `git init`, README from
+# templates\client-home) when it does not exist yet. Returns $true on success.
+function New-CoopHomeRepository {
+  param([string]$Root, [string]$Client)
+  if (-not (Test-Path -LiteralPath $Root)) { New-Item -ItemType Directory -Force -Path $Root | Out-Null }
+  if (-not (Test-Path -LiteralPath (Join-Path $Root '.git'))) {
+    if (-not (Test-Have 'git')) { Coop-Warn 'git is not installed: the home repository folder was created without `git init`'; }
+    else {
+      & git -C $Root init --quiet 2>$null
+      if ($LASTEXITCODE -ne 0) { Coop-Warn "git init failed in $Root"; return $false }
+    }
+  }
+  $readme = Join-Path $Root 'README.md'
+  if (-not (Test-Path -LiteralPath $readme)) {
+    $template = Join-Path $script:CoopRoot 'templates\client-home\README.md'
+    $text = if (Test-Path -LiteralPath $template -PathType Leaf) { [System.IO.File]::ReadAllText($template) } else { "# $(Split-Path -Leaf $Root)`n`nThe coop client home repository for $Client.`n" }
+    $text = $text.Replace('<client>', $Client).Replace('<slug>', (Get-CoopClientSlug $Client))
+    [System.IO.File]::WriteAllText($readme, $text, (New-Object System.Text.UTF8Encoding($false)))
+  }
+  return $true
 }
 
 function Coop-Confirm {

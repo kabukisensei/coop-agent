@@ -1,16 +1,18 @@
 ﻿#!/usr/bin/env pwsh
-# Get-CoopContractRootProposal (lib/common.ps1), master plan C1: one committed
-# contract at the client's Git root. A contract above the folder is "existing" and
-# `coop init` never writes a second copy below it; with none, the folder that holds
-# the client's repositories is proposed (the repository root when it is alone, the
-# folder itself outside Git). Mirrors proposeContractRoot in lib/project-contract.mjs.
+# Get-CoopContractRootProposal, Find-CoopSiblingContract and Set-CoopProjectYmlEnv
+# (lib/common.ps1), master plan C1: one committed contract per client in a
+# repository the team clones. A contract above the folder, or in the client home
+# repository beside it, is "existing" and `coop init` never writes a second copy;
+# with none, the home repository <client>-coop is proposed beside several
+# repositories, the repository root when it is alone, the folder itself outside
+# Git. Mirrors proposeContractRoot in lib/project-contract.mjs.
 # Offline, no waits, no real home.
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '_common.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-contract-root-' + [guid]::NewGuid().ToString('N'))
 
-$saved = Save-Env @('HOME', 'USERPROFILE', 'COOP_DIR', 'NO_COLOR')
+$saved = Save-Env @('HOME', 'USERPROFILE', 'COOP_DIR', 'NO_COLOR', 'COOP_PROJECT_YML')
 try {
   New-Item -ItemType Directory -Force -Path $t, (Join-Path $t 'home') | Out-Null
   $env:HOME = Join-Path $t 'home'
@@ -24,12 +26,18 @@ try {
   New-Item -ItemType Directory -Force -Path (Join-Path (Join-Path $client 'analytics') 'src'), (Join-Path $client 'notes') | Out-Null
 
   $shared = Get-CoopContractRootProposal (Join-Path (Join-Path $client 'analytics') 'src')
-  if ($shared.Kind -ne 'repos-folder') { Ko "inside one of two sibling repositories: Kind=$($shared.Kind), expected repos-folder" }
-  elseif ($shared.Root -ne $client) { Ko "repos-folder root is $($shared.Root), expected $client" }
-  elseif (($shared.Repos -join ',') -ne 'analytics,reports') { Ko "repos-folder lists $($shared.Repos -join ','), expected analytics,reports" }
-  elseif ($shared.Path -ne (Join-Path $client '.coop\project.yml')) { Ko "repos-folder path is $($shared.Path)" }
-  else { Ok 'inside one of two sibling repositories: the folder holding them is proposed, with both named' }
+  if ($shared.Kind -ne 'home-repo') { Ko "inside one of two sibling repositories: Kind=$($shared.Kind), expected home-repo" }
+  elseif ($shared.Parent -ne $client) { Ko "home-repo parent is $($shared.Parent), expected $client" }
+  elseif (($shared.Repos -join ',') -ne 'analytics,reports') { Ko "home-repo lists $($shared.Repos -join ','), expected analytics,reports" }
+  elseif ($shared.Root -ne (Join-Path $client '<client>-coop') -or -not $shared.Pending) { Ko "home-repo root before the client is known: $($shared.Root)" }
+  else { Ok 'inside one of two sibling repositories: the client home repository beside them is proposed, pending the client name' }
+  $named = Get-CoopContractRootProposal (Join-Path (Join-Path $client 'analytics') 'src') 'Contoso Retail'
+  if ($named.Kind -ne 'home-repo' -or $named.Root -ne (Join-Path $client 'contoso-retail-coop') -or $named.Pending) { Ko "named home repository: Kind=$($named.Kind) Root=$($named.Root)" }
+  elseif ($named.Path -ne (Join-Path (Join-Path $client 'contoso-retail-coop') '.coop\project.yml')) { Ko "named home path is $($named.Path)" }
+  else { Ok 'with the client name: <parent>\contoso-retail-coop' }
 
+  # The folder between the repositories is never a contract's home: nothing
+  # proposes it, and a contract there is still found only by the walk-up (legacy).
   $single = Join-Path $t 'single'
   New-Item -ItemType Directory -Force -Path (Join-Path (Join-Path $single 'work') '.git'), (Join-Path (Join-Path $single 'work') 'sub') | Out-Null
   $alone = Get-CoopContractRootProposal (Join-Path (Join-Path $single 'work') 'sub')
@@ -46,6 +54,30 @@ try {
   $existing = Get-CoopContractRootProposal (Join-Path (Join-Path $client 'analytics') 'src')
   if ($existing.Kind -ne 'existing' -or $existing.Path -ne (Join-Path $client '.coop\project.yml')) { Ko "below a root contract: Kind=$($existing.Kind) Path=$($existing.Path)" }
   else { Ok 'below a root contract: that contract, so nothing is created under it' }
+
+  # A client home repository beside the repositories whose contract lists one of
+  # them: found from inside that repository (sibling lookup), not from the other.
+  $homeRepo = Join-Path $t 'sib'
+  foreach ($name in @('analytics', 'reports', 'contoso-coop')) { New-Item -ItemType Directory -Force -Path (Join-Path (Join-Path $homeRepo $name) '.git') | Out-Null }
+  New-Item -ItemType Directory -Force -Path (Join-Path (Join-Path $homeRepo 'contoso-coop') '.coop'), (Join-Path (Join-Path $homeRepo 'analytics') 'src') | Out-Null
+  $homeContract = Join-Path (Join-Path $homeRepo 'contoso-coop') '.coop\project.yml'
+  [System.IO.File]::WriteAllText($homeContract, "profile:`n  client: 'Contoso'`nrepositories:`n  analytics:`n    role: 'sql'`n    local_path: '../analytics'`n  todo:`n    local_path: TODO`n")
+  $paths = @(Get-CoopContractLocalPaths $homeContract)
+  if (($paths -join ',') -ne '../analytics') { Ko "local paths read as $($paths -join ','), expected ../analytics" } else { Ok 'the contract line scan reads local_path values and skips TODO placeholders' }
+  $found = Find-CoopSiblingContract (Join-Path (Join-Path $homeRepo 'analytics') 'src')
+  if ($found -ne $homeContract) { Ko "sibling lookup from a listed repository returned '$found'" } else { Ok 'the sibling home repository is found from inside a repository it lists' }
+  $notListed = Find-CoopSiblingContract (Join-Path $homeRepo 'reports')
+  if ($notListed) { Ko "sibling lookup from an unlisted repository returned '$notListed'" } else { Ok 'a repository the home does not list is not covered' }
+  $viaHome = Get-CoopContractRootProposal (Join-Path (Join-Path $homeRepo 'analytics') 'src')
+  if ($viaHome.Kind -ne 'existing' -or $viaHome.Path -ne $homeContract -or -not $viaHome.Sibling) { Ko "proposal from a listed repository: Kind=$($viaHome.Kind) Path=$($viaHome.Path)" } else { Ok 'the proposal is the home contract, marked as a sibling' }
+  Remove-Item Env:COOP_PROJECT_YML -ErrorAction SilentlyContinue
+  $exported = Set-CoopProjectYmlEnv (Join-Path (Join-Path $homeRepo 'analytics') 'src')
+  if ($exported -ne $homeContract -or $env:COOP_PROJECT_YML -ne $homeContract) { Ko "Set-CoopProjectYmlEnv exported '$env:COOP_PROJECT_YML'" } else { Ok 'the launcher hands the sibling contract to Pi as COOP_PROJECT_YML' }
+  $found2 = Find-CoopProjectYml (Join-Path (Join-Path $homeRepo 'analytics') 'src')
+  if ($found2 -ne $homeContract) { Ko "Find-CoopProjectYml returned '$found2'" } else { Ok 'Find-CoopProjectYml resolves the sibling home contract' }
+  Remove-Item Env:COOP_PROJECT_YML -ErrorAction SilentlyContinue
+  $none2 = Set-CoopProjectYmlEnv (Join-Path $homeRepo 'reports')
+  if ($none2 -or $env:COOP_PROJECT_YML) { Ko "Set-CoopProjectYmlEnv exported '$env:COOP_PROJECT_YML' for an unlisted repository" } else { Ok 'nothing is exported for a repository no home lists' }
 
   # The bundled coop-agent contract is not a client's: the proposal never falls back to it.
   $bare = Join-Path $t 'bare'

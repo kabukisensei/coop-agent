@@ -507,7 +507,7 @@ await check("project form: a new contract and discovery mode match /setup-projec
     assert.equal(preview.mode, localSource ? "partial" : "discovery");
     const saved = saveProject(viaForm, input, preview.token, { env: process.env });
     assert.deepEqual([saved.created, saved.backup], [true, null]);
-    assert.match(saved.next, /^Commit \.coop\/project\.yml with the repository/);
+    assert.match(saved.next, /^Share \.coop\/project\.yml with the team/);
     assert.equal(readFileSync(join(viaForm, ".coop", "project.yml"), "utf8"), expected, `new contract, local source ${localSource}`);
   }
 });

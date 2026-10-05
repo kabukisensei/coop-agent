@@ -23,7 +23,7 @@ import { listFiles, rankFiles } from "./lib/files.mjs";
 import { loadSettings, saveSettings, THEMES } from "./lib/settings.mjs";
 import { listChanges, fileDiff } from "./lib/changes.mjs";
 import { readStandards, readSnapshot, readNote } from "./lib/standards-view.mjs";
-import { loadProject, previewProject, saveProject } from "./lib/project-form.mjs";
+import { getTeamProject, loadProject, previewProject, saveProject, shareProject, teamStatus } from "./lib/project-form.mjs";
 import { DocsSetupRun, AnswerError, docsLocation, listDocsPages, pickedPathAnswer, readDocsPage, runDocsBuild } from "./lib/docs-setup.mjs";
 import { attach, forget, pruneStore, findPdfjs, LIMITS as ATTACH_LIMITS } from "./lib/attachments.mjs";
 import { loadSplash } from "./lib/splash.mjs";
@@ -491,6 +491,13 @@ handle("coop:project-save", (state, input, token) => {
   if (typeof token !== "string") return { success: false, error: "review the changes first" };
   return { success: true, data: saveProject(state.spec.cwd, input, token, { env: toolEnv(state) }) };
 });
+
+// The shared project file (C1): how the local file compares with the team's,
+// "Get the team's project file", and "Share with the team" (the one Git write
+// coop performs on its own, after the button: .coop/project.yml alone).
+handle("coop:project-team", (state) => ({ success: true, data: teamStatus(state.spec.cwd, { env: toolEnv(state) }) }));
+handle("coop:project-get", (state) => ({ success: true, data: getTeamProject(state.spec.cwd, { env: toolEnv(state) }) }));
+handle("coop:project-share", (state, force) => ({ success: true, data: shareProject(state.spec.cwd, { env: toolEnv(state), force: force === true }) }));
 
 // A folder for a path field, relative to what that field is relative to.
 handle("coop:pick-folder", async (state, purpose, current) => {
