@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.30.2] — 2026-10-05
+
 ### Fixed
 
 - The isolated extension tree (`<profile dir>\agent\npm`) has one writer at a
