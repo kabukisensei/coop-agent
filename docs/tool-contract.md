@@ -227,8 +227,15 @@ evidence state, then the object's doc page and one line per upstream object,
 downstream object and relationship (`- name (type)`). The full slice is in
 `details.lineage` → the parsed JSON `{ object, schema, layer, source_file, upstream[],
 downstream[], relationships[], evidence }` (each up/downstream entry carries `id`,
-`name`, `type`, and `doc`, the per-object Markdown path). An ambiguous `object`
-lists the candidates (`{ query, ambiguous: true, matches[] }` in details; re-call
+`name`, `type`, and `doc`, the per-object Markdown path). With coop-data-doc 1.3.2+
+the slice also carries `loaded_by[]` (the Power BI tables whose partition names the
+object: `{ table, source, linked }`), rendered as a "Loaded by" list; a hit with
+`linked: false` is connected by name only (the SQL object is not documented or
+not resolved). A view the docs do not hold at all but a model loads
+(`{ object: null, undocumented_source: true, loaded_by[], downstream[] }`) is
+reported as "not a documented object, but N Power BI table(s) load it by name"
+instead of a failure, so the SQL side can stay outside the docs. An ambiguous `object`
+lists the candidates (`{ query, ambiguous: true, matches[], loaded_by[] }` in details; re-call
 with a specific name); when there's
 no built graph, `content` says so and points at `build` / `/setup-docs` — you can
 still proceed without it. `object` is required: a blank one returns a usage note, not

@@ -5,6 +5,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- `data_doc lineage` names the Power BI tables that load an object even when the
+  SQL side is not in the docs. coop-data-doc's `lineage` (1.3.2+) carries
+  `loaded_by`: the semantic model tables whose partition names the object, with
+  the source string and whether the graph holds the resolved link. The tool text
+  renders it as a "Loaded by" list; a view the docs do not hold at all but a model
+  loads is reported as "not a documented object, but N Power BI table(s) load it by
+  name" instead of "lineage failed", so `sql_impact` (live SQL dependents) and
+  `data_doc lineage` (the Power BI dependents) together cover a view edit without
+  documenting the SQL repository (Aaron, 2026-10-05). Older coop-data-doc releases
+  answer without the field and the text is unchanged.
+
 ## [0.30.4] — 2026-10-05
 
 ### Added
