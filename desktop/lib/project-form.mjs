@@ -7,8 +7,9 @@
 // the fields nothing reads (estate.live_discovery, the mcp.* action lists).
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename } from "node:path";
 import { findProjectContract } from "../../lib/standards.mjs";
+import { contractRepository, createHomeRepository, getTeamContract, hasOrigin, shareContract, teamFileStatus } from "../../lib/project-share.mjs";
 import { userProfilePath } from "../../lib/paths.mjs";
 import {
   PROJECT_MESSAGES,
@@ -17,9 +18,13 @@ import {
   SQL_TARGET_KINDS,
   cleanAnswer,
   clientPlatform,
+  contractCreatedNote,
+  contractLocationNote,
   estateMode,
   findGitRoot,
   isSavableProfileName,
+  proposeContractRoot,
+  siblingRepositoryEntries,
   parseProjectWizardSettings,
   projectContractText,
   projectSettingsProblems,
@@ -40,11 +45,41 @@ export const GUARDRAIL_FIELDS = Object.freeze(["client", "tenantId", "sqlTargetK
 
 const hash = (text) => createHash("sha256").update(text).digest("hex");
 
-/** The contract the form edits for a folder, as /setup-project finds it. */
-export function locateProject(cwd) {
+/** The contract the form edits for a folder, as /setup-project finds it. An
+ *  existing contract (above cwd, or in the client home repository beside it) is
+ *  edited in place; a new one goes in this repository, or, beside several, in
+ *  the client home repository `<client>-coop`, named once the client is known. */
+export function locateProject(cwd, { client = "" } = {}) {
   const existing = findProjectContract(cwd);
-  const root = existing ? resolve(existing, "..", "..") : (findGitRoot(cwd) || resolve(cwd));
-  return { existing, root, path: existing || join(root, ".coop", "project.yml") };
+  const where = proposeContractRoot(cwd, { existing, client });
+  return { existing, root: where.root, path: where.path, kind: where.kind, pending: Boolean(where.pending), repos: where.repos || [], parent: where.parent || "", note: contractLocationNote(where) };
+}
+
+/** How the project file compares with the team's copy, for the pane's status
+ *  line and buttons: null when there is no Git repository or no origin. */
+export function teamStatus(cwd, { env } = {}) {
+  const existing = findProjectContract(cwd, env);
+  const repo = existing ? contractRepository(existing) : findGitRoot(cwd);
+  if (!repo || !hasOrigin(repo)) return null;
+  const status = teamFileStatus(repo, { env, fetchTimeout: 8_000 });
+  return { state: status.state, repo, branch: status.branch || "", defaultBranch: status.defaultBranch || "", originExists: Boolean(status.originExists) };
+}
+
+/** "Get the team's project file" for the pane. */
+export function getTeamProject(cwd, { env } = {}) {
+  const existing = findProjectContract(cwd, env);
+  const repo = existing ? contractRepository(existing) : findGitRoot(cwd);
+  if (!repo) return { ok: false, reason: "this folder is not in a Git repository" };
+  return getTeamContract(repo, { env });
+}
+
+/** "Share with the team" for the pane: the one-file commit and push. */
+export function shareProject(cwd, { env, force = false } = {}) {
+  const existing = findProjectContract(cwd, env);
+  if (!existing) return { ok: false, state: "nothing", reason: "there is no .coop/project.yml to share yet" };
+  const repo = contractRepository(existing);
+  if (!repo) return { ok: false, state: "no-git", reason: "the project file is not in a Git repository" };
+  return shareContract(repo, { env, force });
 }
 
 function readOriginal(where) {
@@ -76,6 +111,8 @@ export function loadProject(cwd, { env } = {}) {
     exists: Boolean(where.existing),
     path: where.path,
     root: where.root,
+    kind: where.kind,
+    locationNote: where.note,
     folder: basename(where.root) || where.root,
     settings,
     commitLists: commitLists(original, existingNames),
@@ -163,12 +200,15 @@ export function settingsFromForm(input, base, existingNames) {
 }
 
 function prepare(cwd, input, options) {
-  const where = locateProject(cwd);
+  const where = locateProject(cwd, { client: field(input, "client") || "" });
   const original = readOriginal(where);
   const base = parseProjectWizardSettings(original, where.root);
+  // A new home-repo contract starts with the repositories beside the home.
+  if (!where.existing && where.kind === "home-repo" && !base.repositories.length) base.repositories = siblingRepositoryEntries(where.repos, base.defaultBranch);
   const existingNames = base.repositories.filter((repo) => !repo.isNew).map((repo) => repo.name);
   const settings = settingsFromForm(input || {}, base, existingNames);
   const problems = projectSettingsProblems(settings);
+  if (!where.existing && where.kind === "home-repo" && where.pending) problems.push({ field: "client", message: "The client name is needed first: it names the client home repository <client>-coop beside the repositories." });
   const profileName = field(input, "profileName") || "";
   const profileMissing = !existsSync(profileFile(options.env));
   if (profileMissing && profileName && !isSavableProfileName(profileName)) problems.push({ field: "profileName", message: PROJECT_MESSAGES.profileName });
@@ -205,7 +245,13 @@ export function saveProject(cwd, input, token, options = {}) {
   const p = prepare(cwd, input, options);
   if (p.problems.length) return { problems: p.problems };
   if (hash(p.original) !== token) throw new Error(".coop/project.yml changed on disk since you reviewed it. Review the changes again.");
+  let home = null;
+  if (!p.where.existing && p.where.kind === "home-repo") {
+    home = createHomeRepository(p.where.root, p.settings.client);
+    if (home.error) throw new Error(`Could not create the client home repository ${p.where.root}: ${home.error}. No files were changed.`);
+  }
   const backup = writeProjectContract(p.where.path, p.text);
   const profileSaved = p.profileName ? saveUserProfileName(p.profileName, profileFile(options.env)) : null;
-  return { problems: [], path: p.where.path, backup, created: !p.where.existing, profileSaved };
+  const team = teamStatus(cwd, options);
+  return { problems: [], path: p.where.path, backup, created: !p.where.existing, profileSaved, home, next: p.where.existing ? "" : contractCreatedNote(p.where.root), team };
 }

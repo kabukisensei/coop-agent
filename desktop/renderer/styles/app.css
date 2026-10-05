@@ -477,6 +477,8 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; }
 .pane-view { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 12px; overflow: hidden; }
 .pane-scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 2px; }
 .pane-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 13px; color: var(--text-muted); }
+.pane-summary.team-line { justify-content: space-between; margin: 4px 0 8px; }
+.pane-summary.team-line .btn { flex: none; }
 .pane-summary code { font-size: 12px; overflow-wrap: anywhere; color: var(--text); }
 .pane-summary.ok { color: var(--success); }
 .pane-empty { color: var(--text-muted); font-size: 13px; margin: 8px 0; }
@@ -810,3 +812,24 @@ pre.output.build-log { max-height: 220px; font-size: 12px; white-space: pre-wrap
 [data-style="retro"] .docs-setup h3,
 [data-style="retro"] .docs-build h3 { font-family: var(--font-display); font-size: 12px; text-transform: uppercase; }
 [data-style="retro"] .repo-card { background: var(--surface-2); }
+
+/* ---------- the project picker (D1m) ---------- */
+.picker-body { overflow: auto; }
+.picker { display: flex; flex-direction: column; gap: 12px; min-height: 100vh; padding: 18px 20px; }
+.picker-head { display: flex; flex-direction: column; gap: 6px; }
+.picker-title { margin: 4px 0 0; font-size: 20px; font-weight: 600; }
+.picker-lead, .picker-empty { margin: 0; color: var(--muted); }
+.project-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+.project { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); cursor: pointer; }
+.project:hover { border-color: var(--accent); }
+.project.selected { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.project-main { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.project-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-where { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-side { display: flex; align-items: center; gap: 6px; flex: none; }
+.project .chip.warn { color: var(--warn, var(--text)); border-color: var(--warn, var(--border)); }
+.project-forget { opacity: 0.6; }
+.project-forget:hover { opacity: 1; }
+.picker-remember { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.picker-foot { display: flex; align-items: center; gap: 8px; }
+.picker-spacer { flex: 1; }

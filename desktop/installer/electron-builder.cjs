@@ -67,7 +67,8 @@ module.exports = {
     deleteAppDataOnUninstall: false,
     createDesktopShortcut: true,
     createStartMenuShortcut: true,
-    shortcutName: "coop (window)",
+    // D1m: the icon is the front door, so the package's shortcut is plain "coop".
+    shortcutName: "coop",
     uninstallDisplayName: "coop (window)",
     installerIcon: icon,
     uninstallerIcon: icon,

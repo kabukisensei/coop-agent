@@ -139,21 +139,50 @@ remembered for 30 minutes) and says nothing.
   account, and `coop doctor` notes this on its `fabric` row.
 - `COOP_SKIP_AZ=1` skips both the launch sign-in and the doctor row.
 
-## 4. Point it at a work repo
+## 4. Your first client
 
-In each Fabric / D365 repo you work in:
+Every client has one `.coop/project.yml`, committed in a repository the whole
+team clones. One person creates it and shares it; everyone else gets it with
+one click. Nobody needs to know Git for any of it.
 
 ```bash
-cd /path/to/your/fabric-repo
+cd /path/to/the/client/repository
 coop onboard              # writes ~/.coop/user.json + versioned ~/.coop/config and managed MCP entries
-coop init                  # optional shell path for project setup
 coop doctor
+coop                      # then /setup-project
 ```
 
-Coop launches directly at the prompt without opening setup dialogs. Run
-`/setup-project` or choose *Start a client project* from `/start` when
-you are ready; the wizard can create or edit a contract without replacing custom
-fields or policies. Choose discovery mode when no local source exists yet;
+**Where the file lives.** A client with one repository keeps it at that
+repository's root. A client with several repositories cloned side by side gets a
+small client home repository, `<client>-coop`, beside them (for example
+`contoso-coop` next to `contoso-analytics` and `contoso-reports`): it holds the
+project file and, later, the lineage docs, the catalog snapshot and the client's
+own prompts and skills. The folder between the repositories is never used. coop
+finds the file from any of the client's repositories.
+
+**The first teammate** runs `/setup-project` (or *Start a client project* from
+`/start`, or the window's Project pane). After the client's name the wizard says
+where the file goes, creates the home repository when there are several
+repositories (`git init` and a README; add its origin on GitHub when you are
+ready) and lists every repository beside it. Saving ends with one question,
+**Share with the team?**: yes, and coop commits only `.coop/project.yml` and
+pushes it. That is the only Git write coop performs on its own, always after
+your yes; `/project-share` and the pane's button do the same any time.
+
+**Everyone else** clones the client's repositories (the home repository too) and
+opens coop in any of them. When the team's file is on origin and the checkout
+does not have it yet, coop says so at the start of the session and
+`/setup-project` or `/project-get` brings it in (a fast-forward pull when nothing
+else would move, else only that file). The window's Project pane shows the same
+line and a **Get the team's project file** button.
+
+**Kept current.** Each session start compares your copy with the team's (one
+fetch, at most every ten minutes): one line when the team's copy is newer
+(`/project-get`), when yours has edits the team does not have (`/project-share`),
+or when the team has a file you lack. Nothing is applied silently, and the
+guardrails keep the file they started with until `/new`. From a shell,
+`coop project status|get|share` does the same. The wizard can edit a contract
+without replacing custom fields or policies. Choose discovery mode when no local source exists yet;
 SQL-only, Power-BI-only, partial-folder, mixed-repository, and fully connected
 projects can all be expanded later through the same wizard.
 
@@ -162,6 +191,26 @@ not launch their setup wizard automatically. When you want lineage-aware impact
 analysis, run **`/setup-docs`** inside the agent, choose *Document a warehouse or
 semantic model* from `/start`, or run `coop data-doc setup` in a shell. These paths use the same full
 native questionnaire; no reduced fallback exists.
+
+### Where the lineage docs live
+
+The docs coop-data-doc builds belong beside the project file (master plan DR1):
+in the client home repository when the client has several repositories, else in
+the client's one repository.
+
+```text
+C:\work\contoso-coop\         .coop/project.yml, coop-data-doc.yml, data-docs/, data-docs-site/
+C:\work\contoso-analytics\    a source repository the project file lists
+C:\work\contoso-reports\      another one
+```
+
+`/setup-docs` run in any of them proposes `data-docs` in the home repository as
+the output, so the build never lands in a source tree. After a setup whose output
+is in that repository and it has no CI yet, coop offers `data-docs-check.yml`
+(from `templates/client-home/`), which runs `coop-data-doc check` on every push.
+One repository per client keeps access per client and a client's lineage out of
+every other client's clone. coop writes the files; a human commits the docs
+(coop shares only the project file on its own).
 
 ## 5. Use it
 
