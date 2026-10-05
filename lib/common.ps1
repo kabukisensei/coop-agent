@@ -2851,6 +2851,41 @@ function Find-CoopProjectYml {
 }
 
 # Confirm a potentially-destructive action unless --yes / COOP_ASSUME_YES is set.
+# C1: where a project contract belongs for a folder (one committed contract at the
+# client's Git root, the folder that holds the client's repositories). Mirrors
+# proposeContractRoot in lib/project-contract.mjs. Returns a hashtable with Kind
+# ('existing' | 'repos-folder' | 'git-root' | 'folder'), Root, Path and Repos.
+function Get-CoopContractRootProposal {
+  param([string]$StartDir = (Get-Location).Path)
+  $start = [System.IO.Path]::GetFullPath($StartDir).TrimEnd('\', '/')
+  if (-not $start) { $start = $StartDir }
+  $dir = $start
+  $gitRoot = ''
+  while ($dir) {
+    $candidate = Join-Path $dir '.coop\project.yml'
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+      return @{ Kind = 'existing'; Root = $dir; Path = $candidate; Repos = @() }
+    }
+    if (-not $gitRoot -and (Test-Path -LiteralPath (Join-Path $dir '.git'))) { $gitRoot = $dir }
+    $parent = Split-Path -Parent $dir
+    if ($parent -eq $dir -or -not $parent) { break }
+    $dir = $parent
+  }
+  if ($gitRoot) {
+    $parent = Split-Path -Parent $gitRoot
+    if ($parent -and $parent -ne $gitRoot) {
+      $repos = @(Get-ChildItem -LiteralPath $parent -Directory -ErrorAction SilentlyContinue |
+        Where-Object { -not $_.Name.StartsWith('.') -and (Test-Path -LiteralPath (Join-Path $_.FullName '.git')) } |
+        Sort-Object Name | ForEach-Object { $_.Name })
+      if ($repos.Count -ge 2 -and $repos -contains (Split-Path -Leaf $gitRoot)) {
+        return @{ Kind = 'repos-folder'; Root = $parent; Path = (Join-Path $parent '.coop\project.yml'); Repos = $repos }
+      }
+    }
+    return @{ Kind = 'git-root'; Root = $gitRoot; Path = (Join-Path $gitRoot '.coop\project.yml'); Repos = @() }
+  }
+  return @{ Kind = 'folder'; Root = $start; Path = (Join-Path $start '.coop\project.yml'); Repos = @() }
+}
+
 function Coop-Confirm {
   param([string]$Prompt = 'Proceed?')
   if ($env:COOP_ASSUME_YES -eq '1') { return $true }

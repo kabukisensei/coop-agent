@@ -112,11 +112,12 @@ coop
 
 Or double-click the **coop** icon on your Desktop or in the Start Menu, which opens
 the same coop in a terminal window. The icon starts coop in your home folder. For
-client work, start coop from the project folder instead, so project setup and
-`/setup-docs` use that folder:
+client work, start coop from the client's Git root (the folder that holds the
+client's repositories, where the team's committed `.coop/project.yml` lives) or
+any folder under it, so coop finds the contract and `/setup-docs` uses that folder:
 
 ```powershell
-cd <project folder>
+cd <client Git root>
 coop
 ```
 
@@ -166,7 +167,8 @@ app with four themes. The window installer brings Node, Pi and coop with it.
 3. Click **Next** and **Install**. No administrator password is asked; it
    installs for your user only, under `%LOCALAPPDATA%\Programs\coop`.
 4. Double-click the new **coop (window)** icon on your Desktop or Start Menu
-   and pick the project folder. The first time, a console runs the same
+   and pick the client's Git root (or a folder under it) so the committed
+   `.coop/project.yml` is found. The first time, a console runs the same
    checklist as `coop install` (prerequisites, tools, the Azure and OpenAI
    sign-ins): follow what it prints, then start the window again if it stopped.
    After that the console only shows coop's launch checks and closes on its own.

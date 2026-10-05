@@ -7,6 +7,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- **The committed project contract** (C1, master plan section 12.3; Joel, Eric
+  and Aaron in the 2026-10-05 demo). `.coop/project.yml` is one team file at the
+  client's Git root, the folder that holds the client's repositories: a human
+  commits it and everyone who opens coop at or below it reads it. `/setup-project`,
+  the window's Project form and `coop init` now say so: a contract found above the
+  current folder is edited in place and never shadowed by a second copy (`coop
+  init` refuses one below it), a new contract is proposed at the folder holding
+  the repositories (the repository root when it is alone, the current folder
+  outside Git), the confirm shows the path, and the creation message says to
+  commit the file and open coop at or below that root. The generated header, the
+  example template, the doctor hint and the README, onboarding, install and
+  extending pages carry the same rule.
+
 - `@juicesharp/rpiv-todo` **2.12.0** joins the pinned extensions (Aaron, 2026-10-03,
   from the pi.dev package review): a `todo` tool and a live task panel above the
   prompt, so a multi-step session shows what coop is doing, what is done and what

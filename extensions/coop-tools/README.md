@@ -37,7 +37,12 @@ touches an object — see [Start Here menu](#start-here-menu-start),
 
 Users do not need to know `coop init` or manually edit YAML. Run `/setup-project`
 or choose *Start a client project* from `/start` whenever the project is ready to
-configure. Normal Coop startup does not open the wizard. While the local user
+configure. Normal Coop startup does not open the wizard. The contract is one
+committed team file at the client's Git root (the folder that holds the client's
+repositories): a contract found above the current folder is edited in place, never
+shadowed by a second copy, and a new one is proposed at that root, with the
+reminder to commit it (a human does; coop never commits it) and to open coop at or
+below it. While the local user
 profile (`<profile dir>/user.json`) is missing, the wizard first asks the name coop
 calls the user by and saves it there with the balanced communication preset (the
 launch no longer runs the onboarding wizard, master plan FR1); the name never goes

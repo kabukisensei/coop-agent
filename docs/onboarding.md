@@ -141,14 +141,18 @@ remembered for 30 minutes) and says nothing.
 
 ## 4. Point it at a work repo
 
-In each Fabric / D365 repo you work in:
+At the client's Git root, the folder that holds the client's repositories (the
+team's committed `.coop/project.yml` lives there and covers every repo under it):
 
 ```bash
-cd /path/to/your/fabric-repo
+cd /path/to/client-git-root
 coop onboard              # writes ~/.coop/user.json + versioned ~/.coop/config and managed MCP entries
-coop init                  # optional shell path for project setup
+coop init                  # optional shell path; one person creates the contract and commits it
 coop doctor
 ```
+
+One teammate creates the contract and commits it with the repository (coop never
+commits it); everyone else opens coop at or below that folder and needs no setup.
 
 Coop launches directly at the prompt without opening setup dialogs. Run
 `/setup-project` or choose *Start a client project* from `/start` when

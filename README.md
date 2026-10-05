@@ -332,8 +332,11 @@ wizard through a strict JSONL bridge; it is the same questionnaire used by
 [`extensions/coop-tools/README.md`](extensions/coop-tools/README.md#data-doc-setup-setup-docs).
 
 Project configuration has the same no-shell path: run **`/setup-project`** or
-choose **Start a client project** from `/start`. The wizard creates a
-missing `.coop/project.yml` or safely edits the nearest existing one, covering
+choose **Start a client project** from `/start`. The contract is one committed
+team file at the client's Git root (the folder that holds the client's
+repositories): everyone who opens coop at or below it reads it, and a human
+commits it. The wizard proposes that root for a missing `.coop/project.yml` or
+safely edits the nearest existing one (never a second copy below it), covering
 client details, whatever repositories are available, Fabric/Power BI workspaces,
 and Tabular Editor. A repository is not required: the wizard can start an engagement
 in discovery mode, record SQL-only or Power-BI-only coverage, and add sources later.
@@ -534,8 +537,10 @@ message + PR description from the diff — drafts only, never commits).
 
 The source of truth for repo paths, workspaces, backup/log rules, and approval policy
 is `.coop/project.yml`. It may provide deliberate project standards overrides;
-otherwise COOP's resolved standards task authority is authoritative. Run
-**`/setup-project`** inside Coop or `coop init` in the project directory. Use
+otherwise COOP's resolved standards task authority is authoritative. It is one
+committed team file at the client's Git root: run **`/setup-project`** inside Coop
+or `coop init` there (both edit a contract found above the folder instead of
+creating a second one), and commit it with the repository. Use
 `coop init --template` only when you intentionally want the full legacy template.
 
 Fabric projects may use two workspaces per environment. Record Warehouse/Lakehouse

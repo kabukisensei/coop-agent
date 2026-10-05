@@ -7,7 +7,7 @@
 // the fields nothing reads (estate.live_discovery, the mcp.* action lists).
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename } from "node:path";
 import { findProjectContract } from "../../lib/standards.mjs";
 import { userProfilePath } from "../../lib/paths.mjs";
 import {
@@ -17,9 +17,11 @@ import {
   SQL_TARGET_KINDS,
   cleanAnswer,
   clientPlatform,
+  contractCreatedNote,
+  contractLocationNote,
   estateMode,
-  findGitRoot,
   isSavableProfileName,
+  proposeContractRoot,
   parseProjectWizardSettings,
   projectContractText,
   projectSettingsProblems,
@@ -43,8 +45,10 @@ const hash = (text) => createHash("sha256").update(text).digest("hex");
 /** The contract the form edits for a folder, as /setup-project finds it. */
 export function locateProject(cwd) {
   const existing = findProjectContract(cwd);
-  const root = existing ? resolve(existing, "..", "..") : (findGitRoot(cwd) || resolve(cwd));
-  return { existing, root, path: existing || join(root, ".coop", "project.yml") };
+  // C1: an existing contract above cwd is edited in place; a new one goes at the
+  // client's Git root (the folder holding the repositories), as /setup-project proposes.
+  const where = proposeContractRoot(cwd, { existing });
+  return { existing, root: where.root, path: where.path, kind: where.kind, note: contractLocationNote(where) };
 }
 
 function readOriginal(where) {
@@ -76,6 +80,7 @@ export function loadProject(cwd, { env } = {}) {
     exists: Boolean(where.existing),
     path: where.path,
     root: where.root,
+    locationNote: where.note,
     folder: basename(where.root) || where.root,
     settings,
     commitLists: commitLists(original, existingNames),
@@ -207,5 +212,5 @@ export function saveProject(cwd, input, token, options = {}) {
   if (hash(p.original) !== token) throw new Error(".coop/project.yml changed on disk since you reviewed it. Review the changes again.");
   const backup = writeProjectContract(p.where.path, p.text);
   const profileSaved = p.profileName ? saveUserProfileName(p.profileName, profileFile(options.env)) : null;
-  return { problems: [], path: p.where.path, backup, created: !p.where.existing, profileSaved };
+  return { problems: [], path: p.where.path, backup, created: !p.where.existing, profileSaved, next: p.where.existing ? "" : contractCreatedNote(p.where.root) };
 }

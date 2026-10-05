@@ -439,6 +439,10 @@ await check("project form: loads the wizard's fields; dropped fields never reach
   assert.deepEqual(data.commitLists.top, ["docs/**"]);
   assert.deepEqual(data.commitLists.repositories.analytics, { allowed: ["special-docs/**"], never: ["secrets/**", "bin/**"] });
   assert.equal(data.profileMissing, false);
+  assert.match(data.locationNote, /A contract already covers this folder/);
+  const fresh = loadProject(projectFixture("fresh-note"), { env: process.env });
+  assert.deepEqual([fresh.exists, fresh.path], [false, join(fresh.root, ".coop", "project.yml")]);
+  assert.match(fresh.locationNote, /Coop proposes this repository's root/);
   assert.deepEqual(data.guardrailFields.sort(), ["client", "commitLists", "repositories.localPath", "sqlTargetDatabase", "sqlTargetKind", "sqlTargetServer", "tenantId"]);
   const shown = JSON.stringify(data);
   for (const dropped of ["live_discovery", "allowed_default_actions", "requires_approval_actions", "list_workspaces", "run_query", "future_setting", "custom_profile_key"]) {
@@ -503,6 +507,7 @@ await check("project form: a new contract and discovery mode match /setup-projec
     assert.equal(preview.mode, localSource ? "partial" : "discovery");
     const saved = saveProject(viaForm, input, preview.token, { env: process.env });
     assert.deepEqual([saved.created, saved.backup], [true, null]);
+    assert.match(saved.next, /^Commit \.coop\/project\.yml with the repository/);
     assert.equal(readFileSync(join(viaForm, ".coop", "project.yml"), "utf8"), expected, `new contract, local source ${localSource}`);
   }
 });

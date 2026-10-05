@@ -845,6 +845,26 @@ function Invoke-CoopInit {
   if ($ciType) { Invoke-CoopInitCi $dir $ciType; return }
   $dst = Join-Path $dir '.coop\project.yml'
   if (Test-Path -LiteralPath $dst) { Coop-Die "$dst already exists — not overwriting.  (seed coop-data-doc.yml from it with: coop init --seed-docs)" }
+  # C1: one committed contract at the client's Git root. A contract above this
+  # folder already covers it, so no second copy is created below it; with none,
+  # the folder that holds the client's repositories is proposed.
+  $where = Get-CoopContractRootProposal $dir
+  if ($where.Kind -eq 'existing') {
+    Coop-Die "a contract already covers this folder: $($where.Path). One contract per client Git root: edit it with /setup-project inside coop (or edit the file) instead of creating a second one below it."
+  }
+  if ($where.Kind -ne 'folder' -and $where.Root -ne [System.IO.Path]::GetFullPath($dir).TrimEnd('\', '/')) {
+    if ($where.Kind -eq 'repos-folder') {
+      Coop-Info "No contract yet. $($where.Root) holds $($where.Repos.Count) repositories ($($where.Repos -join ', ')): one committed .coop/project.yml there covers every repository under it, and everyone opens coop at or below that folder."
+    } else {
+      Coop-Info "No contract yet. The committed .coop/project.yml belongs at the repository root, $($where.Root), where everyone who opens coop at or below it reads it."
+    }
+    if ($env:COOP_ASSUME_YES -eq '1' -or -not [Console]::IsInputRedirected) {
+      if (Coop-Confirm "Create .coop/project.yml at $($where.Root) instead of $dir?") {
+        $dir = $where.Root
+        $dst = Join-Path $dir '.coop\project.yml'
+      }
+    }
+  }
   $py = Get-CoopPython
   if (-not $py) { Coop-Die 'python3 is required for: coop init' }
   $wizard = Join-Path (Join-Path $script:CoopRoot 'lib') 'init_wizard.py'
@@ -861,6 +881,7 @@ function Invoke-CoopInit {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   }
   Coop-Ok "Wrote $dst"
+  Coop-Info "Commit .coop/project.yml with the repository so your teammates share it (a human commits it; coop never does). Open coop at or below $dir so it is found."
   if ($template) {
     Coop-Info 'Fill in the TODOs (repo paths, Fabric/Power BI workspaces, tenant), then: coop doctor'
   }

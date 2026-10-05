@@ -55,9 +55,11 @@ import {
   canonicalProjectUuid,
   cleanAnswer,
   clientPlatform,
+  contractCreatedNote,
+  contractLocationNote,
   estateMode,
-  findGitRoot,
   isServerHost,
+  proposeContractRoot,
   parseProjectWizardSettings,
   projectSqlEndpointType,
   projectYamlScalar,
@@ -86,7 +88,10 @@ export {
   SQL_TARGET_KINDS,
   applyProjectWizardSettings,
   clientPlatform,
+  contractCreatedNote,
+  contractLocationNote,
   estateMode,
+  proposeContractRoot,
   parseProjectWizardSettings,
   projectYamlScalar,
   proposedSqlTargetKind,
@@ -1297,11 +1302,23 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
     return false;
   }
   const existing = findProjectYml(ctx.cwd);
-  const root = existing ? resolve(existing, "..", "..") : (findGitRoot(ctx.cwd) || resolve(ctx.cwd));
+  // C1: one committed contract at the client's Git root. An existing contract
+  // above cwd is edited in place (never a second copy below it); a new one is
+  // proposed at the folder that holds the client's repositories.
+  let where = proposeContractRoot(ctx.cwd, { existing });
   const original = existing ? safeRead(existing) : "";
-  const settings = parseProjectWizardSettings(original, root);
   const title = existing ? "Edit this Coop project" : "Set up this Coop project";
   notify(ctx, `${title}. Press Esc at any prompt to cancel without changing files.`, "info");
+  notify(ctx, contractLocationNote(where), "info");
+  if (!existing && where.kind === "repos-folder") {
+    // The folder holding the repositories may hold more than one client's, so
+    // the proposal asks; No keeps the contract to this repository.
+    const fallback = proposeContractRoot(ctx.cwd, { existing: null, repository: true });
+    const useProposed = await askConfirm(ctx, "Where the contract goes", `Create .coop/project.yml at ${where.root}, covering ${where.repos.join(", ")}?\n\nChoose No to create it at ${fallback.root} instead, for this repository only.`);
+    if (!useProposed) where = fallback;
+  }
+  const root = where.root;
+  const settings = parseProjectWizardSettings(original, root);
 
   // The one onboarding question the launch no longer asks (master plan FR1): the
   // name coop calls the user by. Asked only while the local profile is missing;
@@ -1459,12 +1476,13 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
   const repoSummary = settings.repositories.length
     ? settings.repositories.map((r) => `${r.name} (${r.role}: ${r.localPath})`).join("\n")
     : "No local source yet (discovery mode)";
-  const confirmed = await askConfirm(ctx, title, `${existing ? "Update" : "Create"} .coop/project.yml for ${client || "this project"}?\n\nMode: ${mode}\n${repoSummary}`);
+  const path = existing || where.path;
+  const confirmed = await askConfirm(ctx, title, `${existing ? "Update" : "Create"} ${path} for ${client || "this project"}?\n\nMode: ${mode}\n${repoSummary}`);
   if (!confirmed) { notify(ctx, "Project setup cancelled — no files changed.", "info"); return false; }
   const output = existing ? applyProjectWizardSettings(original, settings) : renderProjectWizardSettings(settings);
-  const path = existing || join(root, ".coop", "project.yml");
   const backup = writeProjectContract(path, output);
   notify(ctx, `Project contract ${existing ? "updated" : "created"}: ${path}${backup ? ` (backup: ${backup})` : ""}`, "info");
+  if (!existing) notify(ctx, contractCreatedNote(root), "info");
   notify(ctx, "Run /new or restart Coop before governed work so the guardrails load the updated contract.", "info");
 
   if (!settings.repositories.length) {
