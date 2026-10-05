@@ -391,7 +391,10 @@ semantic model edit can land (#159): the guardrail reads each call's
 session), and asks every time for deletes, whole-model imports, deploys, unknown
 operations and production. Manifest-pinned managed config is generated into coop's isolated agent dir
 (`~/.coop/agent/mcp-adapter.json`) from `~/.coop/config` by `coop onboard` / `coop sync`,
-and wired through `pi-mcp-adapter`.
+and wired through `pi-mcp-adapter`. The `fabric-sqlendpoint` entry's Warehouse target
+comes from the contract above the current folder, and every launch regenerates it
+for the folder coop starts in (`Update-CoopManagedMcpConfig`), so one shared config
+follows the last launch, not the last sync.
 
 Per `.coop/project.yml` and `docs/guardrails.md`:
 

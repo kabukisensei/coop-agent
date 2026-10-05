@@ -830,6 +830,20 @@ await check("resize: every pane drags, within limits that keep the conversation 
   assert.equal(/grid-template-columns: 264px/.test(css), false, "the sidebar column follows --sidebar-width");
 });
 
+await check("styles: a long session list never pushes the window past its height", () => {
+  // 2026-10-05: the sidebar grew with its list, the composer sat below the fold
+  // and focusing it scrolled the whole document (top bar and sidebar head gone).
+  const css = readFileSync(join(ROOT, "desktop", "renderer", "styles", "app.css"), "utf8");
+  const sidebar = css.match(/\n\.sidebar \{([^}]*)\}/);
+  assert.ok(sidebar, ".sidebar rule");
+  assert.match(sidebar[1], /min-height: 0/, "the sidebar keeps to its grid row");
+  assert.match(sidebar[1], /overflow: hidden/, "the sidebar clips instead of growing");
+  const body = css.match(/\nbody \{([^}]*)\}/);
+  assert.ok(body, "body rule");
+  assert.match(body[1], /overflow: clip/, "the document can never scroll");
+  assert.match(css, /\.session-list \{[^}]*overflow-y: auto/, "the session list scrolls on its own");
+});
+
 rmSync(temp, { recursive: true, force: true });
 console.log(`\n${passed} desktop pane tests passed, ${failed} failed${skipped.length ? `, ${skipped.length} skipped` : ""}.`);
 if (failed) process.exit(1);

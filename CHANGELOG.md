@@ -5,6 +5,29 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- The managed Warehouse MCP entry in the shared `mcp-adapter.json` carries one
+  project's target: the contract above the folder it was generated in. Only
+  `coop sync` wrote it, so a `coop update` or the window's first launch run from
+  the home folder (seen 2026-10-05, right after 0.30.2) left the project folder
+  on the global endpoint: `fabric_sql_query unavailable: target_mismatch`, doctor
+  `target_invalid`, and no `fabric-sqlendpoint.execute_query` tool. Every launch
+  (terminal and window) now rewrites the entry for the folder it starts in
+  (`Update-CoopManagedMcpConfig`, the same ownership-aware generator sync runs),
+  so the last launch wins, not the last sync. Fail-soft: a launch that cannot
+  refresh it warns and starts anyway.
+- coop window: with a long session list the sidebar grew past the window (a
+  grid item's minimum height is its content), so the composer sat below the
+  fold ("no way to type"), and focusing it after New session scrolled the whole
+  document: the top bar and the session list's head went off the top and the
+  conversation no longer scrolled (seen 2026-10-05). The sidebar now keeps to
+  the window's height (its session list scrolls) and the document can never
+  scroll (`overflow: clip`).
+- coop window: Chromium's own log lines (the GPU driver "GetGpuDriverOverlayInfo"
+  error some Windows drivers print) no longer land in the terminal that ran
+  `coop desktop`; only fatal ones remain.
+
 ## [0.30.2] — 2026-10-05
 
 ### Fixed

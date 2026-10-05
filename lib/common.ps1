@@ -1333,6 +1333,41 @@ function Get-CoopEffectiveAgentDir {
   return (Get-CoopPiAgentDir)
 }
 
+# The managed MCP config (mcp-adapter.json in the agent dir Pi loads) carries the
+# Warehouse target of ONE project: the contract above the folder it was generated
+# in. `coop sync` writes it, and every launch rewrites it for the folder coop
+# starts in (same generator, ownership-aware, non-destructive), so a `coop update`
+# or the window's first launch run from the home folder never leaves the project
+# folder pointed at the global endpoint ("target_mismatch", no execute_query tool;
+# seen 2026-10-05). Returns 'ok', 'no_python' or 'failed'; -Quiet keeps the
+# generator's stderr off the console (the launch prints its own one-line warning).
+function Update-CoopManagedMcpConfig {
+  param(
+    [string]$OutputPath = (Join-Path (Get-CoopEffectiveAgentDir) 'mcp-adapter.json'),
+    [string]$ProjectCwd = (Get-Location).Path,
+    [switch]$Quiet
+  )
+  $py = Get-CoopPython
+  if (-not $py) { return 'no_python' }
+  $generator = Join-Path $script:CoopRoot 'lib\mcp_config.py'
+  $previousEap = $ErrorActionPreference
+  $rc = 1
+  try {
+    # Native stderr under Windows PowerShell 5.1 would otherwise become a
+    # terminating error; capture it and decide below.
+    $ErrorActionPreference = 'Continue'
+    $out = @(& $py $generator --config (Get-CoopConfigFile) --output $OutputPath --project-cwd $ProjectCwd 2>&1)
+    $rc = $LASTEXITCODE
+  } catch {
+    $rc = 1
+  } finally {
+    $ErrorActionPreference = $previousEap
+  }
+  if ($rc -eq 0) { return 'ok' }
+  if (-not $Quiet) { foreach ($line in $out) { Write-Host ([string]$line) } }
+  return 'failed'
+}
+
 # True when Pi has a stored provider credential in the agent tree Coop will
 # actually load. Environment-only credentials intentionally do not count: this
 # helper gates the one-time interactive /login handoff requested by onboarding.

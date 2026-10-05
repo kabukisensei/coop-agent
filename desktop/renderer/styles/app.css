@@ -9,7 +9,10 @@ body {
   color: var(--text);
   font: 14px/1.55 var(--font);
   -webkit-font-smoothing: antialiased;
-  overflow: hidden;
+  /* clip, not hidden: a focus() or scrollIntoView() can still scroll a hidden
+     overflow, which is how the top bar and the session list's head went off
+     the window; clip can never scroll. */
+  overflow: clip;
 }
 ::selection { background: var(--selection); }
 button, input, select, textarea { font: inherit; color: inherit; }
@@ -29,6 +32,10 @@ body.no-sidebar .sidebar { visibility: hidden; }
 .sidebar {
   position: relative; display: flex; flex-direction: column; gap: 10px; min-width: 0;
   padding: 12px 10px; background: var(--panel); border-right: 1px solid var(--border);
+  /* A grid item's minimum height is its content: without this a long session
+     list pushed the sidebar (and the row) past the window, the composer sat
+     below the fold and focusing it scrolled the whole document (2026-10-05). */
+  min-height: 0; overflow: hidden;
 }
 .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
 

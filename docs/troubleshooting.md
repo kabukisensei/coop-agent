@@ -178,3 +178,28 @@ carries that project's Warehouse target.
 
 **Verify.** The launch shows no Warehouse line and a `SELECT TOP 1 1` runs.
 
+## 6. `fabric_sql_query unavailable: target_mismatch` / `Tool "fabric-sqlendpoint.execute_query" not found`
+
+**Symptom.** In the project folder a Warehouse query fails with
+`target_mismatch`, `coop doctor` shows `fabric-sqlendpoint target_invalid`, and
+`mcp search execute_query` finds nothing under `fabric-sqlendpoint`.
+
+**Diagnose.** The shared `mcp-adapter.json` carries one Warehouse target, the
+contract above the folder it was last generated in. Before this fix only
+`coop sync` wrote it, so a `coop update` or the window's first launch run from
+the home folder pointed it at the global endpoint. Compare:
+
+```powershell
+Get-Content "$env:USERPROFILE\.coop\agent\mcp-adapter.json" | Select-String -Pattern '"url"|"scope"|"item_name"'
+```
+
+A `"scope": "global"` line while the project's `.coop\project.yml` names a
+`default_sql_endpoint` item is the mismatch.
+
+**Fix.** Start coop (or open the window) in the project folder: every launch
+now rewrites the entry for its own folder. On a build without the fix, run
+`coop sync` from the project folder first.
+
+**Verify.** `coop doctor` shows `fabric-sqlendpoint registered` and a
+`SELECT TOP 1 1` runs.
+
