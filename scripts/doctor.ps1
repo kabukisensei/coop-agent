@@ -782,7 +782,7 @@ if ($proj) {
     }
   }
 } else {
-  D-Warn 'no .coop/project.yml found' "copy $($script:CoopRoot)/.coop/project.example.yml to your repo's .coop/project.yml"
+  D-Warn 'no .coop/project.yml found' "run /setup-project inside coop at the client's Git root (or coop init there), then commit the file with the repository"
 }
 
 D-Head 'coop-agent repository'

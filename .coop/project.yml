@@ -1,8 +1,9 @@
 # Cooptimize agent — bundled project contract (the live default for coop-agent).
-# When you run `coop` inside one of your work repos, coop uses THAT repo's
-# .coop/project.yml instead (it walks up from your working directory). This file
-# is the fallback + a worked example. See .coop/project.example.yml for the fully
-# documented template, and copy it into each work repo.
+# When you run `coop` under a client's Git root, coop uses THAT client's committed
+# .coop/project.yml instead (the nearest one walking up from your working
+# directory). This file is the fallback + a worked example. See
+# .coop/project.example.yml for the fully documented template, and copy it once to
+# each client's Git root and commit it there.
 
 profile:
   organization: "Cooptimize"
