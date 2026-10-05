@@ -123,9 +123,15 @@ try {
   if ($fail -eq 0) { Ok '--yes accepts the prerequisite offer without a console; a re-check that still fails stops as before (D1k)' }
 
   # D1k: when the installer commands DO supply the missing rows, the run goes on
-  # in the same window instead of stopping for a new terminal. The brew/winget
-  # shim drops a Node 22.19.0 and a Python 3.12 shim onto the stub PATH; the
-  # install then reaches step 2 (whose units fail on the stubs, not under test).
+  # in the same window instead of stopping for a new terminal. The brew shim
+  # drops a Node 22.19.0 and a Python 3.12 shim onto the stub PATH; the install
+  # then reaches step 2 (whose units fail on the stubs, not under test).
+  # Off Windows only: on Windows the re-check re-reads PATH from the registry
+  # (by design, so a just-installed tool is found), which puts the CI runner's
+  # real Node, npm and pipx back on PATH, and step 2 onwards then installs for
+  # real for ten minutes. The continue path is the same code on every OS.
+  if ($isWindowsHost) { Ok 'continue-after-re-check case runs off Windows only (the registry PATH re-read would start a real install on the runner)' }
+  else {
   $brewSh = @"
 case "`$*" in
   *node*) printf '#!/bin/sh\necho v22.19.0\n' > "$bin/node"; "$chmod" +x "$bin/node";;
@@ -133,16 +139,9 @@ case "`$*" in
 esac
 exit 0
 "@
-  # cmd only (findstr is off the stub PATH): a line-by-line substring test.
-  $brewCmd = @"
-set "a=%*"
-if not "%a%"=="%a:node=%" (echo @echo off> "$bin\node.cmd" & echo echo v22.19.0>> "$bin\node.cmd")
-if not "%a%"=="%a:python=%" (echo @echo off> "$bin\python3.cmd" & echo echo Python 3.12.4>> "$bin\python3.cmd")
-exit /b 0
-"@
+  $brewCmd = 'exit /b 0'   # never run: this case is off Windows only
   Write-Shim 'brew' $brewSh $brewCmd
-  Write-Shim 'winget' $brewSh $brewCmd
-  Remove-Item -LiteralPath (Join-Path $bin 'node'), (Join-Path $bin 'node.cmd') -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath (Join-Path $bin 'node') -Force -ErrorAction SilentlyContinue
   foreach ($n in @('python3', 'python', 'python3.12', 'python3.13')) { Write-Shim $n 'exit 0' 'exit /b 0' }
   $cout = Invoke-Install @('--prereqs', 'auto', '--no-fabric')
   foreach ($want in @('Prerequisites (re-checked)', 'all prerequisites present, continuing in this window', '2/8')) {
@@ -152,8 +151,8 @@ exit /b 0
   if ($fail -eq 0) { Ok 'a --prereqs auto run whose re-check passes continues in the same window (D1k)' }
   # Back to the Node-and-Python-missing stub set for the rows below.
   Write-Shim 'brew' 'exit 0' 'exit /b 0'
-  Write-Shim 'winget' 'exit 0' 'exit /b 0'
-  Remove-Item -LiteralPath (Join-Path $bin 'node'), (Join-Path $bin 'node.cmd') -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath (Join-Path $bin 'node') -Force -ErrorAction SilentlyContinue
+  }
 
   # A machine whose only Python is 3.14 passes row 3 when its pipx can fetch a
   # standalone 3.12 for the Fabric CLI, with either spelling of that flag
