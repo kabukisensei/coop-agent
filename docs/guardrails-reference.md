@@ -59,6 +59,19 @@ The adapter's `mcpScript` tool is off and blocked. It runs JavaScript that calls
 
 The adapter's direct tools (`directTools` on a server entry, registering every server tool as `<server>_<tool>`) are off on coop's managed servers, and `coop sync` switches a user-enabled flag back off. If one is on anyway, the guardrail maps a direct `fabric_onelake`, `fabric_core`, `azure-devops_…` or `powerbi-modeling-mcp_…` call to its server and remote tool and gates it exactly like the proxied call.
 
+### SQL edits and the lineage context
+
+Before an edit or write of a `.sql` file, coop-tools fills the session's lineage
+context for the object the file defines (the committed catalog snapshot, then the
+built lineage docs). The guardrail lets the edit through when any source holds the
+object, when every source that exists was tried, or when the file defines no object
+coop can name; it blocks the edit when a live target could still answer and
+`sql_impact` was never asked for that object, or when the snapshot's answer is
+older than the contract's `catalog.max_age_days`. The block names the tool to call;
+the same object is never asked twice in a session. Audit kind `lineage-gate` with
+the path and the fixed detail `lineage-not-held`. Reads are never gated. Detail:
+`docs/tool-contract.md`, "Session lineage context".
+
 ### Live environment reads
 
 Coop permits read-only metadata, schema, and artifact-code inspection in dev/test by default. Query/execute/sample/export-style calls can return actual rows, so the runtime asks first. Any tool request that explicitly names prod/production also asks first, including metadata-only reads; production row reads should be narrowly scoped to a named target, columns, filters, and a small limit. Approval-required reads fail closed when no interactive approval UI is available.

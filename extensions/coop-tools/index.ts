@@ -96,6 +96,18 @@ export {
   sqlTargetsBlock,
   upsertProjectYamlScalar,
 } from "../../lib/project-contract.mjs";
+import {
+  clearContext as clearLineageContext,
+  detailLines as lineageDetailLines,
+  getEntry as lineageEntry,
+  lineageFromDocs,
+  lineageFromSqlImpact,
+  prepareEditContext,
+  pruneContexts as pruneLineageContexts,
+  readContext as readLineageContext,
+  recordLineage,
+  summaryLine as lineageSummaryLine,
+} from "../../lib/lineage-context.mjs";
 export {
   JsonlLineDecoder,
   classifyManagedLines,
@@ -493,6 +505,9 @@ export function sqlImpactLines(details: any): string[] {
     if (name === "downstream" && part.state === "ok" && !part.count) {
       lines.push("- none visible: a dependent whose definition this principal cannot read, a dynamic SQL reference or another database would not appear here; built lineage docs cover the rest of the estate");
     }
+    if (name === "downstream" && part.column_references === "unavailable") {
+      lines.push("- column level unavailable on this target (sys.dm_sql_referenced_entities): which columns each dependent reads is not known");
+    }
     for (const item of part.items || []) {
       if (name === "columns") {
         lines.push(`- ${item.name} ${item.type}${item.nullable ? " NULL" : " NOT NULL"}`);
@@ -502,7 +517,10 @@ export function sqlImpactLines(details: any): string[] {
       const flags = item.resolved === false
         ? `, unresolved${item.mentioned_in_definition === false ? ", not named in the definition" : ""}`
         : "";
-      lines.push(`- ${qualified} (${item.type || "unknown"}${flags})`);
+      const uses = name === "downstream" && Array.isArray(item.columns)
+        ? (item.columns.length ? ` uses ${item.columns.join(", ")}` : " uses no column by name")
+        : "";
+      lines.push(`- ${qualified} (${item.type || "unknown"}${flags})${uses}`);
     }
   }
   return lines;
@@ -2198,6 +2216,11 @@ export default function coopTools(pi: ExtensionAPI) {
     // The contract native SQL runs against is the one this session starts with
     // (#284); /new, /resume and /fork re-read it here.
     noteContractSnapshot(ctx.cwd);
+    // The lineage context is per session (SQ8): a session switch starts empty, and
+    // the files of Pi processes that are gone leave with it.
+    clearLineageContext();
+    pendingSqlEdits.clear();
+    try { pruneLineageContexts(); } catch { /* best effort */ }
     // Learning-nudge lifecycle is per SESSION: reset the failure tally, the
     // dedupe set, and the once-only flags so a fresh session can be nudged
     // again. Turns within one session accumulate (two failures across two
@@ -2231,6 +2254,8 @@ export default function coopTools(pi: ExtensionAPI) {
   // contract/logging guidance can never break a turn.
   const announcedCwds = new Set<string>();
   const announcedFabricTargets = new Set<string>();
+  // SQ8: the SQL object each in-flight edit or write is about (by toolCallId).
+  const pendingSqlEdits = new Map<string, string>();
   let announcedTeamKnowledge = false;
   let sessionToolFailures = 0;
   // Distinct failed tool_result events (dedupe by toolCallId so a replayed
@@ -2355,9 +2380,76 @@ export default function coopTools(pi: ExtensionAPI) {
   });
 
   pi.on("tool_call", async (event: any, ctx: ExtensionContext) => {
+    try { await holdLineageForEdit(event, ctx); } catch { /* the context is an aid; the gate decides */ }
     if (!dailyRun) return;
     const effect = dailyLogToolEffect(event.toolName, event.input || {}, ctx.cwd, dailyRun.requirement.logPath);
     if (effect !== "none") pendingDailyEffects.set(event.toolCallId, effect);
+  });
+
+  // --- Session lineage context (master plan SQ8) ------------------------------
+  // Before an edit or write of a .sql file, coop holds the downstream of the object
+  // the file defines: the committed catalog snapshot first (local), then the built
+  // lineage docs (coop-data-doc, local); the live catalog only through sql_impact,
+  // whose result lands here too. An object already in the context costs no lookup.
+  // The guardrails (loaded after this extension, so their hook runs after this
+  // one) read the same store and stop an edit whose lookup never happened.
+  async function holdLineageForEdit(event: any, ctx: ExtensionContext): Promise<void> {
+    const tool = event?.toolName;
+    if (tool !== "edit" && tool !== "write") return;
+    const rawPath = String(event?.input?.path ?? "");
+    if (!/\.sql$/i.test(rawPath)) return;
+    const filePath = resolve(ctx.cwd, rawPath);
+    const content = tool === "write" ? String(event.input?.content ?? "") : "";
+    const prepared = prepareEditContext(ctx.cwd, filePath, content);
+    if (!prepared) return;
+    if (prepared.entry.sources.docs === "absent" && builtLineageDir(ctx.cwd)) {
+      let found: any = null;
+      let asked = false;
+      try {
+        const res = await pi.exec("coop-data-doc", ["lineage", "--", prepared.object], { cwd: ctx.cwd });
+        asked = true;
+        let parsed: any = null;
+        try { parsed = JSON.parse(res.stdout); } catch { parsed = null; }
+        if (res.code === 0 && parsed) found = lineageFromDocs(parsed);
+      } catch { asked = false; }
+      if (asked) recordLineage(prepared.object, "docs", found);
+    }
+    if (event.toolCallId !== undefined && event.toolCallId !== null) pendingSqlEdits.set(String(event.toolCallId), prepared.object);
+  }
+
+  pi.on("tool_result", async (event: any) => {
+    try {
+      if (event.toolName === "sql_impact") {
+        const resolved = event.details?.object;
+        const object = resolved?.name ? `${resolved.schema || "dbo"}.${resolved.name}` : String(event.input?.object ?? "");
+        if (!object) return;
+        // Any answer counts as the live catalog asked: a target that could not be
+        // reached is a miss the gate accepts, never a lookup owed forever.
+        recordLineage(object, "live", lineageFromSqlImpact(event.details));
+        return;
+      }
+      if (event.toolName === "data_doc" && event.details?.command === "lineage" && event.details.object) {
+        const parsed = event.details.lineage;
+        const found = parsed && typeof parsed === "object" ? lineageFromDocs(parsed) : null;
+        if (event.details.exitCode === 0 || found) recordLineage(String(event.details.object), "docs", found);
+        return;
+      }
+      const object = pendingSqlEdits.get(String(event.toolCallId));
+      if (!object) return;
+      pendingSqlEdits.delete(String(event.toolCallId));
+      if (event.isError) return;
+      const line = lineageSummaryLine(lineageEntry(object));
+      if (!line) return;
+      const content = Array.isArray(event.content) ? event.content : [{ type: "text", text: String(event.content ?? "") }];
+      return { content: [...content, { type: "text", text: line }] };
+    } catch {
+      return;
+    }
+  });
+
+  pi.on("session_shutdown", async () => {
+    clearLineageContext();
+    pendingSqlEdits.clear();
   });
 
   pi.on("tool_result", async (event: any) => {
@@ -2450,6 +2542,31 @@ export default function coopTools(pi: ExtensionAPI) {
         await runSetupDocs(pi, ctx);
       } catch (e: any) {
         notify(ctx, `setup-docs failed: ${errMsg(e)}. You can run the same wizard in a shell: coop data-doc setup`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("impact", {
+    description: "Show the downstream coop holds for a SQL object this session (/impact [schema.name])",
+    handler: async (args: string, ctx: ExtensionContext) => {
+      const name = String(args || "").trim();
+      const data = readLineageContext();
+      const keys = Object.keys(data.entries);
+      let text: string;
+      if (name) {
+        const entry = lineageEntry(name);
+        text = entry
+          ? lineageDetailLines(entry).join("\n")
+          : `coop holds no lineage for ${name} this session. It fills before a SQL edit, or when sql_impact or data_doc lineage runs.`;
+      } else if (!keys.length) {
+        text = "coop holds no lineage context yet this session. It fills before the first SQL edit, or when sql_impact or data_doc lineage runs.";
+      } else {
+        text = keys.map((key) => lineageSummaryLine(data.entries[key])).join("\n");
+      }
+      try {
+        pi.sendMessage({ customType: "coop-lineage-context", content: `Lineage context (this session):\n${text}`, display: true });
+      } catch (e: any) {
+        notify(ctx, `Lineage context unavailable: ${errMsg(e)}`, "warning");
       }
     },
   });

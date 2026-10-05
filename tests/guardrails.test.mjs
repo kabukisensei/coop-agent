@@ -1394,6 +1394,50 @@ await t("sql_impact (SQ4): dev/test metadata runs without a prompt; prod, unreso
   await handleSessionStart({ reason: "new" }, liveCtx);
 });
 
+await t("SQL edit gate (SQ8): an edit of a .sql object waits for the lookup when a live target was never asked", async () => {
+  const lineage = await import(pathToFileURL(join(ROOT, "lib", "lineage-context.mjs")).href);
+  clearAudit();
+  lineage.clearContext();
+  writeManagedTarget();
+  writeContract(AZURE_CONTRACT);
+  process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  mkdirSync(join(LIVE_ROOT, "sql", "rpt"), { recursive: true });
+  const view = join(LIVE_ROOT, "sql", "rpt", "vw_New.sql");
+  writeFileSync(view, "CREATE VIEW rpt.vw_New AS SELECT 1 AS One");
+  const edit = { toolName: "edit", input: { path: "sql/rpt/vw_New.sql", oldText: "1", newText: "2" } };
+  const stop = await handle(edit, liveCtx);
+  assert.equal(blocked(stop), true, "no source holds the object and the live catalog was never asked");
+  assert.match(stop.reason, /does not yet hold the downstream of rpt\.vw_new/);
+  assert.match(stop.reason, /Call sql_impact with object "rpt\.vw_new" first/);
+  const rows = readAudit().filter((x) => x.kind === "lineage-gate");
+  assert.equal(rows.length, 1);
+  assert.deepEqual([rows[0].tool, rows[0].decision, rows[0].label, rows[0].detail], ["edit", "blocked", "sql/rpt/vw_New.sql", "lineage-not-held"]);
+  // The lookup happened (sql_impact answered, even with nothing): the edit goes through.
+  lineage.recordLineage("rpt.vw_New", "live", null);
+  assert.equal(blocked(await handle(edit, liveCtx)), false);
+  // A write names its object from the content it carries.
+  const write = { toolName: "write", input: { path: join(LIVE_ROOT, "sql", "dbo", "usp_New.sql"), content: "CREATE PROCEDURE dbo.usp_New AS SELECT 1" } };
+  assert.equal(blocked(await handle(write, liveCtx)), true);
+  lineage.recordLineage("dbo.usp_New", "live", { kind: "procedure", columns: [], downstream: [] });
+  assert.equal(blocked(await handle(write, liveCtx)), false);
+  // A script that defines no object, and any non-SQL file, are never gated.
+  const script = join(LIVE_ROOT, "sql", "backfill.sql");
+  writeFileSync(script, "UPDATE dbo.Orders SET Amount = 0;");
+  assert.equal(blocked(await handle({ toolName: "edit", input: { path: script } }, liveCtx)), false);
+  assert.equal(blocked(await handle({ toolName: "edit", input: { path: "README.md" } }, liveCtx)), false);
+  assert.equal(blocked(await handle({ toolName: "read", input: { path: view } }, liveCtx)), false, "reads are never gated");
+  // No live target anywhere (no sql_targets, no managed Fabric entry): nothing is owed.
+  lineage.clearContext();
+  removeContract();
+  rmSync(join(AUDIT_DIR, "mcp-adapter.json"), { force: true });
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  assert.equal(blocked(await handle(edit, liveCtx)), false);
+  lineage.clearContext();
+  writeManagedTarget();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+});
+
 await t("changed managed target, launch identity, or environment reprompts", async () => {
   writeManagedTarget();
   process.env.COOP_FABRIC_MCP_TOKEN = launchToken();

@@ -7,6 +7,28 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- **Session lineage context** (master plan row SQ8, demo feedback 2026-10-05):
+  coop holds the downstream of every SQL object it is about to change and never
+  re-runs a lookup it already holds. Before an `edit` or `write` of a `.sql` file,
+  `coop-tools` names the object (its `CREATE` statement, else the snapshot layout,
+  else `dbo.<stem>`) and fills the context from the committed catalog snapshot
+  (SQ9: the object's columns and every definition that names it, with the columns
+  each one mentions) and, when built docs exist, `coop-data-doc lineage` (the
+  docs' downstream and the Power BI tables that load it); `sql_impact` and
+  `data_doc lineage` results land in the same context. The guardrails stop a SQL
+  edit whose object no source holds while a live target could still answer (or
+  whose snapshot answer is older than `catalog.max_age_days`), naming `sql_impact`
+  for the object; a script that defines no object is never gated. The edit's
+  result ends with one line naming each downstream object, the columns it uses
+  and the follow-on rule; `/impact [schema.name]` prints the detail without a
+  model turn (`/explain impact` points there). `sql_impact` now also reports,
+  per dependent, which of the object's columns it reads
+  (`sys.dm_sql_referenced_entities` with `referenced_minor_name`, one bound query
+  per dependent, the first 50). The store is one JSON file per Pi process under
+  the agent dir, cleared at every session start and shutdown. No new tool: the
+  context budget is unchanged (`lib/lineage-context.mjs`,
+  `tests/lineage-context.test.mjs`, `tests/lineage-context-runtime.test.mjs`).
+
 - `@juicesharp/rpiv-todo` **2.12.0** joins the pinned extensions (Aaron, 2026-10-03,
   from the pi.dev package review): a `todo` tool and a live task panel above the
   prompt, so a multi-step session shows what coop is doing, what is done and what

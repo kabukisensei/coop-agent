@@ -647,6 +647,10 @@ coop wraps one standalone pipx tool and exposes three native LLM tools: `data_do
 the deterministic model check). `sql_impact` and `bpa_review` are read-only;
 `data_doc build` writes generated documentation. SQL and DAX standards need no tool:
 they are applied while coop writes and self-checked before it presents a change.
+While coop edits SQL it holds the session's lineage context: the downstream of each
+object, filled once from the committed catalog snapshot, the built docs and
+`sql_impact`, one line in the edit's result, the detail on `/impact`, and a
+guardrail that stops a SQL edit whose lookup never happened.
 
 - **`coop-data-doc`** — progressive SQL and/or Power BI documentation, lineage, and machine-readable
   output. `scan` → `graph.json`; `build` → `manifest.json` + Markdown docs + a

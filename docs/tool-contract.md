@@ -304,7 +304,7 @@ catalog queries with the name bound through `OBJECT_ID(?)`, never spliced in:
 
 | Section | Query | Notes |
 | --- | --- | --- |
-| `downstream` | `sys.dm_sql_referencing_entities(?, 'OBJECT')` joined to `sys.objects` | who references the object, resolved at call time; where the target rejects that function (Fabric Warehouse), the `sys.sql_expression_dependencies` rows whose `referenced_id` is the object |
+| `downstream` | `sys.dm_sql_referencing_entities(?, 'OBJECT')` joined to `sys.objects` | who references the object, resolved at call time; where the target rejects that function (Fabric Warehouse), the `sys.sql_expression_dependencies` rows whose `referenced_id` is the object. Each dependent then carries `columns`, the object's columns it reads, from one bound `sys.dm_sql_referenced_entities(?, 'OBJECT')` query per dependent filtered to `referenced_minor_name` (SQ8; the first 50 dependents, the section's `column_references` says `ok`, `partial`, `unavailable` or `none`) |
 | `upstream` | `sys.sql_expression_dependencies` for the object's referenced entities, joined to `sys.objects` | each item carries `resolved`; an unresolved or ambiguous one (dropped, cross-database) adds `mentioned_in_definition` from a `sys.sql_modules` `LIKE` check |
 | `columns` | `INFORMATION_SCHEMA.COLUMNS` | name, type, nullability, position, so a before/after comparison knows what to count |
 
@@ -338,7 +338,30 @@ audit records a fixed label and the environment, never the object name. The tool
 text output adds a `data_doc` lineage hint when built docs exist in the folder, and
 the `impact-analysis` prompt and the `coop-workflow` skill call `sql_impact` before
 any live SQL edit. The text lists every item in each section (`- schema.name (type)`,
-unresolved references flagged; columns as `- name type NULL|NOT NULL`).
+unresolved references flagged, dependents with `uses <columns>`; columns as
+`- name type NULL|NOT NULL`).
+
+### Session lineage context (`lib/lineage-context.mjs`, `/impact`)
+
+Master plan row SQ8: coop holds the downstream of every SQL object it is about to
+change, filled once per object from the cheapest fresh source, and never re-runs a
+lookup it already holds. The store is one JSON file per Pi process under the agent
+dir (`lineage-context/<pid>.json`, keyed by lower-cased `schema.name`), because
+`coop-tools` fills it and `coop-guardrails` reads it; `session_start` and
+`session_shutdown` clear it, and files of Pi processes that are gone are pruned.
+
+| Step | Where | What happens |
+| --- | --- | --- |
+| before an `edit` or `write` of a `.sql` file | `coop-tools` `tool_call` hook (it loads before the guardrails, so it runs first) | the object comes from the file's `CREATE` statement, else the snapshot layout `<schema>/<name>.sql`, else `dbo.<stem>`; the committed catalog snapshot (SQ9) is scanned for the object's columns and every definition that names it, with the columns each one mentions; when built lineage docs exist, `coop-data-doc lineage` adds the docs' downstream and the Power BI tables that load it. A source already recorded for the object is not asked again |
+| the same call | `coop-guardrails` `tool_call` hook | `editGateDecision`: the edit goes through when any source holds the object, when every source that exists was tried, or when the file defines no object coop can name (a script); it is blocked, with a reason naming `sql_impact` for the object, when a live target (the contract's `sql_targets`, or a managed dev/test Fabric entry) could still answer and was never asked, including when the snapshot's answer is older than `catalog.max_age_days`. Audit kind `lineage-gate`, label the path, detail `lineage-not-held`; `read` is never gated |
+| `sql_impact` and `data_doc lineage` results | `coop-tools` `tool_result` hook | recorded for the object as the `live` and `docs` sources (any `sql_impact` answer counts as asked, so an unreachable target is a miss the gate accepts, never a lookup owed forever) |
+| the edit's result | `coop-tools` `tool_result` hook | one line appended: `Downstream of <object>: <dependent> (<kind>, uses <columns>); …` with the follow-on rule (a renamed or removed column breaks each one that uses it; an added column reaches them only when each is updated) and `/impact shows the detail`; with nothing found, the line says which sources were checked and that an empty result is not proof of zero impact |
+| `/impact [schema.name]` | registered command, no model turn, no budget cost | the detail for one object (sources, columns, each dependent with the columns it uses) or the summary line of every object held; `/explain impact` points here |
+
+A source's state per object is `hit`, `miss`, `stale` (the snapshot answered but is
+older than the contract's age, so a live lookup is still owed) or `absent` (the
+source does not exist here, or was never asked). The gate is the enforcement; the
+`coop-workflow` skill's step 3 describes the same order as guidance.
 
 ---
 

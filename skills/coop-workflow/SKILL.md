@@ -57,7 +57,11 @@ partial, or connected project without requiring the user to edit YAML.
    relationships. Before planning or editing a live SQL object (view, table, procedure,
    function), call `sql_impact` with its name for the live dependents, references and
    columns on the contract's default dev/test target, then `data_doc` lineage for the
-   same object when built docs exist; report drift between the two. If local source is missing or partial, use read-only dev/test live
+   same object when built docs exist; report drift between the two. coop holds what
+   it learns in the session's lineage context: a SQL edit whose object no source
+   holds is stopped by the guardrails until `sql_impact` has been asked, a repeat
+   edit of the same object costs no new call, the edit's result ends with one line
+   naming each downstream object, and `/impact` shows the detail. If local source is missing or partial, use read-only dev/test live
    metadata/schema/code to fill gaps. Mark each fact's provenance (repo or live
    environment) and report drift. Use **Microsoft Learn** for current Microsoft docs.
 4. **Plan the first slice + get approval.** For multi-step work, write a short PLAN
