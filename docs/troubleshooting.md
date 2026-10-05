@@ -150,3 +150,25 @@ coop sync
 **Verify.** `coop sync` prints one "Installed release version" or "Already at
 release version" line per extension and no warning; coop (terminal or window)
 starts with the extensions loaded.
+
+## 5. `Fabric Warehouse MCP unavailable: Azure CLI is not installed or not on PATH`
+
+**Symptom.** The launch prints that line (or `coop doctor` shows
+`fabric-sqlendpoint azure_cli_unavailable`) while `az` is installed and signed
+in, and Warehouse queries get a 401.
+
+**Diagnose.** Before 0.30.2 the token helper refused a node or az inside the
+working folder, and a coop started from the home folder (`C:\Users\<name>`)
+counted the whole profile as inside it: the window's bundled Node or a per-user
+install was refused. Check where coop was started:
+
+```powershell
+Get-Location
+```
+
+**Fix.** Start coop from the project folder, or open the window on it (pick the
+project folder in the dialog, never the home folder). From 0.30.2 a folder that
+contains the home is not treated as a work repo.
+
+**Verify.** The launch shows no Warehouse line and a `SELECT TOP 1 1` runs.
+

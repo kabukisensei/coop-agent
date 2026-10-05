@@ -529,6 +529,18 @@ def _is_windows() -> bool:
     return os.name == "nt"
 
 
+def _cwd_may_hold_tools(cwd: Path) -> bool:
+    """A working directory that contains the user's home (the home itself, the
+    users folder, a drive root) is not a work repo: tools installed under the
+    profile (a node from nvm or the coop window package, az.cmd from a per-user
+    install) live there legitimately. A launch from such a folder keeps them;
+    anywhere else, a binary under the cwd is a planted one and is refused."""
+    try:
+        return Path.home().resolve(strict=True).is_relative_to(cwd)
+    except (OSError, RuntimeError):
+        return False
+
+
 def _native_node() -> str | None:
     candidate = shutil.which("node")
     if not candidate:
@@ -536,7 +548,9 @@ def _native_node() -> str | None:
     try:
         node = Path(candidate).resolve(strict=True)
         cwd = Path.cwd().resolve(strict=True)
-        if not node.is_absolute() or not node.is_file() or node.is_relative_to(cwd):
+        if not node.is_absolute() or not node.is_file():
+            return None
+        if node.is_relative_to(cwd) and not _cwd_may_hold_tools(cwd):
             return None
         if _is_windows():
             if node.suffix.lower() != ".exe":

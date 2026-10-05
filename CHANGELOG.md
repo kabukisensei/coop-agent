@@ -19,6 +19,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   coop, delete `node_modules` and `package-lock.json` under `agent\npm`, run
   `coop sync` (docs/troubleshooting.md).
 
+- The Fabric Warehouse token helper no longer reports "Azure CLI is not
+  installed or not on PATH" when coop (terminal or window) starts from the home
+  folder. The helper refuses a node or az that sits inside the working folder
+  (a planted binary in a work repo); started from `C:\Users\<name>`, the whole
+  profile counted as "inside", so the window's bundled Node and any per-user
+  install were refused (seen 2026-10-05). A working folder that contains the
+  home (the home itself, the users folder, a drive root) is not a work repo and
+  keeps them; `lib/warehouse_mcp.py` and `lib/fabric_request_headers.mjs`.
 - `release.yml` publishes the coop window installer only after the same
   acceptance the PR job runs has passed on the exact bytes it publishes
   (#277): the tag's `installer` job now runs `desktop/scripts/verify-installer.mjs`

@@ -494,6 +494,29 @@ with tempfile.TemporaryDirectory(dir=ROOT) as local_dir:
     with mock.patch.object(wmcp.shutil, "which", return_value=str(local_node)):
         assert wmcp._native_node() is None
 
+# A launch from the home folder (or any folder that contains it) keeps a node
+# installed under the profile: nvm, or the coop window package's bundled Node
+# (2026-10-05: `coop desktop` from C:\Users\<name> reported the Azure CLI
+# unavailable because the bundled node was "inside the cwd").
+with tempfile.TemporaryDirectory() as fake_home:
+    home = Path(fake_home).resolve()
+    profile_node = home / "AppData" / "Local" / "Programs" / "coop" / ("node.exe" if wmcp._is_windows() else "node")
+    profile_node.parent.mkdir(parents=True)
+    profile_node.write_bytes(b"profile-node")
+    profile_node.chmod(0o755)
+    prior_cwd = os.getcwd()
+    try:
+        os.chdir(home)
+        with (
+            mock.patch.dict(os.environ, {"HOME": str(home), "USERPROFILE": str(home)}),
+            mock.patch.object(wmcp.shutil, "which", return_value=str(profile_node)),
+        ):
+            assert wmcp._native_node() == str(profile_node), "node under the profile is kept when launched from home"
+            assert wmcp._cwd_may_hold_tools(home.parent)
+            assert not wmcp._cwd_may_hold_tools(home / "AppData")
+    finally:
+        os.chdir(prior_cwd)
+
 
 # Exact item scope requires complete UUIDs and canonicalizes them; mismatch fails.
 workspace = "11111111-1111-1111-1111-111111111111"
