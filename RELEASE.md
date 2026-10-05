@@ -170,7 +170,13 @@ can never reach origin off `main`). `--no-push` stops at the local tag. The tag
 push triggers `release.yml`, which cuts a GitHub Release whose body is that
 version's CHANGELOG section. `release.yml` first refuses a tag that is not
 `v$(cat VERSION)` or not an ancestor of `origin/main`, so a hand-pushed tag
-fails before anything is published.
+fails before anything is published. Its `installer` job builds the coop window
+installer from the tag and runs the installer acceptance on those exact bytes
+(`desktop/scripts/verify-installer.mjs`, as on every PR); the release job
+publishes the executable only when the acceptance report says ok and names the
+executable's SHA-256 (`desktop/scripts/check-installer-report.mjs`), and
+attaches the report to the release. A failed acceptance fails the tag run with
+no release created; fix, then release the next patch (never re-push a tag).
 
 The pre-tag gate runs both lanes on the machine you release from only. The
 Windows legs of the extended lane run in CI, so before you release, check that

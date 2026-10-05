@@ -3,7 +3,9 @@ name: release
 # When `coop release` pushes a vX.Y.Z tag, publish a GitHub Release whose body is
 # that version's section from CHANGELOG.md — so release notes are automatic —
 # with the coop window installer attached (master plan D1c), so teammates
-# download it from the release page.
+# download it from the release page. The installer is published only after the
+# same acceptance ci.yml runs on every PR has passed against these exact bytes
+# (#277): install silently, `coop.exe --doctor`, uninstall, profile untouched.
 on:
   push:
     tags: ['v*']
@@ -17,7 +19,7 @@ jobs:
     # the unsigned per-user NSIS installer of the window, from this tag.
     name: build the coop window installer
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
@@ -38,6 +40,22 @@ jobs:
           path: desktop/installer/dist/coop-window-*.exe
           if-no-files-found: error
           retention-days: 14
+      # The acceptance the PR job runs, on the bytes that will be published: a
+      # failure fails this job, so `release` (needs: installer) never runs and
+      # nothing is published. The report (installer SHA-256, package version,
+      # every step) is kept whether it passed or failed.
+      - name: silent install, coop.exe --doctor, silent uninstall (the release bytes)
+        shell: pwsh
+        env:
+          COOP_INSTALLER_TEST: '1'
+        run: node desktop/scripts/verify-installer.mjs --output "$env:RUNNER_TEMP\installer-acceptance.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coop-window-installer-acceptance
+          path: ${{ runner.temp }}/installer-acceptance.json
+          if-no-files-found: error
+          retention-days: 90
 
   release:
     name: GitHub Release
@@ -47,6 +65,9 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0   # the guard below needs origin/main's history
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.19.0'
 
       # `coop release` tags only from main == origin/main and pushes branch + tag
       # atomically, but a tag pushed by hand skips that. Teammates follow release
@@ -83,6 +104,15 @@ jobs:
         with:
           name: coop-window-installer
           path: installer
+      - uses: actions/download-artifact@v4
+        with:
+          name: coop-window-installer-acceptance
+          path: installer
+
+      # Publish only the executable the acceptance passed on: the report must say
+      # ok and name this file's SHA-256 and this tag's version.
+      - name: Refuse an installer the acceptance did not pass on
+        run: node desktop/scripts/check-installer-report.mjs installer/installer-acceptance.json installer
 
       - name: Create GitHub Release
         # SHA-pinned (v3.0.1) — this is a third-party action with `contents: write`, so
@@ -91,5 +121,7 @@ jobs:
         with:
           name: "coop-agent ${{ github.ref_name }}"
           body_path: RELEASE_NOTES.md
-          files: installer/coop-window-*.exe
+          files: |
+            installer/coop-window-*.exe
+            installer/installer-acceptance.json
           fail_on_unmatched_files: true
