@@ -1349,6 +1349,41 @@ await t("contract sql_targets scope: prod, placeholder, tenant mismatch or a mis
   await handleSessionStart({ reason: "new" }, liveCtx);
 });
 
+await t("catalog_snapshot (SQ9): status never asks; snapshot follows the sql_impact target rule; forged inputs are blocked", async () => {
+  clearAudit();
+  writeManagedTarget();
+  writeContract(AZURE_CONTRACT);
+  process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmAnswer = false; confirmCount = 0;
+  const call = (input) => ({ toolName: "catalog_snapshot", input });
+  assert.equal(blocked(await handle(call({ command: "status" }), liveCtx)), false, "status: folder read only");
+  assert.equal(blocked(await handle(call({}), liveCtx)), false, "no command means status");
+  assert.equal(readAudit().filter((x) => x.tool === "governed-catalog-snapshot").length, 0, "a status is not a live read, nothing audited");
+  assert.equal(blocked(await handle(call({ command: "snapshot" }), liveCtx)), false, "contract dev target: no prompt");
+  assert.equal(confirmCount, 0);
+  const allowed = readAudit().filter((x) => x.tool === "governed-catalog-snapshot");
+  assert.equal(allowed.length, 1);
+  assert.deepEqual([allowed[0].decision, allowed[0].label, allowed[0].detail], ["allowed", "live catalog snapshot", "dev"]);
+  for (const input of [{ command: "snapshot", object: "dbo.x" }, { command: "drop" }, { command: "snapshot", output: "/tmp" }, { path: "x" }, "snapshot"]) {
+    assert.equal(blocked(await handle(call(input), liveCtx)), true, JSON.stringify(input));
+  }
+  assert.equal(confirmCount, 0, "forged shapes are blocked, never prompted");
+  writeContract(contractText(["  default_environment: prod", "  prod:", "    kind: azure_sql", "    server: contoso.database.windows.net", "    database: ContosoDW"]));
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmAnswer = true; confirmCount = 0; lastConfirm = "";
+  assert.equal(blocked(await handle(call({ command: "snapshot" }), liveCtx)), false);
+  assert.equal(confirmCount, 1);
+  assert.match(lastConfirm, /catalog_snapshot/);
+  confirmAnswer = false;
+  assert.equal(blocked(await handle(call({ command: "snapshot" }), liveCtx)), true, "declined");
+  assert.equal(blocked(await handle(call({ command: "snapshot" }), { ...liveCtx, hasUI: false, ui: {} })), true, "headless");
+  assert.equal(blocked(await handle(call({ command: "status" }), { ...liveCtx, hasUI: false, ui: {} })), false, "status still runs headless");
+  removeContract();
+  writeManagedTarget();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+});
+
 await t("sql_impact (SQ4): dev/test metadata runs without a prompt; prod, unresolved and forged inputs do not", async () => {
   clearAudit();
   writeManagedTarget();

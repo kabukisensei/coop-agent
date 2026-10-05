@@ -105,6 +105,15 @@ sql_targets:
     server: ""
     database: ""
 
+# --- Committed dev catalog snapshot (master plan SQ9) ---------------------------
+# `coop catalog snapshot` (or the catalog_snapshot tool) reads the default dev/test
+# target read-only and writes one file per table, view, procedure and function,
+# which you commit; coop reads them before writing SQL and coop-data-doc builds
+# lineage from them when there is no SQL repository. Both keys are optional.
+# catalog:
+#   path: ".coop/catalog/dev"   # default: the data_docs repository's catalog/<env>, else this
+#   max_age_days: 7             # older than this: coop offers a refresh at session start
+
 power_bi:
   default_workspace_name: "TODO: dev semantic-model workspace name"
   default_workspace_id: "TODO: dev semantic-model workspace id"

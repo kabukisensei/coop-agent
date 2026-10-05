@@ -63,6 +63,7 @@ import {
   projectYamlScalar,
   proposedSqlTargetKind,
   renderProjectWizardSettings,
+  repositoryNames,
   repositoryShortName,
   saveUserProfileName,
   scalarValue,
@@ -156,6 +157,10 @@ const SQL_IMPACT_PARAMS = Type.Object({
   object: Type.String({ description: "One SQL object: `schema.name` or `name` (dbo assumed); brackets allowed. Bound as a parameter, never spliced into SQL." }),
 });
 
+const CATALOG_SNAPSHOT_PARAMS = Type.Object({
+  command: Type.Optional(Type.Union([Type.Literal("status"), Type.Literal("snapshot")], { description: "status (default) or snapshot." })),
+});
+
 const FABRIC_SQL_QUERY_PARAMS = Type.Object({
   query: Type.String({ description: "One plain SELECT with a literal TOP bound. Sent to the helper over stdin, never argv." }),
   maximum_rows: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000, description: "Optional result cap at or below the query's TOP bound." })),
@@ -177,7 +182,7 @@ export function fabricSqlPythonResolverInvocation(
   };
 }
 
-export type SqlHelper = "sql_query.py" | "sql_impact.py";
+export type SqlHelper = "sql_query.py" | "sql_impact.py" | "catalog_snapshot.py";
 
 export function fabricSqlHelperInvocation(
   python: string,
@@ -1610,6 +1615,99 @@ export function teamKnowledgeNote(coopDir?: string, homeDir?: string): string | 
  *  calls. Null when the contract has no usable Warehouse/Lakehouse target.
  *  The approval prompt before Warehouse SQL is unchanged — this only removes
  *  the detour, never the gate. */
+/* --- Committed dev catalog snapshot (master plan SQ9) --------------------------
+ * lib/catalog_snapshot.py writes the dev/test catalog as one file per object
+ * under the contract's snapshot folder; this reads the same folder rule and the
+ * manifest it wrote, with no Python and no connection, for the session-start
+ * note and the tool's status text. */
+
+const CATALOG_SNAPSHOT_MAX_AGE_DAYS = 7;
+const CATALOG_COUNT_KEYS = ["tables", "views", "procedures", "functions"] as const;
+
+export type CatalogSnapshotStatus = {
+  state: "missing" | "ok" | "stale";
+  path: string;
+  environment: string;
+  maxAgeDays: number;
+  /** The contract has a sql_targets section (SQ1), so a snapshot can be taken. */
+  sqlTarget: boolean;
+  takenAt?: string;
+  ageDays?: number;
+  objects?: Record<string, number>;
+};
+
+function isTodo(value: string): boolean {
+  return !value || /^todo/i.test(value.trim());
+}
+
+/** The snapshot folder the contract names: catalog.path, else the data_docs
+ *  repository's catalog/<env>, else .coop/catalog/<env> beside the contract. */
+export function catalogSnapshotFolder(contractPath: string, text: string): { folder: string; environment: string; maxAgeDays: number } {
+  const root = dirname(dirname(contractPath));
+  const env = (projectYamlScalar(text, ["sql_targets", "default_environment"]) || "dev").trim().toLowerCase();
+  const environment = env === "test" ? "test" : "dev";
+  const rawAge = parseInt(projectYamlScalar(text, ["catalog", "max_age_days"]) || "", 10);
+  const maxAgeDays = Number.isFinite(rawAge) && rawAge > 0 ? rawAge : CATALOG_SNAPSHOT_MAX_AGE_DAYS;
+  const configured = projectYamlScalar(text, ["catalog", "path"]);
+  if (!isTodo(configured)) return { folder: resolve(root, configured.trim()), environment, maxAgeDays };
+  for (const name of repositoryNames(text)) {
+    const role = (projectYamlScalar(text, ["repositories", name, "role"]) || "").trim().toLowerCase().replace(/-/g, "_");
+    const localPath = projectYamlScalar(text, ["repositories", name, "local_path"]);
+    if (role === "data_docs" && !isTodo(localPath)) {
+      return { folder: resolve(root, expandHomePath(localPath.trim()), "catalog", environment), environment, maxAgeDays };
+    }
+  }
+  return { folder: join(root, ".coop", "catalog", environment), environment, maxAgeDays };
+}
+
+/** The committed snapshot's state for the folder the contract above cwd names, or
+ *  null when there is no contract. */
+export function catalogSnapshotStatus(cwd: string, now = Date.now()): CatalogSnapshotStatus | null {
+  try {
+    const contractPath = findProjectYml(cwd);
+    if (!contractPath) return null;
+    const text = safeRead(contractPath);
+    const { folder, environment, maxAgeDays } = catalogSnapshotFolder(contractPath, text);
+    const root = dirname(dirname(contractPath));
+    const rel = relative(root, folder).replace(/\\/g, "/") || ".";
+    const path = rel.startsWith("..") ? folder.replace(/\\/g, "/") : rel;
+    const sqlTarget = !!(projectYamlScalar(text, ["sql_targets", "default_environment"]) || projectYamlScalar(text, ["sql_targets", "dev", "kind"]) || projectYamlScalar(text, ["sql_targets", "test", "kind"]));
+    let manifest: any = null;
+    try { manifest = JSON.parse(readFileSync(join(folder, "manifest.json"), "utf8")); } catch { manifest = null; }
+    if (!manifest || typeof manifest !== "object" || manifest.coop_catalog_snapshot !== true) {
+      return { state: "missing", path, environment, maxAgeDays, sqlTarget };
+    }
+    const objects: Record<string, number> = {};
+    for (const key of CATALOG_COUNT_KEYS) objects[key] = Number(manifest.objects?.[key]) || 0;
+    const takenAt = typeof manifest.taken_at === "string" ? manifest.taken_at : "";
+    const taken = Date.parse(takenAt);
+    if (!Number.isFinite(taken)) return { state: "stale", path, environment, maxAgeDays, sqlTarget, takenAt, objects };
+    const ageDays = Math.max(0, (now - taken) / 86_400_000);
+    return { state: ageDays > maxAgeDays ? "stale" : "ok", path, environment, maxAgeDays, sqlTarget, takenAt, ageDays: Math.round(ageDays * 10) / 10, objects };
+  } catch {
+    return null;
+  }
+}
+
+/** One agent-visible line about the snapshot for the session-start note. A
+ *  missing snapshot is offered only where the contract names a SQL target. */
+export function catalogSnapshotNote(cwd: string, now = Date.now()): string | null {
+  const status = catalogSnapshotStatus(cwd, now);
+  if (!status || (status.state === "missing" && !status.sqlTarget)) return null;
+  const counts = status.objects ? CATALOG_COUNT_KEYS.map((key) => `${status.objects![key]} ${key}`).join(", ") : "";
+  if (status.state === "ok") {
+    return `A committed catalog snapshot of the ${status.environment} target is under ${status.path} (${counts}; taken ${status.takenAt}, ${status.ageDays} day(s) old). ` +
+      `BEFORE writing or changing SQL for an object, read its file there (<schema>/<name>.sql: tables with their columns and types, views, procedures and functions as the catalog holds them) so the tables and columns you use exist. ` +
+      `It is read-only reference, never a file to edit or deploy; the catalog_snapshot tool (command="snapshot") refreshes it.`;
+  }
+  if (status.state === "stale") {
+    return `The committed catalog snapshot under ${status.path} is ${status.ageDays ?? "an unknown number of"} day(s) old (the contract allows ${status.maxAgeDays}). ` +
+      `Before writing SQL from it, offer to refresh it with the catalog_snapshot tool (command="snapshot"; a read-only dev/test catalog read that rewrites the folder, which the user then commits).`;
+  }
+  return `No committed catalog snapshot exists yet (it would live under ${status.path}). ` +
+    `When the user wants SQL written or changed and no SQL source is at hand, offer the catalog_snapshot tool (command="snapshot"): it reads the ${status.environment} target's tables, columns and object definitions read-only and writes them as files the user commits, so coop knows what exists before it writes.`;
+}
+
 export function fabricTargetNote(cwd: string): { contractPath: string; content: string } | null {
   try {
     const contractPath = findProjectYml(cwd);
@@ -1887,7 +1985,7 @@ export default function coopTools(pi: ExtensionAPI) {
   pi.registerTool({
     name: "sql_impact",
     label: "SQL impact (live catalog trace)",
-    description: "Read-only live impact trace of ONE SQL object on the contract's default dev/test sql_targets entry: three fixed, parameterized catalog queries (never free text) for downstream dependents, upstream references and columns. A section marked unavailable means the target could not be asked; an empty downstream list means 'no dependents visible to this principal in this database' (a dependent whose definition this principal cannot view, dynamic SQL and other databases are outside what the catalog shows), never 'could not look'. Accepts only `object`.",
+    description: "Read-only live impact trace of ONE SQL object on the contract's default dev/test sql_targets entry: three fixed parameterized catalog queries for downstream dependents, upstream references and columns. An unavailable section means the target could not be asked; an empty downstream list means none visible to this principal in this database, never 'could not look'. Accepts only `object`.",
     promptSnippet: "Live catalog trace of one SQL object's dependents, references and columns",
     promptGuidelines: [
       "Before planning or editing a live SQL object, call sql_impact with its name, then data_doc lineage for the same object when built docs exist, and report drift between them. Metadata only: use fabric_sql_query for rows.",
@@ -1914,12 +2012,48 @@ export default function coopTools(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "catalog_snapshot",
+    label: "Catalog snapshot",
+    description: "Committed dev catalog snapshot: one file per table, view, procedure and function. command=status (default): exists and how old. command=snapshot: read the dev/test catalog read-only (never production) and rewrite the folder to commit.",
+    promptSnippet: "Committed dev catalog snapshot: status or refresh",
+    promptGuidelines: [
+      "Read the object's snapshot file before writing SQL; if the snapshot is missing or stale, offer catalog_snapshot (command=\"snapshot\") once.",
+    ],
+    parameters: CATALOG_SNAPSHOT_PARAMS,
+    executionMode: "sequential",
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      const command = params?.command === "snapshot" ? "snapshot" : "status";
+      if (command === "status") {
+        const status = catalogSnapshotStatus(ctx.cwd);
+        const text = status
+          ? `catalog_snapshot status: ${status.state} (${status.path}, ${status.environment}${status.takenAt ? `, taken ${status.takenAt}, ${status.ageDays ?? "?"} day(s) old, max ${status.maxAgeDays}` : ""}${status.objects ? `; ${CATALOG_COUNT_KEYS.map((key) => `${status.objects![key]} ${key}`).join(", ")}` : ""}).`
+          : "catalog_snapshot status: no .coop/project.yml above this folder, so no snapshot location.";
+        return { content: [{ type: "text" as const, text }], details: status || { state: "project_unavailable" } };
+      }
+      const details = await runFabricSqlHelper({ command }, signal, ctx.cwd, "catalog_snapshot.py");
+      const counts = details?.objects ? CATALOG_COUNT_KEYS.map((key) => `${details.objects[key] ?? 0} ${key}`).join(", ") : "";
+      const lines: string[] = [];
+      if (Array.isArray(details?.unavailable)) for (const item of details.unavailable) lines.push(`- unavailable: ${String(item)}`);
+      if (details?.skipped) lines.push(`- ${details.skipped} object(s) skipped (unsafe name or unreadable definition; see manifest.json)`);
+      if (details?.truncated?.objects || details?.truncated?.columns) lines.push("- the catalog is larger than the snapshot caps; the manifest says which list was cut");
+      const text = details?.ok
+        ? modelText(
+          `catalog_snapshot: wrote ${counts} under ${details.path} (${details.target?.environment} ${details.target?.kind} ${details.target?.database}, taken ${details.taken_at}). Ask the user to commit that folder with the client repository; read <schema>/<name>.sql there before writing SQL against an object.`,
+          lines,
+          "see manifest.json in the snapshot folder",
+        )
+        : `catalog_snapshot unavailable: ${String(details?.state || "internal_error")}.${details?.state === "contract_changed" ? ` ${CONTRACT_CHANGED_HINT}` : ""}${details?.state === "output_not_snapshot" ? ` The folder ${details.path} holds files that are not a coop snapshot; move them or set catalog.path in .coop/project.yml.` : ""}`;
+      return { content: [{ type: "text" as const, text }], details };
+    },
+  });
+
+  pi.registerTool({
     name: "fabric_sql_query",
     label: "Fabric SQL Query (pyodbc fallback)",
     description: "Governed pyodbc read of one bounded SELECT against the contract's default sql_targets entry (Azure SQL, Fabric SQL database, Synapse serverless, Fabric Warehouse/Lakehouse), or the canonical Fabric SQL target without sql_targets. When a managed fabric-sqlendpoint MCP tool exists, attempt it first and call fabric_sql_query only after that actual attempt fails (unavailable/missing, authentication, timeout, connection, transport). Never use it for SQL/business/query rejection. Accepts no target, server, credential, or token fields.",
     promptSnippet: "Post-MCP-failure pyodbc fallback for one approval-gated bounded Fabric SELECT TOP read",
     promptGuidelines: [
-      "With a managed fabric-sqlendpoint MCP server, attempt it first; only after an actual unavailable/authentication/timeout/connection/transport/tool-missing failure may you call fabric_sql_query; never fallback before MCP or for SQL/business/query rejection, and never cascade automatically. Direct sql_targets kinds (Azure SQL, Fabric SQL database, Synapse) have no MCP server: fabric_sql_query is the live read route.",
+      "With a managed fabric-sqlendpoint MCP server, attempt it first; call fabric_sql_query only after an actual unavailable/authentication/timeout/connection/transport/tool-missing failure, never for SQL/business/query rejection, and never cascade automatically. Direct sql_targets kinds (Azure SQL, Fabric SQL database, Synapse) have no MCP server: fabric_sql_query is the live read route.",
       "Use only one plain SELECT with a literal TOP bound; mutations, batches, cross-database names, and unbounded reads are rejected before authentication or connection.",
     ],
     parameters: FABRIC_SQL_QUERY_PARAMS,
@@ -2038,8 +2172,8 @@ export default function coopTools(pi: ExtensionAPI) {
     name: "data_doc",
     label: "Data Documentation",
     description:
-      "Understand and document whatever SQL and/or Power BI source is available with coop-data-doc. Commands: 'scan' (default) writes the lineage graph (graph.json); 'build' also writes per-object Markdown docs and a portal, indexed by manifest.json; 'check' is a CI staleness gate; 'lineage' lists ONE object's upstream inputs, downstream dependents and relationships from the built graph; 'impact' lists every downstream object that changed source files feed. No source, one side, partial folders and both sides are valid stages. Without a coop-data-doc.yml or built graph, proceed without it (an aid, not a gate) and optionally suggest /setup-docs. Outputs are committable; source is never touched.",
-    promptSnippet: "Understand a SQL+PowerBI estate: lineage graph, one object's up/downstream, and what a change feeds",
+      "Understand and document whatever SQL and/or Power BI source is available with coop-data-doc. Commands: 'scan' (default) writes the lineage graph (graph.json); 'build' also writes per-object Markdown docs and a portal, indexed by manifest.json; 'check' is a CI staleness gate; 'lineage' lists ONE object's upstream inputs, downstream dependents and relationships; 'impact' lists every downstream object that changed source files feed. Any stage of source coverage is valid. Without a coop-data-doc.yml or built graph, proceed without it (an aid, not a gate) and optionally suggest /setup-docs. Outputs are committable; source is never touched.",
+    promptSnippet: "SQL+Power BI estate: lineage graph, one object's up/downstream, what a change feeds",
     promptGuidelines: [
       "BEFORE analyzing or changing any SQL object, DAX measure, or semantic model, call data_doc with command='lineage', object='<name>' for its upstream inputs, downstream dependents, and relationships. Don't reconstruct lineage by hand.",
       "After editing SQL, DAX or model source files and before presenting the change, call data_doc with command='impact', files=[the changed paths] and report every downstream object it lists.",
@@ -2231,6 +2365,7 @@ export default function coopTools(pi: ExtensionAPI) {
   // contract/logging guidance can never break a turn.
   const announcedCwds = new Set<string>();
   const announcedFabricTargets = new Set<string>();
+  const announcedCatalogSnapshots = new Set<string>();
   let announcedTeamKnowledge = false;
   let sessionToolFailures = 0;
   // Distinct failed tool_result events (dedupe by toolCallId so a replayed
@@ -2299,6 +2434,20 @@ export default function coopTools(pi: ExtensionAPI) {
             content: fabricTarget.content,
             details: { contractPath: fabricTarget.contractPath },
           };
+        }
+      }
+
+      // Once per folder: the committed catalog snapshot (SQ9), so SQL work starts
+      // from the tables and columns that exist, or from an offer to snapshot them.
+      if (!announcedCatalogSnapshots.has(cwd)) {
+        const catalogNote = catalogSnapshotNote(cwd);
+        if (catalogNote) {
+          announcedCatalogSnapshots.add(cwd);
+          if (message) {
+            message.content = `${message.content}\n\n${catalogNote}`;
+          } else {
+            message = { customType: "coop-catalog-snapshot", display: false, content: catalogNote };
+          }
         }
       }
 

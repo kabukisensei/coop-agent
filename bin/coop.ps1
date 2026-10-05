@@ -121,6 +121,56 @@ function Invoke-CoopTeamai {
   exit $LASTEXITCODE
 }
 
+# coop catalog snapshot|status (master plan SQ9): the committed dev catalog
+# snapshot, written by lib/catalog_snapshot.py over the same read-only
+# dev/test connection path as the native SQL tools (never production). The
+# launch identity token is minted the way a session mints it, so the helper's
+# tenant pinning holds outside a session too. Prints the helper's summary.
+function Invoke-CoopCatalog {
+  param([string[]]$Rest)
+  $py = Get-CoopPython
+  if (-not $py) { Coop-Die 'python3 is required for coop catalog' }
+  $cmd = if ($Rest -and $Rest.Count -ge 1) { $Rest[0] } else { '' }
+  if ($cmd -notin @('snapshot', 'status')) { Coop-Die 'usage: coop catalog <snapshot|status>   (snapshot: read the dev/test catalog into the committed snapshot folder; status: is it there and how old)' }
+  $helper = Join-Path $script:CoopRoot 'lib\catalog_snapshot.py'
+  if ($cmd -eq 'snapshot') {
+    Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue
+    $token = Get-CoopFabricMcpToken
+    if ($token) { $env:COOP_FABRIC_MCP_TOKEN = $token }
+  }
+  $raw = (& $py $helper $cmd 2>$null | Out-String).Trim()
+  $rc = $LASTEXITCODE
+  if ($cmd -eq 'snapshot') { Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue }
+  $info = $null
+  try { if ($raw) { $info = $raw | ConvertFrom-Json } } catch { $info = $null }
+  if (-not $info) { Coop-Die "coop catalog $cmd`: the helper printed no result (is python3 the Fabric Python with pyodbc?)" }
+  $state = [string]$info.state
+  if ($state -eq 'ok' -and $cmd -eq 'snapshot') {
+    $o = $info.objects
+    Coop-Ok "catalog snapshot written under $($info.path): $($o.tables) tables, $($o.views) views, $($o.procedures) procedures, $($o.functions) functions ($($info.target.environment) $($info.target.kind) $($info.target.database), taken $($info.taken_at))"
+    foreach ($u in @($info.unavailable)) { if ($u) { Coop-Warn "unavailable: $u" } }
+    if ($info.skipped -gt 0) { Coop-Warn "$($info.skipped) object(s) skipped (unsafe name or unreadable definition; see manifest.json)" }
+    Coop-Info 'commit that folder with the client repository; coop reads it before writing SQL'
+  } elseif ($cmd -eq 'status') {
+    switch ($state) {
+      'ok' { $o = $info.objects; Coop-Ok "catalog snapshot under $($info.path): $($o.tables) tables, $($o.views) views, $($o.procedures) procedures, $($o.functions) functions, $($info.age_days) day(s) old (max $($info.max_age_days))" }
+      'stale' { Coop-Warn "catalog snapshot under $($info.path) is $($info.age_days) day(s) old (max $($info.max_age_days))" 'run: coop catalog snapshot' }
+      'missing' { Coop-Warn "no catalog snapshot under $($info.path)" 'run: coop catalog snapshot' }
+      default { Coop-Die "coop catalog status: $state" }
+    }
+  } else {
+    $hint = switch ($state) {
+      'output_not_snapshot' { " — $($info.path) holds files that are not a coop snapshot; move them or set catalog.path in .coop/project.yml" }
+      'project_unavailable' { ' — no .coop/project.yml above this folder' }
+      'pyodbc_unavailable' { ' — pyodbc is missing in the Fabric Python (coop doctor)' }
+      'target_not_dev_or_test' { ' — the contract default must be a dev or test entry; production is never snapshotted' }
+      default { '' }
+    }
+    Coop-Die "coop catalog snapshot failed: $state$hint"
+  }
+  exit $(if ($rc -eq 0 -or $state -in @('ok', 'stale', 'missing')) { 0 } else { 1 })
+}
+
 function Invoke-CoopContextBudget {
   param([string[]]$Rest)
   $py = Get-CoopPython
@@ -180,6 +230,8 @@ $(Coop-Bold)Usage$(Coop-Rst)
   coop context-budget       Report fixed startup context sizes (use --json for machine output)
   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
                             (--strict: exit 2 on a failing linter; --skip-docs: linters only)
+  coop catalog <cmd>        Committed dev catalog snapshot: snapshot (read the dev/test catalog
+                            into the contract's snapshot folder, read-only) | status
   coop support [--json]     Collect a sanitized support bundle (health, versions, events)
                             (--incident: incident record; --export PATH: write bundle)
   coop fabric [args]        Pass through to the Microsoft Fabric CLI (fab)
@@ -1312,6 +1364,7 @@ switch -CaseSensitive ($cmd) {
   'new-prompt' { New-CoopPrompt $rest; break }
   'release' { Invoke-CoopRelease $rest; break }
   'data-doc' { Invoke-DataDoc $rest; break }
+  'catalog' { Invoke-CoopCatalog $rest; break }
   'support' { & (Join-Path $script:CoopRoot 'scripts\support-center.ps1') @rest; exit $LASTEXITCODE }
   { $_ -ceq 'fabric' -or $_ -ceq 'fab' } {
     if (-not (Test-Have 'fab')) { Coop-Die 'Microsoft Fabric CLI (fab) not found. Run: coop install' }

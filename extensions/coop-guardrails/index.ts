@@ -795,6 +795,7 @@ const SQL_ENDPOINT_TOOL = /(^|[_\-.:/])(executeSQL|execute_query|fabric-sqlendpo
 const MANAGED_SQL_SERVER = "fabric-sqlendpoint";
 const FABRIC_SQL_FALLBACK_TOOL = "fabric_sql_query";
 const SQL_IMPACT_TOOL = "sql_impact";
+const CATALOG_SNAPSHOT_TOOL = "catalog_snapshot";
 const SQL_MUTATION_VERB = /\b(ALTER|CREATE|DELETE|DENY|DROP|EXEC|EXECUTE|GRANT|INSERT|MERGE|RENAME|REPLACE|REVOKE|TRUNCATE|UPDATE|UPSERT)\b/i;
 const SQL_MUTATING_INTO = /\b(?:SELECT|COPY)\b[\s\S]*?\bINTO\b/i;
 
@@ -1400,6 +1401,32 @@ export function decideSqlImpact(event: any, deps: LiveReadResolverDeps): SqlImpa
       || Object.keys(input).join(",") !== "object" || typeof input.object !== "string") {
     return { action: "block", environment: "", reason: "accepts exactly one field, object" };
   }
+  return decideLiveMetadataRead(deps);
+}
+
+/** catalog_snapshot (SQ9) reads the whole catalog of the executor's dev/test
+ *  target and writes it as files under the contract's snapshot folder. `status`
+ *  reads only that folder and never connects, so it always runs; `snapshot` is
+ *  the same live metadata read as sql_impact and follows the same rule. Any
+ *  other field or command is blocked outright. */
+export function decideCatalogSnapshot(event: any, deps: LiveReadResolverDeps): SqlImpactDecision {
+  const input = event?.input ?? {};
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return { action: "block", environment: "", reason: "accepts only the field command" };
+  }
+  const keys = Object.keys(input);
+  if (keys.length > 1 || (keys.length === 1 && keys[0] !== "command")) {
+    return { action: "block", environment: "", reason: "accepts only the field command" };
+  }
+  const command = keys.length ? input.command : "status";
+  if (command === "status") return { action: "allow", environment: "", reason: "status reads the snapshot folder only" };
+  if (command !== "snapshot") return { action: "block", environment: "", reason: "command must be status or snapshot" };
+  return decideLiveMetadataRead(deps);
+}
+
+/** The target rule both live metadata tools share: a resolved dev or test target
+ *  runs without a prompt, anything else asks. */
+function decideLiveMetadataRead(deps: LiveReadResolverDeps): SqlImpactDecision {
   const contract = deps.contract?.() ?? null;
   if (contract?.configured) {
     if (contract.target) return { action: "allow", environment: contract.target.environment, reason: "contract sql_targets default" };
@@ -1976,26 +2003,30 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       if (tool !== "bash") {
         // 0b'. sql_impact (SQ4): catalog metadata for one object on the executor's
         // dev/test target runs without a prompt; anything else asks or is blocked.
-        if (tool === SQL_IMPACT_TOOL) {
-          const impact = decideSqlImpact(event, { ...liveReadDeps, contract: () => ensureSessionGovernance(ctx.cwd).sqlContract });
+        if (tool === SQL_IMPACT_TOOL || tool === CATALOG_SNAPSHOT_TOOL) {
+          const deps = { ...liveReadDeps, contract: () => ensureSessionGovernance(ctx.cwd).sqlContract };
+          const impact = tool === SQL_IMPACT_TOOL ? decideSqlImpact(event, deps) : decideCatalogSnapshot(event, deps);
+          const auditTool = tool === SQL_IMPACT_TOOL ? "governed-sql-impact" : "governed-catalog-snapshot";
+          const label = tool === SQL_IMPACT_TOOL ? "live metadata read" : "live catalog snapshot";
           if (impact.action === "block") {
-            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-sql-impact", decision: "blocked", label: "live metadata read", detail: "input-invalid" });
-            return { block: true, reason: `coop guardrails: blocked sql_impact; it ${impact.reason}.` };
+            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: auditTool, decision: "blocked", label, detail: "input-invalid" });
+            return { block: true, reason: `coop guardrails: blocked ${tool}; it ${impact.reason}.` };
           }
           if (impact.action === "allow") {
-            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-sql-impact", decision: "allowed", label: "live metadata read", detail: impact.environment });
+            // A snapshot status reads a folder, not a target: nothing to audit.
+            if (impact.environment) audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: auditTool, decision: "allowed", label, detail: impact.environment });
             return;
           }
           if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
-            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-sql-impact", decision: "blocked-headless", label: "live metadata read", detail: impact.environment });
-            return { block: true, reason: `coop guardrails: blocked sql_impact (${impact.reason}); explicit approval is unavailable in headless mode.` };
+            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: auditTool, decision: "blocked-headless", label, detail: impact.environment });
+            return { block: true, reason: `coop guardrails: blocked ${tool} (${impact.reason}); explicit approval is unavailable in headless mode.` };
           }
           const ok = await ctx.ui.confirm(
             "coop live-data guardrail",
-            `Live catalog metadata read (sql_impact) on a target that is not a resolved dev/test entry:\n  environment: ${impact.environment} (${impact.reason})\nDev/test metadata is read-only by default; production and unresolved targets ask. Read it once?`,
+            `Live catalog metadata read (${tool}) on a target that is not a resolved dev/test entry:\n  environment: ${impact.environment} (${impact.reason})\nDev/test metadata is read-only by default; production and unresolved targets ask. Read it once?`,
           );
-          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-sql-impact", decision: ok ? "allowed" : "declined", label: "live metadata read", detail: impact.environment });
-          if (!ok) return { block: true, reason: "coop guardrails: blocked sql_impact (you declined)." };
+          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: auditTool, decision: ok ? "allowed" : "declined", label, detail: impact.environment });
+          if (!ok) return { block: true, reason: `coop guardrails: blocked ${tool} (you declined).` };
           return;
         }
         const target = effectiveMutationTarget(event);
