@@ -331,6 +331,11 @@ during startup. The command runs (or re-runs) the full native `coop-data-doc`
 wizard through a strict JSONL bridge; it is the same questionnaire used by
 `coop data-doc setup`. Older tool versions stop with upgrade guidance rather than a reduced fallback. See
 [`extensions/coop-tools/README.md`](extensions/coop-tools/README.md#data-doc-setup-setup-docs).
+The built docs live beside the committed project file (in the client home
+repository `<client>-coop` when the client has several repositories; master plan
+DR1): `/setup-docs` proposes that `data-docs` folder as the output from any of the
+client's repositories and offers coop's `coop-data-doc check` workflow for it
+(`templates/client-home/`). Layout: `docs/onboarding.md`.
 
 Project configuration has the same no-shell path: run **`/setup-project`** or
 choose **Start a client project** from `/start`. Every client has one

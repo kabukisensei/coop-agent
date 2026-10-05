@@ -416,6 +416,7 @@ repositories:
   assert.deepEqual(dataDocPrefillFromProject(nested), {
     sourceMode: "sql",
     sqlPath: "../warehouse",
+    outputDir: "../data-docs",
     projectName: "Contoso",
   });
 });
@@ -434,8 +435,39 @@ repositories:
     sourceMode: "both",
     sqlPath: ".",
     pbiPath: ".",
+    outputDir: "data-docs",
     projectName: "Fabrikam",
   });
+});
+
+await t("DR1: the lineage docs live beside the project file, and the home repository's CI template runs coop-data-doc check", async () => {
+  const setup = await import(pathToFileURL(join(REPO_ROOT, "lib", "data-doc-setup.mjs")).href);
+  assert.equal(setup.DATA_DOCS_FOLDER, "data-docs");
+  const client = trackFixture(mkdtempSync(join(tmpdir(), "coop-dr1-home-")));
+  skipIfContaminated(client);
+  for (const name of ["contoso-coop", "analytics"]) mkdirSync(join(client, name, ".git"), { recursive: true });
+  mkdirSync(join(client, "contoso-coop", ".coop"));
+  writeFileSync(join(client, "contoso-coop", ".coop", "project.yml"), `profile:
+  client: 'Contoso'
+repositories:
+  analytics:
+    role: 'sql'
+    local_path: '../analytics'
+`);
+  // From the client's source repository, the contract comes from the home
+  // repository beside it and the build is proposed there, not in the source tree.
+  assert.equal(findProjectContract(join(client, "analytics")), join(client, "contoso-coop", ".coop", "project.yml"));
+  assert.deepEqual(dataDocPrefillFromProject(join(client, "analytics")), { sourceMode: "sql", sqlPath: ".", outputDir: "../contoso-coop/data-docs", projectName: "Contoso" });
+  assert.deepEqual(dataDocPrefillFromProject(join(client, "contoso-coop")), { sourceMode: "sql", sqlPath: "../analytics", outputDir: "data-docs", projectName: "Contoso" });
+  assert.equal(setup.prefilledPrompt({ id: "output_dir", kind: "path", message: "Output dir" }, { outputDir: "../contoso-coop/data-docs" }).default, "../contoso-coop/data-docs");
+  assert.equal(setup.prefilledPrompt({ id: "x", kind: "path", message: "Where should the docs output folder go?" }, { outputDir: "../d" }).default, "../d");
+  assert.equal(setup.prefilledPrompt({ id: "x", kind: "path", message: "SQL repo path" }, { outputDir: "../d" }).default, undefined, "only the output prompt takes the output dir");
+
+  const workflow = readFileSync(join(REPO_ROOT, "templates", "client-home", "github-workflow-data-docs-check.yml"), "utf8");
+  assert.match(workflow, /run: coop-data-doc check/);
+  const pin = JSON.parse(readFileSync(join(REPO_ROOT, "config", "release-manifest.json"), "utf8")).python_tools["coop-data-doc"];
+  assert.ok(workflow.includes(`pipx install coop-data-doc==${pin}`), "the template pins the manifest's coop-data-doc");
+  assert.match(readFileSync(join(REPO_ROOT, "templates", "client-home", "README.md"), "utf8"), /data-docs-check\.yml/);
 });
 
 await t("normal startup goes straight to the prompt while setup commands remain available", async () => {
