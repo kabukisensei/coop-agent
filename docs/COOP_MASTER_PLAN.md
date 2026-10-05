@@ -1739,7 +1739,7 @@ tags. A stale row is never a reason to re-do work: check the PR list first.
 | 18 | G1 | Never modify production: production writes hard-blocked, scoped reads still ask, hidden human-only unlock outside the repo (section 12.3) | decided (Aaron, 2026-10-05); asked for in the demo | section 12.3 acceptance | in review (PR #302) |
 | 19 | C1 | The shared project file: one committed contract per client, the client home repository, get and share (section 12.3) | decided (Aaron, 2026-10-05); design approved 2026-10-05 | section 12.3 acceptance | in review (PR #303); VM check after the merge |
 | 20 | C2 | Explicit semantic-model-to-SQL mapping and Fabric layout in the contract (section 12.3) | decided (Aaron, 2026-10-05) | section 12.3 acceptance | not started |
-| 21 | L1 | Microsoft tool license and notice review, docs only (section 12.3) | now | section 12.3 acceptance | not started |
+| 21 | L1 | Microsoft tool license and notice review, docs only (section 12.3) | now | section 12.3 acceptance | in review (PR #308) |
 | 22 | P1 | Machine-level shared profile for one-Windows-user-per-client VMs (section 12.3) | accepted (Aaron, 2026-10-05; one VM is one person's) | section 12.3 acceptance | not started |
 | 23 | DR1 | The lineage docs live in the client home repository beside the project file (section 12.3; reshaped onto C1) | accepted (Aaron, 2026-10-05); C1 | section 12.3 acceptance | in review (PR #311, on C1's branch) |
 | 24 | PR1 | Personal, client and shipped prompts and skills (section 12.3) | accepted (Aaron, 2026-10-05) | section 12.3 acceptance | not started |

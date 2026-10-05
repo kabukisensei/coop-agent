@@ -403,6 +403,9 @@ first**, not read-only-only, and all are optional.
 `--readonly` and exposes `refresh_dataset`, a write
 ([#93](https://github.com/kabukisensei/coop-agent/issues/93)). `coop sync` removes the
 entry it generated; an entry you added yourself stays, and `coop doctor` warns about it.
+The license of every bundled or launched component, the Power BI Authoring MCP EULA that
+`--accept-eula` accepts (Aaron accepted it for Cooptimize on 2026-09-30) and the Microsoft
+telemetry the two MCP servers may send are listed in [`NOTICE.md`](NOTICE.md).
 
 `coop onboard` writes versioned `~/.coop/config`; `coop sync` deterministically generates
 COOP-managed entries in `~/.coop/agent/mcp-adapter.json` while preserving unmarked user-owned
