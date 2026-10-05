@@ -801,7 +801,8 @@ await check("bridge: every pane call in preload.cjs has a handler in main.mjs", 
   const preload = readFileSync(join(ROOT, "desktop", "preload.cjs"), "utf8");
   const main = readFileSync(join(ROOT, "desktop", "main.mjs"), "utf8");
   const invoked = [...preload.matchAll(/ipcRenderer\.invoke\("(coop:[a-z-]+)"/g)].map((m) => m[1]);
-  const handled = new Set([...main.matchAll(/handle\("(coop:[a-z-]+)"/g)].map((m) => m[1]));
+  // handle(...) for a window, pickerHandle(...) for the project picker (D1m).
+  const handled = new Set([...main.matchAll(/[hH]andle\("(coop:[a-z-]+)"/g)].map((m) => m[1]));
   for (const channel of ["coop:changes", "coop:change-diff", "coop:standards", "coop:standards-text", "coop:knowledge-note", "coop:project-load", "coop:project-preview", "coop:project-save", "coop:pick-folder", "coop:docs-start", "coop:docs-answer", "coop:docs-cancel", "coop:docs-build", "coop:docs-page", "coop:docs-portal"]) {
     assert.ok(invoked.includes(channel), `preload exposes ${channel}`);
   }
