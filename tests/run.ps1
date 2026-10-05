@@ -603,6 +603,7 @@ print("resume verdict contract OK")
     @{ Name = 'login-present';          Lane = 'gate';     Head = 'model login detection ignores Pi''s empty startup auth.json (#167)' },
     @{ Name = 'extensions-lock';        Lane = 'gate';     Head = 'extension lockfile applied through the helpers (#152)' },
     @{ Name = 'team-skills';            Lane = 'gate';     Head = 'team knowledge skills launch slot (launch-spec --json)' },
+    @{ Name = 'prompt-skill-tiers';     Lane = 'gate';     Head = 'prompt and skill tiers: shipped, client, personal (launch-spec, doctor, scaffolds; PR1)' },
     @{ Name = 'desktop-spec';           Lane = 'gate';     Head = 'coop desktop: the window''s launch spec and runtime state (D1b)' },
     @{ Name = 'desktop-bundle';         Lane = 'gate';     Head = 'coop window package: the bundled Node, Pi and extension tree (D1d)' },
     @{ Name = 'staleness';              Lane = 'gate';     Head = 'repo staleness nudge (throttled fetch + behind-count)' },

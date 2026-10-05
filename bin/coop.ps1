@@ -191,8 +191,9 @@ $(Coop-Bold)Authoring$(Coop-Rst)
                             (--seed-docs: generate coop-data-doc.yml from repositories:)
   coop init --migrate-legacy [dir]
                             Inspect legacy project configuration (dry run; add --apply to confirm changes)
-  coop new-skill <name>     Scaffold skills/<name>/SKILL.md
-  coop new-prompt <name>    Scaffold prompts/<name>.md
+  coop new-skill <name>     Scaffold skills/<name>/SKILL.md (shipped tier)
+                            (--client: .coop/skills beside the contract; --personal: ~/.coop/skills)
+  coop new-prompt <name>    Scaffold prompts/<name>.md (shipped tier; --client / --personal as above)
   coop release [level]      Cut a release: bump version + roll CHANGELOG + commit + tag + push
                             (level = patch|minor|major, default patch; --yes, --no-push)
 
@@ -291,6 +292,21 @@ function Build-CoopPiArgs {
         if ($fm) { [void]$ownNames.Add($fm) }
       }
     }
+    # Client and personal skills (master plan PR1): .coop\skills beside the
+    # committed contract, then <profile>\skills. Shipped wins a name clash, then
+    # the client's, then the user's; a shadowed skill is skipped with a warning
+    # (coop doctor names it too). Get-CoopResourceTiers is the one list.
+    foreach ($tier in (Get-CoopResourceTiers | Where-Object { $_.Tier -ne 'shipped' })) {
+      foreach ($ts in (Get-CoopTierSkills $tier.Skills)) {
+        if ($ownNames.Contains($ts.Folder) -or $ownNames.Contains($ts.Name)) {
+          Coop-Warn "skipping $($tier.Tier) skill '$($ts.Folder)' (name '$($ts.Name)' is already loaded by a higher tier)"
+          continue
+        }
+        $piArgs += @('--skill', $ts.Dir)
+        [void]$ownNames.Add($ts.Folder)
+        [void]$ownNames.Add($ts.Name)
+      }
+    }
     $catPy = Get-CoopPython
     if ($catPy) {
       $effectiveAgentDir = Get-CoopEffectiveAgentDir
@@ -329,7 +345,7 @@ function Build-CoopPiArgs {
           $sk = Join-Path $skillDir.FullName 'SKILL.md'
           if (-not (Test-Path -LiteralPath $sk -PathType Leaf)) { continue }
           if ($ownNames.Contains($skillDir.Name)) {
-            Coop-Warn "skipping team skill '$($skillDir.Name)' (conflicts with a Cooptimize skill)"
+            Coop-Warn "skipping team skill '$($skillDir.Name)' (conflicts with a Cooptimize, client or personal skill)"
             continue
           }
           $fm = Get-CoopSkillName $sk
@@ -338,7 +354,7 @@ function Build-CoopPiArgs {
             continue
           }
           if ($ownNames.Contains($fm)) {
-            Coop-Warn "skipping team skill '$($skillDir.Name)' (name '$fm' conflicts with a Cooptimize skill)"
+            Coop-Warn "skipping team skill '$($skillDir.Name)' (name '$fm' conflicts with a Cooptimize, client or personal skill)"
             continue
           }
           $piArgs += @('--skill', $skillDir.FullName)
@@ -348,8 +364,12 @@ function Build-CoopPiArgs {
       }
     }
   }
-  $prompts = Join-Path $script:CoopRoot 'prompts'
-  if (Test-Path -LiteralPath $prompts -PathType Container) { $piArgs += @('--prompt-template', $prompts) }
+  # Prompt templates, one --prompt-template per tier in precedence order
+  # (shipped, client, personal): Pi keeps the first /name it loads and reports
+  # the later one as a collision, so the same rule holds for prompts.
+  foreach ($tier in (Get-CoopResourceTiers)) {
+    if (Test-Path -LiteralPath $tier.Prompts -PathType Container) { $piArgs += @('--prompt-template', $tier.Prompts) }
+  }
   $theme = Join-Path $script:CoopRoot 'themes\cooptimize.json'
   if (Test-Path -LiteralPath $theme -PathType Leaf) { $piArgs += @('--theme', $theme) }
   # Cooptimize companion extensions: branding/splash/vibes, native tools, governance,
@@ -910,13 +930,31 @@ function Invoke-CoopInitSeedDocs {
   }
 }
 
+# The tier a scaffold command writes to: shipped (default, this repository),
+# --client (.coop\ beside the committed contract; needs a real contract) or
+# --personal (<profile>). Returns the tier object from Get-CoopResourceTiers.
+function Get-CoopScaffoldTier {
+  param([string[]]$RestArgs = @(), [string]$Command)
+  $want = 'shipped'
+  foreach ($a in $RestArgs) {
+    if ($a -eq '--client') { $want = 'client' }
+    elseif ($a -eq '--personal') { $want = 'personal' }
+    elseif ($a -like '--*') { Coop-Die "Usage: coop $Command <name> [--client|--personal]" }
+  }
+  $tier = Get-CoopResourceTiers | Where-Object { $_.Tier -eq $want } | Select-Object -First 1
+  if (-not $tier) { Coop-Die "no committed .coop/project.yml found above $((Get-Location).Path) — run coop init (or /setup-project) in the client repository first, then retry with --client" }
+  return $tier
+}
+
 function New-CoopSkill {
   param([string[]]$RestArgs = @())
-  $name = if ($RestArgs.Count -ge 1) { $RestArgs[0] } else { '' }
-  if (-not (Test-CoopValidName $name)) { Coop-Die 'Usage: coop new-skill <name>  (letters, digits, . _ - only)' }
+  $name = if ($RestArgs.Count -ge 1 -and $RestArgs[0] -notlike '--*') { $RestArgs[0] } else { '' }
+  if (-not (Test-CoopValidName $name)) { Coop-Die 'Usage: coop new-skill <name> [--client|--personal]  (letters, digits, . _ - only)' }
   if ($name -in @('_microsoft', '_microsoft_fabric')) { Coop-Die "'$name' is reserved for subordinate skill slots." }
-  $dir = Join-Path $script:CoopRoot "skills\$name"
-  if (Test-Path -LiteralPath $dir) { Coop-Die "skills/$name already exists." }
+  $tier = Get-CoopScaffoldTier $RestArgs 'new-skill'
+  $dir = Join-Path $tier.Skills $name
+  $shown = if ($tier.Tier -eq 'shipped') { "skills/$name" } else { "$($tier.Tier) tier $dir" }
+  if (Test-Path -LiteralPath $dir) { Coop-Die "$shown already exists." }
   New-Item -ItemType Directory -Force -Path $dir | Out-Null
   $body = @"
 ---
@@ -943,16 +981,23 @@ TODO: when to use this skill.
   # 5.1, which breaks the bash-side frontmatter parser `coop_skill_name`). Same
   # [IO.File]::WriteAllText path the release code uses.
   [System.IO.File]::WriteAllText((Join-Path $dir 'SKILL.md'), ($body -replace "`r`n", "`n"))
-  Coop-Ok "Created skills/$name/SKILL.md"
-  Coop-Info 'Edit it, test with: coop  — then commit & push so the team gets it.'
+  Coop-Ok "Created $shown/SKILL.md"
+  switch ($tier.Tier) {
+    'client'   { Coop-Info 'Edit it, test with: coop  — then commit it with the client repository so the client team gets it.' }
+    'personal' { Coop-Info 'Edit it, test with: coop  — it is yours alone (shipped and client skills win a name clash).' }
+    default    { Coop-Info 'Edit it, test with: coop  — then commit & push so the team gets it.' }
+  }
 }
 
 function New-CoopPrompt {
   param([string[]]$RestArgs = @())
-  $name = if ($RestArgs.Count -ge 1) { $RestArgs[0] } else { '' }
-  if (-not (Test-CoopValidName $name)) { Coop-Die 'Usage: coop new-prompt <name>  (letters, digits, . _ - only)' }
-  $f = Join-Path $script:CoopRoot "prompts\$name.md"
-  if (Test-Path -LiteralPath $f) { Coop-Die "prompts/$name.md already exists." }
+  $name = if ($RestArgs.Count -ge 1 -and $RestArgs[0] -notlike '--*') { $RestArgs[0] } else { '' }
+  if (-not (Test-CoopValidName $name)) { Coop-Die 'Usage: coop new-prompt <name> [--client|--personal]  (letters, digits, . _ - only)' }
+  $tier = Get-CoopScaffoldTier $RestArgs 'new-prompt'
+  if (-not (Test-Path -LiteralPath $tier.Prompts -PathType Container)) { New-Item -ItemType Directory -Force -Path $tier.Prompts | Out-Null }
+  $f = Join-Path $tier.Prompts "$name.md"
+  $shown = if ($tier.Tier -eq 'shipped') { "prompts/$name.md" } else { "$($tier.Tier) tier $f" }
+  if (Test-Path -LiteralPath $f) { Coop-Die "$shown already exists." }
   $body = @"
 # $name
 
@@ -969,8 +1014,8 @@ Steps:
 "@
   # Write LF, no BOM (see New-CoopSkill).
   [System.IO.File]::WriteAllText($f, ($body -replace "`r`n", "`n"))
-  Coop-Ok "Created prompts/$name.md"
-  Coop-Info 'Edit it, then it loads automatically next time you run: coop'
+  Coop-Ok "Created $shown"
+  Coop-Info "Edit it, then it loads as /$name next time you run: coop  (a shipped or client prompt of the same name wins)"
 }
 
 # --- Release gate: the manifest's coop-tool pins vs coop-website/versions.json -
