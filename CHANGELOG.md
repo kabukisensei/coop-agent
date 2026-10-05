@@ -17,6 +17,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   (`Update-CoopManagedMcpConfig`, the same ownership-aware generator sync runs),
   so the last launch wins, not the last sync. Fail-soft: a launch that cannot
   refresh it warns and starts anyway.
+- coop window: with a long session list the sidebar grew past the window (a
+  grid item's minimum height is its content), so the composer sat below the
+  fold ("no way to type"), and focusing it after New session scrolled the whole
+  document: the top bar and the session list's head went off the top and the
+  conversation no longer scrolled (seen 2026-10-05). The sidebar now keeps to
+  the window's height (its session list scrolls) and the document can never
+  scroll (`overflow: clip`).
 
 ## [0.30.2] — 2026-10-05
 
