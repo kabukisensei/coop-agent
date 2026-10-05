@@ -24,6 +24,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   conversation no longer scrolled (seen 2026-10-05). The sidebar now keeps to
   the window's height (its session list scrolls) and the document can never
   scroll (`overflow: clip`).
+- coop window: Chromium's own log lines (the GPU driver "GetGpuDriverOverlayInfo"
+  error some Windows drivers print) no longer land in the terminal that ran
+  `coop desktop`; only fatal ones remain.
 
 ## [0.30.2] — 2026-10-05
 

@@ -42,6 +42,11 @@ const RENDERER = join(HERE, "renderer");
 // pdf.js and the PDF script unpacked beside the asar (packagedPaths).
 const REPO = join(HERE, "..");
 const PACKAGED = app.isPackaged;
+// Chromium's own log lines (the GPU process's "GetGpuDriverOverlayInfo: Failed
+// to retrieve video device" on some Windows drivers) otherwise land in the
+// terminal that ran `coop desktop`. They are not coop's and change nothing;
+// keep only fatal ones. Must run before the app is ready.
+app.commandLine.appendSwitch("log-level", "3");
 const UNPACKED = PACKAGED ? packagedPaths(process.resourcesPath) : { pdfjsDir: "", pdfScript: "" };
 const MAX_QUEUE = 20_000;
 const MAX_COPY = 4 * 1024 * 1024;
