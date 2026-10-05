@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.30.4] — 2026-10-05
+
 ### Added
 
 - coop window: the Standards pane lists the team knowledge repositories next to
