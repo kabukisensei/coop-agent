@@ -32,7 +32,7 @@
 import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
-import { accessSync, constants, existsSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -75,6 +75,7 @@ import {
 } from "../../lib/project-contract.mjs";
 import {
   CONTRACT_FILE as PROJECT_FILE,
+  HOME_TEMPLATE_DIR,
   contractRepository,
   createHomeRepository,
   getTeamContract,
@@ -1089,6 +1090,37 @@ export async function runJsonlSetup(_pi: ExtensionAPI, ctx: any, prefill: DataDo
   });
 }
 
+/**
+ * After a completed /setup-docs (master plan DR1): the lineage docs live beside
+ * the committed project file, in the client home repository when the client has
+ * several repositories. When the output folder is inside that repository and it
+ * has no check workflow yet, offer coop's template so `coop-data-doc check` runs
+ * in its CI. coop writes the file; a human commits it with the docs.
+ */
+async function offerDataDocsCi(ctx: any): Promise<void> {
+  const contract = findProjectContract(ctx.cwd);
+  const configPath = findDataDocConfig(ctx.cwd);
+  if (!contract || !configPath) return;
+  const root = resolve(contract, "..", "..");
+  if (!existsSync(join(root, ".git"))) return;
+  const outputDir = resolveRel(dirname(configPath), parseExisting(safeRead(configPath)).outputDir || DEFAULT_OUTPUT_DIR);
+  const rel = relative(root, outputDir).replace(/\\/g, "/");
+  if (rel.startsWith("..") || isAbsolute(rel)) return; // built elsewhere: not this repository's docs
+  const workflow = join(root, ".github", "workflows", "data-docs-check.yml");
+  if (existsSync(workflow)) return;
+  const template = join(HOME_TEMPLATE_DIR, "github-workflow-data-docs-check.yml");
+  if (!existsSync(template)) return;
+  const addCi = await askConfirm(ctx, "Lineage docs CI", `Add coop's check workflow to ${root} (.github/workflows/data-docs-check.yml runs coop-data-doc check on every push, so docs older than the source fail there)?`);
+  if (!addCi) return;
+  try {
+    mkdirSync(dirname(workflow), { recursive: true });
+    writeFileSync(workflow, safeRead(template), "utf8");
+    notify(ctx, `Wrote ${workflow}. Commit it with the docs (coop shares only .coop/project.yml on its own).`, "info");
+  } catch (e: any) {
+    notify(ctx, `Could not write the workflow: ${errMsg(e)}`, "warning");
+  }
+}
+
 /** Run the one authoritative coop-data-doc wizard; no local fallback exists. */
 async function runQuickSetup(pi: ExtensionAPI, ctx: any, prefill: DataDocSetupPrefill): Promise<boolean> {
   if (!(await supportsJsonlTransport(pi, ctx))) {
@@ -1097,6 +1129,9 @@ async function runQuickSetup(pi: ExtensionAPI, ctx: any, prefill: DataDocSetupPr
   }
   const outcome: JsonlSetupOutcome = {};
   const ok = await runJsonlSetup(pi, ctx, { ...dataDocPrefillFromProject(dirname(findDataDocConfig(ctx.cwd) || join(ctx.cwd, DATADOC_CONFIG))), ...prefill }, outcome);
+  if (ok) {
+    try { await offerDataDocsCi(ctx); } catch (e: any) { notify(ctx, `Lineage docs CI not offered: ${errMsg(e)}`, "warning"); }
+  }
   if (ok && outcome.notRunnable !== undefined) {
     // A saved config that can't build is a warning, never an automatic build (#102).
     const reason = outcome.notRunnable || "the saved config doesn't validate";

@@ -192,6 +192,26 @@ analysis, run **`/setup-docs`** inside the agent, choose *Document a warehouse o
 semantic model* from `/start`, or run `coop data-doc setup` in a shell. These paths use the same full
 native questionnaire; no reduced fallback exists.
 
+### Where the lineage docs live
+
+The docs coop-data-doc builds belong beside the project file (master plan DR1):
+in the client home repository when the client has several repositories, else in
+the client's one repository.
+
+```text
+C:\work\contoso-coop\         .coop/project.yml, coop-data-doc.yml, data-docs/, data-docs-site/
+C:\work\contoso-analytics\    a source repository the project file lists
+C:\work\contoso-reports\      another one
+```
+
+`/setup-docs` run in any of them proposes `data-docs` in the home repository as
+the output, so the build never lands in a source tree. After a setup whose output
+is in that repository and it has no CI yet, coop offers `data-docs-check.yml`
+(from `templates/client-home/`), which runs `coop-data-doc check` on every push.
+One repository per client keeps access per client and a client's lineage out of
+every other client's clone. coop writes the files; a human commits the docs
+(coop shares only the project file on its own).
+
 ## 5. Use it
 
 ```bash

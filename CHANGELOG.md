@@ -62,6 +62,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `coop help`, the `/` menu and the window, documented only in
   `docs/guardrails-reference.md` (Production writes).
 
+- **The lineage docs live with the project file** (DR1, master plan section
+  12.3, demo of 2026-10-05; reshaped onto the approved C1 design). The docs
+  coop-data-doc builds belong beside the committed `.coop/project.yml`: in the
+  client home repository `<client>-coop` when the client has several
+  repositories (one private repository per client, cloned beside the others),
+  else in the client's one repository. `/setup-docs` run from any of the client's
+  repositories proposes that `data-docs` folder as the output, so the build never
+  lands in a source tree; after a setup whose output is in that repository and it
+  has no CI yet, coop offers its `data-docs-check.yml` workflow
+  (`templates/client-home/`), which runs `coop-data-doc check` on every push. coop
+  writes the file; a human commits it with the docs.
 - `@juicesharp/rpiv-todo` **2.12.0** joins the pinned extensions (Aaron, 2026-10-03,
   from the pi.dev package review): a `todo` tool and a live task panel above the
   prompt, so a multi-step session shows what coop is doing, what is done and what
