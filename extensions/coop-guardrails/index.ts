@@ -631,6 +631,40 @@ export function explicitCommitPathspecs(cmd: string, parsed: ParsedGitCommand | 
   return parsed.pathspecs;
 }
 
+/** What the index-changing Git segments BEFORE a commit in the same command put
+ *  into the index: `git add` / `git stage` pathspecs (expanded against HEAD and the
+ *  untracked files at check time), `git rm` / `git mv` paths (named as given, since
+ *  they are unchanged in the working tree when the check runs), and the whole
+ *  working tree for `add -A`, `add .`, `add -u` and forms whose paths the
+ *  guardrail cannot read (`-i`, `-p`, `--pathspec-from-file`). Only segments that
+ *  target the commit's repository count (#282: `git add src/x && git commit` used
+ *  to pass on an empty index). A dry run stages nothing. */
+export function precedingStagingPlan(cmd: string, cwd: string, commit: ParsedGitCommand): { everything: boolean; tracked: boolean; pathspecs: string[]; literal: string[] } | null {
+  const repoDir = gitRepoDir(cmd, cwd, commit);
+  const plan = { everything: false, tracked: false, pathspecs: [] as string[], literal: [] as string[] };
+  let found = false;
+  for (const seg of parseGitCommands(cmd)) {
+    if (seg.segmentStart >= commit.segmentStart) continue;
+    if (!["add", "stage", "rm", "mv"].includes(seg.subcommand || "")) continue;
+    if (gitRepoDir(cmd, cwd, seg) !== repoDir) continue;
+    if (seg.args.some((a) => a === "-n" || a === "--dry-run" || /^-[A-Za-z]*n[A-Za-z]*$/.test(a))) continue;
+    found = true;
+    const paths = [...seg.args.filter((a) => !a.startsWith("-")), ...seg.pathspecs];
+    if (seg.subcommand === "rm" || seg.subcommand === "mv") { plan.literal.push(...paths); continue; }
+    const flags = seg.args.filter((a) => a.startsWith("-"));
+    const short = (letter: string) => flags.some((a) => /^-[A-Za-z]+$/.test(a) && a.includes(letter));
+    if (flags.some((a) => a === "--all" || a === "--no-ignore-removal" || a === "--interactive" || a === "--patch" || a === "--edit" || a.startsWith("--pathspec-from-file"))
+        || short("A") || short("i") || short("p") || short("e")
+        || paths.some((p) => p === "." || p === ":/" || p === "*" || p === "./")) {
+      plan.everything = true;
+      continue;
+    }
+    if (flags.includes("--update") || short("u")) { plan.tracked = true; continue; }
+    plan.pathspecs.push(...paths);
+  }
+  return found ? plan : null;
+}
+
 /** The directory of the LAST `cd <dir>` / `pushd <dir>` in a command prefix, or null.
  *  Quote-aware (reuses tokenizeArgs). `cd` with no arg or an option arg (`cd -`) is
  *  ignored — it can't be resolved to a concrete repo, so we fall back to cwd there. */
@@ -715,6 +749,26 @@ async function offendingCommitPaths(pi: ExtensionAPI, cwd: string, cmd: string, 
       (await diff(["diff", "--name-only", "HEAD", "--", ...pathspecs])) ??
       (await diff(["diff", "--name-only", "--", ...pathspecs]));
     if (named) for (const f of named) if (!files.includes(f)) files.push(f);
+  }
+  // An earlier `git add` in the SAME command changes the index before the commit
+  // runs, so the cached diff above is not the index the commit will see. Fold in
+  // what that staging will add; when it cannot be established, name the whole
+  // tree so the commit is refused rather than guessed (#282).
+  const staging = precedingStagingPlan(cmd, cwd, parsed);
+  if (staging) {
+    const add = (list: string[] | null, fallback: string) => {
+      if (list === null) { files.push(fallback); return; }
+      for (const f of list) if (!files.includes(f)) files.push(f);
+    };
+    if (staging.everything || staging.tracked) {
+      add(await diff(["diff", "--name-only", "HEAD"]), "<every tracked change>");
+      if (staging.everything) add(await diff(["ls-files", "--others", "--exclude-standard"]), "<every untracked file>");
+    }
+    if (staging.pathspecs.length) {
+      add(await diff(["diff", "--name-only", "HEAD", "--", ...staging.pathspecs]), staging.pathspecs.join(" "));
+      add(await diff(["ls-files", "--others", "--exclude-standard", "--", ...staging.pathspecs]), staging.pathspecs.join(" "));
+    }
+    for (const f of staging.literal) if (!files.includes(f)) files.push(f);
   }
   if (!files.length) return null;
   const { allowed, denied } = commitPolicy(repoDir, governance);
@@ -1351,14 +1405,25 @@ export function decideSqlImpact(event: any, deps: LiveReadResolverDeps): SqlImpa
     if (contract.target) return { action: "allow", environment: contract.target.environment, reason: "contract sql_targets default" };
     return { action: "prompt", environment: "unresolved", reason: "the contract's sql_targets default is not a ready dev or test entry" };
   }
-  let environment = "";
-  try {
-    const mcp = JSON.parse(deps.readText(join(deps.agentDir, "mcp-adapter.json")));
-    const managed = Array.isArray(mcp?._coop?.managed_servers) && mcp._coop.managed_servers.includes(MANAGED_SQL_SERVER);
-    environment = managed ? (strictResolvedText(mcp?.mcpServers?.[MANAGED_SQL_SERVER]?._coop_target?.environment)?.toLowerCase() || "") : "";
-  } catch { environment = ""; }
+  const environment = managedSqlEnvironment(deps);
   if (environment === "dev" || environment === "test") return { action: "allow", environment, reason: "managed Fabric target" };
   return { action: "prompt", environment: environment || "unresolved", reason: environment === "production" ? "production target" : "no dev or test target resolved" };
+}
+
+/** The environment coop's own managed-server config gives the Warehouse SQL
+ *  endpoint (`_coop_target.environment` of the one `fabric-sqlendpoint` entry), or
+ *  "" when the entry is absent, ambiguous or not managed. Tool arguments and SQL
+ *  text never feed this: a production write without the word "prod" in it is
+ *  still a production write (#283). */
+export function managedSqlEnvironment(deps: LiveReadResolverDeps): string {
+  try {
+    const mcp = JSON.parse(deps.readText(join(deps.agentDir, "mcp-adapter.json")));
+    const aliases = Object.keys(mcp?.mcpServers || {}).filter((name) => name.replace(/-/g, "_") === "fabric_sqlendpoint");
+    if (aliases.length !== 1 || aliases[0] !== MANAGED_SQL_SERVER) return "";
+    const managed = Array.isArray(mcp?._coop?.managed_servers) && mcp._coop.managed_servers.includes(MANAGED_SQL_SERVER);
+    const environment = managed ? (strictResolvedText(mcp.mcpServers[MANAGED_SQL_SERVER]?._coop_target?.environment)?.toLowerCase() || "") : "";
+    return ["dev", "test", "production"].includes(environment) ? environment : "";
+  } catch { return ""; }
 }
 
 export function createLiveReadGrant(scope: LiveReadScope, now = Date.now()): LiveReadGrant {
@@ -1965,19 +2030,26 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         }
         if (decision.action !== "none" && decision.action !== "allow-grant") {
           // A single dev/test Warehouse INSERT/UPDATE/CREATE/ALTER can ride a session
-          // approval (#156); destructive SQL, batches and production always ask.
-          const sqlEditKey = decision.kind === "ddl-dml-destructive"
-            ? sessionApprovalKey(event, decision.environment || decision.scope?.environment)
+          // approval (#156); destructive SQL, batches and production always ask. The
+          // environment is the trusted config's, resolved for the write itself: a
+          // mutation never resolves a read scope, so without this a production
+          // target whose SQL does not say "prod" offered the session option (#283).
+          const trustedSqlEnvironment = decision.kind === "ddl-dml-destructive" ? managedSqlEnvironment(liveReadDeps) : "";
+          const sqlEditKey = decision.kind === "ddl-dml-destructive" && (trustedSqlEnvironment === "dev" || trustedSqlEnvironment === "test")
+            ? sessionApprovalKey(event, trustedSqlEnvironment)
             : null;
+          // A write is recorded as a write: "live read" on an approved CREATE/ALTER
+          // misread the audit trail (SQ live acceptance, 2026-10-03).
+          const auditLabel = decision.kind === "ddl-dml-destructive" ? "Warehouse SQL write" : "live read";
           if (sqlEditKey && editApprovals.has(sqlEditKey)) {
-            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: "allowed", label: "live read", detail: "session-approval" });
+            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: "allowed", label: auditLabel, detail: "session-approval" });
             return;
           }
           if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
-            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: "blocked-headless", label: "live read", detail: decision.kind || "live-read" });
+            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: "blocked-headless", label: auditLabel, detail: decision.kind || "live-read" });
             return { block: true, reason: `coop guardrails: blocked ${decision.kind || "live-read"} access through ${decision.label || "the governed tool"}; explicit approval is unavailable in headless mode.` };
           }
-          const production = decision.environment === "production" || decision.scope?.environment === "production";
+          const production = decision.environment === "production" || decision.scope?.environment === "production" || trustedSqlEnvironment === "production";
           const sessionGrant = decision.action === "prompt-and-grant";
           const scopeSummary = decision.scope ? [
             "Resolved bounded session scope:",
@@ -1993,7 +2065,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
           const prompt = decision.kind === "ddl-dml-destructive"
             ? sqlEditKey
               ? `Warehouse SQL write (one INSERT, UPDATE, CREATE or ALTER):\n  ${decision.label}\nDeletes, drops, merges, EXEC, batches and production always ask. Run it?`
-              : `Warehouse SQL mutation/DDL call:\n  ${decision.label}\nDDL, DML, destructive SQL, EXEC, and batches require separate explicit approval. Run it?`
+              : `${production ? "PRODUCTION " : ""}Warehouse SQL mutation/DDL call:\n  ${decision.label}\n${production ? "Production writes ask every time. " : ""}DDL, DML, destructive SQL, EXEC, and batches require separate explicit approval. Run it?`
             : decision.kind === "ambiguous-sql"
               ? `Ambiguous Warehouse SQL call:\n  ${decision.label}\nOnly one plain SELECT with a literal TOP bound can use a session grant. Run this call once?`
               : decision.kind === "production-metadata"
@@ -2002,7 +2074,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
           const choice = await askEditApproval(ctx, "coop live-data guardrail", prompt, sqlEditKey);
           const ok = choice !== "declined";
           if (choice === "session" && sqlEditKey) editApprovals.add(sqlEditKey);
-          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: ok ? "allowed" : "declined", label: "live read", detail: choice === "session" ? "session-approval-granted" : decision.kind || "live-read" });
+          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: ok ? "allowed" : "declined", label: auditLabel, detail: choice === "session" ? "session-approval-granted" : decision.kind || "live-read" });
           if (!ok) {
             return { block: true, reason: `coop guardrails: blocked ${decision.kind || "live-read"} access through ${decision.label || "the governed tool"} (you declined).` };
           }

@@ -14,7 +14,7 @@ import { dirname, join, basename, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseSpec, piArgv, piEnv } from "./lib/spec.mjs";
 import { PiSession } from "./lib/pi-session.mjs";
-import { buildCommand, buildUiResponse } from "./lib/rpc-commands.mjs";
+import { IMAGE_LIMITS, buildCommand, buildUiResponse } from "./lib/rpc-commands.mjs";
 import { listSessions, isSessionPath } from "./lib/sessions.mjs";
 import { consoleProcess } from "./lib/terminal.mjs";
 import { resolveAsset, isAppUrl, CSP, APP_ORIGIN } from "./lib/serve.mjs";
@@ -22,7 +22,7 @@ import { readBranch } from "./lib/git.mjs";
 import { listFiles, rankFiles } from "./lib/files.mjs";
 import { loadSettings, saveSettings, THEMES } from "./lib/settings.mjs";
 import { listChanges, fileDiff } from "./lib/changes.mjs";
-import { readStandards, readSnapshot } from "./lib/standards-view.mjs";
+import { readStandards, readSnapshot, readNote } from "./lib/standards-view.mjs";
 import { loadProject, previewProject, saveProject } from "./lib/project-form.mjs";
 import { DocsSetupRun, AnswerError, docsLocation, listDocsPages, pickedPathAnswer, readDocsPage, runDocsBuild } from "./lib/docs-setup.mjs";
 import { attach, forget, pruneStore, findPdfjs, LIMITS as ATTACH_LIMITS } from "./lib/attachments.mjs";
@@ -30,6 +30,7 @@ import { loadSplash } from "./lib/splash.mjs";
 import { vibesDir, loadVibes, vibeSets, userName, fillVibe, pickVibe } from "./lib/vibes.mjs";
 import { bootstrapProcess, doctorReport, findCoop, folderArgument, packagedPaths } from "./lib/bootstrap.mjs";
 import { menuTemplate, notificationFor } from "./lib/menu.mjs";
+import { restartOnce } from "./lib/restart.mjs";
 import { profileDir } from "../lib/paths.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -41,6 +42,11 @@ const RENDERER = join(HERE, "renderer");
 // pdf.js and the PDF script unpacked beside the asar (packagedPaths).
 const REPO = join(HERE, "..");
 const PACKAGED = app.isPackaged;
+// Chromium's own log lines (the GPU process's "GetGpuDriverOverlayInfo: Failed
+// to retrieve video device" on some Windows drivers) otherwise land in the
+// terminal that ran `coop desktop`. They are not coop's and change nothing;
+// keep only fatal ones. Must run before the app is ready.
+app.commandLine.appendSwitch("log-level", "3");
 const UNPACKED = PACKAGED ? packagedPaths(process.resourcesPath) : { pdfjsDir: "", pdfScript: "" };
 const MAX_QUEUE = 20_000;
 const MAX_COPY = 4 * 1024 * 1024;
@@ -67,6 +73,14 @@ const checkout = createHash("sha256").update(HERE.toLowerCase()).digest("hex").s
 app.setPath("userData", join(isAbsolute(dataRoot) ? dataRoot : join(app.getPath("appData"), "coop", "desktop"), checkout));
 const settingsFile = join(app.getPath("userData"), "settings.json");
 let settings = loadSettings(settingsFile);
+// The native chrome (the Windows title bar and the File/Edit/View menu bar)
+// follows the chosen theme: dark themes get a dark title bar and menu bar, light
+// themes a light one, "auto" follows the OS. Set before any window opens; a
+// change fires nativeTheme "updated", which re-broadcasts the theme below.
+function applyNativeTheme(theme) {
+  nativeTheme.themeSource = theme === "auto" ? "system" : theme.endsWith("-dark") ? "dark" : "light";
+}
+applyNativeTheme(settings.theme);
 // Text pulled out of attached documents (D1b2) lives beside the settings; a
 // week-old extract is of no use to anyone, so the store is pruned at start.
 const attachmentStore = join(app.getPath("userData"), "attachments");
@@ -178,7 +192,7 @@ function windowInfo(state) {
     splash: splashArt,
     vibe: vibeFor(state),
     vibeSets: vibeSets(vibesDir(REPO)),
-    attachLimits: { perMessage: ATTACH_LIMITS.perMessage, images: ATTACH_LIMITS.images },
+    attachLimits: { perMessage: ATTACH_LIMITS.perMessage, images: ATTACH_LIMITS.images, imageBytes: IMAGE_LIMITS.maxImageBytes, imageTotalBytes: IMAGE_LIMITS.maxTotalBytes },
     pdfReady: Boolean(pdfjsDir),
   };
 }
@@ -218,7 +232,7 @@ function openWindow(rawSpec, token) {
       devTools: process.env.COOP_DESKTOP_DEVTOOLS === "1",
     },
   });
-  const state = { win, spec, token, pi: null, ready: false, queue: [], sessionFile: "", changes: [], snapshots: new Map(), docs: null, build: null, vibeSet: "" };
+  const state = { win, spec, token, pi: null, ready: false, queue: [], sessionFile: "", changes: [], snapshots: new Map(), knowledgeRoots: new Map(), docs: null, build: null, vibeSet: "" };
   windows.set(win.webContents.id, state);
   if (settings.lastFolder !== spec.cwd) { try { settings = saveSettings(settingsFile, { ...settings, lastFolder: spec.cwd }); } catch { /* keep going */ } }
   if (settings.maximized) win.maximize();
@@ -369,16 +383,20 @@ handle("coop:open-folder", async (state) => {
   return { success: true };
 });
 
-handle("coop:restart", async (state) => {
+// One restart at a time per window (#286): a second request during the
+// shutdown gets the same restart, and a window closed meanwhile starts nothing.
+handle("coop:restart", (state) => restartOnce(state, async () => {
   const sessionFile = await currentSessionFile(state);
   if (state.pi) await state.pi.stop();
+  if (state.win.isDestroyed()) return { success: false, error: "the window closed during the restart" };
   startPi(state, sessionFile && existsSync(sessionFile) ? ["--session", sessionFile] : []);
   return { success: true };
-});
+}));
 
 handle("coop:theme", (state, theme) => {
   if (!THEMES.includes(theme)) return { success: false, error: "unknown theme" };
   settings = saveSettings(settingsFile, { ...settings, theme });
+  applyNativeTheme(theme);
   broadcast("coop:theme", { theme, systemDark: nativeTheme.shouldUseDarkColors });
   installMenu();
   return { success: true };
@@ -446,7 +464,17 @@ handle("coop:change-diff", async (state, path) => {
 handle("coop:standards", async (state) => {
   const result = await readStandards({ node: state.spec.node, repoRoot: repoRootFor(state.spec), cwd: state.spec.cwd, env: toolEnv(state) });
   state.snapshots = result.snapshots;
-  return { success: true, data: { source: result.source, domains: result.domains } };
+  state.knowledgeRoots = result.roots;
+  return { success: true, data: { source: result.source, domains: result.domains, knowledge: result.knowledge } };
+});
+
+// One note of a team knowledge clone (incremental-bi, coop-team-knowledge), by
+// the path the listing gave; the clone's location stays in main.
+handle("coop:knowledge-note", async (state, source, path) => {
+  const root = state.knowledgeRoots && state.knowledgeRoots.get(source);
+  if (!root) return { success: false, error: "that knowledge repository is not cloned here; run coop sync" };
+  try { return { success: true, data: await readNote(root, path) }; }
+  catch (error) { return { success: false, error: error.message }; }
 });
 
 handle("coop:standards-text", async (state, domain) => {
@@ -594,7 +622,7 @@ function focusedState() {
 function installMenu() {
   const template = menuTemplate({
     run: (action) => { const state = focusedState(); if (state) send(state, "coop:menu", { action }); },
-    setTheme: (theme) => { if (THEMES.includes(theme)) { settings = saveSettings(settingsFile, { ...settings, theme }); broadcast("coop:theme", { theme, systemDark: nativeTheme.shouldUseDarkColors }); } },
+    setTheme: (theme) => { if (THEMES.includes(theme)) { settings = saveSettings(settingsFile, { ...settings, theme }); applyNativeTheme(theme); broadcast("coop:theme", { theme, systemDark: nativeTheme.shouldUseDarkColors }); } },
     theme: settings.theme,
     themes: THEMES,
     menuBar: settings.menuBar,
@@ -659,9 +687,11 @@ if (process.argv.includes("--doctor")) {
 // with the spec; that process hands it over through the single-instance lock
 // (second-instance below) and this one opens the window.
 async function bootstrap() {
-  const coop = findCoop(process.env);
+  // The package's own coop snapshot (D1d) answers first; a terminal coop only
+  // for a package that carries none.
+  const coop = findCoop(process.env, existsSync, process.resourcesPath);
   if (!coop) {
-    dialog.showErrorBox("coop", "The coop window needs the terminal coop, which is not installed on this computer yet.\n\nInstall coop first (README: clone coop-agent and double-click \"Install coop.cmd\"), then start the window again.");
+    dialog.showErrorBox("coop", "This coop window package carries no coop of its own and the terminal coop is not installed on this computer.\n\nInstall the newest coop window from the release page (it includes everything), then start it again.");
     app.quit();
     return;
   }

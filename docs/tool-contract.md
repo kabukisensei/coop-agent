@@ -227,8 +227,15 @@ evidence state, then the object's doc page and one line per upstream object,
 downstream object and relationship (`- name (type)`). The full slice is in
 `details.lineage` → the parsed JSON `{ object, schema, layer, source_file, upstream[],
 downstream[], relationships[], evidence }` (each up/downstream entry carries `id`,
-`name`, `type`, and `doc`, the per-object Markdown path). An ambiguous `object`
-lists the candidates (`{ query, ambiguous: true, matches[] }` in details; re-call
+`name`, `type`, and `doc`, the per-object Markdown path). With coop-data-doc 1.3.2+
+the slice also carries `loaded_by[]` (the Power BI tables whose partition names the
+object: `{ table, source, linked }`), rendered as a "Loaded by" list; a hit with
+`linked: false` is connected by name only (the SQL object is not documented or
+not resolved). A view the docs do not hold at all but a model loads
+(`{ object: null, undocumented_source: true, loaded_by[], downstream[] }`) is
+reported as "not a documented object, but N Power BI table(s) load it by name"
+instead of a failure, so the SQL side can stay outside the docs. An ambiguous `object`
+lists the candidates (`{ query, ambiguous: true, matches[], loaded_by[] }` in details; re-call
 with a specific name); when there's
 no built graph, `content` says so and points at `build` / `/setup-docs` — you can
 still proceed without it. `object` is required: a blank one returns a usage note, not
@@ -304,12 +311,23 @@ catalog queries with the name bound through `OBJECT_ID(?)`, never spliced in:
 Each section is `{"state": "ok", "items": [...], "count", "truncated"}` or
 `{"state": "unavailable", "reason": ...}` when that catalog view is missing on the
 target (Synapse serverless never exposes `sys.dm_sql_referencing_entities`, so its
-`downstream` section says so without asking the server), so an empty list always
-means "no dependents" and never "could not look". Dependencies are capped at 500
-per section and columns at 1000. The result also carries the executor's `target`
+`downstream` section says so without asking the server), so an empty list never
+means "could not look". A successful `downstream` section also carries `coverage`
+(this database only, dependents whose definitions this principal can read), because
+`sys.dm_sql_referencing_entities` returns partial results when `VIEW DEFINITION` is
+missing on some referencing objects and never sees dynamic SQL or other databases:
+an empty list means "none visible", and the tool's text says so instead of "no
+dependents". Dependencies are capped at 500 per section and columns at 1000. The result also carries the executor's `target`
 summary and the resolved `object` (schema, name, type); `object_not_found`,
 `object_invalid` and `input_invalid` are the tool's own states, every other state is
 the executor's. Driver error text, hosts and tokens never appear.
+
+Both native SQL tools run against the contract the session started with: the
+extension notes the text of `.coop/project.yml` at `session_start` (or on the first
+native SQL call) and compares the file on every call. A contract edited mid-session,
+by hand or by `/setup-project`, gets `contract_changed` and connects nowhere until
+`/new` or a restart re-reads it, so the executor can never connect to a target the
+guardrails' trusted snapshot did not authorize.
 
 Governance (`extensions/coop-guardrails`): `sql_impact` is a metadata read, so it
 runs without a prompt when the trusted contract snapshot resolves a dev or test
@@ -380,7 +398,10 @@ semantic model edit can land (#159): the guardrail reads each call's
 session), and asks every time for deletes, whole-model imports, deploys, unknown
 operations and production. Manifest-pinned managed config is generated into coop's isolated agent dir
 (`~/.coop/agent/mcp-adapter.json`) from `~/.coop/config` by `coop onboard` / `coop sync`,
-and wired through `pi-mcp-adapter`.
+and wired through `pi-mcp-adapter`. The `fabric-sqlendpoint` entry's Warehouse target
+comes from the contract above the current folder, and every launch regenerates it
+for the folder coop starts in (`Update-CoopManagedMcpConfig`), so one shared config
+follows the last launch, not the last sync.
 
 Per `.coop/project.yml` and `docs/guardrails.md`:
 

@@ -112,11 +112,23 @@ if ((Test-CoopGitCheckout $script:CoopRoot) -and (Test-Have 'git')) {
     # Renamed or removed origin: warn with the fix (Get-CoopRepoStranded names it).
     if (-not (Write-CoopRepoStranded)) { Coop-Warn "no 'origin' remote configured — skipping repo update" }
   }
+} elseif (Test-CoopBundledRuntime) {
+  # The window package's snapshot (D1d): coop-agent, Node and Pi move together
+  # with the package version; the tools below still converge.
+  Coop-Info "this coop is the coop window package v$($script:CoopVersion): a newer installer from https://github.com/kabukisensei/coop-agent/releases/latest updates coop-agent, Node and Pi together"
 } else {
   # A zip/shared-drive copy: Pi + pipx tools above still update, but the repo layer
   # (skills/prompts/guardrails/themes/scripts) is frozen forever — say so loudly.
   Coop-Warn "this coop-agent is not a git checkout — skills/prompts/guardrails will NEVER update — fix: git clone the repo, then run .\bin\coop.cmd install from the clone (your ~/.coop settings carry over)"
 }
+
+# The checkout may have just moved to a newer release: re-read the fleet plan from
+# the manifest it now carries, so Pi, the pipx tools and the npm tools converge to
+# THAT release's pins in this same run (a plan read before the move left them one
+# release behind until the next update; #280). Only the manifest is re-read; the
+# updater code running here stays the loaded version (RELEASE.md's second-update
+# note covers releases that change the updater itself).
+$PLAN = Get-CoopFleetPlan -Edge:$EDGE -NoFabric:$NO_FABRIC
 
 # Busy guard (shared with install): clear any leftover staging dir from a prior
 # interrupted update, and refuse the in-place Pi convergence while a coop/pi

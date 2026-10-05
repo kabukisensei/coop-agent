@@ -19,8 +19,10 @@ queries, never free text:
 The object name is always a bound parameter (`OBJECT_ID(?)`), never spliced into
 SQL. Where a target kind lacks a catalog view, the matching section reports
 `unavailable` with a reason instead of an empty list, so "no dependents" is never
-confused with "could not look". No credential, connection string, server name or
-exception text appears in a result.
+confused with "could not look"; a successful `downstream` section also names its
+coverage (this database, definitions this principal can read), so an empty list
+reads as "none visible" rather than zero impact. No credential, connection string,
+server name or exception text appears in a result.
 """
 
 from __future__ import annotations
@@ -123,8 +125,22 @@ def _rows(cursor: Any, sql: str, params: tuple[Any, ...], limit: int) -> list[tu
     return rows
 
 
-def _section(items: list[dict[str, Any]], truncated: bool) -> dict[str, Any]:
-    return {"state": "ok", "items": items, "count": len(items), "truncated": truncated}
+# What a successful dependents query can see: this database, and only the
+# referencing objects whose definitions the connected principal may view
+# (sys.dm_sql_referencing_entities returns partial results when VIEW DEFINITION is
+# missing on some of them). The result says so, so an empty list reads as "none
+# visible", never as proof of zero impact (#285).
+DOWNSTREAM_COVERAGE = (
+    "this database only, dependents whose definitions this principal can read; "
+    "dynamic SQL and other databases are not covered"
+)
+
+
+def _section(items: list[dict[str, Any]], truncated: bool, coverage: str | None = None) -> dict[str, Any]:
+    section: dict[str, Any] = {"state": "ok", "items": items, "count": len(items), "truncated": truncated}
+    if coverage:
+        section["coverage"] = coverage
+    return section
 
 
 def _unavailable(reason: str) -> dict[str, Any]:
@@ -157,7 +173,7 @@ def trace(cursor: Any, kind: str, schema: str, name: str) -> dict[str, Any]:
                 {"schema": _text(r[0]), "name": _text(r[1]), "type": _text(r[2]) or "unknown"}
                 for r in rows[:MAX_DEPENDENCIES]
             ]
-            sections["downstream"] = _section(items, len(rows) > MAX_DEPENDENCIES)
+            sections["downstream"] = _section(items, len(rows) > MAX_DEPENDENCIES, DOWNSTREAM_COVERAGE)
 
     try:
         rows = _rows(cursor, UPSTREAM_SQL, (qualified,), MAX_DEPENDENCIES)

@@ -119,6 +119,13 @@ assert out["target"] == {"environment": "dev", "kind": "azure_sql", "database": 
 assert out["object"] == {"schema": "dbo", "name": "vw_Sales", "type": "VIEW"}
 assert out["downstream"]["state"] == "ok" and out["downstream"]["count"] == 2
 assert out["downstream"]["items"][0] == {"schema": "rpt", "name": "vw_SalesByRegion", "type": "VIEW"}
+# #285: a successful dependents query says what it could see, so zero rows never
+# read as zero impact; upstream and columns carry no such caveat.
+assert out["downstream"]["coverage"] == si.DOWNSTREAM_COVERAGE and "this principal can read" in out["downstream"]["coverage"]
+assert "coverage" not in out["upstream"] and "coverage" not in out["columns"]
+with mock.patch.object(sq, "open_connection", return_value=(FakeConnection(FakeCursor({**answers, si.DOWNSTREAM_SQL: []})), target(), "ODBC Driver 18 for SQL Server", None)):
+    empty = si.execute({"object": "vw_Sales"})
+assert empty["downstream"]["state"] == "ok" and empty["downstream"]["count"] == 0 and empty["downstream"]["coverage"] == si.DOWNSTREAM_COVERAGE
 up = out["upstream"]["items"]
 assert up[0] == {"schema": "dbo", "name": "Orders", "type": "USER_TABLE", "resolved": True}
 assert up[1]["resolved"] is False and up[1]["mentioned_in_definition"] is True and up[1]["type"] == "unknown"

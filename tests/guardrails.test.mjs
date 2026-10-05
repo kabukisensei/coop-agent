@@ -26,6 +26,7 @@ const { desktopReloadTarget, decideDesktopReload, desktopStatusCommand, isSecret
 // Capture the handler the extension registers.
 let staged = "";     // `git diff --cached --name-only`
 let modified = "";   // `git diff --name-only` (what `git commit -a` would stage)
+let untracked = ""; // `git ls-files --others --exclude-standard` (what `git add .` would stage)
 let confirmAnswer = false;
 let confirmCount = 0;
 let lastConfirm = "";
@@ -49,6 +50,7 @@ const pi = {
     // check --cached first.
     if (bin === "git" && a.includes("diff --cached")) return { stdout: staged, code: 0, stderr: "" };
     if (bin === "git" && a.includes("diff --name-only")) return { stdout: modified, code: 0, stderr: "" };
+    if (bin === "git" && a.includes("ls-files --others")) return { stdout: untracked, code: 0, stderr: "" };
     return { stdout: "", code: 0, stderr: "" };
   },
 };
@@ -62,9 +64,10 @@ assert.ok(cmds["coop-guardrails"], "registers the /coop-guardrails command");
 assert.ok(cmds["coop-live-read"], "registers the /coop-live-read command");
 
 const ctx = { cwd: "/tmp/no-such-repo-xyz", hasUI: true, ui: { confirm: async (_title, message) => { confirmCount++; lastConfirm = String(message); return confirmAnswer; }, notify: () => {} } };
-const call = async (command, { stagedFiles = "", modifiedFiles = "", confirm = false, toolName = "bash" } = {}) => {
+const call = async (command, { stagedFiles = "", modifiedFiles = "", untrackedFiles = "", confirm = false, toolName = "bash" } = {}) => {
   staged = stagedFiles;
   modified = modifiedFiles;
+  untracked = untrackedFiles;
   confirmAnswer = confirm;
   confirmCount = 0;
   lastConfirm = "";
@@ -100,6 +103,38 @@ await t("blocks `git commit -am` that auto-stages source (nothing pre-staged)", 
 });
 await t("allows `git commit -am` when only docs are modified", async () => {
   assert.equal(blocked(await call("git commit -am docs", { stagedFiles: "", modifiedFiles: "docs/a.md" })), false);
+});
+await t("blocks `git add <source> && git commit` on an empty or docs-only index (#282)", async () => {
+  // The index the commit sees is the one `git add` builds a moment earlier, not
+  // the one the pre-command check reads. Modified and untracked source, every
+  // separator form, and `git stage`.
+  for (const cmd of ["git add src/app.py && git commit -m wip", "git add src/app.py; git commit -m wip", "git add src/app.py\ngit commit -m wip", "git stage src/app.py && git commit -m wip", "git add -- src/app.py && git commit -m wip"]) {
+    assert.equal(blocked(await call(cmd, { stagedFiles: "", modifiedFiles: "src/app.py" })), true, `modified: ${JSON.stringify(cmd)}`);
+    assert.equal(blocked(await call(cmd, { stagedFiles: "docs/a.md", modifiedFiles: "src/app.py" })), true, `docs-only index: ${JSON.stringify(cmd)}`);
+    assert.equal(blocked(await call(cmd, { stagedFiles: "", modifiedFiles: "", untrackedFiles: "src/app.py" })), true, `untracked: ${JSON.stringify(cmd)}`);
+  }
+  // `add -A`, `add .` and `add -u` stage the whole tree; `rm`/`mv` name their paths.
+  assert.equal(blocked(await call("git add -A && git commit -m wip", { modifiedFiles: "sql/gold/v.sql" })), true);
+  assert.equal(blocked(await call("git add . && git commit -m wip", { untrackedFiles: "src/new.py" })), true);
+  assert.equal(blocked(await call("git add -u && git commit -m wip", { modifiedFiles: "src/app.py" })), true);
+  assert.equal(blocked(await call("git add -u && git commit -m docs", { modifiedFiles: "docs/a.md", untrackedFiles: "src/new.py" })), false, "-u stages tracked changes only");
+  assert.equal(blocked(await call("git rm --cached src/app.py && git commit -m wip")), true);
+  assert.equal(blocked(await call("git mv src/a.py src/b.py && git commit -m wip")), true);
+  // Interactive and file-driven forms cannot be read: the whole tree counts.
+  assert.equal(blocked(await call("git add -p && git commit -m wip", { modifiedFiles: "src/app.py" })), true);
+  assert.equal(blocked(await call("git add --pathspec-from-file=list && git commit -m wip", { untrackedFiles: "src/app.py" })), true);
+});
+await t("compound docs-only staging and commits still work; other repos and dry runs are not this commit's (#282)", async () => {
+  assert.equal(blocked(await call("git add docs/a.md && git commit -m docs", { modifiedFiles: "docs/a.md" })), false);
+  assert.equal(blocked(await call("git add . && git commit -m docs", { modifiedFiles: "docs/a.md", untrackedFiles: "docs/b.md" })), false);
+  assert.equal(blocked(await call("git add -n src/app.py && git commit -m docs", { stagedFiles: "docs/a.md", modifiedFiles: "src/app.py" })), false, "a dry run stages nothing");
+  assert.equal(blocked(await call("git -C /other add src/app.py && git commit -m docs", { stagedFiles: "docs/a.md", modifiedFiles: "src/app.py" })), false, "staging in another repo");
+  assert.equal(blocked(await call("git commit -m docs && git add src/app.py", { stagedFiles: "docs/a.md", modifiedFiles: "src/app.py" })), false, "staging after the commit");
+  assert.equal(blocked(await call("cd /work/other && git add src/app.py && git commit -m wip", { modifiedFiles: "src/app.py" })), true, "cd applies to both segments");
+  assert.equal(lastRepoDir, "/work/other");
+  const plan = cg.precedingStagingPlan("git add -Av src/x docs/y && git commit -m x", "/cwd", parseGitCommands("git add -Av src/x docs/y && git commit -m x")[1]);
+  assert.deepEqual(plan, { everything: true, tracked: false, pathspecs: [], literal: [] });
+  assert.equal(cg.precedingStagingPlan("git commit -m x", "/cwd", parseGitCommand("git commit -m x")), null);
 });
 await t("detects `git -C <dir> commit` (global options before the subcommand)", async () => {
   assert.equal(blocked(await call("git -C /some/repo commit -m x", { stagedFiles: "src/app.py" })), true);
@@ -812,19 +847,27 @@ await t("/coop-approvals shows and revokes session edit approvals (#156)", async
   assert.equal(asked, 1, "revoke makes the next edit ask again");
 });
 await t("a Warehouse SQL write approval lasts for the session; DELETE still asks (#156)", async () => {
+  // The session option exists only for a managed dev/test Warehouse (#283); the
+  // full managed config helpers live further down, so a minimal dev entry here.
+  writeFileSync(join(AUDIT_DIR, "mcp-adapter.json"), JSON.stringify({ mcpServers: { "fabric-sqlendpoint": { _coop_target: { environment: "dev" } } }, _coop: { managed_servers: ["fabric-sqlendpoint"] } }));
   await handleSessionStart({}, ctx);
   let asked = 0; let pick = "session";
   const ui = { notify: () => {}, confirm: async () => { asked++; return pick !== "decline"; },
     select: async (_t, options) => { asked++; return pick === "session" ? options[1] : options[2]; } };
   const c = { ...ctx, ui };
   const sql = (query) => ({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify({ query }) } });
+  clearAudit();
   assert.equal(blocked(await handle(sql("INSERT INTO dbo.T (a) VALUES (1)"), c)), false);
   assert.equal(blocked(await handle(sql("UPDATE dbo.T SET a = 2 WHERE id = 1"), c)), false);
   assert.equal(asked, 1, "the second write rides the session approval");
+  const writes = readAudit().filter((x) => x.tool === "governed-live-read");
+  assert.equal(writes.length, 2);
+  for (const rec of writes) assert.equal(rec.label, "Warehouse SQL write", "an approved write is not audited as a read");
   pick = "decline";
   assert.equal(blocked(await handle(sql("DELETE FROM dbo.T WHERE id = 1"), c)), true);
   assert.equal(asked, 2, "a DELETE still asks");
   await handleSessionStart({}, ctx);
+  rmSync(join(AUDIT_DIR, "mcp-adapter.json"), { force: true });
 });
 await t("session approval keys: SQL writes vs destructive SQL, deletes and production (#156)", () => {
   const sql = (query) => ({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify({ query }) } });
@@ -1118,6 +1161,34 @@ await t("real MCP proxy ignores forged scope and reuses exact database approval"
   confirmAnswer = false;
   assert.equal(blocked(await handle(sqlRead("SELECT TOP (10) secret_value FROM dbo.Secret"), liveCtx)), false);
   assert.equal(confirmCount, 1, "approved database reads may vary SQL below the approved limit");
+});
+
+await t("a production Warehouse write never offers the session option, whatever its SQL says (#283)", async () => {
+  // The managed config says production; the INSERT does not contain "prod". A
+  // mutation resolves no read scope, so the environment must come from the
+  // trusted config itself, not from the words in the call.
+  const sqlWrite = (query) => ({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify({ query }) } });
+  const run = async (environment) => {
+    writeManagedTarget({ environment });
+    process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+    await handleSessionStart({ reason: "new" }, liveCtx);
+    let selects = 0, confirms = 0;
+    const ui = { notify: () => {}, confirm: async (_t, message) => { confirms++; lastConfirm = String(message); return true; }, select: async (_t, options) => { selects++; return options[1]; } };
+    const first = await handle(sqlWrite("INSERT INTO dbo.T (a) VALUES (1)"), { ...liveCtx, ui });
+    const second = await handle(sqlWrite("UPDATE dbo.T SET a = 2 WHERE id = 1"), { ...liveCtx, ui });
+    return { first: blocked(first), second: blocked(second), selects, confirms };
+  };
+  const production = await run("production");
+  assert.deepEqual(production, { first: false, second: false, selects: 0, confirms: 2 }, "production: a plain confirm, for each write");
+  assert.match(lastConfirm, /PRODUCTION Warehouse SQL mutation/);
+  const dev = await run("dev");
+  assert.deepEqual(dev, { first: false, second: false, selects: 1, confirms: 0 }, "dev: the session option, once");
+  // A dev session grant is not a production grant: switching the trusted config
+  // mid-session is not a thing (it is coop's file), but a new session re-reads it.
+  const test = await run("test");
+  assert.equal(test.selects, 1, "test offers the session option too");
+  writeManagedTarget();
+  await handleSessionStart({ reason: "new" }, liveCtx);
 });
 
 await t("the exact pyodbc fallback shares the MCP grant; forged fallback shapes do not", async () => {
@@ -1871,7 +1942,12 @@ const inst = (pid, hasUnsavedChanges, file = `E:\\coop-sandbox\\tmp\\pbip-copy\\
 const statusJson = (...instances) => JSON.stringify({ status: instances.some((i) => i.bridgeStatus === "connected") ? "ready" : "not_connected", instances }, null, 2);
 const withStatus = (status, fn) => { desktopStatus = status; return fn().finally(() => { desktopStatus = null; }); };
 const reloadCall = (command, opts) => withStatus(opts?.status ?? null, () => call(command, opts));
-const statusCalls = () => execLog.filter((e) => e.bin === "powerbi-desktop").map((e) => e.args.join(" "));
+// On Windows with the real bridge installed the guard runs `node <cli.js> status ...`
+// (desktopStatusCommand); count both shapes as one bridge call.
+const isBridgeCli = (e) => e.bin === process.execPath && /powerbi-desktop-bridge-cli/.test(String(e.args[0]));
+const statusCalls = () => execLog
+  .filter((e) => e.bin === "powerbi-desktop" || isBridgeCli(e))
+  .map((e) => (isBridgeCli(e) ? e.args.slice(1) : e.args).join(" "));
 
 await t("reload guard: status runs through the npm shim's cli.js on Windows (spawn has no shell)", async () => {
   assert.deepEqual(desktopStatusCommand("19284", "linux", { PATH: "/usr/bin" }, () => true, "/node"), { bin: "powerbi-desktop", args: ["status", "--pid", "19284"] });

@@ -197,7 +197,7 @@ client-repo gates above are a different thing.
 
 | Lane | Run it locally | Where CI runs it | What it holds |
 | --- | --- | --- | --- |
-| gate (default) | `bash tests/run.sh` | `.github/workflows/ci.yml` on every PR and every push to `main` | Deterministic logic tests. The same workflow also runs `bash -n` and shellcheck over the bash dev tooling, JSON, YAML and skill validation, the esbuild transpile, `tests/run.ps1` (which starts with `scripts/check-bom.ps1`), and the `.ps1` parse under pwsh 7 and Windows PowerShell 5.1 with PSScriptAnalyzer. Its `installer (Windows)` job builds the coop window package (master plan D1c) as the `coop-window-installer` artifact, installs it silently on the runner, runs `coop.exe --doctor` and uninstalls (`desktop/scripts/verify-installer.mjs`, which refuses any host but an opted-in GitHub-hosted Windows runner). |
+| gate (default) | `bash tests/run.sh` | `.github/workflows/ci.yml` on every PR and every push to `main` | Deterministic logic tests. The same workflow also runs `bash -n` and shellcheck over the bash dev tooling, JSON, YAML and skill validation, the esbuild transpile, `tests/run.ps1` (which starts with `scripts/check-bom.ps1`), and the `.ps1` parse under pwsh 7 and Windows PowerShell 5.1 with PSScriptAnalyzer. Its `installer (Windows)` job builds the coop window package (master plan D1c and D1d: it downloads the pinned Node and stages Pi, the extension tree and the repository snapshot first) as the `coop-window-installer` artifact, installs it silently on the runner, runs `coop.exe --doctor`, checks the bundled Node, Pi and extension pins against the manifest and lock, runs the bundled `coop.ps1 version`, checks that PowerShell's `& npm` reaches the bundled `npm.cmd` and that every bundled path fits Windows' limit, and uninstalls, checking that the first launch's `coop` link and "coop" shortcut go with the package while a foreign shortcut stays (`desktop/scripts/verify-installer.mjs`, which refuses any host but an opted-in GitHub-hosted Windows runner). `release.yml` runs the same acceptance on the tag build and publishes the installer only when its report passes and names the published file's SHA-256 (`desktop/scripts/check-installer-report.mjs`). |
 | extended | `COOP_TEST_EXTENDED=1 bash tests/run.sh` | `.github/workflows/extended.yml`: nightly, on demand, and on a PR that changes that file | The gate lane plus the timing and process fixtures. The two lanes together are the full suite. |
 | Pi matrix | `pwsh -NoProfile -File scripts/test-pi-matrix.ps1 -PiVersion <pi-version>` (needs the network; installs that Pi from npm into a temp prefix) | `.github/workflows/pi-matrix.yml`: nightly, on demand, and on a PR that touches Pi alignment | `scripts/test-pi-matrix.ps1` against the pinned Pi release on Windows. |
 
@@ -234,7 +234,8 @@ The run scripts are the list; this page does not repeat it.
   (`gate` / `extended`); an extended row runs only with `COOP_TEST_EXTENDED=1`.
 - Some gate files keep a few extended-only cases (hang, watchdog or
   live-process cases) behind the same variable inside the file. The header of
-  `tests/run.sh` names them.
+  `tests/run.sh` names them; in `tests/run.ps1`'s table it is
+  `extension-tree-lock` (a second process holding the extension tree's mutex).
 - `tests/repro-tmp-contamination.sh` is a manual reproducer, not a test, and no
   lane runs it. Run it by hand with `bash tests/repro-tmp-contamination.sh`.
 

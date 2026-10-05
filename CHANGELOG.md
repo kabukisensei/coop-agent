@@ -31,6 +31,205 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   (`desktop/renderer/widgets.mjs`), and lists it under `/hotkeys`. The desktop
   RPC fixture is re-recorded with the extension loaded and now carries one
   `todo` create and one update, so the window tests build the panel from them.
+
+### Changed
+
+- `data_doc lineage` names the Power BI tables that load an object even when the
+  SQL side is not in the docs. coop-data-doc's `lineage` (1.3.2+) carries
+  `loaded_by`: the semantic model tables whose partition names the object, with
+  the source string and whether the graph holds the resolved link. The tool text
+  renders it as a "Loaded by" list; a view the docs do not hold at all but a model
+  loads is reported as "not a documented object, but N Power BI table(s) load it by
+  name" instead of "lineage failed", so `sql_impact` (live SQL dependents) and
+  `data_doc lineage` (the Power BI dependents) together cover a view edit without
+  documenting the SQL repository (Aaron, 2026-10-05). Older coop-data-doc releases
+  answer without the field and the text is unchanged.
+
+## [0.30.4] — 2026-10-05
+
+### Added
+
+- coop window: the Standards pane lists the team knowledge repositories next to
+  the standards domains, one chip each: **Incremental BI** (the
+  `cooptimize/incremental-bi` approved patterns) and **Team knowledge** (the
+  TeamAI team share, `cooptimize/coop-team-knowledge`). A chip opens the clone's
+  Markdown notes one at a time (pick one from the list, search it like an
+  article); a repository that is not cloned here shows how to get it (`coop
+  onboard`, then `coop sync`). The pane reads the same clones the terminal's
+  team-knowledge skill searches and the same `/standards-status` sources; the
+  clone's location never leaves the main process.
+- The team knowledge source in `/standards-status` and `coop doctor` now falls
+  back to the TeamAI trial's isolated clone (recorded at `coop teamai init`)
+  when `knowledge.repos` does not list `coop-team-knowledge`, so the team share
+  counts as available wherever the trial is initialised.
+
+### Changed
+
+- coop window: the native title bar and the File/Edit/View menu bar follow the
+  chosen theme (dark for the dark themes, light for the light ones, the OS
+  setting for "auto") instead of always taking the OS colours (asked
+  2026-10-05 after v0.30.3).
+- coop window: the Changes pane's unified diff wraps long lines instead of
+  running past the pane's right edge; side by side already wrapped per cell
+  (asked 2026-10-05).
+
+## [0.30.3] — 2026-10-05
+
+### Fixed
+
+- The managed Warehouse MCP entry in the shared `mcp-adapter.json` carries one
+  project's target: the contract above the folder it was generated in. Only
+  `coop sync` wrote it, so a `coop update` or the window's first launch run from
+  the home folder (seen 2026-10-05, right after 0.30.2) left the project folder
+  on the global endpoint: `fabric_sql_query unavailable: target_mismatch`, doctor
+  `target_invalid`, and no `fabric-sqlendpoint.execute_query` tool. Every launch
+  (terminal and window) now rewrites the entry for the folder it starts in
+  (`Update-CoopManagedMcpConfig`, the same ownership-aware generator sync runs),
+  so the last launch wins, not the last sync. Fail-soft: a launch that cannot
+  refresh it warns and starts anyway.
+- coop window: with a long session list the sidebar grew past the window (a
+  grid item's minimum height is its content), so the composer sat below the
+  fold ("no way to type"), and focusing it after New session scrolled the whole
+  document: the top bar and the session list's head went off the top and the
+  conversation no longer scrolled (seen 2026-10-05). The sidebar now keeps to
+  the window's height (its session list scrolls) and the document can never
+  scroll (`overflow: clip`).
+- coop window: Chromium's own log lines (the GPU driver "GetGpuDriverOverlayInfo"
+  error some Windows drivers print) no longer land in the terminal that ran
+  `coop desktop`; only fatal ones remain.
+
+## [0.30.2] — 2026-10-05
+
+### Fixed
+
+- The isolated extension tree (`<profile dir>\agent\npm`) has one writer at a
+  time. The coop window's first launch seeds that tree from the package and
+  `coop sync`, `coop install` and `coop update` rewrite it; two of them at once
+  (seen 2026-10-05: the window's first launch during a `coop sync`) left a
+  half-written tree and Pi stopped with "Failed to load extension ... Cannot
+  find module" for pi-mcp-adapter and pi-hermes-memory. `Sync-CoopExtensionFleet`
+  now holds a named mutex per agent dir while it writes, a second writer waits
+  for the first (up to 15 minutes, then says so), and every launch waits the
+  same way before Pi loads the tree. Recovery for a tree already broken: close
+  coop, delete `node_modules` and `package-lock.json` under `agent\npm`, run
+  `coop sync` (docs/troubleshooting.md).
+
+- The Fabric Warehouse token helper no longer reports "Azure CLI is not
+  installed or not on PATH" when coop (terminal or window) starts from the home
+  folder. The helper refuses a node or az that sits inside the working folder
+  (a planted binary in a work repo); started from `C:\Users\<name>`, the whole
+  profile counted as "inside", so the window's bundled Node and any per-user
+  install were refused (seen 2026-10-05). A working folder that contains the
+  home (the home itself, the users folder, a drive root) is not a work repo and
+  keeps them; `lib/warehouse_mcp.py` and `lib/fabric_request_headers.mjs`.
+- The terminal install and the coop window package share one
+  `mcp-adapter.json`, and each `coop sync` writes its own
+  `fabric_request_headers.mjs` path into the managed Warehouse entry; the other
+  install then called the configuration invalid ("managed configuration is
+  invalid; run coop sync") and the two took turns breaking the Warehouse MCP.
+  `sqlendpoint_config_status` now accepts the other install's helper when it
+  is byte-identical to its own (the same release); a different file is still
+  refused.
+- `release.yml` publishes the coop window installer only after the same
+  acceptance the PR job runs has passed on the exact bytes it publishes
+  (#277): the tag's `installer` job now runs `desktop/scripts/verify-installer.mjs`
+  (silent install, `coop.exe --doctor`, silent uninstall, profile untouched) on
+  its disposable runner, keeps the report (installer SHA-256, package version,
+  every step) as an artifact on success and failure, and the `release` job
+  refuses to publish unless `desktop/scripts/check-installer-report.mjs` finds
+  the report ok and its SHA-256 equal to the downloaded executable's. The report
+  is attached to the GitHub Release beside the installer. A failed acceptance
+  fails the tag run before anything is published.
+
+## [0.30.1] — 2026-10-05
+
+### Added
+
+- One install for the coop window (master plan D1d; Aaron 2026-10-03). The
+  window package now carries coop itself: `resources\runtime` holds the
+  pinned Node (the nodejs.org win-x64 zip, version and SHA-256 in the
+  manifest's new `desktop.node`), an npm prefix with the pinned Pi and the
+  Power BI tools, and the extension tree installed from
+  `config/extensions-lock.json`; `resources\coop` is a snapshot of this
+  repository (skills, prompts, extensions, guardrails, standards bundle,
+  scripts). A teammate downloads the one installer and nothing else is
+  installed for Node, Pi or the extensions: `lib/common.ps1` run from the
+  snapshot finds the runtime beside it and puts the bundled Node and Pi first
+  on PATH (`Initialize-CoopBundledRuntime`), the package's `coop desktop`
+  opens its own exe, and the first launch on a profile without this release's
+  lock runs `coop install` in the console first (the prerequisite checklist
+  with its `winget` lines, with Node shown as bundled; the pipx tools; the
+  sync; the Azure and model sign-ins). `coop sync` seeds the agent dir's tree
+  from the bundle (`Restore-CoopBundledExtensions`) and declares the
+  extensions in `settings.json` as `pi install` would (`lib/pi_settings.py
+  ensure-packages`), so no npm runs on the machine; `coop doctor` reports the
+  package in place of the "not a git checkout" warning; `coop update` points
+  at the release page for a newer package; `coop uninstall` leaves the
+  package's Pi and tools to Add or remove programs. The `installer (Windows)`
+  CI job checks the bundled Node, Pi, tools and tree at their pins and runs
+  the snapshot's `coop version` on the bundled Pi
+  (`desktop/scripts/build-installer.mjs`, `desktop/scripts/verify-installer.mjs`,
+  `desktop/lib/bootstrap.mjs`; master plan revision 3.19). From the VM check
+  of the first package: the bundled Node ships without the zip's `npm.ps1`
+  and `npx.ps1` (PowerShell picked them over `npm.cmd` and they answered
+  `npm prefix -g` with "Unknown command", so the first launch skipped its
+  tool steps); the bundled npm trees are pruned of type declarations,
+  `dist-types` folders and source maps (about half the files, and every
+  path over Windows' 260-character limit, which the uninstaller could not
+  remove); and uninstalling the window also removes the `coop` link and
+  "coop" shortcuts its first launch wrote, leaving a terminal install's own
+  (`scripts/window-uninstall.ps1` via `desktop/installer/resources/installer.nsh`).
+  The CI job now checks all three.
+
+### Changed
+
+- **New shortcut icon** — `themes/coop.ico` is now a pixel-art tile: the logo's lime
+  C and red dot on a navy square, drawn on a 16 px grid so it stays readable at
+  taskbar size (the spy fedora blurred into a blob at 16 and 32 px). Classic BMP
+  frames at 16, 24, 32, 48, 64 and 128 px plus a 256 px PNG frame. It is picked up
+  by the Desktop and Start Menu shortcuts, the coop window and the installer; run
+  `coop install` (or reinstall the window) to refresh existing shortcuts.
+
+### Fixed
+
+- The installed coop window (D1c) opens its first launch like the terminal
+  does: the Start menu once, and the welcome with the set-up card. Two causes
+  from the v0.30.0 acceptance on the client VM: the package starts `coop desktop`
+  with no console input, so the launch never counted as interactive and
+  `COOP_FIRST_RUN` was never set (`coop desktop` now treats every launch as
+  interactive, since a person is about to see the window; the onboarding line
+  goes out as the warning the set-up card reads); and the MCP adapter's long
+  connection report at start (the Warehouse endpoint answering 401 without an
+  Azure token) landed in the conversation as a report, which the renderer took
+  for conversation content and dropped the whole welcome, including the set-up
+  card, the example prompts and the first-run menu. Notices no longer count as
+  content, and before the conversation starts a notice that names a sign-in
+  joins the set-up card as the `az login` item with the raw text as its detail
+  (`desktop/renderer/welcome.mjs`, `desktop/renderer/app.mjs`,
+  `Set-CoopFirstRunLaunch -Window`).
+- Follow-ups from the SQ live acceptance on the client's dev Warehouse
+  (2026-10-03):
+  - The guardrails audit log records an approved Warehouse SQL write as
+    `Warehouse SQL write`, not `live read` (the scope word was already
+    `ddl-dml-destructive`).
+  - `coop onboard --platform <fabric|azure_sql|both>` on an onboarded machine now
+    switches the client platform without re-asking the integration questions
+    (the hint `coop doctor` and `coop install` print); a fresh machine still runs
+    onboarding with that answer.
+  - Fabric endpoint discovery for `fabric_sql_query` and `sql_impact` retries one
+    transient REST failure; sign-in and target errors are not retried.
+  - `tests/guardrails.test.mjs` counts the Power BI bridge's status read when the
+    real `powerbi-desktop` shim is on PATH (the guard then calls it through node).
+- `fabric-apps` skill: the scaffold step now gives the command that works from
+  PowerShell (`npx --yes @microsoft/create-rayfin@latest <app> --project-name <app>
+  --template todoapp`); the former `npm create ... -- --template` form lost the `--`
+  and the sample template is `todoapp`, not `todo` (found in the FA1 live check on
+  the client VM, 2026-10-04).
+
+## [0.30.0] — 2026-10-03
+
+### Added
+
 - The coop window's first minutes (desktop UX review, Aaron 2026-10-03, six
   items). **Set-up card**: a fresh machine's launch notices (no model sign-in,
   `coop onboard`, `az login`) are one card on the empty screen and one banner
@@ -61,6 +260,61 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- Guardrails: `git add <source> && git commit` (and `;`, newline, `git stage`,
+  `git rm`, `git mv`, `add -A`, `add .`, `add -u` forms) no longer passes the
+  never-commit-source gate on an empty or docs-only index. The gate now folds in
+  what the earlier staging segments of the same command put into the index, and
+  refuses a commit whose future index it cannot read (interactive and
+  `--pathspec-from-file` staging). Compound docs-only staging and commits still
+  work ([#282](https://github.com/kabukisensei/coop-agent/issues/282)).
+- Guardrails: a Warehouse write on a managed **production** target no longer
+  offers "Allow edits for this session" when its SQL happens not to contain the
+  word "prod". The session option now depends on the environment coop's own
+  managed-server config gives the Warehouse (dev or test only); production and
+  unresolved targets ask for every write, and the prompt says PRODUCTION
+  ([#283](https://github.com/kabukisensei/coop-agent/issues/283)).
+- Native SQL (`fabric_sql_query`, `sql_impact`) runs against the project contract
+  the session started with. The extension notes `.coop/project.yml` at session
+  start and compares it on every call; a contract edited mid-session (by hand or
+  `/setup-project`) gets `contract_changed` and connects nowhere until `/new` or a
+  restart, so the executor can never reach a target the guardrails' trusted
+  snapshot did not authorize
+  ([#284](https://github.com/kabukisensei/coop-agent/issues/284)).
+- `sql_impact` no longer presents an empty dependents list as "no dependents": a
+  successful `downstream` section carries its `coverage` (this database only,
+  dependents whose definitions the principal can read) and the tool text says
+  "none visible" with the reasons a dependent would be missing
+  ([#285](https://github.com/kabukisensei/coop-agent/issues/285)).
+- `coop update` re-reads the fleet plan after the checkout moves to the new
+  release, so one run converges Pi, the pipx tools and the npm tools to that
+  release's pins instead of leaving them one release behind when only the
+  manifest and the extension lock changed
+  ([#280](https://github.com/kabukisensei/coop-agent/issues/280)).
+- The coop window restarts Pi once per request: two overlapping Restart
+  requests (the palette reopened during the shutdown) used to each start a
+  replacement Pi, with the first running on unseen until the app quit. The main
+  process now coalesces them and starts nothing for a window closed meanwhile
+  (`desktop/lib/restart.mjs`,
+  [#286](https://github.com/kabukisensei/coop-agent/issues/286)).
+- The coop window keeps a refused draft whole: when Pi does not take a message,
+  the text and every attachment chip come back (ahead of anything attached
+  meanwhile, nothing doubled), and the image limits the RPC boundary enforces
+  (five images, 4 MB each, 8 MB together) are checked before the draft is
+  cleared, with a message that says which image to remove
+  (`desktop/renderer/draft.mjs`,
+  [#281](https://github.com/kabukisensei/coop-agent/issues/281)).
+- Master plan register and `AGENTS.md` reconciled with the shipped tags: rows
+  U1, N1, ST1, 11a, 15 and FA1 name the PR and the first tag that shipped them,
+  the Phase 0 rows say which VM receipts are not recorded instead of "pending",
+  and the `AGENTS.md` roadmap summary points at the register instead of
+  repeating volatile statuses
+  ([#278](https://github.com/kabukisensei/coop-agent/issues/278)).
+- Pi's built-in `/bug` can no longer upload a report or session transcript from a
+  coop session to Earendil's gateway (`radius.pi.dev`), which would have moved
+  client data to a third-party service. coop launches Pi with `PI_RADIUS_GATEWAY`
+  pointed at an unresolvable host, so the upload fails at once and Pi offers its
+  local "Export as Zip" instead; an explicit `PI_RADIUS_GATEWAY` in the
+  environment still wins. The launch-spec test checks it.
 - `sql_impact` lists a view's dependents on a Fabric Warehouse. The Warehouse
   rejects `sys.dm_sql_referencing_entities`, so every trace there reported
   `downstream` as unavailable (found in the SQ live acceptance on the client's dev

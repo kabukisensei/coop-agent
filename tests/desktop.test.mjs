@@ -26,9 +26,11 @@ import { consoleProcess } from "../desktop/lib/terminal.mjs";
 import { listFiles, rankFiles } from "../desktop/lib/files.mjs";
 import { PiSession, endLeftovers, killTree } from "../desktop/lib/pi-session.mjs";
 import { BUILTINS, KEYS, TERMINAL_ONLY, completions, parseInput } from "../desktop/renderer/commands.mjs";
-import { setupItems, setupSummary, EXAMPLES } from "../desktop/renderer/welcome.mjs";
+import { setupItems, setupItem, setupSummary, EXAMPLES } from "../desktop/renderer/welcome.mjs";
 import { parseConfirm, confirmLabels, parseQuestionSelect, parseQuestionMulti, multiAnswer } from "../desktop/renderer/dialogs.mjs";
 import { menuTemplate, notificationFor } from "../desktop/lib/menu.mjs";
+import { restartOnce } from "../desktop/lib/restart.mjs";
+import { imageBudgetProblem, imageBytes, restoreDraft } from "../desktop/renderer/draft.mjs";
 import { activitySummary, applyEvent, createTimeline, finishBash, loadMessages, startBash, toolSummary, turnOf, turns } from "../desktop/renderer/timeline.mjs";
 import { isSafeLink, parseMarkdown } from "../desktop/renderer/markdown.mjs";
 import { diffStats, parseEditDiff } from "../desktop/renderer/diff.mjs";
@@ -194,6 +196,14 @@ await check("replay: every recorded event type and extension request is one the 
   for (const method of UI_METHODS) assert.ok(app.includes(`"${method}"`) || main.includes(`"${method}"`), `no handler names ${method}`);
 });
 
+await check("theme: the native title bar and menu bar follow the chosen theme", () => {
+  const main = readFileSync(join(ROOT, "desktop", "main.mjs"), "utf8");
+  assert.match(main, /nativeTheme\.themeSource = theme === "auto" \? "system" : theme\.endsWith\("-dark"\) \? "dark" : "light"/, "themeSource maps auto/dark/light");
+  assert.ok(main.includes("applyNativeTheme(settings.theme);"), "applied at start, before any window opens");
+  // Every place a theme is chosen (the IPC handler and the menu) applies it natively.
+  assert.equal((main.match(/applyNativeTheme\(theme\);/g) || []).length, 2, "the IPC theme handler and the menu both apply it");
+});
+
 function replay() {
   const tl = createTimeline();
   const bash = new Map();
@@ -313,6 +323,26 @@ await check("welcome: set-up items come from the sign-in flag and the launch not
   for (const example of EXAMPLES) { assert.ok(example.label.length <= 40); assert.ok(example.prompt.length > 20); }
 });
 
+await check("welcome: the MCP adapter's 401 report is the Azure sign-in item, and a start notice never hides the welcome", () => {
+  // What the window showed on the VM (D1c acceptance, 2026-10-03): the adapter's
+  // report when the Warehouse endpoint answers 401 without a token.
+  const report = "MCP: Failed to connect to fabric-sqlendpoint: HTTP request headers command timed out after 10000ms — probe: endpoint returned application/json (401) — authentication may be required; MCP endpoint shape could not be determined";
+  const item = setupItem(report);
+  assert.equal(item.id, "azure");
+  assert.equal(item.command, "az login");
+  assert.equal(item.detail, report);
+  assert.equal(setupItem("   "), null);
+  assert.equal(setupItem("Standards wiki offline; using the bundled copy").command, "");
+  assert.deepEqual(setupItems({ notices: [report, "Fabric Warehouse MCP unavailable: Azure authentication is required; run az login"] }).map((i) => i.id), ["azure"]);
+  // The renderer decides "conversation has content" by prompts and answers, not
+  // by notices, so a report Pi posts at start leaves the welcome and the
+  // first-run Start menu alone.
+  const app = readFileSync(join(ROOT, "desktop", "renderer", "app.mjs"), "utf8");
+  assert.ok(app.includes("function conversationEmpty()"), "app.mjs has conversationEmpty");
+  assert.ok(!/tl\.items\.length/.test(app), "app.mjs never gates the welcome on the raw item count");
+  assert.ok(/firstRun && app\.running && conversationEmpty\(\)/.test(app), "the first-run Start menu checks conversationEmpty");
+});
+
 await check("dialogs: a guardrails confirm becomes blocks, a question and verb buttons", () => {
   const message = "Destructive command (rm -rf):\n  rm -rf build\nRun it?";
   assert.deepEqual(parseConfirm(message), { blocks: [{ kind: "text", text: "Destructive command (rm -rf):" }, { kind: "code", text: "rm -rf build" }], question: "Run it?" });
@@ -349,6 +379,61 @@ await check("dialogs: ask_user_question's RPC select and multi-select are read i
   assert.equal(multiAnswer(new Set([3, 1]), ""), "1,3");
   assert.equal(multiAnswer(new Set([1]), " my own answer "), "my own answer");
   assert.equal(multiAnswer(new Set(), ""), "");
+});
+
+await check("restart: overlapping requests share one restart, a closed window starts nothing (#286)", async () => {
+  // Two requests while the old Pi is still stopping: both callers get the same
+  // result and exactly one successor starts.
+  let release;
+  const stopped = new Promise((resolve) => { release = resolve; });
+  const started = [];
+  const state = { restarting: null, destroyed: false };
+  const run = async () => {
+    await stopped;
+    if (state.destroyed) return { success: false, error: "closed" };
+    started.push(Date.now());
+    return { success: true };
+  };
+  const first = restartOnce(state, run);
+  const second = restartOnce(state, run);
+  assert.equal(second, first, "the second request rides the first restart");
+  assert.ok(state.restarting, "an in-flight restart is visible on the state");
+  release();
+  assert.deepEqual([await first, await second], [{ success: true }, { success: true }]);
+  assert.equal(started.length, 1, "one successor");
+  assert.equal(state.restarting, null, "cleared once settled");
+  // A normal retry after it settled runs again; a window closed during the
+  // shutdown gets a refusal instead of a Pi nobody will see.
+  await restartOnce(state, run);
+  assert.equal(started.length, 2);
+  state.destroyed = true;
+  assert.deepEqual(await restartOnce(state, run), { success: false, error: "closed" });
+  assert.equal(started.length, 2);
+  // A failed restart clears the flag too, so the next request is not stuck.
+  await assert.rejects(restartOnce(state, async () => { throw new Error("spawn failed"); }), /spawn failed/);
+  assert.equal(state.restarting, null);
+});
+
+await check("draft: image limits are checked before a send; a refused send keeps text and attachments (#281)", () => {
+  const limits = { images: 5, imageBytes: 4 * 1024 * 1024, imageTotalBytes: 8 * 1024 * 1024 };
+  const image = (mib, name = "pic.png") => ({ kind: "image", name, data: "A".repeat(Math.ceil(mib * 1024 * 1024 * 4 / 3)), mimeType: "image/png" });
+  assert.equal(imageBytes(image(3)) >= 3 * 1024 * 1024, true);
+  assert.equal(imageBudgetProblem([image(3), image(3)], limits), null, "two 3 MB images fit");
+  // Three individually valid 3 MB images: the count and each size pass, the
+  // total does not, and the message says what to do.
+  assert.match(imageBudgetProblem([image(3), image(3), image(3)], limits), /add up to 9 MB[\s\S]*8 MB of images at most/);
+  assert.match(imageBudgetProblem([image(5, "big.png")], limits), /big\.png is over 4 MB/);
+  assert.match(imageBudgetProblem(Array(6).fill(image(0.1)), limits), /5 images at most/);
+  assert.equal(imageBudgetProblem([{ kind: "text", name: "a.sql", ref: "a.sql" }], limits), null, "documents are not images");
+  // A refused send: the full text and every attachment chip come back, so the
+  // person removes one image and sends again; nothing attached meanwhile is lost
+  // and nothing is doubled.
+  const a = image(3, "a.png"), b = image(3, "b.png"), doc = { kind: "text", name: "notes.md", ref: "notes.md" };
+  assert.deepEqual(restoreDraft({ text: "", attachments: [] }, { text: "compare these", attachments: [a, b, doc] }), { text: "compare these", attachments: [a, b, doc] });
+  const c = image(1, "c.png");
+  const merged = restoreDraft({ text: "typed meanwhile", attachments: [c] }, { text: "compare these", attachments: [a, b] });
+  assert.deepEqual(merged, { text: "typed meanwhile", attachments: [a, b, c] });
+  assert.deepEqual(restoreDraft({ text: "", attachments: [a] }, { text: "x", attachments: [a, b] }).attachments, [a, b], "an attachment is never doubled");
 });
 
 await check("menu: the template runs window actions, themes are radios, notifications name the event", () => {

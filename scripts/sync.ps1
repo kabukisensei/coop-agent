@@ -105,14 +105,13 @@ if ($desktopState -eq 'stale') {
 
 # --- 5. MCP config — manifest-pinned, ownership-aware, non-destructive --------
 # pi-mcp-adapter 3.x reads mcp-adapter.json; the generator migrates an old mcp.json.
+# The Warehouse target follows the folder sync runs in; every launch rewrites it
+# for its own folder (Update-CoopManagedMcpConfig), so sync's choice is not final.
 $MCP_DST = Join-Path $PI_AGENT 'mcp-adapter.json'
-$mcpPy = Get-CoopPython
-if ($mcpPy) {
-  & $mcpPy (Join-Path $script:CoopRoot 'lib\mcp_config.py') --config (Get-CoopConfigFile) --output $MCP_DST
-  if ($LASTEXITCODE -eq 0) { Coop-Ok "generated manifest-pinned MCP config -> $MCP_DST" }
-  else { Coop-Warn 'could not generate MCP config — run: coop onboard --edit, then coop sync' }
-} else {
-  Coop-Warn 'python missing — cannot generate MCP config'
+switch (Update-CoopManagedMcpConfig -OutputPath $MCP_DST) {
+  'ok' { Coop-Ok "generated manifest-pinned MCP config -> $MCP_DST" }
+  'no_python' { Coop-Warn 'python missing — cannot generate MCP config' }
+  default { Coop-Warn 'could not generate MCP config — run: coop onboard --edit, then coop sync' }
 }
 
 # --- 5b. Team knowledge (optional; fail-soft — never blocks sync) -------------

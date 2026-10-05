@@ -415,6 +415,9 @@ print("resume verdict contract OK")
     # #165: MCP comes only from coop's agent-dir mcp-adapter.json, never a repo's .mcp.json.
     if ($jsonData.env.PI_MCP_CONFIG_MODE -eq 'exclusive') { Ok "launch spec pins MCP config to coop's agent dir (PI_MCP_CONFIG_MODE=exclusive)" }
     else { Ko 'launch spec does not set PI_MCP_CONFIG_MODE=exclusive' }
+    # Client data isolation: Pi's /bug upload must never reach radius.pi.dev from a coop session.
+    if ($jsonData.env.PI_RADIUS_GATEWAY -eq 'https://radius.coop.invalid') { Ok 'launch spec blocks the Pi /bug upload (PI_RADIUS_GATEWAY points at an unresolvable host)' }
+    else { Ko "launch spec does not block the Pi /bug upload (PI_RADIUS_GATEWAY='$($jsonData.env.PI_RADIUS_GATEWAY)')" }
   } catch { Ko "--no-launch --json update-policy check failed: $_" }
 
   # --- 2b. coop web is retired (S5): it warns and starts the terminal agent ----
@@ -601,10 +604,12 @@ print("resume verdict contract OK")
     @{ Name = 'extensions-lock';        Lane = 'gate';     Head = 'extension lockfile applied through the helpers (#152)' },
     @{ Name = 'team-skills';            Lane = 'gate';     Head = 'team knowledge skills launch slot (launch-spec --json)' },
     @{ Name = 'desktop-spec';           Lane = 'gate';     Head = 'coop desktop: the window''s launch spec and runtime state (D1b)' },
+    @{ Name = 'desktop-bundle';         Lane = 'gate';     Head = 'coop window package: the bundled Node, Pi and extension tree (D1d)' },
     @{ Name = 'staleness';              Lane = 'gate';     Head = 'repo staleness nudge (throttled fetch + behind-count)' },
     @{ Name = 'coop-unit';              Lane = 'gate';     Head = 'Coop-Unit: the 5.1 job persistence path, and a job that returns nothing is re-run in-process' },
     @{ Name = 'doctor-project';         Lane = 'gate';     Head = 'doctor.ps1 project contract rows' },
     @{ Name = 'first-run';              Lane = 'gate';     Head = 'first-run launcher continuation (onboarding gate)' },
+    @{ Name = 'mcp-retarget';           Lane = 'gate';     Head = 'managed Warehouse MCP entry follows the launch folder' },
     @{ Name = 'profile-root';           Lane = 'gate';     Head = 'one profile root: COOP_DIR parent of .coop, one agent-dir chain (S3, #220)' },
     @{ Name = 'sync-knowledge';         Lane = 'gate';     Head = 'team knowledge sync (sync-knowledge.ps1; hang cases in the extended lane)' },
     @{ Name = 'teamai';                 Lane = 'gate';     Head = 'coop teamai: isolated TeamAI adapter entry (K1; off by default)' },
@@ -613,7 +618,8 @@ print("resume verdict contract OK")
     @{ Name = 'doctor';                 Lane = 'extended'; Head = 'doctor.ps1 MCP mode, az preflight, login and fleet rows' },
     @{ Name = 'inventory';              Lane = 'extended'; Head = 'truthful inventory (doctor pipx probes / sync postconditions)' },
     @{ Name = 'profile-redirect';       Lane = 'gate';     Head = 'install shortcuts and user PATH follow a redirected profile (isolated install)' },
-    @{ Name = 'pi-busy-guard';          Lane = 'gate';     Head = 'install/update busy guard counts only this install''s Pi sessions (#234)' })
+    @{ Name = 'pi-busy-guard';          Lane = 'gate';     Head = 'install/update busy guard counts only this install''s Pi sessions (#234)' },
+    @{ Name = 'extension-tree-lock';    Lane = 'gate';     Head = 'one writer for the extension tree (sync vs. the window''s first launch; the live-holder case runs in the extended lane)' })
   foreach ($fx in $fixtures) {
     if ($fx.Lane -eq 'extended' -and -not $extendedLane) { continue }
     Head $fx.Head

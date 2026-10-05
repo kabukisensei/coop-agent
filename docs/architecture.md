@@ -202,7 +202,8 @@ for the Node tools and extensions; no script builds these paths inline.
 
 7. **Approval-gated MCP servers** (all optional; `coop` runs without them). Generated as
    manifest-pinned, COOP-managed entries in coop's isolated agent dir
-   (`~/.coop/agent/mcp-adapter.json`) by `coop onboard` / `coop sync`:
+   (`~/.coop/agent/mcp-adapter.json`) by `coop onboard` / `coop sync`, and
+   re-targeted at every launch to the contract above the folder coop starts in:
    - `fabric` — `@microsoft/fabric-mcp` (AzureCliCredential).
    - `powerbi-modeling-mcp` — `@microsoft/powerbi-modeling-mcp --start --readwrite
      --accept-eula`, the only Power BI MCP. Reads run freely; the guardrail classifies
@@ -241,15 +242,35 @@ for the Node tools and extensions; no script builds these paths inline.
    (`desktop/installer/electron-builder.cjs`, staged by
    `desktop/scripts/build-installer.mjs`: `desktop/`, the `lib/*.mjs` modules it
    imports, the vibes, the splash and the icon in an asar, pdf.js and its reader
-   script unpacked beside it, the September fuse policy applied). Started from
-   its shortcut it has no spec, so it finds the terminal's `coop.cmd` the way
-   `bin/coop-desktop.ps1` does and runs `coop desktop --app <its exe>`
-   (`desktop/lib/bootstrap.mjs`); coop.ps1 starts the exe again with the spec,
+   script unpacked beside it, the September fuse policy applied). Since D1d it
+   also carries, as electron-builder `extraResources`, `resources\runtime`
+   (the pinned Node from nodejs.org, `desktop.node` in the manifest, without
+   the zip's `npm.ps1`/`npx.ps1` so PowerShell's `& npm` reaches `npm.cmd`; an
+   npm prefix with Pi and the manifest's npm tools; the extension tree installed
+   from `config/extensions-lock.json`, both trees pruned of type declarations,
+   `dist-types` and source maps; and `coop-runtime.json` describing them)
+   and `resources\coop`, a snapshot of this repository without tests, desktop
+   sources and history. Started from its shortcut it has no spec, so it runs the
+   bundled `coop desktop --app <its exe>` (`desktop/lib/bootstrap.mjs`, falling
+   back to a terminal `coop.cmd`); coop.ps1 starts the exe again with the spec,
    and that process hands it to the first through Electron's single-instance
-   lock. Child processes cannot read an asar, so the package runs the standards
-   reader on the terminal's checkout. `coop.exe --doctor` prints one JSON line
-   and exits; the `installer (Windows)` CI job builds the installer, installs it
-   silently, runs that and uninstalls (`desktop/scripts/verify-installer.mjs`). What only the terminal can show (model sign-in, `custom()` screens,
+   lock. The bundled coop.ps1 detects the runtime by location
+   (`Initialize-CoopBundledRuntime` in `lib/common.ps1`, override
+   `COOP_BUNDLED_RUNTIME`): it prepends the Node dir and the npm prefix to
+   `PATH`, sets `npm_config_prefix`, runs `scripts/install.ps1` in the console
+   on the first launch while the extension lock is pending, and
+   `Sync-CoopExtensionFleet` seeds `~/.coop/agent` from the bundled tree
+   (`Restore-CoopBundledExtensions`) instead of running `npm ci`. Child
+   processes cannot read an asar, so the package runs the standards reader on
+   the bundled snapshot. `coop.exe --doctor` prints one JSON line and exits; the
+   `installer (Windows)` CI job builds the installer, installs it silently, runs
+   that, runs the bundled `coop.ps1 version`, checks that PowerShell's `& npm`
+   answers from the bundled `npm.cmd` and that every bundled path fits Windows'
+   limit, and uninstalls (`desktop/scripts/verify-installer.mjs`). The
+   uninstaller's `customUnInstall` (`desktop/installer/resources/installer.nsh`)
+   runs the snapshot's `scripts/window-uninstall.ps1`, which removes the `coop`
+   link and "coop" shortcuts the first launch wrote only when they point into
+   the package. What only the terminal can show (model sign-in, `custom()` screens,
    `/trust`) opens the same session in a terminal; `desktop/PARITY.md` maps every
    Pi command, keybinding and extension command, and `tests/desktop.test.mjs`
    checks it against a recorded session.

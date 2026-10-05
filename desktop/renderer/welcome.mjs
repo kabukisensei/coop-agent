@@ -6,7 +6,11 @@
 /** How a launch notice from coop.ps1 is read: what to run, and where. */
 const NOTICE_RULES = [
   { test: /onboarding is incomplete/i, id: "onboard", command: "coop onboard", text: "Your COOP profile (name, client platform) is not set up yet." },
-  { test: /az login|azure (cli )?(authentication|sign-in|login)/i, id: "azure", command: "az login", text: "Azure sign-in is missing, so Fabric Warehouse queries are off." },
+  // The launch's own line ("Fabric Warehouse MCP unavailable: Azure authentication
+  // is required; run az login") and the MCP adapter's report when the Warehouse
+  // endpoint answers 401 without a token ("Failed to connect to fabric-sqlendpoint:
+  // ... authentication may be required ...") are the same missing sign-in.
+  { test: /az login|azure (cli )?(authentication|sign-in|login)|fabric-sqlendpoint|fabric warehouse mcp|authentication (may be|is) required/i, id: "azure", command: "az login", text: "Azure sign-in is missing or expired, so Fabric Warehouse queries are off." },
   { test: /\/login|model sign-in|no stored (provider )?credential/i, id: "login", command: "/login", text: "No model sign-in yet." },
 ];
 
@@ -22,13 +26,24 @@ export function setupItems({ loginPresent = true, notices = [] } = {}) {
   const add = (item) => { if (!seen.has(item.id)) { seen.add(item.id); items.push(item); } };
   if (loginPresent === false) add({ id: "login", text: "No model sign-in yet. coop cannot answer until you sign in once.", command: "/login", detail: "" });
   for (const raw of notices) {
-    const text = String(raw || "").trim();
-    if (!text) continue;
-    const rule = NOTICE_RULES.find((r) => r.test.test(text));
-    if (rule) add({ id: rule.id, text: rule.text, command: rule.command, detail: text });
-    else add({ id: `notice:${text.slice(0, 80)}`, text, command: "", detail: "" });
+    const item = setupItem(raw);
+    if (item) add(item);
   }
   return items;
+}
+
+/**
+ * One notice as a set-up item: a known one gets its command and keeps the
+ * raw text as the detail; any other becomes a plain item. null for an empty
+ * notice. A notice Pi sends later (the MCP adapter's connection report) goes
+ * through here too, so a missing sign-in reads the same whenever it arrives.
+ */
+export function setupItem(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return null;
+  const rule = NOTICE_RULES.find((r) => r.test.test(text));
+  if (rule) return { id: rule.id, text: rule.text, command: rule.command, detail: text };
+  return { id: `notice:${text.slice(0, 80)}`, text, command: "", detail: "" };
 }
 
 /** One line for the banner above the conversation. */

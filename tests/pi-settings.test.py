@@ -104,4 +104,30 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     assert off.read_bytes() == before
     print("  PASS a deliberate off mode is respected")
 
-print("  8 Pi settings tests passed")
+    # ensure-packages (master plan D1d): the window package ships the extension
+    # tree installed, so the `npm:<name>@<pin>` entries `pi install` would write
+    # are declared here; other entries and settings stay.
+    packaged = tmp / "packaged.json"
+    packaged.write_text(json.dumps({"packages": ["npm:pi-mcp-adapter@3.2.0", "git:github.com/x/y@v1"], "quietStartup": True}))
+    result = subprocess.run(
+        [sys.executable, str(HELPER), "ensure-packages", str(packaged), "npm:pi-mcp-adapter@3.3.0", "npm:@juicesharp/rpiv-ask-user-question@2.12.0"],
+        text=True, capture_output=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(packaged.read_text()) == {
+        "packages": ["npm:pi-mcp-adapter@3.3.0", "git:github.com/x/y@v1", "npm:@juicesharp/rpiv-ask-user-question@2.12.0"],
+        "quietStartup": True,
+    }
+    print("  PASS ensure-packages replaces a package's pin in place, appends the missing ones, keeps the rest")
+    before = packaged.stat().st_mtime_ns
+    result = subprocess.run(
+        [sys.executable, str(HELPER), "ensure-packages", str(packaged), "npm:pi-mcp-adapter@3.3.0", "npm:@juicesharp/rpiv-ask-user-question@2.12.0"],
+        text=True, capture_output=True, check=False,
+    )
+    assert result.returncode == 0 and packaged.stat().st_mtime_ns == before
+    print("  PASS ensure-packages leaves a converged file untouched")
+    result = subprocess.run([sys.executable, str(HELPER), "ensure-packages", str(packaged), "pi-mcp-adapter"], text=True, capture_output=True, check=False)
+    assert result.returncode == 2 and "not an npm package pin" in result.stderr
+    print("  PASS ensure-packages refuses an entry without npm: and a pin")
+
+print("  11 Pi settings tests passed")

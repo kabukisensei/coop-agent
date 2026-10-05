@@ -148,12 +148,15 @@ if (Test-Path -LiteralPath $desktopDir) {
 if ($KEEP_TOOLS) {
   Coop-Info 'kept pi + the pipx tools (--keep-tools)'
 } else {
-  $globals = if (Test-Have 'npm') { (& npm ls -g --depth=0 2>$null | Out-String) } else { '' }
+  # The window package's Pi and npm tools live inside the package (D1d);
+  # Add or remove programs removes them with it, never npm here.
+  $globals = if ((Test-Have 'npm') -and -not (Test-CoopBundledRuntime)) { (& npm ls -g --depth=0 2>$null | Out-String) } else { '' }
+  if (Test-CoopBundledRuntime) { Coop-Info 'pi and the Power BI tools are part of the coop window package: remove it from Add or remove programs' }
   if ($globals -match [regex]::Escape($PI_NPM_PACKAGE)) {
     & npm uninstall -g $PI_NPM_PACKAGE *> $null
     if ($LASTEXITCODE -eq 0) { Coop-Ok "removed pi ($PI_NPM_PACKAGE)" }
     else { Coop-Warn "could not npm-uninstall pi — remove by hand: npm uninstall -g $PI_NPM_PACKAGE" }
-  } else {
+  } elseif (-not (Test-CoopBundledRuntime)) {
     Coop-Info 'pi not installed via npm globally (nothing to remove)'
   }
   if (Test-Have 'pipx') {

@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld("coop", Object.freeze({
   changeDiff: (path) => ipcRenderer.invoke("coop:change-diff", String(path || "")),
   standards: () => ipcRenderer.invoke("coop:standards"),
   standardsText: (domain) => ipcRenderer.invoke("coop:standards-text", String(domain || "")),
+  knowledgeNote: (source, path) => ipcRenderer.invoke("coop:knowledge-note", String(source || ""), String(path || "")),
   projectLoad: () => ipcRenderer.invoke("coop:project-load"),
   projectPreview: (input) => ipcRenderer.invoke("coop:project-preview", input),
   projectSave: (input, token) => ipcRenderer.invoke("coop:project-save", input, token),

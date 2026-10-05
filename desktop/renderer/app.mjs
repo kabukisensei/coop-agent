@@ -15,8 +15,9 @@ import { makeResizer, sidebarMaxWidth } from "./resize.mjs";
 import { attachmentNote } from "./attach-note.mjs";
 import { widgetView } from "./widgets.mjs";
 import { COLLAPSE_KEY, TODO_TOOL, applyTodoResult, createTodos, startTurn, todoLines, todosFromMessages } from "./todos.mjs";
-import { setupItems, setupSummary, EXAMPLES } from "./welcome.mjs";
+import { setupItems, setupItem, setupSummary, EXAMPLES } from "./welcome.mjs";
 import { parseConfirm, confirmLabels, parseQuestionSelect, parseQuestionMulti, multiAnswer } from "./dialogs.mjs";
+import { imageBudgetProblem, restoreDraft } from "./draft.mjs";
 
 const coop = window.coop;
 const $ = (id) => document.getElementById(id);
@@ -176,6 +177,16 @@ function onUiRequest(request) {
       const level = ["info", "warning", "error"].includes(request.notifyType) ? request.notifyType : "info";
       const text = clean(request.message).trim();
       if (!text) break;
+      // Before the conversation starts, a notice that names a set-up step
+      // (the MCP adapter reporting the Warehouse endpoint's 401, for one) joins
+      // the set-up card with its command instead of landing as a raw report.
+      if (conversationEmpty()) {
+        const item = setupItem(text);
+        if (item && item.command) {
+          if (!app.setup.some((known) => known.id === item.id)) { app.setup.push(item); renderSetup(); }
+          break;
+        }
+      }
       // Reports (several lines, like /mcp or /ctx-stats) go in the conversation,
       // where the terminal prints them too; one-liners are toasts.
       if (text.includes("\n") || text.length > 200) redraw(notice(app.tl, level, text, { markdown: true }));
@@ -328,7 +339,7 @@ function flush() {
   }
   app.dirty.clear();
   renderEmpty();
-  if (app.setup.length && app.tl.items.length && !app.setupBannerShown) renderSetup();
+  if (app.setup.length && !conversationEmpty() && !app.setupBannerShown) renderSetup();
   if (stick) box.scrollTop = box.scrollHeight;
   if (app.finder) app.finder.refresh();
 }
@@ -388,12 +399,23 @@ function vibeLine() {
   return el("div", { class: "vibe" }, el("span", { class: "vibe-mark", "aria-hidden": "true", text: "\u2b21" }), el("span", { text: app.vibe }));
 }
 
+/**
+ * Whether the conversation has no content yet: no prompt sent, no answer. A
+ * notice Pi posted on its own (an MCP connection report at start) is not
+ * content, so it never takes the welcome, the set-up card or the first-run
+ * Start menu away.
+ */
+function conversationEmpty() {
+  return !app.tl.items.some((item) => item.kind !== "notice");
+}
+
 /** The splash on an empty conversation: the logo, wordmark, tagline and a vibe, as the terminal opens. */
 function renderEmpty({ fresh = false } = {}) {
   const box = $("timeline");
   const empty = box.querySelector(".empty");
-  if (app.tl.items.length) { if (empty) empty.remove(); return; }
-  if (empty && !fresh) return;
+  if (!conversationEmpty()) { if (empty) empty.remove(); return; }
+  // The welcome stays below any notice already drawn.
+  if (empty && !fresh) { box.append(empty); return; }
   if (empty) empty.remove();
   const art = app.info && app.info.splash && app.info.splash.width ? splashArt(app.info.splash) : null;
   const start = el("button", { type: "button", class: "btn primary", text: "Open the Start menu", onclick: () => sendPrompt("/start") });
@@ -447,7 +469,7 @@ function renderSetup() {
   const banner = $("banner");
   if (!app.setup.length) { if (banner.className.includes("setup")) banner.hidden = true; renderEmpty({ fresh: true }); return; }
   renderEmpty({ fresh: true });
-  if (!app.tl.items.length) { banner.hidden = true; return; }
+  if (conversationEmpty()) { banner.hidden = true; return; }
   app.setupBannerShown = true;
   showBanner("warning setup", setupSummary(app.setup), [
     { label: "Show set-up", kind: "primary", onClick: () => openModal({ title: "Set-up", body: setupCard(), wide: true, buttons: [{ label: "Close", kind: "primary" }] }) },
@@ -505,16 +527,22 @@ function pushHistory(text) {
 }
 
 async function sendPrompt(text, { followUp = false } = {}) {
-  const images = app.attachments.filter((file) => file.kind === "image").map((image) => ({ type: "image", data: image.data, mimeType: image.mimeType }));
-  const input = { type: "prompt", message: text + attachmentNote(app.attachments) };
+  const attachments = app.attachments;
+  const images = attachments.filter((file) => file.kind === "image").map((image) => ({ type: "image", data: image.data, mimeType: image.mimeType }));
+  const input = { type: "prompt", message: text + attachmentNote(attachments) };
   if (images.length) input.images = images;
   if (app.tl.busy) input.streamingBehavior = followUp ? "followUp" : "steer";
   pushHistory(text);
   clearPrompt();
   const result = await cmd(input);
   if (!result.success) {
+    // The draft comes back whole (#281): the text unless something new was typed,
+    // and every attachment ahead of anything attached meanwhile.
     toast(`coop did not take that message: ${result.error || "unknown error"}`, "error");
-    if (!prompt().value) setPrompt(text);
+    const draft = restoreDraft({ text: prompt().value, attachments: app.attachments }, { text, attachments });
+    if (draft.text !== prompt().value) setPrompt(draft.text);
+    app.attachments = draft.attachments;
+    renderAttachments();
   }
 }
 
@@ -523,6 +551,10 @@ async function submit({ followUp = false } = {}) {
   if (!text.trim() && !app.attachments.length) return;
   if (!app.running) { toast("coop is not running in this window. Restart it first.", "warning"); return; }
   if (app.attachments.some((file) => file.kind === "pending")) { toast("Still reading an attached file; one moment.", "info"); return; }
+  // The same image limits the RPC boundary enforces, checked before the draft
+  // is cleared (#281); the boundary still enforces them.
+  const budget = imageBudgetProblem(app.attachments, attachLimits());
+  if (budget) { toast(budget, "warning"); return; }
   const parsed = parseInput(text);
   // /coop-vibe <set> changes Pi's pool in the terminal; the window's own pool follows.
   const vibe = /^\/coop-vibe(?:\s+(\S+))?\s*$/.exec(text.trim());
@@ -695,7 +727,15 @@ function readImage(file) {
 }
 
 function attachLimits() {
-  return (app.info && app.info.attachLimits) || { perMessage: 10, images: 5 };
+  return (app.info && app.info.attachLimits) || { perMessage: 10, images: 5, imageBytes: 4 * 1024 * 1024, imageTotalBytes: 8 * 1024 * 1024 };
+}
+
+/** Add an image to the draft when it fits the image budget; otherwise say why. */
+function addImage(image) {
+  const problem = imageBudgetProblem([...app.attachments, image], attachLimits());
+  if (problem) { toast(problem, "warning"); return false; }
+  app.attachments.push(image);
+  return true;
 }
 
 function modelReadsImages() {
@@ -720,7 +760,7 @@ async function addImages(files) {
   for (const file of files) {
     if (!roomFor("image")) break;
     const image = await readImage(file);
-    if (image) app.attachments.push({ kind: "image", ...image });
+    if (image && !addImage({ kind: "image", name: file.name, ...image })) break;
   }
   renderAttachments();
 }
@@ -740,7 +780,12 @@ async function addPaths(paths) {
     if (result.success) {
       const file = result.data;
       if (file.kind === "image") file.url = `data:${file.mimeType};base64,${file.data}`;
-      app.attachments.splice(index, 1, file);
+      app.attachments.splice(index, 1);
+      if (file.kind === "image") {
+        if (!addImage(file)) { if (file.id) coop.forgetAttachment(file.id); }
+      } else {
+        app.attachments.push(file);
+      }
     } else {
       app.attachments.splice(index, 1);
       toast(result.error || `${pending.name} could not be attached.`, "warning");
@@ -950,6 +995,14 @@ async function openTerminal(hint) {
 }
 
 async function restart() {
+  // One restart at a time (#286): the main process coalesces overlapping
+  // requests; the window just does not reset its view twice.
+  if (app.restarting) { toast("coop is already restarting.", "info"); return; }
+  app.restarting = true;
+  try { await restartNow(); } finally { app.restarting = false; }
+}
+
+async function restartNow() {
   $("banner").hidden = true;
   app.setup = [];
   renderEmpty({ fresh: true });
@@ -1454,7 +1507,7 @@ async function boot() {
   await refreshAll();
   renderSetup();
   // The first launch on this profile opens the Start menu, as the terminal does.
-  if (app.info.firstRun && app.running && !app.tl.items.length && app.info.loginPresent !== false) sendPrompt("/start");
+  if (app.info.firstRun && app.running && conversationEmpty() && app.info.loginPresent !== false) sendPrompt("/start");
   prompt().focus();
 }
 
