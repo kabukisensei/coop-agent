@@ -30,7 +30,7 @@ readable in one place.
 
 | Component | Pin | Copyright | License | Terms coop honors |
 | --- | --- | --- | --- | --- |
-| `@microsoft/powerbi-modeling-mcp` and `@microsoft/powerbi-modeling-mcp-win32-x64` (Microsoft Power BI Authoring MCP Server, named "Power BI Modeling MCP" in coop's docs) | 1.0.0 | Copyright (c) Microsoft Corporation | MIT in the package, plus the **Microsoft Software License Terms – Microsoft Power BI Authoring MCP Server** EULA the server requires before any tool runs (https://go.microsoft.com/fwlink/?LinkId=2381247, text in the repository's `EULA.txt`) | See "Microsoft terms" below: EULA acceptance, no redistribution (section 2(e)), keep Microsoft's notices (2(c)), telemetry (3(a)); the package's `NOTICE.txt` is the notices file section 1(b) refers to. |
+| `@microsoft/powerbi-modeling-mcp` and `@microsoft/powerbi-modeling-mcp-win32-x64` (Microsoft Power BI Authoring MCP Server, named "Power BI Modeling MCP" in coop's docs) | 1.0.0 | Copyright (c) Microsoft Corporation | MIT in the package (`LICENSE`), plus the **Microsoft Software License Terms – Microsoft Power BI Authoring MCP Server** EULA the server requires before any tool runs (https://go.microsoft.com/fwlink/?LinkId=2381247, text in the repository's `EULA.txt`) | See "Microsoft terms" below: Cooptimize treats the package's MIT file as the license that governs its copy (Aaron, 2026-10-05), so the window installer keeps bundling it with `LICENSE` and `NOTICE.txt` in place (section 2(c)); EULA acceptance at launch; telemetry (3(a)). |
 | `@microsoft/powerbi-report-authoring-cli` (`powerbi-report-author`) | 0.4.0 | Copyright (c) Microsoft Corporation | MIT; `NOTICE` lists its third-party components | Keep `LICENSE` and `NOTICE` in redistributed copies; Microsoft trademarks used descriptively only. |
 | `@microsoft/powerbi-desktop-bridge-cli` (`powerbi-desktop`) | 1.0.0 | Copyright (c) Microsoft Corporation | MIT; `NOTICE` lists its third-party components | As above. |
 | `@microsoft/fabric-mcp` (Fabric MCP server) | 1.4.0 | Copyright 2025 (c) Microsoft Corporation | MIT | Launched, not redistributed. Its README states it may send usage telemetry to Microsoft; see "Microsoft terms". |
@@ -50,7 +50,7 @@ readable in one place.
 | Node.js | 22.19.0 | Node.js contributors (OpenJS Foundation) | MIT, with the composite `LICENSE` of its bundled dependencies (ICU, OpenSSL, zlib, npm, V8 and others) | Redistributed whole in the window installer; `runtime/node/LICENSE` ships with it. |
 | Electron | 44.5.1 | Copyright (c) Electron contributors; Copyright (c) 2013-2020 GitHub Inc. | MIT, plus Chromium's third-party licenses (`LICENSES.chromium.html`) | Redistributed; electron-builder places `LICENSE.electron.txt` and `LICENSES.chromium.html` in the app folder. |
 | pdfjs-dist (pdf.js) | 6.3.289 | Mozilla Foundation | Apache-2.0, with the component licenses the package ships (Foxit and Liberation fonts, OpenJPEG, JBIG2, qcms, cmaps, ICC profiles) | Redistributed unpacked; every `LICENSE*` file ships with it. |
-| `microsoft/skills` (`kql`, `microsoft-docs`) | commit `3495f50ae0d7b69dcb19c6922db9f80aab6cf79c` | Copyright (c) Microsoft Corporation | MIT | Copied into the agent dir by `coop sync`; the repository's root LICENSE is the notice (issue #307 copies it into each generation). |
+| `microsoft/skills` (`kql`, `microsoft-docs`) | commit `3495f50ae0d7b69dcb19c6922db9f80aab6cf79c` | Copyright (c) Microsoft Corporation | MIT | Copied into the agent dir by `coop sync`; the repository's root LICENSE is the notice (the repository's root LICENSE is the notice; #307 parked). |
 | `microsoft/skills-for-fabric` | v0.3.18, commit `6c11ad58c25992e5d1435ce7cd80d217d5598a31` | Copyright (c) 2026 Microsoft Corporation | MIT | As above. |
 | ODBC Driver 18 for SQL Server | winget, not pinned | Microsoft Corporation | Microsoft EULA, presented by winget | coop installs it only after the user answers "Install Microsoft ODBC Driver 18 for SQL Server and accept its license?" (`lib/common.ps1`), then passes `--accept-package-agreements`. |
 | Azure CLI, Tabular Editor CLI | not pinned | Microsoft Corporation; Tabular Editor ApS | Vendor terms | Prerequisites the user installs; coop ships nothing. |
@@ -64,11 +64,18 @@ MCP enabled means using that server under those terms. Read them before you
 enable it: https://go.microsoft.com/fwlink/?LinkId=2381247 (the repository copy
 is `EULA.txt` in https://github.com/microsoft/powerbi-modeling-mcp). Two clauses
 matter to coop beyond acceptance: section 2(c), coop must not remove or hide
-Microsoft's notices (the package's `NOTICE.txt` stays in place), and section
-2(e), the software may not be shared, published or distributed to a third party,
-which the coop window installer does today (issue #304; Aaron decides). Whether
-coop should also ask each worker-owner once, as it does for the ODBC driver, is
-issue #305.
+Microsoft's notices (the package's `NOTICE.txt` and `LICENSE` stay in place), and
+section 2(e), the software may not be shared, published or distributed to a third
+party, while the same npm package ships an MIT `LICENSE` that permits
+redistribution. **Cooptimize's call (Aaron, 2026-10-05, issue #304):** treat the
+MIT file in the package as the license that governs coop's copy, keep bundling
+the server in the coop window installer as is, and record that reasoning here
+rather than ask Microsoft for written permission. This is a decision Cooptimize
+owns, taken while the team is small, and it is revisited if Microsoft changes the
+package's license files or objects. coop does not show the EULA to each
+worker-owner before launch (issue #305, same day): the acceptance recorded here
+and on the website's privacy page is the record, and the server's own
+`--accept-eula` flag is the only acceptance it asks for.
 
 **Telemetry.** The Power BI Authoring MCP EULA (section 3(a)) and the Fabric MCP
 README both state that the software may collect information about you and your
@@ -81,12 +88,14 @@ website's privacy page lists this under what leaves your machine.
 Guidelines. coop names Microsoft Fabric, Power BI, Azure and Azure DevOps
 descriptively and uses no Microsoft logos.
 
-## Gaps tracked as issues
+## Decisions and open items
 
-- #304: the window installer redistributes the Power BI Authoring MCP server, which EULA section 2(e) forbids.
-- #305: coop accepts that EULA for every user without showing it.
-- #306: the installer check should assert that every redistributed license file is present.
-- #307: the Microsoft skills catalog copies Microsoft-copyrighted Markdown without its MIT notice.
+Aaron decided the four findings of this review on 2026-10-05:
+
+- #304, decided: the window installer keeps bundling the Power BI Authoring MCP server; the package's MIT `LICENSE` is taken as governing (see "Microsoft terms").
+- #305, decided: coop does not ask each user to accept the EULA; this file and the privacy page record Cooptimize's acceptance.
+- #306, parked: the installer check does not assert the redistributed license files; the window package keeps shipping them as electron-builder and the npm prune leave them, with no gate that could stop a build.
+- #307, parked: the Microsoft skills catalog keeps copying the skill folders as the pinned revisions hold them; the repositories' root MIT LICENSE files are the notice, as the table above says.
 
 ## What could not be verified from the review machine
 
@@ -94,7 +103,7 @@ The EULA text behind the `go.microsoft.com` link (the repository's `EULA.txt` on
 `main` was read instead; the package changelog says 1.0.0 updated the EULA to
 the GA version), a telemetry opt-out for either MCP server, the Electron and
 Chromium license files inside a built installer (relied on electron-builder's
-documented default; issue #306 asserts it), and each Pi extension tarball's own
+documented default; #306 parked, no check asserts it), and each Pi extension tarball's own
 LICENSE file (registry metadata only). Sources: the npm and PyPI registry
 metadata and tarballs for each pin, the LICENSE, README and EULA files of each
 repository at the pinned revision.
