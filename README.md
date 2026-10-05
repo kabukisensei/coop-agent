@@ -24,6 +24,14 @@ DAX, semantic models (TMDL), and data documentation.
 
 ---
 
+## Planned mobile companion
+
+An installable iOS/Android web companion is planned for chat, status, stop and
+questions in the same running VM desktop session, with the four desktop themes.
+It is not available on main. Provider sign-in stays on the VM; external Windows
+and authentication dialogs use secure remote desktop. The sole roadmap and
+acceptance criteria are [master plan section 12.4](docs/COOP_MASTER_PLAN.md#124-secure-mobile-companion-mc1mc4-documentation-authorized-october-5-2026).
+
 ## Quick start
 
 From a fresh clone, run the installer with its full path (it links `coop` onto your

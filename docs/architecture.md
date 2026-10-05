@@ -390,3 +390,16 @@ The project contract `.coop/project.yml` (copied from
 workspaces, backup/log rules, allowed/blocked commit paths, and the approval policy.
 It may provide deliberate project standards overrides; otherwise COOP's resolved
 standards task authority is authoritative.
+
+## Planned mobile boundary (not implemented)
+
+The [master plan, section 12.4](COOP_MASTER_PLAN.md#124-secure-mobile-companion-mc1mc4-documentation-authorized-october-5-2026)
+plans a phone web view over the same existing live desktop Pi process. Current
+Electron IPC is local; it supplies no remote authentication boundary. A future VM
+adapter needs its own narrow command allowlist, explicit user/device/client/session
+authorization and revocation in addition to private encrypted network reachability.
+Provider requests and credentials and all production policy remain on the VM in
+the client's Windows identity. Dialog arbitration, expiry and reconnect snapshots
+are required new work; PiSession's in-memory maps promise no crash durability.
+M1 Teams PR #275 and G1 draft PR #302 are separate unmerged work as of October 5,
+2026; this documentation changes neither. No remote endpoint is enabled here.

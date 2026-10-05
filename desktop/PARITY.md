@@ -270,3 +270,18 @@ window's actions above; View > Menu bar hides it, Alt shows it again) and a
 Windows notification plus taskbar flash when a turn ends (`agent_end`) or an
 extension asks a question while the window is in the background (Settings >
 Notify in the background).
+
+## Planned phone parity (not implemented)
+
+[Master plan section 12.4](../docs/COOP_MASTER_PLAN.md#124-secure-mobile-companion-mc1mc4-documentation-authorized-october-5-2026)
+is the sole roadmap for MC1–MC4. The first phone web companion targets the same
+live desktop session: chat, status, current-turn stop and confirm/select/input/editor
+questions, including supported approval and questionnaire cards. Reuse
+`renderer/dialogs.mjs` semantics and `renderer/styles/themes.css` for Modern/Retro
+Dark/Light. Mobile layouts must retain exact action text and choices, accessibility
+and clear client/session identity. Phone and desktop must resolve cards together
+when either answers first; stale, expired and duplicate answers are rejected by
+the VM. Reconnect must reconcile a snapshot before submitting. Unsupported
+extension UI stays on desktop; external Windows/auth dialogs need full remote
+desktop. Session management, files and every other desktop capability are outside
+this bounded phone version; this section claims no shipped mobile parity.
