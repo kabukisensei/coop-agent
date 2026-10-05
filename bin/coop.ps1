@@ -633,8 +633,11 @@ function Invoke-CoopDesktop {
   if (-not $appExe -and $script:CoopWindowExe) { $appExe = $script:CoopWindowExe }
   if (-not $printSpec -and (Test-CoopBundledSetupPending)) {
     Coop-Head 'First launch of the coop window: setting up this computer'
-    Coop-Info 'the checklist below names anything still missing; the window opens once setup finishes'
-    $setupRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\install.ps1')
+    # The installer is the user's "yes" (D1k): a missing prerequisite is installed
+    # here with winget (this console has no keyboard for a question; Windows may
+    # still ask for permission), and the install goes on when every row passes.
+    Coop-Info 'anything still missing is installed below with winget (Windows may ask for permission); the window opens once setup finishes'
+    $setupRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\install.ps1') @('--prereqs', 'auto')
     if ($setupRc -ne 0) { Coop-Die 'setup did not finish: do what the lines above say, then start the coop window again' }
   }
   if (-not (Test-Have 'pi')) { Coop-Die 'pi is not installed. Run: coop install   (installs the release''s tested Pi)' }

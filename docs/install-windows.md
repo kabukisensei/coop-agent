@@ -12,6 +12,29 @@ first release whose `coop update` follows release tags. Before that tag exists t
 line leaves the clone on main; never point teammates at an older tag.
 -->
 
+## The short way: one command
+
+Paste this into Windows PowerShell and follow what it asks. It does steps 1 to 6
+below for you: Git through winget when missing, the clone at the newest release,
+`coop install` with the missing prerequisites installed through winget, the
+sign-ins, and the coop window installer from the same release (its SHA-256 is
+checked against the release's acceptance report before it runs).
+
+```powershell
+irm https://raw.githubusercontent.com/kabukisensei/coop-agent/main/scripts/bootstrap.ps1 | iex
+```
+
+Windows asks for permission once for each machine-wide installer (Git, the Azure
+CLI, the ODBC driver); Python and pipx install for your user only. Everything comes
+from winget's Microsoft source, nodejs.org, npm, PyPI and github.com, the same
+places `coop install` already uses. If it stops, do what its last lines say
+(usually: open a new PowerShell window) and paste the same line again; it
+continues where it stopped. Set `COOP_BOOTSTRAP_NO_WINDOW=1` first to skip the
+window, or `COOP_BOOTSTRAP_DIR` to clone somewhere other than `C:\Users\<you>\coop-agent`.
+
+The rest of this page is the same setup by hand, for when you want to see each
+step or already have part of it.
+
 ## 1. Install the prerequisites
 
 The installer checks these seven items in this order and prints the command below
@@ -87,7 +110,10 @@ that row's command under it, for example:
       winget install --id OpenJS.NodeJS.LTS -e
 ```
 
-Close the install window, run that command in a new PowerShell window, then
+Below the table it then asks **Install the missing prerequisites now?** Press
+Enter: it runs those same commands for you (Windows may ask for permission), checks
+the rows again and carries on in the same window. Answer `n` to do it yourself:
+close the install window, run the printed commands in a new PowerShell window, then
 double-click **Install coop.cmd** again.
 
 Partway through, it asks:
@@ -151,7 +177,8 @@ app with four themes. The window installer brings Node, Pi and coop with it.
 
 - **New to coop:** download and run the window installer below; that is the
   whole install. Git, Python, pipx, the Azure CLI and the ODBC driver from
-  step 1 are still needed, and the first launch tells you which are missing.
+  step 1 are not in the package: the first launch installs the missing ones
+  through winget (Windows may ask for permission), then carries on.
 - **Already have coop:** run `coop update` in PowerShell, then run the same
   installer. Your sessions, memory, settings and sign-ins stay where they are,
   and `coop` in the terminal keeps working as before. The update comes first
@@ -167,8 +194,9 @@ app with four themes. The window installer brings Node, Pi and coop with it.
    installs for your user only, under `%LOCALAPPDATA%\Programs\coop`.
 4. Double-click the new **coop (window)** icon on your Desktop or Start Menu
    and pick the project folder. The first time, a console runs the same
-   checklist as `coop install` (prerequisites, tools, the Azure and OpenAI
-   sign-ins): follow what it prints, then start the window again if it stopped.
+   checklist as `coop install` (prerequisites, installed through winget when
+   missing, then the tools and the Azure and OpenAI sign-ins): follow what it
+   prints, then start the window again if it stopped.
    After that the console only shows coop's launch checks and closes on its own.
 
 With the terminal coop from steps 1 to 5 as well, the window shares your

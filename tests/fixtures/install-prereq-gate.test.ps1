@@ -11,9 +11,12 @@ $bin = Join-Path $t 'bin'
 
 # Run install.ps1 and return its output; "$_" keeps each stderr line whole
 # (Out-String can wrap long lines). Sets $script:installRc.
+# The child's stdin is a pipe (one empty line), never this console: the D1k
+# prerequisite offer must not prompt a redirected stdin, so a run from a
+# terminal behaves as CI does.
 function Invoke-Install([string[]]$InstallArgs = @()) {
   $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-  $lines = @(& $psExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\install.ps1') @InstallArgs 2>&1 | ForEach-Object { "$_" })
+  $lines = @('' | & $psExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\install.ps1') @InstallArgs 2>&1 | ForEach-Object { "$_" })
   $script:installRc = $LASTEXITCODE
   $ErrorActionPreference = $eap
   return ($lines -join "`n")
@@ -104,6 +107,51 @@ try {
   $want = 'Open a NEW terminal so the new tools are on PATH, then run: coop install'
   if (-not $lout.Contains($want)) { Ko "install.ps1 --prereqs auto with coop on PATH is missing: $want" $lout }
   if ($fail -eq 0) { Ok 'with coop on PATH, the stop lines still say: coop install' }
+
+  # D1k: with stdin redirected the offer is never made (the stop lines above
+  # already proved the plain run stops), and --yes answers it without a console:
+  # the installer commands run (no-op shims), the re-check follows and, with
+  # the rows still missing, the stop names a NEW terminal.
+  $env:PATH = $bin
+  if ($lout.Contains('Install the missing prerequisites now?')) { Ko 'install.ps1 prompted for the prerequisites on a redirected stdin' $lout }
+  $yout = Invoke-Install @('--yes')
+  if ($yout.Contains('Install the missing prerequisites now?')) { Ko 'install.ps1 --yes still asked the prerequisite question' $yout }
+  foreach ($want in @(('running: ' + $nodeFix), 'Prerequisites (re-checked)', 'Open a NEW terminal so the new tools are on PATH')) {
+    if (-not $yout.Contains($want)) { Ko "install.ps1 --yes output is missing: $want" $yout }
+  }
+  if ($installRc -eq 0) { Ko 'install.ps1 --yes exited 0 with the rows still missing' $yout }
+  if ($fail -eq 0) { Ok '--yes accepts the prerequisite offer without a console; a re-check that still fails stops as before (D1k)' }
+
+  # D1k: when the installer commands DO supply the missing rows, the run goes on
+  # in the same window instead of stopping for a new terminal. The brew/winget
+  # shim drops a Node 22.19.0 and a Python 3.12 shim onto the stub PATH; the
+  # install then reaches step 2 (whose units fail on the stubs, not under test).
+  $brewSh = @"
+case "`$*" in
+  *node*) printf '#!/bin/sh\necho v22.19.0\n' > "$bin/node"; "$chmod" +x "$bin/node";;
+  *python*) printf '#!/bin/sh\necho Python 3.12.4\n' > "$bin/python3"; "$chmod" +x "$bin/python3";;
+esac
+exit 0
+"@
+  $brewCmd = @"
+echo %*| findstr /i node >nul && (echo @echo off> "$bin\node.cmd" & echo echo v22.19.0>> "$bin\node.cmd")
+echo %*| findstr /i python >nul && (echo @echo off> "$bin\python3.cmd" & echo echo Python 3.12.4>> "$bin\python3.cmd")
+exit /b 0
+"@
+  Write-Shim 'brew' $brewSh $brewCmd
+  Write-Shim 'winget' $brewSh $brewCmd
+  Remove-Item -LiteralPath (Join-Path $bin 'node'), (Join-Path $bin 'node.cmd') -Force -ErrorAction SilentlyContinue
+  foreach ($n in @('python3', 'python', 'python3.12', 'python3.13')) { Write-Shim $n 'exit 0' 'exit /b 0' }
+  $cout = Invoke-Install @('--prereqs', 'auto', '--no-fabric')
+  foreach ($want in @('Prerequisites (re-checked)', 'all prerequisites present, continuing in this window', '2/8')) {
+    if (-not $cout.Contains($want)) { Ko "install.ps1 --prereqs auto with working installer commands is missing: $want" $cout }
+  }
+  if ($cout.Contains('Open a NEW terminal so the new tools are on PATH')) { Ko 'install.ps1 still asked for a new terminal after the re-check passed' $cout }
+  if ($fail -eq 0) { Ok 'a --prereqs auto run whose re-check passes continues in the same window (D1k)' }
+  # Back to the Node-and-Python-missing stub set for the rows below.
+  Write-Shim 'brew' 'exit 0' 'exit /b 0'
+  Write-Shim 'winget' 'exit 0' 'exit /b 0'
+  Remove-Item -LiteralPath (Join-Path $bin 'node'), (Join-Path $bin 'node.cmd') -Force -ErrorAction SilentlyContinue
 
   # A machine whose only Python is 3.14 passes row 3 when its pipx can fetch a
   # standalone 3.12 for the Fabric CLI, with either spelling of that flag

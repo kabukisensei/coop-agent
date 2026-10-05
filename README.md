@@ -127,6 +127,14 @@ cd coop-agent
 .\bin\coop.cmd install   # bootstraps pi, extensions, pipx tools, Fabric CLI, links coop onto PATH
 ```
 
+Or, with nothing installed yet, one line in Windows PowerShell does all of it,
+the coop window included (`scripts/bootstrap.ps1`; the details and the two
+opt-outs are in `docs/install-windows.md`):
+
+```powershell
+irm https://raw.githubusercontent.com/kabukisensei/coop-agent/main/scripts/bootstrap.ps1 | iex
+```
+
 From Git Bash, `./bin/coop install` forwards to the same PowerShell code.
 
 `coop install` handles the complete bootstrap: prerequisites → Pi → Microsoft
@@ -221,8 +229,11 @@ location (`resources\runtime\coop-runtime.json` next to `resources\coop`): it
 puts the bundled Node and the npm prefix holding Pi first on its `PATH`, so a
 terminal `coop` installed later and the package never fight over Pi. The first
 launch runs `scripts\install.ps1` in that console (Git, Python, pipx, the Azure
-CLI and ODBC are still prerequisites; Node is not) and stops with the exact
-lines to fix if anything is missing; `coop sync` then copies the bundled
+CLI and ODBC are still prerequisites; Node is not) with `--prereqs auto`, so
+the missing ones are installed through winget unattended (at a keyboard,
+`Install coop.cmd` and `coop install` ask first; `--yes` answers for them) and
+it stops with the exact lines to fix only when that does not work; `coop sync`
+then copies the bundled
 extension tree into `~/.coop/agent` instead of downloading it. `coop doctor`
 names the bundled versions on its coop window row. On a machine that already
 has the terminal coop, the package shares `~/.coop` (settings, sign-ins,

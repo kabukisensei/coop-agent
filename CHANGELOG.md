@@ -5,6 +5,30 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- One install for the window and the terminal (master plan D1k; Aaron
+  2026-10-05, "both"). `coop install` now offers to install a missing required
+  prerequisite itself when it runs at a console with winget (or brew) at hand:
+  the same commands its table prints, run visibly, then the table again, and
+  the install continues in the same window when every row passes (before, a
+  `--prereqs auto` run always stopped for a new terminal). `Install coop.cmd`
+  and `coop install` make the offer at a keyboard (Enter accepts, `n` keeps the
+  printed commands, a redirected stdin never asks, `--yes` answers without a
+  console); the coop window's first launch runs the install with
+  `--prereqs auto`, the installer being the yes. winget steps run unattended
+  with its agreement flags, as the ODBC step already did, and say so. New
+  `scripts/bootstrap.ps1`, the
+  one-command terminal path for Windows
+  (`irm https://raw.githubusercontent.com/kabukisensei/coop-agent/main/scripts/bootstrap.ps1 | iex`):
+  Git through winget when missing, the clone at the newest release tag,
+  `coop install --prereqs auto`, then the release's window installer, its
+  SHA-256 checked against the release's `installer-acceptance.json` before the
+  silent per-user install (`COOP_BOOTSTRAP_NO_WINDOW=1` skips it,
+  `COOP_BOOTSTRAP_DIR` moves the clone, `COOP_BOOTSTRAP_DRY_RUN=1` only prints
+  the steps). Only winget's Microsoft source, nodejs.org, npm, PyPI and
+  github.com are contacted. `docs/install-windows.md` opens with the one line.
+
 ### Fixed
 
 - `release.yml` publishes the coop window installer only after the same
