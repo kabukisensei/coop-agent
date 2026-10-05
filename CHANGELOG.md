@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.30.3] — 2026-10-05
+
 ### Fixed
 
 - The managed Warehouse MCP entry in the shared `mcp-adapter.json` carries one
