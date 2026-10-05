@@ -920,6 +920,53 @@ function Restore-CoopBundledExtensions([string]$AgentDir) {
   return $true
 }
 
+# --- One writer for the extension tree ---------------------------------------
+# `coop sync`, `coop install`, `coop update` and the coop window's first launch
+# (Restore-CoopBundledExtensions, then the same convergence) all rewrite
+# <agent dir>\npm. Two at once leave a half-written tree: on 2026-10-05 the
+# window's first launch deleted node_modules and copied the bundled tree while a
+# `coop sync` ran `npm ci` in the same folder, and Pi then failed to load
+# pi-mcp-adapter and pi-hermes-memory ("Cannot find module"). One named mutex per
+# agent dir (machine-wide for this user session): a second writer waits for the
+# first to finish, and a launch waits the same way before Pi loads the tree.
+# COOP_EXT_TREE_LOCK_TIMEOUT (seconds) overrides the wait, for the tests.
+function Get-CoopExtensionTreeMutexName([string]$AgentDir) {
+  $key = ConvertTo-CoopComparablePath $AgentDir
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try { $hex = -join ($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($key)) | ForEach-Object { $_.ToString('x2') }) }
+  finally { $sha.Dispose() }
+  return 'coop-extension-tree-' + $hex.Substring(0, 16)
+}
+# Returns the held mutex (pass it to Unlock-CoopExtensionTree), or $null when the
+# other writer did not finish within the timeout. A mutex a crashed process left
+# behind counts as acquired.
+function Lock-CoopExtensionTree {
+  param([string]$AgentDir, [int]$TimeoutSeconds = 900, [string]$Who = 'another coop process')
+  if ($env:COOP_EXT_TREE_LOCK_TIMEOUT -match '^\d+$') { $TimeoutSeconds = [int]$env:COOP_EXT_TREE_LOCK_TIMEOUT }
+  $mutex = New-Object System.Threading.Mutex($false, (Get-CoopExtensionTreeMutexName $AgentDir))
+  $got = $false
+  try { $got = $mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $got = $true }
+  if (-not $got) {
+    Coop-Info "$Who is updating the extension tree in $AgentDir; waiting for it to finish (up to $TimeoutSeconds s)..."
+    try { $got = $mutex.WaitOne([TimeSpan]::FromSeconds($TimeoutSeconds)) } catch [System.Threading.AbandonedMutexException] { $got = $true }
+  }
+  if (-not $got) { $mutex.Dispose(); return $null }
+  return $mutex
+}
+function Unlock-CoopExtensionTree($Mutex) {
+  if (-not $Mutex) { return }
+  try { $Mutex.ReleaseMutex() } catch { }
+  $Mutex.Dispose()
+}
+# Before Pi loads the tree: wait for a writer that is still at work (the half-
+# written tree is what Pi would otherwise load). $true when the tree is free.
+function Wait-CoopExtensionTreeIdle([string]$AgentDir) {
+  $m = Lock-CoopExtensionTree -AgentDir $AgentDir -Who 'coop sync'
+  if (-not $m) { return $false }
+  Unlock-CoopExtensionTree $m
+  return $true
+}
+
 # Version of an installed Pi extension inside an isolated agent dir, read from
 # its package.json. Empty when absent or unreadable — callers treat that as a
 # failed postcondition, never as success.
@@ -1459,6 +1506,13 @@ function Remove-CoopRetiredExtensions([string]$AgentDir) {
 function Sync-CoopExtensionFleet {
   param([string]$AgentDir = (Get-CoopPiAgentDir))
   $failures = 0
+  # One writer at a time (Lock-CoopExtensionTree): a `coop sync` and the window's
+  # first launch that overlap would otherwise interleave their writes.
+  $treeLock = Lock-CoopExtensionTree -AgentDir $AgentDir
+  if (-not $treeLock) {
+    Coop-Err "another coop process is still updating the extension tree in $AgentDir — wait for it to finish (or close it), then run: coop sync"
+    return 1
+  }
   $priorAgentDir = $env:PI_CODING_AGENT_DIR
   try {
     $env:PI_CODING_AGENT_DIR = $AgentDir
@@ -1543,6 +1597,7 @@ function Sync-CoopExtensionFleet {
     }
   }
   finally {
+    Unlock-CoopExtensionTree $treeLock
     if ($null -ne $priorAgentDir) { $env:PI_CODING_AGENT_DIR = $priorAgentDir }
     else { Remove-Item Env:PI_CODING_AGENT_DIR -ErrorAction SilentlyContinue }
   }

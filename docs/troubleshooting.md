@@ -123,3 +123,58 @@ a new session with `/new` and paste the summary.
 
 **Verify.** With Transport `sse`, `/compact` completes and the transcript shows
 the compaction summary; no WebSocket error.
+
+## 4. coop stops with `Failed to load extension … Cannot find module`
+
+**Symptom.** The coop window shows "coop stopped (exit code 1)" (or the
+terminal's Pi exits) with lines like
+`Failed to load extension "…\.coop\agent\npm\node_modules\pi-mcp-adapter\index.ts": Cannot find module './v4/classic/external.js'`
+or the same for `pi-hermes-memory` and `./store/memory-store.js`.
+
+**Diagnose.** The isolated extension tree (`~\.coop\agent\npm`) is half
+written. Two writers ran at once: typically the coop window's first launch,
+which seeds the tree from the package, while a `coop sync`, `coop install` or
+`coop update` ran `npm ci` in the same folder. Releases after 0.30.1 hold one
+lock per agent dir so the second writer waits; a tree broken before that stays
+broken, because its lock file looks complete to `coop sync`.
+
+**Fix.** Close every coop window and let any running `coop sync` finish, then:
+
+```powershell
+Stop-Process -Name coop -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath "$env:USERPROFILE\.coop\agent\npm\node_modules" -Recurse -Force
+Remove-Item -LiteralPath "$env:USERPROFILE\.coop\agent\npm\package-lock.json" -Force
+coop sync
+```
+
+**Verify.** `coop sync` prints one "Installed release version" or "Already at
+release version" line per extension and no warning; coop (terminal or window)
+starts with the extensions loaded.
+
+## 5. `Fabric Warehouse MCP unavailable: Azure CLI is not installed or not on PATH`
+
+**Symptom.** The launch prints that line (or `coop doctor` shows
+`fabric-sqlendpoint azure_cli_unavailable`) while `az` is installed and signed
+in, and Warehouse queries get a 401.
+
+**Diagnose.** Before 0.30.2 the token helper refused a node or az inside the
+working folder, and a coop started from the home folder (`C:\Users\<name>`)
+counted the whole profile as inside it: the window's bundled Node or a per-user
+install was refused. Check where coop was started:
+
+```powershell
+Get-Location
+```
+
+**Fix.** Start coop from the project folder, or open the window on it (pick the
+project folder in the dialog, never the home folder). From 0.30.2 a folder that
+contains the home is not treated as a work repo.
+
+A second message, `managed configuration is invalid; run coop sync`, means the
+other install (terminal or window) wrote the shared `mcp-adapter.json` last:
+before 0.30.2 each refused the other's helper path. Run `coop sync` from the
+install you are about to use, in the project folder, so the managed entry also
+carries that project's Warehouse target.
+
+**Verify.** The launch shows no Warehouse line and a `SELECT TOP 1 1` runs.
+

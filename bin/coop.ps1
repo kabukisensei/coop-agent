@@ -222,11 +222,16 @@ e.g. ``coop -c`` resumes the last session, ``coop @notes.md "review this"``.
 # COOP_SKIP_EXT_CHECK=1.
 function Invoke-CoopLaunchPreflight {
   if ($env:COOP_SKIP_EXT_CHECK -eq '1') { return }
-  if (-not (Test-Have 'pi')) { return }
-  $py = Get-CoopPython; if (-not $py) { return }
   # The dir Pi will ACTUALLY load (with COOP_NO_ISOLATE Pi uses the personal
   # ~/.pi/agent, so guarding coop's isolated dir would be wrong).
   $agentDir = Get-CoopEffectiveAgentDir
+  # A `coop sync` (or the window's first launch) still writing the tree: wait for
+  # it rather than load a half-written tree (Lock-CoopExtensionTree).
+  if (-not (Wait-CoopExtensionTreeIdle -AgentDir $agentDir)) {
+    Coop-Die 'launch aborted — another coop process is still updating the extension tree; wait for it to finish, then re-run: coop'
+  }
+  if (-not (Test-Have 'pi')) { return }
+  $py = Get-CoopPython; if (-not $py) { return }
   if (-not (Test-Path -LiteralPath (Join-Path $agentDir 'npm\package.json') -PathType Leaf)) { return }
   $verRaw = (& pi --version 2>$null | Select-Object -First 1)
   if (-not $verRaw) { return }

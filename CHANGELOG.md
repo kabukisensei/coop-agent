@@ -31,6 +31,34 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- The isolated extension tree (`<profile dir>\agent\npm`) has one writer at a
+  time. The coop window's first launch seeds that tree from the package and
+  `coop sync`, `coop install` and `coop update` rewrite it; two of them at once
+  (seen 2026-10-05: the window's first launch during a `coop sync`) left a
+  half-written tree and Pi stopped with "Failed to load extension ... Cannot
+  find module" for pi-mcp-adapter and pi-hermes-memory. `Sync-CoopExtensionFleet`
+  now holds a named mutex per agent dir while it writes, a second writer waits
+  for the first (up to 15 minutes, then says so), and every launch waits the
+  same way before Pi loads the tree. Recovery for a tree already broken: close
+  coop, delete `node_modules` and `package-lock.json` under `agent\npm`, run
+  `coop sync` (docs/troubleshooting.md).
+
+- The Fabric Warehouse token helper no longer reports "Azure CLI is not
+  installed or not on PATH" when coop (terminal or window) starts from the home
+  folder. The helper refuses a node or az that sits inside the working folder
+  (a planted binary in a work repo); started from `C:\Users\<name>`, the whole
+  profile counted as "inside", so the window's bundled Node and any per-user
+  install were refused (seen 2026-10-05). A working folder that contains the
+  home (the home itself, the users folder, a drive root) is not a work repo and
+  keeps them; `lib/warehouse_mcp.py` and `lib/fabric_request_headers.mjs`.
+- The terminal install and the coop window package share one
+  `mcp-adapter.json`, and each `coop sync` writes its own
+  `fabric_request_headers.mjs` path into the managed Warehouse entry; the other
+  install then called the configuration invalid ("managed configuration is
+  invalid; run coop sync") and the two took turns breaking the Warehouse MCP.
+  `sqlendpoint_config_status` now accepts the other install's helper when it
+  is byte-identical to its own (the same release); a different file is still
+  refused.
 - `release.yml` publishes the coop window installer only after the same
   acceptance the PR job runs has passed on the exact bytes it publishes
   (#277): the tag's `installer` job now runs `desktop/scripts/verify-installer.mjs`
