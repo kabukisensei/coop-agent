@@ -1312,6 +1312,40 @@ function Get-CoopConfigFile { return (Join-Path (Get-CoopProfileDir) 'config') }
 # The local user profile written by scripts/onboard.py.
 function Get-CoopUserProfileFile { return (Join-Path (Get-CoopProfileDir) 'user.json') }
 
+# The machine-level profile (master plan P1): one user.json per machine for the
+# team's VMs, where every client is its own Windows user and one person owns the
+# machine. COOP_MACHINE_DIR names its folder (tests, sandboxes); else
+# %ProgramData%\coop on Windows and /etc/coop elsewhere. It holds only the
+# person's name and communication preference, never anything client-shaped; the
+# per-user file wins field by field (mirror of lib/paths.mjs machineProfilePath).
+function Get-CoopMachineProfileDir {
+  if ($env:COOP_MACHINE_DIR) { return [string]$env:COOP_MACHINE_DIR }
+  if ($env:ProgramData) { return (Join-Path $env:ProgramData 'coop') }
+  if ([System.IO.Path]::DirectorySeparatorChar -eq '\') { return 'C:\ProgramData\coop' }
+  return '/etc/coop'
+}
+function Get-CoopMachineProfileFile { return (Join-Path (Get-CoopMachineProfileDir) 'user.json') }
+
+# The name coop calls the person and the file that supplied it: @{ Name; Source }
+# with Source 'user', 'machine' or '' (no usable name anywhere). Same resolution
+# as lib/user-profile.mjs effectiveProfile; a malformed file counts as absent.
+function Get-CoopEffectiveProfileName {
+  foreach ($pair in @(@('user', (Get-CoopUserProfileFile)), @('machine', (Get-CoopMachineProfileFile)))) {
+    $file = $pair[1]
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { continue }
+    try {
+      $raw = Get-Content -LiteralPath $file -Raw -Encoding UTF8 | ConvertFrom-Json
+      if ($null -eq $raw -or $raw.schema_version -ne 1) { continue }
+      $name = [string]$raw.name
+      $name = ($name -replace '[\x00-\x1f\x7f-\x9f\u2028\u2029]+', ' ') -replace '\s+', ' '
+      $name = $name.Trim()
+      if ($name.Length -gt 100) { $name = $name.Substring(0, 100) }
+      if ($name) { return @{ Name = $name; Source = $pair[0] } }
+    } catch { }
+  }
+  return @{ Name = ''; Source = '' }
+}
+
 # True when COOP_NO_ISOLATE asks for the personal ~/.pi/agent (1|true|yes|on).
 function Test-CoopNoIsolate { return ([string]$env:COOP_NO_ISOLATE).Trim() -match '^(1|true|yes|on)$' }
 
@@ -2860,10 +2894,12 @@ function Coop-Confirm {
   if ($ans -match '^(y|yes)$') { return $true } else { return $false }
 }
 
-# Test whether the local COOP user profile exists (in the profile dir onboarding
-# writes to, so COOP_DIR is honoured).
+# Test whether a COOP user profile exists: the per-user file (in the profile dir
+# onboarding writes to, so COOP_DIR is honoured) or the machine-level file
+# (master plan P1), which stands in for it on a one-user-per-client VM.
 function Test-CoopUserProfileMissing {
-  return -not (Test-Path -LiteralPath (Get-CoopUserProfileFile) -PathType Leaf)
+  if (Test-Path -LiteralPath (Get-CoopUserProfileFile) -PathType Leaf) { return $false }
+  return -not (Test-Path -LiteralPath (Get-CoopMachineProfileFile) -PathType Leaf)
 }
 
 function Test-CoopOnboardingMissing {

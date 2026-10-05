@@ -118,6 +118,10 @@ for the Node tools and extensions; no script builds these paths inline.
      Coop user profile (`user.json`, written by `coop onboard`) as a small hidden
      instruction at session start, so the agent addresses the member by name and
      in their preferred style without the profile ever appearing in the chat.
+     The per-user file is filled field by field from the machine-level
+     `%ProgramData%\coop\user.json` (`coop onboard --machine`, master plan P1;
+     `lib/user-profile.mjs`), which holds only a name and a communication
+     preference for VMs with one Windows user per client.
    - **`coop-guardrails` extension** — `extensions/coop-guardrails/`: **enforces**
      governance at runtime via a `tool_call` hook (blocks the agent committing
      source; confirms destructive commands). Complements the advisory

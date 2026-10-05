@@ -289,6 +289,16 @@ if (Test-Have 'pi') {
   }
 }
 
+# The person's name (master plan P1): the per-user user.json, else the
+# machine-level file; doctor says which one supplied it.
+$who = Get-CoopEffectiveProfileName
+if ($who.Name) {
+  $whoFile = if ($who.Source -eq 'machine') { Get-CoopMachineProfileFile } else { Get-CoopUserProfileFile }
+  D-Ok ("profile name '" + $who.Name + "' from " + $whoFile)
+} else {
+  D-Warn 'no COOP profile name yet' ('run: coop onboard  (or once per machine, from an elevated terminal: coop onboard --machine; files: ' + (Get-CoopUserProfileFile) + ', ' + (Get-CoopMachineProfileFile) + ')')
+}
+
 # The client tenant, resolved once through the one predicate (Get-CoopTenant:
 # Rc 0 resolved, 1 none, 2 not a GUID or domain name). The Azure sign-in row, the
 # Warehouse MCP row and the project contract row all read this result; no row

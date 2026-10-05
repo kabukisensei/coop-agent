@@ -97,4 +97,44 @@ console.log("  ✓ registration failure propagates to Pi's loader (extension omi
   }
 }
 
+// --- the machine-level profile (master plan P1) -------------------------------
+// With no per-user file the machine file supplies the name; a per-user file wins
+// field by field; with neither there is no instruction. The machine folder is a
+// fixture (COOP_MACHINE_DIR), never %ProgramData% or /etc.
+{
+  const machineDir = mkdtempSync(path.join(tmpdir(), "coop-machine-profile-"));
+  process.env.COOP_MACHINE_DIR = machineDir;
+  const machineFile = path.join(machineDir, "user.json");
+  try { rmSync(userFile); } catch {}
+  assert.equal(mod.loadProfile(), null, "neither file: no profile");
+  writeFileSync(machineFile, JSON.stringify({ schema_version: 1, name: "Joel", communication: { preset: "concise" } }));
+  let p = mod.loadProfile();
+  assert.equal(p.name, "Joel", "no per-user file: the machine profile's name");
+  assert.equal(p.communication.preset, "concise");
+  assert.match(mod.buildInstruction(p), /Call the user Joel/);
+  writeFileSync(userFile, JSON.stringify({ schema_version: 1, name: "Joel L", communication: { preset: "teaching" } }));
+  p = mod.loadProfile();
+  assert.equal(p.name, "Joel L", "the per-user file wins");
+  assert.equal(p.communication.preset, "teaching");
+  writeFileSync(userFile, JSON.stringify({ schema_version: 1, name: "Only Name" }));
+  p = mod.loadProfile();
+  assert.equal(p.name, "Only Name");
+  assert.equal(p.communication.preset, "concise", "a field the per-user file lacks comes from the machine file");
+  writeFileSync(machineFile, "{broken");
+  p = mod.loadProfile();
+  assert.equal(p.name, "Only Name");
+  assert.equal(p.communication.preset, "balanced", "a malformed machine file counts as absent");
+  const lib = await import(pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "lib", "user-profile.mjs")).href);
+  writeFileSync(machineFile, JSON.stringify({ schema_version: 1, name: "Joel", communication: { preset: "concise" }, client: "Contoso", tenant_id: "x" }));
+  const eff = lib.effectiveProfile(process.env);
+  assert.deepEqual(eff.source, { name: "user", communication: "machine" });
+  assert.deepEqual(Object.keys(eff.profile).sort(), ["communication", "name", "schema_version"], "nothing client-shaped is ever read from the machine file");
+  assert.equal(lib.effectiveProfileName(process.env), "Only Name");
+  rmSync(userFile);
+  assert.equal(lib.effectiveProfile(process.env).source.name, "machine");
+  rmSync(machineDir, { recursive: true, force: true });
+  delete process.env.COOP_MACHINE_DIR;
+  console.log("  ✓ machine-level profile fills in for a missing per-user file; the per-user file wins field by field");
+}
+
 console.log("  ✓ profile schema, sanitization, and constant system-prompt contribution");

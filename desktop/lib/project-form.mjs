@@ -10,6 +10,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { findProjectContract } from "../../lib/standards.mjs";
 import { userProfilePath } from "../../lib/paths.mjs";
+import { effectiveProfile } from "../../lib/user-profile.mjs";
 import {
   FABRIC_LAYOUTS,
   PROJECT_MESSAGES,
@@ -67,6 +68,9 @@ function commitLists(text, names) {
 // The window's environment plus coop's (spec.env): where user.json and the
 // machine's client platform live, so a redirected sandbox profile is honoured.
 const profileFile = (env) => userProfilePath(env || process.env);
+// The name question is asked only when neither the per-user file nor the
+// machine-level profile (master plan P1) supplies a name.
+const profileMissing = (env) => !effectiveProfile(env || process.env).profile;
 
 /** Everything the form shows: the wizard-owned settings and read-only context. */
 export function loadProject(cwd, { env } = {}) {
@@ -86,7 +90,7 @@ export function loadProject(cwd, { env } = {}) {
     mappingOverrides: projectYamlMapping(original, ["power_bi", "table_mapping", "overrides"]),
     layouts: [...FABRIC_LAYOUTS],
     mappingRules: [...TABLE_MAPPING_RULES],
-    profileMissing: !existsSync(profileFile(env)),
+    profileMissing: profileMissing(env),
     platform,
     proposedKind: { fabric: proposedSqlTargetKind(platform, true), noFabric: proposedSqlTargetKind(platform, false) },
     kinds: [...SQL_TARGET_KINDS],
@@ -182,12 +186,12 @@ function prepare(cwd, input, options) {
   const settings = settingsFromForm(input || {}, base, existingNames);
   const problems = projectSettingsProblems(settings);
   const profileName = field(input, "profileName") || "";
-  const profileMissing = !existsSync(profileFile(options.env));
-  if (profileMissing && profileName && !isSavableProfileName(profileName)) problems.push({ field: "profileName", message: PROJECT_MESSAGES.profileName });
+  const missing = profileMissing(options.env);
+  if (missing && profileName && !isSavableProfileName(profileName)) problems.push({ field: "profileName", message: PROJECT_MESSAGES.profileName });
   // The wizard lowercases the server only after checking it.
   if (settings.sqlTargetServer) settings.sqlTargetServer = settings.sqlTargetServer.toLowerCase();
   const text = problems.length ? original : projectContractText(original, settings);
-  return { where, original, settings, problems, text, profileName: profileMissing ? profileName : "" };
+  return { where, original, settings, problems, text, profileName: missing ? profileName : "" };
 }
 
 /**

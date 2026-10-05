@@ -31,6 +31,11 @@ import coop_paths  # noqa: E402
 # launcher: PI_CODING_AGENT_DIR -> COOP_NO_ISOLATE -> COOP_AGENT_DIR -> default).
 COOP_DIR = coop_paths.profile_dir()
 USER_JSON = coop_paths.user_profile_path()
+# The machine-level profile (master plan P1): name and communication preference
+# once per machine, for VMs with one Windows user per client. `coop onboard
+# --machine` writes it; every reader falls back to it field by field when the
+# per-user file lacks a field. Never a client, tenant, workspace or contract.
+MACHINE_JSON = coop_paths.machine_profile_path()
 CONFIG_JSON = coop_paths.config_path()
 MCP_OUTPUT = coop_paths.agent_dir() / "mcp-adapter.json"
 
@@ -187,14 +192,52 @@ def validate_name(name: str) -> str:
 
 
 def load_user() -> dict:
-    if USER_JSON.exists():
+    return load_profile_file(USER_JSON)
+
+
+def load_profile_file(path: Path) -> dict:
+    if path.exists():
         try:
-            data = json.loads(USER_JSON.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 return data
-        except json.JSONDecodeError:
+        except (OSError, json.JSONDecodeError):
             pass
     return {}
+
+
+def load_machine() -> dict:
+    return load_profile_file(MACHINE_JSON)
+
+
+def effective_profile() -> tuple[dict, dict[str, str]]:
+    """The profile coop uses and where each field came from: the per-user file
+    wins field by field, the machine-level file fills the rest (mirror of
+    lib/user-profile.mjs effectiveProfile). {} when no file supplies a name."""
+    user, machine = load_user(), load_machine()
+    source: dict[str, str] = {}
+    out: dict = {"schema_version": 1}
+    for field in ("name", "communication"):
+        for label, data in (("user", user), ("machine", machine)):
+            value = data.get(field) if data.get("schema_version") == 1 else None
+            if (field == "name" and isinstance(value, str) and value.strip()) or (
+                field == "communication" and isinstance(value, dict) and value.get("preset") in PRESET_KEYS
+            ):
+                out[field] = value
+                source[field] = label
+                break
+    if "name" not in out:
+        return {}, source
+    out.setdefault("communication", {"preset": "balanced", "custom_instructions": ""})
+    return out, source
+
+
+def save_machine(data: dict) -> None:
+    atomic_save(MACHINE_JSON, {
+        "schema_version": 1,
+        "name": data["name"],
+        "communication": data.get("communication", {"preset": "balanced", "custom_instructions": ""}),
+    })
 
 
 def atomic_save(path: Path, data: dict) -> None:
@@ -818,13 +861,51 @@ def run_full_onboarding() -> dict:
     """Full first-run onboarding."""
     sys.stderr.write("Welcome to COOP. Let's set up your local profile.\n\n")
     migration = maybe_migrate_consultant_name()
-    profile = run_profile_questions(migration_name=migration)
+    machine = load_machine()
+    # A machine-level profile (P1) answers the name by default: Enter keeps it,
+    # and the per-user file then wins for this Windows user.
+    profile = run_profile_questions(machine if machine.get("name") and not migration else None, migration_name=migration)
     save_user(profile)
     sys.stderr.write(f"\nSaved profile for {profile['name']}.\n")
     return profile
 
 
+def cmd_machine(args: argparse.Namespace) -> int:
+    """`coop onboard --machine`: the machine-level profile, name and communication
+    only, written once per machine (an elevated terminal on Windows, since the
+    folder is %ProgramData%\\coop). Nothing else about the machine changes."""
+    if args.reset:
+        if MACHINE_JSON.exists():
+            try:
+                MACHINE_JSON.unlink()
+            except PermissionError:
+                sys.stderr.write(f"Cannot remove {MACHINE_JSON}: run this from an elevated (Administrator) terminal.\n")
+                return 2
+        sys.stderr.write("Machine profile reset.\n")
+        return 0
+    sys.stderr.write(
+        "Machine-level profile: the name and communication preference every Windows user on this\n"
+        f"machine starts from when it has no profile of its own ({MACHINE_JSON}).\n"
+        "It never holds a client, tenant, workspace or contract; a per-user profile wins field by field.\n\n"
+    )
+    existing = load_machine()
+    profile = run_profile_questions(existing or {}, migration_name=str(load_user().get("name", "")))
+    try:
+        save_machine(profile)
+    except PermissionError:
+        sys.stderr.write(
+            f"\nCannot write {MACHINE_JSON}: run `coop onboard --machine` once from an elevated (Administrator) terminal.\n"
+        )
+        return 2
+    sys.stderr.write(f"\nSaved the machine profile for {profile['name']} to {MACHINE_JSON}.\n")
+    if args.json:
+        print(json.dumps(profile, indent=2, ensure_ascii=False))
+    return 0
+
+
 def cmd_onboard(args: argparse.Namespace) -> int:
+    if args.machine:
+        return cmd_machine(args)
     if args.reset:
         if USER_JSON.exists():
             USER_JSON.unlink()
@@ -921,17 +1002,23 @@ def cmd_profile(args: argparse.Namespace) -> int:
         profile = updated
         sys.stderr.write(f"Updated profile for {profile['name']}.\n")
 
-    if not profile:
-        sys.stderr.write("No COOP profile yet. Run: coop onboard\n")
+    # What coop uses: the per-user file, filled from the machine-level one (P1).
+    effective, source = effective_profile()
+    if not effective:
+        sys.stderr.write(
+            f"No COOP profile yet. Run: coop onboard  (or once per machine: coop onboard --machine; "
+            f"files: {USER_JSON}, {MACHINE_JSON})\n"
+        )
         return 1
 
     if args.json:
-        print(json.dumps(profile, indent=2, ensure_ascii=False))
+        print(json.dumps(effective, indent=2, ensure_ascii=False))
     else:
-        comm = profile.get("communication", {})
+        comm = effective.get("communication", {})
         preset = comm.get("preset", "balanced")
-        print(f"Name: {profile.get('name', '')}")
-        print(f"Communication: {preset}")
+        files = {"user": USER_JSON, "machine": MACHINE_JSON}
+        print(f"Name: {effective.get('name', '')}  (from {files[source['name']]})")
+        print(f"Communication: {preset}" + (f"  (from {files[source['communication']]})" if source.get("communication") else "  (default)"))
         custom = comm.get("custom_instructions", "")
         if custom:
             print(f"Custom instruction: {custom}")
@@ -950,6 +1037,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     onboard.add_argument("--reset", action="store_true", help="Remove local profile.")
     onboard.add_argument("--json", action="store_true", help="Emit profile as JSON.")
+    onboard.add_argument(
+        "--machine",
+        action="store_true",
+        help="Write the machine-level profile (name, communication) once per machine; with --reset, remove it.",
+    )
     onboard.add_argument(
         "--config-only",
         action="store_true",

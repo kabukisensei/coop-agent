@@ -91,6 +91,14 @@ later launches go straight to the prompt. The launch never runs the onboarding
 wizard and nothing can stop it: with no profile yet, *Start a client project*
 asks the name coop calls you by (or run `coop onboard`).
 
+On a team VM where every client is its own Windows user, run
+`coop onboard --machine` once from an elevated (Administrator) terminal: it writes
+your name and communication preference to `%ProgramData%\coop\user.json`, and
+every Windows user on that machine without a profile of its own starts from it
+(a per-user `coop onboard` still wins, field by field). The machine file never
+holds a client, tenant, workspace or contract; those stay in each client's
+Windows user, and `coop doctor` says which file supplied your name.
+
 Fresh interactive installation now performs this step at the end: Coop opens a
 short sign-in-only screen with `/login openai-codex` in the editor. Press Enter,
 complete the browser sign-in, and the installer resumes automatically. If the
@@ -146,6 +154,7 @@ In each Fabric / D365 repo you work in:
 ```bash
 cd /path/to/your/fabric-repo
 coop onboard              # writes ~/.coop/user.json + versioned ~/.coop/config and managed MCP entries
+coop onboard --machine    # VMs with one Windows user per client: your name and communication once per machine (elevated terminal)
 coop init                  # optional shell path for project setup
 coop doctor
 ```

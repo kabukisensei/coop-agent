@@ -72,7 +72,11 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
 `coop sync`. Disable with `COOP_NO_ISOLATE=1` (`true`, `yes` and `on` also count).
 
 The rest of coop's profile (`config`, `user.json`, `support/`, `standards/`) lives
-next to the agent dir in `~/.coop`. `COOP_DIR` moves the whole profile: it is the
+next to the agent dir in `~/.coop`. A second, machine-level `user.json` can hold
+your name and communication preference once per machine (`%ProgramData%\coop`,
+written by `coop onboard --machine`; master plan P1) for VMs where every client is
+its own Windows user; the per-user file wins field by field and the machine file
+never carries anything client-shaped. `COOP_DIR` moves the whole profile: it is the
 **parent** of `.coop`, so `COOP_DIR=D:\coop-profile` puts the profile at
 `D:\coop-profile\.coop` and the agent dir at `D:\coop-profile\.coop\agent` unless
 `COOP_AGENT_DIR` overrides it. Every coop command, script and extension reads the
@@ -278,6 +282,7 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop update [--check] [--edge] [--yes] [--no-fabric]` | Move coop-agent to the newest release tag (never backwards), converge tools to that release's manifest, and run Doctor. `--edge` is the maintainer channel: head of `main` plus latest upstream; `--check` fetches origin, then reports what the update would do and changes nothing; `--pi-latest` is a deprecated alias of `--edge` |
 | `coop support [--json] [--incident] [--export PATH]` | Offline Support Center: sanitized diagnostics, incident timeline, preview/export, and standards status; works without Pi/model availability |
 | `coop onboard [--edit|--config-only|--reset|--json]` | Configure profile and managed integrations without launching the agent |
+| `coop onboard --machine [--reset|--json]` | Write the machine-level profile (your name and communication preference) once per machine, from an elevated terminal: on a VM with one Windows user per client, every user without a profile of its own starts from it, and a per-user profile wins field by field. It never holds a client, tenant, workspace or contract |
 | `coop profile [--edit|--reset|--json]` | Inspect or update the private user profile |
 | `coop context-budget [--json]` | Inspect the active model/context budget |
 | `coop teamai <status\|install\|init\|pull\|skills\|maintenance\|recall --query <text>\|compare --query <text>\|contribute --file <draft.md> [--title <text>] [--approve]>` | TeamAI shared-knowledge trial (master plan K1, K2, K3): the pinned `teamai-cli` isolated under `~/.coop/teamai`, explicit and bounded, one JSON document per call; `contribute` previews, and stages a review branch only with `--approve`; `skills`, `maintenance` and `compare` are read-only lifecycle views; off until `knowledge.teamai.enabled` is true |

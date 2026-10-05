@@ -42,7 +42,8 @@ import {
   provenanceText,
   sourceStatus,
 } from "../../lib/standards.mjs";
-import { agentDir as coopAgentDir, configPath as coopConfigPath, userProfilePath as coopUserProfilePath } from "../../lib/paths.mjs";
+import { agentDir as coopAgentDir, configPath as coopConfigPath } from "../../lib/paths.mjs";
+import { effectiveProfile } from "../../lib/user-profile.mjs";
 // The /setup-project contract writer and the /setup-docs wizard driver live in
 // lib/ so the coop window's forms run the same code (master plan D1b2).
 import {
@@ -1344,7 +1345,8 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
   // The one onboarding question the launch no longer asks (master plan FR1): the
   // name coop calls the user by. Asked only while the local profile is missing;
   // Enter on a blank answer skips it, and it is never written into project.yml.
-  if (!existsSync(coopUserProfilePath())) {
+  // No name from the per-user file or the machine-level one (master plan P1).
+  if (!effectiveProfile().profile) {
     const name = await askText(ctx, "What should coop call you? (your local profile, not the project)", "");
     if (name === null) return false;
     if (name) {
