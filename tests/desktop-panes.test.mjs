@@ -359,7 +359,7 @@ const ANSWERS = {
   client: "Contoso",
   analytics: { description: "Warehouse SQL", role: "mixed", localPath: ".", remoteName: "origin", defaultBranch: "main" },
   added: { name: "Reports Repo", description: "Power BI reports", role: "powerbi", localPath: "../reports", remoteName: "origin", defaultBranch: "release" },
-  fabric: { tenantId: "11111111-1111-1111-1111-111111111111", fabricWorkspaceName: "Contoso WS", fabricWorkspaceId: "22222222-2222-2222-2222-222222222222", sqlEndpointItemType: "Warehouse", sqlEndpointItemName: "ContosoDW", sqlEndpointItemId: "33333333-3333-3333-3333-333333333333", sqlEndpointPropertiesId: "", powerBiWorkspaceName: "Contoso WS", powerBiWorkspaceId: "" },
+  fabric: { tenantId: "11111111-1111-1111-1111-111111111111", fabricWorkspaceName: "Contoso WS", fabricWorkspaceId: "22222222-2222-2222-2222-222222222222", sqlEndpointItemType: "Warehouse", sqlEndpointItemName: "ContosoDW", sqlEndpointItemId: "33333333-3333-3333-3333-333333333333", sqlEndpointPropertiesId: "", powerBiWorkspaceName: "Contoso WS", powerBiWorkspaceId: "", fabricLayout: "warehouse", tableMappingRule: "prefix", tableMappingSchema: "dbo", tableMappingPrefix: "v_" },
   target: { sqlTargetKind: "azure_sql", sqlTargetServer: "Contoso-Dev.Database.Windows.Net", sqlTargetDatabase: "ContosoDW" },
   te: { tabularEditorPath: "te", bpaRulesPath: "rules/bpa.json" },
 };
@@ -389,6 +389,7 @@ function wizardCtx(root, { fresh = false, localSource = true } = {}) {
             tenantId: "Azure tenant ID", fabricWorkspaceName: "Default Fabric workspace name", fabricWorkspaceId: "Default Fabric workspace ID",
             sqlEndpointItemType: "Default SQL endpoint item type", sqlEndpointItemName: "Default SQL endpoint item name", sqlEndpointItemId: "Default SQL endpoint item ID",
             sqlEndpointPropertiesId: "Lakehouse sqlEndpointProperties.id", powerBiWorkspaceName: "Default Power BI workspace name", powerBiWorkspaceId: "Default Power BI workspace ID",
+            fabricLayout: "Fabric layout", tableMappingRule: "Semantic-model table to SQL object rule", tableMappingSchema: "Default schema for a model table", tableMappingPrefix: "View prefix the model table names drop",
             sqlTargetKind: "Dev SQL target kind", sqlTargetServer: "Dev SQL server host", sqlTargetDatabase: "Dev database name",
             tabularEditorPath: "Tabular Editor CLI command or path", bpaRulesPath: "BPA rules file path",
           };
@@ -445,7 +446,7 @@ await check("project form: loads the wizard's fields; dropped fields never reach
     assert.equal(shown.includes(dropped), false, `${dropped} reaches the window`);
   }
   const input = formInput(initialValues(data));
-  assert.deepEqual(Object.keys(input).sort(), ["bpaRulesPath", "client", "defaultBranch", "fabricEnabled", "fabricWorkspaceId", "fabricWorkspaceName", "organization", "powerBiWorkspaceId", "powerBiWorkspaceName", "profileName", "repositories", "sqlEndpointItemId", "sqlEndpointItemName", "sqlEndpointItemType", "sqlEndpointPropertiesId", "sqlTargetDatabase", "sqlTargetKind", "sqlTargetServer", "tabularEditorEnabled", "tabularEditorPath", "tenantId", "timezone"]);
+  assert.deepEqual(Object.keys(input).sort(), ["bpaRulesPath", "client", "defaultBranch", "fabricEnabled", "fabricLayout", "fabricWorkspaceId", "fabricWorkspaceName", "organization", "powerBiWorkspaceId", "powerBiWorkspaceName", "profileName", "repositories", "sqlEndpointItemId", "sqlEndpointItemName", "sqlEndpointItemType", "sqlEndpointPropertiesId", "sqlTargetDatabase", "sqlTargetKind", "sqlTargetServer", "tableMappingPrefix", "tableMappingRule", "tableMappingSchema", "tabularEditorEnabled", "tabularEditorPath", "tenantId", "timezone"]);
   assert.equal(platformHint("azure_sql"), "This machine is set up as an Azure SQL client, so No is the usual answer.");
   assert.equal(platformHint(""), "");
 });
@@ -475,6 +476,11 @@ await check("project form: the same answers write the same file as /setup-projec
   assert.equal(projectYamlScalar(written, ["profile", "client"]), "Contoso");
   assert.equal(projectYamlScalar(written, ["repositories", "Reports-Repo", "local_path"]), "../reports");
   assert.equal(projectYamlScalar(written, ["sql_targets", "dev", "server"]), "contoso-dev.database.windows.net");
+  assert.equal(projectYamlScalar(written, ["fabric", "layout"]), "warehouse");
+  assert.equal(projectYamlScalar(written, ["power_bi", "table_mapping", "rule"]), "prefix");
+  assert.equal(projectYamlScalar(written, ["power_bi", "table_mapping", "view_prefix"]), "v_");
+  assert.deepEqual(data.mappingOverrides, {});
+  assert.deepEqual(data.layouts, ["warehouse", "lakehouse", "sql_database", "mixed"]);
   for (const kept of ["# keep this client comment", "custom_profile_key: 'keep-me'", "- 'special-docs/**'", "agent_never_commit: ['secrets/**', 'bin/**']", "live_discovery:", "allowed_default_actions:", "future_setting: 42"]) {
     assert.ok(written.includes(kept), `unowned text kept: ${kept}`);
   }

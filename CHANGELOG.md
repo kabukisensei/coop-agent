@@ -7,6 +7,23 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- The project contract declares what coop used to assume about a client's layout
+  (master plan C2, from the 2026-10-05 demo: "I don't want the tool to assume
+  anything"). `power_bi.table_mapping` states how a semantic-model table maps to
+  the SQL object it loads: `rule: same_name` (a table is named like its view, the
+  rule the "Loaded by" lineage uses) or `rule: prefix` (table `<name>` loads
+  `default_schema.<view_prefix><name>`), plus hand-edited `overrides` (model table
+  to `schema.object`) that win over the rule. `fabric.layout` names the Fabric
+  item kinds that hold the SQL (`warehouse`, `lakehouse`, `sql_database`, `mixed`).
+  `/setup-project`, the window's Project form and `coop init` write both blocks
+  (the layout proposed from the default SQL endpoint type and the dev `sql_targets`
+  kind; a new contract also seeds `warehouse_names` / `lakehouse_names` from the
+  default endpoint item). `data_doc lineage` checks the mapping on every SQL object
+  and says "Declared mapping does not match" (with the table the rule expected, or
+  the table that loads it outside the rule) instead of leaving an empty "Loaded by"
+  to read as no dependents; `sql_impact` adds the same expectation to an empty
+  downstream list. A contract without the block declares nothing and is checked
+  against nothing.
 - `@juicesharp/rpiv-todo` **2.12.0** joins the pinned extensions (Aaron, 2026-10-03,
   from the pi.dev package review): a `todo` tool and a live task panel above the
   prompt, so a multi-step session shows what coop is doing, what is done and what

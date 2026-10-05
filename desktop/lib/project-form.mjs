@@ -11,8 +11,11 @@ import { basename, join, resolve } from "node:path";
 import { findProjectContract } from "../../lib/standards.mjs";
 import { userProfilePath } from "../../lib/paths.mjs";
 import {
+  FABRIC_LAYOUTS,
   PROJECT_MESSAGES,
   SQL_ENDPOINT_TYPES,
+  TABLE_MAPPING_RULES,
+  projectYamlMapping,
   SQL_TARGET_DISCOVERED_KINDS,
   SQL_TARGET_KINDS,
   cleanAnswer,
@@ -79,6 +82,10 @@ export function loadProject(cwd, { env } = {}) {
     folder: basename(where.root) || where.root,
     settings,
     commitLists: commitLists(original, existingNames),
+    // power_bi.table_mapping.overrides is hand-edited in the file (C2): the form shows it read-only.
+    mappingOverrides: projectYamlMapping(original, ["power_bi", "table_mapping", "overrides"]),
+    layouts: [...FABRIC_LAYOUTS],
+    mappingRules: [...TABLE_MAPPING_RULES],
     profileMissing: !existsSync(profileFile(env)),
     platform,
     proposedKind: { fabric: proposedSqlTargetKind(platform, true), noFabric: proposedSqlTargetKind(platform, false) },
@@ -144,7 +151,12 @@ export function settingsFromForm(input, base, existingNames) {
 
   if (typeof input.fabricEnabled === "boolean") s.fabricEnabled = input.fabricEnabled;
   if (s.fabricEnabled) {
-    for (const key of ["tenantId", "fabricWorkspaceName", "fabricWorkspaceId", "sqlEndpointItemType", "sqlEndpointItemName", "sqlEndpointItemId", "sqlEndpointPropertiesId", "powerBiWorkspaceName", "powerBiWorkspaceId"]) take(key);
+    for (const key of ["tenantId", "fabricWorkspaceName", "fabricWorkspaceId", "sqlEndpointItemType", "sqlEndpointItemName", "sqlEndpointItemId", "sqlEndpointPropertiesId", "powerBiWorkspaceName", "powerBiWorkspaceId", "fabricLayout", "tableMappingRule", "tableMappingSchema", "tableMappingPrefix"]) take(key);
+    // The wizard lowercases the layout and the rule and keeps the prefix only for a prefix rule.
+    s.fabricLayout = (s.fabricLayout || "").toLowerCase();
+    s.tableMappingRule = (s.tableMappingRule || "same_name").toLowerCase();
+    s.tableMappingSchema = s.tableMappingSchema || "dbo";
+    if (s.tableMappingRule !== "prefix") s.tableMappingPrefix = "";
   }
 
   const kind = field(input, "sqlTargetKind");

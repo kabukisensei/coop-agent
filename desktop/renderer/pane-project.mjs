@@ -19,7 +19,9 @@ export function platformHint(platform) {
   return "";
 }
 
-const FLAT = ["profileName", "organization", "client", "timezone", "defaultBranch", "tenantId", "fabricWorkspaceName", "fabricWorkspaceId", "sqlEndpointItemType", "sqlEndpointItemName", "sqlEndpointItemId", "sqlEndpointPropertiesId", "powerBiWorkspaceName", "powerBiWorkspaceId", "sqlTargetKind", "sqlTargetServer", "sqlTargetDatabase", "tabularEditorPath", "bpaRulesPath"];
+const FLAT = ["profileName", "organization", "client", "timezone", "defaultBranch", "tenantId", "fabricWorkspaceName", "fabricWorkspaceId", "sqlEndpointItemType", "sqlEndpointItemName", "sqlEndpointItemId", "sqlEndpointPropertiesId", "powerBiWorkspaceName", "powerBiWorkspaceId", "fabricLayout", "tableMappingRule", "tableMappingSchema", "tableMappingPrefix", "sqlTargetKind", "sqlTargetServer", "sqlTargetDatabase", "tabularEditorPath", "bpaRulesPath"];
+const LAYOUT_LABELS = { warehouse: "Warehouse", lakehouse: "Lakehouse", sql_database: "SQL database", mixed: "Mixed (more than one kind)" };
+const RULE_LABELS = { same_name: "Same name: a model table is named like its view", prefix: "Prefix: table <name> loads <schema>.<prefix><name>" };
 const REPO_FIELDS = ["name", "description", "role", "localPath", "remoteName", "defaultBranch"];
 
 /** The form's starting values: the contract's settings with the wizard's defaults. */
@@ -33,6 +35,8 @@ export function initialValues(data) {
   values.powerBiWorkspaceName = s.powerBiWorkspaceName || s.fabricWorkspaceName || "";
   values.sqlTargetKind = s.sqlTargetKind || data.proposedKind[s.fabricEnabled ? "fabric" : "noFabric"] || "";
   values.sqlTargetDatabase = s.sqlTargetDatabase || s.sqlEndpointItemName || "";
+  values.tableMappingRule = s.tableMappingRule || "same_name";
+  values.tableMappingSchema = s.tableMappingSchema || "dbo";
   values.repositories = s.repositories.map((repo) => ({ ...Object.fromEntries(REPO_FIELDS.map((key) => [key, repo[key] || ""])), isNew: Boolean(repo.isNew) }));
   return values;
 }
@@ -135,6 +139,15 @@ export function mountProject(box, options, { coop, newSession }) {
       dbRow.hidden = !values.sqlTargetKind;
     };
     const teBox = el("div", { class: "form-group", hidden: !values.tabularEditorEnabled });
+    const prefixRow = row({ field: "tableMappingPrefix", label: "View prefix", hint: "What the model table names drop, for example v_.", control: text(values, "tableMappingPrefix") });
+    const showPrefix = () => { prefixRow.hidden = values.tableMappingRule !== "prefix"; };
+    const overridesRows = (overrides) => {
+      const entries = Object.entries(overrides || {});
+      return el("div", { class: "commit-lists" },
+        el("div", { class: "form-label" }, el("span", { text: "Mapping overrides" })),
+        el("div", { class: "hint", text: entries.length ? "Model table to SQL object, edited in the file itself (power_bi.table_mapping.overrides); they win over the rule." : "None. Add model table to SQL object pairs under power_bi.table_mapping.overrides in the file when a table breaks the rule." }),
+        ...entries.map(([table, object]) => el("div", {}, el("code", { text: table }), el("span", { text: " loads " }), el("code", { text: object }))));
+    };
     fabricBox.append(
       row({ field: "tenantId", label: "Azure tenant ID", hint: "Optional.", control: text(values, "tenantId"), guarded: true }),
       row({ field: "fabricWorkspaceName", label: "Default Fabric workspace name", hint: "Optional.", control: text(values, "fabricWorkspaceName") }),
@@ -144,7 +157,12 @@ export function mountProject(box, options, { coop, newSession }) {
       row({ field: "sqlEndpointItemId", label: "Default SQL endpoint item ID", hint: "Optional; a lowercase UUID.", control: text(values, "sqlEndpointItemId") }),
       row({ field: "sqlEndpointPropertiesId", label: "Lakehouse sqlEndpointProperties.id", hint: "A lowercase UUID; required for a Lakehouse.", control: text(values, "sqlEndpointPropertiesId") }),
       row({ field: "powerBiWorkspaceName", label: "Default Power BI workspace name", hint: "Optional.", control: text(values, "powerBiWorkspaceName") }),
-      row({ field: "powerBiWorkspaceId", label: "Default Power BI workspace ID", hint: "Optional.", control: text(values, "powerBiWorkspaceId") }));
+      row({ field: "powerBiWorkspaceId", label: "Default Power BI workspace ID", hint: "Optional.", control: text(values, "powerBiWorkspaceId") }),
+      row({ field: "fabricLayout", label: "Fabric layout", hint: "Which Fabric items hold this client's SQL. coop assumes nothing beyond what is declared here.", control: select(values, "fabricLayout", [["", "Not declared"], ...(data.layouts || []).map((layout) => [layout, LAYOUT_LABELS[layout] || layout])]) }),
+      row({ field: "tableMappingRule", label: "Model table to SQL object rule", hint: "How a semantic-model table maps to the view or table it loads. Lineage checks it and reports a mismatch instead of \"no dependents\".", control: select(values, "tableMappingRule", (data.mappingRules || []).map((rule) => [rule, RULE_LABELS[rule] || rule]), showPrefix) }),
+      row({ field: "tableMappingSchema", label: "Default schema", hint: "For a model table named without a schema.", control: text(values, "tableMappingSchema") }),
+      prefixRow,
+      overridesRows(data.mappingOverrides));
     teBox.append(
       row({ field: "tabularEditorPath", label: "Tabular Editor CLI command or path", control: text(values, "tabularEditorPath") }),
       row({ field: "bpaRulesPath", label: "BPA rules file path", hint: "Optional.", control: text(values, "bpaRulesPath") }));
@@ -196,6 +214,7 @@ export function mountProject(box, options, { coop, newSession }) {
         el("button", { type: "button", class: "btn primary", text: "Review changes", title: "Check the answers and show what saving would change", onclick: review }),
         el("button", { type: "button", class: "btn", text: "Discard edits", title: "Go back to what the file says now", onclick: () => reload(true) })));
     showTarget();
+    showPrefix();
   }
 
   // --- Problems -------------------------------------------------------------
