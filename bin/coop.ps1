@@ -186,6 +186,76 @@ function Invoke-CoopProject {
   return $rc
 }
 
+# --- Never modify production: the human-only unlock (master plan G1) ----------
+# Production writes are a hard block in coop-guardrails. The one way back is this
+# command, run by a person in their own terminal (never from a session): it writes a
+# time-bounded grant for ONE client to <profile dir>\prod-unlock.json. While it holds
+# and the session's contract names that client, a production write asks per call and
+# the audit carries the grant id. Deliberately absent from `coop help`, the `/` menu
+# and the window; documented in docs/guardrails-reference.md only.
+function Invoke-CoopUnlockProd {
+  param([string[]]$Rest)
+  $file = Join-Path (Get-CoopProfileDir) 'prod-unlock.json'
+  $argv = @()
+  if ($Rest) { $argv = @($Rest) }
+  if ($argv -contains '--status') {
+    if (-not (Test-Path -LiteralPath $file)) { Coop-Say 'Production writes: blocked (no unlock).'; return }
+    try {
+      $g = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json
+      $exp = [DateTime]::Parse([string]$g.expires_at, $null, [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+      $left = [int][Math]::Ceiling(($exp - (Get-Date).ToUniversalTime()).TotalMinutes)
+      $until = $exp.ToString('o')
+      if ($left -le 0) { Coop-Say "Production writes: blocked (the unlock for $($g.client) expired at $until)."; return }
+      Coop-Warn "Production writes UNLOCKED for $($g.client): grant $($g.id), $left min left (until $until). Each production write still asks and is audited."
+    } catch { Coop-Say 'Production writes: blocked (the unlock file is unreadable and is ignored).' }
+    return
+  }
+  if ($argv -contains '--revoke') {
+    if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force }
+    Coop-Say 'Production writes: blocked again (unlock removed).'
+    return
+  }
+  $client = ''
+  $minutes = 30
+  for ($i = 0; $i -lt $argv.Count; $i++) {
+    $a = [string]$argv[$i]
+    if ($a -eq '--minutes') {
+      if ($i + 1 -ge $argv.Count) { Coop-Die 'usage: coop unlock-prod <client> [--minutes <1-480>] | --status | --revoke' }
+      $i++
+      $minutes = 0
+      if (-not [int]::TryParse([string]$argv[$i], [ref]$minutes)) { Coop-Die '--minutes takes a whole number from 1 to 480' }
+    } elseif ($a.StartsWith('--minutes=')) {
+      $minutes = 0
+      if (-not [int]::TryParse($a.Substring(10), [ref]$minutes)) { Coop-Die '--minutes takes a whole number from 1 to 480' }
+    } elseif ($a.StartsWith('-')) {
+      Coop-Die "unknown option $a. usage: coop unlock-prod <client> [--minutes <1-480>] | --status | --revoke"
+    } elseif (-not $client) {
+      $client = $a.Trim()
+    } else {
+      Coop-Die 'usage: coop unlock-prod <client> [--minutes <1-480>] | --status | --revoke'
+    }
+  }
+  if (-not $client) { Coop-Die 'usage: coop unlock-prod <client> [--minutes <1-480>] | --status | --revoke  (the client is the contract''s profile.client)' }
+  if ($client.Length -gt 160) { Coop-Die 'the client name is longer than 160 characters' }
+  if ($minutes -lt 1 -or $minutes -gt 480) { Coop-Die '--minutes takes a whole number from 1 to 480 (eight hours at most)' }
+  $now = (Get-Date).ToUniversalTime()
+  $id = ([guid]::NewGuid().ToString('N')).Substring(0, 8)
+  $grant = [ordered]@{
+    schema_version = 1
+    id             = $id
+    client         = $client
+    minutes        = $minutes
+    created_at     = $now.ToString('o')
+    expires_at     = $now.AddMinutes($minutes).ToString('o')
+  }
+  $dir = Split-Path -Parent $file
+  if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+  $json = [pscustomobject]$grant | ConvertTo-Json -Compress
+  [System.IO.File]::WriteAllText($file, $json, (New-Object System.Text.UTF8Encoding $false))
+  Coop-Warn "Production writes UNLOCKED for $client for $minutes min (grant $id, until $($grant.expires_at))."
+  Coop-Say 'Only a session whose .coop/project.yml names this client is covered. Each production write still asks and is audited; coop unlock-prod --revoke ends it now.'
+}
+
 function Invoke-CoopContextBudget {
   param([string[]]$Rest)
   $py = Get-CoopPython
@@ -1438,6 +1508,7 @@ switch -CaseSensitive ($cmd) {
   'profile' { Invoke-CoopProfile $rest; break }
   'teamai' { Invoke-CoopTeamai $rest; break }
   'context-budget' { Invoke-CoopContextBudget $rest; break }
+  'unlock-prod' { Invoke-CoopUnlockProd $rest; break }
   'init' { Invoke-CoopInit $rest; break }
   'project' { $projectRc = Invoke-CoopProject $rest; exit $projectRc }
   'new-skill' { New-CoopSkill $rest; break }
