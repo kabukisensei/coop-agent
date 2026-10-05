@@ -133,9 +133,11 @@ case "`$*" in
 esac
 exit 0
 "@
+  # cmd only (findstr is off the stub PATH): a line-by-line substring test.
   $brewCmd = @"
-echo %*| findstr /i node >nul && (echo @echo off> "$bin\node.cmd" & echo echo v22.19.0>> "$bin\node.cmd")
-echo %*| findstr /i python >nul && (echo @echo off> "$bin\python3.cmd" & echo echo Python 3.12.4>> "$bin\python3.cmd")
+set "a=%*"
+if not "%a%"=="%a:node=%" (echo @echo off> "$bin\node.cmd" & echo echo v22.19.0>> "$bin\node.cmd")
+if not "%a%"=="%a:python=%" (echo @echo off> "$bin\python3.cmd" & echo echo Python 3.12.4>> "$bin\python3.cmd")
 exit /b 0
 "@
   Write-Shim 'brew' $brewSh $brewCmd
