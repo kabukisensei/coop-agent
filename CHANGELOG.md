@@ -7,6 +7,20 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- `NOTICE.md`, the third-party notices and license review master plan row L1
+  asked for (section 12.3; Aaron raised it in the 2026-10-05 demo): every pin in
+  `config/release-manifest.json` and `config/microsoft-skills.json` with its
+  copyright line, license, how coop distributes it (installed, launched,
+  redistributed in the window installer, copied, prerequisite) and the terms
+  coop honors. It names the Power BI Authoring MCP EULA that `--accept-eula`
+  accepts, who accepted it for Cooptimize and when, and the Microsoft telemetry
+  both MCP servers may send. It ships in the window package's repository
+  snapshot, so Pi's MIT notice (absent from the 0.87.1 npm tarball) travels with
+  the redistributed copy. The four terms coop does not meet today are issues,
+  not fixes: #304 (the installer redistributes the EULA'd server), #305
+  (per-user EULA display), #306 (assert the license files in the installer
+  check), #307 (the skills catalog copies without the MIT notice).
+
 - `@juicesharp/rpiv-todo` **2.12.0** joins the pinned extensions (Aaron, 2026-10-03,
   from the pi.dev package review): a `todo` tool and a live task panel above the
   prompt, so a multi-step session shows what coop is doing, what is done and what
