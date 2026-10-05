@@ -22,7 +22,7 @@ import { readBranch } from "./lib/git.mjs";
 import { listFiles, rankFiles } from "./lib/files.mjs";
 import { loadSettings, saveSettings, THEMES } from "./lib/settings.mjs";
 import { listChanges, fileDiff } from "./lib/changes.mjs";
-import { readStandards, readSnapshot } from "./lib/standards-view.mjs";
+import { readStandards, readSnapshot, readNote } from "./lib/standards-view.mjs";
 import { loadProject, previewProject, saveProject } from "./lib/project-form.mjs";
 import { DocsSetupRun, AnswerError, docsLocation, listDocsPages, pickedPathAnswer, readDocsPage, runDocsBuild } from "./lib/docs-setup.mjs";
 import { attach, forget, pruneStore, findPdfjs, LIMITS as ATTACH_LIMITS } from "./lib/attachments.mjs";
@@ -232,7 +232,7 @@ function openWindow(rawSpec, token) {
       devTools: process.env.COOP_DESKTOP_DEVTOOLS === "1",
     },
   });
-  const state = { win, spec, token, pi: null, ready: false, queue: [], sessionFile: "", changes: [], snapshots: new Map(), docs: null, build: null, vibeSet: "" };
+  const state = { win, spec, token, pi: null, ready: false, queue: [], sessionFile: "", changes: [], snapshots: new Map(), knowledgeRoots: new Map(), docs: null, build: null, vibeSet: "" };
   windows.set(win.webContents.id, state);
   if (settings.lastFolder !== spec.cwd) { try { settings = saveSettings(settingsFile, { ...settings, lastFolder: spec.cwd }); } catch { /* keep going */ } }
   if (settings.maximized) win.maximize();
@@ -464,7 +464,17 @@ handle("coop:change-diff", async (state, path) => {
 handle("coop:standards", async (state) => {
   const result = await readStandards({ node: state.spec.node, repoRoot: repoRootFor(state.spec), cwd: state.spec.cwd, env: toolEnv(state) });
   state.snapshots = result.snapshots;
-  return { success: true, data: { source: result.source, domains: result.domains } };
+  state.knowledgeRoots = result.roots;
+  return { success: true, data: { source: result.source, domains: result.domains, knowledge: result.knowledge } };
+});
+
+// One note of a team knowledge clone (incremental-bi, coop-team-knowledge), by
+// the path the listing gave; the clone's location stays in main.
+handle("coop:knowledge-note", async (state, source, path) => {
+  const root = state.knowledgeRoots && state.knowledgeRoots.get(source);
+  if (!root) return { success: false, error: "that knowledge repository is not cloned here; run coop sync" };
+  try { return { success: true, data: await readNote(root, path) }; }
+  catch (error) { return { success: false, error: error.message }; }
 });
 
 handle("coop:standards-text", async (state, domain) => {

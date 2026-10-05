@@ -203,6 +203,26 @@ try {
     assert.equal(support.standards.canonical_remote, CANONICAL_REMOTE_STATE);
   });
 
+  test("STD-10a", "the team knowledge sources come from knowledge.repos, else the TeamAI trial's isolated clone", () => {
+    const profile = join(tmp, "knowledge-profile"); mkdirSync(join(profile, "teamai"), { recursive: true });
+    const config = join(profile, "config");
+    const teamClone = join(tmp, "team-clone"); mkdirSync(teamClone, { recursive: true });
+    const biClone = join(tmp, "bi-clone"); mkdirSync(biClone, { recursive: true });
+    const sourcesOf = (more) => Object.fromEntries(sourceStatus(opts({ cwd: tmp, coopConfig: config, ...more })).sources.slice(1).map((s) => [s.id, [s.authority_class, s.state, s.path]]));
+    // Nothing configured: both unavailable.
+    assert.deepEqual(sourcesOf(), { "cooptimize/incremental-bi": ["approved_pattern", "unavailable", null], "cooptimize/coop-team-knowledge": ["team_knowledge", "unavailable", null] });
+    // The TeamAI trial recorded its clone at init: that is the team knowledge.
+    writeFileSync(join(profile, "teamai", "state.json"), JSON.stringify({ clone_path: teamClone }));
+    assert.deepEqual(sourcesOf()["cooptimize/coop-team-knowledge"], ["team_knowledge", "available", realpathSync(teamClone)]);
+    // knowledge.repos names both: it wins over the trial's clone.
+    const listed = join(tmp, "team-listed"); mkdirSync(listed, { recursive: true });
+    writeFileSync(config, JSON.stringify({ knowledge: { enabled: true, repos: [{ url: "https://github.com/cooptimize/incremental-bi.git", local_path: biClone }, { url: "https://github.com/cooptimize/coop-team-knowledge.git", local_path: listed }] } }));
+    assert.deepEqual(sourcesOf(), { "cooptimize/incremental-bi": ["approved_pattern", "available", realpathSync(biClone)], "cooptimize/coop-team-knowledge": ["team_knowledge", "available", realpathSync(listed)] });
+    // A malformed state file is no team knowledge, never an error.
+    writeFileSync(config, "{}"); writeFileSync(join(profile, "teamai", "state.json"), "not json");
+    assert.deepEqual(sourcesOf()["cooptimize/coop-team-knowledge"], ["team_knowledge", "unavailable", null]);
+  });
+
   test("STD-10b", "Doctor tells an expired freshness window apart from a failed refresh", () => {
     // Doctor never refreshes. An install last launched longer ago than freshness_seconds
     // has a stale window but a healthy last attempt; only a failed attempt is a warning.

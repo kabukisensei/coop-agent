@@ -5,6 +5,22 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- coop window: the Standards pane lists the team knowledge repositories next to
+  the standards domains, one chip each: **Incremental BI** (the
+  `cooptimize/incremental-bi` approved patterns) and **Team knowledge** (the
+  TeamAI team share, `cooptimize/coop-team-knowledge`). A chip opens the clone's
+  Markdown notes one at a time (pick one from the list, search it like an
+  article); a repository that is not cloned here shows how to get it (`coop
+  onboard`, then `coop sync`). The pane reads the same clones the terminal's
+  team-knowledge skill searches and the same `/standards-status` sources; the
+  clone's location never leaves the main process.
+- The team knowledge source in `/standards-status` and `coop doctor` now falls
+  back to the TeamAI trial's isolated clone (recorded at `coop teamai init`)
+  when `knowledge.repos` does not list `coop-team-knowledge`, so the team share
+  counts as available wherever the trial is initialised.
+
 ### Changed
 
 - coop window: the native title bar and the File/Edit/View menu bar follow the
