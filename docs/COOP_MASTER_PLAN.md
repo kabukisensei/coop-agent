@@ -1739,7 +1739,7 @@ tags. A stale row is never a reason to re-do work: check the PR list first.
 | 18 | G1 | Never modify production: production writes hard-blocked, scoped reads still ask, hidden human-only unlock outside the repo (section 12.3) | decided (Aaron, 2026-10-05); asked for in the demo | section 12.3 acceptance | not started |
 | 19 | C1 | The committed project contract at the client's Git root (section 12.3) | decided (Aaron, 2026-10-05) | section 12.3 acceptance | not started |
 | 20 | C2 | Explicit semantic-model-to-SQL mapping and Fabric layout in the contract (section 12.3) | decided (Aaron, 2026-10-05) | section 12.3 acceptance | not started |
-| 21 | L1 | Microsoft tool license and notice review, docs only (section 12.3) | now | section 12.3 acceptance | in review (PR #TBD) |
+| 21 | L1 | Microsoft tool license and notice review, docs only (section 12.3) | now | section 12.3 acceptance | in review (PR #308) |
 | 22 | P1 | Machine-level shared profile for one-Windows-user-per-client VMs (section 12.3) | accepted (Aaron, 2026-10-05; one VM is one person's) | section 12.3 acceptance | not started |
 | 23 | DR1 | One private data-docs repository per client (section 12.3) | accepted (Aaron, 2026-10-05) | section 12.3 acceptance | not started |
 | 24 | PR1 | Personal, client and shipped prompts and skills (section 12.3) | accepted (Aaron, 2026-10-05) | section 12.3 acceptance | not started |
