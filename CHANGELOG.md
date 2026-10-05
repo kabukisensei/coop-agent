@@ -5,6 +5,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- coop window: the native title bar and the File/Edit/View menu bar follow the
+  chosen theme (dark for the dark themes, light for the light ones, the OS
+  setting for "auto") instead of always taking the OS colours (asked
+  2026-10-05 after v0.30.3).
+
 ## [0.30.3] — 2026-10-05
 
 ### Fixed
