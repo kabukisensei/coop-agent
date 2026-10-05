@@ -194,6 +194,14 @@ await check("replay: every recorded event type and extension request is one the 
   for (const method of UI_METHODS) assert.ok(app.includes(`"${method}"`) || main.includes(`"${method}"`), `no handler names ${method}`);
 });
 
+await check("theme: the native title bar and menu bar follow the chosen theme", () => {
+  const main = readFileSync(join(ROOT, "desktop", "main.mjs"), "utf8");
+  assert.match(main, /nativeTheme\.themeSource = theme === "auto" \? "system" : theme\.endsWith\("-dark"\) \? "dark" : "light"/, "themeSource maps auto/dark/light");
+  assert.ok(main.includes("applyNativeTheme(settings.theme);"), "applied at start, before any window opens");
+  // Every place a theme is chosen (the IPC handler and the menu) applies it natively.
+  assert.equal((main.match(/applyNativeTheme\(theme\);/g) || []).length, 2, "the IPC theme handler and the menu both apply it");
+});
+
 function replay() {
   const tl = createTimeline();
   const bash = new Map();

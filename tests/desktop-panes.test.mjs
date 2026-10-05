@@ -889,6 +889,19 @@ await check("styles: a long session list never pushes the window past its height
   assert.match(css, /\.session-list \{[^}]*overflow-y: auto/, "the session list scrolls on its own");
 });
 
+await check("styles: the unified diff wraps long lines instead of scrolling sideways", () => {
+  // 2026-10-05: a wide unified diff ran past the pane's right edge; Aaron asked
+  // for word wrap in unified mode (side by side already wraps per cell).
+  const css = readFileSync(join(ROOT, "desktop", "renderer", "styles", "app.css"), "utf8");
+  assert.ok(!/\.diff-view\.unified \{[^}]*max-content/.test(css), "the unified view no longer forces its content width");
+  const row = css.match(/\n\.diff-view\.unified \.diff-row \{([^}]*)\}/);
+  assert.ok(row, ".diff-view.unified .diff-row rule");
+  assert.match(row[1], /white-space: pre-wrap/, "unified rows wrap");
+  assert.match(row[1], /minmax\(0, 1fr\)/, "the text column can shrink below its content");
+  assert.match(css, /\.diff-view\.unified \.diff-text \{[^}]*overflow-wrap: anywhere/, "long tokens break too");
+  assert.match(css, /\n\.diff-cell \{[^}]*white-space: pre-wrap/, "side by side keeps wrapping");
+});
+
 rmSync(temp, { recursive: true, force: true });
 console.log(`\n${passed} desktop pane tests passed, ${failed} failed${skipped.length ? `, ${skipped.length} skipped` : ""}.`);
 if (failed) process.exit(1);

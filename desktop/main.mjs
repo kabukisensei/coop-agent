@@ -73,6 +73,14 @@ const checkout = createHash("sha256").update(HERE.toLowerCase()).digest("hex").s
 app.setPath("userData", join(isAbsolute(dataRoot) ? dataRoot : join(app.getPath("appData"), "coop", "desktop"), checkout));
 const settingsFile = join(app.getPath("userData"), "settings.json");
 let settings = loadSettings(settingsFile);
+// The native chrome (the Windows title bar and the File/Edit/View menu bar)
+// follows the chosen theme: dark themes get a dark title bar and menu bar, light
+// themes a light one, "auto" follows the OS. Set before any window opens; a
+// change fires nativeTheme "updated", which re-broadcasts the theme below.
+function applyNativeTheme(theme) {
+  nativeTheme.themeSource = theme === "auto" ? "system" : theme.endsWith("-dark") ? "dark" : "light";
+}
+applyNativeTheme(settings.theme);
 // Text pulled out of attached documents (D1b2) lives beside the settings; a
 // week-old extract is of no use to anyone, so the store is pruned at start.
 const attachmentStore = join(app.getPath("userData"), "attachments");
@@ -388,6 +396,7 @@ handle("coop:restart", (state) => restartOnce(state, async () => {
 handle("coop:theme", (state, theme) => {
   if (!THEMES.includes(theme)) return { success: false, error: "unknown theme" };
   settings = saveSettings(settingsFile, { ...settings, theme });
+  applyNativeTheme(theme);
   broadcast("coop:theme", { theme, systemDark: nativeTheme.shouldUseDarkColors });
   installMenu();
   return { success: true };
@@ -613,7 +622,7 @@ function focusedState() {
 function installMenu() {
   const template = menuTemplate({
     run: (action) => { const state = focusedState(); if (state) send(state, "coop:menu", { action }); },
-    setTheme: (theme) => { if (THEMES.includes(theme)) { settings = saveSettings(settingsFile, { ...settings, theme }); broadcast("coop:theme", { theme, systemDark: nativeTheme.shouldUseDarkColors }); } },
+    setTheme: (theme) => { if (THEMES.includes(theme)) { settings = saveSettings(settingsFile, { ...settings, theme }); applyNativeTheme(theme); broadcast("coop:theme", { theme, systemDark: nativeTheme.shouldUseDarkColors }); } },
     theme: settings.theme,
     themes: THEMES,
     menuBar: settings.menuBar,
