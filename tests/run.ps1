@@ -591,6 +591,7 @@ print("resume verdict contract OK")
     @{ Name = 'coop-unit';              Lane = 'gate';     Head = 'Coop-Unit: the 5.1 job persistence path, and a job that returns nothing is re-run in-process' },
     @{ Name = 'doctor-project';         Lane = 'gate';     Head = 'doctor.ps1 project contract rows' },
     @{ Name = 'first-run';              Lane = 'gate';     Head = 'first-run launcher continuation (onboarding gate)' },
+    @{ Name = 'mcp-retarget';           Lane = 'gate';     Head = 'managed Warehouse MCP entry follows the launch folder' },
     @{ Name = 'profile-root';           Lane = 'gate';     Head = 'one profile root: COOP_DIR parent of .coop, one agent-dir chain (S3, #220)' },
     @{ Name = 'sync-knowledge';         Lane = 'gate';     Head = 'team knowledge sync (sync-knowledge.ps1; hang cases in the extended lane)' },
     @{ Name = 'teamai';                 Lane = 'gate';     Head = 'coop teamai: isolated TeamAI adapter entry (K1; off by default)' },

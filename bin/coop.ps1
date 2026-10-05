@@ -514,6 +514,14 @@ function Initialize-CoopLaunch {
   # Guard against launching into a known-broken extension load (agent/extension skew).
   Invoke-CoopLaunchPreflight
 
+  # Point the managed Warehouse MCP entry at THIS folder's project: the shared
+  # config keeps one target, and the last `coop sync` may have run elsewhere
+  # (`coop update`, the window's first launch). Fail-soft: the token helper
+  # below reports whatever the config still says.
+  if ((Update-CoopManagedMcpConfig -Quiet) -eq 'failed') {
+    Coop-Warn 'could not refresh the MCP config for this folder; run: coop sync   (from this folder)'
+  }
+
   # Once-a-day fleet-staleness nudge: warn when this checkout is behind the next
   # release tag (throttled fetch, bounded wait — never blocks or fails the launch).
   Invoke-CoopUpdateNudge

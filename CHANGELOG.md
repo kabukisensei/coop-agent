@@ -5,6 +5,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- The managed Warehouse MCP entry in the shared `mcp-adapter.json` carries one
+  project's target: the contract above the folder it was generated in. Only
+  `coop sync` wrote it, so a `coop update` or the window's first launch run from
+  the home folder (seen 2026-10-05, right after 0.30.2) left the project folder
+  on the global endpoint: `fabric_sql_query unavailable: target_mismatch`, doctor
+  `target_invalid`, and no `fabric-sqlendpoint.execute_query` tool. Every launch
+  (terminal and window) now rewrites the entry for the folder it starts in
+  (`Update-CoopManagedMcpConfig`, the same ownership-aware generator sync runs),
+  so the last launch wins, not the last sync. Fail-soft: a launch that cannot
+  refresh it warns and starts anyway.
+
 ## [0.30.2] — 2026-10-05
 
 ### Fixed
