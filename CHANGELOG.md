@@ -7,6 +7,30 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- **Production is never modified from a session** (G1, master plan section 12.3;
+  asked for in the 2026-10-05 demo). Production writes are a hard block in
+  `coop-guardrails`, the same class as a source commit: a Warehouse SQL
+  `CREATE`/`ALTER`/`INSERT`/`UPDATE`/`DELETE`/`DROP`/`MERGE`/`EXEC` whose target
+  the trusted contract or managed server resolves to `production`, a Power BI
+  Modeling edit after a production connection, a Fabric or proxied MCP mutation
+  naming prod, and a shell Fabric write (`az rest`, `fab`) naming production get
+  no prompt and no session grant; the model is told to work on dev and leave the
+  change to the pipeline or a human. Production reads still ask with a scope.
+  The environment comes from trusted configuration, so a dev target with a
+  `prod_staging` schema is not blocked. `/coop-approvals status` says so, the
+  session-approval option reads "deletes still ask; production is blocked", and
+  every block is audited as `production write`.
+- `coop unlock-prod <client> [--minutes <n>]`, the human-only way to allow a
+  production change through coop when one really must happen: run in the
+  person's own terminal, never from a session, it writes a time-bounded grant
+  (default 30 minutes, at most 8 hours) to `~/.coop/prod-unlock.json`, outside
+  every repository. While it holds for the contract's client, the same writes
+  fall back to a per-call production prompt prefixed with the grant id and the
+  minutes left, audited as `prod-unlock:<id>`. `--status` and `--revoke` manage
+  it; the file is a secret path for the agent. The command is absent from
+  `coop help`, the `/` menu and the window, documented only in
+  `docs/guardrails-reference.md` (Production writes).
+
 - `@juicesharp/rpiv-todo` **2.12.0** joins the pinned extensions (Aaron, 2026-10-03,
   from the pi.dev package review): a `todo` tool and a live task panel above the
   prompt, so a multi-step session shows what coop is doing, what is done and what
