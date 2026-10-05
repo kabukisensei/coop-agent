@@ -96,6 +96,25 @@ for forbidden in (
     candidate = entry()
     candidate.update(forbidden)
     assert wmcp.sqlendpoint_config_status(candidate) == "unavailable"
+# Another coop install's copy of the same helper (the terminal install and the
+# window package share one mcp-adapter.json) is accepted when byte-identical;
+# a different file of the same name, or another name, is not.
+with tempfile.TemporaryDirectory() as other_install:
+    other_lib = Path(other_install) / "resources" / "coop" / "lib"
+    other_lib.mkdir(parents=True)
+    other_helper = other_lib / "fabric_request_headers.mjs"
+    shutil.copyfile(wmcp.REQUEST_HEADERS_HELPER, other_helper)
+    twin = entry()
+    twin["requestHeadersCommand"]["args"] = [str(other_helper), wmcp.GLOBAL_SQL_ENDPOINT_URL]
+    assert wmcp.sqlendpoint_config_status(twin) == "registered", "the other install's identical helper is registered"
+    other_helper.write_bytes(other_helper.read_bytes() + b"\n// tampered\n")
+    assert wmcp.sqlendpoint_config_status(twin) == "unavailable", "a changed helper is refused"
+    renamed = other_lib / "fabric_request_headers_copy.mjs"
+    shutil.copyfile(wmcp.REQUEST_HEADERS_HELPER, renamed)
+    twin["requestHeadersCommand"]["args"] = [str(renamed), wmcp.GLOBAL_SQL_ENDPOINT_URL]
+    assert wmcp.sqlendpoint_config_status(twin) == "unavailable", "another file name is refused"
+    twin["requestHeadersCommand"]["args"] = [str(other_helper)]
+    assert wmcp.sqlendpoint_config_status(twin) == "unavailable", "a one-item args list is refused"
 for spelling in (
     "executeSQL",
     "execute_query",
@@ -493,6 +512,29 @@ with tempfile.TemporaryDirectory(dir=ROOT) as local_dir:
     local_node.chmod(0o755)
     with mock.patch.object(wmcp.shutil, "which", return_value=str(local_node)):
         assert wmcp._native_node() is None
+
+# A launch from the home folder (or any folder that contains it) keeps a node
+# installed under the profile: nvm, or the coop window package's bundled Node
+# (2026-10-05: `coop desktop` from C:\Users\<name> reported the Azure CLI
+# unavailable because the bundled node was "inside the cwd").
+with tempfile.TemporaryDirectory() as fake_home:
+    home = Path(fake_home).resolve()
+    profile_node = home / "AppData" / "Local" / "Programs" / "coop" / ("node.exe" if wmcp._is_windows() else "node")
+    profile_node.parent.mkdir(parents=True)
+    profile_node.write_bytes(b"profile-node")
+    profile_node.chmod(0o755)
+    prior_cwd = os.getcwd()
+    try:
+        os.chdir(home)
+        with (
+            mock.patch.dict(os.environ, {"HOME": str(home), "USERPROFILE": str(home)}),
+            mock.patch.object(wmcp.shutil, "which", return_value=str(profile_node)),
+        ):
+            assert wmcp._native_node() == str(profile_node), "node under the profile is kept when launched from home"
+            assert wmcp._cwd_may_hold_tools(home.parent)
+            assert not wmcp._cwd_may_hold_tools(home / "AppData")
+    finally:
+        os.chdir(prior_cwd)
 
 
 # Exact item scope requires complete UUIDs and canonicalizes them; mismatch fails.

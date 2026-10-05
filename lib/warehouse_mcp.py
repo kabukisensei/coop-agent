@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import ntpath
 import os
@@ -431,6 +432,28 @@ def classify_tools(tools: list[Any]) -> str:
     return "tool_missing" if names else "unavailable"
 
 
+def same_request_headers_helper(path: Any) -> bool:
+    """True when `path` is this install's request-headers helper, or another coop
+    install's copy of the same file (byte-identical). The terminal install and
+    the coop window package share one profile and one mcp-adapter.json, and each
+    `coop sync` writes its own helper path into it; on 2026-10-05 the two
+    installs took turns calling the other's config invalid. The content check
+    keeps the ownership rule (a helper that is not this release's file is still
+    refused) while either install's path passes."""
+    if path == REQUEST_HEADERS_HELPER:
+        return True
+    if not isinstance(path, str) or not path:
+        return False
+    try:
+        other = Path(path)
+        if not other.is_absolute() or other.name != "fabric_request_headers.mjs":
+            return False
+        mine = hashlib.sha256(Path(REQUEST_HEADERS_HELPER).read_bytes()).digest()
+        return hashlib.sha256(other.read_bytes()).digest() == mine
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
 def sqlendpoint_config_status(entry: Any) -> str:
     if not isinstance(entry, dict):
         return "unavailable"
@@ -465,7 +488,10 @@ def sqlendpoint_config_status(entry: Any) -> str:
         or not isinstance(header, dict)
         or set(header) != {"command", "args", "timeoutMs"}
         or header.get("command") != "node"
-        or header.get("args") != [REQUEST_HEADERS_HELPER, url]
+        or not isinstance(header.get("args"), list)
+        or len(header["args"]) != 2
+        or not same_request_headers_helper(header["args"][0])
+        or header["args"][1] != url
         or header.get("timeoutMs") != 10000
         or not isinstance(target, dict)
         or set(target) != target_keys
@@ -529,6 +555,18 @@ def _is_windows() -> bool:
     return os.name == "nt"
 
 
+def _cwd_may_hold_tools(cwd: Path) -> bool:
+    """A working directory that contains the user's home (the home itself, the
+    users folder, a drive root) is not a work repo: tools installed under the
+    profile (a node from nvm or the coop window package, az.cmd from a per-user
+    install) live there legitimately. A launch from such a folder keeps them;
+    anywhere else, a binary under the cwd is a planted one and is refused."""
+    try:
+        return Path.home().resolve(strict=True).is_relative_to(cwd)
+    except (OSError, RuntimeError):
+        return False
+
+
 def _native_node() -> str | None:
     candidate = shutil.which("node")
     if not candidate:
@@ -536,7 +574,9 @@ def _native_node() -> str | None:
     try:
         node = Path(candidate).resolve(strict=True)
         cwd = Path.cwd().resolve(strict=True)
-        if not node.is_absolute() or not node.is_file() or node.is_relative_to(cwd):
+        if not node.is_absolute() or not node.is_file():
+            return None
+        if node.is_relative_to(cwd) and not _cwd_may_hold_tools(cwd):
             return None
         if _is_windows():
             if node.suffix.lower() != ".exe":

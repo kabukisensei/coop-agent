@@ -91,7 +91,8 @@ const runToken = (resource = "https://api.fabric.microsoft.com", mode = "success
     timeout: 12000, cwd: options.cwd || ROOT,
     env: {
       PATH: options.path || `${dir}${delimiter}${process.env.PATH || ""}`,
-      HOME: process.env.HOME || tmpdir(),
+      HOME: options.home || process.env.HOME || tmpdir(),
+      ...(options.home ? { USERPROFILE: options.home } : {}),
       ARBITRARY_SECRET_CANARY: "must-not-reach-child",
       ...(process.platform === "win32" ? { SystemRoot: process.env.SystemRoot } : {}),
     },
@@ -214,6 +215,26 @@ try {
     assert.equal(tokenResult.stdout.length, 0);
     assert.equal(existsSync(marker), false, "token mode also rejects repo-local Azure CLI candidates");
   } finally { rmSync(hijack, { recursive: true, force: true }); }
+
+  // A launch from the home folder keeps an Azure CLI installed under the
+  // profile (a per-user install): the cwd contains the home, so it is not a
+  // work repo and nothing in it counts as planted (2026-10-05).
+  const home = mkdtempSync(join(tmpdir(), "coop fabric home "));
+  try {
+    const perUser = join(home, "AppData", "Local", "Programs", "Azure CLI");
+    mkdirSync(perUser, { recursive: true });
+    const perUserAz = join(perUser, process.platform === "win32" ? "az.cmd" : "az");
+    writeFileSync(perUserAz, readFileSync(fakeAz));
+    chmodSync(perUserAz, 0o755);
+    rmSync(marker, { force: true });
+    const fromHome = runToken("https://api.fabric.microsoft.com", "success", { cwd: home, path: perUser, home });
+    assert.equal(fromHome.status, 0, `az under the profile runs when launched from home: ${fromHome.stderr}`);
+    assert.equal(existsSync(marker), true, "the per-user Azure CLI ran");
+    rmSync(marker, { force: true });
+    const fromRepo = runToken("https://api.fabric.microsoft.com", "success", { cwd: perUser, path: perUser, home: join(home, "elsewhere") });
+    assert.notEqual(fromRepo.status, 0, "an az inside a work folder that does not contain the home is still refused");
+    assert.equal(existsSync(marker), false);
+  } finally { rmSync(home, { recursive: true, force: true }); }
 
   const windows = windowsAzureCliCommand(
     "C:\\Windows\\System32\\cmd.exe",
