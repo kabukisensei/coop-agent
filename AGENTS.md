@@ -60,8 +60,8 @@ The in-agent `/setup-docs` command (and a `setup-docs` skill) runs a native wiza
 create or rebuild lineage docs for the current folder without leaving the session;
 `coop-data-doc.yml` and the built docs are committable, source is never touched.
 The in-agent `/setup-project` command and the `/start` menu's project item create
-or edit `.coop/project.yml`; a missing contract is proactively offered on startup
-in a Git repository. Contract edits preserve unowned fields and require `/new` or a
+or edit `.coop/project.yml`, the one committed team file at the client's Git root
+(startup never opens the wizard). Contract edits preserve unowned fields and require `/new` or a
 restart before the guardrails use the new trusted snapshot.
 
 For setup and commands — including `coop install`'s automatic `PATH` linking

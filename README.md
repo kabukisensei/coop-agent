@@ -290,7 +290,8 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop version` | Print `coop` + `pi` versions; a git checkout adds its `git describe` (for example `coop 0.23.5 (v0.23.5-21-gdf91630)`) |
 | `coop help` | Show usage |
 | **Authoring** | |
-| `coop init [dir] [--seed-docs] [--template] [--ci github|ado] [--yes]` | Guided minimal project-contract wizard (default `.`); `--template` explicitly selects the full legacy template and `--seed-docs` generates/patches `coop-data-doc.yml` |
+| `coop init [dir] [--seed-docs] [--template] [--ci github|ado] [--yes]` | Guided minimal project-contract wizard (default `.`); beside several repositories it creates the client home repository `<client>-coop` and puts the file there; `--template` explicitly selects the full legacy template and `--seed-docs` generates/patches `coop-data-doc.yml` |
+| `coop project status\|get\|share [--root <dir>] [--force]` | The shared project file from a shell: compare `.coop/project.yml` with the team's copy on origin, get the team's version (a fast-forward pull when nothing else would move, else only that file with a backup), or share yours (commits only that file and pushes the current branch; `--force` from a branch other than the default). Same code as `/project-get`, `/project-share` and the window's Project pane |
 | `coop new-skill <name>` | Scaffold `skills/<name>/SKILL.md` |
 | `coop new-prompt <name>` | Scaffold `prompts/<name>.md` |
 | `coop release [patch\|minor\|major] [--yes] [--no-push] [--no-check]` | Cut a release — bump version, roll CHANGELOG, commit + tag, then push `main` and the tag atomically (default `patch`). Runs only on `main` at `origin/main`. Build-checks the extensions first (skip with `--no-check`); `--no-push` tags locally only; `--yes` skips the confirm |
@@ -332,10 +333,20 @@ wizard through a strict JSONL bridge; it is the same questionnaire used by
 [`extensions/coop-tools/README.md`](extensions/coop-tools/README.md#data-doc-setup-setup-docs).
 
 Project configuration has the same no-shell path: run **`/setup-project`** or
-choose **Start a client project** from `/start`. The wizard creates a
-missing `.coop/project.yml` or safely edits the nearest existing one, covering
+choose **Start a client project** from `/start`. Every client has one
+`.coop/project.yml`, committed in a repository the whole team clones: at the
+repository root when the client has one repository, or in a small client home
+repository `<client>-coop` beside several (coop finds it from any of them). When
+the team already has the file on origin and this checkout does not, the wizard
+offers **Get the team's project file** before anything else. Otherwise it
+creates the file where it belongs (creating the home repository when needed) or
+safely edits the nearest existing one (never a second copy below it), covering
 client details, whatever repositories are available, Fabric/Power BI workspaces,
-and Tabular Editor. A repository is not required: the wizard can start an engagement
+and Tabular Editor. After a save it offers **Share with the team**: one yes, and
+coop commits only that file and pushes the current branch (`/project-share` and
+the window's Project pane do the same any time; `/project-get` brings the team's
+version in). Each session start says one line when the team's copy is newer or
+yours is unshared. A repository is not required: the wizard can start an engagement
 in discovery mode, record SQL-only or Power-BI-only coverage, and add sources later.
 Edits make a backup and preserve comments, custom policies, and fields the wizard
 does not own. After an edit, run `/new` (or restart Coop) so the guardrails take a fresh trusted
@@ -536,9 +547,14 @@ message + PR description from the diff — drafts only, never commits).
 
 The source of truth for repo paths, workspaces, backup/log rules, and approval policy
 is `.coop/project.yml`. It may provide deliberate project standards overrides;
-otherwise COOP's resolved standards task authority is authoritative. Run
-**`/setup-project`** inside Coop or `coop init` in the project directory. Use
-`coop init --template` only when you intentionally want the full legacy template.
+otherwise COOP's resolved standards task authority is authoritative. It is one
+committed team file per client, in the repository root or the client home
+repository `<client>-coop` beside several repositories: run **`/setup-project`**
+inside Coop or `coop init` (both edit a contract found above the folder, or in the
+home repository beside it, instead of creating a second one), then share it with
+`/project-share` or `coop project share`, the one Git write coop performs on its
+own, after your yes and only for that file. Use `coop init --template` only when
+you intentionally want the full legacy template.
 
 Fabric projects may use two workspaces per environment. Record Warehouse/Lakehouse
 DEV/TEST/PROD workspaces in `fabric.environment_names` and semantic-model

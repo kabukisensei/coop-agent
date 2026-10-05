@@ -52,7 +52,10 @@ const DEFAULT_ALLOWED_GLOBS = [
   "data-docs-site/**",
 ];
 
-/** Find the nearest .coop/project.yml walking up from `cwd` (bounded). */
+/** Find the nearest .coop/project.yml walking up from `cwd` (bounded), else the
+ *  contract the launcher resolved (COOP_PROJECT_YML: the client home repository
+ *  beside this one, C1), so the trusted snapshot is the file every other part
+ *  of coop reads. */
 function findProjectYml(cwd: string, exists: (path: string) => boolean = existsSync): string | null {
   let d = cwd;
   for (let i = 0; i < 8; i++) {
@@ -62,7 +65,8 @@ function findProjectYml(cwd: string, exists: (path: string) => boolean = existsS
     if (up === d) break;
     d = up;
   }
-  return null;
+  const launched = process.env.COOP_PROJECT_YML;
+  return launched && exists(launched) ? launched : null;
 }
 
 /** A committed path is allowed only after explicit deny rules have been checked. */
@@ -1922,7 +1926,8 @@ function auditPath(): string {
 type AuditEntry = {
   ts?: string;     // set by audit() on write; present on every read
   cwd: string;
-  kind: "commit-block" | "danger-confirm" | "secret-confirm" | "mcp-confirm";
+  // project-share rows are written by lib/project-share.mjs ("Share with the team", C1).
+  kind: "commit-block" | "danger-confirm" | "secret-confirm" | "mcp-confirm" | "project-share";
   tool: string;
   decision: "blocked" | "blocked-headless" | "allowed" | "declined";
   label: string;   // the short subject (offending path, danger label, tool name)

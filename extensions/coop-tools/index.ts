@@ -55,9 +55,14 @@ import {
   canonicalProjectUuid,
   cleanAnswer,
   clientPlatform,
+  contractCreatedNote,
+  contractLocationNote,
   estateMode,
   findGitRoot,
+  findSiblingContract,
   isServerHost,
+  proposeContractRoot,
+  siblingRepositoryEntries,
   parseProjectWizardSettings,
   projectSqlEndpointType,
   projectYamlScalar,
@@ -68,6 +73,15 @@ import {
   scalarValue,
   writeProjectContract,
 } from "../../lib/project-contract.mjs";
+import {
+  CONTRACT_FILE as PROJECT_FILE,
+  contractRepository,
+  createHomeRepository,
+  getTeamContract,
+  hasOrigin,
+  shareContract,
+  teamFileStatus,
+} from "../../lib/project-share.mjs";
 import {
   DATADOC_CONFIG,
   DEFAULT_OUTPUT_DIR,
@@ -86,7 +100,12 @@ export {
   SQL_TARGET_KINDS,
   applyProjectWizardSettings,
   clientPlatform,
+  contractCreatedNote,
+  contractLocationNote,
   estateMode,
+  findSiblingContract,
+  proposeContractRoot,
+  siblingRepositoryEntries,
   parseProjectWizardSettings,
   projectYamlScalar,
   proposedSqlTargetKind,
@@ -1296,12 +1315,24 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
     notify(ctx, "Project setup needs an interactive Coop UI. In a shell, run: coop init", "warning");
     return false;
   }
-  const existing = findProjectYml(ctx.cwd);
-  const root = existing ? resolve(existing, "..", "..") : (findGitRoot(ctx.cwd) || resolve(ctx.cwd));
+  let existing = findProjectYml(ctx.cwd);
+  // C1 (the shared project file design): one committed contract per client, in
+  // a repository the team clones. Before offering to create one, check whether
+  // the team already has it on origin ("Get the team's project file").
+  if (!existing) {
+    const got = await offerTeamContract(ctx);
+    if (got) existing = findProjectYml(ctx.cwd);
+  }
+  // An existing contract (above cwd, or in the client home repository beside
+  // it) is edited in place, never shadowed by a second copy; a new one goes in
+  // this repository, or in the client home repository beside several.
+  let where = proposeContractRoot(ctx.cwd, { existing });
   const original = existing ? safeRead(existing) : "";
-  const settings = parseProjectWizardSettings(original, root);
   const title = existing ? "Edit this Coop project" : "Set up this Coop project";
   notify(ctx, `${title}. Press Esc at any prompt to cancel without changing files.`, "info");
+  notify(ctx, contractLocationNote(where), "info");
+  let root = where.root;
+  let settings = parseProjectWizardSettings(original, root);
 
   // The one onboarding question the launch no longer asks (master plan FR1): the
   // name coop calls the user by. Asked only while the local profile is missing;
@@ -1328,6 +1359,20 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
   settings.client = client;
   settings.timezone = timezone;
   settings.defaultBranch = defaultBranch;
+
+  if (!existing && where.kind === "home-repo") {
+    // The client home repository is named after the client, so it is proposed
+    // only now; No keeps the project file in this repository alone.
+    const named = proposeContractRoot(ctx.cwd, { existing: null, client: client || basename(where.parent) });
+    const fallback = proposeContractRoot(ctx.cwd, { existing: null, repository: true });
+    const useHome = await askConfirm(ctx, "Where the project file goes", `Create the client home repository ${named.root} beside ${named.repos.join(", ")} (a small private repository the whole team clones: the project file, the lineage docs, the catalog snapshot and the client's prompts and skills) and put .coop/project.yml there?\n\nChoose No to keep it at ${fallback.root}, for this repository only.`);
+    where = useHome ? named : fallback;
+    root = where.root;
+    const carried = settings;
+    settings = parseProjectWizardSettings(original, root);
+    Object.assign(settings, { organization: carried.organization, client: carried.client, timezone: carried.timezone, defaultBranch: carried.defaultBranch });
+    if (useHome) settings.repositories = siblingRepositoryEntries(where.repos, defaultBranch);
+  }
 
   if (!existing) {
     const hasLocalSource = await askConfirm(
@@ -1459,18 +1504,96 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
   const repoSummary = settings.repositories.length
     ? settings.repositories.map((r) => `${r.name} (${r.role}: ${r.localPath})`).join("\n")
     : "No local source yet (discovery mode)";
-  const confirmed = await askConfirm(ctx, title, `${existing ? "Update" : "Create"} .coop/project.yml for ${client || "this project"}?\n\nMode: ${mode}\n${repoSummary}`);
+  const path = existing || where.path;
+  const confirmed = await askConfirm(ctx, title, `${existing ? "Update" : "Create"} ${path} for ${client || "this project"}?\n\nMode: ${mode}\n${repoSummary}`);
   if (!confirmed) { notify(ctx, "Project setup cancelled — no files changed.", "info"); return false; }
   const output = existing ? applyProjectWizardSettings(original, settings) : renderProjectWizardSettings(settings);
-  const path = existing || join(root, ".coop", "project.yml");
+  if (!existing && where.kind === "home-repo") {
+    const home = createHomeRepository(root, client);
+    if (home.error) { notify(ctx, `Could not create the client home repository ${root}: ${home.error}. No files were changed.`, "error"); return false; }
+    if (home.created || home.initialized) notify(ctx, `Created the client home repository ${root}${home.initialized ? " (git init)" : ""}. Add its remote (for example cooptimize/${basename(root)}) when the team should clone it.`, "info");
+  }
   const backup = writeProjectContract(path, output);
   notify(ctx, `Project contract ${existing ? "updated" : "created"}: ${path}${backup ? ` (backup: ${backup})` : ""}`, "info");
+  if (!existing) notify(ctx, contractCreatedNote(root), "info");
   notify(ctx, "Run /new or restart Coop before governed work so the guardrails load the updated contract.", "info");
+  await offerShare(ctx, path);
 
   if (!settings.repositories.length) {
     notify(ctx, "Discovery mode is ready. Coop can inspect dev/test metadata read-only; row data and production access still ask first.", "info");
   }
   return true;
+}
+
+// --- The shared project file (C1): get, share, and the session-start check ----
+// Sharing is the one Git write coop performs on its own, after the user's yes:
+// lib/project-share.mjs stages and commits .coop/project.yml alone and pushes the
+// current branch; nothing else is ever staged. Every path here is best-effort
+// and silent where there is no Git repository or no origin remote.
+
+/** "Get the team's project file": when this repository has no contract but
+ *  origin has one, offer the one-click get. Returns true when the file arrived. */
+async function offerTeamContract(ctx: any): Promise<boolean> {
+  try {
+    const repo = findGitRoot(ctx.cwd);
+    if (!repo || !hasOrigin(repo)) return false;
+    const status = teamFileStatus(repo, { fetchTimeout: 10_000 });
+    if (status.state !== "team-has-it") return false;
+    const get = await askConfirm(ctx, "The team's project file", `The team already has ${PROJECT_FILE} on origin/${status.defaultBranch}, and this checkout does not. Get it? (a fast-forward pull when nothing else would move, else only that file)`);
+    if (!get) return false;
+    const result = getTeamContract(repo);
+    if (!result.ok) { notify(ctx, `Could not get the team's project file: ${result.reason}`, "warning"); return false; }
+    notify(ctx, `Got the team's project file (${result.method === "pull" ? "fast-forward pull" : "only .coop/project.yml changed"}): ${result.path}${result.backup ? ` (backup: ${result.backup})` : ""}`, "info");
+    return true;
+  } catch (e: any) {
+    notify(ctx, `Could not check origin for the team's project file: ${errMsg(e)}`, "warning");
+    return false;
+  }
+}
+
+/** "Share with the team", after a save: one yes, then the one-file commit and push. */
+async function offerShare(ctx: any, contractPath: string): Promise<void> {
+  try {
+    const repo = contractRepository(contractPath);
+    if (!repo) { notify(ctx, `${PROJECT_FILE} is not shared yet: ${resolve(contractPath, "..", "..")} is not a Git repository, and the team's project file belongs in a repository the team clones.`, "info"); return; }
+    if (!hasOrigin(repo)) { notify(ctx, `${PROJECT_FILE} is not shared yet: ${repo} has no origin remote. Add one, then /project-share.`, "info"); return; }
+    const share = await askConfirm(ctx, "Share with the team", `Share ${PROJECT_FILE} with the team now? coop commits that one file (message "coop: project file updated by <your name>") and pushes the current branch; nothing else is staged or committed.`);
+    if (!share) { notify(ctx, "Not shared yet. Share it any time with /project-share (or the window's Project pane).", "info"); return; }
+    await runShare(ctx, repo);
+  } catch (e: any) {
+    notify(ctx, `Share failed: ${errMsg(e)}`, "warning");
+  }
+}
+
+async function runShare(ctx: any, repo: string): Promise<void> {
+  let result = shareContract(repo);
+  if (result.state === "other-branch") {
+    const anyway = await askConfirm(ctx, "Share from this branch?", `${result.reason}.\n\nPush ${PROJECT_FILE} to ${result.branch} anyway? Choose No to stop (switch to ${result.defaultBranch} first, then /project-share).`);
+    if (!anyway) { notify(ctx, "Not shared. Nothing was committed or pushed.", "info"); return; }
+    result = shareContract(repo, { force: true });
+  }
+  if (result.ok) {
+    notify(ctx, result.state === "already-shared" ? "Your project file already matches the team's; nothing to share." : `Shared ${PROJECT_FILE} with the team (commit ${result.commit} pushed to ${result.branch}).`, "info");
+    return;
+  }
+  notify(ctx, `Could not share the project file: ${result.reason}${result.committed ? " (the commit exists locally; push it when the remote accepts it)" : ""}`, "warning");
+}
+
+/** The session-start check: one line when the team's copy is newer than an
+ *  unmodified local file, when the local file carries unshared edits, or when
+ *  the team has a file this checkout lacks. Silent otherwise. */
+export function projectFileNote(cwd: string): { text: string; state: string } | null {
+  if (process.env.COOP_PROJECT_SYNC === "0") return null;
+  const contract = findProjectYml(cwd);
+  const repo = contract ? contractRepository(contract) : findGitRoot(cwd);
+  if (!repo || !hasOrigin(repo)) return null;
+  const status = teamFileStatus(repo, { fetchTimeout: 8_000 });
+  switch (status.state) {
+    case "team-newer": return { state: status.state, text: `The team's ${PROJECT_FILE} on origin/${status.defaultBranch} is newer than your unmodified copy. /project-get gets the team's version; the guardrails keep the file they started with until /new.` };
+    case "not-shared": return { state: status.state, text: `Your ${PROJECT_FILE} differs from the team's copy (not shared yet). /project-share shares it, or keep yours for now.` };
+    case "team-has-it": return { state: status.state, text: `The team already has ${PROJECT_FILE} on origin/${status.defaultBranch}, and this checkout does not. /project-get gets it.` };
+    default: return null;
+  }
 }
 
 // --- "Start Here" menu (on demand via /start) --------------------------------
@@ -2207,6 +2330,13 @@ export default function coopTools(pi: ExtensionAPI) {
     learningNudgeAnnounced = false;
     announcedTeamKnowledge = false;
     const primedLogin = primeModelLogin(ctx);
+    // The shared project file (C1): say once per session when the team's copy
+    // moved, when this copy is unshared, or when the team has a file this
+    // checkout lacks. Never applied silently; the guardrails keep their snapshot.
+    try {
+      const note = projectFileNote(ctx.cwd);
+      if (note) notify(ctx, note.text, note.state === "team-newer" ? "warning" : "info");
+    } catch { /* best effort */ }
     // First launch (master plan FR1): the common-workflows menu, once per profile
     // dir. The flag is cleared first so `/new` in the same process never reopens it.
     if (shouldOpenFirstRunMenu(ctx)) {
@@ -2435,6 +2565,49 @@ export default function coopTools(pi: ExtensionAPI) {
         await runProjectWizard(pi, ctx);
       } catch (e: any) {
         notify(ctx, `Project setup failed: ${errMsg(e)}. No source files were changed.`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("project-share", {
+    description: "Share .coop/project.yml with the team (commit that one file and push)",
+    handler: async (_args, ctx) => {
+      try {
+        if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") { notify(ctx, "project-share needs an interactive session. In a shell: coop project share", "warning"); return; }
+        const contract = findProjectYml(ctx.cwd);
+        if (!contract) { notify(ctx, `No ${PROJECT_FILE} here. /setup-project creates one.`, "warning"); return; }
+        const repo = contractRepository(contract);
+        if (!repo) { notify(ctx, `${contract} is not in a Git repository: the team's project file belongs in a repository the team clones.`, "warning"); return; }
+        if (!hasOrigin(repo)) { notify(ctx, `${repo} has no origin remote to share to.`, "warning"); return; }
+        const share = await askConfirm(ctx, "Share with the team", `Share ${PROJECT_FILE} with the team? coop commits that one file and pushes the current branch; nothing else is staged or committed.`);
+        if (!share) { notify(ctx, "Not shared. Nothing was committed or pushed.", "info"); return; }
+        await runShare(ctx, repo);
+      } catch (e: any) {
+        notify(ctx, `Share failed: ${errMsg(e)}`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("project-get", {
+    description: "Get the team's .coop/project.yml from origin (nothing else moves)",
+    handler: async (_args, ctx) => {
+      try {
+        const contract = findProjectYml(ctx.cwd);
+        const repo = contract ? contractRepository(contract) : findGitRoot(ctx.cwd);
+        if (!repo) { notify(ctx, "This folder is not in a Git repository.", "warning"); return; }
+        if (!hasOrigin(repo)) { notify(ctx, `${repo} has no origin remote.`, "warning"); return; }
+        const status = teamFileStatus(repo);
+        if (!status.originExists) { notify(ctx, `origin has no ${PROJECT_FILE} yet. /setup-project creates one here, then /project-share.`, "info"); return; }
+        if (status.state === "shared") { notify(ctx, "Your project file already matches the team's.", "info"); return; }
+        if (status.state === "not-shared" && ctx.hasUI && typeof ctx.ui?.confirm === "function") {
+          const replace = await askConfirm(ctx, "Replace your edits?", `Your ${PROJECT_FILE} has edits the team does not have. Replace it with the team's version? (a backup is kept; choose No to keep yours and /project-share it instead)`);
+          if (!replace) { notify(ctx, "Kept your version.", "info"); return; }
+        }
+        const result = getTeamContract(repo);
+        if (!result.ok) { notify(ctx, `Could not get the team's project file: ${result.reason}`, "warning"); return; }
+        notify(ctx, `Got the team's project file (${result.method === "pull" ? "fast-forward pull" : "only .coop/project.yml changed"}): ${result.path}${result.backup ? ` (backup: ${result.backup})` : ""}. Run /new so the guardrails use it.`, "info");
+      } catch (e: any) {
+        notify(ctx, `Get failed: ${errMsg(e)}`, "error");
       }
     },
   });

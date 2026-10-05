@@ -477,6 +477,8 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; }
 .pane-view { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 12px; overflow: hidden; }
 .pane-scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 2px; }
 .pane-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 13px; color: var(--text-muted); }
+.pane-summary.team-line { justify-content: space-between; margin: 4px 0 8px; }
+.pane-summary.team-line .btn { flex: none; }
 .pane-summary code { font-size: 12px; overflow-wrap: anywhere; color: var(--text); }
 .pane-summary.ok { color: var(--success); }
 .pane-empty { color: var(--text-muted); font-size: 13px; margin: 8px 0; }
