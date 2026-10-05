@@ -855,8 +855,9 @@ function modelLabel() {
 
 function renderHeader() {
   const info = app.info || {};
-  $("folderName").textContent = info.folder || "";
-  $("folderName").title = info.cwd || "";
+  // The client the project file names, then the folder (D1m).
+  $("folderName").textContent = info.client ? `${info.client} · ${info.folder}` : (info.folder || "");
+  $("folderName").title = info.contract ? `${info.cwd}\n${info.contract}` : (info.cwd || "");
   $("branchName").textContent = info.branch || "";
   $("branchName").hidden = !info.branch;
   const name = app.tl.sessionName || (app.state && app.state.sessionName) || "";
@@ -1258,6 +1259,12 @@ function hotkeys() {
   openModal({ title: "Keyboard shortcuts", wide: true, body: el("table", { class: "keys" }, el("tbody", {}, unique.map(([keys, does]) => el("tr", {}, el("td", {}, el("kbd", { text: keys })), el("td", { text: does }))))), buttons: [{ label: "Close", kind: "primary" }] });
 }
 
+async function switchProject() {
+  const result = await coop.switchProject();
+  if (result.success) toast("Opening that project in a new coop window. A console shows coop's launch checks first, then the window opens.", "info");
+  else if (!result.cancelled) toast(result.error || "Could not open the project.", "warning");
+}
+
 async function openFolder() {
   const result = await coop.openFolder();
   if (result.success) toast("Opening that folder in a new coop window. A console shows coop's launch checks first, then the window opens.", "info");
@@ -1283,6 +1290,7 @@ const ACTIONS = {
   quit: { label: "Close this window", keys: "Ctrl+W", run: () => window.close() },
   terminal: { label: "Open in terminal", run: (arg, name) => openTerminal(name ? `Run /${name}${arg ? ` ${arg}` : ""} there.` : "") },
   theme: { label: "Theme", run: () => chooseTheme() },
+  switch: { label: "Switch project", run: () => switchProject() },
   folder: { label: "Open a folder in a new window", run: () => openFolder() },
   start: { label: "Start menu: common tasks", run: () => sendPrompt("/start") },
   changes: { label: "Changes since the last commit", keys: "Ctrl+Shift+D", pane: true, run: () => openPane("changes") },

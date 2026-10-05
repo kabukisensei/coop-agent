@@ -359,7 +359,7 @@ const ANSWERS = {
   client: "Contoso",
   analytics: { description: "Warehouse SQL", role: "mixed", localPath: ".", remoteName: "origin", defaultBranch: "main" },
   added: { name: "Reports Repo", description: "Power BI reports", role: "powerbi", localPath: "../reports", remoteName: "origin", defaultBranch: "release" },
-  fabric: { tenantId: "11111111-1111-1111-1111-111111111111", fabricWorkspaceName: "Contoso WS", fabricWorkspaceId: "22222222-2222-2222-2222-222222222222", sqlEndpointItemType: "Warehouse", sqlEndpointItemName: "ContosoDW", sqlEndpointItemId: "33333333-3333-3333-3333-333333333333", sqlEndpointPropertiesId: "", powerBiWorkspaceName: "Contoso WS", powerBiWorkspaceId: "" },
+  fabric: { tenantId: "11111111-1111-1111-1111-111111111111", fabricWorkspaceName: "Contoso WS", fabricWorkspaceId: "22222222-2222-2222-2222-222222222222", sqlEndpointItemType: "Warehouse", sqlEndpointItemName: "ContosoDW", sqlEndpointItemId: "33333333-3333-3333-3333-333333333333", sqlEndpointPropertiesId: "", powerBiWorkspaceName: "Contoso WS", powerBiWorkspaceId: "", fabricLayout: "warehouse", tableMappingRule: "prefix", tableMappingSchema: "dbo", tableMappingPrefix: "v_" },
   target: { sqlTargetKind: "azure_sql", sqlTargetServer: "Contoso-Dev.Database.Windows.Net", sqlTargetDatabase: "ContosoDW" },
   te: { tabularEditorPath: "te", bpaRulesPath: "rules/bpa.json" },
 };
@@ -389,6 +389,7 @@ function wizardCtx(root, { fresh = false, localSource = true } = {}) {
             tenantId: "Azure tenant ID", fabricWorkspaceName: "Default Fabric workspace name", fabricWorkspaceId: "Default Fabric workspace ID",
             sqlEndpointItemType: "Default SQL endpoint item type", sqlEndpointItemName: "Default SQL endpoint item name", sqlEndpointItemId: "Default SQL endpoint item ID",
             sqlEndpointPropertiesId: "Lakehouse sqlEndpointProperties.id", powerBiWorkspaceName: "Default Power BI workspace name", powerBiWorkspaceId: "Default Power BI workspace ID",
+            fabricLayout: "Fabric layout", tableMappingRule: "Semantic-model table to SQL object rule", tableMappingSchema: "Default schema for a model table", tableMappingPrefix: "View prefix the model table names drop",
             sqlTargetKind: "Dev SQL target kind", sqlTargetServer: "Dev SQL server host", sqlTargetDatabase: "Dev database name",
             tabularEditorPath: "Tabular Editor CLI command or path", bpaRulesPath: "BPA rules file path",
           };
@@ -439,13 +440,17 @@ await check("project form: loads the wizard's fields; dropped fields never reach
   assert.deepEqual(data.commitLists.top, ["docs/**"]);
   assert.deepEqual(data.commitLists.repositories.analytics, { allowed: ["special-docs/**"], never: ["secrets/**", "bin/**"] });
   assert.equal(data.profileMissing, false);
+  assert.match(data.locationNote, /A contract already covers this folder/);
+  const fresh = loadProject(projectFixture("fresh-note"), { env: process.env });
+  assert.deepEqual([fresh.exists, fresh.path], [false, join(fresh.root, ".coop", "project.yml")]);
+  assert.match(fresh.locationNote, /Coop proposes this repository's root/);
   assert.deepEqual(data.guardrailFields.sort(), ["client", "commitLists", "repositories.localPath", "sqlTargetDatabase", "sqlTargetKind", "sqlTargetServer", "tenantId"]);
   const shown = JSON.stringify(data);
   for (const dropped of ["live_discovery", "allowed_default_actions", "requires_approval_actions", "list_workspaces", "run_query", "future_setting", "custom_profile_key"]) {
     assert.equal(shown.includes(dropped), false, `${dropped} reaches the window`);
   }
   const input = formInput(initialValues(data));
-  assert.deepEqual(Object.keys(input).sort(), ["bpaRulesPath", "client", "defaultBranch", "fabricEnabled", "fabricWorkspaceId", "fabricWorkspaceName", "organization", "powerBiWorkspaceId", "powerBiWorkspaceName", "profileName", "repositories", "sqlEndpointItemId", "sqlEndpointItemName", "sqlEndpointItemType", "sqlEndpointPropertiesId", "sqlTargetDatabase", "sqlTargetKind", "sqlTargetServer", "tabularEditorEnabled", "tabularEditorPath", "tenantId", "timezone"]);
+  assert.deepEqual(Object.keys(input).sort(), ["bpaRulesPath", "client", "defaultBranch", "fabricEnabled", "fabricLayout", "fabricWorkspaceId", "fabricWorkspaceName", "organization", "powerBiWorkspaceId", "powerBiWorkspaceName", "profileName", "repositories", "sqlEndpointItemId", "sqlEndpointItemName", "sqlEndpointItemType", "sqlEndpointPropertiesId", "sqlTargetDatabase", "sqlTargetKind", "sqlTargetServer", "tableMappingPrefix", "tableMappingRule", "tableMappingSchema", "tabularEditorEnabled", "tabularEditorPath", "tenantId", "timezone"]);
   assert.equal(platformHint("azure_sql"), "This machine is set up as an Azure SQL client, so No is the usual answer.");
   assert.equal(platformHint(""), "");
 });
@@ -475,6 +480,11 @@ await check("project form: the same answers write the same file as /setup-projec
   assert.equal(projectYamlScalar(written, ["profile", "client"]), "Contoso");
   assert.equal(projectYamlScalar(written, ["repositories", "Reports-Repo", "local_path"]), "../reports");
   assert.equal(projectYamlScalar(written, ["sql_targets", "dev", "server"]), "contoso-dev.database.windows.net");
+  assert.equal(projectYamlScalar(written, ["fabric", "layout"]), "warehouse");
+  assert.equal(projectYamlScalar(written, ["power_bi", "table_mapping", "rule"]), "prefix");
+  assert.equal(projectYamlScalar(written, ["power_bi", "table_mapping", "view_prefix"]), "v_");
+  assert.deepEqual(data.mappingOverrides, {});
+  assert.deepEqual(data.layouts, ["warehouse", "lakehouse", "sql_database", "mixed"]);
   for (const kept of ["# keep this client comment", "custom_profile_key: 'keep-me'", "- 'special-docs/**'", "agent_never_commit: ['secrets/**', 'bin/**']", "live_discovery:", "allowed_default_actions:", "future_setting: 42"]) {
     assert.ok(written.includes(kept), `unowned text kept: ${kept}`);
   }
@@ -503,6 +513,7 @@ await check("project form: a new contract and discovery mode match /setup-projec
     assert.equal(preview.mode, localSource ? "partial" : "discovery");
     const saved = saveProject(viaForm, input, preview.token, { env: process.env });
     assert.deepEqual([saved.created, saved.backup], [true, null]);
+    assert.match(saved.next, /^Share \.coop\/project\.yml with the team/);
     assert.equal(readFileSync(join(viaForm, ".coop", "project.yml"), "utf8"), expected, `new contract, local source ${localSource}`);
   }
 });
@@ -796,7 +807,8 @@ await check("bridge: every pane call in preload.cjs has a handler in main.mjs", 
   const preload = readFileSync(join(ROOT, "desktop", "preload.cjs"), "utf8");
   const main = readFileSync(join(ROOT, "desktop", "main.mjs"), "utf8");
   const invoked = [...preload.matchAll(/ipcRenderer\.invoke\("(coop:[a-z-]+)"/g)].map((m) => m[1]);
-  const handled = new Set([...main.matchAll(/handle\("(coop:[a-z-]+)"/g)].map((m) => m[1]));
+  // handle(...) for a window, pickerHandle(...) for the project picker (D1m).
+  const handled = new Set([...main.matchAll(/[hH]andle\("(coop:[a-z-]+)"/g)].map((m) => m[1]));
   for (const channel of ["coop:changes", "coop:change-diff", "coop:standards", "coop:standards-text", "coop:knowledge-note", "coop:project-load", "coop:project-preview", "coop:project-save", "coop:pick-folder", "coop:docs-start", "coop:docs-answer", "coop:docs-cancel", "coop:docs-build", "coop:docs-page", "coop:docs-portal"]) {
     assert.ok(invoked.includes(channel), `preload exposes ${channel}`);
   }

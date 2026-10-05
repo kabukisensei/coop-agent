@@ -166,7 +166,7 @@ await check("electron-builder: NSIS per-user, no elevation, data kept, shortcuts
   assert.equal(config.nsis.runAfterFinish, false);
   assert.equal(config.nsis.createDesktopShortcut, true);
   assert.equal(config.nsis.createStartMenuShortcut, true);
-  assert.equal(config.nsis.shortcutName, "coop (window)");
+  assert.equal(config.nsis.shortcutName, "coop");
   assert.match(config.artifactName, /^coop-window-\$\{version\}-\$\{os\}-\$\{arch\}\.\$\{ext\}$/);
   assert.equal(config.nsis.artifactName, config.artifactName);
   // D1d: the uninstaller drops the first launch's `coop` link and "coop"

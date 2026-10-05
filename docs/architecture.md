@@ -118,6 +118,10 @@ for the Node tools and extensions; no script builds these paths inline.
      Coop user profile (`user.json`, written by `coop onboard`) as a small hidden
      instruction at session start, so the agent addresses the member by name and
      in their preferred style without the profile ever appearing in the chat.
+     The per-user file is filled field by field from the machine-level
+     `%ProgramData%\coop\user.json` (`coop onboard --machine`, master plan P1;
+     `lib/user-profile.mjs`), which holds only a name and a communication
+     preference for VMs with one Windows user per client.
    - **`coop-guardrails` extension** — `extensions/coop-guardrails/`: **enforces**
      governance at runtime via a `tool_call` hook (blocks the agent committing
      source; confirms destructive commands). Complements the advisory
@@ -206,7 +210,8 @@ for the Node tools and extensions; no script builds these paths inline.
    re-targeted at every launch to the contract above the folder coop starts in:
    - `fabric` — `@microsoft/fabric-mcp` (AzureCliCredential).
    - `powerbi-modeling-mcp` — `@microsoft/powerbi-modeling-mcp --start --readwrite
-     --accept-eula`, the only Power BI MCP. Reads run freely; the guardrail classifies
+     --accept-eula`, the only Power BI MCP (the EULA that flag accepts, and every other
+     component's license, is listed in `NOTICE.md`). Reads run freely; the guardrail classifies
      each call's `request.operation` and asks before any edit (#159). (`powerbi-mcp-server`, the former `powerbi` entry, is
      retired: it ignores `--readonly` and exposes `refresh_dataset`, a write, #93.
      `coop sync` removes the entry it generated; `coop doctor` warns about a

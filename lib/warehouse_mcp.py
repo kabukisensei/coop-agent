@@ -124,6 +124,11 @@ def find_project_yml(start: Path) -> Path | None:
         if d.parent == d:
             break
         d = d.parent
+    # The launcher's answer (COOP_PROJECT_YML, bin/coop.ps1): the contract in the
+    # client home repository beside this one (master plan C1).
+    launched = os.environ.get("COOP_PROJECT_YML", "")
+    if launched and Path(launched).is_file():
+        return Path(launched)
     return None
 
 
@@ -227,6 +232,9 @@ def launcher_project_yml() -> Path | None:
             if d.parent == d:
                 break
             d = d.parent
+        launched = os.environ.get("COOP_PROJECT_YML", "")
+        if launched and Path(launched).is_file():
+            return Path(launched)
         bundled = Path(__file__).resolve().parent.parent / ".coop" / "project.yml"
         return bundled if bundled.is_file() else None
     except OSError:
