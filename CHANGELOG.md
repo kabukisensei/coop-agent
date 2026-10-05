@@ -7,6 +7,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- The isolated extension tree (`<profile dir>\agent\npm`) has one writer at a
+  time. The coop window's first launch seeds that tree from the package and
+  `coop sync`, `coop install` and `coop update` rewrite it; two of them at once
+  (seen 2026-10-05: the window's first launch during a `coop sync`) left a
+  half-written tree and Pi stopped with "Failed to load extension ... Cannot
+  find module" for pi-mcp-adapter and pi-hermes-memory. `Sync-CoopExtensionFleet`
+  now holds a named mutex per agent dir while it writes, a second writer waits
+  for the first (up to 15 minutes, then says so), and every launch waits the
+  same way before Pi loads the tree. Recovery for a tree already broken: close
+  coop, delete `node_modules` and `package-lock.json` under `agent\npm`, run
+  `coop sync` (docs/troubleshooting.md).
+
 - `release.yml` publishes the coop window installer only after the same
   acceptance the PR job runs has passed on the exact bytes it publishes
   (#277): the tag's `installer` job now runs `desktop/scripts/verify-installer.mjs`

@@ -234,7 +234,8 @@ The run scripts are the list; this page does not repeat it.
   (`gate` / `extended`); an extended row runs only with `COOP_TEST_EXTENDED=1`.
 - Some gate files keep a few extended-only cases (hang, watchdog or
   live-process cases) behind the same variable inside the file. The header of
-  `tests/run.sh` names them.
+  `tests/run.sh` names them; in `tests/run.ps1`'s table it is
+  `extension-tree-lock` (a second process holding the extension tree's mutex).
 - `tests/repro-tmp-contamination.sh` is a manual reproducer, not a test, and no
   lane runs it. Run it by hand with `bash tests/repro-tmp-contamination.sh`.
 

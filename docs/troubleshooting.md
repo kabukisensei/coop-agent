@@ -123,3 +123,30 @@ a new session with `/new` and paste the summary.
 
 **Verify.** With Transport `sse`, `/compact` completes and the transcript shows
 the compaction summary; no WebSocket error.
+
+## 4. coop stops with `Failed to load extension … Cannot find module`
+
+**Symptom.** The coop window shows "coop stopped (exit code 1)" (or the
+terminal's Pi exits) with lines like
+`Failed to load extension "…\.coop\agent\npm\node_modules\pi-mcp-adapter\index.ts": Cannot find module './v4/classic/external.js'`
+or the same for `pi-hermes-memory` and `./store/memory-store.js`.
+
+**Diagnose.** The isolated extension tree (`~\.coop\agent\npm`) is half
+written. Two writers ran at once: typically the coop window's first launch,
+which seeds the tree from the package, while a `coop sync`, `coop install` or
+`coop update` ran `npm ci` in the same folder. Releases after 0.30.1 hold one
+lock per agent dir so the second writer waits; a tree broken before that stays
+broken, because its lock file looks complete to `coop sync`.
+
+**Fix.** Close every coop window and let any running `coop sync` finish, then:
+
+```powershell
+Stop-Process -Name coop -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath "$env:USERPROFILE\.coop\agent\npm\node_modules" -Recurse -Force
+Remove-Item -LiteralPath "$env:USERPROFILE\.coop\agent\npm\package-lock.json" -Force
+coop sync
+```
+
+**Verify.** `coop sync` prints one "Installed release version" or "Already at
+release version" line per extension and no warning; coop (terminal or window)
+starts with the extensions loaded.
