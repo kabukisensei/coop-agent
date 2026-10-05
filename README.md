@@ -197,7 +197,7 @@ shows anything still missing.
 | **Microsoft Fabric CLI** (`ms-fabric-cli` → `fab`) | installed via `pipx` |
 | **Power BI authoring tools** — Report Authoring CLI, Power BI Modeling MCP, and Windows-only Desktop Bridge | installed globally from manifest-pinned npm packages; Doctor requires Report Authoring and validates Modeling MCP arguments |
 | **Managed MCP entries** — `fabric`, `fabric-sqlendpoint`, `powerbi-modeling-mcp`, `azure-devops`, `microsoft-learn` | generated from Coop config with release-manifest pins; npm-backed servers use `npx`. Power BI Modeling is also installed globally. `context-mode` is a native Pi extension, not MCP. |
-| **Windows double-click launcher**: **coop** opens the terminal agent | created on the Start Menu and Desktop, starting in your home folder; `coop update` repairs older shortcuts. A second shortcut, **coop (window)**, appears after your first `coop desktop`. Purely additive: `coop` in any terminal is unchanged. An isolated install (`USERPROFILE` redirected at a sandbox folder) keeps its shortcuts inside that profile and leaves your user PATH alone |
+| **Windows double-click launchers**: **coop** and **coop (terminal)** | created on the Start Menu and Desktop; `coop update` repairs older shortcuts. **coop** is the front door (master plan D1m): it opens the window once the window runtime is installed (your first `coop desktop`, or the window package) and the terminal until then; **coop (terminal)** always opens the terminal. The window asks which project to open the first time (the folders opened before, each with its client, branch and whether the team's project file is in step; Browse for a new one) and opens straight on the last one once you tick "open this one next time"; File > Switch project changes it. Purely additive: `coop` in any terminal is unchanged. An isolated install (`USERPROFILE` redirected at a sandbox folder) keeps its shortcuts inside that profile and leaves your user PATH alone |
 
 **The coop window package (master plan D1c, D1d).** Every release carries an
 unsigned, per-user Windows installer of the window with coop inside: the
@@ -211,10 +211,11 @@ download it from the [newest release](https://github.com/kabukisensei/coop-agent
 see `docs/install-windows.md` step 6). CI builds the same installer on every PR
 (the `coop-window-installer` artifact of the `installer (Windows)` job).
 It installs under `%LOCALAPPDATA%\Programs\coop` with no administrator prompt,
-adds a **coop (window)** shortcut to the Start Menu and Desktop and an Add/Remove
+adds a **coop** shortcut to the Start Menu and Desktop and an Add/Remove
 Programs entry, and keeps the window's data (`~/.coop/desktop/data`) on
 uninstall. SmartScreen shows "unknown publisher" once (one click; signing is
-D1f, optional). Its shortcut asks for a folder, then runs the bundled
+D1f, optional). Its shortcut shows the project picker (or opens the project
+you ticked to open next time), then runs the bundled
 `coop desktop --app <its exe>` in a console, so the window gets the same launch
 checks, spec and token as `coop desktop`. The bundled coop finds its runtime by
 location (`resources\runtime\coop-runtime.json` next to `resources\coop`): it
@@ -273,7 +274,7 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | Command | Description |
 | --- | --- |
 | `coop` | Launch the branded Pi agent (skills, prompts, theme, guardrails, splash) |
-| `coop desktop [folder]` | Open coop in a window on a folder (default: the current one): the same Pi, arguments, guardrails and approvals as `coop`, drawn as a modern UI with four themes (Modern and Retro, dark and light). The first run installs the window's runtime (Electron and pdf.js, about 150 MB to download and 400 MB on disk, pinned in the release manifest, into `~/.coop/desktop`) and adds a **coop (window)** shortcut; `coop sync` keeps it current. Anything only the terminal can show opens the same session in a terminal. A side pane (Ctrl+\\) shows the changes since the last commit, the standards coop applies together with the team knowledge clones (`cooptimize/incremental-bi` and the TeamAI team share `cooptimize/coop-team-knowledge`, one note at a time), a form for `.coop/project.yml` and the docs setup with Build; the sidebar and panes resize by dragging. The paperclip, Ctrl+V or drag and drop attach images, text files, Word, Excel, PowerPoint and PDF files (documents are read to Markdown and referenced by path, so coop reads them through its guarded read tool). The thinking and tool calls between coop's replies fold into one expandable line (Ctrl+O keeps them open); nothing leaves the session log. Master plan D1b and D1b2; the parity checklist is `desktop/PARITY.md`. `--app <exe>` opens the window in the installed **coop window package** instead of the runtime tree (the package passes it itself; see below) |
+| `coop desktop [folder]` | Open coop in a window on a folder (default: the current one): the same Pi, arguments, guardrails and approvals as `coop`, drawn as a modern UI with four themes (Modern and Retro, dark and light). The first run installs the window's runtime (Electron and pdf.js, about 150 MB to download and 400 MB on disk, pinned in the release manifest, into `~/.coop/desktop`) and makes the **coop** shortcut open the window (**coop (terminal)** keeps the terminal); `coop sync` keeps it current. The window names the client from the project file in its title and header, and File > Switch project opens the project picker. Anything only the terminal can show opens the same session in a terminal. A side pane (Ctrl+\\) shows the changes since the last commit, the standards coop applies together with the team knowledge clones (`cooptimize/incremental-bi` and the TeamAI team share `cooptimize/coop-team-knowledge`, one note at a time), a form for `.coop/project.yml` and the docs setup with Build; the sidebar and panes resize by dragging. The paperclip, Ctrl+V or drag and drop attach images, text files, Word, Excel, PowerPoint and PDF files (documents are read to Markdown and referenced by path, so coop reads them through its guarded read tool). The thinking and tool calls between coop's replies fold into one expandable line (Ctrl+O keeps them open); nothing leaves the session log. Master plan D1b and D1b2; the parity checklist is `desktop/PARITY.md`. `--app <exe>` opens the window in the installed **coop window package** instead of the runtime tree (the package passes it itself; see below) |
 | `coop doctor [--fix] [--json] [--publish]` | Check dependencies/configuration; optionally apply safe fixes, emit JSON, or publish a fleet snapshot to `fleet.publish_dir` |
 | `coop update [--check] [--edge] [--yes] [--no-fabric]` | Move coop-agent to the newest release tag (never backwards), converge tools to that release's manifest, and run Doctor. `--edge` is the maintainer channel: head of `main` plus latest upstream; `--check` fetches origin, then reports what the update would do and changes nothing; `--pi-latest` is a deprecated alias of `--edge` |
 | `coop support [--json] [--incident] [--export PATH]` | Offline Support Center: sanitized diagnostics, incident timeline, preview/export, and standards status; works without Pi/model availability |
@@ -290,7 +291,8 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop version` | Print `coop` + `pi` versions; a git checkout adds its `git describe` (for example `coop 0.23.5 (v0.23.5-21-gdf91630)`) |
 | `coop help` | Show usage |
 | **Authoring** | |
-| `coop init [dir] [--seed-docs] [--template] [--ci github|ado] [--yes]` | Guided minimal project-contract wizard (default `.`); `--template` explicitly selects the full legacy template and `--seed-docs` generates/patches `coop-data-doc.yml` |
+| `coop init [dir] [--seed-docs] [--template] [--ci github|ado] [--yes]` | Guided minimal project-contract wizard (default `.`); beside several repositories it creates the client home repository `<client>-coop` and puts the file there; `--template` explicitly selects the full legacy template and `--seed-docs` generates/patches `coop-data-doc.yml` |
+| `coop project status\|get\|share [--root <dir>] [--force]` | The shared project file from a shell: compare `.coop/project.yml` with the team's copy on origin, get the team's version (a fast-forward pull when nothing else would move, else only that file with a backup), or share yours (commits only that file and pushes the current branch; `--force` from a branch other than the default). Same code as `/project-get`, `/project-share` and the window's Project pane |
 | `coop new-skill <name>` | Scaffold `skills/<name>/SKILL.md` |
 | `coop new-prompt <name>` | Scaffold `prompts/<name>.md` |
 | `coop release [patch\|minor\|major] [--yes] [--no-push] [--no-check]` | Cut a release — bump version, roll CHANGELOG, commit + tag, then push `main` and the tag atomically (default `patch`). Runs only on `main` at `origin/main`. Build-checks the extensions first (skip with `--no-check`); `--no-push` tags locally only; `--yes` skips the confirm |
@@ -330,12 +332,27 @@ during startup. The command runs (or re-runs) the full native `coop-data-doc`
 wizard through a strict JSONL bridge; it is the same questionnaire used by
 `coop data-doc setup`. Older tool versions stop with upgrade guidance rather than a reduced fallback. See
 [`extensions/coop-tools/README.md`](extensions/coop-tools/README.md#data-doc-setup-setup-docs).
+The built docs live beside the committed project file (in the client home
+repository `<client>-coop` when the client has several repositories; master plan
+DR1): `/setup-docs` proposes that `data-docs` folder as the output from any of the
+client's repositories and offers coop's `coop-data-doc check` workflow for it
+(`templates/client-home/`). Layout: `docs/onboarding.md`.
 
 Project configuration has the same no-shell path: run **`/setup-project`** or
-choose **Start a client project** from `/start`. The wizard creates a
-missing `.coop/project.yml` or safely edits the nearest existing one, covering
+choose **Start a client project** from `/start`. Every client has one
+`.coop/project.yml`, committed in a repository the whole team clones: at the
+repository root when the client has one repository, or in a small client home
+repository `<client>-coop` beside several (coop finds it from any of them). When
+the team already has the file on origin and this checkout does not, the wizard
+offers **Get the team's project file** before anything else. Otherwise it
+creates the file where it belongs (creating the home repository when needed) or
+safely edits the nearest existing one (never a second copy below it), covering
 client details, whatever repositories are available, Fabric/Power BI workspaces,
-and Tabular Editor. A repository is not required: the wizard can start an engagement
+and Tabular Editor. After a save it offers **Share with the team**: one yes, and
+coop commits only that file and pushes the current branch (`/project-share` and
+the window's Project pane do the same any time; `/project-get` brings the team's
+version in). Each session start says one line when the team's copy is newer or
+yours is unshared. A repository is not required: the wizard can start an engagement
 in discovery mode, record SQL-only or Power-BI-only coverage, and add sources later.
 Edits make a backup and preserve comments, custom policies, and fields the wizard
 does not own. After an edit, run `/new` (or restart Coop) so the guardrails take a fresh trusted
@@ -378,7 +395,7 @@ first**, not read-only-only, and all are optional.
 | --- | --- | --- |
 | `fabric` | Manifest-pinned Microsoft Fabric MCP | follows the active Azure CLI login (az's default account; coop cannot set its tenant); metadata reads by default, mutations approval-gated |
 | `fabric-sqlendpoint` | Microsoft-managed Fabric SQL endpoint over direct Streamable HTTP with a launch-time Azure CLI bearer token | every call approval-gated; valid project IDs select an item-scoped endpoint; with no explicit target, global; malformed explicit targets fail closed |
-| `powerbi-modeling-mcp` | Microsoft Power BI Modeling MCP with `--start --readwrite --accept-eula` | no tenant/workspace required; reads run, edits ask (an approval can cover the session), deletes, imports, deploys and production always ask |
+| `powerbi-modeling-mcp` | Microsoft Power BI Modeling MCP with `--start --readwrite --accept-eula` | no tenant/workspace required; reads run, edits ask (an approval can cover the session), deletes, imports and deploys always ask, production edits are blocked |
 | `azure-devops` | Manifest-pinned Azure DevOps MCP for one organization | requires enabled toggle + valid organization; mutations approval-gated |
 | `microsoft-learn` | `learn.microsoft.com/api/mcp` | requires only its enabled toggle; always-current Microsoft docs |
 
@@ -386,6 +403,9 @@ first**, not read-only-only, and all are optional.
 `--readonly` and exposes `refresh_dataset`, a write
 ([#93](https://github.com/kabukisensei/coop-agent/issues/93)). `coop sync` removes the
 entry it generated; an entry you added yourself stays, and `coop doctor` warns about it.
+The license of every bundled or launched component, the Power BI Authoring MCP EULA that
+`--accept-eula` accepts (Aaron accepted it for Cooptimize on 2026-09-30) and the Microsoft
+telemetry the two MCP servers may send are listed in [`NOTICE.md`](NOTICE.md).
 
 `coop onboard` writes versioned `~/.coop/config`; `coop sync` deterministically generates
 COOP-managed entries in `~/.coop/agent/mcp-adapter.json` while preserving unmarked user-owned
@@ -394,8 +414,10 @@ in `~/.coop/config`; batch digest client/project/team/recipient records live sep
 private `~/.coop/devops/clients.yml`.
 
 **Approval boundary.** Dev/test metadata reads proceed by default. Row reads, production
-access, mutation-looking MCP actions, and **every Warehouse SQL call** require explicit
-approval; approval-required calls fail closed when no UI is available. Warehouse SQL is
+reads, mutation-looking MCP actions, and **every Warehouse SQL call** require explicit
+approval; approval-required calls fail closed when no UI is available. Production writes
+are blocked outright; only a human can unlock them, outside the session
+(`docs/guardrails-reference.md`, Production writes). Warehouse SQL is
 classified as `row-data` or `ddl-dml-destructive`: one bounded `SELECT` on the resolved
 **dev** target runs without a prompt, bounded reads on test/production targets still ask,
 and DDL/DML, permissions, `SELECT … INTO`, and `COPY INTO` receive mutation-specific
@@ -489,13 +511,13 @@ launch.
    Python, or notebook source. Make the edit, show the diff, let a human commit.
    Only docs / logs / diagrams / glossary / site may be committed, after approval.
 5. Dev/test metadata/schema/code is read-only by default; actual rows and all production access ask first.
-6. No production changes without explicit, specific confirmation.
+6. Production is never modified from a session; production writes are hard-blocked.
 7. Managed integrations are read-only first; mutation and Warehouse SQL calls are approval-gated.
 8. Never expose secrets.
 
 **Audit trail.** Every guardrail decision the runtime `coop-guardrails` extension makes —
-a blocked source commit, or a confirmed/declined destructive command, secret-file access,
-live row/production read, or mutating MCP call — is appended as one JSON line to
+a blocked source commit or production write, or a confirmed/declined destructive command,
+secret-file access, live row/production read, or mutating MCP call — is appended as one JSON line to
 `$PI_CODING_AGENT_DIR/guardrails-audit.jsonl` (default `~/.coop/agent/…`). Each line records
 the timestamp, working folder, kind, decision, and the offending path(s) or a fixed
 command classification. Command text and arguments are not persisted; the secret gate
@@ -534,9 +556,14 @@ message + PR description from the diff — drafts only, never commits).
 
 The source of truth for repo paths, workspaces, backup/log rules, and approval policy
 is `.coop/project.yml`. It may provide deliberate project standards overrides;
-otherwise COOP's resolved standards task authority is authoritative. Run
-**`/setup-project`** inside Coop or `coop init` in the project directory. Use
-`coop init --template` only when you intentionally want the full legacy template.
+otherwise COOP's resolved standards task authority is authoritative. It is one
+committed team file per client, in the repository root or the client home
+repository `<client>-coop` beside several repositories: run **`/setup-project`**
+inside Coop or `coop init` (both edit a contract found above the folder, or in the
+home repository beside it, instead of creating a second one), then share it with
+`/project-share` or `coop project share`, the one Git write coop performs on its
+own, after your yes and only for that file. Use `coop init --template` only when
+you intentionally want the full legacy template.
 
 Fabric projects may use two workspaces per environment. Record Warehouse/Lakehouse
 DEV/TEST/PROD workspaces in `fabric.environment_names` and semantic-model

@@ -440,6 +440,10 @@ await check("project form: loads the wizard's fields; dropped fields never reach
   assert.deepEqual(data.commitLists.top, ["docs/**"]);
   assert.deepEqual(data.commitLists.repositories.analytics, { allowed: ["special-docs/**"], never: ["secrets/**", "bin/**"] });
   assert.equal(data.profileMissing, false);
+  assert.match(data.locationNote, /A contract already covers this folder/);
+  const fresh = loadProject(projectFixture("fresh-note"), { env: process.env });
+  assert.deepEqual([fresh.exists, fresh.path], [false, join(fresh.root, ".coop", "project.yml")]);
+  assert.match(fresh.locationNote, /Coop proposes this repository's root/);
   assert.deepEqual(data.guardrailFields.sort(), ["client", "commitLists", "repositories.localPath", "sqlTargetDatabase", "sqlTargetKind", "sqlTargetServer", "tenantId"]);
   const shown = JSON.stringify(data);
   for (const dropped of ["live_discovery", "allowed_default_actions", "requires_approval_actions", "list_workspaces", "run_query", "future_setting", "custom_profile_key"]) {
@@ -509,6 +513,7 @@ await check("project form: a new contract and discovery mode match /setup-projec
     assert.equal(preview.mode, localSource ? "partial" : "discovery");
     const saved = saveProject(viaForm, input, preview.token, { env: process.env });
     assert.deepEqual([saved.created, saved.backup], [true, null]);
+    assert.match(saved.next, /^Share \.coop\/project\.yml with the team/);
     assert.equal(readFileSync(join(viaForm, ".coop", "project.yml"), "utf8"), expected, `new contract, local source ${localSource}`);
   }
 });
@@ -802,7 +807,8 @@ await check("bridge: every pane call in preload.cjs has a handler in main.mjs", 
   const preload = readFileSync(join(ROOT, "desktop", "preload.cjs"), "utf8");
   const main = readFileSync(join(ROOT, "desktop", "main.mjs"), "utf8");
   const invoked = [...preload.matchAll(/ipcRenderer\.invoke\("(coop:[a-z-]+)"/g)].map((m) => m[1]);
-  const handled = new Set([...main.matchAll(/handle\("(coop:[a-z-]+)"/g)].map((m) => m[1]));
+  // handle(...) for a window, pickerHandle(...) for the project picker (D1m).
+  const handled = new Set([...main.matchAll(/[hH]andle\("(coop:[a-z-]+)"/g)].map((m) => m[1]));
   for (const channel of ["coop:changes", "coop:change-diff", "coop:standards", "coop:standards-text", "coop:knowledge-note", "coop:project-load", "coop:project-preview", "coop:project-save", "coop:pick-folder", "coop:docs-start", "coop:docs-answer", "coop:docs-cancel", "coop:docs-build", "coop:docs-page", "coop:docs-portal"]) {
     assert.ok(invoked.includes(channel), `preload exposes ${channel}`);
   }

@@ -169,8 +169,9 @@ under the Pi package's `examples/extensions/` (the patterns coop's extensions fo
 
 ## 5. Scaffold a work repo (`coop init`)
 
-Skills and prompts lean on the project contract — `.coop/project.yml` in the work
-repo — for repo paths, workspaces, and standards. Scaffolding a new work repo is
+Skills and prompts lean on the project contract — `.coop/project.yml`, the one
+committed team file at the client's Git root — for repo paths, workspaces, and
+standards. Scaffolding a new work repo is
 two commands:
 
 ```bash
@@ -179,7 +180,8 @@ coop init --seed-docs     # then, once repositories: is filled — generates a m
                           # coop-data-doc.yml from the contract's repositories: paths
 ```
 
-`coop init --template` copies the documented template into `<repo>/.coop/project.yml`;
+`coop init --template` copies the documented template into `<Git root>/.coop/project.yml`
+(a contract found above the folder is edited, never shadowed by a second copy);
 plain `coop init` runs the safe guided wizard, and `coop onboard --edit` owns global
 integration/MCP settings. Verify with `coop doctor`. `coop init --seed-docs` generates/patches `coop-data-doc.yml`
 from the contract's `repositories:` (via `coop-data-doc config-set`), so repo

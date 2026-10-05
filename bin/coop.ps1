@@ -121,6 +121,141 @@ function Invoke-CoopTeamai {
   exit $LASTEXITCODE
 }
 
+# coop project status|get|share [--root <dir>] [--force]: the shared project file
+# (master plan C1). `share` is the one Git write coop performs on its own: it
+# stages and commits .coop/project.yml alone and pushes the current branch, after
+# the yes `coop init` or the user gave; everything runs in lib/project-share.mjs.
+function Invoke-CoopProject {
+  param([string[]]$Rest = @())
+  $sub = if ($Rest.Count) { $Rest[0] } else { 'status' }
+  if (@('status', 'get', 'share') -notcontains $sub) { Coop-Die "usage: coop project <status|get|share> [--root <dir>] [--force]" }
+  if (-not (Test-Have 'node')) { Coop-Die 'Node.js is required for: coop project. Run: coop install' }
+  $root = (Get-Location).Path
+  $extra = @()
+  for ($i = 1; $i -lt $Rest.Count; $i++) {
+    if ($Rest[$i] -eq '--root' -and $i + 1 -lt $Rest.Count) { $root = $Rest[$i + 1]; $i++ }
+    elseif ($Rest[$i] -eq '--force') { $extra += '--force' }
+  }
+  $contract = Find-CoopProjectYml $root
+  $bundled = Join-Path $script:CoopRoot '.coop\project.yml'
+  if ($contract -and $contract -ne $bundled) { $root = Split-Path -Parent (Split-Path -Parent $contract) }
+  $name = ''
+  try {
+    $profileFile = Get-CoopUserProfileFile
+    if (Test-Path -LiteralPath $profileFile -PathType Leaf) { $name = [string]((Get-Content -LiteralPath $profileFile -Raw | ConvertFrom-Json).name) }
+  } catch { $name = '' }
+  $cliArgs = @((Join-Path $script:CoopRoot 'lib\project-share.mjs'), $sub, '--root', $root)
+  if ($name) { $cliArgs += @('--name', $name) }
+  $cliArgs += $extra
+  $raw = & node @cliArgs 2>&1
+  $rc = $LASTEXITCODE
+  $json = $null
+  try { $json = ($raw | Out-String) | ConvertFrom-Json } catch { $json = $null }
+  if (-not $json) { Coop-Die "coop project $sub failed: $(($raw | Out-String).Trim())" }
+  switch ($sub) {
+    'status' {
+      switch ($json.state) {
+        'shared'      { Coop-Ok "$($json.path) is shared with the team (same as origin/$($json.defaultBranch))." }
+        'not-shared'  { Coop-Warn "$($json.path) differs from the team's copy (not shared yet). Share it: coop project share" }
+        'team-newer'  { Coop-Warn "The team's project file on origin is newer than your unmodified copy. Get it: coop project get" }
+        'team-has-it' { Coop-Warn "The team already has a project file on origin and this checkout does not. Get it: coop project get" }
+        'none'        { Coop-Info 'No project file here or on origin yet: coop init creates one.' }
+        'no-remote'   { Coop-Info "$($json.root) has no origin remote: the project file cannot be shared from here." }
+        default       { Coop-Info "Not a Git repository: $($json.root). The team's project file belongs in a repository the team clones." }
+      }
+    }
+    'get' {
+      if ($json.ok) {
+        if ($json.state -eq 'shared') { Coop-Ok 'Your project file already matches the team''s.' }
+        elseif ($json.method -eq 'pull') { Coop-Ok "Got the team's project file (fast-forward pull): $($json.path)" }
+        else { Coop-Ok "Got the team's project file (only .coop/project.yml changed): $($json.path)$(if ($json.backup) { "  (backup: $($json.backup))" })" }
+        Coop-Info 'Start a new coop session so the guardrails use it.'
+      } else { Coop-Warn "could not get the team's project file: $($json.reason)"; return 1 }
+    }
+    'share' {
+      if ($json.ok) {
+        if ($json.state -eq 'already-shared') { Coop-Ok 'Your project file already matches the team''s; nothing to share.' }
+        else { Coop-Ok "Shared .coop/project.yml with the team (commit $($json.commit) pushed to $($json.branch))." }
+      } elseif ($json.state -eq 'other-branch') {
+        Coop-Warn $json.reason
+        Coop-Info "Push it to $($json.branch) anyway with: coop project share --force   (or switch to $($json.defaultBranch) first)"
+        return 1
+      } else { Coop-Warn "could not share the project file: $($json.reason)"; return 1 }
+    }
+  }
+  return $rc
+}
+
+# --- Never modify production: the human-only unlock (master plan G1) ----------
+# Production writes are a hard block in coop-guardrails. The one way back is this
+# command, run by a person in their own terminal (never from a session): it writes a
+# time-bounded grant for ONE client to <profile dir>\prod-unlock.json. While it holds
+# and the session's contract names that client, a production write asks per call and
+# the audit carries the grant id. Deliberately absent from `coop help`, the `/` menu
+# and the window; documented in docs/guardrails-reference.md only.
+function Invoke-CoopUnlockProd {
+  param([string[]]$Rest)
+  $file = Join-Path (Get-CoopProfileDir) 'prod-unlock.json'
+  $argv = @()
+  if ($Rest) { $argv = @($Rest) }
+  if ($argv -contains '--status') {
+    if (-not (Test-Path -LiteralPath $file)) { Coop-Say 'Production writes: blocked (no unlock).'; return }
+    try {
+      $g = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json
+      $exp = [DateTime]::Parse([string]$g.expires_at, $null, [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+      $left = [int][Math]::Ceiling(($exp - (Get-Date).ToUniversalTime()).TotalMinutes)
+      $until = $exp.ToString('o')
+      if ($left -le 0) { Coop-Say "Production writes: blocked (the unlock for $($g.client) expired at $until)."; return }
+      Coop-Warn "Production writes UNLOCKED for $($g.client): grant $($g.id), $left min left (until $until). Each production write still asks and is audited."
+    } catch { Coop-Say 'Production writes: blocked (the unlock file is unreadable and is ignored).' }
+    return
+  }
+  if ($argv -contains '--revoke') {
+    if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force }
+    Coop-Say 'Production writes: blocked again (unlock removed).'
+    return
+  }
+  $client = ''
+  $minutes = 30
+  for ($i = 0; $i -lt $argv.Count; $i++) {
+    $a = [string]$argv[$i]
+    if ($a -eq '--minutes') {
+      if ($i + 1 -ge $argv.Count) { Coop-Die 'usage: coop unlock-prod <client> [--minutes <1-480>] | --status | --revoke' }
+      $i++
+      $minutes = 0
+      if (-not [int]::TryParse([string]$argv[$i], [ref]$minutes)) { Coop-Die '--minutes takes a whole number from 1 to 480' }
+    } elseif ($a.StartsWith('--minutes=')) {
+      $minutes = 0
+      if (-not [int]::TryParse($a.Substring(10), [ref]$minutes)) { Coop-Die '--minutes takes a whole number from 1 to 480' }
+    } elseif ($a.StartsWith('-')) {
+      Coop-Die "unknown option $a. usage: coop unlock-prod <client> [--minutes <1-480>] | --status | --revoke"
+    } elseif (-not $client) {
+      $client = $a.Trim()
+    } else {
+      Coop-Die 'usage: coop unlock-prod <client> [--minutes <1-480>] | --status | --revoke'
+    }
+  }
+  if (-not $client) { Coop-Die 'usage: coop unlock-prod <client> [--minutes <1-480>] | --status | --revoke  (the client is the contract''s profile.client)' }
+  if ($client.Length -gt 160) { Coop-Die 'the client name is longer than 160 characters' }
+  if ($minutes -lt 1 -or $minutes -gt 480) { Coop-Die '--minutes takes a whole number from 1 to 480 (eight hours at most)' }
+  $now = (Get-Date).ToUniversalTime()
+  $id = ([guid]::NewGuid().ToString('N')).Substring(0, 8)
+  $grant = [ordered]@{
+    schema_version = 1
+    id             = $id
+    client         = $client
+    minutes        = $minutes
+    created_at     = $now.ToString('o')
+    expires_at     = $now.AddMinutes($minutes).ToString('o')
+  }
+  $dir = Split-Path -Parent $file
+  if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+  $json = [pscustomobject]$grant | ConvertTo-Json -Compress
+  [System.IO.File]::WriteAllText($file, $json, (New-Object System.Text.UTF8Encoding $false))
+  Coop-Warn "Production writes UNLOCKED for $client for $minutes min (grant $id, until $($grant.expires_at))."
+  Coop-Say 'Only a session whose .coop/project.yml names this client is covered. Each production write still asks and is audited; coop unlock-prod --revoke ends it now.'
+}
+
 function Invoke-CoopContextBudget {
   param([string[]]$Rest)
   $py = Get-CoopPython
@@ -191,6 +326,9 @@ $(Coop-Bold)Authoring$(Coop-Rst)
                             (--seed-docs: generate coop-data-doc.yml from repositories:)
   coop init --migrate-legacy [dir]
                             Inspect legacy project configuration (dry run; add --apply to confirm changes)
+  coop project status|get|share
+                            The team's .coop/project.yml: compare with origin, get it, or share it
+                            (share commits that one file and pushes; --force on a non-default branch)
   coop new-skill <name>     Scaffold skills/<name>/SKILL.md
   coop new-prompt <name>    Scaffold prompts/<name>.md
   coop release [level]      Cut a release: bump version + roll CHANGELOG + commit + tag + push
@@ -467,6 +605,10 @@ function Get-CoopFabricMcpToken {
 function Invoke-CoopPiProcess {
   param([string[]] $PiArgs = @())
   Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue
+  # C1: a contract in the client home repository beside this folder travels as
+  # COOP_PROJECT_YML so Pi's extensions and the Python helpers read the same file.
+  $sibling = Set-CoopProjectYmlEnv
+  if ($sibling) { Coop-Info "project file: $sibling (the client home repository beside this one lists this repository)" }
   $token = Get-CoopFabricMcpToken
   if ($token) { $env:COOP_FABRIC_MCP_TOKEN = $token }
   try {
@@ -575,6 +717,7 @@ function Get-CoopLaunchEnvMap {
   if ($env:PI_RADIUS_GATEWAY)     { $envMap['PI_RADIUS_GATEWAY']     = $env:PI_RADIUS_GATEWAY }
   if ($env:COOP_VIBES_DIR)      { $envMap['COOP_VIBES_DIR']      = $env:COOP_VIBES_DIR }
   if ($env:COOP_SPLASH_FILE)    { $envMap['COOP_SPLASH_FILE']    = $env:COOP_SPLASH_FILE }
+  if ($env:COOP_PROJECT_YML)    { $envMap['COOP_PROJECT_YML']    = $env:COOP_PROJECT_YML }
   return $envMap
 }
 
@@ -665,6 +808,7 @@ function Invoke-CoopDesktop {
     Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue
     $token = Get-CoopFabricMcpToken
   }
+  [void](Set-CoopProjectYmlEnv)
   $piArgs = Build-CoopPiArgs
   $envMap = Get-CoopLaunchEnvMap
   # The profile location travels too, so a second window handed to an
@@ -699,7 +843,7 @@ function Invoke-CoopDesktop {
     if ((Get-CoopDesktopRuntimeState) -ne 'current') {
       $firstInstall = ((Get-CoopDesktopRuntimeState) -eq 'missing')
       if (Install-CoopDesktopRuntime) {
-        if ($firstInstall -and (Set-CoopWindowShortcut)) { Coop-Ok 'added the "coop (window)" shortcut next to "coop"' }
+        if ($firstInstall -and (Set-CoopWindowShortcut)) { Coop-Ok 'the "coop" shortcut now opens the window; "coop (terminal)" opens the terminal' }
       } elseif (-not (Get-CoopDesktopElectronExe)) {
         Coop-Die 'the coop window runtime is not installed (see above)'
       } else {
@@ -845,9 +989,50 @@ function Invoke-CoopInit {
   if ($ciType) { Invoke-CoopInitCi $dir $ciType; return }
   $dst = Join-Path $dir '.coop\project.yml'
   if (Test-Path -LiteralPath $dst) { Coop-Die "$dst already exists — not overwriting.  (seed coop-data-doc.yml from it with: coop init --seed-docs)" }
+  # C1: one committed contract at the client's Git root. A contract above this
+  # folder already covers it, so no second copy is created below it; with none,
+  # the folder that holds the client's repositories is proposed.
+  $where = Get-CoopContractRootProposal $dir
+  if ($where.Kind -eq 'existing') {
+    Coop-Die "a contract already covers this folder: $($where.Path). One project file per client: edit it with /setup-project inside coop (or edit the file) instead of creating a second one."
+  }
+  $client = ''
+  $interactive = ($env:COOP_ASSUME_YES -eq '1' -or -not [Console]::IsInputRedirected)
+  if ($where.Kind -eq 'home-repo') {
+    # The team's project file goes in the client home repository beside the
+    # client's repositories (the shared project file design), never in the
+    # folder between them, which is in no repository.
+    Coop-Info "No contract yet. This repository is one of $($where.Repos.Count) side by side ($($where.Repos -join ', ')), so the team's project file goes in a small client home repository beside them (<client>-coop): it holds the project file, the lineage docs, the catalog snapshot and the client's prompts and skills, and the whole team clones it."
+    if ($interactive) {
+      $client = if ($env:COOP_INIT_CLIENT) { $env:COOP_INIT_CLIENT } else { (Read-Host 'Client / engagement (names the home repository <client>-coop)') }
+      $client = ([string]$client).Trim()
+      if ($client) {
+        $where = Get-CoopContractRootProposal $dir $client
+        if (Coop-Confirm "Create the client home repository $($where.Root) (git init) and put .coop/project.yml there?") {
+          if (-not (New-CoopHomeRepository $where.Root $client)) { Coop-Die "could not create $($where.Root)" }
+          $dir = $where.Root
+          $dst = Join-Path $dir '.coop\project.yml'
+          if (Test-Path -LiteralPath $dst) { Coop-Die "$dst already exists — not overwriting." }
+        } else {
+          Coop-Info "Keeping the project file in this repository only: $dir"
+        }
+      }
+    }
+  } elseif ($where.Kind -ne 'folder' -and $where.Root -ne [System.IO.Path]::GetFullPath($dir).TrimEnd('\', '/')) {
+    Coop-Info "No contract yet. The committed .coop/project.yml belongs at the repository root, $($where.Root), where everyone who opens coop at or below it reads it."
+    if ($interactive) {
+      if (Coop-Confirm "Create .coop/project.yml at $($where.Root) instead of $dir?") {
+        $dir = $where.Root
+        $dst = Join-Path $dir '.coop\project.yml'
+      }
+    }
+  }
   $py = Get-CoopPython
   if (-not $py) { Coop-Die 'python3 is required for: coop init' }
   $wizard = Join-Path (Join-Path $script:CoopRoot 'lib') 'init_wizard.py'
+  if ($client) { $env:COOP_INIT_CLIENT = $client }
+  $env:COOP_INIT_REPOS = ''
+  if ($where.Kind -eq 'home-repo' -and $dir -eq $where.Root) { $env:COOP_INIT_REPOS = ($where.Repos -join ',') }
   if ($template) {
     New-Item -ItemType Directory -Force -Path (Join-Path $dir '.coop') | Out-Null
     & $py $wizard "$dir" --template > "$dst"
@@ -861,6 +1046,22 @@ function Invoke-CoopInit {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   }
   Coop-Ok "Wrote $dst"
+  Coop-Info "Open coop at or below $dir, or in a repository the file lists, so it is found."
+  # The share offer: the one Git write coop performs on its own, after a yes.
+  $hasOrigin = $false
+  if ((Test-Have 'git') -and (Test-Path -LiteralPath (Join-Path $dir '.git'))) {
+    & git -C $dir remote get-url origin 2>$null | Out-Null
+    $hasOrigin = ($LASTEXITCODE -eq 0)
+  }
+  if ($interactive -and $hasOrigin -and (Test-Have 'node') -and (Coop-Confirm 'Share .coop/project.yml with the team now? (coop commits that one file and pushes the current branch; nothing else)')) {
+    [void](Invoke-CoopProject @('share', '--root', $dir))
+  } elseif ($hasOrigin) {
+    Coop-Info "Share it with the team when ready: coop project share (or /project-share inside coop, or the window's Project pane)."
+  } elseif (Test-Path -LiteralPath (Join-Path $dir '.git')) {
+    Coop-Info "Not shared yet: $dir has no origin remote. Add one (for example cooptimize/$(Split-Path -Leaf $dir)), then: coop project share"
+  } else {
+    Coop-Info "Not shared yet: $dir is not a Git repository, and the team's project file belongs in a repository the team clones."
+  }
   if ($template) {
     Coop-Info 'Fill in the TODOs (repo paths, Fabric/Power BI workspaces, tenant), then: coop doctor'
   }
@@ -1307,7 +1508,9 @@ switch -CaseSensitive ($cmd) {
   'profile' { Invoke-CoopProfile $rest; break }
   'teamai' { Invoke-CoopTeamai $rest; break }
   'context-budget' { Invoke-CoopContextBudget $rest; break }
+  'unlock-prod' { Invoke-CoopUnlockProd $rest; break }
   'init' { Invoke-CoopInit $rest; break }
+  'project' { $projectRc = Invoke-CoopProject $rest; exit $projectRc }
   'new-skill' { New-CoopSkill $rest; break }
   'new-prompt' { New-CoopPrompt $rest; break }
   'release' { Invoke-CoopRelease $rest; break }

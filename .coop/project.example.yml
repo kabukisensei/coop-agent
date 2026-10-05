@@ -1,5 +1,8 @@
 # Cooptimize agent — project contract (.coop/project.yml)
-# Copy this file to <your-repo>/.coop/project.yml and replace every TODO.
+# Copy this file to .coop/project.yml in the client's repository (or in the client
+# home repository <client>-coop beside several repositories) and replace every TODO.
+# It is one committed team file per client: everyone who opens coop at or below that
+# folder, or in a repository it lists, reads it; /project-share shares it.
 # coop's skills, prompts, and the Cooptimize workflow treat this file as the single
 # source of truth. coop reads it before any file work. Based on the original
 # pi-analytics-agent agent-config.template.yml, extended for the Cooptimize stack.

@@ -611,6 +611,8 @@ print("resume verdict contract OK")
     @{ Name = 'first-run';              Lane = 'gate';     Head = 'first-run launcher continuation (onboarding gate)' },
     @{ Name = 'mcp-retarget';           Lane = 'gate';     Head = 'managed Warehouse MCP entry follows the launch folder' },
     @{ Name = 'profile-root';           Lane = 'gate';     Head = 'one profile root: COOP_DIR parent of .coop, one agent-dir chain (S3, #220)' },
+    @{ Name = 'contract-root';          Lane = 'gate';     Head = 'Get-CoopContractRootProposal: one committed contract at the client Git root (C1)' },
+    @{ Name = 'unlock-prod';            Lane = 'gate';     Head = 'coop unlock-prod: the human-only production-write unlock (G1)' },
     @{ Name = 'sync-knowledge';         Lane = 'gate';     Head = 'team knowledge sync (sync-knowledge.ps1; hang cases in the extended lane)' },
     @{ Name = 'teamai';                 Lane = 'gate';     Head = 'coop teamai: isolated TeamAI adapter entry (K1; off by default)' },
     @{ Name = 'fleet-execution';        Lane = 'extended'; Head = 'fleet execution (install/update/sync against stubs)' },

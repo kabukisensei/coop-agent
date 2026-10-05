@@ -51,7 +51,7 @@ export function formInput(values) {
 }
 
 export function mountProject(box, options, { coop, newSession }) {
-  const state = { data: null, values: null, dirty: false, kindTouched: false, view: "form", preview: null };
+  const state = { data: null, values: null, dirty: false, kindTouched: false, view: "form", preview: null, team: null };
   const body = el("div", { class: "pane-scroll project-form" });
   box.append(body);
 
@@ -172,6 +172,8 @@ export function mountProject(box, options, { coop, newSession }) {
       el("div", { class: "pane-summary" },
         el("span", { text: data.exists ? "Editing " : "No contract yet: saving creates " }),
         el("code", { text: data.path })),
+      data.exists ? null : el("p", { class: "hint", text: data.locationNote || "" }),
+      teamLine(),
       el("p", { class: "hint", text: "The same questions as /setup-project. Review shows the change before anything is written; the old file is backed up." }),
       data.profileMissing ? section("You",
         row({ field: "profileName", label: "What should coop call you?", hint: "Your local profile, not the project. Leave blank to skip.", control: text(values, "profileName") })) : null,
@@ -289,11 +291,75 @@ export function mountProject(box, options, { coop, newSession }) {
     fill(body, 
       el("div", { class: "pane-summary ok" }, icon("check"), el("span", { text: saved.created ? "Created " : "Saved " }), el("code", { text: saved.path })),
       saved.backup ? el("p", { class: "hint" }, el("span", { text: "Backup: " }), el("code", { text: saved.backup })) : null,
+      saved.home && (saved.home.created || saved.home.initialized) ? el("p", { class: "hint", text: `Created the client home repository ${saved.home.root}${saved.home.initialized ? " (git init)" : ""}. Add its remote when the team should clone it.` }) : null,
+      saved.next ? el("p", { class: "hint", text: saved.next }) : null,
       saved.profileSaved ? el("p", { class: "hint", text: `Saved your profile name (${saved.profileSaved}). coop uses it from the next session.` }) : null,
       el("p", { text: "The guardrails read the contract when a session starts. Start a new session before governed work so they use this one." }),
+      saved.team ? el("p", { class: "hint", text: teamText(saved.team) }) : null,
       el("div", { class: "form-actions" },
-        el("button", { type: "button", class: "btn primary", text: "Start a new session", onclick: () => newSession() }),
+        saved.team && saved.team.state !== "shared" ? el("button", { type: "button", class: "btn primary", text: "Share with the team", onclick: (event) => doShare(event.currentTarget) }) : null,
+        el("button", { type: "button", class: saved.team && saved.team.state !== "shared" ? "btn" : "btn primary", text: "Start a new session", onclick: () => newSession() }),
         el("button", { type: "button", class: "btn", text: "Back to the form", onclick: () => reload(false) })));
+  }
+
+  // --- The team's copy (C1) ---------------------------------------------------------
+  // One line and at most one button: nothing is applied silently, and sharing is
+  // the one-file commit and push the main process runs after the click.
+
+  function teamText(team) {
+    switch (team && team.state) {
+      case "shared": return `Shared with the team (same as origin/${team.defaultBranch}).`;
+      case "not-shared": return "Not shared yet: your copy differs from the team's.";
+      case "team-newer": return `The team's copy on origin/${team.defaultBranch} is newer than your unmodified file.`;
+      case "team-has-it": return `The team already has a project file on origin/${team.defaultBranch}; this checkout does not.`;
+      case "none": return "Not shared yet: neither this checkout nor origin has a project file.";
+      default: return "";
+    }
+  }
+
+  function teamLine() {
+    const team = state.team;
+    if (!team) return null;
+    const text = teamText(team);
+    if (!text) return null;
+    const button = team.state === "team-has-it" || team.state === "team-newer"
+      ? el("button", { type: "button", class: "btn", text: team.state === "team-newer" ? "Get the team's version" : "Get the team's project file", onclick: (event) => doGet(event.currentTarget) })
+      : team.state === "not-shared" && state.data.exists
+        ? el("button", { type: "button", class: "btn", text: "Share with the team", onclick: (event) => doShare(event.currentTarget) })
+        : null;
+    return el("div", { class: "pane-summary team-line" }, el("span", { class: "hint", text }), button);
+  }
+
+  async function doGet(button) {
+    if (state.dirty) { toast("Save or discard your edits first.", "error"); return; }
+    button.disabled = true;
+    const result = await coop.projectGet();
+    button.disabled = false;
+    if (!result.success || !result.data.ok) { toast((result.data && result.data.reason) || result.error || "Could not get the team's project file.", "error", { timeout: 0 }); return; }
+    toast(result.data.method === "pull" ? "Got the team's project file (fast-forward pull)." : "Got the team's project file (only .coop/project.yml changed; the old file is backed up).", "success");
+    reload(false);
+  }
+
+  async function doShare(button, force = false) {
+    button.disabled = true;
+    const result = await coop.projectShare(force);
+    button.disabled = false;
+    if (!result.success) { toast(result.error || "Could not share.", "error", { timeout: 0 }); return; }
+    const r = result.data;
+    if (r.ok) {
+      toast(r.state === "already-shared" ? "Your project file already matches the team's." : `Shared with the team (commit ${r.commit} pushed to ${r.branch}).`, "success");
+      reload(false);
+      return;
+    }
+    if (r.state === "other-branch") {
+      openModal({
+        title: "Share from this branch?",
+        body: el("p", { class: "dialog-message", text: `${r.reason}. Push .coop/project.yml to ${r.branch} anyway?` }),
+        buttons: [{ label: "Stop" }, { label: `Push to ${r.branch}`, kind: "danger", onClick: () => doShare(button, true) }],
+      });
+      return;
+    }
+    toast(r.reason || "Could not share the project file.", "error", { timeout: 0 });
   }
 
   // --- Loading ------------------------------------------------------------------
@@ -315,7 +381,13 @@ export function mountProject(box, options, { coop, newSession }) {
     state.values = initialValues(result.data);
     state.dirty = false;
     state.kindTouched = false;
+    state.team = null;
     renderForm();
+    // The comparison with the team's copy may fetch: it lands after the form.
+    try {
+      const team = await coop.projectTeam();
+      if (team.success && team.data && state.data === result.data) { state.team = team.data; if (state.view === "form") renderForm(); }
+    } catch { /* no team line */ }
   }
 
   reload(false);

@@ -20,7 +20,9 @@
  *      etc.). The agent must never expose secrets.
  *   4. Live data reads — dev/test metadata is allowed read-only; one plain bounded
  *      SELECT against the resolved dev target runs unprompted; other row-level
- *      reads and any production access require explicit approval.
+ *      reads and any production access require explicit approval; a production
+ *      WRITE is blocked outright (G1), unless a human unlocked it from their own
+ *      terminal for a bounded time.
  *   5. Mutating MCP actions — confirm before Fabric/Power BI/MCP tool calls whose
  *      names look like create/update/delete/deploy/publish (best-effort; MCP tool
  *      names vary. This extension is the approval layer: Pi itself does not
@@ -37,7 +39,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { appendFileSync, existsSync, readFileSync, renameSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { agentDir as coopAgentDir } from "../../lib/paths.mjs";
+import { agentDir as coopAgentDir, profileDir as coopProfileDir } from "../../lib/paths.mjs";
 
 declare const Buffer: { from(value: string, encoding: "base64url"): { length: number; toString(encoding: "utf8" | "base64url"): string } };
 
@@ -50,7 +52,10 @@ const DEFAULT_ALLOWED_GLOBS = [
   "data-docs-site/**",
 ];
 
-/** Find the nearest .coop/project.yml walking up from `cwd` (bounded). */
+/** Find the nearest .coop/project.yml walking up from `cwd` (bounded), else the
+ *  contract the launcher resolved (COOP_PROJECT_YML: the client home repository
+ *  beside this one, C1), so the trusted snapshot is the file every other part
+ *  of coop reads. */
 function findProjectYml(cwd: string, exists: (path: string) => boolean = existsSync): string | null {
   let d = cwd;
   for (let i = 0; i < 8; i++) {
@@ -60,7 +65,8 @@ function findProjectYml(cwd: string, exists: (path: string) => boolean = existsS
     if (up === d) break;
     d = up;
   }
-  return null;
+  const launched = process.env.COOP_PROJECT_YML;
+  return launched && exists(launched) ? launched : null;
 }
 
 /** A committed path is allowed only after explicit deny rules have been checked. */
@@ -791,6 +797,58 @@ const MCP_WRITE_VERB =
 const DATA_SERVER = /(^|[_\-.:/])(fabric|powerbi|pbi|sql|database|db|warehouse|lakehouse|onelake|kusto|adx|eventhouse)([_\-.:/]|$)/i;
 const ROW_READ_VERB = /(^|[_\-.:/])(query|execute|evaluate|run_sql|runsql|sql_query|dax_query|preview|sample|row|rows|record|records|data|export|download)([_\-.:/]|$)/i;
 const PRODUCTION_WORD = /(^|[^a-z0-9])(prod|production)([^a-z0-9]|$)/i;
+
+// --- Never modify production (master plan G1, 2026-10-05) --------------------------
+// A production WRITE is a hard block, the same class as a source commit: no
+// approval option, no session grant, no headless path. Production READS keep the
+// explicit-scope-plus-approval rule (the team compares against production). The
+// one way back is a human-only, time-bounded unlock written OUTSIDE any repository
+// by `coop unlock-prod <client> --minutes <n>` in the person's own terminal
+// (never from a session): `<profile dir>/prod-unlock.json`. While it holds and
+// names this session's client, a production write falls back to today's per-call
+// approval and the audit carries the grant id. Nothing here lists the command.
+export const PROD_UNLOCK_FILE = "prod-unlock.json";
+export type ProdUnlock = { id: string; client: string; expiresAt: number };
+
+/** Parse the unlock file. Anything malformed, expired or over-long is no unlock. */
+export function parseProdUnlock(text: string, now = Date.now()): ProdUnlock | null {
+  try {
+    const raw = JSON.parse(text);
+    if (!raw || typeof raw !== "object" || raw.schema_version !== 1) return null;
+    const id = typeof raw.id === "string" && /^[A-Za-z0-9-]{4,40}$/.test(raw.id) ? raw.id : "";
+    const client = typeof raw.client === "string" ? raw.client.trim().slice(0, 160) : "";
+    const expiresAt = typeof raw.expires_at === "string" ? Date.parse(raw.expires_at) : NaN;
+    if (!id || !client || !Number.isFinite(expiresAt) || expiresAt <= now) return null;
+    // A grant is at most eight hours from when it was written; a longer one is refused.
+    const createdAt = typeof raw.created_at === "string" ? Date.parse(raw.created_at) : NaN;
+    if (!Number.isFinite(createdAt) || expiresAt - createdAt > 8 * 60 * 60 * 1000 || createdAt > now + 5 * 60 * 1000) return null;
+    return { id, client, expiresAt };
+  } catch {
+    return null;
+  }
+}
+
+/** The unlock covers this session when it names the contract's client (case-insensitive)
+ *  or when the session has no contract client to compare, and when it still holds. */
+export function prodUnlockApplies(unlock: ProdUnlock | null, contractClient: string, now = Date.now()): boolean {
+  if (!unlock || unlock.expiresAt <= now) return false;
+  const client = (contractClient || "").trim();
+  if (!client) return true;
+  return unlock.client.toLocaleLowerCase() === client.toLocaleLowerCase();
+}
+
+function readProdUnlock(): ProdUnlock | null {
+  try {
+    const p = join(coopProfileDir(), PROD_UNLOCK_FILE);
+    if (!existsSync(p)) return null;
+    return parseProdUnlock(readFileSync(p, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+const prodUnlockMinutesLeft = (unlock: ProdUnlock, now = Date.now()) => Math.max(1, Math.ceil((unlock.expiresAt - now) / 60_000));
+const PROD_WRITE_BLOCK = "coop guardrails: production is never modified from a session. Coop can read production with approval for a comparison; the change itself goes through the deployment pipeline or a human runs it. Work on the dev target instead.";
 const SQL_ENDPOINT_TOOL = /(^|[_\-.:/])(executeSQL|execute_query|fabric-sqlendpoint-execute_query|fabric_sqlendpoint_execute_query)([_\-.:/]|$)/i;
 const MANAGED_SQL_SERVER = "fabric-sqlendpoint";
 const FABRIC_SQL_FALLBACK_TOOL = "fabric_sql_query";
@@ -1410,6 +1468,18 @@ export function decideSqlImpact(event: any, deps: LiveReadResolverDeps): SqlImpa
   return { action: "prompt", environment: environment || "unresolved", reason: environment === "production" ? "production target" : "no dev or test target resolved" };
 }
 
+/** The environment a SQL write would land in, from coop's trusted sources only
+ *  (G1): the contract's ready `sql_targets` default for the native executor when
+ *  the contract configures one (`unresolved` when its default is not a ready dev
+ *  or test entry, which the executor refuses anyway), else the managed Fabric
+ *  entry's environment. The call's own words never feed this. */
+export function trustedWriteEnvironment(event: any, deps: LiveReadResolverDeps, contract: ContractSqlScope | null): string {
+  const target = effectiveMutationTarget(event);
+  const name = target.innerTool || target.outerTool;
+  if (name === FABRIC_SQL_FALLBACK_TOOL && contract?.configured) return contract.target ? contract.target.environment : "unresolved";
+  return managedSqlEnvironment(deps);
+}
+
 /** The environment coop's own managed-server config gives the Warehouse SQL
  *  endpoint (`_coop_target.environment` of the one `fabric-sqlendpoint` entry), or
  *  "" when the entry is absent, ambiguous or not managed. Tool arguments and SQL
@@ -1517,6 +1587,16 @@ export function sessionApprovalKey(event: any, environment?: string): string | n
   return `mcp:${target.server || namespace || target.outerTool}`;
 }
 
+/** The words a production-write decision reads for an MCP mutation: server, tool
+ *  and arguments, exactly what sessionApprovalKey reads. Never logged. */
+function mutationCallText(event: any, target: MutationTarget): string {
+  const call = normalizeMcpCall(event);
+  const name = target.innerTool || target.outerTool || "";
+  let inputText = "";
+  try { inputText = JSON.stringify(call.proxy ? call.args || {} : event?.input || {}); } catch { inputText = ""; }
+  return `${name} ${target.server || ""} ${inputText}`;
+}
+
 /** Human label for an approval key: the server name without its kind prefix. */
 export function sessionApprovalLabel(key: string): string {
   return key.replace(/^(?:mcp|sql):/, "");
@@ -1525,7 +1605,7 @@ export function sessionApprovalLabel(key: string): string {
 export type EditApprovalChoice = "once" | "session" | "declined";
 export const APPROVE_ONCE = "Allow once";
 export const APPROVE_DECLINE = "Decline";
-export const approveSessionOption = (key: string) => `Allow ${sessionApprovalLabel(key)} edits for this session (deletes and production still ask)`;
+export const approveSessionOption = (key: string) => `Allow ${sessionApprovalLabel(key)} edits for this session (deletes still ask; production is blocked)`;
 
 /** Ask for an edit. With an approvable key and a select dialog, offer once / this
  * session / decline; otherwise a plain yes/no that approves once. */
@@ -1810,6 +1890,7 @@ export function isSecretPath(p: string): boolean {
   if (/\.(pem|key|p12|pfx|keystore|jks)$/.test(base)) return true;
   if (/^id_(rsa|dsa|ecdsa|ed25519)(\.|$)/.test(base)) return true;
   if (/^(\.npmrc|\.pypirc|\.netrc|\.pgpass|credentials)$/.test(base)) return true;
+  if (base === PROD_UNLOCK_FILE) return true; // the human-only production unlock (G1)
   if (/(^|[._-])secrets?([._-]|$)/.test(base) && /\.(ya?ml|json|env|txt|conf|ini)$/.test(base)) return true;
   return false;
 }
@@ -1845,7 +1926,8 @@ function auditPath(): string {
 type AuditEntry = {
   ts?: string;     // set by audit() on write; present on every read
   cwd: string;
-  kind: "commit-block" | "danger-confirm" | "secret-confirm" | "mcp-confirm";
+  // project-share rows are written by lib/project-share.mjs ("Share with the team", C1).
+  kind: "commit-block" | "danger-confirm" | "secret-confirm" | "mcp-confirm" | "project-share";
   tool: string;
   decision: "blocked" | "blocked-headless" | "allowed" | "declined";
   label: string;   // the short subject (offending path, danger label, tool name)
@@ -1901,6 +1983,13 @@ export default function coopGuardrails(pi: ExtensionAPI) {
     token: () => (globalThis as any).process?.env?.COOP_FABRIC_MCP_TOKEN,
   };
   rotateAuditIfLarge();
+  // G1: the human unlock, re-read on every production write (it expires on its
+  // own and `coop unlock-prod --revoke` deletes it); matched to the trusted
+  // contract's client so one client's grant never covers another's session.
+  const activeProdUnlock = (ctx: ExtensionContext): ProdUnlock | null => {
+    const unlock = readProdUnlock();
+    return prodUnlockApplies(unlock, ensureSessionGovernance(ctx.cwd).sqlContract?.client || "") ? unlock : null;
+  };
   // One Pi process can serve multiple sessions (/new, /resume, /fork fire
   // session_shutdown + session_start without reloading this module). Drop the
   // stale governance snapshot so THIS session's project contract is re-read on
@@ -2001,6 +2090,17 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         const target = effectiveMutationTarget(event);
         if (modelingConnectsProduction(event)) modelingProduction = true;
         const mcp = mcpEditLabel(event);
+        // G1: a production write is blocked before any approval path. The signal is
+        // the call's own words (server, tool, arguments naming prod) or the session's
+        // production Modeling connection; the Warehouse SQL path below uses coop's
+        // trusted config for the same decision.
+        const mcpProductionWrite = Boolean(mcp) && (
+          (modelingProduction && isModelingEdit(event)) || PRODUCTION_WORD.test(mutationCallText(event, target)));
+        const mcpUnlock = mcpProductionWrite ? activeProdUnlock(ctx) : null;
+        if (mcpProductionWrite && !mcpUnlock) {
+          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-mcp", decision: "blocked", label: "production write", detail: "production-write" });
+          return { block: true, reason: PROD_WRITE_BLOCK };
+        }
         const editKey = mcp ? sessionApprovalKey(event, modelingProduction && isModelingEdit(event) ? "production" : undefined) : null;
         if (mcp && editKey && editApprovals.has(editKey)) {
           audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-mcp", decision: "allowed", label: "managed MCP mutation", detail: "session-approval" });
@@ -2012,12 +2112,13 @@ export default function coopGuardrails(pi: ExtensionAPI) {
           const choice = await askEditApproval(
             ctx,
             "coop guardrails",
-            `This looks like a MUTATING MCP action (create/update/delete/deploy/publish):\n  ${mcp}\ncoop treats MCP as read-only (list / read / inspect). Run it?`,
+            (mcpUnlock ? `PRODUCTION write under unlock ${mcpUnlock.id} (${prodUnlockMinutesLeft(mcpUnlock)} min left). ` : "") +
+              `This looks like a MUTATING MCP action (create/update/delete/deploy/publish):\n  ${mcp}\ncoop treats MCP as read-only (list / read / inspect). Run it?`,
             editKey,
           );
           const ok = choice !== "declined";
           if (choice === "session" && editKey) editApprovals.add(editKey);
-          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-mcp", decision: ok ? "allowed" : "declined", label: "managed MCP mutation", detail: choice === "session" ? "session-approval-granted" : "mutation" });
+          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-mcp", decision: ok ? "allowed" : "declined", label: mcpUnlock ? "production write" : "managed MCP mutation", detail: mcpUnlock ? `prod-unlock:${mcpUnlock.id}` : choice === "session" ? "session-approval-granted" : "mutation" });
           if (!ok) {
             return { block: true, reason: `coop guardrails: blocked the MCP action ${mcp} (you declined). MCP is read-only by default — list / read / inspect only; make changes with explicit approval or in the Fabric / Power BI UX.` };
           }
@@ -2041,6 +2142,23 @@ export default function coopGuardrails(pi: ExtensionAPI) {
           // A write is recorded as a write: "live read" on an approved CREATE/ALTER
           // misread the audit trail (SQ live acceptance, 2026-10-03).
           const auditLabel = decision.kind === "ddl-dml-destructive" ? "Warehouse SQL write" : "live read";
+          // G1: a production Warehouse write is blocked, not approved. Coop's own
+          // trusted config decides; the call's words decide only when that config
+          // resolves no dev or test target (a dev Warehouse may hold a schema named
+          // prod_staging, and a production write without the word "prod" is still
+          // a production write, #283). An active unlock falls back to asking.
+          const writeEnvironment = decision.kind === "ddl-dml-destructive"
+            ? trustedWriteEnvironment(event, liveReadDeps, ensureSessionGovernance(ctx.cwd).sqlContract)
+            : "";
+          const production = decision.environment === "production" || decision.scope?.environment === "production" || writeEnvironment === "production";
+          const sqlProductionWrite = decision.kind === "ddl-dml-destructive" && (
+            writeEnvironment === "production" || decision.scope?.environment === "production" ||
+            (decision.environment === "production" && writeEnvironment !== "dev" && writeEnvironment !== "test"));
+          const sqlUnlock = sqlProductionWrite ? activeProdUnlock(ctx) : null;
+          if (sqlProductionWrite && !sqlUnlock) {
+            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: "blocked", label: "production write", detail: "production-write" });
+            return { block: true, reason: PROD_WRITE_BLOCK };
+          }
           if (sqlEditKey && editApprovals.has(sqlEditKey)) {
             audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: "allowed", label: auditLabel, detail: "session-approval" });
             return;
@@ -2049,7 +2167,6 @@ export default function coopGuardrails(pi: ExtensionAPI) {
             audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: "blocked-headless", label: auditLabel, detail: decision.kind || "live-read" });
             return { block: true, reason: `coop guardrails: blocked ${decision.kind || "live-read"} access through ${decision.label || "the governed tool"}; explicit approval is unavailable in headless mode.` };
           }
-          const production = decision.environment === "production" || decision.scope?.environment === "production" || trustedSqlEnvironment === "production";
           const sessionGrant = decision.action === "prompt-and-grant";
           const scopeSummary = decision.scope ? [
             "Resolved bounded session scope:",
@@ -2065,7 +2182,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
           const prompt = decision.kind === "ddl-dml-destructive"
             ? sqlEditKey
               ? `Warehouse SQL write (one INSERT, UPDATE, CREATE or ALTER):\n  ${decision.label}\nDeletes, drops, merges, EXEC, batches and production always ask. Run it?`
-              : `${production ? "PRODUCTION " : ""}Warehouse SQL mutation/DDL call:\n  ${decision.label}\n${production ? "Production writes ask every time. " : ""}DDL, DML, destructive SQL, EXEC, and batches require separate explicit approval. Run it?`
+              : `${production ? "PRODUCTION " : ""}Warehouse SQL mutation/DDL call:\n  ${decision.label}\n${sqlUnlock ? `Production write under unlock ${sqlUnlock.id} (${prodUnlockMinutesLeft(sqlUnlock)} min left); it asks every time. ` : production ? "Production writes ask every time. " : ""}DDL, DML, destructive SQL, EXEC, and batches require separate explicit approval. Run it?`
             : decision.kind === "ambiguous-sql"
               ? `Ambiguous Warehouse SQL call:\n  ${decision.label}\nOnly one plain SELECT with a literal TOP bound can use a session grant. Run this call once?`
               : decision.kind === "production-metadata"
@@ -2074,7 +2191,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
           const choice = await askEditApproval(ctx, "coop live-data guardrail", prompt, sqlEditKey);
           const ok = choice !== "declined";
           if (choice === "session" && sqlEditKey) editApprovals.add(sqlEditKey);
-          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: ok ? "allowed" : "declined", label: auditLabel, detail: choice === "session" ? "session-approval-granted" : decision.kind || "live-read" });
+          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: ok ? "allowed" : "declined", label: sqlUnlock ? "production write" : auditLabel, detail: sqlUnlock ? `prod-unlock:${sqlUnlock.id}` : choice === "session" ? "session-approval-granted" : decision.kind || "live-read" });
           if (!ok) {
             return { block: true, reason: `coop guardrails: blocked ${decision.kind || "live-read"} access through ${decision.label || "the governed tool"} (you declined).` };
           }
@@ -2169,17 +2286,25 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       const fabricWrite = fabricWriteLabel(cmd);
       const rayfin = fabricWrite !== null && fabricWrite.startsWith("rayfin ");
       if (fabricWrite) {
+        // G1: a Fabric write whose command names prod is a production write: blocked
+        // unless a human unlock holds, in which case it asks as before.
+        const fabricUnlock = PRODUCTION_WORD.test(cmd) ? activeProdUnlock(ctx) : null;
+        if (PRODUCTION_WORD.test(cmd) && !fabricUnlock) {
+          audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "blocked", label: "production write", detail: "production-write" });
+          return { block: true, reason: PROD_WRITE_BLOCK };
+        }
         if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
           audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "blocked-headless", label: fabricWrite, detail: fabricWrite });
           return { block: true, reason: `coop guardrails: blocked ${fabricWrite}; approval is unavailable in headless mode.` };
         }
         const ok = await ctx.ui.confirm(
           "coop guardrails",
-          `Fabric / Azure write from the shell (${fabricWrite}):\n  ${cmd.slice(0, 200)}\n` +
+          (fabricUnlock ? `PRODUCTION write under unlock ${fabricUnlock.id} (${prodUnlockMinutesLeft(fabricUnlock)} min left). ` : "") +
+            `Fabric / Azure write from the shell (${fabricWrite}):\n  ${cmd.slice(0, 200)}\n` +
             (rayfin ? rayfinTargetNote(cmd, governance.devWorkspaceId) : "") +
             `coop treats Fabric item create/update/deploy/delete as approval-gated, like a mutating MCP call. Run it?`,
         );
-        audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: ok ? "allowed" : "declined", label: fabricWrite, detail: fabricWrite });
+        audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: ok ? "allowed" : "declined", label: fabricUnlock ? `production write (prod-unlock:${fabricUnlock.id})` : fabricWrite, detail: fabricUnlock ? `production write (prod-unlock:${fabricUnlock.id})` : fabricWrite });
         if (!ok) {
           return { block: true, reason: `coop guardrails: blocked the ${fabricWrite} command (you declined). Fabric writes need explicit approval; read with \`--method get\` or make the change in the Fabric UX.` };
         }
@@ -2270,8 +2395,14 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         message = [
           "coop edit approvals: active for this session",
           ...[...editApprovals].sort().map((key) => `  • ${sessionApprovalLabel(key)}${key.startsWith("sql:") ? " (single INSERT/UPDATE/CREATE/ALTER statements)" : ""}`),
-          "Deletes, drops and production still ask every time. Ends at /new or exit; /coop-approvals revoke ends it now.",
+          "Deletes and drops still ask every time; production writes are blocked. Ends at /new or exit; /coop-approvals revoke ends it now.",
         ].join("\n");
+      }
+      if (action === "status") {
+        const unlock = activeProdUnlock(ctx);
+        message += unlock
+          ? `\nPRODUCTION WRITES UNLOCKED by a human for ${unlock.client} (grant ${unlock.id}, ${prodUnlockMinutesLeft(unlock)} min left): each production write asks and is audited.`
+          : "\nProduction writes: blocked (never approvable from a session).";
       }
       try { if (typeof ctx.ui?.notify === "function") ctx.ui.notify(message, "info"); } catch { /* ignore */ }
     },
@@ -2289,8 +2420,9 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         "  • secret files — confirms read/edit/write AND bash access (cat .env etc.) of .env / keys / credentials",
         `  • live data — allows dev/test metadata and one plain bounded SELECT on the dev target; elsewhere bounded matching reads may reuse one session grant (${liveReadGrant ? "active" : "none"}; /coop-live-read status|revoke)`,
         "  • mutating MCP actions — confirms create/update/delete/deploy/publish-looking Fabric/Power BI/MCP tool calls (best-effort)",
+        `  • production writes — blocked, never approvable: SQL on a production target, model edits after a production connection, Fabric writes naming prod (${activeProdUnlock(ctx) ? "a human unlock is active: they ask instead" : "no unlock active"})`,
         "  • Power BI Desktop reloads — reads `powerbi-desktop status` before `powerbi-desktop reload` / `powerbi-report-author preview`; asks on unsaved changes, blocks when the instance can't be verified",
-        `  • edit approvals — approving an edit can cover that server for the session; deletes, drops and production still ask (${editApprovals.size ? `${editApprovals.size} active` : "none"}; /coop-approvals status|revoke)`,
+        `  • edit approvals — approving an edit can cover that server for the session; deletes and drops still ask (${editApprovals.size ? `${editApprovals.size} active` : "none"}; /coop-approvals status|revoke)`,
         "Advisory rules live in docs/guardrails.md. Disable with COOP_NO_GUARDRAILS=1.",
         "",
         `Audit log (append-only; secrets/file contents never written): ${auditPath()}`,
