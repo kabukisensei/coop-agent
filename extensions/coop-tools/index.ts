@@ -1158,6 +1158,11 @@ async function offerDataDocsCi(ctx: any): Promise<void> {
   const outputDir = resolveRel(dirname(configPath), parseExisting(safeRead(configPath)).outputDir || DEFAULT_OUTPUT_DIR);
   const rel = relative(root, outputDir).replace(/\\/g, "/");
   if (rel.startsWith("..") || isAbsolute(rel)) return; // built elsewhere: not this repository's docs
+  // The workflow runs a bare `coop-data-doc check` at the repository root, so it
+  // needs the config there too; a config saved in a source repository beside it
+  // (setup run from there) would only give CI "No coop-data-doc.yml found".
+  const configRel = relative(root, dirname(configPath)).replace(/\\/g, "/");
+  if (configRel !== "") return;
   const workflow = join(root, ".github", "workflows", "data-docs-check.yml");
   if (existsSync(workflow)) return;
   const template = join(HOME_TEMPLATE_DIR, "github-workflow-data-docs-check.yml");

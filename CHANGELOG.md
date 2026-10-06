@@ -65,6 +65,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   missing** (P1, found on the client VM). With `coop onboard --machine`
   supplying the name, every launch still said "user.json or config missing";
   it now says only this Windows user's client settings are missing.
+- **`/setup-docs` offers the docs check workflow only where it can run**
+  (DR1, found on the client VM). Run from a source repository, the wizard
+  saves `coop-data-doc.yml` there and builds into the home repository, so the
+  offered `data-docs-check.yml` in the home repository failed with "No
+  coop-data-doc.yml found". The offer now needs the config in that repository.
 - **The guardrails audit tells window tabs apart.** Each row now carries the
   coop process id, so two tabs (or terminals) on one folder no longer write
   decisions that look the same. Found in the tabs check on the client VM.
