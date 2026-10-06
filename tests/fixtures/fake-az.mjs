@@ -17,7 +17,8 @@
 //   mode      optional probe behavior: "term" ends the probe the way the
 //             launch watchdog does (killed by SIGTERM, or exit 143 on
 //             Windows, where a signal cannot be sent to itself);
-//             "error" fails with a non-authentication error; "hang" never
+//             "error" fails with a non-authentication error; "badtenant" fails
+//             the way az does for a tenant id that does not exist; "hang" never
 //             answers (see hang below)
 //   hang.pid  written by a hanging call: its pid, so a test can check that the
 //             watchdog ended it. A hanging call exits by itself after 20 s and
@@ -66,6 +67,11 @@ if (args[0] === "account" && args[1] === "get-access-token") {
     process.exit(97);
   }
   if (mode === "hang") hang();
+  if (mode === "badtenant") {
+    // What az prints for a tenant id that does not exist: a traceback, no ERROR: line.
+    process.stderr.write("The command failed with an unexpected error. Here is the traceback:\nUnable to get authority configuration for https://login.microsoftonline.com/" + tenant + ".\nValueError: OIDC Discovery failed. HTTP status: 400, Error: {\"error\":\"invalid_tenant\",\"error_description\":\"AADSTS90002: Tenant '" + tenant + "' not found.\"}\n");
+    process.exit(1);
+  }
   if (mode === "error") {
     process.stderr.write("ERROR: HTTPSConnectionPool: connection reset by proxy\n");
     process.exit(1);

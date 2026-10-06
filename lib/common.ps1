@@ -1952,15 +1952,21 @@ function Get-CoopAzTokenResources {
 # doctor can say what went wrong instead of only "not an auth error".
 $script:CoopAzLastError = ''
 
-# One printable line of az's stderr: the first "ERROR:" line, else the first
-# non-blank line, without the prefix, control characters or more than 200
-# characters. --output none keeps tokens off stdout; stderr never carries one.
+# One printable line of az's stderr: a tenant that does not exist (AADSTS90002)
+# in plain words, else the first "ERROR:" line, else the first AADSTS message,
+# else the first line that is not traceback noise; without the prefix, control
+# characters or more than 200 characters. --output none keeps tokens off
+# stdout; stderr never carries one.
 function Get-CoopAzErrorLine {
   param([string]$Text)
   if (-not $Text) { return '' }
+  if ($Text -match 'AADSTS90002|invalid_tenant') { return 'this tenant id does not exist (AADSTS90002); the configured tenant id is wrong' }
   $lines = @($Text -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
   $pick = @($lines | Where-Object { $_ -match '^ERROR:' } | Select-Object -First 1)
-  if ($pick.Count -eq 0) { $pick = @($lines | Select-Object -First 1) }
+  if ($pick.Count -eq 0 -and $Text -match '(AADSTS\d+:[^."]*)') { $pick = @($Matches[1]) }
+  if ($pick.Count -eq 0) {
+    $pick = @($lines | Where-Object { $_ -notmatch '^(Traceback|File |During handling|The command failed with an unexpected error|To check existing issues)' } | Select-Object -First 1)
+  }
   if ($pick.Count -eq 0) { return '' }
   $line = ($pick[0] -replace '^ERROR:\s*', '') -replace '[\x00-\x1f\x7f]', ''
   if ($line.Length -gt 200) { $line = $line.Substring(0, 200) + '...' }
@@ -1980,6 +1986,17 @@ function Get-CoopAzTokenRc {
     return 2
   }
   return 0
+}
+
+# What to run after a non-authentication failure: fix the tenant id when it does
+# not exist (the contract's fabric.tenant_id wins over ~/.coop/config), else the
+# token command that shows az's full error.
+function Get-CoopAzFailureHint {
+  param([string]$Tenant)
+  if ($script:CoopAzLastError -like '*AADSTS90002*') {
+    return 'fix the tenant id: run coop onboard --config-only (or fabric.tenant_id in the project''s .coop/project.yml)'
+  }
+  return (Get-CoopAzTokenHint $Tenant)
 }
 
 # The "not an auth error" warning text for -Tenant, with az's reason when known.
@@ -2038,7 +2055,7 @@ function Invoke-CoopAzPreflight {
   } elseif ($rc -eq 1) {
     Coop-Warn "Azure: not signed in to tenant $tenant; continuing." (Get-CoopAzLoginHint $tenant)
   } else {
-    Coop-Warn "Azure $(Get-CoopAzFailureText $tenant); continuing." (Get-CoopAzTokenHint $tenant)
+    Coop-Warn "Azure $(Get-CoopAzFailureText $tenant); continuing." (Get-CoopAzFailureHint $tenant)
   }
 }
 

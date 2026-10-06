@@ -193,6 +193,13 @@ try {
   elseif (-not $out.Contains('(not an auth error): HTTPSConnectionPool: connection reset by proxy')) { Ko "non-auth line does not carry az's reason" $out }
   else { Ok "non-auth failure: no sign-in, 'not an auth error' line with az's reason" }
 
+  # 11b. A tenant id that does not exist (AADSTS90002) says so and names the fix.
+  Reset-Az; Set-AzState 'mode' 'badtenant'
+  $out = Invoke-Preflight -AssumeYes
+  if ((Get-Logins) -ne 0) { Ko 'missing tenant: no sign-in expected' ((Get-AzLines) -join "`n") }
+  elseif ((Get-WarnCount $out) -ne 1 -or -not $out.Contains('this tenant id does not exist (AADSTS90002)') -or -not $out.Contains('coop onboard --config-only') -or $out.Contains('Traceback')) { Ko 'missing tenant line mismatch' $out }
+  else { Ok 'missing tenant: says the tenant id does not exist and names coop onboard --config-only' }
+
   # 12. Tenant chain (no contract / TODO contracts / purpose / no config).
   Set-Config '{"schema_version":1,"azure":{"purpose":"client_resources","tenant_id":"tenant-ccc.example"}}'
   $chainOk = $true

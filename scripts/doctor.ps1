@@ -320,7 +320,7 @@ if ($env:COOP_SKIP_AZ -ne '1' -and (Test-Have 'az')) {
     if ($azRc -eq 0) { D-Ok "Azure sign-in: signed in to tenant $azT" }
     elseif ($azRc -eq 124) { D-Warn "Azure sign-in: check timed out for tenant $azT" (Get-CoopAzTokenHint $azT) }
     elseif ($azRc -eq 1) { D-Warn "Azure sign-in: not signed in to tenant $azT" (Get-CoopAzLoginHint $azT) }
-    else { D-Warn "Azure sign-in: $(Get-CoopAzFailureText $azT)" (Get-CoopAzTokenHint $azT) }
+    else { D-Warn "Azure sign-in: $(Get-CoopAzFailureText $azT)" (Get-CoopAzFailureHint $azT) }
   }
 }
 

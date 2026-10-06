@@ -47,7 +47,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   wizard's list of repositories, skip any coop-agent checkout.
 - "Azure token check failed ... (not an auth error)" now names az's own
   reason (its `ERROR:` line, or that az could not start), at launch and in
-  `coop doctor`.
+  `coop doctor`. A tenant id that does not exist (AADSTS90002) is said in
+  plain words, with `coop onboard --config-only` as the fix.
 - **A long conversation no longer stops on "native turn auth context
   mismatch: scopes"** (Aaron, 2026-10-06). Pi keeps reusing its cached OpenAI
   Codex connection after it refreshes your ChatGPT sign-in, and the Codex server
