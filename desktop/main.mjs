@@ -26,7 +26,7 @@ import { listChanges, fileDiff } from "./lib/changes.mjs";
 import { readStandards, readSnapshot, readNote } from "./lib/standards-view.mjs";
 import { getTeamProject, loadProject, previewProject, saveProject, shareProject, teamStatus } from "./lib/project-form.mjs";
 import { DocsSetupRun, AnswerError, docsLocation, listDocsPages, pickedPathAnswer, readDocsPage, runDocsBuild } from "./lib/docs-setup.mjs";
-import { attach, forget, pruneStore, findPdfjs, LIMITS as ATTACH_LIMITS } from "./lib/attachments.mjs";
+import { attach, forget, pruneStore, saveUpload, findPdfjs, AttachError, LIMITS as ATTACH_LIMITS } from "./lib/attachments.mjs";
 import { loadSplash } from "./lib/splash.mjs";
 import { vibesDir, loadVibes, vibeSets, userName, fillVibe, pickVibe } from "./lib/vibes.mjs";
 import { bootstrapProcess, doctorReport, findCoop, folderArgument, packagedPaths } from "./lib/bootstrap.mjs";
@@ -93,6 +93,9 @@ applyNativeTheme(settings.theme);
 // week-old extract is of no use to anyone, so the store is pruned at start.
 const attachmentStore = join(app.getPath("userData"), "attachments");
 pruneStore(attachmentStore);
+// Photos and files the phone sends (MC10) are saved here, never in the project.
+const phoneUploadStore = join(app.getPath("userData"), "phone-uploads");
+pruneStore(phoneUploadStore);
 // pdf.js is the window runtime's second package, next to Electron; the
 // installed package carries it unpacked beside its asar.
 const pdfjsDir = PACKAGED ? UNPACKED.pdfjsDir : findPdfjs(process.execPath);
@@ -360,10 +363,12 @@ handle("coop:answer", (state, id, answer) => {
 handle("coop:sessions", (state) => ({ success: true, data: listSessions({ ...process.env, ...state.spec.env }, state.spec.cwd) }));
 
 // @ mentions: the folder's file list, read once and kept for 20 seconds.
-handle("coop:files", async (state, query) => {
+async function folderFiles(state, query) {
   if (!state.files || Date.now() - state.files.at > 20_000) state.files = { at: Date.now(), paths: await listFiles(state.spec.cwd) };
-  return { success: true, data: rankFiles(state.files.paths, String(query || "").slice(0, 200)) };
-});
+  return rankFiles(state.files.paths, String(query || "").slice(0, 200));
+}
+
+handle("coop:files", async (state, query) => ({ success: true, data: await folderFiles(state, query) }));
 
 handle("coop:switch-session", async (state, path) => {
   if (!isSessionPath({ ...process.env, ...state.spec.env }, path)) return { success: false, error: "that is not one of coop's saved sessions" };
@@ -698,10 +703,9 @@ handle("coop:pick-files", async (state) => {
   return { success: true, data: result.filePaths.slice(0, ATTACH_LIMITS.perMessage) };
 });
 
-handle("coop:attach-file", async (state, path) => ({
-  success: true,
-  data: await attach(String(path || ""), { cwd: state.spec.cwd, store: attachmentStore, node: state.spec.node, pdfjsDir, script: UNPACKED.pdfScript || undefined, env: { ...process.env, ...state.spec.env } }),
-}));
+const attachOptions = (state) => ({ cwd: state.spec.cwd, store: attachmentStore, node: state.spec.node, pdfjsDir, script: UNPACKED.pdfScript || undefined, env: { ...process.env, ...state.spec.env } });
+
+handle("coop:attach-file", async (state, path) => ({ success: true, data: await attach(String(path || ""), attachOptions(state)) }));
 
 handle("coop:attachment-forget", (state, id) => ({ success: forget(attachmentStore, String(id || "")) }));
 
@@ -763,6 +767,16 @@ function newHub(state) {
         return join(dirname(file), `coop-session-${stamp}.html`);
       },
       changed: (action) => send(state, "coop:refresh", { by: "phone", action }),
+      // Photos and files from the phone (MC10): saved, then attached as the window attaches a file.
+      attach: async (name, bytes) => {
+        if (bytes.length > ATTACH_LIMITS.document) throw new AttachError(`${name} is over ${Math.round(ATTACH_LIMITS.document / 1024 / 1024)} MB; files up to that size can be attached.`);
+        try {
+          return await attach(saveUpload(phoneUploadStore, name, bytes), attachOptions(state));
+        } catch (error) {
+          throw error instanceof AttachError ? error : new Error(`${name} could not be saved on the computer.`);
+        }
+      },
+      files: (query) => folderFiles(state, query),
     },
   });
   // The phone answered (or Pi's clock ran out): the desktop card closes.
@@ -789,6 +803,7 @@ async function startCompanion() {
         shared: {
           "/shared/dialogs.mjs": join(RENDERER, "dialogs.mjs"),
           "/shared/markdown.mjs": join(RENDERER, "markdown.mjs"),
+          "/shared/attach-note.mjs": join(RENDERER, "attach-note.mjs"),
           "/shared/themes.css": join(RENDERER, "styles", "themes.css"),
         },
         audit: companionAudit,

@@ -6,10 +6,11 @@
 // which builds DOM nodes and never parses HTML.
 import { parseConfirm, confirmLabels, parseQuestionSelect, parseQuestionMulti, multiAnswer } from "./shared/dialogs.mjs";
 import { renderMarkdown } from "./shared/markdown.mjs";
+import { splitAttachmentNote } from "./shared/attach-note.mjs";
 
 const $ = (id) => document.getElementById(id);
 const THEMES = ["modern-dark", "modern-light", "retro-dark", "retro-light"];
-const app = { incarnation: "", status: "disconnected", messages: new Map(), questions: new Map(), source: null, ready: false, retry: null };
+const app = { incarnation: "", status: "disconnected", messages: new Map(), questions: new Map(), source: null, ready: false, retry: null, attachments: [] };
 
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
@@ -266,7 +267,7 @@ function toast(text, level = "warning") {
 function refusal(json) {
   const reason = REASONS[json.code];
   if (reason && ["not-paired", "revoked", "device-expired", "wrong-user", "wrong-client", "access-off", "wrong-session"].includes(json.code)) { showGate(json.code); return; }
-  if (json.message && ["desktop-only", "unknown-command"].includes(json.code)) { toast(json.message); return; }
+  if (json.message && ["desktop-only", "unknown-command", "not-an-option", "too-large", "not-found", "busy"].includes(json.code)) { toast(json.message); return; }
   toast(reason ? reason[1] : json.code === "desktop-only" ? "That runs on the desktop only." : json.code === "already-answered" ? "That question was already answered." : json.code === "offline" ? "No connection to the VM. Try again." : `Not sent (${json.code}).`);
 }
 
@@ -327,6 +328,7 @@ async function dequeue() {
 
 function renderCompletions() {
   const list = $("completions");
+  if (mentionAt()) { renderMentions(); return; }
   const match = /^\/([A-Za-z0-9:._-]*)$/.exec($("message").value.trimStart());
   if (!match) { list.hidden = true; list.replaceChildren(); return; }
   const query = match[1].toLowerCase();
@@ -340,6 +342,110 @@ function renderCompletions() {
     item.append(pick);
     return item;
   }));
+}
+
+// ---- @ mentions (MC10): the folder's files, as the window's composer lists them ---
+
+/** The "@word" being typed at the cursor, or null. */
+function mentionAt() {
+  const box = $("message");
+  const before = box.value.slice(0, box.selectionStart ?? box.value.length);
+  const match = /(^|\s)@([^\s@]*)$/.exec(before);
+  return match ? { query: match[2], start: before.length - match[2].length - 1, end: before.length } : null;
+}
+
+let mentionAsk = 0;
+async function renderMentions() {
+  const list = $("completions");
+  const at = mentionAt();
+  const ask = ++mentionAsk;
+  let files = [];
+  try {
+    const { json } = await api("GET", `/api/files?q=${encodeURIComponent(at.query)}`);
+    if (json.ok) files = json.files || [];
+  } catch { /* offline: no list */ }
+  if (ask !== mentionAsk || !mentionAt()) return;
+  list.hidden = !files.length;
+  list.replaceChildren(...files.map((path) => {
+    const item = el("li", { role: "option" });
+    const pick = el("button", { type: "button", class: "completion" }, el("span", { class: "name", text: `@${path}` }));
+    pick.addEventListener("click", () => {
+      const box = $("message");
+      const now = mentionAt() || at;
+      // A folder stays open for the next part of the path; a file ends the mention.
+      const insert = `@${path}${path.endsWith("/") ? "" : " "}`;
+      box.value = box.value.slice(0, now.start) + insert + box.value.slice(now.end);
+      const caret = now.start + insert.length;
+      box.focus();
+      box.setSelectionRange(caret, caret);
+      renderCompletions();
+    });
+    item.append(pick);
+    return item;
+  }));
+}
+
+// ---- photos and files (MC10): each one goes to the VM as it is picked ----------
+
+const MAX_FILE_BYTES = 25 * 1024 * 1024;
+const PHOTO_EDGE = 2048;
+
+/** A photo made JPEG and at most PHOTO_EDGE on its long side; anything else as it is. */
+async function prepare(file) {
+  if (!/^image\//.test(file.type) || file.type === "image/gif") return { name: file.name, blob: file };
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, PHOTO_EDGE / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
+    if (!blob) return { name: file.name, blob: file };
+    return { name: `${(file.name || "photo").replace(/\.[^.]+$/, "")}.jpg`, blob };
+  } catch {
+    return { name: file.name, blob: file };
+  }
+}
+
+function base64Of(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]*,/, ""));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+function renderAttachments() {
+  const list = $("attachments");
+  list.hidden = !app.attachments.length;
+  list.replaceChildren(...app.attachments.map((a) => {
+    const label = a.state === "pending" ? `${a.name} (sending…)` : a.state === "failed" ? `${a.name}: ${a.error}` : `${a.name}${a.detail ? ` (${a.detail})` : ""}`;
+    const remove = el("button", { type: "button", class: "attachment-remove", "aria-label": `Remove ${a.name}`, text: "×" });
+    remove.addEventListener("click", () => { app.attachments = app.attachments.filter((x) => x !== a); renderAttachments(); });
+    return el("li", { class: `attachment ${a.state}` }, el("span", { class: "attachment-name", text: label }), remove);
+  }));
+}
+
+async function attachFiles(files) {
+  for (const file of files) {
+    if (app.attachments.length >= 10) { toast("10 files at most per message."); break; }
+    const entry = { name: file.name || "file", state: "pending", id: "", detail: "", error: "" };
+    app.attachments.push(entry);
+    renderAttachments();
+    try {
+      if (file.size > MAX_FILE_BYTES) throw new Error("over 25 MB");
+      const ready = await prepare(file);
+      entry.name = ready.name || entry.name;
+      const { json } = await submit("/api/upload", { incarnation: app.incarnation, name: entry.name.replace(/[\\/:*?"<>|]/g, "_"), data: await base64Of(ready.blob) });
+      if (!json.ok) throw new Error(json.message || (REASONS[json.code] ? REASONS[json.code][1] : json.code));
+      Object.assign(entry, { state: "ready", id: json.file.id, detail: json.file.kind === "image" ? "photo" : json.file.detail || json.file.label });
+    } catch (error) {
+      Object.assign(entry, { state: "failed", error: String((error && error.message) || error) });
+    }
+    renderAttachments();
+  }
 }
 
 // The status line, the widgets and the todo panel above the prompt (MC8). A
@@ -372,10 +478,14 @@ function renderMessage(m) {
     $("timeline").append(node);
   }
   node.className = `msg ${m.role}${m.final ? "" : " partial"}`;
-  texts.set(node, m.text);
+  // A message sent with files shows what was typed and the files' names (MC10).
+  const sent = m.role === "user" ? splitAttachmentNote(m.text) : { text: m.text, files: [] };
+  texts.set(node, sent.text);
   node.replaceChildren();
   if (m.role === "assistant") renderMarkdown(document, m.text, node);
-  else node.append(el("p", { text: m.text }));
+  else if (sent.text.trim()) node.append(el("p", { text: sent.text }));
+  const attached = [...(m.images ? [m.images === 1 ? "1 photo" : `${m.images} photos`] : []), ...sent.files.map((f) => `${f.name}${f.detail ? ` (${f.detail})` : ""}`)];
+  if (attached.length) node.append(el("ul", { class: "msg-files" }, attached.map((text) => el("li", { text: `Attached: ${text}` }))));
   // The terminal's /copy: every finished answer copies as Markdown (MC7).
   if (m.role === "assistant" && m.final) {
     node.append(el("div", { class: "msg-actions" },
@@ -584,12 +694,21 @@ function openStream() {
 async function sendMessage(mode = "steer") {
   const box = $("message");
   const text = box.value.trim();
-  if (!text || !app.ready) return;
+  if (app.attachments.some((a) => a.state === "pending")) { toast("A file is still on its way; one moment.", "info"); return; }
+  const files = app.attachments.filter((a) => a.state === "ready");
+  if ((!text && !files.length) || !app.ready) return;
   if (/^!/.test(text)) { toast("A ! line runs a shell on the VM: use the coop window for that."); return; }
   $("send").disabled = true;
   $("queue-send").disabled = true;
-  const { json } = await submit("/api/chat", { incarnation: app.incarnation, text, mode });
-  if (json.ok) { box.value = ""; renderCompletions(); } else refusal(json);
+  const body = { incarnation: app.incarnation, text, mode };
+  if (files.length) body.attachments = files.map((a) => a.id);
+  const { json } = await submit("/api/chat", body);
+  if (json.ok) {
+    box.value = "";
+    app.attachments = app.attachments.filter((a) => !files.includes(a));
+    renderAttachments();
+    renderCompletions();
+  } else refusal(json);
   setStatus(app.status);
 }
 
@@ -614,6 +733,8 @@ $("menu-commands").addEventListener("click", () => {
   box.focus();
   renderCompletions();
 });
+$("attach").addEventListener("click", () => $("file-pick").click());
+$("file-pick").addEventListener("change", () => { const picked = [...$("file-pick").files]; $("file-pick").value = ""; attachFiles(picked); });
 $("send").addEventListener("click", () => sendMessage("steer"));
 $("queue-send").addEventListener("click", () => sendMessage("queue"));
 $("message").addEventListener("input", renderCompletions);

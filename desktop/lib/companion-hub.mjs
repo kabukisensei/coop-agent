@@ -5,7 +5,10 @@
 // The HTTP server (companion-server.mjs) only authenticates and routes to this.
 import { EventEmitter } from "node:events";
 import { basename } from "node:path";
-import { buildUiResponse } from "./rpc-commands.mjs";
+import { randomBytes } from "node:crypto";
+import { IMAGE_LIMITS, buildUiResponse } from "./rpc-commands.mjs";
+import { attachmentNote } from "../renderer/attach-note.mjs";
+import { imageBudgetProblem } from "../renderer/draft.mjs";
 import { TODO_TOOL, applyTodoResult, createTodos, startTurn, todoLines, todosFromMessages } from "../renderer/todos.mjs";
 import {
   LIMITS, classifyQuestion, decideAnswer, eventEnvelope, newIncarnation, phoneCommand, phoneCommandList, resumePoint,
@@ -22,6 +25,10 @@ const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
 const DETAIL_KEEP = 300;
 const DETAIL_ARGS_CHARS = 4000;
 const DETAIL_TEXT_CHARS = 16_000;
+// Photos and files from the phone (MC10) wait here, per device, until a chat names them.
+const UPLOAD_KEEP = 10;
+const UPLOAD_MS = 30 * 60_000;
+const PHONE_IMAGE_LIMITS = Object.freeze({ images: IMAGE_LIMITS.maxImages, imageBytes: IMAGE_LIMITS.maxImageBytes, imageTotalBytes: IMAGE_LIMITS.maxTotalBytes });
 const thinkingText = (content) => (Array.isArray(content) ? content.filter((p) => p && p.type === "thinking" && typeof p.thinking === "string").map((p) => p.thinking).join("\n\n").trim() : "");
 const resultText = (result) => messageText(result && result.content);
 const panelText = (text) => String(text === undefined || text === null ? "" : text).replace(ANSI, "").slice(0, PANEL_CHARS);
@@ -31,6 +38,11 @@ export function messageText(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   return content.filter((part) => part && part.type === "text" && typeof part.text === "string").map((part) => part.text).join("");
+}
+
+/** How many images a user message carried (MC10): the phone shows the count, never the image. */
+export function imageCount(content) {
+  return Array.isArray(content) ? content.filter((part) => part && part.type === "image").length : 0;
 }
 
 /** A tool as the phone sees it: its name and, for file tools, the file's name only. */
@@ -51,13 +63,16 @@ export class CompanionHub extends EventEmitter {
     super();
     // host (MC9, main.mjs): `list()` the folder's saved sessions with their
     // paths, `exportPath()` a file beside the session, `changed(message)` tells
-    // the window the phone changed the session.
+    // the window the phone changed the session; (MC10) `attach(name, bytes)`
+    // saves and reads a phone's file as the window attaches one, and
+    // `files(query)` lists the folder's files for @ mentions.
     Object.assign(this, { windowsUser: windowsUser || "", client: client || "", now, setTimer, clearTimer, random, host });
     this.pi = null;
     this.incarnation = "";
     this.accessOn = false;
     this.sessionName = "";
     this.commands = [];
+    this.uploads = new Map();
     this.reset();
   }
 
@@ -165,7 +180,8 @@ export class CompanionHub extends EventEmitter {
       case "message_start":
         if (message.message && message.message.role === "user") {
           const text = messageText(message.message.content);
-          if (text) this.#push("message", { id: `u${this.seq + 1}`, role: "user", text, final: true });
+          const images = imageCount(message.message.content);
+          if (text || images) this.#push("message", { id: `u${this.seq + 1}`, role: "user", text, final: true, ...(images ? { images } : {}) });
         } else if (message.message && message.message.role === "assistant") {
           this.partial = { id: `a${this.seq + 1}`, text: "" };
         }
@@ -350,12 +366,67 @@ export class CompanionHub extends EventEmitter {
       // A /command goes to Pi as typed only when Pi listed it (MC6).
       const command = phoneCommand(request.text, this.commands);
       if (!command.ok) return command;
+      // Uploaded files (MC10) go as the window sends its attachments: images
+      // as images, the rest named by path in the note.
+      this.#pruneUploads();
+      const files = [];
+      for (const id of request.attachments || []) {
+        const upload = this.uploads.get(id);
+        if (!upload || upload.deviceId !== deviceId) return { ok: false, code: "not-found", message: "an attached file is gone; attach it again" };
+        files.push(upload.file);
+      }
+      const budget = imageBudgetProblem(files, PHONE_IMAGE_LIMITS);
+      if (budget) return { ok: false, code: "too-large", message: budget };
       // As the window sends it: while coop works, Send now steers and Queue waits.
-      const prompt = { type: "prompt", message: request.text };
+      const prompt = { type: "prompt", message: request.text + attachmentNote(files) };
+      const images = files.filter((file) => file.kind === "image").map((image) => ({ type: "image", data: image.data, mimeType: image.mimeType }));
+      if (images.length) prompt.images = images;
+      for (const id of request.attachments || []) this.uploads.delete(id);
       if (this.status === "running") prompt.streamingBehavior = request.mode === "steer" ? "steer" : "followUp";
       this.pi.request(prompt, { timeoutMs: 0 }).catch(() => {});
       return { ok: true };
     });
+  }
+
+  #pruneUploads() {
+    const oldest = this.now() - UPLOAD_MS;
+    for (const [id, upload] of this.uploads) if (upload.at < oldest) this.uploads.delete(id);
+  }
+
+  /**
+   * A photo or file from the phone (MC10), saved under the window's data
+   * folder and read the way the window attaches a file. Resolves to
+   * `{ ok, file: { id, name, kind, label, detail, size } }`; the id goes in a chat.
+   */
+  upload(deviceId, request) {
+    return this.#remember(deviceId, request.submissionId, async () => {
+      if (request.incarnation !== this.incarnation) return { ok: false, code: "wrong-session" };
+      if (!this.pi || this.pi.exited) return { ok: false, code: "pi-not-running" };
+      if (!this.host || typeof this.host.attach !== "function") return { ok: false, code: "desktop-only", message: "this window cannot take files from the phone" };
+      this.#pruneUploads();
+      const waiting = [...this.uploads.values()].filter((upload) => upload.deviceId === deviceId).length;
+      if (waiting >= UPLOAD_KEEP) return { ok: false, code: "too-large", message: `${UPLOAD_KEEP} files at most can wait to be sent; send or remove some first` };
+      let file;
+      try {
+        file = await this.host.attach(request.name, Buffer.from(request.data, "base64"));
+      } catch (error) {
+        return { ok: false, code: "not-an-option", message: String((error && error.message) || "that file could not be read").slice(0, 300) };
+      }
+      const id = `u${randomBytes(12).toString("hex")}`;
+      this.uploads.set(id, { deviceId, at: this.now(), file });
+      return { ok: true, file: { id, name: file.name, kind: file.kind, label: file.label || file.kind, detail: file.detail || "", size: file.size || 0 } };
+    });
+  }
+
+  /** The working folder's files for an @ mention (MC10), as the window's composer lists them. */
+  async files(query) {
+    if (!this.host || typeof this.host.files !== "function") return { ok: true, files: [] };
+    try {
+      const files = await this.host.files(String(query || ""));
+      return { ok: true, files: Array.isArray(files) ? files.filter((f) => typeof f === "string").slice(0, 30) : [] };
+    } catch {
+      return { ok: true, files: [] };
+    }
   }
 
   /** Queued messages back to the phone's text box (the terminal's Alt+Up). */
@@ -564,8 +635,8 @@ export class CompanionHub extends EventEmitter {
         if (!this.todos.found) { const todos = todosFromMessages(list); if (todos.found) this.todos = todos; }
         messages = list
           .filter((m) => m && (m.role === "user" || m.role === "assistant"))
-          .map((m, i) => ({ id: `h${i}`, role: m.role, text: messageText(m.content), final: true, content: m.content }))
-          .filter((m) => m.text)
+          .map((m, i) => ({ id: `h${i}`, role: m.role, text: messageText(m.content), final: true, content: m.content, ...(m.role === "user" && imageCount(m.content) ? { images: imageCount(m.content) } : {}) }))
+          .filter((m) => m.text || m.images)
           .slice(-SNAPSHOT_MESSAGES)
           .map(({ content, ...m }) => (m.role === "assistant" && this.#keepThinking(`m:${m.id}`, content) ? { ...m, thinking: true } : m));
       } catch { /* the stream will catch up */ }

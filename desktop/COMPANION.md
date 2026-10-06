@@ -105,7 +105,9 @@ ignored.
 | `POST /api/pair` | `code`, `deviceName` | trades a pairing code for the device cookie |
 | `GET /api/snapshot` | none | the authoritative state: session identity, status, the conversation's messages, open questions, the queue, the `/` commands the phone may send, the last event id |
 | `GET /api/events` | none (`Last-Event-ID` header) | the event stream (server-sent events) |
-| `POST /api/chat` | `submissionId`, `incarnation`, `text`, `mode` | sends a message; while coop works `mode` `steer` sends it now and `queue` waits for the turn to end, as the window's Send now and Queue (MC6) |
+| `POST /api/chat` | `submissionId`, `incarnation`, `text`, `mode`, optional `attachments` | sends a message; while coop works `mode` `steer` sends it now and `queue` waits for the turn to end, as the window's Send now and Queue (MC6); `attachments` names up to ten uploaded files by id (MC10) |
+| `POST /api/upload` | `submissionId`, `incarnation`, `name`, `data` (base64) | one photo or file from the phone (MC10), at most 34 MB of body and read only from a paired phone; the window saves it under its own data folder (`phone-uploads`, pruned after seven days) and reads it as the window attaches a file; returns an id, the kind and a detail, never a path |
+| `GET /api/files` | `q` in the query | the working folder's file names that match, for `@` mentions (MC10), as the window's composer lists them; names only, never contents |
 | `POST /api/stop` | `submissionId`, `incarnation` | stops the current turn (Pi's `abort`) |
 | `POST /api/dequeue` | `submissionId`, `incarnation` | takes the queued messages back (Pi's `clear_queue`) and returns their texts for the text box (MC6) |
 | `GET /api/detail` | `id` in the query (`t:` a tool call, `m:` an answer) | one tool call's arguments and output, or one answer's thinking, for a tapped line (MC8) |
@@ -121,8 +123,12 @@ ignored.
   as typed only when Pi listed it (`get_commands`: extension commands, prompt
   templates, skills); Pi's built-ins wait for their rows or stay in the
   terminal, and the extension screens that exist only in the terminal stay
-  there (`phoneCommand`, refused with the reason). At most 16,000 characters;
-  no attachments.
+  there (`phoneCommand`, refused with the reason). At most 16,000 characters.
+  Uploaded files go with the chat that names them, as the window sends its
+  attachments: images with the prompt (five, 4 MB each, 8 MB together), other
+  files by path in the prompt's attachment note, so coop reads them through its
+  guarded read tool. An upload waits 30 minutes for its chat and goes once;
+  only the phone that uploaded it can send it.
 - **Every write is idempotent.** `submissionId` is a UUID the phone makes once
   per action and repeats on every retry. The window remembers each outcome for
   10 minutes and answers a repeat with the first outcome, so a retry after a

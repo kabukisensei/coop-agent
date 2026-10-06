@@ -7,7 +7,7 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize, sep } from "node:path";
-import { CODES, DETAIL_ID, LIMITS, ProtocolError, checkGrant, checkOrigin, validateRequest } from "./companion-protocol.mjs";
+import { CODES, DETAIL_ID, LIMITS, ProtocolError, ROUTES, bodyLimit, checkGrant, checkOrigin, validateRequest } from "./companion-protocol.mjs";
 
 export const DEFAULT_PORT = 47821;
 export const COOKIE = "coop_device";
@@ -65,12 +65,12 @@ export function createCompanionServer({ store, active, origin, webRoot = "", sha
     sendJson(res, CODES[code] || 400, { ok: false, code, message: message || code });
   }
 
-  async function readBody(req) {
+  async function readBody(req, limit) {
     const chunks = [];
     let size = 0;
     for await (const chunk of req) {
       size += chunk.length;
-      if (size > LIMITS.bodyBytes) throw new ProtocolError("too-large");
+      if (size > limit) throw new ProtocolError("too-large");
       chunks.push(chunk);
     }
     const text = Buffer.concat(chunks).toString("utf8");
@@ -137,7 +137,14 @@ export function createCompanionServer({ store, active, origin, webRoot = "", sha
     let request;
     try {
       checkOrigin(req.method, req.headers, origin);
-      const { body, size } = req.method === "GET" ? { body: null, size: 0 } : await readBody(req);
+      const limit = bodyLimit(ROUTES[`${req.method} ${path}`]);
+      // A large body is read only from a paired device (MC10's uploads).
+      if (limit > LIMITS.bodyBytes) {
+        const early = readCookie(req.headers.cookie);
+        if (!early || !store.get(early.id)) throw new ProtocolError("not-paired");
+        if (Number(req.headers["content-length"] || 0) > limit) throw new ProtocolError("too-large");
+      }
+      const { body, size } = req.method === "GET" ? { body: null, size: 0 } : await readBody(req, limit);
       request = validateRequest(req.method, path, body, size);
     } catch (error) {
       if (error instanceof ProtocolError) return refuse(res, error.code, error.message);
@@ -181,6 +188,15 @@ export function createCompanionServer({ store, active, origin, webRoot = "", sha
         const result = hub.chat(device.id, request);
         audit({ kind: "chat", device: device.id, outcome: result.ok ? "sent" : result.code });
         return result.ok ? sendJson(res, 200, { ok: true }) : refuse(res, result.code, result.message, device.id);
+      }
+      case "upload": {
+        const result = await hub.upload(device.id, request);
+        audit({ kind: "upload", device: device.id, outcome: result.ok ? "saved" : result.code });
+        return result.ok ? sendJson(res, 200, { ok: true, file: result.file }) : refuse(res, result.code, result.message, device.id);
+      }
+      case "files": {
+        const result = await hub.files(String(query.get("q") || "").slice(0, 200));
+        return result.ok ? sendJson(res, 200, { ok: true, files: result.files }) : refuse(res, result.code, undefined, device.id);
       }
       case "dequeue": {
         const result = await hub.dequeue(device.id, request);

@@ -95,10 +95,13 @@
       <div id="panel-body" class="panel-body"></div>
     </div>
     <div id="queue" class="queue" hidden></div>
-    <ul id="completions" class="completions" role="listbox" aria-label="Commands" hidden></ul>
+    <ul id="completions" class="completions" role="listbox" aria-label="Commands and files" hidden></ul>
+    <ul id="attachments" class="attachments" aria-label="Attached files" hidden></ul>
+    <input id="file-pick" type="file" multiple hidden>
     <label class="sr-only" for="message">Message coop</label>
-    <textarea id="message" rows="2" maxlength="16000" placeholder="Message coop, or / for commands"></textarea>
+    <textarea id="message" rows="2" maxlength="16000" placeholder="Message coop, / for commands, @ for files"></textarea>
     <div class="actions">
+      <button id="attach" class="btn attach" type="button" aria-label="Attach a photo or file">Attach</button>
       <button id="stop" class="btn danger" type="button" hidden>Stop</button>
       <button id="queue-send" class="btn" type="button" hidden>Queue</button>
       <button id="send" class="btn primary" type="button">Send</button>

@@ -15,6 +15,7 @@ import { CompanionHub, messageText, toolLabel } from "../desktop/lib/companion-h
 import { DeviceStore } from "../desktop/lib/companion-devices.mjs";
 import { createCompanionServer, readCookie } from "../desktop/lib/companion-server.mjs";
 import { LIMITS } from "../desktop/lib/companion-protocol.mjs";
+import { attach, saveUpload } from "../desktop/lib/attachments.mjs";
 import { originFromStatus, tailscaleCommand } from "../desktop/lib/companion-tailscale.mjs";
 
 const temp = mkdtempSync(join(tmpdir(), "coop-companion-"));
@@ -185,7 +186,7 @@ await check("/ commands (MC6): Pi's listed commands go as typed; built-ins and u
   const snap = await hub.snapshot();
   assert.deepEqual(snap.commands.map((c) => c.name), ["start"]);
   assert.deepEqual(hub.chat("d1", { submissionId: SUB(20), incarnation: hub.incarnation, text: "/start", mode: "steer" }), { ok: true });
-  const refused = hub.chat("d1", { submissionId: SUB(21), incarnation: hub.incarnation, text: "/new", mode: "steer" });
+  const refused = hub.chat("d1", { submissionId: SUB(21), incarnation: hub.incarnation, text: "/reload", mode: "steer" });
   assert.equal(refused.code, "desktop-only");
   assert.match(refused.message, /coop window/);
   assert.equal(hub.chat("d1", { submissionId: SUB(22), incarnation: hub.incarnation, text: "/pets", mode: "steer" }).code, "desktop-only");
@@ -278,6 +279,40 @@ await check("sessions (MC9): ids resolve against the window's lists; a session t
   pi.emit("event", { type: "agent_end" });
   hub.renew();
   assert.equal(hub.accessOn, false, "a session changed at the desk still ends access");
+});
+
+await check("photos and files (MC10): saved under the window's data folder, sent as the window sends attachments", async () => {
+  const uploads = join(temp, "phone-uploads");
+  const folder = join(temp, "project");
+  mkdirSync(join(folder, "views"), { recursive: true });
+  const host = {
+    attach: (name, bytes) => attach(saveUpload(uploads, name, bytes), { cwd: folder, store: join(temp, "extracts"), node: process.execPath, pdfjsDir: "" }),
+    files: async (q) => ["views/", "views/sales.sql", "README.md"].filter((p) => p.includes(q)),
+  };
+  const { pi, hub } = newHub({ host });
+  const req = (n, body) => ({ submissionId: SUB(80 + n), incarnation: hub.incarnation, ...body });
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  const photo = await hub.upload("d1", req(0, { name: "IMG_0001.png", data: png.toString("base64") }));
+  assert.equal(photo.ok, true);
+  assert.match(photo.file.id, /^u[0-9a-f]{24}$/);
+  assert.equal(photo.file.kind, "image");
+  assert.ok(!JSON.stringify(photo).includes(uploads), "no VM path goes back to the phone");
+  const notes = await hub.upload("d1", req(1, { name: "notes.sql", data: Buffer.from("select 1").toString("base64") }));
+  assert.equal(notes.file.kind, "text");
+  assert.equal((await hub.upload("d1", req(2, { name: "old.doc", data: Buffer.from("x").toString("base64") }))).code, "not-an-option");
+  // Another device cannot send this phone's files.
+  assert.equal(hub.chat("d2", req(3, { text: "look", mode: "queue", attachments: [photo.file.id] })).code, "not-found");
+  assert.deepEqual(hub.chat("d1", req(4, { text: "what is this?", mode: "queue", attachments: [photo.file.id, notes.file.id] })), { ok: true });
+  const sent = pi.sent.at(-1);
+  assert.equal(sent.type, "prompt");
+  assert.match(sent.message, /^what is this\?\n\nAttached files \(read each one with the read tool before answering\):\n- notes\.sql: /);
+  assert.equal(sent.images.length, 1);
+  assert.equal(sent.images[0].mimeType, "image/png");
+  assert.equal(hub.chat("d1", req(5, { text: "", mode: "queue", attachments: [photo.file.id] })).code, "not-found", "a file goes once");
+  pi.emit("event", { type: "message_start", message: { role: "user", content: [{ type: "image", data: "x", mimeType: "image/png" }] } });
+  assert.equal(hub.buffer.at(-1).data.images, 1, "an image-only message still shows, as a count");
+  assert.deepEqual((await hub.files("sales")).files, ["views/sales.sql"]);
+  assert.deepEqual((await newHub().hub.files("x")).files, [], "no host, no list");
 });
 
 await check("access needs a client in the project file and a running Pi", () => {
@@ -444,6 +479,24 @@ try {
     assert.equal((await call(port, "POST", "/api/chat", { cookie, body: { ...body, submissionId: SUB(22), text: "/new" } })).json.code, "desktop-only");
   });
 
+  await check("server: an upload is read only from a paired phone, and its file goes with the next chat (MC10)", async () => {
+    const big = await call(port, "POST", "/api/upload", { body: { submissionId: SUB(90), incarnation: hub.incarnation, name: "a.txt", data: "QQ==" } });
+    assert.equal(big.json.code, "not-paired", "no cookie, no body read");
+    const files = [];
+    hub.host = { attach: async (name, bytes) => { files.push([name, bytes.toString()]); return { kind: "text", label: "text", name, size: bytes.length, ref: name }; }, files: async () => ["views/sales.sql"] };
+    try {
+      const up = await call(port, "POST", "/api/upload", { cookie, body: { submissionId: SUB(91), incarnation: hub.incarnation, name: "a.txt", data: Buffer.from("hello").toString("base64") } });
+      assert.equal(up.status, 200);
+      assert.deepEqual(files, [["a.txt", "hello"]]);
+      assert.equal((await call(port, "POST", "/api/upload", { cookie, body: { submissionId: SUB(92), incarnation: hub.incarnation, name: "../a.txt", data: "QQ==" } })).json.code, "bad-request");
+      const chat = await call(port, "POST", "/api/chat", { cookie, body: { submissionId: SUB(93), incarnation: hub.incarnation, text: "", attachments: [up.json.file.id] } });
+      assert.equal(chat.status, 200);
+      assert.match(pi.sent.at(-1).message, /- a\.txt: a\.txt$/);
+      const listed = await call(port, "GET", "/api/files?q=sales", { cookie });
+      assert.deepEqual(listed.json.files, ["views/sales.sql"]);
+    } finally { hub.host = null; }
+  });
+
   await check("server: a tapped tool line reads its detail; a malformed id is refused (MC8)", async () => {
     pi.emit("event", { type: "tool_execution_start", toolCallId: "call_7", toolName: "read", args: { path: "a.sql" } });
     const read = await call(port, "GET", "/api/detail?id=t%3Acall_7", { cookie });
@@ -539,7 +592,7 @@ await check("page: every file the page names ships, from this origin only, with 
   }
   assert.ok(!/<script(?![^>]*src=)/i.test(html) && !/ on[a-z]+=/i.test(html) && !/ style=/i.test(html), "no inline script, handler or style (the CSP forbids them)");
   const js = readFileSync(join(pageDir, "app.js"), "utf8");
-  for (const [, ref] of js.matchAll(/from "\.\/(shared\/[^"]+)"/g)) assert.ok(["shared/dialogs.mjs", "shared/markdown.mjs"].includes(ref));
+  for (const [, ref] of js.matchAll(/from "\.\/(shared\/[^"]+)"/g)) assert.ok(["shared/dialogs.mjs", "shared/markdown.mjs", "shared/attach-note.mjs"].includes(ref));
   assert.ok(!/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function/.test(js), "VM text never becomes HTML");
   assert.ok(!/localStorage\.setItem\((?!"coop-theme")/.test(js), "only the theme is kept on the phone");
   const sw = readFileSync(join(pageDir, "sw.js"), "utf8");

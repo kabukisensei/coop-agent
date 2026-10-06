@@ -310,8 +310,8 @@ terminal capability with its phone status:
 | `/tree` (view) | MC9 | The session tree, read-only, from the Sessions sheet. |
 | `/export` (HTML) | phone (MC9) | Export HTML in the Sessions sheet writes the page beside the session file on the VM (not in the project folder); the file stays on the VM. |
 | `/reload` | MC9 | Restart coop in the window on the same session; access carries over as for MC9's session actions. |
-| Attach images and files (`app.clipboard.pasteImage`) | MC10 | Photos and files from the phone, with the window's limits and readers; documents land in the project folder on the VM and are referenced by path. |
-| `@path` file mentions and Tab completion | MC10 | The window's file search over the folder (`listFiles`, `rankFiles`). |
+| Attach images and files (`app.clipboard.pasteImage`) | phone (MC10) | Attach in the text box: photos (made JPEG, 2048 pixels on the long side, so a phone's camera photo fits the 4 MB image limit) and files, with the window's limits and readers. Each file is saved under the window's data folder on the VM, not in the project, and sent as the window sends attachments. |
+| `@path` file mentions and Tab completion | phone (MC10) | Typing `@` lists the folder's files as the window's composer does (`listFiles`, `rankFiles`); a tap puts the path in the text box. |
 | Know when coop needs you (the window's background notification) | MC11 | A notice on the phone when a question arrives or a turn ends while the page is closed. Web push goes through Apple's or Google's push service, so MC11 sends no session text, only "coop needs you" (Aaron said yes, 2026-10-06 03:34). |
 
 ### Desk only (intentional)

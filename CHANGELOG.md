@@ -16,6 +16,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   wins against the exact action, and production or session-wide approvals stay
   on the desktop. The checkable rules are `desktop/lib/companion-protocol.mjs`
   with gate-lane fixtures.
+- **Phone parity, part 5** (MC10). The phone's text box has *Attach*: pick
+  photos or files, or take a photo, and they go with the next message as the
+  window sends attachments. Photos are made JPEG at most 2048 pixels on the
+  long side, so a camera photo fits. Each file is saved in the window's own
+  data folder on the VM, never in the project. Typing `@` lists the folder's
+  files to mention.
 - **Phone parity, part 4** (MC9). The phone's menu adds *Sessions*: start a
   new session, open one of the folder's saved sessions, fork from an earlier
   prompt, clone, or export the session as HTML beside its file on the VM. A
