@@ -105,6 +105,8 @@ ignored.
 | `POST /api/chat` | `submissionId`, `incarnation`, `text`, `mode` | sends a message; while coop works `mode` `steer` sends it now and `queue` waits for the turn to end, as the window's Send now and Queue (MC6) |
 | `POST /api/stop` | `submissionId`, `incarnation` | stops the current turn (Pi's `abort`) |
 | `POST /api/dequeue` | `submissionId`, `incarnation` | takes the queued messages back (Pi's `clear_queue`) and returns their texts for the text box (MC6) |
+| `GET /api/session` | none | the session sheets (MC7): model, thinking level and the levels and models Pi lists, the session's name, auto-compact, prompts, answers, tool calls, tokens, cost and context; no file paths |
+| `POST /api/session` | `submissionId`, `incarnation`, `action` and its own fields | one session control (MC7): `model` (`provider`, `modelId`, one Pi lists), `thinking` (`level`), `compact` (optional `instructions`, refused while coop works) or `name` (`name`) |
 | `POST /api/answer` | `submissionId`, `incarnation`, `questionId`, `digest`, `answer` | answers one open question |
 | `POST /api/logout` | none | forgets this device |
 

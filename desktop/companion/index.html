@@ -33,6 +33,11 @@
       <div class="drawer-cap">Session</div>
       <ul class="drawer-list">
         <li><button id="menu-commands" class="drawer-item" type="button"><span class="item-name">Commands</span><span class="item-detail">coop's / commands, skills and prompts</span></button></li>
+        <li><button id="menu-model" class="drawer-item" type="button"><span class="item-name">Model</span><span class="item-detail" id="menu-model-now">Choose the model coop uses</span></button></li>
+        <li><button id="menu-thinking" class="drawer-item" type="button"><span class="item-name">Thinking</span><span class="item-detail" id="menu-thinking-now">How hard the model thinks</span></button></li>
+        <li><button id="menu-compact" class="drawer-item" type="button"><span class="item-name">Compact</span><span class="item-detail">Summarize the conversation to free context</span></button></li>
+        <li><button id="menu-name" class="drawer-item" type="button"><span class="item-name">Name this session</span><span class="item-detail" id="menu-name-now">Not named</span></button></li>
+        <li><button id="menu-details" class="drawer-item" type="button"><span class="item-name">Session details</span><span class="item-detail">Tokens, cost and context</span></button></li>
       </ul>
       <div class="drawer-cap">This phone</div>
       <ul class="drawer-list">
@@ -52,6 +57,13 @@
       </div>
     </div>
   </aside>
+  <dialog id="sheet" class="sheet" aria-labelledby="sheet-title">
+    <div class="sheet-head">
+      <h2 id="sheet-title"></h2>
+      <button id="sheet-close" class="menu-toggle" type="button" aria-label="Close" aria-expanded="true"><span class="hamburger"></span></button>
+    </div>
+    <div id="sheet-body" class="sheet-body"></div>
+  </dialog>
 
   <main id="main">
     <section id="gate" class="gate" hidden>

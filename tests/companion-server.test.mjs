@@ -29,7 +29,11 @@ class FakePi extends EventEmitter {
     this.sent.push(command);
     const data = command.type === "get_messages" ? { messages: this.messages }
       : command.type === "get_commands" ? { commands: this.commands || [] }
-      : command.type === "clear_queue" ? { steering: ["look at the view"], followUp: ["then the report"] } : {};
+      : command.type === "clear_queue" ? { steering: ["look at the view"], followUp: ["then the report"] }
+      : command.type === "get_available_models" ? { models: [{ provider: "openai", id: "gpt-5", name: "GPT-5", contextWindow: 400000 }, { provider: "openai", id: "gpt-5-mini", name: "GPT-5 mini" }] }
+      : command.type === "get_available_thinking_levels" ? { levels: ["off", "low", "medium", "high"] }
+      : command.type === "get_state" ? { model: { provider: "openai", id: "gpt-5", name: "GPT-5" }, thinkingLevel: "medium", sessionFile: "C:\\Users\\aaron\\.coop\\s.jsonl", autoCompactionEnabled: true }
+      : command.type === "get_session_stats" ? { userMessages: 3, assistantMessages: 3, toolCalls: 7, tokens: { input: 12000, output: 3400 }, cost: 0.12, contextUsage: { tokens: 15400, contextWindow: 400000, percent: 3.85 } } : {};
     return Promise.resolve({ type: "response", success: true, data });
   }
   dialog(id) { return this.dialogs.get(id); }
@@ -191,6 +195,32 @@ await check("queue (MC6): Pi's queue reaches the phone; Edit queued brings the t
   const back = await hub.dequeue("d1", { submissionId: SUB(30), incarnation: hub.incarnation });
   assert.deepEqual(back, { ok: true, texts: ["look at the view", "then the report"] });
   assert.equal((await hub.dequeue("d1", { submissionId: SUB(31), incarnation: "CCCCCCCCCCCCCCCCCCCCCCCC" })).code, "wrong-session");
+});
+
+await check("session controls (MC7): a listed model, a thinking level, compact when idle, a name; details carry no paths", async () => {
+  const { pi, hub } = newHub();
+  const req = (n, body) => ({ submissionId: SUB(40 + n), incarnation: hub.incarnation, ...body });
+  assert.deepEqual(await hub.control("d1", req(0, { action: "model", provider: "openai", modelId: "gpt-5-mini" })), { ok: true });
+  assert.deepEqual(pi.sent.at(-1), { type: "set_model", provider: "openai", modelId: "gpt-5-mini" });
+  const unlisted = await hub.control("d1", req(1, { action: "model", provider: "evil", modelId: "x" }));
+  assert.equal(unlisted.code, "not-an-option");
+  assert.ok(!pi.sent.some((c) => c.type === "set_model" && c.provider === "evil"), "an unlisted model never reaches Pi");
+  assert.deepEqual(await hub.control("d1", req(2, { action: "thinking", level: "high" })), { ok: true });
+  assert.deepEqual(pi.sent.at(-1), { type: "set_thinking_level", level: "high" });
+  assert.deepEqual(await hub.control("d1", req(3, { action: "name", name: "Sales views" })), { ok: true });
+  assert.equal(hub.sessionName, "Sales views");
+  pi.emit("event", { type: "agent_start" });
+  assert.equal((await hub.control("d1", req(4, { action: "compact" }))).code, "busy");
+  pi.emit("event", { type: "agent_end" });
+  assert.deepEqual(await hub.control("d1", req(5, { action: "compact", instructions: "keep the SQL" })), { ok: true });
+  assert.deepEqual(pi.sent.at(-1), { type: "compact", customInstructions: "keep the SQL" });
+  assert.equal((await hub.control("d1", { ...req(6, { action: "thinking", level: "low" }), incarnation: "CCCCCCCCCCCCCCCCCCCCCCCC" })).code, "wrong-session");
+  const { details } = await hub.details();
+  assert.equal(details.model.id, "gpt-5");
+  assert.deepEqual(details.levels, ["off", "low", "medium", "high"]);
+  assert.equal(details.models.length, 2);
+  assert.equal(details.stats.toolCalls, 7);
+  assert.ok(!JSON.stringify(details).includes(".jsonl"), "the session file path stays on the VM");
 });
 
 await check("access needs a client in the project file and a running Pi", () => {
@@ -355,6 +385,17 @@ try {
     assert.equal((await call(port, "POST", "/api/chat", { cookie, body })).status, 200);
     assert.equal(pi.sent.filter((c) => c.message === "what changed?").length, 1);
     assert.equal((await call(port, "POST", "/api/chat", { cookie, body: { ...body, submissionId: SUB(22), text: "/new" } })).json.code, "desktop-only");
+  });
+
+  await check("server: the session sheets read details and set the thinking level (MC7)", async () => {
+    const read = await call(port, "GET", "/api/session", { cookie });
+    assert.equal(read.status, 200);
+    assert.equal(read.json.details.thinkingLevel, "medium");
+    const body = { submissionId: SUB(60), incarnation: hub.incarnation, action: "thinking", level: "low" };
+    assert.equal((await call(port, "POST", "/api/session", { cookie, body })).status, 200);
+    assert.deepEqual(pi.sent.at(-1), { type: "set_thinking_level", level: "low" });
+    const bad = await call(port, "POST", "/api/session", { cookie, body: { ...body, submissionId: SUB(61), action: "model", provider: "evil", modelId: "x", level: undefined } });
+    assert.equal(bad.json.code, "not-an-option");
   });
 
   await check("server: events stream live, the desktop's answer closes the phone's card, and an answer races correctly", async () => {

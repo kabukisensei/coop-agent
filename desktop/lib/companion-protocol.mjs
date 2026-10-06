@@ -8,7 +8,7 @@
 // reconnecting phone replays events or reloads the snapshot. Nothing listens,
 // stores or talks to Pi; MC2 wires these decisions to the live PiSession.
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { buildUiResponse, CommandError } from "./rpc-commands.mjs";
+import { buildUiResponse, CommandError, THINKING_LEVELS } from "./rpc-commands.mjs";
 import { BUILTINS, TERMINAL_ONLY } from "../renderer/commands.mjs";
 
 export const PROTOCOL_VERSION = 1;
@@ -38,6 +38,8 @@ export const ROUTES = Object.freeze({
   "POST /api/stop": "stop",
   "POST /api/dequeue": "dequeue",
   "POST /api/answer": "answer",
+  "GET /api/session": "details",
+  "POST /api/session": "control",
   "POST /api/logout": "logout",
 });
 
@@ -58,6 +60,7 @@ export const CODES = Object.freeze({
   "expired": 409,
   "cancelled": 409,
   "changed": 409,
+  "busy": 409,
   "too-large": 413,
   "desktop-only": 422,
   "unknown-command": 422,
@@ -144,6 +147,33 @@ export function validateRequest(method, path, body, rawBytes = 0) {
     case "dequeue":
       onlyKeys(body, ["submissionId", "incarnation"]);
       return { op, submissionId: field(body, "submissionId", SUBMISSION_ID), incarnation: field(body, "incarnation", INCARNATION) };
+    case "control": {
+      // The session controls the window's menus offer (MC7): one action per
+      // request, each rebuilt from its own fields. The hub checks a model
+      // against Pi's own list before it is set.
+      onlyKeys(body, ["submissionId", "incarnation", "action", "provider", "modelId", "level", "name", "instructions"]);
+      const base = { op, submissionId: field(body, "submissionId", SUBMISSION_ID), incarnation: field(body, "incarnation", INCARNATION) };
+      const only = (keys) => onlyKeys(body, ["submissionId", "incarnation", "action", ...keys]);
+      switch (body.action) {
+        case "model":
+          only(["provider", "modelId"]);
+          return { ...base, action: "model", provider: plainText(body.provider, "provider", 200).trim(), modelId: plainText(body.modelId, "model", 300).trim() };
+        case "thinking":
+          only(["level"]);
+          if (!THINKING_LEVELS.has(body.level)) throw new ProtocolError("bad-request", "unknown thinking level");
+          return { ...base, action: "thinking", level: body.level };
+        case "compact":
+          only(["instructions"]);
+          return body.instructions === undefined || body.instructions === ""
+            ? { ...base, action: "compact" }
+            : { ...base, action: "compact", instructions: plainText(body.instructions, "instructions", 4000) };
+        case "name":
+          only(["name"]);
+          return { ...base, action: "name", name: plainText(body.name, "session name", 200).trim() };
+        default:
+          throw new ProtocolError("bad-request", "action is model, thinking, compact or name");
+      }
+    }
     case "answer": {
       onlyKeys(body, ["submissionId", "incarnation", "questionId", "digest", "answer"]);
       const answer = body.answer;
@@ -332,10 +362,14 @@ const BUILTIN_NAMES = new Set(BUILTINS.map((command) => command.name));
  * command Pi listed (`get_commands`: extensions, prompt templates, skills).
  * `piCommands` is that list. Returns `{ ok: true }` or `{ ok: false, code, message }`.
  */
+// The built-ins the phone's menu covers (MC7): typing one points there.
+const ON_THE_MENU = Object.freeze({ model: "Model", thinking: "Thinking", compact: "Compact", name: "Name this session", session: "Session details", copy: "Copy, under each answer" });
+
 export function phoneCommand(text, piCommands = []) {
   const match = /^\s*\/([A-Za-z0-9:._-]+)/.exec(String(text || ""));
   if (!match) return { ok: true };
   const name = match[1];
+  if (Object.hasOwn(ON_THE_MENU, name)) return { ok: false, code: "desktop-only", message: `On the phone, /${name} is in the menu: ${ON_THE_MENU[name]}` };
   if (BUILTIN_NAMES.has(name)) return { ok: false, code: "desktop-only", message: `/${name} runs in the coop window for now` };
   if (Object.hasOwn(TERMINAL_ONLY, name)) return { ok: false, code: "desktop-only", message: `/${name} opens ${TERMINAL_ONLY[name]}, which exists only in the terminal` };
   const known = Array.isArray(piCommands) && piCommands.some((command) => command && command.name === name);

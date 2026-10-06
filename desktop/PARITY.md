@@ -301,8 +301,8 @@ terminal capability with its phone status:
 | --- | --- | --- |
 | Extension commands, prompt templates and skills (`/start`, `/standards-status`, `/todos`, `/memory-*`, `/rename`, `/websearch`, `/search`, `/coop-approvals`, `/coop-live-read`, prompt templates such as `/spec-first`, `/skill:name`) | phone (MC6) | Typing `/` lists the commands Pi returned (`get_commands`) and sends the ones the window maps to **Pi** as typed; their dialogs and notices reach the phone. `/coop-approvals` and `/coop-live-read` only show or revoke, so they narrow access. |
 | Steer while coop works (Enter) and pull back queued messages (`clear_queue`, Alt+Up) | phone (MC6) | Send now and Queue while coop works; the queued messages show above the text box, and Edit queued brings them back into it. |
-| `/model`, `/thinking` (and Ctrl+P, Shift+Tab) | MC7 | Model and thinking pickers (`get_available_models`, `set_model`, `set_thinking_level`). |
-| `/compact`, `/session`, `/name`, `/copy` | MC7 | `compact`, the session's details (`get_state`, `get_session_stats`), `set_session_name`, a copy button on every answer. |
+| `/model`, `/thinking` (and Ctrl+P, Shift+Tab) | phone (MC7) | The menu's Model and Thinking sheets (`get_available_models`, `set_model`, `set_thinking_level`); a model must be one Pi lists. Typing `/model` or `/thinking` points to the menu. |
+| `/compact`, `/session`, `/name`, `/copy` | phone (MC7) | The menu's Compact (with optional instructions, when coop is idle), Session details (`get_state`, `get_session_stats`, without file paths) and Name this session sheets, and Copy under every answer. |
 | Thinking and tool detail (Ctrl+T, Ctrl+O) | MC8 | Thinking blocks and each tool's arguments and output, folded, opened on tap. |
 | Status bar, widgets and the todo panel (`setStatus`, `setWidget`, `rpiv-todo`) | MC8 | The status line and the widgets above the prompt, the todo panel rebuilt from `todo` results as the window does. |
 | Search the conversation, jump between prompts (Ctrl+F, Ctrl+Up/Down) and prompt history (Up) | MC8 | A search box, prompt jumps and the last prompts sent. |

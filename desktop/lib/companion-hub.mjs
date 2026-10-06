@@ -320,7 +320,90 @@ export class CompanionHub extends EventEmitter {
     });
   }
 
+  /**
+   * The window's session controls from the phone (MC7): model, thinking level,
+   * compact and the session's name, as the window's menus send them. A model
+   * must be one Pi lists. Resolves to `{ ok, code?, message? }`.
+   */
+  control(deviceId, request) {
+    return this.#remember(deviceId, request.submissionId, async () => {
+      if (request.incarnation !== this.incarnation) return { ok: false, code: "wrong-session" };
+      if (!this.pi || this.pi.exited) return { ok: false, code: "pi-not-running" };
+      const ask = async (command, options) => {
+        try {
+          const response = await this.pi.request(command, options);
+          return response && response.success ? { ok: true, data: response.data || {} } : { ok: false, error: response && response.error };
+        } catch (error) {
+          return { ok: false, error: error && error.message };
+        }
+      };
+      let result;
+      switch (request.action) {
+        case "model": {
+          const list = await ask({ type: "get_available_models" });
+          const models = list.ok && Array.isArray(list.data.models) ? list.data.models : [];
+          if (!models.some((m) => m && m.provider === request.provider && m.id === request.modelId)) {
+            return { ok: false, code: "not-an-option", message: `coop has no model ${request.provider}/${request.modelId}` };
+          }
+          result = await ask({ type: "set_model", provider: request.provider, modelId: request.modelId });
+          break;
+        }
+        case "thinking":
+          result = await ask({ type: "set_thinking_level", level: request.level });
+          break;
+        case "compact": {
+          if (this.status === "running") return { ok: false, code: "busy", message: "coop is working: compact when it finishes" };
+          const command = request.instructions ? { type: "compact", customInstructions: request.instructions } : { type: "compact" };
+          // Compacting answers when it is done; the phone sees it in the stream.
+          this.pi.request(command, { timeoutMs: 0 }).catch(() => {});
+          return { ok: true };
+        }
+        case "name":
+          result = await ask({ type: "set_session_name", name: request.name });
+          if (result.ok) this.setSessionName(request.name);
+          break;
+        default:
+          return { ok: false, code: "bad-request" };
+      }
+      return result.ok ? { ok: true } : { ok: false, code: "changed", message: String(result.error || "coop could not do that").slice(0, 200) };
+    });
+  }
+
   // ---- reads -------------------------------------------------------------
+
+  /** What the phone's session sheets show (MC7): no file paths leave the VM. */
+  async details() {
+    if (!this.pi || this.pi.exited) return { ok: false, code: "pi-not-running" };
+    const ask = (type) => this.pi.request({ type }).then((r) => (r && r.success && r.data ? r.data : {}), () => ({}));
+    const [state, stats, available, thinking] = await Promise.all([ask("get_state"), ask("get_session_stats"), ask("get_available_models"), ask("get_available_thinking_levels")]);
+    const model = (m) => (m && typeof m.id === "string" ? { provider: String(m.provider || ""), id: m.id, name: String(m.name || m.id), contextWindow: Number(m.contextWindow) || 0 } : null);
+    const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+    const tokens = stats.tokens || {};
+    const context = stats.contextUsage || {};
+    return {
+      ok: true,
+      details: {
+        model: model(state.model),
+        thinkingLevel: typeof state.thinkingLevel === "string" ? state.thinkingLevel : "off",
+        levels: Array.isArray(thinking.levels) ? thinking.levels.filter((l) => typeof l === "string") : [],
+        models: (Array.isArray(available.models) ? available.models : []).map(model).filter(Boolean),
+        sessionName: this.sessionName,
+        autoCompaction: Boolean(state.autoCompactionEnabled),
+        stats: {
+          prompts: num(stats.userMessages),
+          answers: num(stats.assistantMessages),
+          toolCalls: num(stats.toolCalls),
+          tokensIn: num(tokens.input),
+          tokensOut: num(tokens.output),
+          cost: num(stats.cost),
+          contextTokens: num(context.tokens),
+          contextWindow: num(context.contextWindow),
+          contextPercent: num(context.percent),
+        },
+      },
+    };
+  }
+
 
   /** The authoritative state for a phone that is starting or resyncing. */
   async snapshot() {

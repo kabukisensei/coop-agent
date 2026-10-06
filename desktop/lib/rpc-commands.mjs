@@ -2,7 +2,7 @@
 // field from an allowlist; nothing from the renderer is spread into a command.
 // Field names follow Pi 0.87.1 docs/rpc-commands.md and docs/rpc-extension-ui.md.
 
-const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+export const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 const QUEUE_MODES = new Set(["all", "one-at-a-time"]);
 const STREAMING_BEHAVIORS = new Set(["steer", "followUp"]);
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);

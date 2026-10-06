@@ -187,6 +187,15 @@ export function createCompanionServer({ store, active, origin, webRoot = "", sha
         audit({ kind: "dequeue", device: device.id, outcome: result.ok ? "returned" : result.code });
         return result.ok ? sendJson(res, 200, { ok: true, texts: result.texts }) : refuse(res, result.code, undefined, device.id);
       }
+      case "details": {
+        const result = await hub.details();
+        return result.ok ? sendJson(res, 200, { ok: true, details: result.details }) : refuse(res, result.code, undefined, device.id);
+      }
+      case "control": {
+        const result = await hub.control(device.id, request);
+        audit({ kind: "control", device: device.id, action: request.action, outcome: result.ok ? "sent" : result.code });
+        return result.ok ? sendJson(res, 200, { ok: true }) : refuse(res, result.code, result.message, device.id);
+      }
       case "stop": {
         const result = hub.stop(device.id, request);
         audit({ kind: "stop", device: device.id, outcome: result.ok ? "sent" : result.code });
