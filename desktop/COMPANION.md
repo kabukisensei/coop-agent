@@ -216,7 +216,7 @@ in review without touching the rest.
 
 | Decision | Default |
 | --- | --- |
-| Private connection | **for Aaron to pick**; see below |
+| Private connection | **Tailscale** (Aaron, 2026-10-06 02:17, "2"): `tailscale serve` publishes the loopback port as `https://<vm>.<tailnet>.ts.net` inside the tailnet only, with its own certificate; never `tailscale funnel` |
 | Device lifetime | 30 days from pairing, 7 days idle, revocable at once |
 | Pairing code | 8 characters, 5 minutes, one use, 5 tries |
 | Access | off per window until turned on; one window at a time |
@@ -228,8 +228,10 @@ in review without touching the rest.
 | Extension UI on the phone | the four dialog kinds and `ask_user_question` cards; notices as `notice`; everything else *Continue on the desktop* |
 | Security review and VM tester | Aaron, at MC4 |
 
-**The private connection, options.** Any of them sits in front of the same
-loopback server and the same device grant.
+**The private connection, options considered.** Any of them sits in front of
+the same loopback server and the same device grant. Aaron picked Tailscale on
+2026-10-06 at 02:17 after confirming Cooptimize manages its own VMs, so client
+IT consent is not a factor.
 
 1. **Microsoft dev tunnel, private to Aaron's Cooptimize account.** The VM runs `devtunnel host` (outbound HTTPS only, no
    inbound port or firewall rule); the phone signs in with the Cooptimize
