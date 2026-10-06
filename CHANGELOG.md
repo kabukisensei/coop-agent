@@ -5,6 +5,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **The project file is found one folder down** (C1 follow-up; Aaron,
+  2026-10-06). Opened in the folder that holds a client's repositories (a folder
+  that is not itself a repository), coop now uses the project file of the one
+  repository directly inside it that has a `.coop/project.yml`, says which on
+  launch, and edits that file instead of offering to create a new one in a folder
+  no teammate could get. When several repositories inside have one, coop picks
+  none and names them so you open the one you mean.
+
 ## [0.32.0] — 2026-10-06
 
 ### Added
@@ -76,14 +86,6 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   the terminal is unchanged.
 
 ### Changed
-
-- **The project file is found one folder down** (C1 follow-up; Aaron,
-  2026-10-06). Opened in the folder that holds a client's repositories (a folder
-  that is not itself a repository), coop now uses the project file of the one
-  repository directly inside it that has a `.coop/project.yml`, says which on
-  launch, and edits that file instead of offering to create a new one in a folder
-  no teammate could get. When several repositories inside have one, coop picks
-  none and names them so you open the one you mean.
 
 - `coop-data-doc` pin 1.3.1 -> 1.3.4 (`config/release-manifest.json`):
   `coop-data-doc lineage` now names the Power BI tables that load an object
