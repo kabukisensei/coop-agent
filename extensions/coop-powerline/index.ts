@@ -24,7 +24,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { userProfilePath } from "../../lib/paths.mjs";
+import { effectiveProfileName } from "../../lib/user-profile.mjs";
 
 // --- Locate our assets (env vars from bin/coop.ps1 win; else resolve from this file) ---
 let EXT_DIR = "";
@@ -238,15 +238,13 @@ function vibeSets(): string[] {
 }
 
 // `{user}` in a vibe line becomes the person's name: the COOP profile name
-// (<profile dir>/user.json, the same file coop-profile reads; lib/paths.mjs),
-// else the OS login, else "Dave" (HAL never did learn anyone else's name).
+// (the per-user user.json, else the machine-level one; lib/user-profile.mjs, the
+// same resolution coop-profile uses), else the OS login, else "Dave" (HAL never
+// did learn anyone else's name).
 function vibeUserName(): string {
   try {
-    const raw = JSON.parse(readFileSync(userProfilePath(), "utf8"));
-    if (raw && typeof raw.name === "string") {
-      const name = raw.name.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 100);
-      if (name) return name;
-    }
+    const name = effectiveProfileName();
+    if (name) return name;
   } catch {
     /* no profile */
   }

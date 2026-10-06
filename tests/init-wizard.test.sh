@@ -14,6 +14,18 @@ ko()  { printf '  ✗ %s\n' "$1"; fail=1; }
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+# C1: `coop init` refuses to create a contract below one that already covers the
+# folder, so a foreign .coop/project.yml above the temp root would fail every
+# case here. Skip loudly instead of reporting a false failure.
+probe="$TMP"
+while [ "$probe" != "/" ] && [ -n "$probe" ]; do
+  probe="$(dirname "$probe")"
+  if [ -f "$probe/.coop/project.yml" ]; then
+    echo "  SKIP init-wizard tests: a foreign contract covers the temp dir: $probe/.coop/project.yml"
+    exit 0
+  fi
+done
+
 # `coop init` is dispatched by bin/coop.ps1 (master plan S1: one implementation,
 # in PowerShell); pwsh on macOS/Linux and CI, Windows PowerShell as the fallback.
 PWSH="$(command -v pwsh 2>/dev/null || command -v powershell.exe 2>/dev/null || command -v powershell 2>/dev/null || true)"
@@ -141,6 +153,45 @@ answers "Cooptimize" "Test Client" "" "" "" "" "" "generic" "n" "no" "no" "n" | 
 rc=$?
 [ "$rc" -eq 0 ] && ok "wizard exits 0 with lineage offer declined" || ko "wizard exit: $rc"
 [ ! -f "$TMP/repo3/setup-marker2.calls" ] && ok "coop-data-doc setup NOT invoked when declined" || ko "coop-data-doc setup invoked despite decline"
+
+# --- C1: one contract per client Git root; nothing is created below it ----------
+mkdir -p "$TMP/client/.coop" "$TMP/client/analytics/.git" "$TMP/client/reports/.git"
+printf "profile:\n  client: 'Contoso'\n" > "$TMP/client/.coop/project.yml"
+answers "Cooptimize" "Test Client" "" "" "" "" "" "n" "no" "no" "n" | \
+  HOME="$TMP" "$PY" "$ROOT/lib/init_wizard.py" "$TMP/client/analytics" >"$TMP/below.out" 2>&1
+rc=$?
+[ "$rc" -ne 0 ] && ok "python wizard refuses a contract below an existing one (exit $rc)" || ko "python wizard created a second contract below the root"
+[ ! -e "$TMP/client/analytics/.coop" ] && ok "no .coop was created below the root contract" || ko "a second .coop appeared below the root contract"
+grep -q "a contract already covers this folder" "$TMP/below.out" && ok "the refusal names the covering contract" || ko "refusal message missing: $(cat "$TMP/below.out")"
+HOME="$TMP" USERPROFILE="$TMP" "$PWSH" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "$COOP_PS1" init "$TMP/client/reports" >"$TMP/below-ps.out" 2>&1 </dev/null
+rc=$?
+[ "$rc" -ne 0 ] && ok "coop init refuses a contract below an existing one (exit $rc)" || ko "coop init created a second contract below the root"
+[ ! -e "$TMP/client/reports/.coop" ] && ok "coop init wrote nothing below the root contract" || ko "coop init wrote a second .coop below the root"
+grep -q "a contract already covers this folder" "$TMP/below-ps.out" && ok "coop init names the covering contract" || ko "coop init refusal message missing: $(cat "$TMP/below-ps.out")"
+case "$(cat "$TMP/repo/.coop/project.yml")" in *"# One committed team file per client"*) ok "the generated header says the contract is the committed team file" ;; *) ko "generated header lacks the committed-team-file line" ;; esac
+
+# --- C1: beside several repositories, coop init creates the client home repository
+if command -v git >/dev/null 2>&1; then
+  mkdir -p "$TMP/estate/analytics" "$TMP/estate/reports"
+  git -C "$TMP/estate/analytics" init --quiet
+  git -C "$TMP/estate/reports" init --quiet
+  answers "" "" "" "" "" "" "" "n" "no" "no" "n" | HOME="$TMP" USERPROFILE="$TMP" COOP_ASSUME_YES=1 COOP_INIT_CLIENT="Fabrikam Foods" \
+    "$PWSH" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "$COOP_PS1" init "$TMP/estate/analytics" >"$TMP/home.out" 2>&1
+  rc=$?
+  [ "$rc" -eq 0 ] && ok "coop init exits 0 beside several repositories (home repo)" || ko "coop init home-repo exit $rc: $(cat "$TMP/home.out")"
+  [ -f "$TMP/estate/fabrikam-foods-coop/.coop/project.yml" ] && ok "the project file went into the client home repository <client>-coop" || ko "no project file in the home repository: $(cat "$TMP/home.out")"
+  [ -d "$TMP/estate/fabrikam-foods-coop/.git" ] && ok "the home repository was git-initialised" || ko "home repository has no .git"
+  grep -q "Fabrikam Foods" "$TMP/estate/fabrikam-foods-coop/README.md" 2>/dev/null && ok "the home repository README names the client" || ko "home README missing or unnamed"
+  home_text="$(cat "$TMP/estate/fabrikam-foods-coop/.coop/project.yml")"
+  case "$home_text" in *"client: 'Fabrikam Foods'"*"  'analytics':"*"local_path: '../analytics'"*"  'reports':"*"local_path: '../reports'"*) ok "the home repository's contract lists both repositories as ../<name>" ;; *) ko "sibling repositories not listed: $home_text" ;; esac
+  [ ! -e "$TMP/estate/analytics/.coop" ] && [ ! -e "$TMP/estate/.coop" ] && ok "nothing was written in the repository or the parent folder" || ko "a contract appeared outside the home repository"
+  grep -q "Not shared yet" "$TMP/home.out" && ok "without an origin, coop init says the file is not shared yet" || ko "missing 'Not shared yet' line: $(cat "$TMP/home.out")"
+  HOME="$TMP" USERPROFILE="$TMP" "$PWSH" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "$COOP_PS1" init "$TMP/estate/reports" >"$TMP/home2.out" 2>&1 </dev/null
+  rc=$?
+  [ "$rc" -ne 0 ] && grep -q "One project file per client" "$TMP/home2.out" && ok "a sibling repository finds the home repository's contract and refuses a second one" || ko "sibling lookup failed (exit $rc): $(cat "$TMP/home2.out")"
+else
+  echo "  SKIP home-repository cases: git not installed"
+fi
 
 # Tabular Editor CLI captures both executable and BPA rules path.
 answers "Cooptimize" "BPA Client" "" "" "" "" "" "generic" "n" "no" "yes" "/custom/te" "/rules/BPARules.json" "n" | \

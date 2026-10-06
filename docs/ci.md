@@ -36,7 +36,10 @@ check` is always a gate: it exists to catch docs that drifted from the source.
 ## Exit codes (the family contract)
 
 **0 = clean, 1 = environment problem, 2 = findings** (the thing the gate exists
-to catch):
+to catch). A client's home repository (`<client>-coop`, where the docs live;
+master plan DR1) gets the same gate from
+`templates/client-home/github-workflow-data-docs-check.yml`, which `/setup-docs`
+offers to copy in as `.github/workflows/data-docs-check.yml`:
 
 | Exit | `coop-data-doc check` | `coop-data-doc build --non-interactive --strict` |
 | --- | --- | --- |

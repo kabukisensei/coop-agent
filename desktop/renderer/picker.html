@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en" data-theme="modern-dark" data-style="modern">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>coop</title>
+  <link rel="stylesheet" href="styles/themes.css">
+  <link rel="stylesheet" href="styles/app.css">
+  <script type="module" src="picker.mjs"></script>
+</head>
+<body class="picker-body">
+  <main class="picker" aria-label="Open a project in coop">
+    <header class="picker-head">
+      <span class="brand"><span class="brand-mark" aria-hidden="true"></span>coop</span>
+      <h1 class="picker-title">Open a project</h1>
+      <p class="picker-lead" id="pickerLead">Pick the client you are working on. coop opens in that folder and reads its project file.</p>
+    </header>
+    <ol id="projectList" class="project-list" aria-label="Projects opened before"></ol>
+    <p id="pickerEmpty" class="picker-empty" hidden>No project yet. Browse to a client's folder: a repository the team shares, or the client home repository beside several.</p>
+    <label class="picker-remember"><input type="checkbox" id="openNextTime"> Open this one next time without asking</label>
+    <footer class="picker-foot">
+      <button type="button" id="browse" class="btn">Browse...</button>
+      <span class="picker-spacer"></span>
+      <button type="button" id="cancel" class="btn ghost">Cancel</button>
+      <button type="button" id="open" class="btn primary" disabled>Open</button>
+    </footer>
+  </main>
+</body>
+</html>

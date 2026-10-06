@@ -19,7 +19,9 @@ export function platformHint(platform) {
   return "";
 }
 
-const FLAT = ["profileName", "organization", "client", "timezone", "defaultBranch", "tenantId", "fabricWorkspaceName", "fabricWorkspaceId", "sqlEndpointItemType", "sqlEndpointItemName", "sqlEndpointItemId", "sqlEndpointPropertiesId", "powerBiWorkspaceName", "powerBiWorkspaceId", "sqlTargetKind", "sqlTargetServer", "sqlTargetDatabase", "tabularEditorPath", "bpaRulesPath"];
+const FLAT = ["profileName", "organization", "client", "timezone", "defaultBranch", "tenantId", "fabricWorkspaceName", "fabricWorkspaceId", "sqlEndpointItemType", "sqlEndpointItemName", "sqlEndpointItemId", "sqlEndpointPropertiesId", "powerBiWorkspaceName", "powerBiWorkspaceId", "fabricLayout", "tableMappingRule", "tableMappingSchema", "tableMappingPrefix", "sqlTargetKind", "sqlTargetServer", "sqlTargetDatabase", "tabularEditorPath", "bpaRulesPath"];
+const LAYOUT_LABELS = { warehouse: "Warehouse", lakehouse: "Lakehouse", sql_database: "SQL database", mixed: "Mixed (more than one kind)" };
+const RULE_LABELS = { same_name: "Same name: a model table is named like its view", prefix: "Prefix: table <name> loads <schema>.<prefix><name>" };
 const REPO_FIELDS = ["name", "description", "role", "localPath", "remoteName", "defaultBranch"];
 
 /** The form's starting values: the contract's settings with the wizard's defaults. */
@@ -33,6 +35,8 @@ export function initialValues(data) {
   values.powerBiWorkspaceName = s.powerBiWorkspaceName || s.fabricWorkspaceName || "";
   values.sqlTargetKind = s.sqlTargetKind || data.proposedKind[s.fabricEnabled ? "fabric" : "noFabric"] || "";
   values.sqlTargetDatabase = s.sqlTargetDatabase || s.sqlEndpointItemName || "";
+  values.tableMappingRule = s.tableMappingRule || "same_name";
+  values.tableMappingSchema = s.tableMappingSchema || "dbo";
   values.repositories = s.repositories.map((repo) => ({ ...Object.fromEntries(REPO_FIELDS.map((key) => [key, repo[key] || ""])), isNew: Boolean(repo.isNew) }));
   return values;
 }
@@ -47,7 +51,7 @@ export function formInput(values) {
 }
 
 export function mountProject(box, options, { coop, newSession }) {
-  const state = { data: null, values: null, dirty: false, kindTouched: false, view: "form", preview: null };
+  const state = { data: null, values: null, dirty: false, kindTouched: false, view: "form", preview: null, team: null };
   const body = el("div", { class: "pane-scroll project-form" });
   box.append(body);
 
@@ -135,6 +139,15 @@ export function mountProject(box, options, { coop, newSession }) {
       dbRow.hidden = !values.sqlTargetKind;
     };
     const teBox = el("div", { class: "form-group", hidden: !values.tabularEditorEnabled });
+    const prefixRow = row({ field: "tableMappingPrefix", label: "View prefix", hint: "What the model table names drop, for example v_.", control: text(values, "tableMappingPrefix") });
+    const showPrefix = () => { prefixRow.hidden = values.tableMappingRule !== "prefix"; };
+    const overridesRows = (overrides) => {
+      const entries = Object.entries(overrides || {});
+      return el("div", { class: "commit-lists" },
+        el("div", { class: "form-label" }, el("span", { text: "Mapping overrides" })),
+        el("div", { class: "hint", text: entries.length ? "Model table to SQL object, edited in the file itself (power_bi.table_mapping.overrides); they win over the rule." : "None. Add model table to SQL object pairs under power_bi.table_mapping.overrides in the file when a table breaks the rule." }),
+        ...entries.map(([table, object]) => el("div", {}, el("code", { text: table }), el("span", { text: " loads " }), el("code", { text: object }))));
+    };
     fabricBox.append(
       row({ field: "tenantId", label: "Azure tenant ID", hint: "Optional.", control: text(values, "tenantId"), guarded: true }),
       row({ field: "fabricWorkspaceName", label: "Default Fabric workspace name", hint: "Optional.", control: text(values, "fabricWorkspaceName") }),
@@ -144,7 +157,12 @@ export function mountProject(box, options, { coop, newSession }) {
       row({ field: "sqlEndpointItemId", label: "Default SQL endpoint item ID", hint: "Optional; a lowercase UUID.", control: text(values, "sqlEndpointItemId") }),
       row({ field: "sqlEndpointPropertiesId", label: "Lakehouse sqlEndpointProperties.id", hint: "A lowercase UUID; required for a Lakehouse.", control: text(values, "sqlEndpointPropertiesId") }),
       row({ field: "powerBiWorkspaceName", label: "Default Power BI workspace name", hint: "Optional.", control: text(values, "powerBiWorkspaceName") }),
-      row({ field: "powerBiWorkspaceId", label: "Default Power BI workspace ID", hint: "Optional.", control: text(values, "powerBiWorkspaceId") }));
+      row({ field: "powerBiWorkspaceId", label: "Default Power BI workspace ID", hint: "Optional.", control: text(values, "powerBiWorkspaceId") }),
+      row({ field: "fabricLayout", label: "Fabric layout", hint: "Which Fabric items hold this client's SQL. coop assumes nothing beyond what is declared here.", control: select(values, "fabricLayout", [["", "Not declared"], ...(data.layouts || []).map((layout) => [layout, LAYOUT_LABELS[layout] || layout])]) }),
+      row({ field: "tableMappingRule", label: "Model table to SQL object rule", hint: "How a semantic-model table maps to the view or table it loads. Lineage checks it and reports a mismatch instead of \"no dependents\".", control: select(values, "tableMappingRule", (data.mappingRules || []).map((rule) => [rule, RULE_LABELS[rule] || rule]), showPrefix) }),
+      row({ field: "tableMappingSchema", label: "Default schema", hint: "For a model table named without a schema.", control: text(values, "tableMappingSchema") }),
+      prefixRow,
+      overridesRows(data.mappingOverrides));
     teBox.append(
       row({ field: "tabularEditorPath", label: "Tabular Editor CLI command or path", control: text(values, "tabularEditorPath") }),
       row({ field: "bpaRulesPath", label: "BPA rules file path", hint: "Optional.", control: text(values, "bpaRulesPath") }));
@@ -154,6 +172,8 @@ export function mountProject(box, options, { coop, newSession }) {
       el("div", { class: "pane-summary" },
         el("span", { text: data.exists ? "Editing " : "No contract yet: saving creates " }),
         el("code", { text: data.path })),
+      data.exists ? null : el("p", { class: "hint", text: data.locationNote || "" }),
+      teamLine(),
       el("p", { class: "hint", text: "The same questions as /setup-project. Review shows the change before anything is written; the old file is backed up." }),
       data.profileMissing ? section("You",
         row({ field: "profileName", label: "What should coop call you?", hint: "Your local profile, not the project. Leave blank to skip.", control: text(values, "profileName") })) : null,
@@ -196,6 +216,7 @@ export function mountProject(box, options, { coop, newSession }) {
         el("button", { type: "button", class: "btn primary", text: "Review changes", title: "Check the answers and show what saving would change", onclick: review }),
         el("button", { type: "button", class: "btn", text: "Discard edits", title: "Go back to what the file says now", onclick: () => reload(true) })));
     showTarget();
+    showPrefix();
   }
 
   // --- Problems -------------------------------------------------------------
@@ -270,11 +291,75 @@ export function mountProject(box, options, { coop, newSession }) {
     fill(body, 
       el("div", { class: "pane-summary ok" }, icon("check"), el("span", { text: saved.created ? "Created " : "Saved " }), el("code", { text: saved.path })),
       saved.backup ? el("p", { class: "hint" }, el("span", { text: "Backup: " }), el("code", { text: saved.backup })) : null,
+      saved.home && (saved.home.created || saved.home.initialized) ? el("p", { class: "hint", text: `Created the client home repository ${saved.home.root}${saved.home.initialized ? " (git init)" : ""}. Add its remote when the team should clone it.` }) : null,
+      saved.next ? el("p", { class: "hint", text: saved.next }) : null,
       saved.profileSaved ? el("p", { class: "hint", text: `Saved your profile name (${saved.profileSaved}). coop uses it from the next session.` }) : null,
       el("p", { text: "The guardrails read the contract when a session starts. Start a new session before governed work so they use this one." }),
+      saved.team ? el("p", { class: "hint", text: teamText(saved.team) }) : null,
       el("div", { class: "form-actions" },
-        el("button", { type: "button", class: "btn primary", text: "Start a new session", onclick: () => newSession() }),
+        saved.team && saved.team.state !== "shared" ? el("button", { type: "button", class: "btn primary", text: "Share with the team", onclick: (event) => doShare(event.currentTarget) }) : null,
+        el("button", { type: "button", class: saved.team && saved.team.state !== "shared" ? "btn" : "btn primary", text: "Start a new session", onclick: () => newSession() }),
         el("button", { type: "button", class: "btn", text: "Back to the form", onclick: () => reload(false) })));
+  }
+
+  // --- The team's copy (C1) ---------------------------------------------------------
+  // One line and at most one button: nothing is applied silently, and sharing is
+  // the one-file commit and push the main process runs after the click.
+
+  function teamText(team) {
+    switch (team && team.state) {
+      case "shared": return `Shared with the team (same as origin/${team.defaultBranch}).`;
+      case "not-shared": return "Not shared yet: your copy differs from the team's.";
+      case "team-newer": return `The team's copy on origin/${team.defaultBranch} is newer than your unmodified file.`;
+      case "team-has-it": return `The team already has a project file on origin/${team.defaultBranch}; this checkout does not.`;
+      case "none": return "Not shared yet: neither this checkout nor origin has a project file.";
+      default: return "";
+    }
+  }
+
+  function teamLine() {
+    const team = state.team;
+    if (!team) return null;
+    const text = teamText(team);
+    if (!text) return null;
+    const button = team.state === "team-has-it" || team.state === "team-newer"
+      ? el("button", { type: "button", class: "btn", text: team.state === "team-newer" ? "Get the team's version" : "Get the team's project file", onclick: (event) => doGet(event.currentTarget) })
+      : team.state === "not-shared" && state.data.exists
+        ? el("button", { type: "button", class: "btn", text: "Share with the team", onclick: (event) => doShare(event.currentTarget) })
+        : null;
+    return el("div", { class: "pane-summary team-line" }, el("span", { class: "hint", text }), button);
+  }
+
+  async function doGet(button) {
+    if (state.dirty) { toast("Save or discard your edits first.", "error"); return; }
+    button.disabled = true;
+    const result = await coop.projectGet();
+    button.disabled = false;
+    if (!result.success || !result.data.ok) { toast((result.data && result.data.reason) || result.error || "Could not get the team's project file.", "error", { timeout: 0 }); return; }
+    toast(result.data.method === "pull" ? "Got the team's project file (fast-forward pull)." : "Got the team's project file (only .coop/project.yml changed; the old file is backed up).", "success");
+    reload(false);
+  }
+
+  async function doShare(button, force = false) {
+    button.disabled = true;
+    const result = await coop.projectShare(force);
+    button.disabled = false;
+    if (!result.success) { toast(result.error || "Could not share.", "error", { timeout: 0 }); return; }
+    const r = result.data;
+    if (r.ok) {
+      toast(r.state === "already-shared" ? "Your project file already matches the team's." : `Shared with the team (commit ${r.commit} pushed to ${r.branch}).`, "success");
+      reload(false);
+      return;
+    }
+    if (r.state === "other-branch") {
+      openModal({
+        title: "Share from this branch?",
+        body: el("p", { class: "dialog-message", text: `${r.reason}. Push .coop/project.yml to ${r.branch} anyway?` }),
+        buttons: [{ label: "Stop" }, { label: `Push to ${r.branch}`, kind: "danger", onClick: () => doShare(button, true) }],
+      });
+      return;
+    }
+    toast(r.reason || "Could not share the project file.", "error", { timeout: 0 });
   }
 
   // --- Loading ------------------------------------------------------------------
@@ -296,7 +381,13 @@ export function mountProject(box, options, { coop, newSession }) {
     state.values = initialValues(result.data);
     state.dirty = false;
     state.kindTouched = false;
+    state.team = null;
     renderForm();
+    // The comparison with the team's copy may fetch: it lands after the form.
+    try {
+      const team = await coop.projectTeam();
+      if (team.success && team.data && state.data === result.data) { state.team = team.data; if (state.view === "form") renderForm(); }
+    } catch { /* no team line */ }
   }
 
   reload(false);

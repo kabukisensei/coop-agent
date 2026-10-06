@@ -7,6 +7,156 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- **The icon is the front door** (D1m, master plan section 12.3; Aaron,
+  2026-10-05). One **coop** icon on the Desktop and in the Start Menu opens the
+  window (once the window runtime is installed, or from the window package,
+  whose shortcut is now plain "coop"); **coop (terminal)** opens the terminal
+  for daily terminal work, and `coop` in any terminal is unchanged. Started from
+  the icon with no folder, the window shows a project picker instead of the OS
+  folder dialog: the folders opened before, newest first, each with the client
+  its `.coop/project.yml` names (found above the folder or in the client home
+  repository beside it), the Git branch and "Not shared yet" or "The team has a
+  newer file" when the project file is out of step, a Browse button, and "Open
+  this one next time", which makes the icon open straight on that project; a
+  folder with no project file is listed as such (`/setup-project` creates one).
+  The window title and header name the client and the folder, and File > Switch
+  project opens the same picker for another window. `coop desktop` from a
+  terminal keeps opening the current folder.
+- **The shared project file** (C1, master plan section 12.3; Joel, Eric and
+  Aaron in the 2026-10-05 demo; the design Aaron approved the same evening,
+  `demo/c1-shared-contract-design.md`). Every client has one `.coop/project.yml`,
+  committed in a repository the whole team clones, and nobody needs Git to use
+  it. Where it lives: a client with one repository keeps it at that repository's
+  root; a client with several repositories side by side gets a small **client
+  home repository** `<client>-coop` beside them (the project file, and later the
+  lineage docs, the catalog snapshot and the client's prompts and skills); the
+  folder between the repositories is never used. How coop finds it: the nearest
+  contract above the folder coop opens in, else the sibling `*-coop` repository
+  whose contract lists this repository, in every reader (`lib/standards.mjs`,
+  the guardrails, `lib/common.ps1`, the Python SQL target readers); the launcher
+  hands a sibling hit to the extensions as `COOP_PROJECT_YML`. **Get the team's
+  project file:** when origin has the file and this checkout does not,
+  `/setup-project`, the window's Project pane and `/project-get` offer it before
+  any create (a fast-forward pull when nothing else would move, else only that
+  file with a backup). **Share with the team:** after a save, `/setup-project`,
+  the pane's button, `/project-share` and `coop project share` ask once and then
+  commit only `.coop/project.yml` (message `coop: project file updated by
+  <name>`) and push the current branch, nothing else staged; from another branch
+  they ask again first. It is the one Git write coop performs on its own, always
+  after a yes, logged in the guardrails audit as kind `project-share`. **Kept
+  current:** every session start compares the local file with origin's (one
+  fetch, at most every ten minutes) and says one line when the team's copy is
+  newer, when this copy carries unshared edits, or when the team has a file this
+  checkout lacks (`COOP_PROJECT_SYNC=0` silences it); nothing is applied
+  silently, and the guardrails keep the snapshot they started with until `/new`.
+  `/setup-project`, the pane and `coop init` propose the home repository after the
+  client's name, create it (`git init`, README from `templates/client-home/`) with
+  every sibling repository listed as `../<name>`, and never write a second copy
+  below an existing contract. `coop project status|get|share` is the shell form.
+- **Production is never modified from a session** (G1, master plan section 12.3;
+  asked for in the 2026-10-05 demo). Production writes are a hard block in
+  `coop-guardrails`, the same class as a source commit: a Warehouse SQL
+  `CREATE`/`ALTER`/`INSERT`/`UPDATE`/`DELETE`/`DROP`/`MERGE`/`EXEC` whose target
+  the trusted contract or managed server resolves to `production`, a Power BI
+  Modeling edit after a production connection, a Fabric or proxied MCP mutation
+  naming prod, and a shell Fabric write (`az rest`, `fab`) naming production get
+  no prompt and no session grant; the model is told to work on dev and leave the
+  change to the pipeline or a human. Production reads still ask with a scope.
+  The environment comes from trusted configuration, so a dev target with a
+  `prod_staging` schema is not blocked. `/coop-approvals status` says so, the
+  session-approval option reads "deletes still ask; production is blocked", and
+  every block is audited as `production write`.
+- `coop unlock-prod <client> [--minutes <n>]`, the human-only way to allow a
+  production change through coop when one really must happen: run in the
+  person's own terminal, never from a session, it writes a time-bounded grant
+  (default 30 minutes, at most 8 hours) to `~/.coop/prod-unlock.json`, outside
+  every repository. While it holds for the contract's client, the same writes
+  fall back to a per-call production prompt prefixed with the grant id and the
+  minutes left, audited as `prod-unlock:<id>`. `--status` and `--revoke` manage
+  it; the file is a secret path for the agent. The command is absent from
+  `coop help`, the `/` menu and the window, documented only in
+  `docs/guardrails-reference.md` (Production writes).
+
+- **The lineage docs live with the project file** (DR1, master plan section
+  12.3, demo of 2026-10-05; reshaped onto the approved C1 design). The docs
+  coop-data-doc builds belong beside the committed `.coop/project.yml`: in the
+  client home repository `<client>-coop` when the client has several
+  repositories (one private repository per client, cloned beside the others),
+  else in the client's one repository. `/setup-docs` run from any of the client's
+  repositories proposes that `data-docs` folder as the output, so the build never
+  lands in a source tree; after a setup whose output is in that repository and it
+  has no CI yet, coop offers its `data-docs-check.yml` workflow
+  (`templates/client-home/`), which runs `coop-data-doc check` on every push. coop
+  writes the file; a human commits it with the docs.
+- `NOTICE.md`, the third-party notices and license review master plan row L1
+  asked for (section 12.3; Aaron raised it in the 2026-10-05 demo): every pin in
+  `config/release-manifest.json` and `config/microsoft-skills.json` with its
+  copyright line, license, how coop distributes it (installed, launched,
+  redistributed in the window installer, copied, prerequisite) and the terms
+  coop honors. It names the Power BI Authoring MCP EULA that `--accept-eula`
+  accepts, who accepted it for Cooptimize and when, and the Microsoft telemetry
+  both MCP servers may send. It ships in the window package's repository
+  snapshot, so Pi's MIT notice (absent from the 0.87.1 npm tarball) travels with
+  the redistributed copy. The review's four findings were decided by Aaron the
+  same day and the file records them: the installer keeps bundling the Power BI
+  Authoring MCP server under the package's MIT file (#304), coop does not show
+  the EULA per user (#305), and the installer license-file check and the skills
+  catalog LICENSE copies are parked (#306, #307).
+
+- A machine-level profile for the team's VMs (master plan P1, demo of
+  2026-10-05): every client is its own Windows user there and one person owns the
+  machine, so `coop onboard --machine` writes the person's name and communication
+  preference once per machine to `%ProgramData%\coop\user.json` (`/etc/coop` off
+  Windows; `COOP_MACHINE_DIR` for tests and sandboxes; one elevated terminal,
+  once). coop-profile, the vibes, the window's set-up card and `/setup-project`'s
+  name question read it when the per-user `~/.coop/user.json` is missing, and the
+  per-user file wins field by field when both exist. `coop profile` and
+  `coop doctor` name the file that supplied the name. The machine file carries
+  only the name and the communication preference, never a client, tenant,
+  workspace, contract, memory or session: everything client-shaped stays in the
+  client's Windows user, and nothing in coop reads another user's profile.
+- The project contract declares what coop used to assume about a client's layout
+  (master plan C2, from the 2026-10-05 demo: "I don't want the tool to assume
+  anything"). `power_bi.table_mapping` states how a semantic-model table maps to
+  the SQL object it loads: `rule: same_name` (a table is named like its view, the
+  rule the "Loaded by" lineage uses) or `rule: prefix` (table `<name>` loads
+  `default_schema.<view_prefix><name>`), plus hand-edited `overrides` (model table
+  to `schema.object`) that win over the rule. `fabric.layout` names the Fabric
+  item kinds that hold the SQL (`warehouse`, `lakehouse`, `sql_database`, `mixed`).
+  `/setup-project`, the window's Project form and `coop init` write both blocks
+  (the layout proposed from the default SQL endpoint type and the dev `sql_targets`
+  kind; a new contract also seeds `warehouse_names` / `lakehouse_names` from the
+  default endpoint item). `data_doc lineage` checks the mapping on every SQL object
+  and says "Declared mapping does not match" (with the table the rule expected, or
+  the table that loads it outside the rule) instead of leaving an empty "Loaded by"
+  to read as no dependents; `sql_impact` adds the same expectation to an empty
+  downstream list. A contract without the block declares nothing and is checked
+  against nothing.
+- **Personal, client and shipped prompts and skills** (master plan PR1, section
+  12.3). coop loads three tiers at launch, shipped first, then the client's
+  `.coop/prompts/` and `.coop/skills/` beside the committed contract, then your
+  `~/.coop/prompts/` and `~/.coop/skills/`; a name clash resolves in that order
+  (a shadowed skill is skipped with a warning, Pi keeps the first `/prompt`).
+  `coop doctor` gains a "Prompts and skills" section listing each tier and every
+  shadowed name; `coop new-skill` and `coop new-prompt` take `--client` or
+  `--personal`; `docs/extending.md` section 8 documents the layout.
+- **Committed dev catalog snapshot** (master plan SQ9, section 12.3; Joel's
+  schema file and read-only definitions export as one feature). `coop catalog
+  snapshot`, or the new `catalog_snapshot` tool (`command="snapshot"`), reads the
+  contract's default dev/test target read-only over the `sql_impact` connection
+  path and writes one file per table (a `CREATE TABLE` from its columns), view,
+  procedure and function, plus `manifest.json` and a README, under `catalog.path`,
+  else the `data_docs` repository's `catalog/<env>`, else `.coop/catalog/<env>`
+  beside the contract; the user commits the folder. No row data, credential or
+  server name is written, production is refused, and a folder that is not a
+  snapshot is never overwritten. The session-start note tells coop to read an
+  object's file before writing SQL, to offer a refresh when the snapshot is older
+  than `catalog.max_age_days` (default 7), or to offer the first snapshot;
+  `catalog_snapshot` `status` and `coop catalog status` report the same;
+  `coop doctor` shows it in the project-contract section; `coop init --seed-docs`
+  uses the folder as coop-data-doc's SQL source when the contract has no SQL
+  repository; the guardrails treat `snapshot` like `sql_impact` (dev/test runs,
+  anything else asks) and `status` as a folder read.
 - **Session lineage context** (master plan row SQ8, demo feedback 2026-10-05):
   coop holds the downstream of every SQL object it is about to change and never
   re-runs a lookup it already holds. Before an `edit` or `write` of a `.sql` file,

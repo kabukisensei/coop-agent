@@ -130,8 +130,13 @@ def _sanitize(value: str, max_len: int = 100) -> str:
 
 
 def load_profile(profile_file: Path) -> dict | None:
-    """Load and validate ~/.coop/user.json; return normalized profile or None."""
+    """Load and validate ~/.coop/user.json; return normalized profile or None.
+    With no per-user file, the machine-level profile (master plan P1,
+    coop_paths.machine_profile_path) stands in, as coop-profile does."""
     if not profile_file.is_file():
+        machine = coop_paths.machine_profile_path()
+        if machine != profile_file and machine.is_file():
+            return load_profile(machine)
         return None
     try:
         raw = json.loads(profile_file.read_text(encoding="utf-8"))
