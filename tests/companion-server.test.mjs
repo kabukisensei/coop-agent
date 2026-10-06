@@ -730,6 +730,12 @@ await check("page: four themes from the menu, Retro in the coop site's look (MC5
     assert.ok(existsSync(join(pageDir, ref)), `ships: ${ref}`);
   }
   assert.match(readFileSync(join(pageDir, "fonts", "OFL.txt"), "utf8"), /SIL OPEN FONT LICENSE Version 1\.1/);
+  // Fields stay at 16px or more in every look, or iPhone Safari zooms the page past the screen (MC4).
+  assert.match(css, /input, textarea, select \{ font-size: max\(16px, 1em\); \}/);
+  for (const m of css.matchAll(/(?:^|\n)([^{}\n]*\b(?:input|textarea)\b[^{}]*)\{([^}]*)\}/g)) {
+    const size = /font-size:\s*(\d+)px/.exec(m[2]);
+    assert.ok(!size || Number(size[1]) >= 16, `a field under 16px: ${m[1].trim()}`);
+  }
 });
 
 console.log(`✓ companion server (MC2) and page (MC3): ${checks} checks`);

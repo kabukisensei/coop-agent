@@ -89,7 +89,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   in the window. Tapping a tool line on the phone no longer answers "id is
   malformed" for models whose tool ids contain a `|`. The window opens no larger
   than the screen it opens on. With no window allowing the phone, the phone
-  now says "Phone access is off" instead of "Different Windows user".
+  now says "Phone access is off" instead of "Different Windows user". In the Retro looks, tapping a text
+  field on an iPhone no longer zooms the phone page wider than the screen.
 
 ## [0.31.0] — 2026-10-05
 
