@@ -75,12 +75,13 @@ which:
 - **The secret is never stored.** Pairing returns a random 256-bit secret as an
   `HttpOnly; Secure; SameSite=Strict; Path=/api` cookie. The VM keeps only its
   SHA-256 and compares in constant time. Page scripts cannot read the cookie.
-- **Phone access is off until you turn it on, per window.** *Session > Phone >
-  Allow phone for this session* turns it on for this window's live session; both
-  screens then show *Windows user · client · session · device*. It turns off
-  when the window closes or the session changes, and at most one window per
-  Windows user has it on (turning it on in a second window turns it off in
-  the first).
+- **Phone access is off until you turn it on, per tab.** *Session > Phone >
+  Allow phone for this session* turns it on for the live session of the tab in
+  front (each tab is its own session and Pi); both screens then show
+  *Windows user · client · session · device*. It turns off when the tab or
+  window closes or the session changes, and at most one tab per Windows user
+  has it on (turning it on in a second tab or window turns it off in the
+  first).
 - **A new session is a new incarnation.** Each Pi start, `/new`, session
   switch, project switch or window restart gets a fresh random id. Every write
   names the incarnation it was made against; one from an older incarnation is
@@ -258,7 +259,7 @@ in review without touching the rest.
 | Private connection | **Tailscale** (Aaron, 2026-10-06 02:17, "2"): `tailscale serve` publishes the loopback port as `https://<vm>.<tailnet>.ts.net` inside the tailnet only, with its own certificate; never `tailscale funnel` |
 | Device lifetime | 30 days from pairing, 7 days idle, revocable at once |
 | Pairing code | 8 characters, 5 minutes, one use, 5 tries |
-| Access | off per window until turned on; one window at a time |
+| Access | off per tab until turned on; one tab at a time |
 | Reconnect retention | 2,000 events or 15 minutes, then reload the snapshot |
 | Idempotency memory | 10 minutes per `submissionId` |
 | Chat | text, 16,000 characters, no `!`; Pi's listed `/` commands; steer or queue while busy (MC6) |

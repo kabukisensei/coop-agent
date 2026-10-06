@@ -5,6 +5,20 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **Several sessions at once in the coop window: tabs** (Aaron, 2026-10-06).
+  Each tab is its own session with its own coop process, so its approvals,
+  guardrails, questions and phone access are its own, as each terminal runs its
+  own coop. Ctrl+N or the strip's + opens a tab; New session, or a click on
+  another saved session, while coop works opens it in a new tab instead of
+  refusing ("Stop it (Esc) before starting a new session"). Ctrl+W closes a tab
+  (the last closes the window), Ctrl+Tab and Ctrl+1 to Ctrl+9 move between
+  them, and a tab shows a dot while coop works and a mark while it asks. A
+  saved session is open in one tab at most: picking one another tab or window
+  holds brings that tab forward. File > New window opens a second window on the
+  same folder.
+
 ## [0.32.0] — 2026-10-06
 
 ### Added

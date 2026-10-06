@@ -147,7 +147,8 @@ function onEvent(event) {
   if (event.type === "extension_ui_request") { onUiRequest(event); return; }
   const { changed, status } = applyEvent(app.tl, event);
   for (const id of changed) redraw(id);
-  if (status) { renderBusy(); renderHeader(); }
+  // A first prompt names a new session's tab right away.
+  if (status || (event.type === "message_start" && event.message && event.message.role === "user")) { renderBusy(); renderHeader(); }
   if (event.type === "agent_start") { freshVibe(); startTurn(app.todos); renderWidgets(); }
   if (event.type === "tool_execution_end" && event.toolName === TODO_TOOL && applyTodoResult(app.todos, event.result)) renderWidgets();
   if (event.type === "agent_settled") {
@@ -879,6 +880,9 @@ function renderHeader() {
   const file = app.state && app.state.sessionFile;
   const saved = file ? app.sessions.find((session) => session.path === file) : null;
   $("sessionName").textContent = name || (saved && saved.title) || "New session";
+  // The tab strip shows the same name.
+  const first = app.tl.items.find((item) => item.kind === "user" && item.text);
+  coop.tabLabel(name || (saved && saved.title) || (first ? first.text.split("\n")[0] : ""));
   $("modelButton").replaceChildren(el("span", { class: "pill-label", text: modelLabel() }));
   const level = app.tl.thinkingLevel || (app.state && app.state.thinkingLevel) || "";
   const reasoning = app.state && app.state.model && app.state.model.reasoning;
@@ -982,23 +986,25 @@ function renderSessions() {
   $("sessionList").replaceChildren(...shown.map((session) => el("li", {},
     el("button", {
       type: "button",
-      class: `session ${session.path === current ? "current" : ""}`,
-      title: session.title || session.name || "",
+      class: `session ${session.path === current ? "current" : ""} ${session.openElsewhere ? "elsewhere" : ""}`,
+      title: session.openElsewhere ? "Open in another tab: click to go there" : session.title || session.name || "",
       onclick: () => switchSession(session.path),
-    }, el("span", { class: "session-title", text: sessionLabel(session) }), el("span", { class: "session-meta", text: `${relativeTime(session.modified)} · ${session.messages} ${session.messages === 1 ? "prompt" : "prompts"}` })))));
+    }, el("span", { class: "session-title", text: sessionLabel(session) }), el("span", { class: "session-meta", text: `${session.openElsewhere ? "open in another tab · " : ""}${relativeTime(session.modified)} · ${session.messages} ${session.messages === 1 ? "prompt" : "prompts"}` })))));
   if (!shown.length) $("sessionList").append(el("li", { class: "session-empty", text: filter ? "No session matches." : "No saved sessions in this folder yet." }));
 }
 
 async function switchSession(path) {
   if (app.state && path === app.state.sessionFile) return;
-  if (app.tl.busy) { toast("coop is working. Stop it (Esc) before switching sessions.", "warning"); return; }
+  // coop keeps working here; the other session opens in its own tab.
+  if (app.tl.busy) { await newTab(path); return; }
   const result = await cmdOrToastSwitch(path);
   if (result.success && !(result.data && result.data.cancelled)) await refreshAll();
 }
 
 async function cmdOrToastSwitch(path) {
   const result = await coop.switchSession(path);
-  if (!result.success) toast(`Could not open that session: ${result.error || "unknown error"}`, "error");
+  if (result.openElsewhere) toast(result.error, "info");
+  else if (!result.success) toast(`Could not open that session: ${result.error || "unknown error"}`, "error");
   return result;
 }
 
@@ -1226,9 +1232,17 @@ async function exportSession(arg = "") {
 }
 
 async function newSession() {
-  if (app.tl.busy) { toast("coop is working. Stop it (Esc) before starting a new session.", "warning"); return; }
+  // coop keeps working here; the new session gets its own tab and its own coop.
+  if (app.tl.busy) { await newTab(); return; }
   const result = await cmdOrToast({ type: "new_session" }, "Could not start a new session");
   if (result.success && !(result.data && result.data.cancelled)) { await refreshAll(); prompt().focus(); }
+}
+
+async function newTab(path = "") {
+  const result = await coop.newTab(path);
+  if (!result.success && !result.openElsewhere) toast(result.error || "Could not open a new tab.", "warning");
+  else if (!result.success) toast(result.error, "info");
+  return result;
 }
 
 async function cloneSession() {
@@ -1263,6 +1277,8 @@ function hotkeys() {
     ["Ctrl+K", "Command palette: every action and /command"],
     // The tree view's own controls are listed in that view, not here.
     ...Object.entries(KEYS).filter(([id, k]) => !id.startsWith("app.tree.") && k.keys && k.keys !== "native" && k.keys !== "terminal").map(([, k]) => [k.keys, k.does]),
+    ["Ctrl+N", "New tab: another session alongside, with its own coop"],
+    ["Ctrl+Tab / Ctrl+Shift+Tab", "Next or previous tab (Ctrl+1 to Ctrl+9 jump to one)"],
     ["Ctrl+= / Ctrl+-", "Zoom in or out (Ctrl+0 resets)"],
     // The same key collapses the todo panel in the terminal (coop sync seeds it).
     [COLLAPSE_KEY, "Collapse or expand the panels above the prompt (the todo list)"],
@@ -1302,7 +1318,9 @@ const ACTIONS = {
   export: { label: "Export as a web page", run: (arg) => exportSession(arg) },
   reload: { label: "Restart coop on this session", run: () => restart() },
   hotkeys: { label: "Keyboard shortcuts", run: () => hotkeys() },
-  quit: { label: "Close this window", keys: "Ctrl+W", run: () => window.close() },
+  quit: { label: "Close this tab", keys: "Ctrl+W", run: () => coop.closeTab() },
+  tab: { label: "New tab: another session alongside this one", keys: "Ctrl+N", run: () => newTab() },
+  window: { label: "New window on this folder", run: () => coop.newWindow() },
   terminal: { label: "Open in terminal", run: (arg, name) => openTerminal(name ? `Run /${name}${arg ? ` ${arg}` : ""} there.` : "") },
   theme: { label: "Theme", run: () => chooseTheme() },
   switch: { label: "Switch project", run: () => switchProject() },
@@ -1432,7 +1450,7 @@ function onGlobalKey(event) {
     if (key === "t") { event.preventDefault(); app.prefs.showThinking = !app.prefs.showThinking; app.prefs.thinkingOpen.clear(); rerenderAll(); return; }
     if (key === "o") { event.preventDefault(); app.prefs.expandTools = !app.prefs.expandTools; app.prefs.toolOpen.clear(); app.prefs.activityOpen.clear(); rerenderAll(); return; }
     if (key === "g") { event.preventDefault(); biggerEditor(); return; }
-    if (key === "w") { event.preventDefault(); window.close(); return; }
+    if (key === "w") { event.preventDefault(); coop.closeTab(); return; }
     if (key === "=" || key === "+") { event.preventDefault(); coop.zoom(1); return; }
     if (key === "-") { event.preventDefault(); coop.zoom(-1); return; }
     if (key === "0") { event.preventDefault(); coop.zoom(0); return; }

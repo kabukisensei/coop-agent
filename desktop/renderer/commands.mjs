@@ -107,7 +107,7 @@ function firstLine(text) {
 export const KEYS = Object.freeze({
   "app.interrupt": { keys: "Esc", does: "Stop the answer (or the running shell command, or a retry)" },
   "app.clear": { keys: "native", does: "Ctrl+C copies in a window; clear the box with Ctrl+A then Delete" },
-  "app.exit": { keys: "Ctrl+W", does: "Close the window" },
+  "app.exit": { keys: "Ctrl+W", does: "Close this tab (the last tab closes the window)" },
   "app.suspend": { keys: "terminal", does: "No job control in a window (none on Windows either)" },
   "app.editor.external": { keys: "Ctrl+G", does: "Open the prompt in a larger editor" },
   "app.clipboard.pasteImage": { keys: "Ctrl+V", does: "Paste an image or text into the prompt" },
