@@ -140,6 +140,23 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `coop doctor` gains a "Prompts and skills" section listing each tier and every
   shadowed name; `coop new-skill` and `coop new-prompt` take `--client` or
   `--personal`; `docs/extending.md` section 8 documents the layout.
+- **Committed dev catalog snapshot** (master plan SQ9, section 12.3; Joel's
+  schema file and read-only definitions export as one feature). `coop catalog
+  snapshot`, or the new `catalog_snapshot` tool (`command="snapshot"`), reads the
+  contract's default dev/test target read-only over the `sql_impact` connection
+  path and writes one file per table (a `CREATE TABLE` from its columns), view,
+  procedure and function, plus `manifest.json` and a README, under `catalog.path`,
+  else the `data_docs` repository's `catalog/<env>`, else `.coop/catalog/<env>`
+  beside the contract; the user commits the folder. No row data, credential or
+  server name is written, production is refused, and a folder that is not a
+  snapshot is never overwritten. The session-start note tells coop to read an
+  object's file before writing SQL, to offer a refresh when the snapshot is older
+  than `catalog.max_age_days` (default 7), or to offer the first snapshot;
+  `catalog_snapshot` `status` and `coop catalog status` report the same;
+  `coop doctor` shows it in the project-contract section; `coop init --seed-docs`
+  uses the folder as coop-data-doc's SQL source when the contract has no SQL
+  repository; the guardrails treat `snapshot` like `sql_impact` (dev/test runs,
+  anything else asks) and `status` as a folder read.
 - `@juicesharp/rpiv-todo` **2.12.0** joins the pinned extensions (Aaron, 2026-10-03,
   from the pi.dev package review): a `todo` tool and a live task panel above the
   prompt, so a multi-step session shows what coop is doing, what is done and what

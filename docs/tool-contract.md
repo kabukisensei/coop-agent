@@ -372,6 +372,46 @@ name)` and `expectedSqlObject(mapping, table)` are the two directions of the rul
 texts above. The wizard writes `view_prefix: ''` for a `same_name` rule and never
 touches `overrides` once it holds entries.
 
+### `catalog_snapshot` (committed dev catalog snapshot)
+
+The committed dev catalog snapshot (master plan row SQ9, Joel's "schema file coop
+must follow" and "export of object definitions into a read-only folder" as one
+feature), implemented by `lib/catalog_snapshot.py` over the same connection path
+as `sql_impact` (`open_connection`: the contract's ready dev or test default,
+never production; same identity pinning, driver, encryption and timeouts). The
+tool accepts one optional field, `command`:
+
+| Command | What it does |
+| --- | --- |
+| `status` (default) | Reads the snapshot folder only, no connection: `missing`, `ok` or `stale` with the path, the time it was taken, its age and the object counts. |
+| `snapshot` | Runs three fixed, parameter-free catalog queries (`sys.objects`, `INFORMATION_SCHEMA.COLUMNS`, `sys.sql_modules`) and rewrites the folder: one `<schema>/<name>.sql` per object (tables as a `CREATE TABLE` built from their columns, types and nullability; views, procedures and functions as the definition the catalog holds), `manifest.json` (time taken, target environment, kind and database, counts, file list, anything unavailable or skipped) and a `README.md`. |
+
+The folder is `catalog.path` from the contract (relative to the contract root),
+else `<data_docs repository>/catalog/<environment>` when the contract names a
+`data_docs` repository, else `.coop/catalog/<environment>` beside the contract;
+`catalog.max_age_days` (default 7) decides when `status` and the session-start
+note call it stale. A folder that is not a snapshot (no `manifest.json`, not
+empty) is never overwritten (`output_not_snapshot`). No row data, credential,
+connection string or server name is written; a snapshot of a production target is
+refused (`target_not_dev_or_test`). Caps: 5000 objects, 200,000 columns, one
+million characters per definition; an object whose name is not a plain identifier,
+or whose definition the principal cannot read, is skipped and listed in the
+manifest. On a Lakehouse SQL endpoint the definitions are unavailable and the
+manifest says so; tables still land.
+
+Governance (`extensions/coop-guardrails`): `status` runs without a prompt or an
+audit row (it reads a folder); `snapshot` follows the `sql_impact` rule (a resolved
+dev or test target runs without a prompt, production or an unresolved target asks
+once per call and is blocked headlessly, any other field or command is blocked).
+The session-start note names the snapshot's state so coop reads the object's file
+before writing SQL, offers a refresh when it is stale, and offers the first
+snapshot when none exists (only where the contract has a `sql_targets` section;
+`coop doctor` applies the same gate). `coop catalog snapshot` and `coop catalog status` are
+the terminal forms; `coop doctor` reports the state in the project-contract
+section; `coop init --seed-docs` uses the folder as coop-data-doc's SQL source when
+the contract has no SQL repository. The snapshot is reference, never a deployment
+artifact: nothing runs from it.
+
 ---
 
 ## Microsoft Fabric CLI (`fab`) and the Python Fabric collision

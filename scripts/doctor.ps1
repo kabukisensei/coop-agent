@@ -809,6 +809,17 @@ if ($proj) {
     }
   }
 
+  # The committed dev catalog snapshot (SQ9): present and fresh, stale, or
+  # missing, for contracts that name a SQL target.
+  if ($pyBin) {
+    foreach ($line in @(& $pyBin (Join-Path $script:CoopRoot 'lib\catalog_snapshot.py') --project $proj doctor-lines 2>$null)) {
+      $parts = @(([string]$line) -split "`t", 3)
+      if ($parts.Count -lt 2 -or -not $parts[0]) { continue }
+      $hint = if ($parts.Count -ge 3) { $parts[2] } else { '' }
+      if ($parts[0] -ceq 'ok') { D-Ok $parts[1] } else { D-Warn $parts[1] $hint }
+    }
+  }
+
   # Read-only bounded legacy-project diagnostics, shared with Bash and migration.
   if ($pyBin) {
     $projectRoot = Split-Path -Parent (Split-Path -Parent $proj)

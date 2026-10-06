@@ -74,8 +74,7 @@ see `docs/extending.md`.
 
 ## Maintaining this repo (for agents working ON coop-agent)
 
-Everything below is for an agent editing coop-agent itself — scripts, docs, tests,
-skills, extensions. This file is canonical; `CONTRIBUTING.md` and `RELEASE.md`
+Everything below is for an agent editing coop-agent itself. This file is canonical; `CONTRIBUTING.md` and `RELEASE.md`
 carry the detail and align with it.
 
 ### Current roadmap — the master plan, phase by phase
@@ -87,8 +86,7 @@ rollout hotfixes, Phase 2 (the Windows-first simplification: one implementation 
 PowerShell, one manifest, one BOM check), dependency reconciliation, standards
 alignment and the reviewer decision, Azure SQL breadth with dev-by-default and
 live impact tracing, the common-workflows first run and TeamAI shared knowledge
-have all merged and shipped (the beta channel is skipped and Jev waits, revision
-3.8); the optional package trial has not started; the installable Electron desktop
+have all merged and shipped; the optional package trial has not started; the installable Electron desktop
 (Phase 8) is in progress. **It is the only plan.** The earlier Windows terminal plan (revision 2.0) and every prior plan,
 handoff, and receipt live under `docs/history/` as read-only reference; the master
 plan wins where they differ, and new planning is a new revision of the master plan,

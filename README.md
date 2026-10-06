@@ -292,6 +292,7 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop bootstrap` | Same bootstrap as bare `coop install` |
 | `coop sync` | Ensure core Pi extensions are installed, place the governed MCP config non-destructively, refresh managed catalogs/team knowledge, and verify brand assets |
 | `coop data-doc [args]` | Run `coop-data-doc` (default: `build`) and summarize outputs |
+| `coop catalog snapshot\|status` | The committed dev catalog snapshot: `snapshot` reads the contract's dev/test target read-only and writes one file per table, view, procedure and function under the contract's snapshot folder (commit it); `status` says whether it exists and how old it is |
 | `coop fabric [args]` | Pass through to the Microsoft Fabric CLI (`fab`) |
 | `coop version` | Print `coop` + `pi` versions; a git checkout adds its `git describe` (for example `coop 0.23.5 (v0.23.5-21-gdf91630)`) |
 | `coop help` | Show usage |
@@ -678,11 +679,15 @@ A project override is one Markdown file per domain in `.coop/project.yml`
 
 ## Standalone tools
 
-coop wraps one standalone pipx tool and exposes three native LLM tools: `data_doc`,
+coop wraps one standalone pipx tool and exposes four native LLM tools: `data_doc`,
 `sql_impact` (live catalog impact trace of one SQL object on the contract's dev/test
-`sql_targets` entry) and the optional, config-driven `bpa_review` (Tabular Editor BPA,
-the deterministic model check). `sql_impact` and `bpa_review` are read-only;
-`data_doc build` writes generated documentation. SQL and DAX standards need no tool:
+`sql_targets` entry), `catalog_snapshot` (the committed dev catalog snapshot: one file
+per table, view, procedure and function under the contract's snapshot folder, read
+before coop writes SQL and used by coop-data-doc as a SQL source when the client has
+none) and the optional, config-driven `bpa_review` (Tabular Editor BPA, the
+deterministic model check). `sql_impact` and `bpa_review` are read-only;
+`catalog_snapshot` reads the dev/test catalog read-only and writes only its snapshot
+folder; `data_doc build` writes generated documentation. SQL and DAX standards need no tool:
 they are applied while coop writes and self-checked before it presents a change.
 
 - **`coop-data-doc`** — progressive SQL and/or Power BI documentation, lineage, and machine-readable
