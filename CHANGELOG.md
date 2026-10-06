@@ -5,6 +5,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **The phone companion's contract** (MC1, master plan section 12.4; Aaron,
+  2026-10-06). `desktop/COMPANION.md` specifies how a phone will see and steer
+  the same live session an open coop window runs: two locks (a sign-in-protected
+  private connection to a loopback-only server, and coop's own device grant,
+  paired at the desk and bound to one Windows user, one client and one session),
+  seven routes (read, chat, stop, answer, pair, events, sign out), first answer
+  wins against the exact action, and production or session-wide approvals stay
+  on the desktop. The checkable rules are `desktop/lib/companion-protocol.mjs`
+  with gate-lane fixtures. Nothing listens yet: the server and the phone page
+  are MC2 and MC3.
+
 ## [0.31.0] — 2026-10-05
 
 ### Added
