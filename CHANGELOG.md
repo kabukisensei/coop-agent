@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.32.0] — 2026-10-06
+
 ### Added
 
 - The coop window installer now carries everything (master plan D1k; Aaron
@@ -114,6 +116,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   than the screen it opens on. With no window allowing the phone, the phone
   now says "Phone access is off" instead of "Different Windows user". In the Retro looks, tapping a text
   field on an iPhone no longer zooms the phone page wider than the screen.
+- The phone's Home Screen icon is now the coop tile from the desktop shortcut
+  and the website (lime C on navy). On an iPhone, remove the old icon and add
+  coop to the Home Screen again to see it.
 
 ## [0.31.0] — 2026-10-05
 
