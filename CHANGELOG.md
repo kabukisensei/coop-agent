@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.33.0] — 2026-10-06
+
 ### Added
 
 - **Several sessions at once in the coop window: tabs** (Aaron, 2026-10-06).
