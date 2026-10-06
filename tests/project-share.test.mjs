@@ -26,7 +26,9 @@ const git = (cwd, ...args) => {
   if (r.status !== 0) throw new Error(`git ${args.join(" ")} in ${cwd}: ${r.stderr}`);
   return r.stdout.trim();
 };
-const identity = (cwd) => { git(cwd, "config", "user.email", "test@example.com"); git(cwd, "config", "user.name", "Test User"); };
+// Fixture identity, and LF in the working tree: Git for Windows defaults core.autocrlf to true,
+// which would hand the assertions CRLF after a pull.
+const identity = (cwd) => { git(cwd, "config", "user.email", "test@example.com"); git(cwd, "config", "user.name", "Test User"); git(cwd, "config", "core.autocrlf", "false"); };
 const CONTRACT = "profile:\n  client: 'Contoso'\n";
 
 if (spawnSync("git", ["--version"]).status !== 0) {

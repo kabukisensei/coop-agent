@@ -27,7 +27,9 @@ const git = (cwd, ...args) => {
   if (r.status !== 0) throw new Error(`git ${args.join(" ")} in ${cwd}: ${r.stderr}`);
   return r.stdout.trim();
 };
-const identity = (cwd) => { git(cwd, "config", "user.email", "test@example.com"); git(cwd, "config", "user.name", "Test User"); };
+// Fixture identity, and LF in the working tree: Git for Windows defaults core.autocrlf to true,
+// which would hand the assertions CRLF after a pull.
+const identity = (cwd) => { git(cwd, "config", "user.email", "test@example.com"); git(cwd, "config", "user.name", "Test User"); git(cwd, "config", "core.autocrlf", "false"); };
 // The fetch is throttled on .git/FETCH_HEAD's age; a test that needs origin's
 // latest state removes it first, as a fresh clone has none.
 const unthrottle = (cwd) => rmSync(join(cwd, ".git", "FETCH_HEAD"), { force: true });
