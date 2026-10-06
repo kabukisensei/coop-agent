@@ -777,7 +777,7 @@ handle("coop:changes", async (state, want) => {
   state.changeDir = repo ? repo.dir : state.spec.cwd;
   const result = repo ? await listChanges(repo.dir) : { repo: false, files: [], truncated: false };
   state.changes = result.files;
-  return { success: true, data: { ...result, repos: repos.map(({ id, label }) => ({ id, label })), current: repo ? repo.id : null } };
+  return { success: true, data: { ...result, repos: repos.map(({ id, label, rel }) => ({ id, label, rel })), current: repo ? repo.id : null } };
 });
 
 handle("coop:change-diff", async (state, path) => {

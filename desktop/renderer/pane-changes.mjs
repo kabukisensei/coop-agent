@@ -34,18 +34,41 @@ export function normalizePath(path, cwd) {
 }
 
 /**
- * The repository a changed path belongs to, from the panel's list (ids are ""
- * for the open folder's own repository, else a folder name one level down):
+ * Like normalizePath, but a path outside the working folder stays as a
+ * "../" path (a project file repository beside it), and "" only when it is
+ * on another drive.
+ */
+export function relativePath(path, cwd) {
+  const inside = normalizePath(path, cwd);
+  if (inside) return inside;
+  const p = String(path || "").trim().replace(/\\/g, "/").replace(/^@/, "");
+  const root = String(cwd || "").replace(/\\/g, "/").replace(/\/+$/, "");
+  if (!root || !/^([A-Za-z]:)?\//.test(p)) return "";
+  const windows = /^[A-Za-z]:\//.test(root);
+  const same = (a, b) => (windows ? a.toLowerCase() === b.toLowerCase() : a === b);
+  const from = root.split("/");
+  const to = p.split("/");
+  if (!same(from[0], to[0])) return "";
+  let common = 0;
+  while (common < from.length && common < to.length && same(from[common], to[common])) common++;
+  return [...from.slice(common).filter(Boolean).map(() => ".."), ...to.slice(common)].join("/");
+}
+
+/**
+ * The repository a changed path belongs to, from the panel's list (`rel` is
+ * each repository's folder relative to the open folder: "" for the folder's
+ * own, a name one level down, or a "../" path from the project file):
  * { id, path } with the path made relative to that repository, or null when
  * no listed repository holds it. The deepest match wins.
  */
 export function repoForPath(repos, path) {
   const p = String(path || "");
   if (!p) return null;
-  const inside = (repos || []).filter((r) => r.id && (p === r.id || p.startsWith(`${r.id}/`)));
-  inside.sort((a, b) => b.id.length - a.id.length);
-  if (inside.length) return { id: inside[0].id, path: p.slice(inside[0].id.length + 1) };
-  return (repos || []).some((r) => r.id === "") ? { id: "", path: p } : null;
+  const relOf = (r) => (typeof r.rel === "string" ? r.rel : r.id);
+  const inside = (repos || []).filter((r) => relOf(r) && p.startsWith(`${relOf(r)}/`));
+  inside.sort((a, b) => relOf(b).length - relOf(a).length);
+  if (inside.length) return { id: inside[0].id, path: p.slice(relOf(inside[0]).length + 1) };
+  return !p.startsWith("../") && (repos || []).some((r) => r.id === "") ? { id: "", path: p } : null;
 }
 
 export function mountChanges(box, options, { coop, cwd }) {
@@ -139,7 +162,8 @@ export function mountChanges(box, options, { coop, cwd }) {
     fill(repoPicker, ...state.repos.map((r) => el("option", { value: r.id, text: r.id ? r.label : `${r.label} (this folder)`, selected: r.id === state.repo })));
   }
 
-  // `want` is a path from a tool card (relative to the open folder); it picks
+  // `want` is a path from a tool card (relative to the open folder, "../" for
+  // a project file repository beside it); it picks
   // the repository that holds it. `repo` is a choice from the picker.
   async function load(want, repo) {
     if (state.loading) return;
@@ -156,6 +180,7 @@ export function mountChanges(box, options, { coop, cwd }) {
       if (hit && hit.id !== result.data.current) result = await coop.changes(hit.id);
     }
     if (hit) want = hit.path;
+    else if (want.startsWith("../")) want = "";
     state.loading = false;
     if (!result.success) { summary.textContent = result.error || "Could not read the changes."; return; }
     const data = result.data;
@@ -193,10 +218,10 @@ export function mountChanges(box, options, { coop, cwd }) {
   search.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); step(event.shiftKey ? -1 : 1); } });
   modeButton.addEventListener("click", () => { state.mode = state.mode === "split" ? "unified" : "split"; renderModeButton(); renderDiffView(); });
   renderModeButton();
-  load(options && options.path ? normalizePath(options.path, cwd()) : "");
+  load(options && options.path ? relativePath(options.path, cwd()) : "");
 
   return {
-    show: (opts) => load(opts && opts.path ? normalizePath(opts.path, cwd()) : ""),
+    show: (opts) => load(opts && opts.path ? relativePath(opts.path, cwd()) : ""),
     refresh: () => load(""),
   };
 }

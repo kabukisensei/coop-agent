@@ -44,7 +44,7 @@ const { listChanges, fileDiff, parseNameStatus, parseNumstat, newFileDiff, chang
 const { readStandards, readSnapshot, readNote, listNotes, knowledgeView, domainView, DOMAINS, KNOWLEDGE_LABELS } = await import("../desktop/lib/standards-view.mjs");
 const { loadProject, previewProject, saveProject, settingsFromForm } = await import("../desktop/lib/project-form.mjs");
 const docs = await import("../desktop/lib/docs-setup.mjs");
-const { normalizePath, repoForPath } = await import("../desktop/renderer/pane-changes.mjs");
+const { normalizePath, relativePath, repoForPath } = await import("../desktop/renderer/pane-changes.mjs");
 const { articleOutline, sourceLine, noteLabel, isKnowledgeId, STATE_LABELS, KNOWLEDGE_STATE_LABELS } = await import("../desktop/renderer/pane-standards.mjs");
 const { initialValues, formInput, platformHint, ROLE_LABELS } = await import("../desktop/renderer/pane-project.mjs");
 const { resolvePage, isDocsLink, stripFrontMatter, answerLabel, typeLabel } = await import("../desktop/renderer/pane-docs.mjs");
@@ -273,6 +273,31 @@ await check("changes: the repository picker lists the folder's repository and th
   assert.deepEqual(repoForPath(listed, "innerx/y.md"), { id: "", path: "innerx/y.md" });
   assert.equal(repoForPath([{ id: "alpha" }], "notes/n.md"), null, "outside every repository: keep the current one");
   assert.equal(repoForPath(listed, ""), null);
+});
+
+await check("changes: the picker adds the repositories the project file lists", async () => {
+  // A client folder: the open repository holds the project file, which also
+  // lists a warehouse repository beside it and one not cloned here.
+  const client = join(temp, "client");
+  const open = join(client, "fabric");
+  const dw = join(client, "fabric-dw");
+  for (const dir of [open, dw]) { mkdirSync(dir, { recursive: true }); git(dir, "init", "-q"); }
+  mkdirSync(join(open, ".coop"), { recursive: true });
+  writeFileSync(join(open, ".coop", "project.yml"), "profile:\n  client: Contoso\nrepositories:\n  fabric:\n    local_path: .\n  fabric-dw:\n    local_path: ../fabric-dw\n  missing:\n    local_path: ../not-cloned\n  later:\n    local_path: TODO\n");
+  if (foreignMarkerAbove(client)) return;
+  const repos = changeRepos(open);
+  assert.deepEqual(repos.map((r) => [r.id, r.label, r.rel]), [["", "fabric", ""], ["project:fabric-dw", "fabric-dw", "../fabric-dw"]], "the open repository once, then the listed one beside it");
+  writeFileSync(join(dw, "v.sql"), "select 1\n");
+  const dwRepo = repos.find((r) => r.id === "project:fabric-dw");
+  assert.deepEqual((await listChanges(dwRepo.dir)).files.map((f) => f.path), ["v.sql"]);
+  // A tool card's absolute path beside the folder picks that repository.
+  assert.equal(relativePath(join(dw, "v.sql"), open), "../fabric-dw/v.sql");
+  assert.equal(relativePath("C:\\work\\client\\fabric-dw\\v.sql", "c:\\work\\client\\fabric"), "../fabric-dw/v.sql");
+  assert.equal(relativePath("D:\\other\\x.sql", "C:\\work\\client\\fabric"), "", "another drive");
+  assert.equal(relativePath("sql/a.sql", "/w/repo"), "sql/a.sql");
+  const listed = repos.map(({ id, label, rel }) => ({ id, label, rel }));
+  assert.deepEqual(repoForPath(listed, "../fabric-dw/v.sql"), { id: "project:fabric-dw", path: "v.sql" });
+  assert.equal(repoForPath(listed, "../elsewhere/x.sql"), null, "outside every repository: keep the current one");
 });
 
 // --- The standards pane ---------------------------------------------------------
