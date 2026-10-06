@@ -54,6 +54,95 @@ function pickTheme(part) {
   try { localStorage.setItem("coop-theme", theme); } catch { /* private mode */ }
 }
 
+// ---- session sheets (MC7): the window's model, thinking, compact, name and details ----
+
+function openSheet(title, ...body) {
+  setMenu(false);
+  $("sheet-title").textContent = title;
+  $("sheet-body").replaceChildren(...body.flat().filter(Boolean));
+  if (!$("sheet").open) $("sheet").showModal();
+}
+const closeSheet = () => { if ($("sheet").open) $("sheet").close(); };
+
+async function control(body, done) {
+  const { json } = await submit("/api/session", { incarnation: app.incarnation, ...body });
+  closeSheet();
+  if (!json.ok) { if (json.message && json.code !== "bad-request") toast(json.message); else refusal(json); return; }
+  if (done) toast(done, "info");
+  loadDetails();
+}
+
+async function loadDetails() {
+  if (!app.ready) return null;
+  const { json } = await api("GET", "/api/session");
+  if (!json.ok) return null;
+  const d = json.details;
+  app.details = d;
+  $("menu-model-now").textContent = d.model ? d.model.name : "No model";
+  $("menu-thinking-now").textContent = d.thinkingLevel;
+  $("menu-name-now").textContent = d.sessionName || "Not named";
+  return d;
+}
+
+const fmtTokens = (n) => (n === undefined ? "" : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n));
+
+function choice(label, detail, current, onclick) {
+  return el("button", { type: "button", class: `choice${current ? " current" : ""}`, "aria-current": current ? "true" : null, onclick },
+    el("span", { class: "item-name", text: label }), detail ? el("span", { class: "item-detail", text: detail }) : null);
+}
+
+const SHEETS = {
+  async model() {
+    const d = await loadDetails();
+    if (!d) return toast("Could not read the session. Try again.");
+    const current = d.model ? `${d.model.provider}/${d.model.id}` : "";
+    const list = el("div", { class: "choices" }, d.models.map((m) => choice(m.name, `${m.provider}/${m.id}${m.contextWindow ? ` · ${fmtTokens(m.contextWindow)} context` : ""}`, `${m.provider}/${m.id}` === current,
+      () => control({ action: "model", provider: m.provider, modelId: m.id }, `Model: ${m.name}`))));
+    openSheet("Model", d.models.length ? list : el("p", { text: "coop lists no models. Sign in on the VM." }));
+  },
+  async thinking() {
+    const d = await loadDetails();
+    if (!d) return toast("Could not read the session. Try again.");
+    const levels = d.levels.length ? d.levels : ["off", "minimal", "low", "medium", "high"];
+    openSheet("Thinking", el("div", { class: "choices" }, levels.map((level) => choice(level, "", level === d.thinkingLevel,
+      () => control({ action: "thinking", level }, `Thinking: ${level}`)))));
+  },
+  compact() {
+    const field = el("textarea", { id: "compact-text", rows: "3", maxlength: "4000", placeholder: "What to keep (optional)" });
+    openSheet("Compact the conversation",
+      el("p", { class: "note", text: "coop summarizes the conversation so far to free context. The summary stays in the session." }),
+      el("label", { class: "sr-only", for: "compact-text", text: "What to keep" }), field,
+      el("div", { class: "sheet-actions" }, el("button", { type: "button", class: "btn primary", text: "Compact", onclick: () => control({ action: "compact", instructions: field.value.trim() }, "Compacting…") })));
+  },
+  async name() {
+    const d = await loadDetails();
+    const field = el("input", { id: "name-text", maxlength: "200", placeholder: "Session name", enterkeyhint: "done" });
+    field.value = (d && d.sessionName) || "";
+    const save = () => { if (field.value.trim()) control({ action: "name", name: field.value.trim() }, `Session named ${field.value.trim()}`); };
+    field.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); save(); } });
+    openSheet("Name this session", el("label", { class: "sr-only", for: "name-text", text: "Session name" }), field,
+      el("div", { class: "sheet-actions" }, el("button", { type: "button", class: "btn primary", text: "Save", onclick: save })));
+  },
+  async details() {
+    const d = await loadDetails();
+    if (!d) return toast("Could not read the session. Try again.");
+    const s = d.stats;
+    const rows = [
+      ["Name", d.sessionName || "Not named"],
+      ["Model", d.model ? `${d.model.name} (${d.model.provider})` : "None"],
+      ["Thinking", d.thinkingLevel],
+      ["Prompts", s.prompts],
+      ["Answers", s.answers],
+      ["Tool calls", s.toolCalls],
+      ["Tokens", s.tokensIn !== undefined ? `${fmtTokens(s.tokensIn)} in, ${fmtTokens(s.tokensOut)} out` : undefined],
+      ["Cost", s.cost !== undefined ? `$${s.cost.toFixed(4)}` : undefined],
+      ["Context", s.contextTokens !== undefined && s.contextWindow ? `${fmtTokens(s.contextTokens)} of ${fmtTokens(s.contextWindow)} (${Math.round(s.contextPercent || 0)}%)` : undefined],
+      ["Auto-compact", d.autoCompaction ? "On" : "Off"],
+    ].filter(([, v]) => v !== undefined && v !== "");
+    openSheet("Session details", el("dl", { class: "facts" }, rows.flatMap(([k, v]) => [el("dt", { text: k }), el("dd", { text: String(v) })])));
+  },
+};
+
 // ---- the menu: a side drawer like the coop website's ------------------------------
 
 function setMenu(open) {
@@ -107,8 +196,8 @@ async function submit(path, body) {
   return { status: 0, json: { ok: false, code: "offline" } };
 }
 
-function toast(text) {
-  const note = el("li", { class: "notice warning", role: "status", text });
+function toast(text, level = "warning") {
+  const note = el("li", { class: `notice ${level}`, role: "status", text });
   $("timeline").append(note);
   note.scrollIntoView({ block: "end" });
 }
@@ -208,6 +297,21 @@ function renderMessage(m) {
   node.replaceChildren();
   if (m.role === "assistant") renderMarkdown(document, m.text, node);
   else node.append(el("p", { text: m.text }));
+  // The terminal's /copy: every finished answer copies as Markdown (MC7).
+  if (m.role === "assistant" && m.final) node.append(el("div", { class: "msg-actions" }, el("button", { type: "button", class: "link", text: "Copy", onclick: (e) => copyText(m.text, e.currentTarget) })));
+}
+
+async function copyText(text, button) {
+  let done = false;
+  try { await navigator.clipboard.writeText(text); done = true; } catch {
+    const area = el("textarea", { class: "sr-only", readonly: true });
+    area.value = text;
+    document.body.append(area);
+    area.select();
+    try { done = document.execCommand("copy"); } catch { /* not allowed */ }
+    area.remove();
+  }
+  if (button) { button.textContent = done ? "Copied" : "Copy failed"; setTimeout(() => { button.textContent = "Copy"; }, 1500); }
 }
 
 function renderTool(t) {
@@ -385,7 +489,10 @@ async function sendMessage(mode = "steer") {
 
 applyTheme(storedTheme());
 for (const b of document.querySelectorAll(".seg-btn")) b.addEventListener("click", () => pickTheme(b.dataset));
-$("menu-open").addEventListener("click", () => setMenu(true));
+$("menu-open").addEventListener("click", () => { setMenu(true); loadDetails(); });
+for (const name of Object.keys(SHEETS)) $(`menu-${name}`).addEventListener("click", () => SHEETS[name]());
+$("sheet-close").addEventListener("click", closeSheet);
+$("sheet").addEventListener("click", (e) => { if (e.target === $("sheet")) closeSheet(); });
 $("menu-close").addEventListener("click", () => setMenu(false));
 $("scrim").addEventListener("click", () => setMenu(false));
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") setMenu(false); });

@@ -16,6 +16,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   wins against the exact action, and production or session-wide approvals stay
   on the desktop. The checkable rules are `desktop/lib/companion-protocol.mjs`
   with gate-lane fixtures.
+- **Phone parity, part 2** (MC7). The phone's menu adds *Model*, *Thinking*,
+  *Compact*, *Name this session* and *Session details*, each a sheet that opens
+  from the bottom of the screen, and every finished answer has *Copy*. The phone
+  can only pick a model coop lists, compacts only while coop is idle, and the
+  details carry no file paths. Typing `/model`, `/thinking`, `/compact`,
+  `/name`, `/session` or `/copy` on the phone points to the menu.
 - **Phone parity, part 1** (MC6; Aaron asked for terminal parity, 2026-10-06).
   `desktop/PARITY.md` lists every terminal capability with its phone status.
   The phone now sends coop's `/` commands, prompt templates and skills (typing

@@ -26,8 +26,8 @@ const OTHER_INC = "BBBBBBBBBBBBBBBBBBBBBBBB";
 const SUB = "0f8fad5b-d9cb-469f-a165-70867728950e";
 
 // ---- the remote surface ------------------------------------------------------
-ok("only eight routes exist and every code has a status", () => {
-  assert.deepEqual(Object.values(ROUTES).sort(), ["answer", "chat", "dequeue", "events", "logout", "pair", "snapshot", "stop"]);
+ok("only ten routes exist and every code has a status", () => {
+  assert.deepEqual(Object.values(ROUTES).sort(), ["answer", "chat", "control", "dequeue", "details", "events", "logout", "pair", "snapshot", "stop"]);
   for (const status of Object.values(CODES)) assert.ok(status >= 400 && status < 600);
 });
 ok("anything else is not found, including Pi's own commands", () => {
@@ -202,6 +202,22 @@ ok("/ commands (MC6): Pi's own commands pass; built-ins, terminal screens and un
   assert.equal(phoneCommand("/nope", pi).code, "unknown-command");
   assert.deepEqual(phoneCommandList(pi).map((c) => c.name), ["start", "spec-first", "skill:coop-workflow"]);
   assert.equal(phoneCommandList(pi)[0].description, "Start here");
+});
+
+ok("session controls (MC7): model, thinking, compact and name, each with only its own fields", () => {
+  const base = { submissionId: SUB, incarnation: INC };
+  const v = (body) => validateRequest("POST", "/api/session", { ...base, ...body });
+  assert.deepEqual(v({ action: "model", provider: "openai", modelId: "gpt-5" }), { op: "control", ...base, action: "model", provider: "openai", modelId: "gpt-5" });
+  assert.equal(v({ action: "thinking", level: "high" }).level, "high");
+  assert.deepEqual(v({ action: "compact" }), { op: "control", ...base, action: "compact" });
+  assert.equal(v({ action: "compact", instructions: "keep the SQL" }).instructions, "keep the SQL");
+  assert.equal(v({ action: "name", name: "  Sales views  " }).name, "Sales views");
+  assert.equal(validateRequest("GET", "/api/session", null).op, "details");
+  for (const bad of [{ action: "bash", command: "dir" }, { action: "thinking", level: "huge" }, { action: "model", provider: "openai" }, { action: "thinking", level: "high", name: "x" }, { action: "name", name: " " }, { action: "set_auto_compaction" }]) {
+    assert.throws(() => v(bad), ProtocolError, JSON.stringify(bad));
+  }
+  assert.equal(phoneCommand("/model", []).code, "desktop-only");
+  assert.match(phoneCommand("/model", []).message, /menu: Model/);
 });
 
 console.log(`✓ companion protocol (MC1): ${checks} checks`);
