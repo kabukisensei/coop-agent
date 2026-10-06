@@ -40,6 +40,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { appendFileSync, existsSync, readFileSync, renameSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { agentDir as coopAgentDir, profileDir as coopProfileDir } from "../../lib/paths.mjs";
+import { editGateDecision } from "../../lib/lineage-context.mjs";
 
 declare const Buffer: { from(value: string, encoding: "base64url"): { length: number; toString(encoding: "utf8" | "base64url"): string } };
 
@@ -1954,7 +1955,7 @@ type AuditEntry = {
   ts?: string;     // set by audit() on write; present on every read
   cwd: string;
   // project-share rows are written by lib/project-share.mjs ("Share with the team", C1).
-  kind: "commit-block" | "danger-confirm" | "secret-confirm" | "mcp-confirm" | "project-share";
+  kind: "commit-block" | "danger-confirm" | "secret-confirm" | "mcp-confirm" | "project-share" | "lineage-gate";
   tool: string;
   decision: "blocked" | "blocked-headless" | "allowed" | "declined";
   label: string;   // the short subject (offending path, danger label, tool name)
@@ -2033,6 +2034,19 @@ export default function coopGuardrails(pi: ExtensionAPI) {
     modelingProduction = false;
   });
 
+  /** The SQ8 edit gate: a live target is one sql_impact would answer on without
+   *  a prompt (the contract's sql_targets, or a managed dev/test Fabric entry). */
+  function decideSqlEditGate(path: string, content: string, ctx: ExtensionContext): { action: "allow" | "block"; object?: string; reason?: string } {
+    try {
+      const contract = ensureSessionGovernance(ctx.cwd).sqlContract;
+      const managed = managedSqlEnvironment(liveReadDeps);
+      const liveTarget = Boolean(contract?.configured) || managed === "dev" || managed === "test";
+      return editGateDecision(ctx.cwd, isAbsolute(path) ? path : resolve(ctx.cwd, path), content, { liveTarget });
+    } catch {
+      return { action: "allow" };
+    }
+  }
+
   pi.on("tool_call", async (event: any, ctx: ExtensionContext) => {
     try {
       if (!enabled()) return;
@@ -2083,6 +2097,17 @@ export default function coopGuardrails(pi: ExtensionAPI) {
           );
           audit({ cwd: ctx.cwd, kind: "secret-confirm", tool, decision: ok ? "allowed" : "declined", label: path, detail: path });
           if (!ok) return { block: true, reason: `coop guardrails: blocked ${tool} of the secret-looking file ${path} (you declined). Reference an env var / vault instead.` };
+        }
+        // 0'. SQL edits (SQ8): the lookup happens before the edit. coop-tools fills
+        // the session's lineage context from the snapshot and the built docs in its
+        // own tool_call hook (it loads first); when no source holds the object and
+        // a live target could still answer, the edit waits for sql_impact.
+        if ((tool === "edit" || tool === "write") && /\.sql$/i.test(path)) {
+          const gate = decideSqlEditGate(path, tool === "write" ? String(event?.input?.content ?? "") : "", ctx);
+          if (gate.action === "block") {
+            audit({ cwd: ctx.cwd, kind: "lineage-gate", tool, decision: "blocked", label: path, detail: "lineage-not-held" });
+            return { block: true, reason: `coop guardrails: blocked ${tool} of ${path}: ${gate.reason}` };
+          }
         }
         return;
       }

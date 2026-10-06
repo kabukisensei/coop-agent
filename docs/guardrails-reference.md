@@ -65,6 +65,19 @@ Production is never modified from a session. A Warehouse SQL `CREATE`, `ALTER`, 
 
 **The human-only unlock.** When a production change really has to go through coop, a human runs `coop unlock-prod <client> [--minutes <n>]` in their own terminal, never from inside a session (the command is deliberately absent from `coop help`, the `/` menu and the window). It writes a time-bounded grant to `~/.coop/prod-unlock.json` (default 30 minutes, at most 8 hours), outside every repository. While the grant holds and its client matches the trusted contract's `client`, the same writes fall back to today's per-call production approval: each one asks, prefixed with the grant id and the minutes left, and every decision is logged in the audit with `prod-unlock:<id>`. The file is a secret path for the agent, so a session cannot read, write or forge it. `coop unlock-prod --status` shows the grant, `coop unlock-prod --revoke` removes it, `/coop-approvals status` shows it in the session, and it expires on its own.
 
+### SQL edits and the lineage context
+
+Before an edit or write of a `.sql` file, coop-tools fills the session's lineage
+context for the object the file defines (the committed catalog snapshot, then the
+built lineage docs). The guardrail lets the edit through when any source holds the
+object, when every source that exists was tried, or when the file defines no object
+coop can name; it blocks the edit when a live target could still answer and
+`sql_impact` was never asked for that object, or when the snapshot's answer is
+older than the contract's `catalog.max_age_days`. The block names the tool to call;
+the same object is never asked twice in a session. Audit kind `lineage-gate` with
+the path and the fixed detail `lineage-not-held`. Reads are never gated. Detail:
+`docs/tool-contract.md`, "Session lineage context".
+
 ### Live environment reads
 
 Coop permits read-only metadata, schema, and artifact-code inspection in dev/test by default. Query/execute/sample/export-style calls can return actual rows, so the runtime asks first. Any tool request that explicitly names prod/production also asks first, including metadata-only reads; production row reads should be narrowly scoped to a named target, columns, filters, and a small limit. Approval-required reads fail closed when no interactive approval UI is available.
