@@ -9,7 +9,7 @@
  */
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -656,6 +656,20 @@ await check("sessions: Pi's folder naming, listing and the switch guard", () => 
   const listed = listSessions(env, cwd);
   assert.equal(listed.length, 1);
   assert.deepEqual([listed[0].title, listed[0].name, listed[0].messages], ["Tidy report.sql", "Desktop fixture", 1]);
+  // A long session: the name and later prompts sit past the first megabytes, and
+  // the file grows between listings (auto-naming appends after a few turns).
+  const long = join(folder, "2026-10-03T00-00-00-000Z_def.jsonl");
+  const bulky = { type: "message", message: { role: "toolResult", content: [{ type: "text", text: "x".repeat(700 * 1024) }] } };
+  const prompt = (text) => ({ type: "message", message: { role: "user", content: [{ type: "text", text }] } });
+  writeFileSync(long, [{ type: "session", id: "def", cwd, timestamp: "2026-10-03T00:00:00.000Z" }, prompt("First ask"), bulky, bulky, prompt("Second ask")]
+    .map((e) => JSON.stringify(e) + "\n").join(""));
+  let summary = listSessions(env, cwd).find((s) => s.id === "def");
+  assert.deepEqual([summary.title, summary.name, summary.messages], ["First ask", "", 2]);
+  appendFileSync(long, [bulky, prompt("Third ask"), { type: "session_info", name: "Fiscal period label" }].map((e) => JSON.stringify(e) + "\n").join(""));
+  summary = listSessions(env, cwd).find((s) => s.id === "def");
+  assert.deepEqual([summary.title, summary.name, summary.messages], ["First ask", "Fiscal period label", 3]);
+  assert.equal(listSessions(env, cwd).find((s) => s.id === "def").messages, 3, "a second listing does not count twice");
+  rmSync(long);
   assert.ok(isSessionPath(env, file));
   const outside = join(temp, "outside.jsonl");
   writeFileSync(outside, "{}");
