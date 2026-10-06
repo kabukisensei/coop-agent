@@ -303,15 +303,16 @@ terminal capability with its phone status:
 | Steer while coop works (Enter) and pull back queued messages (`clear_queue`, Alt+Up) | phone (MC6) | Send now and Queue while coop works; the queued messages show above the text box, and Edit queued brings them back into it. |
 | `/model`, `/thinking` (and Ctrl+P, Shift+Tab) | phone (MC7) | The menu's Model and Thinking sheets (`get_available_models`, `set_model`, `set_thinking_level`); a model must be one Pi lists. Typing `/model` or `/thinking` points to the menu. |
 | `/compact`, `/session`, `/name`, `/copy` | phone (MC7) | The menu's Compact (with optional instructions, when coop is idle), Session details (`get_state`, `get_session_stats`, without file paths) and Name this session sheets, and Copy under every answer. |
-| Thinking and tool detail (Ctrl+T, Ctrl+O) | MC8 | Thinking blocks and each tool's arguments and output, folded, opened on tap. |
-| Status bar, widgets and the todo panel (`setStatus`, `setWidget`, `rpiv-todo`) | MC8 | The status line and the widgets above the prompt, the todo panel rebuilt from `todo` results as the window does. |
-| Search the conversation, jump between prompts (Ctrl+F, Ctrl+Up/Down) and prompt history (Up) | MC8 | A search box, prompt jumps and the last prompts sent. |
-| `/new`, `/resume`, `/fork`, `/clone`, `/tree` (view) and the sessions list (`coop -c`, `-r`, `--session`) | MC9 | Session actions from the phone. A session the phone itself starts or opens keeps the phone's access (the MC1 rule that access ends at every new session stays for sessions changed at the desk). |
-| `/export` (HTML) | MC9 | `export_html` to the session folder on the VM; the file stays on the VM. |
-| `/reload` | MC9 | Restart coop in the window on the same session; access carries over as for MC9's session actions. |
-| Attach images and files (`app.clipboard.pasteImage`) | MC10 | Photos and files from the phone, with the window's limits and readers; documents land in the project folder on the VM and are referenced by path. |
-| `@path` file mentions and Tab completion | MC10 | The window's file search over the folder (`listFiles`, `rankFiles`). |
-| Know when coop needs you (the window's background notification) | MC11 | A notice on the phone when a question arrives or a turn ends while the page is closed. Web push goes through Apple's or Google's push service, so MC11 sends no session text, only "coop needs you" (Aaron said yes, 2026-10-06 03:34). |
+| Thinking and tool detail (Ctrl+T, Ctrl+O) | phone (MC8) | A tool line opens its arguments and output on tap, and an answer's Thinking link opens its thinking; fetched only on tap (`GET /api/detail`). |
+| Status bar, widgets and the todo panel (`setStatus`, `setWidget`, `rpiv-todo`) | phone (MC8) | Above the text box: the status line, the widgets and the todo panel rebuilt from `todo` results as the window does; a tap folds it to the status line. |
+| Search the conversation, jump between prompts (Ctrl+F, Ctrl+Up/Down) and prompt history (Up) | phone (MC8) | The menu's Find: a search over the conversation, and with no search your prompts, newest first, each to jump to or Reuse. |
+| `/new`, `/resume`, `/fork`, `/clone` and the sessions list (`coop -c`, `-r`, `--session`) | phone (MC9) | The menu's Sessions sheet: New session, the folder's saved sessions, Fork from a prompt and Clone. A session the phone itself starts or opens keeps the phone's access; one changed at the desk still ends it. |
+| `/tree` (view) | phone (MC9) | Tree in the Sessions sheet: the window's default view, one line per prompt and answer, indented where the session branches; a tap on a prompt forks from it. Moving within the session and labels stay in the terminal's `/tree`, as in the window. |
+| `/export` (HTML) | phone (MC9) | Export HTML in the Sessions sheet writes the page beside the session file on the VM (not in the project folder); the file stays on the VM. |
+| `/reload` | phone (MC9) | Restart coop in the Sessions sheet: the window restarts coop on the same session as its own `/reload` does, and the phone keeps its access. |
+| Attach images and files (`app.clipboard.pasteImage`) | phone (MC10) | Attach in the text box: photos (made JPEG, 2048 pixels on the long side, so a phone's camera photo fits the 4 MB image limit) and files, with the window's limits and readers. Each file is saved under the window's data folder on the VM, not in the project, and sent as the window sends attachments. |
+| `@path` file mentions and Tab completion | phone (MC10) | Typing `@` lists the folder's files as the window's composer does (`listFiles`, `rankFiles`); a tap puts the path in the text box. |
+| Know when coop needs you (the window's background notification) | phone (MC11) | Notices in the menu: when a question arrives or a turn ends while the page is closed, the phone shows "coop is waiting for you". Web push goes through Apple's or Google's push service, so the push carries nothing at all (Aaron said yes, 2026-10-06 03:34). On an iPhone, coop must be on the Home Screen. |
 
 ### Desk only (intentional)
 

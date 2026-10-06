@@ -75,4 +75,6 @@ contextBridge.exposeInMainWorld("coop", Object.freeze({
   onTheme: listen("coop:theme"),
   onMenu: listen("coop:menu"),
   onDocs: listen("coop:docs"),
+  // The phone started, opened, forked or cloned a session (MC9): reload it here.
+  onRefresh: listen("coop:refresh"),
 }));

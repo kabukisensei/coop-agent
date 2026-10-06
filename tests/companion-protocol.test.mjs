@@ -26,12 +26,12 @@ const OTHER_INC = "BBBBBBBBBBBBBBBBBBBBBBBB";
 const SUB = "0f8fad5b-d9cb-469f-a165-70867728950e";
 
 // ---- the remote surface ------------------------------------------------------
-ok("only ten routes exist and every code has a status", () => {
-  assert.deepEqual(Object.values(ROUTES).sort(), ["answer", "chat", "control", "dequeue", "details", "events", "logout", "pair", "snapshot", "stop"]);
+ok("only eighteen routes exist and every code has a status", () => {
+  assert.deepEqual(Object.values(ROUTES).sort(), ["answer", "chat", "control", "dequeue", "detail", "details", "events", "files", "logout", "pair", "push", "pushState", "sessionAction", "sessions", "snapshot", "stop", "tree", "upload"]);
   for (const status of Object.values(CODES)) assert.ok(status >= 400 && status < 600);
 });
 ok("anything else is not found, including Pi's own commands", () => {
-  for (const [method, path] of [["POST", "/api/bash"], ["POST", "/api/rpc"], ["GET", "/api/files"], ["POST", "/api/new_session"], ["POST", "/api/unlock-prod"], ["DELETE", "/api/pair"], ["GET", "/api/chat"]]) {
+  for (const [method, path] of [["POST", "/api/bash"], ["POST", "/api/rpc"], ["GET", "/api/file"], ["POST", "/api/files"], ["GET", "/api/upload"], ["POST", "/api/new_session"], ["POST", "/api/unlock-prod"], ["DELETE", "/api/pair"], ["GET", "/api/chat"]]) {
     refuses("not-found", () => validateRequest(method, path, {}));
   }
 });
@@ -39,7 +39,7 @@ ok("bodies over the limit are refused before parsing matters", () => {
   refuses("too-large", () => validateRequest("POST", "/api/chat", { submissionId: SUB, incarnation: INC, text: "hi" }, LIMITS.bodyBytes + 1));
 });
 ok("chat is rebuilt field by field; extra fields, commands and shell lines are refused", () => {
-  assert.deepEqual(validateRequest("POST", "/api/chat", { submissionId: SUB, incarnation: INC, text: "check the view" }), { op: "chat", submissionId: SUB, incarnation: INC, text: "check the view", mode: "queue" });
+  assert.deepEqual(validateRequest("POST", "/api/chat", { submissionId: SUB, incarnation: INC, text: "check the view" }), { op: "chat", submissionId: SUB, incarnation: INC, text: "check the view", mode: "queue", attachments: [] });
   assert.equal(validateRequest("POST", "/api/chat", { submissionId: SUB, incarnation: INC, text: "hi", mode: "steer" }).mode, "steer");
   refuses("bad-request", () => validateRequest("POST", "/api/chat", { submissionId: SUB, incarnation: INC, text: "hi", mode: "bash" }));
   refuses("bad-request", () => validateRequest("POST", "/api/chat", { submissionId: SUB, incarnation: INC, text: "hi", type: "bash" }));
@@ -218,6 +218,45 @@ ok("session controls (MC7): model, thinking, compact and name, each with only it
   }
   assert.equal(phoneCommand("/model", []).code, "desktop-only");
   assert.match(phoneCommand("/model", []).message, /menu: Model/);
+});
+
+ok("session actions (MC9): ids only, never a path", () => {
+  const base = { submissionId: SUB, incarnation: INC };
+  const v = (body) => validateRequest("POST", "/api/sessions", { ...base, ...body });
+  assert.deepEqual(v({ action: "new" }), { op: "sessionAction", ...base, action: "new" });
+  assert.equal(v({ action: "resume", sessionId: "0193-abc" }).sessionId, "0193-abc");
+  assert.equal(v({ action: "fork", entryId: "e2" }).entryId, "e2");
+  assert.equal(v({ action: "reload" }).action, "reload");
+  for (const bad of [{ action: "resume", sessionId: "C:\\x\\s.jsonl" }, { action: "resume", sessionPath: "/x" }, { action: "new", sessionId: "s" }, { action: "delete" }, { action: "fork" }]) {
+    assert.throws(() => v(bad), ProtocolError, JSON.stringify(bad));
+  }
+});
+
+ok("photos and files (MC10): a plain name and base64, the big body only on the upload route", () => {
+  const base = { submissionId: SUB, incarnation: INC };
+  const up = (body, raw = 0) => validateRequest("POST", "/api/upload", { ...base, ...body }, raw);
+  assert.deepEqual(up({ name: " IMG_1.jpg ", data: "QUJD" }), { op: "upload", ...base, name: "IMG_1.jpg", data: "QUJD" });
+  for (const bad of [{ name: "../x.txt", data: "QQ==" }, { name: "C:x", data: "QQ==" }, { name: "..", data: "QQ==" }, { name: "a.txt", data: "not base64!" }, { name: "a.txt", data: "" }, { name: "a.txt", data: "QQ==", path: "/x" }]) {
+    assert.throws(() => up(bad), ProtocolError, JSON.stringify(bad));
+  }
+  assert.doesNotThrow(() => up({ name: "a.txt", data: "QQ==" }, LIMITS.bodyBytes * 10));
+  assert.throws(() => up({ name: "a.txt", data: "QQ==" }, LIMITS.uploadBytes + 1), (e) => e.code === "too-large");
+  assert.throws(() => validateRequest("POST", "/api/chat", { ...base, text: "hi" }, LIMITS.bodyBytes + 1), (e) => e.code === "too-large");
+  const chat = (body) => validateRequest("POST", "/api/chat", { ...base, ...body });
+  const id = `u${"a".repeat(24)}`;
+  assert.deepEqual(chat({ text: "", attachments: [id] }).attachments, [id]);
+  assert.deepEqual(chat({ text: "hi" }).attachments, []);
+  for (const bad of [{ text: "" }, { text: "x", attachments: ["/etc/passwd"] }, { text: "x", attachments: [id, id] }, { text: "x", attachments: Array.from({ length: 11 }, (_, i) => `u${String(i).padStart(24, "0")}`) }]) {
+    assert.throws(() => chat(bad), ProtocolError, JSON.stringify(bad));
+  }
+  assert.equal(phoneCommand("/fork").message, "On the phone, /fork is in the menu: Sessions");
+});
+
+ok("notices (MC11): on with an endpoint, off with nothing", () => {
+  const v = (body) => validateRequest("POST", "/api/push", { submissionId: SUB, ...body });
+  assert.deepEqual(v({ action: "on", endpoint: "https://web.push.apple.com/abc" }), { op: "push", submissionId: SUB, action: "on", endpoint: "https://web.push.apple.com/abc" });
+  assert.deepEqual(v({ action: "off" }), { op: "push", submissionId: SUB, action: "off" });
+  for (const bad of [{ action: "on" }, { action: "off", endpoint: "x" }, { action: "maybe" }, { action: "on", endpoint: "https://x", keys: {} }]) assert.throws(() => v(bad), ProtocolError, JSON.stringify(bad));
 });
 
 console.log(`✓ companion protocol (MC1): ${checks} checks`);

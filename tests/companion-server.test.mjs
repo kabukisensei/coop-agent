@@ -15,6 +15,9 @@ import { CompanionHub, messageText, toolLabel } from "../desktop/lib/companion-h
 import { DeviceStore } from "../desktop/lib/companion-devices.mjs";
 import { createCompanionServer, readCookie } from "../desktop/lib/companion-server.mjs";
 import { LIMITS } from "../desktop/lib/companion-protocol.mjs";
+import { attach, saveUpload } from "../desktop/lib/attachments.mjs";
+import { createPushSender, loadVapid, pushEndpointOk, vapidAuthorization } from "../desktop/lib/companion-push.mjs";
+import { createPublicKey, verify } from "node:crypto";
 import { originFromStatus, tailscaleCommand } from "../desktop/lib/companion-tailscale.mjs";
 
 const temp = mkdtempSync(join(tmpdir(), "coop-companion-"));
@@ -32,6 +35,9 @@ class FakePi extends EventEmitter {
       : command.type === "clear_queue" ? { steering: ["look at the view"], followUp: ["then the report"] }
       : command.type === "get_available_models" ? { models: [{ provider: "openai", id: "gpt-5", name: "GPT-5", contextWindow: 400000 }, { provider: "openai", id: "gpt-5-mini", name: "GPT-5 mini" }] }
       : command.type === "get_available_thinking_levels" ? { levels: ["off", "low", "medium", "high"] }
+      : command.type === "get_fork_messages" ? { messages: [{ entryId: "e1", text: "tidy the view\nmore" }, { entryId: "e2", text: "now the report" }] }
+      : command.type === "fork" ? { text: "now the report", cancelled: false }
+      : command.type === "get_tree" ? this.tree || { tree: [] }
       : command.type === "get_state" ? { model: { provider: "openai", id: "gpt-5", name: "GPT-5" }, thinkingLevel: "medium", sessionFile: "C:\\Users\\aaron\\.coop\\s.jsonl", autoCompactionEnabled: true }
       : command.type === "get_session_stats" ? { userMessages: 3, assistantMessages: 3, toolCalls: 7, tokens: { input: 12000, output: 3400 }, cost: 0.12, contextUsage: { tokens: 15400, contextWindow: 400000, percent: 3.85 } } : {};
     return Promise.resolve({ type: "response", success: true, data });
@@ -58,7 +64,7 @@ const confirmQ = { type: "extension_ui_request", id: "c1", method: "confirm", ti
 const selectQ = { type: "extension_ui_request", id: "s1", method: "select", title: "coop guardrails\nThis looks like a MUTATING MCP action:\n  fabric.x\nRun it?", options: ["Allow once", "Allow fabric edits for this session (deletes still ask; production is blocked)", "Decline"] };
 
 // ---- the hub -------------------------------------------------------------------
-await check("Pi's events become the phone's seven types; thinking and tool output stay behind", () => {
+await check("Pi's events become the phone's types; thinking and tool output stay out of the stream, on tap only (MC8)", () => {
   const { pi, hub } = newHub();
   const types = [];
   hub.on("event", (e) => types.push([e.type, e.data]));
@@ -77,9 +83,16 @@ await check("Pi's events become the phone's seven types; thinking and tool outpu
   pi.emit("event", { type: "agent_end" });
   const text = JSON.stringify(types);
   assert.ok(!text.includes("secret plan") && !text.includes("SELECT secret") && !text.includes("diff with client data") && !text.includes("C:\\\\work"));
-  assert.deepEqual(types.map(([t]) => t), ["status", "message", "message", "message", "tool", "tool", "notice", "status"]);
+  assert.deepEqual(types.map(([t]) => t), ["status", "message", "message", "message", "tool", "tool", "notice", "panel", "status"]);
   assert.deepEqual(types[2][1], { id: types[3][1].id, role: "assistant", text: "One question.", final: false });
-  assert.deepEqual(types[4][1], { id: "t1", name: "edit", label: "report.sql", state: "running" });
+  assert.deepEqual(types[3][1], { id: types[3][1].id, role: "assistant", text: "One question.", final: true, thinking: true });
+  assert.deepEqual(types[4][1], { id: "t1", name: "edit", label: "report.sql", state: "running", detail: true });
+  // Only the phone that taps a line reads what is behind it.
+  assert.equal(hub.detail(`m:${types[3][1].id}`).detail.thinking, "secret plan");
+  const tool = hub.detail("t1".replace(/^/, "t:")).detail;
+  assert.equal(tool.output, "diff with client data");
+  assert.match(tool.args, /SELECT secret/);
+  assert.equal(hub.detail("t:nope").code, "not-found");
   assert.equal(messageText("plain"), "plain");
   assert.equal(toolLabel("bash", { command: "rm -rf x" }), "");
 });
@@ -176,7 +189,7 @@ await check("/ commands (MC6): Pi's listed commands go as typed; built-ins and u
   const snap = await hub.snapshot();
   assert.deepEqual(snap.commands.map((c) => c.name), ["start"]);
   assert.deepEqual(hub.chat("d1", { submissionId: SUB(20), incarnation: hub.incarnation, text: "/start", mode: "steer" }), { ok: true });
-  const refused = hub.chat("d1", { submissionId: SUB(21), incarnation: hub.incarnation, text: "/new", mode: "steer" });
+  const refused = hub.chat("d1", { submissionId: SUB(21), incarnation: hub.incarnation, text: "/hotkeys", mode: "steer" });
   assert.equal(refused.code, "desktop-only");
   assert.match(refused.message, /coop window/);
   assert.equal(hub.chat("d1", { submissionId: SUB(22), incarnation: hub.incarnation, text: "/pets", mode: "steer" }).code, "desktop-only");
@@ -195,6 +208,23 @@ await check("queue (MC6): Pi's queue reaches the phone; Edit queued brings the t
   const back = await hub.dequeue("d1", { submissionId: SUB(30), incarnation: hub.incarnation });
   assert.deepEqual(back, { ok: true, texts: ["look at the view", "then the report"] });
   assert.equal((await hub.dequeue("d1", { submissionId: SUB(31), incarnation: "CCCCCCCCCCCCCCCCCCCCCCCC" })).code, "wrong-session");
+});
+
+await check("panel (MC8): status line, widgets and the todo panel above the prompt", async () => {
+  const { pi, hub } = newHub();
+  const panels = [];
+  hub.on("event", (e) => { if (e.type === "panel") panels.push(e.data); });
+  pi.emit("event", { type: "extension_ui_request", id: "s1", method: "setStatus", statusKey: "std", statusText: "\x1b[32mstandards: bundled\x1b[0m" });
+  pi.emit("event", { type: "extension_ui_request", id: "w1", method: "setWidget", widgetKey: "ctx", widgetLines: ["line 1", "line 2"] });
+  pi.emit("event", { type: "tool_execution_end", toolCallId: "t9", toolName: "todo", result: { content: [], details: { tasks: [{ id: 1, subject: "Read the view", status: "in_progress", activeForm: "Reading" }, { id: 2, subject: "Fix it", status: "pending" }], nextId: 3 } } });
+  const last = panels.at(-1);
+  assert.deepEqual(last.status, ["standards: bundled"], "ANSI colours are dropped");
+  assert.deepEqual(last.widgets, [{ key: "ctx", lines: ["line 1", "line 2"] }]);
+  assert.equal(last.todo[0], "● Todos (0/2)");
+  assert.match(last.todo[1], /Read the view \(Reading\)/);
+  assert.deepEqual((await hub.snapshot()).panel, last);
+  pi.emit("event", { type: "extension_ui_request", id: "s2", method: "setStatus", statusKey: "std" });
+  assert.deepEqual(panels.at(-1).status, []);
 });
 
 await check("session controls (MC7): a listed model, a thinking level, compact when idle, a name; details carry no paths", async () => {
@@ -221,6 +251,103 @@ await check("session controls (MC7): a listed model, a thinking level, compact w
   assert.equal(details.models.length, 2);
   assert.equal(details.stats.toolCalls, 7);
   assert.ok(!JSON.stringify(details).includes(".jsonl"), "the session file path stays on the VM");
+});
+
+await check("sessions (MC9): ids resolve against the window's lists; a session the phone opens keeps access, one the desk opens does not", async () => {
+  const changed = [];
+  const host = {
+    list: () => [{ id: "s-old", path: "C:\\Users\\aaron\\.coop\\sessions\\x\\old.jsonl", name: "Old", title: "tidy", modified: 1, messages: 2 }],
+    exportPath: async () => "C:\\Users\\aaron\\.coop\\sessions\\x\\coop-session-1.html",
+    changed: (action) => changed.push(action),
+  };
+  const { pi, hub } = newHub({ host });
+  hub.accessOn = true;
+  const req = (n, body) => ({ submissionId: SUB(70 + n), incarnation: hub.incarnation, ...body });
+  const listed = await hub.sessions();
+  assert.deepEqual(listed.sessions.map((s) => s.id), ["s-old"]);
+  assert.ok(!JSON.stringify(listed).includes(".jsonl"), "no session path leaves the VM");
+  assert.deepEqual(listed.prompts, [{ entryId: "e1", text: "tidy the view" }, { entryId: "e2", text: "now the report" }]);
+  assert.equal((await hub.sessionAction("d1", req(0, { action: "resume", sessionId: "nope" }))).code, "not-an-option");
+  const before = hub.incarnation;
+  assert.deepEqual(await hub.sessionAction("d1", req(1, { action: "resume", sessionId: "s-old" })), { ok: true });
+  assert.deepEqual(pi.sent.at(-1), { type: "switch_session", sessionPath: "C:\\Users\\aaron\\.coop\\sessions\\x\\old.jsonl" });
+  assert.notEqual(hub.incarnation, before);
+  assert.equal(hub.accessOn, true, "the phone opened it, so it keeps access");
+  assert.deepEqual(changed, ["resume"]);
+  assert.equal((await hub.sessionAction("d1", req(2, { action: "fork", entryId: "e9" }))).code, "not-an-option");
+  assert.deepEqual(await hub.sessionAction("d1", { submissionId: SUB(73), incarnation: hub.incarnation, action: "fork", entryId: "e2" }), { ok: true, text: "now the report" });
+  assert.deepEqual(await hub.sessionAction("d1", { submissionId: SUB(74), incarnation: hub.incarnation, action: "export" }), { ok: true, file: "coop-session-1.html" });
+  pi.emit("event", { type: "agent_start" });
+  assert.equal((await hub.sessionAction("d1", { submissionId: SUB(75), incarnation: hub.incarnation, action: "new" })).code, "busy");
+  pi.emit("event", { type: "agent_end" });
+  hub.renew();
+  assert.equal(hub.accessOn, false, "a session changed at the desk still ends access");
+});
+
+await check("photos and files (MC10): saved under the window's data folder, sent as the window sends attachments", async () => {
+  const uploads = join(temp, "phone-uploads");
+  const folder = join(temp, "project");
+  mkdirSync(join(folder, "views"), { recursive: true });
+  const host = {
+    attach: (name, bytes) => attach(saveUpload(uploads, name, bytes), { cwd: folder, store: join(temp, "extracts"), node: process.execPath, pdfjsDir: "" }),
+    files: async (q) => ["views/", "views/sales.sql", "README.md"].filter((p) => p.includes(q)),
+  };
+  const { pi, hub } = newHub({ host });
+  const req = (n, body) => ({ submissionId: SUB(80 + n), incarnation: hub.incarnation, ...body });
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  const photo = await hub.upload("d1", req(0, { name: "IMG_0001.png", data: png.toString("base64") }));
+  assert.equal(photo.ok, true);
+  assert.match(photo.file.id, /^u[0-9a-f]{24}$/);
+  assert.equal(photo.file.kind, "image");
+  assert.ok(!JSON.stringify(photo).includes(uploads), "no VM path goes back to the phone");
+  const notes = await hub.upload("d1", req(1, { name: "notes.sql", data: Buffer.from("select 1").toString("base64") }));
+  assert.equal(notes.file.kind, "text");
+  assert.equal((await hub.upload("d1", req(2, { name: "old.doc", data: Buffer.from("x").toString("base64") }))).code, "not-an-option");
+  // Another device cannot send this phone's files.
+  assert.equal(hub.chat("d2", req(3, { text: "look", mode: "queue", attachments: [photo.file.id] })).code, "not-found");
+  assert.deepEqual(hub.chat("d1", req(4, { text: "what is this?", mode: "queue", attachments: [photo.file.id, notes.file.id] })), { ok: true });
+  const sent = pi.sent.at(-1);
+  assert.equal(sent.type, "prompt");
+  assert.match(sent.message, /^what is this\?\n\nAttached files \(read each one with the read tool before answering\):\n- notes\.sql: /);
+  assert.equal(sent.images.length, 1);
+  assert.equal(sent.images[0].mimeType, "image/png");
+  assert.equal(hub.chat("d1", req(5, { text: "", mode: "queue", attachments: [photo.file.id] })).code, "not-found", "a file goes once");
+  pi.emit("event", { type: "message_start", message: { role: "user", content: [{ type: "image", data: "x", mimeType: "image/png" }] } });
+  assert.equal(hub.buffer.at(-1).data.images, 1, "an image-only message still shows, as a count");
+  assert.deepEqual((await hub.files("sales")).files, ["views/sales.sql"]);
+  assert.deepEqual((await newHub().hub.files("x")).files, [], "no host, no list");
+});
+
+await check("the session tree (MC9): prompts and answers as indented rows, tool output left on the VM; a phone reload keeps access", async () => {
+  const reloads = [];
+  const { pi, hub } = newHub({ host: { list: () => [], exportPath: async () => "", changed: () => {}, reload: () => reloads.push(1) } });
+  const node = (id, message, children = [], label) => ({ entry: { id, type: "message", message }, children, ...(label ? { label } : {}) });
+  pi.tree = { leafId: "a2", tree: [node("u1", { role: "user", content: "tidy the view" }, [
+    node("a1", { role: "assistant", content: [{ type: "toolCall", name: "read" }] }, [
+      node("t1", { role: "toolResult", toolName: "read", content: [{ type: "text", text: "SECRET ROWS" }] }, [
+        node("u2", { role: "user", content: "now the report" }, [node("a2", { role: "assistant", content: [{ type: "text", text: "Done." }] })], "checkpoint"),
+        node("u3", { role: "user", content: "or the model" }),
+      ]),
+    ]),
+  ])] };
+  const tree = await hub.tree();
+  assert.deepEqual(tree.rows.map((r) => [r.depth, r.role, r.text, r.entryId || "", r.current]), [
+    [0, "user", "tidy the view", "u1", false], [0, "assistant", "Runs read", "", false],
+    [1, "user", "now the report", "u2", false], [1, "assistant", "Done.", "", true], [1, "user", "or the model", "u3", false],
+  ]);
+  assert.equal(tree.rows[2].label, "checkpoint");
+  assert.ok(!JSON.stringify(tree).includes("SECRET"), "tool output stays on the VM");
+  hub.accessOn = true;
+  assert.deepEqual(await hub.sessionAction("d1", { submissionId: SUB(95), incarnation: hub.incarnation, action: "reload" }), { ok: true });
+  assert.equal(reloads.length, 1);
+  pi.exited = true;
+  pi.emit("exit", {});
+  assert.equal(hub.accessOn, true, "the old coop exiting during the phone's reload keeps access");
+  const next = new FakePi();
+  hub.attach(next);
+  assert.equal(hub.accessOn, true, "the restarted coop keeps the phone's access");
+  hub.attach(new FakePi());
+  assert.equal(hub.accessOn, false, "a later restart at the desk ends it");
 });
 
 await check("access needs a client in the project file and a running Pi", () => {
@@ -263,6 +390,46 @@ await check("pairing codes work once, expire, die after five wrong tries; secret
   assert.deepEqual(new DeviceStore(file).list().map((d) => d.name), ["Aaron's phone"]);
   store.revoke(device.id);
   assert.deepEqual(store.list(), []);
+});
+
+await check("notices (MC11): known push services only, a VAPID key kept per user, an ES256 token, and no payload", async () => {
+  for (const ok of ["https://web.push.apple.com/QGx", "https://fcm.googleapis.com/fcm/send/abc", "https://updates.push.services.mozilla.com/wpush/v2/x"]) assert.ok(pushEndpointOk(ok), ok);
+  for (const bad of ["http://web.push.apple.com/x", "https://evil.example/web.push.apple.com", "https://fcm.googleapis.com:8443/x", "https://127.0.0.1/x", "https://a@fcm.googleapis.com/x", "not a url"]) assert.ok(!pushEndpointOk(bad), bad);
+  const file = join(temp, "push", "push.json");
+  const keys = loadVapid(file);
+  assert.equal(loadVapid(file).publicKey, keys.publicKey, "the key pair is kept");
+  assert.equal(Buffer.from(keys.publicKey, "base64url").length, 65);
+  const auth = vapidAuthorization("https://web.push.apple.com/QGx", keys, "https://coop-vm.example-tailnet.ts.net", 1_000_000_000_000);
+  const [, token, k] = /^vapid t=([^,]+), k=(.+)$/.exec(auth);
+  assert.equal(k, keys.publicKey);
+  const [h, c, sig] = token.split(".");
+  const claims = JSON.parse(Buffer.from(c, "base64url").toString());
+  assert.deepEqual(claims, { aud: "https://web.push.apple.com", exp: 1_000_000_000 + 12 * 3600, sub: "https://coop-vm.example-tailnet.ts.net" });
+  const raw = Buffer.from(keys.publicKey, "base64url");
+  const pub = createPublicKey({ key: { kty: "EC", crv: "P-256", x: raw.subarray(1, 33).toString("base64url"), y: raw.subarray(33).toString("base64url") }, format: "jwk" });
+  assert.ok(verify("sha256", Buffer.from(`${h}.${c}`), { key: pub, dsaEncoding: "ieee-p1363" }, Buffer.from(sig, "base64url")));
+  const requests = [];
+  const fakeRequest = (url, options, onResponse) => {
+    const req = new EventEmitter();
+    req.end = (body) => { requests.push({ url, options, body }); onResponse({ statusCode: 201, resume() {} }); };
+    return req;
+  };
+  const sender = createPushSender({ keys, subject: "https://coop-vm.example-tailnet.ts.net", request: fakeRequest });
+  assert.equal(await sender.send("https://fcm.googleapis.com/fcm/send/abc"), 201);
+  assert.equal(await sender.send("https://evil.example/x"), 0);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].options.headers["Content-Length"], "0");
+  assert.equal(requests[0].body, undefined, "a notice carries nothing");
+});
+
+await check("notices (MC11): a question or a finished turn calls for attention", () => {
+  const { pi, hub } = newHub();
+  const seen = [];
+  hub.on("attention", (e) => seen.push(e.kind));
+  pi.emit("event", { type: "agent_start" });
+  pi.emit("event", { type: "agent_end" });
+  pi.emit("event", confirmQ);
+  assert.deepEqual(seen, ["done", "question"]);
 });
 
 // ---- the server, driven like the phone page --------------------------------------
@@ -313,7 +480,11 @@ const { pi, hub } = newHub();
 let activeHub = hub;
 const store = new DeviceStore(join(temp, "store2", "devices.json"));
 const audit = [];
-const companion = createCompanionServer({ store, active: () => activeHub, origin: ORIGIN, webRoot, audit: (e) => audit.push(e), port: 0 });
+const pushed = [];
+let pushStatus = 201;
+const push = { publicKey: "BPUBLIC", send: async (endpoint) => { pushed.push(endpoint); return pushStatus; } };
+let clock = 5_000_000;
+const companion = createCompanionServer({ store, active: () => activeHub, origin: ORIGIN, webRoot, audit: (e) => audit.push(e), port: 0, push, now: () => clock++ });
 await companion.listen();
 const port = companion.server.address().port;
 // The test listens on an OS-chosen port; requests name the tailnet host.
@@ -385,6 +556,53 @@ try {
     assert.equal((await call(port, "POST", "/api/chat", { cookie, body })).status, 200);
     assert.equal(pi.sent.filter((c) => c.message === "what changed?").length, 1);
     assert.equal((await call(port, "POST", "/api/chat", { cookie, body: { ...body, submissionId: SUB(22), text: "/new" } })).json.code, "desktop-only");
+  });
+
+  await check("server: an upload is read only from a paired phone, and its file goes with the next chat (MC10)", async () => {
+    const big = await call(port, "POST", "/api/upload", { body: { submissionId: SUB(90), incarnation: hub.incarnation, name: "a.txt", data: "QQ==" } });
+    assert.equal(big.json.code, "not-paired", "no cookie, no body read");
+    const files = [];
+    hub.host = { attach: async (name, bytes) => { files.push([name, bytes.toString()]); return { kind: "text", label: "text", name, size: bytes.length, ref: name }; }, files: async () => ["views/sales.sql"] };
+    try {
+      const up = await call(port, "POST", "/api/upload", { cookie, body: { submissionId: SUB(91), incarnation: hub.incarnation, name: "a.txt", data: Buffer.from("hello").toString("base64") } });
+      assert.equal(up.status, 200);
+      assert.deepEqual(files, [["a.txt", "hello"]]);
+      assert.equal((await call(port, "POST", "/api/upload", { cookie, body: { submissionId: SUB(92), incarnation: hub.incarnation, name: "../a.txt", data: "QQ==" } })).json.code, "bad-request");
+      const chat = await call(port, "POST", "/api/chat", { cookie, body: { submissionId: SUB(93), incarnation: hub.incarnation, text: "", attachments: [up.json.file.id] } });
+      assert.equal(chat.status, 200);
+      assert.match(pi.sent.at(-1).message, /- a\.txt: a\.txt$/);
+      const listed = await call(port, "GET", "/api/files?q=sales", { cookie });
+      assert.deepEqual(listed.json.files, ["views/sales.sql"]);
+    } finally { hub.host = null; }
+  });
+
+  await check("server: notices go to a closed page only, a minute apart, and a dropped endpoint is forgotten (MC11)", async () => {
+    assert.deepEqual((await call(port, "GET", "/api/push", { cookie })).json, { ok: true, available: true, publicKey: "BPUBLIC", on: false });
+    assert.equal((await call(port, "POST", "/api/push", { cookie, body: { submissionId: SUB(96), action: "on", endpoint: "https://evil.example/x" } })).json.code, "not-an-option");
+    assert.equal((await call(port, "POST", "/api/push", { cookie, body: { submissionId: SUB(97), action: "on", endpoint: "https://web.push.apple.com/QGx" } })).status, 200);
+    assert.equal((await call(port, "GET", "/api/push", { cookie })).json.on, true);
+    const open = await stream(port, cookie);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.deepEqual(await companion.nudge(hub), [], "the page is open: no notice");
+    open.close();
+    await new Promise((r) => setTimeout(r, 50));
+    assert.deepEqual(await companion.nudge(hub), [201]);
+    assert.deepEqual(await companion.nudge(hub), [], "one a minute at most");
+    clock += 61_000;
+    pushStatus = 410;
+    assert.deepEqual(await companion.nudge(hub), [410]);
+    assert.equal((await call(port, "GET", "/api/push", { cookie })).json.on, false, "a gone subscription is dropped");
+    assert.deepEqual(pushed, ["https://web.push.apple.com/QGx", "https://web.push.apple.com/QGx"]);
+    pushStatus = 201;
+  });
+
+  await check("server: a tapped tool line reads its detail; a malformed id is refused (MC8)", async () => {
+    pi.emit("event", { type: "tool_execution_start", toolCallId: "call_7", toolName: "read", args: { path: "a.sql" } });
+    const read = await call(port, "GET", "/api/detail?id=t%3Acall_7", { cookie });
+    assert.equal(read.status, 200);
+    assert.equal(read.json.detail.name, "read");
+    assert.equal((await call(port, "GET", "/api/detail?id=..%2Fetc", { cookie })).json.code, "bad-request");
+    assert.equal((await call(port, "GET", "/api/detail?id=t%3Agone", { cookie })).status, 404);
   });
 
   await check("server: the session sheets read details and set the thinking level (MC7)", async () => {
@@ -473,7 +691,7 @@ await check("page: every file the page names ships, from this origin only, with 
   }
   assert.ok(!/<script(?![^>]*src=)/i.test(html) && !/ on[a-z]+=/i.test(html) && !/ style=/i.test(html), "no inline script, handler or style (the CSP forbids them)");
   const js = readFileSync(join(pageDir, "app.js"), "utf8");
-  for (const [, ref] of js.matchAll(/from "\.\/(shared\/[^"]+)"/g)) assert.ok(["shared/dialogs.mjs", "shared/markdown.mjs"].includes(ref));
+  for (const [, ref] of js.matchAll(/from "\.\/(shared\/[^"]+)"/g)) assert.ok(["shared/dialogs.mjs", "shared/markdown.mjs", "shared/attach-note.mjs"].includes(ref));
   assert.ok(!/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function/.test(js), "VM text never becomes HTML");
   assert.ok(!/localStorage\.setItem\((?!"coop-theme")/.test(js), "only the theme is kept on the phone");
   const sw = readFileSync(join(pageDir, "sw.js"), "utf8");

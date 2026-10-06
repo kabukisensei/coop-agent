@@ -26,7 +26,7 @@ import { listChanges, fileDiff } from "./lib/changes.mjs";
 import { readStandards, readSnapshot, readNote } from "./lib/standards-view.mjs";
 import { getTeamProject, loadProject, previewProject, saveProject, shareProject, teamStatus } from "./lib/project-form.mjs";
 import { DocsSetupRun, AnswerError, docsLocation, listDocsPages, pickedPathAnswer, readDocsPage, runDocsBuild } from "./lib/docs-setup.mjs";
-import { attach, forget, pruneStore, findPdfjs, LIMITS as ATTACH_LIMITS } from "./lib/attachments.mjs";
+import { attach, forget, pruneStore, saveUpload, findPdfjs, AttachError, LIMITS as ATTACH_LIMITS } from "./lib/attachments.mjs";
 import { loadSplash } from "./lib/splash.mjs";
 import { vibesDir, loadVibes, vibeSets, userName, fillVibe, pickVibe } from "./lib/vibes.mjs";
 import { bootstrapProcess, doctorReport, findCoop, folderArgument, packagedPaths } from "./lib/bootstrap.mjs";
@@ -37,6 +37,7 @@ import { CompanionHub } from "./lib/companion-hub.mjs";
 import { DeviceStore } from "./lib/companion-devices.mjs";
 import { createCompanionServer, DEFAULT_PORT } from "./lib/companion-server.mjs";
 import { tailnetOrigin } from "./lib/companion-tailscale.mjs";
+import { createPushSender, loadVapid } from "./lib/companion-push.mjs";
 import { profileDir } from "../lib/paths.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -93,6 +94,9 @@ applyNativeTheme(settings.theme);
 // week-old extract is of no use to anyone, so the store is pruned at start.
 const attachmentStore = join(app.getPath("userData"), "attachments");
 pruneStore(attachmentStore);
+// Photos and files the phone sends (MC10) are saved here, never in the project.
+const phoneUploadStore = join(app.getPath("userData"), "phone-uploads");
+pruneStore(phoneUploadStore);
 // pdf.js is the window runtime's second package, next to Electron; the
 // installed package carries it unpacked beside its asar.
 const pdfjsDir = PACKAGED ? UNPACKED.pdfjsDir : findPdfjs(process.execPath);
@@ -360,10 +364,12 @@ handle("coop:answer", (state, id, answer) => {
 handle("coop:sessions", (state) => ({ success: true, data: listSessions({ ...process.env, ...state.spec.env }, state.spec.cwd) }));
 
 // @ mentions: the folder's file list, read once and kept for 20 seconds.
-handle("coop:files", async (state, query) => {
+async function folderFiles(state, query) {
   if (!state.files || Date.now() - state.files.at > 20_000) state.files = { at: Date.now(), paths: await listFiles(state.spec.cwd) };
-  return { success: true, data: rankFiles(state.files.paths, String(query || "").slice(0, 200)) };
-});
+  return rankFiles(state.files.paths, String(query || "").slice(0, 200));
+}
+
+handle("coop:files", async (state, query) => ({ success: true, data: await folderFiles(state, query) }));
 
 handle("coop:switch-session", async (state, path) => {
   if (!isSessionPath({ ...process.env, ...state.spec.env }, path)) return { success: false, error: "that is not one of coop's saved sessions" };
@@ -698,10 +704,9 @@ handle("coop:pick-files", async (state) => {
   return { success: true, data: result.filePaths.slice(0, ATTACH_LIMITS.perMessage) };
 });
 
-handle("coop:attach-file", async (state, path) => ({
-  success: true,
-  data: await attach(String(path || ""), { cwd: state.spec.cwd, store: attachmentStore, node: state.spec.node, pdfjsDir, script: UNPACKED.pdfScript || undefined, env: { ...process.env, ...state.spec.env } }),
-}));
+const attachOptions = (state) => ({ cwd: state.spec.cwd, store: attachmentStore, node: state.spec.node, pdfjsDir, script: UNPACKED.pdfScript || undefined, env: { ...process.env, ...state.spec.env } });
+
+handle("coop:attach-file", async (state, path) => ({ success: true, data: await attach(String(path || ""), attachOptions(state)) }));
 
 handle("coop:attachment-forget", (state, id) => ({ success: forget(attachmentStore, String(id || "")) }));
 
@@ -749,15 +754,54 @@ function activeHub() {
 }
 
 function newHub(state) {
-  const hub = new CompanionHub({ windowsUser, client: describeProject(state.spec.cwd).client });
+  const env = () => ({ ...process.env, ...state.spec.env });
+  const hub = new CompanionHub({
+    windowsUser,
+    client: describeProject(state.spec.cwd).client,
+    // Session actions from the phone (MC9): the same lists and checks as the window's own.
+    host: {
+      list: () => listSessions(env(), state.spec.cwd).filter((s) => isSessionPath(env(), s.path)),
+      exportPath: async () => {
+        const file = await currentSessionFile(state);
+        if (!file || !existsSync(file)) return "";
+        const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
+        return join(dirname(file), `coop-session-${stamp}.html`);
+      },
+      changed: (action) => send(state, "coop:refresh", { by: "phone", action }),
+      // Photos and files from the phone (MC10): saved, then attached as the window attaches a file.
+      attach: async (name, bytes) => {
+        if (bytes.length > ATTACH_LIMITS.document) throw new AttachError(`${name} is over ${Math.round(ATTACH_LIMITS.document / 1024 / 1024)} MB; files up to that size can be attached.`);
+        try {
+          return await attach(saveUpload(phoneUploadStore, name, bytes), attachOptions(state));
+        } catch (error) {
+          throw error instanceof AttachError ? error : new Error(`${name} could not be saved on the computer.`);
+        }
+      },
+      files: (query) => folderFiles(state, query),
+      // /reload from the phone (MC9): the window restarts coop as its own /reload does.
+      reload: () => send(state, "coop:refresh", { by: "phone", action: "reload" }),
+    },
+  });
   // The phone answered (or Pi's clock ran out): the desktop card closes.
   hub.on("resolved", ({ piId, by }) => { if (by !== "desktop") send(state, "coop:dialog-closed", { id: piId }); });
+  // coop asked a question or finished a turn: a closed phone page gets a notice (MC11).
+  hub.on("attention", () => { if (companion.server) companion.server.nudge(hub).catch(() => {}); });
   hub.on("access", ({ on, reason }) => {
     companionAudit({ kind: on ? "access-on" : "access-off", client: hub.client, reason });
     if (!on && reason && reason !== "switched") send(state, "pi:notice", { level: "info", message: "Phone access is off for this window." });
     installMenu();
   });
   return hub;
+}
+
+// Notices (MC11): one VAPID key pair per Windows user, beside the device list.
+// Without it the phone's Notifications sheet says notices are not set up.
+function companionPush(origin) {
+  try {
+    return createPushSender({ keys: loadVapid(join(profileDir(process.env), "companion", "push.json")), subject: origin });
+  } catch {
+    return null;
+  }
 }
 
 async function startCompanion() {
@@ -774,10 +818,12 @@ async function startCompanion() {
         shared: {
           "/shared/dialogs.mjs": join(RENDERER, "dialogs.mjs"),
           "/shared/markdown.mjs": join(RENDERER, "markdown.mjs"),
+          "/shared/attach-note.mjs": join(RENDERER, "attach-note.mjs"),
           "/shared/themes.css": join(RENDERER, "styles", "themes.css"),
         },
         audit: companionAudit,
         port: DEFAULT_PORT,
+        push: companionPush(origin),
       });
       await server.listen();
       companion.server = server;

@@ -33,6 +33,8 @@
       <div class="drawer-cap">Session</div>
       <ul class="drawer-list">
         <li><button id="menu-commands" class="drawer-item" type="button"><span class="item-name">Commands</span><span class="item-detail">coop's / commands, skills and prompts</span></button></li>
+        <li><button id="menu-sessions" class="drawer-item" type="button"><span class="item-name">Sessions</span><span class="item-detail">New, open a saved one, fork, clone, export</span></button></li>
+        <li><button id="menu-find" class="drawer-item" type="button"><span class="item-name">Find</span><span class="item-detail">Search the conversation, jump to or reuse a prompt</span></button></li>
         <li><button id="menu-model" class="drawer-item" type="button"><span class="item-name">Model</span><span class="item-detail" id="menu-model-now">Choose the model coop uses</span></button></li>
         <li><button id="menu-thinking" class="drawer-item" type="button"><span class="item-name">Thinking</span><span class="item-detail" id="menu-thinking-now">How hard the model thinks</span></button></li>
         <li><button id="menu-compact" class="drawer-item" type="button"><span class="item-name">Compact</span><span class="item-detail">Summarize the conversation to free context</span></button></li>
@@ -41,6 +43,7 @@
       </ul>
       <div class="drawer-cap">This phone</div>
       <ul class="drawer-list">
+        <li><button id="menu-notices" class="drawer-item" type="button"><span class="item-name">Notices</span><span class="item-detail">When coop needs you and this page is closed</span></button></li>
         <li><button id="signout" class="drawer-item danger" type="button"><span class="item-name">Sign this phone out</span><span class="item-detail">Pair it again from the coop window</span></button></li>
       </ul>
     </div>
@@ -88,11 +91,18 @@
   </main>
 
   <footer id="composer" class="composer" hidden>
+    <div id="panel" class="panel" hidden>
+      <button id="panel-toggle" class="panel-head" type="button" aria-expanded="true" aria-controls="panel-body"><span id="panel-status" class="panel-status"></span><span class="panel-fold" aria-hidden="true"></span></button>
+      <div id="panel-body" class="panel-body"></div>
+    </div>
     <div id="queue" class="queue" hidden></div>
-    <ul id="completions" class="completions" role="listbox" aria-label="Commands" hidden></ul>
+    <ul id="completions" class="completions" role="listbox" aria-label="Commands and files" hidden></ul>
+    <ul id="attachments" class="attachments" aria-label="Attached files" hidden></ul>
+    <input id="file-pick" type="file" multiple hidden>
     <label class="sr-only" for="message">Message coop</label>
-    <textarea id="message" rows="2" maxlength="16000" placeholder="Message coop, or / for commands"></textarea>
+    <textarea id="message" rows="2" maxlength="16000" placeholder="Message coop, / for commands, @ for files"></textarea>
     <div class="actions">
+      <button id="attach" class="btn attach" type="button" aria-label="Attach a photo or file">Attach</button>
       <button id="stop" class="btn danger" type="button" hidden>Stop</button>
       <button id="queue-send" class="btn" type="button" hidden>Queue</button>
       <button id="send" class="btn primary" type="button">Send</button>

@@ -7,12 +7,14 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize, sep } from "node:path";
-import { CODES, LIMITS, ProtocolError, checkGrant, checkOrigin, validateRequest } from "./companion-protocol.mjs";
+import { pushEndpointOk } from "./companion-push.mjs";
+import { CODES, DETAIL_ID, LIMITS, ProtocolError, ROUTES, bodyLimit, checkGrant, checkOrigin, validateRequest } from "./companion-protocol.mjs";
 
 export const DEFAULT_PORT = 47821;
 export const COOKIE = "coop_device";
 export const PAGE_CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 const HEARTBEAT_MS = 25_000;
+const NOTICE_GAP_MS = 60_000;
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json", ".webmanifest": "application/manifest+json", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon", ".woff2": "font/woff2" };
 const SECURITY_HEADERS = { "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "X-Frame-Options": "DENY", "Cache-Control": "no-store" };
 
@@ -47,13 +49,15 @@ class Limiter {
  * is on (or null); `origin` is the companion's public origin, the Tailscale name
  * (`https://<vm>.<tailnet>.ts.net`); `audit(entry)` writes one log line.
  */
-export function createCompanionServer({ store, active, origin, webRoot = "", shared = {}, audit = () => {}, now = Date.now, port = DEFAULT_PORT }) {
+export function createCompanionServer({ store, active, origin, webRoot = "", shared = {}, audit = () => {}, now = Date.now, port = DEFAULT_PORT, push = null }) {
   const allowedHosts = new Set([new URL(origin).host, `127.0.0.1:${port}`, `localhost:${port}`]);
   const requests = new Limiter(LIMITS.requestsPerMinute, 60_000, now);
   const answers = new Limiter(LIMITS.answersPerMinute, 60_000, now);
   const pairs = new Limiter(LIMITS.pairFailuresPerHour, 3600_000, now);
   /** @type {Map<string, Set<import("node:http").ServerResponse>>} open streams by device */
   const streams = new Map();
+  // When each device last got a notice (MC11): one a minute at most.
+  const lastNotice = new Map();
 
   function sendJson(res, status, body, headers = {}) {
     res.writeHead(status, { ...SECURITY_HEADERS, "Content-Type": "application/json", ...headers });
@@ -65,12 +69,12 @@ export function createCompanionServer({ store, active, origin, webRoot = "", sha
     sendJson(res, CODES[code] || 400, { ok: false, code, message: message || code });
   }
 
-  async function readBody(req) {
+  async function readBody(req, limit) {
     const chunks = [];
     let size = 0;
     for await (const chunk of req) {
       size += chunk.length;
-      if (size > LIMITS.bodyBytes) throw new ProtocolError("too-large");
+      if (size > limit) throw new ProtocolError("too-large");
       chunks.push(chunk);
     }
     const text = Buffer.concat(chunks).toString("utf8");
@@ -137,7 +141,14 @@ export function createCompanionServer({ store, active, origin, webRoot = "", sha
     let request;
     try {
       checkOrigin(req.method, req.headers, origin);
-      const { body, size } = req.method === "GET" ? { body: null, size: 0 } : await readBody(req);
+      const limit = bodyLimit(ROUTES[`${req.method} ${path}`]);
+      // A large body is read only from a paired device (MC10's uploads).
+      if (limit > LIMITS.bodyBytes) {
+        const early = readCookie(req.headers.cookie);
+        if (!early || !store.get(early.id)) throw new ProtocolError("not-paired");
+        if (Number(req.headers["content-length"] || 0) > limit) throw new ProtocolError("too-large");
+      }
+      const { body, size } = req.method === "GET" ? { body: null, size: 0 } : await readBody(req, limit);
       request = validateRequest(req.method, path, body, size);
     } catch (error) {
       if (error instanceof ProtocolError) return refuse(res, error.code, error.message);
@@ -182,10 +193,49 @@ export function createCompanionServer({ store, active, origin, webRoot = "", sha
         audit({ kind: "chat", device: device.id, outcome: result.ok ? "sent" : result.code });
         return result.ok ? sendJson(res, 200, { ok: true }) : refuse(res, result.code, result.message, device.id);
       }
+      case "upload": {
+        const result = await hub.upload(device.id, request);
+        audit({ kind: "upload", device: device.id, outcome: result.ok ? "saved" : result.code });
+        return result.ok ? sendJson(res, 200, { ok: true, file: result.file }) : refuse(res, result.code, result.message, device.id);
+      }
+      case "files": {
+        const result = await hub.files(String(query.get("q") || "").slice(0, 200));
+        return result.ok ? sendJson(res, 200, { ok: true, files: result.files }) : refuse(res, result.code, undefined, device.id);
+      }
       case "dequeue": {
         const result = await hub.dequeue(device.id, request);
         audit({ kind: "dequeue", device: device.id, outcome: result.ok ? "returned" : result.code });
         return result.ok ? sendJson(res, 200, { ok: true, texts: result.texts }) : refuse(res, result.code, undefined, device.id);
+      }
+      case "detail": {
+        const id = String(query.get("id") || "");
+        if (!DETAIL_ID.test(id)) return refuse(res, "bad-request", "id is malformed", device.id);
+        const result = hub.detail(id);
+        return result.ok ? sendJson(res, 200, { ok: true, detail: result.detail }) : refuse(res, result.code, result.message, device.id);
+      }
+      case "sessions": {
+        const result = await hub.sessions();
+        return result.ok ? sendJson(res, 200, { ok: true, sessions: result.sessions, prompts: result.prompts }) : refuse(res, result.code, undefined, device.id);
+      }
+      case "pushState":
+        return sendJson(res, 200, { ok: true, available: Boolean(push), publicKey: push ? push.publicKey : "", on: Boolean(device.push) });
+      case "push": {
+        if (!push) return refuse(res, "desktop-only", "notices are not set up in this window", device.id);
+        if (request.action === "on" && !pushEndpointOk(request.endpoint)) return refuse(res, "not-an-option", "that is not Apple's, Google's or Mozilla's push service", device.id);
+        store.setPush(device.id, request.action === "on" ? request.endpoint : null);
+        audit({ kind: "notices", device: device.id, outcome: request.action });
+        return sendJson(res, 200, { ok: true, on: request.action === "on" });
+      }
+      case "tree": {
+        const result = await hub.tree();
+        return result.ok ? sendJson(res, 200, { ok: true, rows: result.rows, truncated: result.truncated }) : refuse(res, result.code, undefined, device.id);
+      }
+      case "sessionAction": {
+        const result = await hub.sessionAction(device.id, request);
+        audit({ kind: "session", device: device.id, action: request.action, outcome: result.ok ? "done" : result.code });
+        if (!result.ok) return refuse(res, result.code, result.message, device.id);
+        const { ok, ...rest } = result;
+        return sendJson(res, 200, { ok: true, ...rest });
       }
       case "details": {
         const result = await hub.details();
@@ -238,6 +288,27 @@ export function createCompanionServer({ store, active, origin, webRoot = "", sha
     close() {
       closeStreams("*");
       return new Promise((resolve) => server.close(() => resolve()));
+    },
+    /**
+     * coop needs someone (MC11): each phone paired on this window's user and
+     * client with notices on, access on and its page closed gets one empty
+     * push, a minute apart at most. Resolves when the sends settle.
+     */
+    nudge(hub) {
+      if (!push || !hub || !hub.accessOn) return Promise.resolve([]);
+      const sends = [];
+      for (const device of store.devices || []) {
+        if (device.revokedAt || !device.push || device.windowsUser !== hub.windowsUser || device.client !== hub.client || streams.has(device.id)) continue;
+        if (now() - (lastNotice.get(device.id) || 0) < NOTICE_GAP_MS) continue;
+        lastNotice.set(device.id, now());
+        sends.push(push.send(device.push.endpoint).then((status) => {
+          // The phone unsubscribed or the browser dropped it: forget the endpoint.
+          if (status === 404 || status === 410) store.setPush(device.id, null);
+          audit({ kind: "notice", device: device.id, outcome: String(status) });
+          return status;
+        }));
+      }
+      return Promise.all(sends);
     },
     /** End a removed device's streams at once. */
     revoked(ids) { for (const id of ids) closeStreams(id); },

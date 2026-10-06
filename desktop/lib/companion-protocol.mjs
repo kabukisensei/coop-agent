@@ -15,6 +15,11 @@ export const PROTOCOL_VERSION = 1;
 
 export const LIMITS = Object.freeze({
   bodyBytes: 96 * 1024,
+  // One photo or file from the phone (MC10), base64 in JSON: the window's own
+  // 25 MB document limit plus base64's third.
+  uploadBytes: 34 * 1024 * 1024,
+  uploadNameChars: 200,
+  uploadsPerMessage: 10,
   chatChars: 16_000,
   answerChars: 64_000,
   deviceNameChars: 60,
@@ -35,10 +40,18 @@ export const ROUTES = Object.freeze({
   "GET /api/snapshot": "snapshot",
   "GET /api/events": "events",
   "POST /api/chat": "chat",
+  "POST /api/upload": "upload",
+  "GET /api/files": "files",
   "POST /api/stop": "stop",
   "POST /api/dequeue": "dequeue",
   "POST /api/answer": "answer",
   "GET /api/session": "details",
+  "GET /api/detail": "detail",
+  "GET /api/sessions": "sessions",
+  "GET /api/tree": "tree",
+  "GET /api/push": "pushState",
+  "POST /api/push": "push",
+  "POST /api/sessions": "sessionAction",
   "POST /api/session": "control",
   "POST /api/logout": "logout",
 });
@@ -81,6 +94,11 @@ const SUBMISSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 const INCARNATION = /^[A-Za-z0-9_-]{16,64}$/;
 const QUESTION_ID = /^q[0-9a-f]{24}$/;
 const DIGEST = /^[0-9a-f]{64}$/;
+// A saved session's id or a prompt's entry id, as Pi writes them (MC9).
+const ENTRY_ID = /^[A-Za-z0-9_.:-]{1,200}$/;
+// A photo or file the phone uploaded, named in its chat (MC10).
+export const UPLOAD_ID = /^u[0-9a-f]{24}$/;
+const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 // Crockford base32 without I, L, O, U: read off the window and typed on a phone.
 const PAIRING_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const PAIRING_CODE = /^[0-9A-HJKMNP-TV-Z]{8}$/;
@@ -116,6 +134,11 @@ export function checkOrigin(method, headers, allowedOrigin) {
   if (!/^application\/json(;|$)/i.test(String(get("content-type") || ""))) throw new ProtocolError("bad-request", "body must be JSON");
 }
 
+/** The largest body a route takes: an upload carries a file, the rest are small. */
+export function bodyLimit(op) {
+  return op === "upload" ? LIMITS.uploadBytes : LIMITS.bodyBytes;
+}
+
 /**
  * One request, rebuilt field by field. `body` is the parsed JSON (null for GET);
  * `rawBytes` its size before parsing. Returns `{ op, ...fields }`.
@@ -123,7 +146,7 @@ export function checkOrigin(method, headers, allowedOrigin) {
 export function validateRequest(method, path, body, rawBytes = 0) {
   const op = ROUTES[`${method} ${path}`];
   if (!op) throw new ProtocolError("not-found");
-  if (rawBytes > LIMITS.bodyBytes) throw new ProtocolError("too-large");
+  if (rawBytes > bodyLimit(op)) throw new ProtocolError("too-large");
   if (method === "GET") return { op };
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new ProtocolError("bad-request", "body missing");
   switch (op) {
@@ -134,14 +157,38 @@ export function validateRequest(method, path, body, rawBytes = 0) {
       return { op, code, deviceName: plainText(body.deviceName, "device name", LIMITS.deviceNameChars).trim() };
     }
     case "chat": {
-      onlyKeys(body, ["submissionId", "incarnation", "text", "mode"]);
-      const text = plainText(body.text, "message", LIMITS.chatChars);
+      onlyKeys(body, ["submissionId", "incarnation", "text", "mode", "attachments"]);
+      // Uploaded photos and files (MC10) are named by id; the hub holds the files.
+      const attachments = body.attachments === undefined ? [] : body.attachments;
+      if (!Array.isArray(attachments) || attachments.length > LIMITS.uploadsPerMessage) throw new ProtocolError("bad-request", `attachments is a list of at most ${LIMITS.uploadsPerMessage}`);
+      for (const id of attachments) if (typeof id !== "string" || !UPLOAD_ID.test(id)) throw new ProtocolError("bad-request", "attachment id is malformed");
+      if (new Set(attachments).size !== attachments.length) throw new ProtocolError("bad-request", "an attachment is named twice");
+      const text = plainText(body.text, "message", LIMITS.chatChars, { allowEmpty: attachments.length > 0 });
       // A `!` line is a shell on the VM: desktop only (MC1). Slash commands are
       // checked by the hub against Pi's own list (phoneCommand, MC6).
       if (/^\s*!/.test(text)) throw new ProtocolError("desktop-only", "a ! line runs a shell on the VM: use the coop window");
       const mode = body.mode === undefined ? "queue" : body.mode;
       if (mode !== "queue" && mode !== "steer") throw new ProtocolError("bad-request", "mode is queue or steer");
-      return { op, submissionId: field(body, "submissionId", SUBMISSION_ID), incarnation: field(body, "incarnation", INCARNATION), text, mode };
+      return { op, submissionId: field(body, "submissionId", SUBMISSION_ID), incarnation: field(body, "incarnation", INCARNATION), text, mode, attachments };
+    }
+    case "push": {
+      // Notices on this phone (MC11): the push service's endpoint, checked
+      // against the known services by the server; no keys, since a notice
+      // carries no payload.
+      onlyKeys(body, ["submissionId", "action", "endpoint"]);
+      const submissionId = field(body, "submissionId", SUBMISSION_ID);
+      if (body.action === "off") { onlyKeys(body, ["submissionId", "action"]); return { op, submissionId, action: "off" }; }
+      if (body.action !== "on") throw new ProtocolError("bad-request", "action is on or off");
+      return { op, submissionId, action: "on", endpoint: plainText(body.endpoint, "endpoint", 1000) };
+    }
+    case "upload": {
+      // A photo or file from the phone (MC10). Only its name and bytes arrive;
+      // the window saves it under its own data folder, never in the project.
+      onlyKeys(body, ["submissionId", "incarnation", "name", "data"]);
+      const name = plainText(body.name, "file name", LIMITS.uploadNameChars).trim();
+      if (/[\\/:*?"<>|\x00-\x1f]/.test(name) || /^\.+$/.test(name)) throw new ProtocolError("bad-request", "file name is not a plain name");
+      if (typeof body.data !== "string" || !BASE64.test(body.data)) throw new ProtocolError("bad-request", "data must be base64");
+      return { op, submissionId: field(body, "submissionId", SUBMISSION_ID), incarnation: field(body, "incarnation", INCARNATION), name, data: body.data };
     }
     case "stop":
     case "dequeue":
@@ -172,6 +219,30 @@ export function validateRequest(method, path, body, rawBytes = 0) {
           return { ...base, action: "name", name: plainText(body.name, "session name", 200).trim() };
         default:
           throw new ProtocolError("bad-request", "action is model, thinking, compact or name");
+      }
+    }
+    case "sessionAction": {
+      // Session actions from the phone (MC9): a session the phone starts or
+      // opens keeps the phone's access; the hub resolves ids against the
+      // window's own lists, so no path ever comes from the phone.
+      onlyKeys(body, ["submissionId", "incarnation", "action", "sessionId", "entryId"]);
+      const base = { op, submissionId: field(body, "submissionId", SUBMISSION_ID), incarnation: field(body, "incarnation", INCARNATION) };
+      const only = (keys) => onlyKeys(body, ["submissionId", "incarnation", "action", ...keys]);
+      switch (body.action) {
+        case "new":
+        case "clone":
+        case "export":
+        case "reload":
+          only([]);
+          return { ...base, action: body.action };
+        case "resume":
+          only(["sessionId"]);
+          return { ...base, action: "resume", sessionId: field(body, "sessionId", ENTRY_ID) };
+        case "fork":
+          only(["entryId"]);
+          return { ...base, action: "fork", entryId: field(body, "entryId", ENTRY_ID) };
+        default:
+          throw new ProtocolError("bad-request", "action is new, resume, fork, clone, export or reload");
       }
     }
     case "answer": {
@@ -363,7 +434,8 @@ const BUILTIN_NAMES = new Set(BUILTINS.map((command) => command.name));
  * `piCommands` is that list. Returns `{ ok: true }` or `{ ok: false, code, message }`.
  */
 // The built-ins the phone's menu covers (MC7): typing one points there.
-const ON_THE_MENU = Object.freeze({ model: "Model", thinking: "Thinking", compact: "Compact", name: "Name this session", session: "Session details", copy: "Copy, under each answer" });
+const ON_THE_MENU = Object.freeze({ model: "Model", thinking: "Thinking", compact: "Compact", name: "Name this session", session: "Session details", copy: "Copy, under each answer",
+  new: "Sessions", resume: "Sessions", fork: "Sessions", clone: "Sessions", export: "Sessions", tree: "Sessions", reload: "Sessions" });
 
 export function phoneCommand(text, piCommands = []) {
   const match = /^\s*\/([A-Za-z0-9:._-]+)/.exec(String(text || ""));
@@ -388,13 +460,17 @@ export function phoneCommandList(piCommands = []) {
 /** The only event types the phone receives; MC2 maps Pi's RPC events onto these. */
 export const EVENT_TYPES = Object.freeze([
   "status",            // { state: "idle" | "running" | "exited", queue?: { steering: [], followUp: [] } }
-  "message",           // { id, role: "user" | "assistant", text, final }
-  "tool",              // { id, name, label, state: "running" | "done" | "error" }
+  "message",           // { id, role: "user" | "assistant", text, final, thinking? } (thinking: GET /api/detail has it, MC8)
+  "tool",              // { id, name, label, state: "running" | "done" | "error", detail? } (detail: arguments and output on tap, MC8)
   "question",          // classifyQuestion's result without piId
   "question_resolved", // { questionId, outcome: "answered" | "expired" | "cancelled", by: "desktop" | "phone" | "pi" }
   "notice",            // { level: "info" | "warning" | "error", text }
   "session",           // { incarnation, windowsUser, client, sessionName }
+  "panel",             // { status: [text], widgets: [{ key, lines }], todo: [line] } (MC8)
 ]);
+
+/** What `GET /api/detail?id=` names (MC8): `t:` a tool call, `m:` an answer's thinking. */
+export const DETAIL_ID = /^[tm]:[A-Za-z0-9_.:-]{1,120}$/;
 
 /** One event as sent on the stream; `id` is the SSE id the phone echoes in Last-Event-ID. */
 export function eventEnvelope({ seq, incarnation, type, data, at = Date.now() }) {

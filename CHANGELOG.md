@@ -16,6 +16,30 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   wins against the exact action, and production or session-wide approvals stay
   on the desktop. The checkable rules are `desktop/lib/companion-protocol.mjs`
   with gate-lane fixtures.
+- **Phone parity, part 6** (MC11). *Notices* in the phone's menu: when coop
+  asks a question or finishes while the phone's page is closed, the phone shows
+  "coop is waiting for you". The push is empty, so Apple's or Google's push
+  service never sees what coop said; one a minute at most. On an iPhone, add
+  coop to the Home Screen first.
+- **Phone parity, part 5** (MC10). The phone's text box has *Attach*: pick
+  photos or files, or take a photo, and they go with the next message as the
+  window sends attachments. Photos are made JPEG at most 2048 pixels on the
+  long side, so a camera photo fits. Each file is saved in the window's own
+  data folder on the VM, never in the project. Typing `@` lists the folder's
+  files to mention.
+- **Phone parity, part 4** (MC9). The phone's menu adds *Sessions*: start a
+  new session, open one of the folder's saved sessions, fork from an earlier
+  prompt, clone, export the session as HTML beside its file on the VM, see
+  the session tree and fork from any prompt in it, or restart coop. A
+  session the phone starts or opens keeps the phone's access; one changed at
+  the desk still turns it off. The window reloads and says what the phone did.
+  The phone sends ids only, never a path.
+- **Phone parity, part 3** (MC8). The phone shows the status line, the
+  extension widgets and the todo panel above the text box, as the window does,
+  and a tap folds them. Tapping a tool line opens its arguments and output, and
+  an answer's *Thinking* link opens its thinking; both are fetched only on tap
+  and kept in the window's memory only. The menu's *Find* searches the
+  conversation and lists your prompts to jump to or reuse.
 - **Phone parity, part 2** (MC7). The phone's menu adds *Model*, *Thinking*,
   *Compact*, *Name this session* and *Session details*, each a sheet that opens
   from the bottom of the screen, and every finished answer has *Copy*. The phone

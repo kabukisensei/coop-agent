@@ -86,7 +86,10 @@ which:
   names the incarnation it was made against; one from an older incarnation is
   refused, and its open questions are gone. A new incarnation also turns phone
   access off: the grant was for the session the person allowed, so a restarted
-  or switched session needs *Allow phone* again at the desk.
+  or switched session needs *Allow phone* again at the desk. The one exception
+  (MC9) is a session the phone itself starts, opens, forks or clones from its
+  *Sessions* sheet: the phone asked for it, so its access carries over. A
+  session changed at the desk still turns access off.
 - **Revoking is immediate.** *Session > Phone > Paired phones* lists each
   device; *Remove* deletes it and closes its open stream at once. *Remove all
   phones* does every device. Signing out on the phone deletes its record too.
@@ -102,9 +105,17 @@ ignored.
 | `POST /api/pair` | `code`, `deviceName` | trades a pairing code for the device cookie |
 | `GET /api/snapshot` | none | the authoritative state: session identity, status, the conversation's messages, open questions, the queue, the `/` commands the phone may send, the last event id |
 | `GET /api/events` | none (`Last-Event-ID` header) | the event stream (server-sent events) |
-| `POST /api/chat` | `submissionId`, `incarnation`, `text`, `mode` | sends a message; while coop works `mode` `steer` sends it now and `queue` waits for the turn to end, as the window's Send now and Queue (MC6) |
+| `POST /api/chat` | `submissionId`, `incarnation`, `text`, `mode`, optional `attachments` | sends a message; while coop works `mode` `steer` sends it now and `queue` waits for the turn to end, as the window's Send now and Queue (MC6); `attachments` names up to ten uploaded files by id (MC10) |
+| `POST /api/upload` | `submissionId`, `incarnation`, `name`, `data` (base64) | one photo or file from the phone (MC10), at most 34 MB of body and read only from a paired phone; the window saves it under its own data folder (`phone-uploads`, pruned after seven days) and reads it as the window attaches a file; returns an id, the kind and a detail, never a path |
+| `GET /api/files` | `q` in the query | the working folder's file names that match, for `@` mentions (MC10), as the window's composer lists them; names only, never contents |
 | `POST /api/stop` | `submissionId`, `incarnation` | stops the current turn (Pi's `abort`) |
 | `POST /api/dequeue` | `submissionId`, `incarnation` | takes the queued messages back (Pi's `clear_queue`) and returns their texts for the text box (MC6) |
+| `GET /api/detail` | `id` in the query (`t:` a tool call, `m:` an answer) | one tool call's arguments and output, or one answer's thinking, for a tapped line (MC8) |
+| `GET /api/sessions` | none | the folder's saved sessions (id, name, first prompt, time, prompt count, which is current) and this session's prompts to fork from (MC9); no paths |
+| `POST /api/sessions` | `submissionId`, `incarnation`, `action`, and `sessionId` or `entryId` | one session action (MC9): `new`, `resume` (a listed `sessionId`), `fork` (a listed `entryId`), `clone`, `export` (HTML beside the session file on the VM) or `reload` (the window restarts coop on this session, as its own `/reload`); refused while coop works |
+| `GET /api/push` | none | whether notices are set up, the window's VAPID public key, and whether this phone has them on (MC11) |
+| `POST /api/push` | `submissionId`, `action` (`on` with `endpoint`, or `off`) | turns notices on or off for this phone; the endpoint must be Apple's, Google's or Mozilla's push service (MC11) |
+| `GET /api/tree` | none | the session tree as the window's default view draws it (MC9): one line per prompt, answer or summary, indented where the session branches, a prompt's `entryId` to fork from; tool output stays on the VM |
 | `GET /api/session` | none | the session sheets (MC7): model, thinking level and the levels and models Pi lists, the session's name, auto-compact, prompts, answers, tool calls, tokens, cost and context; no file paths |
 | `POST /api/session` | `submissionId`, `incarnation`, `action` and its own fields | one session control (MC7): `model` (`provider`, `modelId`, one Pi lists), `thinking` (`level`), `compact` (optional `instructions`, refused while coop works) or `name` (`name`) |
 | `POST /api/answer` | `submissionId`, `incarnation`, `questionId`, `digest`, `answer` | answers one open question |
@@ -115,8 +126,12 @@ ignored.
   as typed only when Pi listed it (`get_commands`: extension commands, prompt
   templates, skills); Pi's built-ins wait for their rows or stay in the
   terminal, and the extension screens that exist only in the terminal stay
-  there (`phoneCommand`, refused with the reason). At most 16,000 characters;
-  no attachments.
+  there (`phoneCommand`, refused with the reason). At most 16,000 characters.
+  Uploaded files go with the chat that names them, as the window sends its
+  attachments: images with the prompt (five, 4 MB each, 8 MB together), other
+  files by path in the prompt's attachment note, so coop reads them through its
+  guarded read tool. An upload waits 30 minutes for its chat and goes once;
+  only the phone that uploaded it can send it.
 - **Every write is idempotent.** `submissionId` is a UUID the phone makes once
   per action and repeats on every retry. The window remembers each outcome for
   10 minutes and answers a repeat with the first outcome, so a retry after a
@@ -129,10 +144,14 @@ ignored.
 
 ## Events and reconnect
 
-The stream carries seven event types (`EVENT_TYPES`), each wrapped with the
+The stream carries eight event types (`EVENT_TYPES`), each wrapped with the
 session incarnation and a sequence number (`eventEnvelope`). The window maps
 Pi's RPC events onto them and drops the rest: thinking, tool arguments and tool
-output never reach the phone; a tool shows as its name and a one-line label.
+output are never in the stream; a tool shows as its name and a one-line label.
+Since MC8 the phone can open one tool call's arguments and output, or one
+answer's thinking, when you tap it (`GET /api/detail`). The window keeps the
+last 300 of those in memory only, each capped (arguments 4,000 characters,
+output and thinking 16,000), and nothing is fetched until a tap.
 
 | Type | Carries |
 | --- | --- |
@@ -143,6 +162,7 @@ output never reach the phone; a tool shows as its name and a one-line label.
 | `question_resolved` | answered, expired or cancelled, and by desktop, phone or Pi |
 | `notice` | an extension's notice (info, warning, error) |
 | `session` | the identity line: incarnation, Windows user, client, session name |
+| `panel` | the status line, the widgets and the todo panel above the prompt (MC8) |
 
 **Reconnect.** The window keeps the last 2,000 events or 15 minutes. A phone
 coming back sends the last id it saw; the window replays the tail only when it
@@ -210,14 +230,22 @@ sign-in pages. Those need a remote desktop session.
   script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src
   'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`, no
   inline script, and Markdown rendered with HTML escaped, as the desktop does.
-- No push notifications in this version. If they come later, the text is
-  generic ("coop needs you"), never a client name, question or command.
+- Notices (MC11, Aaron said yes 2026-10-06 03:34) are off until the phone
+  turns them on in the menu. When coop asks a question or finishes a turn,
+  access is on and the phone's page is closed, the window sends that phone
+  a web push with **no payload**, one a minute at most. The push service
+  (Apple's or Google's) learns only that a push was sent, and the phone shows
+  the fixed line "coop is waiting for you": never a client name, question,
+  command or answer. The window keeps one VAPID key pair per Windows user
+  (`<profile>\companion\push.json`) and only the subscription's endpoint on
+  the device record, and sends only to Apple's, Google's or Mozilla's push
+  hosts. On an iPhone, notices need coop on the Home Screen (iOS 16.4 or later).
 
 ## Audit
 
 Each Windows user's profile gets `logs\companion.jsonl`: one line per pairing,
 refused request (with its code), answer (question id, outcome, which screen),
-stop, revoke and access on/off, with the time and the device id. Never message
+stop, revoke, access on/off, notices turned on or off and each notice sent (the push service's status), with the time and the device id. Never message
 text, answers' values, cookies or codes.
 
 ## Decisions (MC1)
@@ -281,8 +309,12 @@ Once per VM, and once per phone. Nothing here changes the terminal coop.
    screen / Install app).
 4. **Use.** In the window, *Session > Phone > Allow phone for this session*.
    The phone shows the conversation, coop's status and its questions; send a
-   message, stop a turn, or answer. Allow it again after a new session or a
-   restart.
+   message, stop a turn, or answer, and the rest is in its menu. Allow it
+   again after a new session or a restart started at the desk; one the phone
+   starts keeps its access.
+5. **Notices (optional).** In the phone's menu, *Notices > Turn notices on*.
+   On an iPhone this works only from the Home Screen app (iOS 16.4 or later).
+   The VM needs to reach Apple's and Google's push services over HTTPS.
 
 coop reads the address from `tailscale status --json`. The window's
 `settings.json` key `companionOrigin` (an `https://` address) overrides it.

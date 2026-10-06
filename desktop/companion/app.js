@@ -6,10 +6,11 @@
 // which builds DOM nodes and never parses HTML.
 import { parseConfirm, confirmLabels, parseQuestionSelect, parseQuestionMulti, multiAnswer } from "./shared/dialogs.mjs";
 import { renderMarkdown } from "./shared/markdown.mjs";
+import { splitAttachmentNote } from "./shared/attach-note.mjs";
 
 const $ = (id) => document.getElementById(id);
 const THEMES = ["modern-dark", "modern-light", "retro-dark", "retro-light"];
-const app = { incarnation: "", status: "disconnected", messages: new Map(), questions: new Map(), source: null, ready: false, retry: null };
+const app = { incarnation: "", status: "disconnected", messages: new Map(), questions: new Map(), source: null, ready: false, retry: null, attachments: [] };
 
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
@@ -123,6 +124,103 @@ const SHEETS = {
     openSheet("Name this session", el("label", { class: "sr-only", for: "name-text", text: "Session name" }), field,
       el("div", { class: "sheet-actions" }, el("button", { type: "button", class: "btn primary", text: "Save", onclick: save })));
   },
+  // Search, prompt jumps and prompt history in one sheet (MC8): the terminal's
+  // Ctrl+F, Ctrl+Up/Down and Up. It reads only what this page already shows.
+  find() {
+    const field = el("input", { id: "find-text", type: "search", placeholder: "Search the conversation", enterkeyhint: "search", autocomplete: "off" });
+    const list = el("div", { class: "choices find-results" });
+    const jump = (node) => {
+      closeSheet();
+      node.scrollIntoView({ block: "center" });
+      node.classList.add("found");
+      setTimeout(() => node.classList.remove("found"), 1600);
+    };
+    const reuse = (text) => { closeSheet(); $("message").value = text; $("message").focus(); renderCompletions(); };
+    const draw = () => {
+      const q = field.value.trim().toLowerCase();
+      const nodes = [...$("timeline").querySelectorAll(".msg")];
+      const textOf = (n) => texts.get(n) || n.textContent;
+      const hits = q ? nodes.filter((n) => textOf(n).toLowerCase().includes(q)) : nodes.filter((n) => n.classList.contains("user"));
+      list.replaceChildren(...hits.reverse().slice(0, 50).map((n) => {
+        const text = textOf(n);
+        const at = q ? Math.max(0, text.toLowerCase().indexOf(q) - 30) : 0;
+        const row = el("div", { class: "find-row" },
+          choice(`${at ? "…" : ""}${text.slice(at, at + 120)}`, n.classList.contains("user") ? "Your prompt" : "coop", false, () => jump(n)));
+        if (n.classList.contains("user")) row.append(el("button", { type: "button", class: "btn find-reuse", text: "Reuse", "aria-label": "Put this prompt in the text box", onclick: () => reuse(textOf(n)) }));
+        return row;
+      }));
+      if (!hits.length) list.replaceChildren(el("p", { class: "note find-none", text: q ? "Nothing matches." : "No prompts yet." }));
+    };
+    field.addEventListener("input", draw);
+    draw();
+    openSheet("Find", el("label", { class: "sr-only", for: "find-text", text: "Search the conversation" }), field, list);
+  },
+  // Sessions from the phone (MC9): the phone keeps its access to a session it
+  // starts or opens itself. Ids only; the VM resolves them.
+  async sessions() {
+    const { json } = await api("GET", "/api/sessions");
+    if (!json.ok) { refusal(json); return; }
+    const act = async (body, done) => {
+      const before = app.incarnation;
+      const { json: r } = await submit("/api/sessions", { incarnation: app.incarnation, ...body });
+      closeSheet();
+      if (!r.ok) { if (r.message) toast(r.message); else refusal(r); return; }
+      if (r.file) { toast(`Exported ${r.file} beside the session on the VM.`, "info"); return; }
+      // The new session reloads the page's view; the note and a fork's prompt follow it.
+      if (body.action === "fork" && r.text) app.pendingText = r.text;
+      app.pendingNote = done;
+      if (app.incarnation !== before && app.ready) afterReload();
+    };
+    const when = (ms) => (ms ? new Date(ms).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "");
+    const forkList = () => openSheet("Fork from a prompt",
+      el("p", { class: "note", text: "coop starts a new session from just before that prompt and puts the prompt back in the text box." }),
+      json.prompts.length ? el("div", { class: "choices" }, [...json.prompts].reverse().map((p) => choice(p.text || "(empty prompt)", "", false, () => act({ action: "fork", entryId: p.entryId }, "Forked into a new session.")))) : el("p", { class: "note", text: "There is no earlier prompt to fork from yet." }));
+    // The session tree, read-only as in the window (MC9): a prompt forks from there.
+    const treeView = async () => {
+      const { json: t } = await api("GET", "/api/tree");
+      if (!t.ok) { refusal(t); return; }
+      const who = { user: "You", assistant: "coop" };
+      const rows = t.rows.map((r) => {
+        const body = [el("span", { class: "tree-role", text: who[r.role] || "summary" }), r.label ? el("span", { class: "chip", text: r.label }) : null, el("span", { class: "tree-text", text: r.text })];
+        const row = r.entryId
+          ? el("button", { type: "button", class: `tree-row ${r.role}${r.current ? " current" : ""}`, "aria-label": `Fork from: ${r.text}` }, ...body)
+          : el("div", { class: `tree-row ${r.role}${r.current ? " current" : ""}` }, ...body);
+        if (r.entryId) row.addEventListener("click", () => act({ action: "fork", entryId: r.entryId }, "Forked into a new session."));
+        row.style.setProperty("--depth", String(Math.min(r.depth, 8)));
+        return row;
+      });
+      openSheet("Session tree",
+        el("p", { class: "note", text: "Tap one of your prompts to fork a new session from just before it. Moving within the session and labels are in the terminal's /tree." }),
+        rows.length ? el("div", { class: "tree" }, rows) : el("p", { class: "note", text: "Nothing in this session yet." }),
+        t.truncated ? el("p", { class: "note", text: "The tree is longer than the phone shows; the window shows all of it." }) : null);
+    };
+    openSheet("Sessions",
+      el("div", { class: "sheet-grid" },
+        el("button", { type: "button", class: "btn primary", text: "New session", onclick: () => act({ action: "new" }, "Started a new session.") }),
+        el("button", { type: "button", class: "btn", text: "Fork…", onclick: forkList }),
+        el("button", { type: "button", class: "btn", text: "Clone", onclick: () => act({ action: "clone" }, "Cloned into a new session.") }),
+        el("button", { type: "button", class: "btn", text: "Export HTML", onclick: () => act({ action: "export" }) }),
+        el("button", { type: "button", class: "btn", text: "Tree", onclick: treeView }),
+        el("button", { type: "button", class: "btn", text: "Restart coop", onclick: () => act({ action: "reload" }, "coop restarted on this session.") })),
+      el("h3", { class: "detail-label", text: "Saved in this folder" }),
+      json.sessions.length ? el("div", { class: "choices" }, json.sessions.map((s) => choice(s.name || s.title || "Untitled session", [when(s.modified), `${s.messages} prompt${s.messages === 1 ? "" : "s"}`, s.current ? "this session" : ""].filter(Boolean).join(" · "), s.current,
+        s.current ? () => closeSheet() : () => act({ action: "resume", sessionId: s.id }, "Opened the saved session.")))) : el("p", { class: "note", text: "No saved sessions yet." }));
+  },
+  // Notices (MC11): an empty push through Apple's or Google's service; the
+  // phone shows a fixed line, so no session text ever leaves the tailnet.
+  async notices() {
+    const { json } = await api("GET", "/api/push");
+    if (!json.ok) { refusal(json); return; }
+    const supported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+    const apple = /iPhone|iPad|iPod/.test(navigator.userAgent);
+    const installed = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+    const explain = el("p", { class: "note", text: "A notice says only \u201ccoop is waiting for you\u201d, when coop asks a question or finishes while this page is closed. It travels through Apple's or Google's push service, so it never carries what coop said." });
+    let body;
+    if (!json.available) body = el("p", { class: "note", text: "Notices are not set up in this coop window." });
+    else if (!supported) body = el("p", { class: "note", text: apple && !installed ? "On iPhone, add coop to the Home Screen first: tap Share, then Add to Home Screen. Open coop from there and turn notices on here." : "This browser cannot show notices. Add coop to the Home Screen and open it from there." });
+    else body = el("button", { type: "button", class: `btn${json.on ? "" : " primary"}`, text: json.on ? "Turn notices off" : "Turn notices on", onclick: () => (json.on ? noticesOff() : noticesOn(json.publicKey)) });
+    openSheet("Notices", explain, body);
+  },
   async details() {
     const d = await loadDetails();
     if (!d) return toast("Could not read the session. Try again.");
@@ -142,6 +240,35 @@ const SHEETS = {
     openSheet("Session details", el("dl", { class: "facts" }, rows.flatMap(([k, v]) => [el("dt", { text: k }), el("dd", { text: String(v) })])));
   },
 };
+
+function keyBytes(base64url) {
+  const text = atob(base64url.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(base64url.length / 4) * 4, "="));
+  return Uint8Array.from(text, (c) => c.charCodeAt(0));
+}
+
+async function noticesOn(publicKey) {
+  closeSheet();
+  try {
+    if (await Notification.requestPermission() !== "granted") { toast("Notices are blocked for coop. Allow them in the phone's settings, then try again."); return; }
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = (await registration.pushManager.getSubscription()) || (await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(publicKey) }));
+    const { json } = await submit("/api/push", { action: "on", endpoint: subscription.endpoint });
+    if (json.ok) toast("Notices are on for this phone.", "info"); else refusal(json);
+  } catch (error) {
+    toast(`Notices could not be turned on: ${(error && error.message) || error}`);
+  }
+}
+
+async function noticesOff() {
+  closeSheet();
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.getSubscription();
+    if (subscription) await subscription.unsubscribe();
+  } catch { /* the window forgets it anyway */ }
+  const { json } = await submit("/api/push", { action: "off" });
+  if (json.ok) toast("Notices are off for this phone.", "info"); else refusal(json);
+}
 
 // ---- the menu: a side drawer like the coop website's ------------------------------
 
@@ -205,7 +332,7 @@ function toast(text, level = "warning") {
 function refusal(json) {
   const reason = REASONS[json.code];
   if (reason && ["not-paired", "revoked", "device-expired", "wrong-user", "wrong-client", "access-off", "wrong-session"].includes(json.code)) { showGate(json.code); return; }
-  if (json.message && ["desktop-only", "unknown-command"].includes(json.code)) { toast(json.message); return; }
+  if (json.message && ["desktop-only", "unknown-command", "not-an-option", "too-large", "not-found", "busy"].includes(json.code)) { toast(json.message); return; }
   toast(reason ? reason[1] : json.code === "desktop-only" ? "That runs on the desktop only." : json.code === "already-answered" ? "That question was already answered." : json.code === "offline" ? "No connection to the VM. Try again." : `Not sent (${json.code}).`);
 }
 
@@ -266,6 +393,7 @@ async function dequeue() {
 
 function renderCompletions() {
   const list = $("completions");
+  if (mentionAt()) { renderMentions(); return; }
   const match = /^\/([A-Za-z0-9:._-]*)$/.exec($("message").value.trimStart());
   if (!match) { list.hidden = true; list.replaceChildren(); return; }
   const query = match[1].toLowerCase();
@@ -281,10 +409,131 @@ function renderCompletions() {
   }));
 }
 
+// ---- @ mentions (MC10): the folder's files, as the window's composer lists them ---
+
+/** The "@word" being typed at the cursor, or null. */
+function mentionAt() {
+  const box = $("message");
+  const before = box.value.slice(0, box.selectionStart ?? box.value.length);
+  const match = /(^|\s)@([^\s@]*)$/.exec(before);
+  return match ? { query: match[2], start: before.length - match[2].length - 1, end: before.length } : null;
+}
+
+let mentionAsk = 0;
+async function renderMentions() {
+  const list = $("completions");
+  const at = mentionAt();
+  const ask = ++mentionAsk;
+  let files = [];
+  try {
+    const { json } = await api("GET", `/api/files?q=${encodeURIComponent(at.query)}`);
+    if (json.ok) files = json.files || [];
+  } catch { /* offline: no list */ }
+  if (ask !== mentionAsk || !mentionAt()) return;
+  list.hidden = !files.length;
+  list.replaceChildren(...files.map((path) => {
+    const item = el("li", { role: "option" });
+    const pick = el("button", { type: "button", class: "completion" }, el("span", { class: "name", text: `@${path}` }));
+    pick.addEventListener("click", () => {
+      const box = $("message");
+      const now = mentionAt() || at;
+      // A folder stays open for the next part of the path; a file ends the mention.
+      const insert = `@${path}${path.endsWith("/") ? "" : " "}`;
+      box.value = box.value.slice(0, now.start) + insert + box.value.slice(now.end);
+      const caret = now.start + insert.length;
+      box.focus();
+      box.setSelectionRange(caret, caret);
+      renderCompletions();
+    });
+    item.append(pick);
+    return item;
+  }));
+}
+
+// ---- photos and files (MC10): each one goes to the VM as it is picked ----------
+
+const MAX_FILE_BYTES = 25 * 1024 * 1024;
+const PHOTO_EDGE = 2048;
+
+/** A photo made JPEG and at most PHOTO_EDGE on its long side; anything else as it is. */
+async function prepare(file) {
+  if (!/^image\//.test(file.type) || file.type === "image/gif") return { name: file.name, blob: file };
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, PHOTO_EDGE / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
+    if (!blob) return { name: file.name, blob: file };
+    return { name: `${(file.name || "photo").replace(/\.[^.]+$/, "")}.jpg`, blob };
+  } catch {
+    return { name: file.name, blob: file };
+  }
+}
+
+function base64Of(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).replace(/^data:[^,]*,/, ""));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+function renderAttachments() {
+  const list = $("attachments");
+  list.hidden = !app.attachments.length;
+  list.replaceChildren(...app.attachments.map((a) => {
+    const label = a.state === "pending" ? `${a.name} (sending…)` : a.state === "failed" ? `${a.name}: ${a.error}` : `${a.name}${a.detail ? ` (${a.detail})` : ""}`;
+    const remove = el("button", { type: "button", class: "attachment-remove", "aria-label": `Remove ${a.name}`, text: "×" });
+    remove.addEventListener("click", () => { app.attachments = app.attachments.filter((x) => x !== a); renderAttachments(); });
+    return el("li", { class: `attachment ${a.state}` }, el("span", { class: "attachment-name", text: label }), remove);
+  }));
+}
+
+async function attachFiles(files) {
+  for (const file of files) {
+    if (app.attachments.length >= 10) { toast("10 files at most per message."); break; }
+    const entry = { name: file.name || "file", state: "pending", id: "", detail: "", error: "" };
+    app.attachments.push(entry);
+    renderAttachments();
+    try {
+      if (file.size > MAX_FILE_BYTES) throw new Error("over 25 MB");
+      const ready = await prepare(file);
+      entry.name = ready.name || entry.name;
+      const { json } = await submit("/api/upload", { incarnation: app.incarnation, name: entry.name.replace(/[\\/:*?"<>|]/g, "_"), data: await base64Of(ready.blob) });
+      if (!json.ok) throw new Error(json.message || (REASONS[json.code] ? REASONS[json.code][1] : json.code));
+      Object.assign(entry, { state: "ready", id: json.file.id, detail: json.file.kind === "image" ? "photo" : json.file.detail || json.file.label });
+    } catch (error) {
+      Object.assign(entry, { state: "failed", error: String((error && error.message) || error) });
+    }
+    renderAttachments();
+  }
+}
+
+// The status line, the widgets and the todo panel above the prompt (MC8). A
+// tap on the line folds the panel to that line, as Alt+T does in the terminal.
+function renderPanel(p) {
+  const panel = p || { status: [], widgets: [], todo: [] };
+  const blocks = [];
+  if (panel.todo && panel.todo.length) blocks.push(["todos", panel.todo]);
+  for (const w of panel.widgets || []) if (w.lines && w.lines.length) blocks.push([w.key, w.lines]);
+  const status = (panel.status || []).join(" · ");
+  $("panel").hidden = !status && !blocks.length;
+  $("panel-status").textContent = status || (panel.todo && panel.todo[0]) || "Panel";
+  $("panel-body").replaceChildren(...blocks.map(([key, lines]) => el("pre", { class: `widget${key === "todos" ? " todos" : ""}` }, el("code", { text: lines.join("\n") }))));
+  $("panel-toggle").disabled = !blocks.length;
+}
+
 function setIdentity(s) {
   app.incarnation = s.incarnation;
   $("identity").textContent = [s.windowsUser, s.client, s.sessionName || "this session", app.deviceName].filter(Boolean).join(" · ");
 }
+
+// Each message's own text, for Find (MC8): not the buttons drawn under it.
+const texts = new WeakMap();
 
 function renderMessage(m) {
   let node = app.messages.get(m.id);
@@ -294,11 +543,21 @@ function renderMessage(m) {
     $("timeline").append(node);
   }
   node.className = `msg ${m.role}${m.final ? "" : " partial"}`;
+  // A message sent with files shows what was typed and the files' names (MC10).
+  const sent = m.role === "user" ? splitAttachmentNote(m.text) : { text: m.text, files: [] };
+  texts.set(node, sent.text);
   node.replaceChildren();
   if (m.role === "assistant") renderMarkdown(document, m.text, node);
-  else node.append(el("p", { text: m.text }));
+  else if (sent.text.trim()) node.append(el("p", { text: sent.text }));
+  const attached = [...(m.images ? [m.images === 1 ? "1 photo" : `${m.images} photos`] : []), ...sent.files.map((f) => `${f.name}${f.detail ? ` (${f.detail})` : ""}`)];
+  if (attached.length) node.append(el("ul", { class: "msg-files" }, attached.map((text) => el("li", { text: `Attached: ${text}` }))));
   // The terminal's /copy: every finished answer copies as Markdown (MC7).
-  if (m.role === "assistant" && m.final) node.append(el("div", { class: "msg-actions" }, el("button", { type: "button", class: "link", text: "Copy", onclick: (e) => copyText(m.text, e.currentTarget) })));
+  if (m.role === "assistant" && m.final) {
+    node.append(el("div", { class: "msg-actions" },
+      // The thinking behind the answer, folded as the window's Ctrl+T does (MC8).
+      m.thinking ? el("button", { type: "button", class: "link", text: "Thinking", onclick: () => showDetail(`m:${m.id}`, "Thinking") }) : null,
+      el("button", { type: "button", class: "link", text: "Copy", onclick: (e) => copyText(m.text, e.currentTarget) })));
+  }
 }
 
 async function copyText(text, button) {
@@ -321,7 +580,19 @@ function renderTool(t) {
   const label = t.label ? ` ${t.label}` : "";
   if (t.state === "running" || !node.dataset.label) node.dataset.label = label;
   node.className = `tool ${t.state}`;
-  node.textContent = `${t.state === "running" ? "Running" : t.state === "error" ? "Failed" : "Ran"} ${t.name}${node.dataset.label}`;
+  const line = `${t.state === "running" ? "Running" : t.state === "error" ? "Failed" : "Ran"} ${t.name}${node.dataset.label}`;
+  // A tap opens the call's arguments and output, as the window's Ctrl+O does (MC8).
+  if (t.detail) node.replaceChildren(el("button", { type: "button", class: "tool-open", "aria-label": `${line}: show details`, onclick: () => showDetail(`t:${t.id}`, line) }, el("span", { text: line })));
+  else node.textContent = line;
+}
+
+async function showDetail(id, title) {
+  const { json } = await api("GET", `/api/detail?id=${encodeURIComponent(id)}`);
+  if (!json.ok) { toast(json.message || "That detail is no longer kept on the VM."); return; }
+  const d = json.detail;
+  const block = (label, text, cls = "") => (text ? [el("h3", { class: "detail-label", text: label }), el("pre", { class: `detail-text ${cls}` }, el("code", { text }))] : []);
+  if (d.kind === "thinking") openSheet(title, el("pre", { class: "detail-text thinking" }, el("code", { text: d.thinking })));
+  else openSheet(title, ...block("Arguments", d.args), ...block(d.isError ? "Error" : "Output", d.output || (d.isError ? "" : "(no output yet)"), d.isError ? "error" : ""));
 }
 
 // ---- questions: the window's own parsers, the VM's own options --------------------
@@ -421,6 +692,7 @@ async function load() {
   renderQuestions();
   app.commands = Array.isArray(s.commands) ? s.commands : [];
   renderQueue(s.queue);
+  renderPanel(s.panel);
   $("gate").hidden = true;
   $("session").hidden = false;
   $("composer").hidden = false;
@@ -430,6 +702,13 @@ async function load() {
   openStream();
   const last = $("timeline").lastElementChild;
   if (last) last.scrollIntoView({ block: "end" });
+  // A fork puts its prompt back in the text box, as the window does.
+  afterReload();
+}
+
+function afterReload() {
+  if (app.pendingText) { $("message").value = app.pendingText; app.pendingText = ""; renderCompletions(); }
+  if (app.pendingNote) { toast(app.pendingNote, "info"); app.pendingNote = ""; }
 }
 
 function closeStream() {
@@ -450,12 +729,14 @@ function openStream() {
   });
   // A gap the window can no longer fill: reload the snapshot rather than guess.
   source.addEventListener("resync", () => load());
+  on("panel", (d) => renderPanel(d));
   on("status", (d) => { setStatus(d.state); if (d.queue) renderQueue(d.queue); });
   on("message", (d) => { renderMessage(d); app.messages.get(d.id).scrollIntoView({ block: "end" }); });
   // Keep the newest line in view, whatever kind it is.
   on("tool", (d) => { renderTool(d); app.messages.get(`tool:${d.id}`).scrollIntoView({ block: "end" }); });
   on("notice", (d) => { const note = el("li", { class: `notice ${d.level}`, text: d.text }); $("timeline").append(note); note.scrollIntoView({ block: "end" }); });
-  on("session", (d) => setIdentity(d));
+  // A new incarnation the phone keeps access to (it started or opened the session, MC9): reload.
+  on("session", (d) => { if (app.incarnation && d.incarnation !== app.incarnation) { closeStream(); load(); } else setIdentity(d); });
   on("question", (d) => { app.questions.set(d.questionId, d); renderQuestions(); });
   on("question_resolved", (d) => {
     if (!app.questions.delete(d.questionId)) return;
@@ -478,12 +759,21 @@ function openStream() {
 async function sendMessage(mode = "steer") {
   const box = $("message");
   const text = box.value.trim();
-  if (!text || !app.ready) return;
+  if (app.attachments.some((a) => a.state === "pending")) { toast("A file is still on its way; one moment.", "info"); return; }
+  const files = app.attachments.filter((a) => a.state === "ready");
+  if ((!text && !files.length) || !app.ready) return;
   if (/^!/.test(text)) { toast("A ! line runs a shell on the VM: use the coop window for that."); return; }
   $("send").disabled = true;
   $("queue-send").disabled = true;
-  const { json } = await submit("/api/chat", { incarnation: app.incarnation, text, mode });
-  if (json.ok) { box.value = ""; renderCompletions(); } else refusal(json);
+  const body = { incarnation: app.incarnation, text, mode };
+  if (files.length) body.attachments = files.map((a) => a.id);
+  const { json } = await submit("/api/chat", body);
+  if (json.ok) {
+    box.value = "";
+    app.attachments = app.attachments.filter((a) => !files.includes(a));
+    renderAttachments();
+    renderCompletions();
+  } else refusal(json);
   setStatus(app.status);
 }
 
@@ -492,6 +782,11 @@ for (const b of document.querySelectorAll(".seg-btn")) b.addEventListener("click
 $("menu-open").addEventListener("click", () => { setMenu(true); loadDetails(); });
 for (const name of Object.keys(SHEETS)) $(`menu-${name}`).addEventListener("click", () => SHEETS[name]());
 $("sheet-close").addEventListener("click", closeSheet);
+$("panel-toggle").addEventListener("click", () => {
+  const open = $("panel-toggle").getAttribute("aria-expanded") !== "true";
+  $("panel-toggle").setAttribute("aria-expanded", String(open));
+  $("panel-body").hidden = !open;
+});
 $("sheet").addEventListener("click", (e) => { if (e.target === $("sheet")) closeSheet(); });
 $("menu-close").addEventListener("click", () => setMenu(false));
 $("scrim").addEventListener("click", () => setMenu(false));
@@ -503,6 +798,8 @@ $("menu-commands").addEventListener("click", () => {
   box.focus();
   renderCompletions();
 });
+$("attach").addEventListener("click", () => $("file-pick").click());
+$("file-pick").addEventListener("change", () => { const picked = [...$("file-pick").files]; $("file-pick").value = ""; attachFiles(picked); });
 $("send").addEventListener("click", () => sendMessage("steer"));
 $("queue-send").addEventListener("click", () => sendMessage("queue"));
 $("message").addEventListener("input", renderCompletions);
