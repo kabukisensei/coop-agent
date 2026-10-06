@@ -386,18 +386,21 @@ def main() -> int:
         type=Path,
         default=coop_paths.agent_dir() / ADAPTER_CONFIG_NAME,
     )
+    # The file whose servers and ownership carry over, when it is not --output:
+    # a launch's per-folder copy starts from the shared mcp-adapter.json.
+    parser.add_argument("--existing", type=Path, default=None)
     parser.add_argument("--project", type=Path, default=None)
     parser.add_argument("--project-cwd", type=Path, default=Path.cwd())
     args = parser.parse_args()
     try:
         manifest = load_json(args.manifest, required=True)
         config = load_json(args.config)
-        existing = load_json(args.output)
+        existing = load_json(args.existing if args.existing is not None else args.output)
         # Migrate once from the pre-3.0 file: its servers, settings and `_coop`
         # ownership carry over, then it is removed so the adapter stops warning
         # about it. A legacy file without coop's `_coop` marker is someone else's
         # and is left alone once the new file exists.
-        legacy = legacy_config_for(args.output)
+        legacy = legacy_config_for(args.output) if args.existing is None else None
         legacy_value = None
         if legacy is not None and legacy.exists():
             try:

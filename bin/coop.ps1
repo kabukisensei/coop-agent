@@ -583,6 +583,13 @@ function Build-CoopPiArgs {
   # this, pi-mcp-adapter also merges a work repo's .mcp.json / .pi/mcp.json and
   # other tools' configs, so a repo could add a server or redefine a coop one.
   $env:PI_MCP_CONFIG_MODE = 'exclusive'
+  # This launch folder's own copy of it (Initialize-CoopLaunch), when written.
+  if ($script:CoopMcpConfig -and (Test-Path -LiteralPath $script:CoopMcpConfig -PathType Leaf)) {
+    $piArgs += @('--mcp-config', $script:CoopMcpConfig)
+    $env:COOP_MCP_CONFIG = $script:CoopMcpConfig
+  } else {
+    Remove-Item Env:COOP_MCP_CONFIG -ErrorAction SilentlyContinue
+  }
   # Pi's built-in /bug uploads a report (optionally the whole session transcript)
   # to Earendil's gateway at radius.pi.dev. coop runs on client VMs where no
   # session content may leave for a third-party service, so point the gateway at
@@ -609,6 +616,7 @@ function Get-CoopFabricMcpToken {
   if (-not $py) { return '' }
   $agentDir = Get-CoopEffectiveAgentDir
   $config = Join-Path $agentDir 'mcp-adapter.json'
+  if ($script:CoopMcpConfig -and (Test-Path -LiteralPath $script:CoopMcpConfig -PathType Leaf)) { $config = $script:CoopMcpConfig }
   if (-not (Test-Have 'node')) {
     Coop-Warn 'Fabric Warehouse MCP unavailable: token helper supervisor is unavailable'
     return ''
@@ -740,8 +748,16 @@ function Initialize-CoopLaunch {
   # config keeps one target, and the last `coop sync` may have run elsewhere
   # (`coop update`, the window's first launch). Fail-soft: the token helper
   # below reports whatever the config still says.
-  if ((Update-CoopManagedMcpConfig -Quiet) -eq 'failed') {
+  $script:CoopMcpConfig = ''
+  $mcpState = Update-CoopManagedMcpConfig -Quiet
+  if ($mcpState -eq 'failed') {
     Coop-Warn 'could not refresh the MCP config for this folder; run: coop sync   (from this folder)'
+  } elseif ($mcpState -eq 'ok') {
+    # This launch's own copy, so a coop started later on another folder never
+    # retargets this one (Get-CoopFolderMcpConfigPath).
+    $folderConfig = Get-CoopFolderMcpConfigPath
+    $shared = Join-Path (Get-CoopEffectiveAgentDir) 'mcp-adapter.json'
+    if ((Update-CoopManagedMcpConfig -OutputPath $folderConfig -ExistingPath $shared -Quiet) -eq 'ok') { $script:CoopMcpConfig = $folderConfig }
   }
 
   # Once-a-day fleet-staleness nudge: warn when this checkout is behind the next
@@ -794,6 +810,7 @@ function Get-CoopLaunchEnvMap {
   if ($env:PI_CODING_AGENT_DIR) { $envMap['PI_CODING_AGENT_DIR'] = $env:PI_CODING_AGENT_DIR }
   if ($env:PI_SKIP_VERSION_CHECK) { $envMap['PI_SKIP_VERSION_CHECK'] = $env:PI_SKIP_VERSION_CHECK }
   if ($env:PI_MCP_CONFIG_MODE)    { $envMap['PI_MCP_CONFIG_MODE']    = $env:PI_MCP_CONFIG_MODE }
+  if ($env:COOP_MCP_CONFIG)       { $envMap['COOP_MCP_CONFIG']       = $env:COOP_MCP_CONFIG }
   if ($env:PI_RADIUS_GATEWAY)     { $envMap['PI_RADIUS_GATEWAY']     = $env:PI_RADIUS_GATEWAY }
   if ($env:COOP_VIBES_DIR)      { $envMap['COOP_VIBES_DIR']      = $env:COOP_VIBES_DIR }
   if ($env:COOP_SPLASH_FILE)    { $envMap['COOP_SPLASH_FILE']    = $env:COOP_SPLASH_FILE }
