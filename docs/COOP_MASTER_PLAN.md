@@ -1,6 +1,6 @@
 # Coop master plan — ordered execution roadmap
 
-**Document revision 3.21 · October 5, 2026** (Revision 3.21 records the demo feedback of October 5, 2026, section 12.3: Aaron showed the window to the team, and the feedback became four rows the plan can carry now, G1 production writes become a hard block (Aaron said in the meeting he would get it in today), C1 the committed project contract, C2 the explicit semantic-model-to-SQL mapping and Fabric layout in the contract, L1 the Microsoft tool license review, one addition to D1j (the command palette grouped by kind), the demo as a stated reason for U2 once the adapter ships, and thirteen numbered questions (the project file `demo/demo-feedback-2026-10-05.md` holds the full list); Aaron answered them the same evening, so the section also records his decisions (G1 with a hidden, human-only production-write unlock outside the repo; C1, C2 and the mapping field as proposed; the Cooptimize transfer deferred; the docs site stays on the VPS) and the rows proposed from his open answers, P1 the machine-level shared profile for the one-Windows-user-per-client VMs, DR1 one private data-docs repository per client, PR1 personal, client and shipped prompts and skills, SQ8 change-aware impact while coop edits SQL and SQ9 the committed dev catalog snapshot, all five accepted by Aaron at 20:08 the same evening (one VM is one person's, so P1's machine profile holds the name; SQ8 reshaped around intent: coop holds the lineage context and surfaces it, details only when asked, never re-running what it already has); at 20:12 he added D1m, the window icon as the default way in, opening on the right project folder so the committed contract is found; register rows 18–27; at 20:18 he set the client-isolation rule, one Windows user per client, which P1 and G1 record. Revision 3.20 added `@juicesharp/rpiv-todo` 2.12.0 to the pinned extensions, section 6 table: Aaron picked it on 2026-10-03 from the pi.dev package review as the one package worth a trial; the window rebuilds the panel from the `todo` tool results because Pi's RPC mode drops the extension's TUI widget, Alt+T collapses it in the terminal and the window, and the VM check is pending. Revision 3.19 was D1d (D1d as built: the coop window package bundles the pinned Node (the nodejs.org win-x64 zip, version and SHA-256 in the manifest's `desktop.node`), an npm prefix with the pinned Pi and the Power BI tools, the extension tree installed from `config/extensions-lock.json`, and a snapshot of this repository, as `resources\runtime` and `resources\coop` beside the asar; `lib/common.ps1` run from the snapshot finds the runtime by location, puts the bundled Node and Pi first on PATH and points npm's global prefix at the bundle, so the one implementation needs no second code path; the package's first `coop desktop` on a profile without this release's lock runs `coop install` in its console (the H1 table with its `winget` lines, the pipx tools, the Azure and model sign-ins), `coop sync` seeds the agent dir's tree from the bundle instead of `npm ci` and declares the extensions in `settings.json` as `pi install` would; doctor, update and uninstall know the package; the CI job checks the bundled Node, Pi, tools and tree at their pins and runs the snapshot's `coop version` on the bundled Pi; Git, Python, pipx, Azure CLI and ODBC stay prerequisites (11.3 item 6: no bundled Git); section 11.7; register row 16. Revision 3.18 was the desktop UX review, Aaron 2026-10-03: the six first-run fixes landed in the window (section 11.6 statuses: set-up card for sign-in, profile and Azure notices; the Start menu on the first launch; approval cards with the command as code and No as the default; question cards for `ask_user_question`; example prompts; background notifications; a menu bar), the follow-up rows D1h health pane, D1i integrated terminal pane and D1j approvals chip and skills browser added in section 11.7, D1e's update notice named as its first deliverable, and D1d no longer waits for U2: the package bundles the Pi the manifest pins today (0.87.1) and D1e re-stages it at every version, so U2 is not a gate (section 11.7). Revision 3.17 was D1c as built: the coop window package is electron-builder's NSIS per-user installer of the same `desktop/` code, staged with the `lib/*.mjs` modules it imports, the vibes, the splash and the icon into an asar (pdf.js and its reader unpacked beside it, the September fuse policy applied); it still needs the terminal coop, finds `coop.cmd` the way `bin/coop-desktop.ps1` does and asks it for the window with the new `coop desktop --app <exe>`, which hands the spec over through Electron's single-instance lock; `coop.exe --doctor` prints one JSON line; the `installer (Windows)` CI job builds, installs silently, runs `--doctor` and uninstalls on every PR; 11.3 item 2 decided as NSIS per-user; register row 16. Revision 3.16 added Pi Durable to the section 12.1 watch list: the experimental durable agent-harness library published beside Pi 1.0, watched, not scheduled; Aaron asked on 2026-10-02. Revision 3.15 was D1b2 as built: one side pane beside the timeline with four views, Changes, Standards, Project and Docs, opened from tool cards, the standards chip, setup notices, the command palette and Ctrl+\; the `/setup-project` writer and the `/setup-docs` driver moved out of `extensions/coop-tools/index.ts` into `lib/project-contract.mjs` and `lib/data-doc-setup.mjs` so the window calls the same code; the docs form shows coop-data-doc's prompts one at a time, as its wizard asks them, and the built docs open as Markdown in the pane, with a list of every object page because coop-data-doc's overview does not link them, and the HTML portal in the browser. Aaron's second D1b2 batch, same day: file attachments in the composer (images with the prompt as in the terminal; text by path; Word, Excel, PowerPoint read to Markdown by coop's own readers and PDF by pdf.js in a time-limited process, every document referenced by path so coop reads it through its guarded read tool), pdf.js pinned next to Electron as the runtime's second package, every pane draggable, the Cooptimize splash logo and the vibes in the window, the thinking and tool calls between replies folded into one expandable line with nothing removed from the session, and a readability pass over all four themes; register row 16. Revision 3.14 was D1b as built: the window runs coop's launch arguments with `--mode rpc` and no `-a`, because the recorded session shows coop's guardrails, standards and skills load without it and `-a` would only trust a work repo's own `.pi` files, which the terminal asks about first; Electron installs into its own runtime tree on the first `coop desktop`, not into the extension tree on every machine; the first `coop desktop` adds the "coop (window)" shortcut; register row 16. Revision 3.13 was D1a, the desktop decision record and salvage list: Aaron chose a rendered, modern UI with four themes over a terminal in a window, D1b is re-scoped to it with a terminal parity rule, a changes panel, a standards pane, a project form and a docs setup form go into D1b2 with a list of proposed enhancements (section 11.6), every other section 11.3 item has a recorded default, and the September desktop branches are reviewed file by file; sections 11.1–11.6 and register row 16. Revision 3.12 added an explore and research watch list, section 12.1, starting with PiG, the Go port of Pi: watched, not scheduled. Revision 3.11 scoped Phase 8 D1 into rows D1a–D1g, sections 11.1–11.4; revision 3.10 added the Pi 1.0 row U2, section 6.5; revision 3.9 added the mixed-estate documentation repair, section 8.1. Existing phase ordering and the revision 3.8 scope decisions remain.)
+**Document revision 3.22 · October 5, 2026** (Revision 3.22 adds the secure mobile companion roadmap, MC1–MC4 in section 12.4 and register row 28, documentation only: a phone web view of the same live desktop session on the VM. Aaron reviewed it the same evening and decided at 23:09 ("A1 B2 C2"): the phone web view is the one mobile route, so M1 Teams mobile (#275) is closed as superseded; this revision merges after the C1 project-file set; MC1 starts after the demo-feedback rows, on his explicit word, so implementation remains unstarted. Revision 3.21 records the demo feedback of October 5, 2026, section 12.3: Aaron showed the window to the team, and the feedback became four rows the plan can carry now, G1 production writes become a hard block (Aaron said in the meeting he would get it in today), C1 the committed project contract, C2 the explicit semantic-model-to-SQL mapping and Fabric layout in the contract, L1 the Microsoft tool license review, one addition to D1j (the command palette grouped by kind), the demo as a stated reason for U2 once the adapter ships, and thirteen numbered questions (the project file `demo/demo-feedback-2026-10-05.md` holds the full list); Aaron answered them the same evening, so the section also records his decisions (G1 with a hidden, human-only production-write unlock outside the repo; C1, C2 and the mapping field as proposed; the Cooptimize transfer deferred; the docs site stays on the VPS) and the rows proposed from his open answers, P1 the machine-level shared profile for the one-Windows-user-per-client VMs, DR1 one private data-docs repository per client, PR1 personal, client and shipped prompts and skills, SQ8 change-aware impact while coop edits SQL and SQ9 the committed dev catalog snapshot, all five accepted by Aaron at 20:08 the same evening (one VM is one person's, so P1's machine profile holds the name; SQ8 reshaped around intent: coop holds the lineage context and surfaces it, details only when asked, never re-running what it already has); at 20:12 he added D1m, the window icon as the default way in, opening on the right project folder so the committed contract is found; register rows 18–27; at 20:18 he set the client-isolation rule, one Windows user per client, which P1 and G1 record. Revision 3.20 added `@juicesharp/rpiv-todo` 2.12.0 to the pinned extensions, section 6 table: Aaron picked it on 2026-10-03 from the pi.dev package review as the one package worth a trial; the window rebuilds the panel from the `todo` tool results because Pi's RPC mode drops the extension's TUI widget, Alt+T collapses it in the terminal and the window, and the VM check is pending. Revision 3.19 was D1d (D1d as built: the coop window package bundles the pinned Node (the nodejs.org win-x64 zip, version and SHA-256 in the manifest's `desktop.node`), an npm prefix with the pinned Pi and the Power BI tools, the extension tree installed from `config/extensions-lock.json`, and a snapshot of this repository, as `resources\runtime` and `resources\coop` beside the asar; `lib/common.ps1` run from the snapshot finds the runtime by location, puts the bundled Node and Pi first on PATH and points npm's global prefix at the bundle, so the one implementation needs no second code path; the package's first `coop desktop` on a profile without this release's lock runs `coop install` in its console (the H1 table with its `winget` lines, the pipx tools, the Azure and model sign-ins), `coop sync` seeds the agent dir's tree from the bundle instead of `npm ci` and declares the extensions in `settings.json` as `pi install` would; doctor, update and uninstall know the package; the CI job checks the bundled Node, Pi, tools and tree at their pins and runs the snapshot's `coop version` on the bundled Pi; Git, Python, pipx, Azure CLI and ODBC stay prerequisites (11.3 item 6: no bundled Git); section 11.7; register row 16. Revision 3.18 was the desktop UX review, Aaron 2026-10-03: the six first-run fixes landed in the window (section 11.6 statuses: set-up card for sign-in, profile and Azure notices; the Start menu on the first launch; approval cards with the command as code and No as the default; question cards for `ask_user_question`; example prompts; background notifications; a menu bar), the follow-up rows D1h health pane, D1i integrated terminal pane and D1j approvals chip and skills browser added in section 11.7, D1e's update notice named as its first deliverable, and D1d no longer waits for U2: the package bundles the Pi the manifest pins today (0.87.1) and D1e re-stages it at every version, so U2 is not a gate (section 11.7). Revision 3.17 was D1c as built: the coop window package is electron-builder's NSIS per-user installer of the same `desktop/` code, staged with the `lib/*.mjs` modules it imports, the vibes, the splash and the icon into an asar (pdf.js and its reader unpacked beside it, the September fuse policy applied); it still needs the terminal coop, finds `coop.cmd` the way `bin/coop-desktop.ps1` does and asks it for the window with the new `coop desktop --app <exe>`, which hands the spec over through Electron's single-instance lock; `coop.exe --doctor` prints one JSON line; the `installer (Windows)` CI job builds, installs silently, runs `--doctor` and uninstalls on every PR; 11.3 item 2 decided as NSIS per-user; register row 16. Revision 3.16 added Pi Durable to the section 12.1 watch list: the experimental durable agent-harness library published beside Pi 1.0, watched, not scheduled; Aaron asked on 2026-10-02. Revision 3.15 was D1b2 as built: one side pane beside the timeline with four views, Changes, Standards, Project and Docs, opened from tool cards, the standards chip, setup notices, the command palette and Ctrl+\; the `/setup-project` writer and the `/setup-docs` driver moved out of `extensions/coop-tools/index.ts` into `lib/project-contract.mjs` and `lib/data-doc-setup.mjs` so the window calls the same code; the docs form shows coop-data-doc's prompts one at a time, as its wizard asks them, and the built docs open as Markdown in the pane, with a list of every object page because coop-data-doc's overview does not link them, and the HTML portal in the browser. Aaron's second D1b2 batch, same day: file attachments in the composer (images with the prompt as in the terminal; text by path; Word, Excel, PowerPoint read to Markdown by coop's own readers and PDF by pdf.js in a time-limited process, every document referenced by path so coop reads it through its guarded read tool), pdf.js pinned next to Electron as the runtime's second package, every pane draggable, the Cooptimize splash logo and the vibes in the window, the thinking and tool calls between replies folded into one expandable line with nothing removed from the session, and a readability pass over all four themes; register row 16. Revision 3.14 was D1b as built: the window runs coop's launch arguments with `--mode rpc` and no `-a`, because the recorded session shows coop's guardrails, standards and skills load without it and `-a` would only trust a work repo's own `.pi` files, which the terminal asks about first; Electron installs into its own runtime tree on the first `coop desktop`, not into the extension tree on every machine; the first `coop desktop` adds the "coop (window)" shortcut; register row 16. Revision 3.13 was D1a, the desktop decision record and salvage list: Aaron chose a rendered, modern UI with four themes over a terminal in a window, D1b is re-scoped to it with a terminal parity rule, a changes panel, a standards pane, a project form and a docs setup form go into D1b2 with a list of proposed enhancements (section 11.6), every other section 11.3 item has a recorded default, and the September desktop branches are reviewed file by file; sections 11.1–11.6 and register row 16. Revision 3.12 added an explore and research watch list, section 12.1, starting with PiG, the Go port of Pi: watched, not scheduled. Revision 3.11 scoped Phase 8 D1 into rows D1a–D1g, sections 11.1–11.4; revision 3.10 added the Pi 1.0 row U2, section 6.5; revision 3.9 added the mixed-estate documentation repair, section 8.1. Existing phase ordering and the revision 3.8 scope decisions remain.)
 **Product scope: Coop Windows terminal first; an installable Electron desktop returns after the terminal is simplified.**
 
 **Canonical repository location:** `docs/COOP_MASTER_PLAN.md`. This revision keeps the
@@ -1258,7 +1258,7 @@ Section 11.5 records the answer or default for every item (D1a, revision 3.13).
 ### 11.4 Out of scope for D1
 
 Side-by-side agent threads and worktrees, scheduled tasks, remote or mobile
-access to a session, macOS and ARM packages, a per-machine install,
+access to a session (planned separately in section 12.4), macOS and ARM packages, a per-machine install,
 bundled Python or Azure CLI, a beta or edge channel in the app, Power BI Desktop
 automation beyond what the terminal already does, and any change to the terminal
 product's install, update or profile layout. The old branches' managed-runtime
@@ -1678,8 +1678,7 @@ row starts on its own.
 **Already covered elsewhere, no row.** Too many permission prompts (Joel was on a
 version before #230; re-ask after a week on v0.30.4). Bug reports that reach Aaron
 (the "Internal bug reporting" thread holds that yes/no). The auto-update
-expectation (D1e's notice and the in-place installer). Teams and mobile (#275, M1,
-held for Aaron). Release notes (the changelog page; its home follows question 10).
+expectation (D1e's notice and the in-place installer). Mobile is the secure phone web companion, section 12.4; Teams mobile (M1, #275) was closed as superseded on 2026-10-05. Nothing mobile is shipped on main. Release notes (the changelog page; its home follows question 10).
 
 **Aaron's answers of 2026-10-05 20:00 and the rows proposed from them.** Questions
 1–4 are decided above. The transfer of `coop-agent`, `coop-website` and
@@ -1703,6 +1702,147 @@ coop. The rest became proposals, each a row only when Aaron says yes:
 | SQ9 | Committed dev catalog snapshot | Aaron (12): "coop should have all the context needed to help write good quality code". Joel's two asks, a schema file coop must follow when writing SQL and a periodic export of object definitions into a read-only repository folder, are one feature. Proposal: `coop catalog snapshot` (or `data_doc snapshot`, owner to be decided with coop-data-doc) reads the default dev target read-only through the SQ2 executor and writes the catalog as committable files, one per object, under the client's data-docs repository (DR1) or `.coop/catalog/<target>/`: tables and columns with types, and the definitions of views, procedures and functions. coop-data-doc treats that folder as a SQL source, so lineage and docs work for clients with no SQL source control, and the SQL-writing guidance names it as the file coop reads before writing (the "allowed tables and fields" Joel described). The snapshot refreshes on demand and when coop finds it older than a contract-set age at session start; it is never a deployment artifact and never runs against production | merged ([#313](https://github.com/kabukisensei/coop-agent/pull/313), 2026-10-06), unreleased; VM check pending | a client with no SQL repository gets `data_doc lineage` for a procedure from the snapshot alone on the VM; a stale snapshot is reported with its age; the snapshot contains no row data and no connection string |
 | D1m | The icon is the front door | Aaron (2026-10-05 20:12): the window icon should be the default way people open coop, and it should open in the right folder so coop finds the committed `.coop/project.yml` (C1). Today the installed window package asks for a folder on every launch with a plain folder dialog that defaults to the last folder, and the terminal install's "coop (window)" shortcut starts in the home folder. The row: one "coop" icon (Start Menu and Desktop) opens the window; the terminal keeps a `coop` command and a "coop (terminal)" shortcut for Aaron's daily work. On launch without a folder the window shows a project picker instead of the OS dialog: the folders it has opened before that hold a `.coop/project.yml`, newest first, each with the contract's client name and the Git branch, a Browse button, and "open this one next time" so the last project opens straight away with one click to switch; a folder with no contract offers `/setup-project` and proposes the Git root (C1). The window title and the sidebar name the project. `coop desktop` from a terminal keeps opening the current folder | merged ([#316](https://github.com/kabukisensei/coop-agent/pull/316), 2026-10-05), unreleased: one "coop" icon opens the window (the window runtime's, or the package's, whose shortcut is now plain "coop") and "coop (terminal)" the terminal; the picker (`desktop/lib/projects.mjs`, `desktop/renderer/picker.html`) lists the folders opened before with the client from the project file found above them or in the client home repository beside them (C1), the branch and the team word, Browse, and "open this one next time"; File > Switch project; the title and header name the client | on the VM a teammate double-clicks the icon, picks the client project once, and every later launch opens on it and reads its committed contract without a terminal; a folder without a contract gets the setup offer; the terminal shortcut still opens the terminal |
 
+
+### 12.4 Secure mobile companion (MC1–MC4; documentation authorized October 5, 2026)
+
+**Scope and decision.** Aaron asked on 2026-10-05 to add this to the master plan and
+document what needs doing (draft PR #315, 22:44; reviewed the same evening; at 23:09
+he answered the review's three questions "A1 B2 C2": the phone web view is the only
+mobile route and M1 Teams mobile is superseded, the plan merges after the C1 project
+file set, and MC1 starts after the demo-feedback rows, on his explicit word): an installable phone-friendly web companion for iOS and Android,
+mirroring the **same existing live desktop Pi session** on his running VM. The VM
+and Coop window remain running. First version: ordinary chat, current status,
+stop the current turn, and confirmation/select/input/editor questions, including
+approval cards and questionnaires. Preserve Modern Dark, Modern Light, Retro Dark
+and Retro Light with responsive layouts. This authorizes planning only; Aaron
+starts each implementation row explicitly. It is not a generic remote worker
+platform, a second agent, an unattended scheduler or a replacement desktop.
+
+Keep the current individual OpenAI Codex business/premium subscription and
+provider login flow on the VM; model requests and provider credentials stay there.
+No phone credential replication, shared subscription entitlement assumption,
+self-hosted inference dependency or new model-hosting requirement. Confirm the
+actual account's permitted use before implementation; this plan grants no new
+provider entitlement. Windows sign-in, UAC, browser/provider authentication and
+other external/native dialogs remain full secure remote-desktop fallback.
+
+**Current baseline and neighboring work.** `desktop/lib/pi-session.mjs` owns one
+Pi process and in-memory pending commands/dialogs; `desktop/lib/rpc-commands.mjs`
+validates local renderer commands and dialog responses; `desktop/renderer/dialogs.mjs`
+and `desktop/renderer/styles/themes.css` provide reusable question presentation
+and four theme tokens. `desktop/main.mjs` and `desktop/preload.cjs` use local
+Electron IPC, not an authenticated remote API. `desktop/PARITY.md` is the behavior
+reference. Reuse these contracts where suitable; do not publish the IPC surface.
+The in-memory maps do not establish crash durability or replay correctness.
+
+PR [#275](https://github.com/kabukisensei/coop-agent/pull/275) (M1, Teams mobile,
+built 2026-10-03, never merged) proposed a Teams self-chat transport. Aaron decided on
+2026-10-05 at 23:09 that the phone web view is the one mobile route, so M1 is
+superseded and #275 is closed; its dialog race through Pi's `AbortSignal`, its answer
+parsing and its security review (`m1-security-review-2026-10-03.md` in the project
+files) are reference material for MC2, and its stale desktop-card limitation must
+not be inherited. G1 PR
+[#302](https://github.com/kabukisensei/coop-agent/pull/302) merged on 2026-10-05,
+not yet released: apply the production policy actually installed on the VM and qualify
+against G1 as released. All policy stays server-side; the companion cannot create
+or expose G1's human-only unlock. No existing row's status is changed here.
+
+**Required boundary.** Private network reachability and application/API
+authorization are separate controls. Choose an authenticated encrypted private
+transport without a public unauthenticated listener. On the VM explicitly bind
+each authorized human/device to one client Windows identity and one live session;
+show that identity on both screens. Pairing, expiry, logout and immediate device
+revocation must be designed before access is enabled. A machine-level personal
+profile is not a client/session grant. Never read another client's Windows
+profile, credentials, transcript, files, memory or approvals. Changing the client
+or live session invalidates old grants and pending submissions; any future
+cross-client need requires explicit authorization, outside this first version.
+
+Expose only a separately validated narrow command allowlist: read the bound
+session's sanitized snapshot/status/events, submit chat, stop its current turn,
+and answer a currently pending supported question. No raw bash, arbitrary RPC,
+full Electron IPC, file browsing, shell launch, session creation/switching, model
+login or production unlock endpoints. Validate payload types, size and rate
+limits on the VM; enforce origin/CSRF protections appropriate to the chosen auth,
+and audit authorization/answer/revocation outcomes without secrets. Cache no
+client transcript or credentials in a service worker/offline store by default;
+use secure mobile storage for the minimum revocable companion credential, never
+provider tokens. Review browser storage/XSS risks in MC1. Optional future push
+must be generic (for example “Coop needs your attention”), with no client data,
+question text or commands in a lock-screen notification.
+
+**Question and reconnect contract.** The VM owns session incarnation, question
+identity, exact action/content, choices and expiry; the phone never extends a
+lease. Approval grants cover only that exact action in that client/session,
+never a general session permission inferred from a stale card. One server-side
+arbiter accepts the first valid desktop/phone answer atomically and broadcasts
+resolved/cancelled/expired state to every screen. Decline remains the safe default.
+Reject unknown, expired, already resolved and wrong-session answers; enforce
+server-owned cancellation/timeouts even while a phone sleeps. Submission IDs
+and acknowledgements prevent duplicate chat, stop and answers on retry. After
+reconnect, reconcile an authoritative snapshot of messages, running status and
+pending questions with event sequence/gap detection before enabling submissions;
+never auto-replay an uncertain answer. Pi exit, desktop restart or client/session
+change invalidates prior questions. First version promises live-session reconnect,
+not crash recovery or durable approvals. Unsupported extension/custom TUI/native
+UI must say “continue on desktop” and preserve the pending state without guessing
+an answer; Windows/auth dialogs use full remote desktop.
+
+| Row | Work breakdown | Gate / done when |
+| --- | --- | --- |
+| MC1 | Specify the bounded remote contract, identity/pairing/revocation, private transport, secure storage, event/snapshot and exact-action question lifecycle; reconcile the installed/G1 production policy | Aaron explicitly starts; review the threat model and protocol before building; wrong user/device/client/session and revoked credentials are denied independently of network reachability; record transport and auth choices |
+| MC2 | Add the VM adapter over the existing live PiSession with the narrow allowlist, server policy checks, atomic dialog resolution, expiry/cancellation, idempotency and reconnect reconciliation | MC1 reviewed; fixtures prove both answer-race orders, duplicates, stale/expired/cancelled dialogs, event gaps, session changes and Pi exit; desktop cards close when phone resolves; no raw RPC/IPC escape or credential exposure |
+| MC3 | Build the installable responsive web companion for iOS/Android: chat, status, stop and supported questions, using existing dialog semantics and four themes | MC2 contract stable; phone browser/install tests on both OSes; readable exact commands/options, keyboard and screen-reader access, sufficient contrast and touch targets in every theme; unsupported UI gives desktop fallback |
+| MC4 | Qualify on the running Windows VM and document pairing, access, revocation, recovery and remote-desktop fallback | MC2 + MC3; acceptance matrix below passes with sanitized evidence; security review and Aaron's acceptance before enabling for teammates; update operational docs only for capabilities actually shipped |
+
+**Agent assignment and conflict boundaries.** Implementation is **not started**.
+Once Aaron explicitly starts a row, agents can work in isolated branches with
+synthetic sessions and mock authentication; no real credentials, listeners,
+network rules or tenant/device provisioning are required for that development.
+MC1 must settle the protocol before MC2 and MC3 begin. These are prospective file
+ownership boundaries, not new files or commands already available in the tree:
+
+| Assignment | Likely ownership | Dependencies / parallelization |
+| --- | --- | --- |
+| MC1 protocol/security owner | Section 12.4 and reviewed protocol/identity decisions in the existing architecture docs; define shared request/event/question types and fixtures | First; obtain Aaron's review of the contract and security choices. One owner edits shared types and the master plan; other agents review without overlapping edits |
+| MC2 VM adapter owner | Future mobile adapter modules and protocol fixtures; narrow changes to `desktop/main.mjs`, `desktop/lib/pi-session.mjs` and `desktop/lib/rpc-commands.mjs` only where the live-session contract requires them | After MC1; owns shared dialog arbitration and desktop integration, reusing M1's dialog-race code from #275 where it fits. No concurrent agent changes these files or guardrails for this task |
+| MC3 web UI owner | Future companion UI/assets and phone tests; reuse `desktop/renderer/dialogs.mjs` and `desktop/renderer/styles/themes.css` semantics/tokens | After MC1, parallel with MC2 against a mock adapter and frozen contract. Coordinate any changes to shared desktop renderer/theme files with their current owner; do not fork policy into the UI |
+| MC4 qualification/docs owner | Acceptance evidence, README, architecture and desktop parity updates; fixtures coordinated with MC2/MC3 | After integrated MC2/MC3 and approved provisioning. One owner updates the register; retain unrelated row statuses and rebase on fresh main before each focused PR |
+
+**Provisioning gate versus build work.** Aaron/admin must select and authorize the
+private access mechanism and application identity/enrollment approach, provision
+any required private network/identity resources and device grants, confirm the
+actual provider account's permitted use, and name a reviewer and VM acceptance
+user. Agents can prepare the MC1 contract and, after its review, build MC2/MC3 with
+mocks; they cannot assume those grants exist or enable real access as part of
+coding. MC4 live qualification waits for approved provisioning and the identified
+client Windows user/running session. This roadmap grants no permission to modify
+infrastructure, security settings, production policy or provider credentials.
+Resolve protocol changes through the MC1 owner, then update both consumers before
+integration. Native packaging/push are not parallel first-version assignments.
+
+**Acceptance matrix (MC4, also drives MC2 fixtures).** Verify normal chat,
+stream/status, stop and each confirm/select/input/editor/questionnaire form against
+the same desktop session. Suspend the phone, lose the network, reconnect with
+missing events and retry an unacknowledged request: recover the authoritative
+pending state without a second action. Race desktop and phone in both orders;
+exactly one answer reaches Pi and both cards resolve. Reject a stale/expired
+card, an altered action/option, wrong client/session/device and a revoked device
+on an otherwise reachable private network. Disconnect must not count as approval.
+Verify running versus disconnected versus exited states honestly. Test Pi exit,
+desktop restart and Windows client-user switching invalidate access and questions.
+Check all four themes, small screens, accessibility and long approval commands;
+exercise unsupported extensions and external Windows/auth UI using the stated
+fallback. Verify no provider credentials, cross-client content or sensitive
+notifications/cache/logs leave their intended boundary, and that production
+blocks cannot be bypassed from the phone under the installed policy.
+
+**Decisions still needed at MC1.** Private transport/auth and device-enrollment
+mechanism; session authorization lifetime and reconnect retention limits; supported
+iOS/Android browser/install matrix; which live extension UI can be represented;
+security-review owner and VM acceptance tester. Native packaging,
+app stores, push and background execution remain later decisions, with no first
+version requirement. No infrastructure/security settings are changed by this plan.
 
 ## 13. Ordered work register
 
@@ -1746,6 +1886,7 @@ tags. A stale row is never a reason to re-do work: check the PR list first.
 | 25 | SQ8 | Coop holds the lineage context while it edits SQL: column-level downstream, one line in the summary, detail on request, no repeated lookups (section 12.3) | accepted (Aaron, 2026-10-05: intention over mechanism); SQ4, SQ9 | section 12.3 acceptance | merged ([#314](https://github.com/kabukisensei/coop-agent/pull/314), 2026-10-06), unreleased; VM check pending |
 | 26 | SQ9 | Committed dev catalog snapshot as a SQL source and the file coop reads before writing SQL (section 12.3) | accepted (Aaron, 2026-10-05); SQ2, DR1 | section 12.3 acceptance | merged ([#313](https://github.com/kabukisensei/coop-agent/pull/313), 2026-10-06), unreleased; VM check pending |
 | 27 | D1m | The window icon is the front door: one coop icon, a project picker that remembers the client folders and opens the last one (section 12.3) | accepted (Aaron, 2026-10-05); C1 | section 12.3 acceptance | merged ([#316](https://github.com/kabukisensei/coop-agent/pull/316), 2026-10-05), unreleased; VM check pending |
+| 28 | MC1–MC4 | Secure installable iOS/Android web companion for the same running desktop Pi session (section 12.4) | documentation authorized 2026-10-05; implementation requires explicit start, MC1 review then MC2/MC3 and MC4 qualification | section 12.4 acceptance matrix; private transport plus independent app/session authorization; desktop/theme parity | planned, implementation not started; starts after the demo-feedback rows on Aaron's word; M1 #275 closed as superseded (Aaron, 2026-10-05 23:09) |
 
 Phase 0 rows can each be released as a patch. Later phases are minor versions.
 Rows become `agent:ready` only when Aaron says so. On September 28 he marked the
