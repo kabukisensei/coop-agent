@@ -470,7 +470,9 @@ export const EVENT_TYPES = Object.freeze([
 ]);
 
 /** What `GET /api/detail?id=` names (MC8): `t:` a tool call, `m:` an answer's thinking. */
-export const DETAIL_ID = /^[tm]:[A-Za-z0-9_.:-]{1,120}$/;
+// Tool call ids are the provider's own (OpenAI's carry a "|"), so any visible
+// ASCII is allowed; the id is only ever a key into the hub's in-memory map.
+export const DETAIL_ID = /^[tm]:[\x21-\x7e]{1,300}$/;
 
 /** One event as sent on the stream; `id` is the SSE id the phone echoes in Last-Event-ID. */
 export function eventEnvelope({ seq, incarnation, type, data, at = Date.now() }) {

@@ -19,7 +19,7 @@ import { JsonlSplitter, encodeLine } from "../desktop/lib/jsonl.mjs";
 import { SpecError, parseSpec, piArgv, piEnv } from "../desktop/lib/spec.mjs";
 import { CommandError, IMAGE_LIMITS, buildCommand, buildUiResponse } from "../desktop/lib/rpc-commands.mjs";
 import { CSP, isAppUrl, resolveAsset } from "../desktop/lib/serve.mjs";
-import { THEMES, loadSettings, saveSettings } from "../desktop/lib/settings.mjs";
+import { THEMES, fitToScreen, loadSettings, saveSettings } from "../desktop/lib/settings.mjs";
 import { MAX_PROJECTS, describeProject, forgetProject, projectEntries, rememberProject, startFolder, teamWord, windowTitle } from "../desktop/lib/projects.mjs";
 import { isSessionPath, listSessions, sessionFolderName } from "../desktop/lib/sessions.mjs";
 import { readBranch } from "../desktop/lib/git.mjs";
@@ -524,6 +524,10 @@ await check("settings: unknown values fall back, the four themes and auto are ke
   assert.equal(loadSettings(file).openNextTime, "C:\\work\\a");
   writeFileSync(file, "{not json");
   assert.equal(loadSettings(file).theme, "auto");
+  // The window fits a small screen (MC4 on a VM display): never larger than the work area, never under the minimums.
+  assert.deepEqual(fitToScreen({ width: 1280, height: 860 }, { width: 1366, height: 728 }), { width: 1280, height: 728 });
+  assert.deepEqual(fitToScreen({ width: 1280, height: 860 }, { width: 600, height: 400 }), { width: 640, height: 420 });
+  assert.deepEqual(fitToScreen({ width: 1000, height: 700 }, undefined), { width: 1000, height: 700 });
 });
 
 await check("D1m projects: the picker's list, the folder the icon opens, the team word and the title", () => {

@@ -5,7 +5,7 @@
 // terminal uses. The renderer is untrusted: it is sandboxed, sees only the
 // small bridge in preload.cjs, and every command it sends is rebuilt from an
 // allowlist (lib/rpc-commands.mjs) before it reaches Pi.
-import { app, BrowserWindow, ipcMain, protocol, session, dialog, shell, clipboard, nativeTheme, Menu, Notification } from "electron";
+import { app, BrowserWindow, ipcMain, protocol, session, dialog, shell, clipboard, nativeTheme, Menu, Notification, screen } from "electron";
 import { readFile } from "node:fs/promises";
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { hostname, userInfo } from "node:os";
@@ -21,7 +21,7 @@ import { consoleProcess } from "./lib/terminal.mjs";
 import { resolveAsset, isAppUrl, CSP, APP_ORIGIN } from "./lib/serve.mjs";
 import { readBranch } from "./lib/git.mjs";
 import { listFiles, rankFiles } from "./lib/files.mjs";
-import { loadSettings, saveSettings, THEMES } from "./lib/settings.mjs";
+import { fitToScreen, loadSettings, saveSettings, THEMES } from "./lib/settings.mjs";
 import { listChanges, fileDiff } from "./lib/changes.mjs";
 import { readStandards, readSnapshot, readNote } from "./lib/standards-view.mjs";
 import { getTeamProject, loadProject, previewProject, saveProject, shareProject, teamStatus } from "./lib/project-form.mjs";
@@ -232,9 +232,12 @@ function openWindow(rawSpec, token) {
     if (!BrowserWindow.getAllWindows().length) app.quit();
     return;
   }
+  // The saved size, cut down to the screen it opens on (a small VM display).
+  let fit = { width: settings.width, height: settings.height };
+  try { fit = fitToScreen(fit, screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workAreaSize); } catch { /* keep the saved size */ }
   const win = new BrowserWindow({
-    width: settings.width,
-    height: settings.height,
+    width: fit.width,
+    height: fit.height,
     minWidth: 640,
     minHeight: 420,
     // The client the project file names, then the folder (D1m).

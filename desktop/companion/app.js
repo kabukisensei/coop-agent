@@ -291,7 +291,7 @@ const REASONS = {
   "not-paired": ["Pair this phone", "Open coop on the VM and choose Session > Phone > Pair a phone. Enter the code it shows."],
   "revoked": ["This phone was removed", "Pair it again from the coop window: Session > Phone > Pair a phone."],
   "device-expired": ["Pairing expired", "Pair this phone again from the coop window: Session > Phone > Pair a phone."],
-  "wrong-user": ["Different Windows user", "This phone was paired by another Windows user, or no coop window has phone access on. Allow the phone in the coop window: Session > Phone > Allow phone for this session."],
+  "wrong-user": ["Different Windows user", "This phone was paired by another Windows user on this computer. Pair it again from your own coop window: Session > Phone > Pair a phone."],
   "wrong-client": ["Different client", "This phone was paired for another client. Pair it for this client from the coop window."],
   "access-off": ["Phone access is off", "In the coop window on the VM, choose Session > Phone > Allow phone for this session. It turns off when the session changes."],
   "wrong-session": ["The session changed", "coop started a new session. Allow the phone again in the coop window."],

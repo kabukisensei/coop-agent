@@ -113,24 +113,33 @@ export function createCompanionServer({ store, active, origin, webRoot = "", sha
 
   function openStream(req, res, hub, deviceId, after) {
     res.writeHead(200, { ...SECURITY_HEADERS, "Content-Type": "text/event-stream", Connection: "keep-alive", "X-Accel-Buffering": "no" });
-    const write = (event) => res.write(`id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+    // A stream that has ended (access went off, the phone went away) takes no
+    // more writes: the hub can push in the same step that ends it.
+    const send = (text) => { if (!res.writableEnded && !res.destroyed) res.write(text); };
+    const write = (event) => send(`id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
     // EventSource repeats the last id on its own; the page passes the snapshot's as `after`.
     const start = hub.resume(req.headers["last-event-id"] || after);
     if (start.mode === "replay") start.events.forEach(write);
-    else res.write(`event: resync\ndata: ${JSON.stringify({ reason: start.reason })}\n\n`);
+    else send(`event: resync\ndata: ${JSON.stringify({ reason: start.reason })}\n\n`);
     const onEvent = (event) => write(event);
     // Access going off (a new session, Pi exiting, the window's toggle) ends
     // the stream; the phone's next request is refused with the reason.
-    const onAccess = ({ on }) => { if (!on) res.end(); };
-    hub.on("event", onEvent);
-    hub.on("access", onAccess);
-    const beat = setInterval(() => res.write(": keep-alive\n\n"), HEARTBEAT_MS);
-    if (!streams.has(deviceId)) streams.set(deviceId, new Set());
-    streams.get(deviceId).add(res);
-    res.on("close", () => {
+    const onAccess = ({ on }) => { if (!on) { stop(); res.end(); } };
+    const beat = setInterval(() => send(": keep-alive\n\n"), HEARTBEAT_MS);
+    let stopped = false;
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
       clearInterval(beat);
       hub.off("event", onEvent);
       hub.off("access", onAccess);
+    };
+    hub.on("event", onEvent);
+    hub.on("access", onAccess);
+    if (!streams.has(deviceId)) streams.set(deviceId, new Set());
+    streams.get(deviceId).add(res);
+    res.on("close", () => {
+      stop();
       const set = streams.get(deviceId);
       if (set) { set.delete(res); if (!set.size) streams.delete(deviceId); }
     });
@@ -168,7 +177,9 @@ export function createCompanionServer({ store, active, origin, webRoot = "", sha
     const cookie = readCookie(req.headers.cookie);
     const device = cookie ? store.get(cookie.id) : null;
     const hub = active();
-    const binding = hub ? hub.binding : { windowsUser: "", client: "", incarnation: "", accessOn: false };
+    // No window has phone access on: a paired phone hears "access off", not
+    // "another Windows user" (MC4). The store is this Windows user's own.
+    const binding = hub ? hub.binding : { windowsUser: device ? device.windowsUser : "", client: device ? device.client : "", incarnation: "", accessOn: false };
     if (request.op === "logout") {
       // Signing out works whatever the session: it removes this device.
       if (device && cookie && checkGrant({ device, secret: cookie.secret, binding: { ...binding, windowsUser: device.windowsUser, client: device.client, accessOn: true }, now: now() }) === null) {

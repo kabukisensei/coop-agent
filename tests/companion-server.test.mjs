@@ -603,6 +603,11 @@ try {
     assert.equal(read.json.detail.name, "read");
     assert.equal((await call(port, "GET", "/api/detail?id=..%2Fetc", { cookie })).json.code, "bad-request");
     assert.equal((await call(port, "GET", "/api/detail?id=t%3Agone", { cookie })).status, 404);
+    // OpenAI's tool call ids carry a "|" (MC4 on the VM).
+    pi.emit("event", { type: "tool_execution_start", toolCallId: "call_8|fc_9", toolName: "bash", args: { command: "ls" } });
+    const piped = await call(port, "GET", `/api/detail?id=${encodeURIComponent("t:call_8|fc_9")}`, { cookie });
+    assert.equal(piped.status, 200);
+    assert.equal(piped.json.detail.name, "bash");
   });
 
   await check("server: the session sheets read details and set the thinking level (MC7)", async () => {
@@ -639,6 +644,17 @@ try {
     assert.deepEqual(pi.answers.at(-1), { type: "extension_ui_response", id: "c9", confirmed: true });
   });
 
+  await check("server: a new session at the desk ends the phone's stream without a write after end (MC4)", async () => {
+    const s = await stream(port, cookie);
+    await new Promise((r) => setTimeout(r, 20));
+    hub.renew();
+    pi.emit("event", { type: "agent_start" });
+    await s.ended;
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal((await call(port, "GET", "/api/snapshot", { cookie })).json.code, "access-off");
+    hub.setAccess(true);
+  });
+
   await check("server: removing the device in the window ends its stream and refuses it at once", async () => {
     const s = await stream(port, cookie);
     const id = readCookie(cookie).id;
@@ -654,12 +670,12 @@ try {
     assert.equal((await call(port, "GET", "/api/snapshot", { cookie: other })).json.code, "wrong-client");
   });
 
-  await check("server: no window with access on refuses everything", async () => {
+  await check("server: no window with access on refuses everything, as access off", async () => {
     activeHub = null;
     const { code } = store.startPairing({ windowsUser: "VM\\aaron", client: "Example Co" });
     const res = await call(port, "POST", "/api/pair", { body: { code, deviceName: "phone" } });
     const fresh = String(res.headers["set-cookie"]).split(";")[0];
-    assert.equal((await call(port, "GET", "/api/snapshot", { cookie: fresh })).json.code, "wrong-user");
+    assert.equal((await call(port, "GET", "/api/snapshot", { cookie: fresh })).json.code, "access-off");
   });
 
   await check("server: the audit log names outcomes, never message text or answers", () => {
@@ -714,6 +730,12 @@ await check("page: four themes from the menu, Retro in the coop site's look (MC5
     assert.ok(existsSync(join(pageDir, ref)), `ships: ${ref}`);
   }
   assert.match(readFileSync(join(pageDir, "fonts", "OFL.txt"), "utf8"), /SIL OPEN FONT LICENSE Version 1\.1/);
+  // Fields stay at 16px or more in every look, or iPhone Safari zooms the page past the screen (MC4).
+  assert.match(css, /input, textarea, select \{ font-size: max\(16px, 1em\); \}/);
+  for (const m of css.matchAll(/(?:^|\n)([^{}\n]*\b(?:input|textarea)\b[^{}]*)\{([^}]*)\}/g)) {
+    const size = /font-size:\s*(\d+)px/.exec(m[2]);
+    assert.ok(!size || Number(size[1]) >= 16, `a field under 16px: ${m[1].trim()}`);
+  }
 });
 
 console.log(`✓ companion server (MC2) and page (MC3): ${checks} checks`);
