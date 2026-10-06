@@ -37,6 +37,18 @@ function normalize(value) {
   };
 }
 
+/**
+ * The window's size on this screen: the saved size, but never bigger than the
+ * screen's work area (the screen less the taskbar), so a size saved on a
+ * larger screen, or the default on a small VM display, still fits. `workArea`
+ * is Electron's `{ width, height }`; the minimums still hold.
+ */
+export function fitToScreen({ width, height }, workArea) {
+  const room = workArea && workArea.width > 0 && workArea.height > 0 ? workArea : null;
+  if (!room) return { width, height };
+  return { width: Math.max(640, Math.min(width, room.width)), height: Math.max(420, Math.min(height, room.height)) };
+}
+
 export function loadSettings(file) {
   try { return normalize(JSON.parse(readFileSync(file, "utf8"))); } catch { return normalize({}); }
 }

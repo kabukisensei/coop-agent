@@ -82,6 +82,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   1.3.2 and 1.3.3 were published without that change and are skipped.
   `coop sync` installs 1.3.4; `coop doctor` reports an older copy as stale.
 
+### Fixed
+
+- Phone companion fixes from the VM check (MC4). Starting a new session at the
+  desk while a phone was connected no longer shows a "write after end" error box
+  in the window. Tapping a tool line on the phone no longer answers "id is
+  malformed" for models whose tool ids contain a `|`. The window opens no larger
+  than the screen it opens on.
+
 ## [0.31.0] — 2026-10-05
 
 ### Added

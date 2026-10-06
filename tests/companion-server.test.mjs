@@ -603,6 +603,11 @@ try {
     assert.equal(read.json.detail.name, "read");
     assert.equal((await call(port, "GET", "/api/detail?id=..%2Fetc", { cookie })).json.code, "bad-request");
     assert.equal((await call(port, "GET", "/api/detail?id=t%3Agone", { cookie })).status, 404);
+    // OpenAI's tool call ids carry a "|" (MC4 on the VM).
+    pi.emit("event", { type: "tool_execution_start", toolCallId: "call_8|fc_9", toolName: "bash", args: { command: "ls" } });
+    const piped = await call(port, "GET", `/api/detail?id=${encodeURIComponent("t:call_8|fc_9")}`, { cookie });
+    assert.equal(piped.status, 200);
+    assert.equal(piped.json.detail.name, "bash");
   });
 
   await check("server: the session sheets read details and set the thinking level (MC7)", async () => {
@@ -637,6 +642,17 @@ try {
     const res = await call(port, "POST", "/api/answer", { cookie, body: { submissionId: SUB(24), incarnation: hub.incarnation, questionId: q.questionId, digest: q.digest, answer: { confirmed: true } } });
     assert.equal(res.status, 200);
     assert.deepEqual(pi.answers.at(-1), { type: "extension_ui_response", id: "c9", confirmed: true });
+  });
+
+  await check("server: a new session at the desk ends the phone's stream without a write after end (MC4)", async () => {
+    const s = await stream(port, cookie);
+    await new Promise((r) => setTimeout(r, 20));
+    hub.renew();
+    pi.emit("event", { type: "agent_start" });
+    await s.ended;
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal((await call(port, "GET", "/api/snapshot", { cookie })).json.code, "access-off");
+    hub.setAccess(true);
   });
 
   await check("server: removing the device in the window ends its stream and refuses it at once", async () => {
