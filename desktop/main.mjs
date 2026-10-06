@@ -764,7 +764,7 @@ async function startCompanion() {
   if (companion.server) return companion.origin;
   if (!companion.starting) {
     companion.starting = (async () => {
-      const origin = typeof settings.companionOrigin === "string" && /^https:\/\/[a-z0-9.-]+$/i.test(settings.companionOrigin) ? settings.companionOrigin : await tailnetOrigin();
+      const origin = settings.companionOrigin || await tailnetOrigin();
       if (!origin) throw new Error("Tailscale is not running or not signed in on this computer, so the phone cannot reach coop. Start Tailscale, sign in, and try again.");
       const server = createCompanionServer({
         store: companionStore(),

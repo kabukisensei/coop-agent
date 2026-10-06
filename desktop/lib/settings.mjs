@@ -31,6 +31,9 @@ function normalize(value) {
     // the one the icon opens without asking ("" asks).
     projects: Array.isArray(raw.projects) ? raw.projects.map(folderString).filter(Boolean).slice(0, 12) : [],
     openNextTime: folderString(raw.openNextTime),
+    // The phone companion's address when it is not this computer's Tailscale
+    // name (MC2); "" reads it from Tailscale.
+    companionOrigin: typeof raw.companionOrigin === "string" && /^https:\/\/[a-z0-9.-]+(:\d{1,5})?$/i.test(raw.companionOrigin) ? raw.companionOrigin.toLowerCase() : "",
   };
 }
 

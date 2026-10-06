@@ -15,6 +15,7 @@ import { CompanionHub, messageText, toolLabel } from "../desktop/lib/companion-h
 import { DeviceStore } from "../desktop/lib/companion-devices.mjs";
 import { createCompanionServer, readCookie } from "../desktop/lib/companion-server.mjs";
 import { LIMITS } from "../desktop/lib/companion-protocol.mjs";
+import { originFromStatus, tailscaleCommand } from "../desktop/lib/companion-tailscale.mjs";
 
 const temp = mkdtempSync(join(tmpdir(), "coop-companion-"));
 let checks = 0;
@@ -370,6 +371,14 @@ try {
   await companion.close();
   rmSync(temp, { recursive: true, force: true });
 }
+
+await check("tailscale: the origin is the VM's tailnet name, and nothing when Tailscale is off", () => {
+  assert.equal(originFromStatus(JSON.stringify({ BackendState: "Running", Self: { DNSName: "coop-vm.example-tailnet.ts.net." } })), "https://coop-vm.example-tailnet.ts.net");
+  assert.equal(originFromStatus(JSON.stringify({ BackendState: "Stopped", Self: { DNSName: "coop-vm.example-tailnet.ts.net." } })), "");
+  assert.equal(originFromStatus(JSON.stringify({ BackendState: "Running", Self: { DNSName: "evil.example.com." } })), "");
+  assert.equal(originFromStatus("not json"), "");
+  assert.equal(tailscaleCommand("win32", { ProgramFiles: "C:\\Program Files" }, () => true), "C:\\Program Files\\Tailscale\\tailscale.exe");
+});
 
 // ---- the phone page (MC3): what ships, and what it may load ------------------------
 const ROOT = join(import.meta.dirname, "..");
