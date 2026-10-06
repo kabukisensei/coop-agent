@@ -148,6 +148,8 @@ function onEvent(event) {
   const { changed, status } = applyEvent(app.tl, event);
   for (const id of changed) redraw(id);
   if (status) { renderBusy(); renderHeader(); }
+  // A name set mid-session (auto-naming runs after the turn ends) shows in the list at once.
+  if (event.type === "session_info_changed") loadSessions();
   if (event.type === "agent_start") { freshVibe(); startTurn(app.todos); renderWidgets(); }
   if (event.type === "tool_execution_end" && event.toolName === TODO_TOOL && applyTodoResult(app.todos, event.result)) renderWidgets();
   if (event.type === "agent_settled") {

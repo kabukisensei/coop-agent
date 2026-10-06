@@ -5,6 +5,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- The window's session list shows a session's name. It read only the first
+  256 KB of each session file, so a name set after a few turns (auto-naming,
+  `/name`, `/rename`) was missed in any session with large tool output, and the
+  prompt count stopped early. It now reads the whole file, picking up from where
+  it stopped when the file grows, and refreshes the list the moment a session is
+  named.
+
 ## [0.32.0] — 2026-10-06
 
 ### Added
