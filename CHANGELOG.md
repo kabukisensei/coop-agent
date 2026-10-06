@@ -30,6 +30,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- **The project file is found two levels down** (Aaron, 2026-10-06). Most
+  teammates open coop in their user folder, and the client's repositories sit
+  one folder further down (`devops\fabric`). Opened in a folder that is not a
+  repository, coop now finds the one repository up to two levels down with a
+  `.coop/project.yml`, as it did one level down. Hidden folders, `AppData`,
+  `node_modules` and coop's own checkout are skipped, a repository is never
+  searched inside, and with several it still names them and picks none.
 - Phone companion feedback (Aaron, 2026-10-06). Attach is a paperclip; button
   labels sit centred on one line ("Send now" no longer wraps). The phone shows a
   compaction as the window does: "compacting the conversation", then how far it
