@@ -9,6 +9,7 @@
 // stores or talks to Pi; MC2 wires these decisions to the live PiSession.
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { buildUiResponse, CommandError } from "./rpc-commands.mjs";
+import { BUILTINS, TERMINAL_ONLY } from "../renderer/commands.mjs";
 
 export const PROTOCOL_VERSION = 1;
 
@@ -35,6 +36,7 @@ export const ROUTES = Object.freeze({
   "GET /api/events": "events",
   "POST /api/chat": "chat",
   "POST /api/stop": "stop",
+  "POST /api/dequeue": "dequeue",
   "POST /api/answer": "answer",
   "POST /api/logout": "logout",
 });
@@ -58,6 +60,7 @@ export const CODES = Object.freeze({
   "changed": 409,
   "too-large": 413,
   "desktop-only": 422,
+  "unknown-command": 422,
   "not-an-option": 422,
   "rate-limited": 429,
   "pi-not-running": 503,
@@ -128,14 +131,17 @@ export function validateRequest(method, path, body, rawBytes = 0) {
       return { op, code, deviceName: plainText(body.deviceName, "device name", LIMITS.deviceNameChars).trim() };
     }
     case "chat": {
-      onlyKeys(body, ["submissionId", "incarnation", "text"]);
+      onlyKeys(body, ["submissionId", "incarnation", "text", "mode"]);
       const text = plainText(body.text, "message", LIMITS.chatChars);
-      // Slash commands and `!` shell lines open terminal screens, change the
-      // session or run commands outside the model's turn: desktop only (v1).
-      if (/^\s*[/!]/.test(text)) throw new ProtocolError("desktop-only", "commands starting with / or ! run on the desktop");
-      return { op, submissionId: field(body, "submissionId", SUBMISSION_ID), incarnation: field(body, "incarnation", INCARNATION), text };
+      // A `!` line is a shell on the VM: desktop only (MC1). Slash commands are
+      // checked by the hub against Pi's own list (phoneCommand, MC6).
+      if (/^\s*!/.test(text)) throw new ProtocolError("desktop-only", "a ! line runs a shell on the VM: use the coop window");
+      const mode = body.mode === undefined ? "queue" : body.mode;
+      if (mode !== "queue" && mode !== "steer") throw new ProtocolError("bad-request", "mode is queue or steer");
+      return { op, submissionId: field(body, "submissionId", SUBMISSION_ID), incarnation: field(body, "incarnation", INCARNATION), text, mode };
     }
     case "stop":
+    case "dequeue":
       onlyKeys(body, ["submissionId", "incarnation"]);
       return { op, submissionId: field(body, "submissionId", SUBMISSION_ID), incarnation: field(body, "incarnation", INCARNATION) };
     case "answer": {
@@ -314,11 +320,40 @@ export function decideAnswer({ question, request, incarnation }) {
   }
 }
 
+// ---- slash commands (MC6) ----------------------------------------------------
+
+const BUILTIN_NAMES = new Set(BUILTINS.map((command) => command.name));
+
+/**
+ * Whether a phone message that starts with `/` may go to Pi as typed. Pi's
+ * built-ins belong to its terminal UI (the window runs them itself), so they
+ * wait for their own rows (MC7, MC9) or stay in the terminal; the extension
+ * screens that exist only in the terminal stay there; anything else must be a
+ * command Pi listed (`get_commands`: extensions, prompt templates, skills).
+ * `piCommands` is that list. Returns `{ ok: true }` or `{ ok: false, code, message }`.
+ */
+export function phoneCommand(text, piCommands = []) {
+  const match = /^\s*\/([A-Za-z0-9:._-]+)/.exec(String(text || ""));
+  if (!match) return { ok: true };
+  const name = match[1];
+  if (BUILTIN_NAMES.has(name)) return { ok: false, code: "desktop-only", message: `/${name} runs in the coop window for now` };
+  if (Object.hasOwn(TERMINAL_ONLY, name)) return { ok: false, code: "desktop-only", message: `/${name} opens ${TERMINAL_ONLY[name]}, which exists only in the terminal` };
+  const known = Array.isArray(piCommands) && piCommands.some((command) => command && command.name === name);
+  return known ? { ok: true } : { ok: false, code: "unknown-command", message: `coop has no /${name} command` };
+}
+
+/** The commands the phone lists when you type `/`: Pi's own, minus the ones above. */
+export function phoneCommandList(piCommands = []) {
+  return (Array.isArray(piCommands) ? piCommands : [])
+    .filter((command) => command && typeof command.name === "string" && phoneCommand(`/${command.name}`, piCommands).ok)
+    .map((command) => ({ name: command.name, description: String(command.description || "").split("\n")[0].slice(0, 200), source: String(command.source || "") }));
+}
+
 // ---- events and reconnect ----------------------------------------------------
 
 /** The only event types the phone receives; MC2 maps Pi's RPC events onto these. */
 export const EVENT_TYPES = Object.freeze([
-  "status",            // { state: "idle" | "running" | "exited", queued }
+  "status",            // { state: "idle" | "running" | "exited", queue?: { steering: [], followUp: [] } }
   "message",           // { id, role: "user" | "assistant", text, final }
   "tool",              // { id, name, label, state: "running" | "done" | "error" }
   "question",          // classifyQuestion's result without piId

@@ -16,6 +16,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   wins against the exact action, and production or session-wide approvals stay
   on the desktop. The checkable rules are `desktop/lib/companion-protocol.mjs`
   with gate-lane fixtures.
+- **Phone parity, part 1** (MC6; Aaron asked for terminal parity, 2026-10-06).
+  `desktop/PARITY.md` lists every terminal capability with its phone status.
+  The phone now sends coop's `/` commands, prompt templates and skills (typing
+  `/` lists them, from Pi's own list), and while coop works it offers *Send now*
+  (steer) and *Queue*, shows the queued messages and brings them back with *Edit
+  queued*. Pi's built-in commands, terminal-only screens and `!` shell lines
+  stay off the phone, refused with the reason.
 - **The coop website's look on the phone** (MC5; Aaron, 2026-10-06). The phone
   page's theme menu adds *Site dark* and *Site light*: the coop website's colours
   with its raised and sunken bevels, title-bar gradients and Silkscreen pixel

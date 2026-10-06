@@ -180,7 +180,12 @@ export function createCompanionServer({ store, active, origin, webRoot = "", sha
       case "chat": {
         const result = hub.chat(device.id, request);
         audit({ kind: "chat", device: device.id, outcome: result.ok ? "sent" : result.code });
-        return result.ok ? sendJson(res, 200, { ok: true }) : refuse(res, result.code, undefined, device.id);
+        return result.ok ? sendJson(res, 200, { ok: true }) : refuse(res, result.code, result.message, device.id);
+      }
+      case "dequeue": {
+        const result = await hub.dequeue(device.id, request);
+        audit({ kind: "dequeue", device: device.id, outcome: result.ok ? "returned" : result.code });
+        return result.ok ? sendJson(res, 200, { ok: true, texts: result.texts }) : refuse(res, result.code, undefined, device.id);
       }
       case "stop": {
         const result = hub.stop(device.id, request);

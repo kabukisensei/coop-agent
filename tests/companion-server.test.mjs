@@ -25,7 +25,13 @@ async function check(name, fn) {
 
 class FakePi extends EventEmitter {
   constructor() { super(); this.exited = false; this.sent = []; this.answers = []; this.dialogs = new Map(); this.messages = []; }
-  request(command) { this.sent.push(command); return Promise.resolve({ type: "response", success: true, data: command.type === "get_messages" ? { messages: this.messages } : {} }); }
+  request(command) {
+    this.sent.push(command);
+    const data = command.type === "get_messages" ? { messages: this.messages }
+      : command.type === "get_commands" ? { commands: this.commands || [] }
+      : command.type === "clear_queue" ? { steering: ["look at the view"], followUp: ["then the report"] } : {};
+    return Promise.resolve({ type: "response", success: true, data });
+  }
   dialog(id) { return this.dialogs.get(id); }
   answer(response) { if (!this.dialogs.has(response.id)) return false; this.dialogs.delete(response.id); this.answers.push(response); return true; }
   ask(request) { this.dialogs.set(request.id, request); this.emit("event", request); }
@@ -144,14 +150,47 @@ await check("a new session is a new incarnation: access off, old questions and w
   assert.equal(hub.chat("d1", { submissionId: SUB(7), incarnation: old, text: "hi" }).code, "wrong-session");
 });
 
-await check("chat is a prompt when idle and a follow-up while coop works; stop aborts; retries send once", () => {
+await check("chat is a prompt when idle; while coop works it steers or queues as asked; stop aborts; retries send once", () => {
   const { pi, hub } = newHub();
-  hub.chat("d1", { submissionId: SUB(8), incarnation: hub.incarnation, text: "first" });
+  hub.chat("d1", { submissionId: SUB(8), incarnation: hub.incarnation, text: "first", mode: "steer" });
   pi.emit("event", { type: "agent_start" });
-  hub.chat("d1", { submissionId: SUB(9), incarnation: hub.incarnation, text: "second" });
-  hub.chat("d1", { submissionId: SUB(9), incarnation: hub.incarnation, text: "second" });
+  hub.chat("d1", { submissionId: SUB(9), incarnation: hub.incarnation, text: "second", mode: "queue" });
+  hub.chat("d1", { submissionId: SUB(9), incarnation: hub.incarnation, text: "second", mode: "queue" });
+  hub.chat("d1", { submissionId: SUB(11), incarnation: hub.incarnation, text: "use the dev target", mode: "steer" });
   hub.stop("d1", { submissionId: SUB(10), incarnation: hub.incarnation });
-  assert.deepEqual(pi.sent, [{ type: "prompt", message: "first" }, { type: "follow_up", message: "second" }, { type: "abort" }]);
+  assert.deepEqual(pi.sent, [
+    { type: "prompt", message: "first" },
+    { type: "prompt", message: "second", streamingBehavior: "followUp" },
+    { type: "prompt", message: "use the dev target", streamingBehavior: "steer" },
+    { type: "abort" },
+  ]);
+});
+
+await check("/ commands (MC6): Pi's listed commands go as typed; built-ins and unknown names are refused with a reason", async () => {
+  const { pi, hub } = newHub();
+  pi.commands = [{ name: "start", description: "Start here", source: "extension" }, { name: "pets", source: "extension" }];
+  const snap = await hub.snapshot();
+  assert.deepEqual(snap.commands.map((c) => c.name), ["start"]);
+  assert.deepEqual(hub.chat("d1", { submissionId: SUB(20), incarnation: hub.incarnation, text: "/start", mode: "steer" }), { ok: true });
+  const refused = hub.chat("d1", { submissionId: SUB(21), incarnation: hub.incarnation, text: "/new", mode: "steer" });
+  assert.equal(refused.code, "desktop-only");
+  assert.match(refused.message, /coop window/);
+  assert.equal(hub.chat("d1", { submissionId: SUB(22), incarnation: hub.incarnation, text: "/pets", mode: "steer" }).code, "desktop-only");
+  assert.equal(hub.chat("d1", { submissionId: SUB(23), incarnation: hub.incarnation, text: "/nope", mode: "steer" }).code, "unknown-command");
+  assert.deepEqual(pi.sent.filter((c) => c.type === "prompt"), [{ type: "prompt", message: "/start" }]);
+});
+
+await check("queue (MC6): Pi's queue reaches the phone; Edit queued brings the texts back", async () => {
+  const { pi, hub } = newHub();
+  const events = [];
+  hub.on("event", (e) => events.push(e));
+  pi.emit("event", { type: "queue_update", steering: ["look at the view"], followUp: ["then the report"] });
+  const status = events.find((e) => e.type === "status");
+  assert.deepEqual(status.data.queue, { steering: ["look at the view"], followUp: ["then the report"] });
+  assert.deepEqual((await hub.snapshot()).queue, { steering: ["look at the view"], followUp: ["then the report"] });
+  const back = await hub.dequeue("d1", { submissionId: SUB(30), incarnation: hub.incarnation });
+  assert.deepEqual(back, { ok: true, texts: ["look at the view", "then the report"] });
+  assert.equal((await hub.dequeue("d1", { submissionId: SUB(31), incarnation: "CCCCCCCCCCCCCCCCCCCCCCCC" })).code, "wrong-session");
 });
 
 await check("access needs a client in the project file and a running Pi", () => {

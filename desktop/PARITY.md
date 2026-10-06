@@ -290,7 +290,7 @@ terminal capability with its phone status:
 | Capability | Status | On the phone |
 | --- | --- | --- |
 | Read the session | phone | The conversation's prompts and answers (Markdown), tool lines, notices and coop's status, live, with resume after a dropped connection. |
-| Send a message | phone | `prompt` when idle; while coop works it is queued as a follow-up (`follow_up`). |
+| Send a message | phone | `prompt` when idle; while coop works Send now steers and Queue waits (`streamingBehavior`), as the window's Enter and Alt+Enter (MC6). |
 | Stop a turn | phone | `abort` (the terminal's Esc). |
 | Answer coop's questions | phone | `select`, `confirm`, `input`, `editor` and `ask_user_question` cards, first answer wins against the desk. |
 | Theme | phone | The four window themes plus Site dark and Site light (MC5), kept on the phone. |
@@ -299,8 +299,8 @@ terminal capability with its phone status:
 
 | Capability | Status | What closes it |
 | --- | --- | --- |
-| Extension commands, prompt templates and skills (`/start`, `/standards-status`, `/todos`, `/memory-*`, `/rename`, `/websearch`, `/search`, prompt templates such as `/spec-first`, `/skill:name`) | MC6 | Typing `/` lists the commands Pi returned (`get_commands`) and sends the ones the window maps to **Pi** as typed; their dialogs and notices already reach the phone. |
-| Steer while coop works (Enter) and pull back queued messages (`clear_queue`, Alt+Up) | MC6 | A Steer / Queue choice while coop works, and the queued messages back into the text box. |
+| Extension commands, prompt templates and skills (`/start`, `/standards-status`, `/todos`, `/memory-*`, `/rename`, `/websearch`, `/search`, `/coop-approvals`, `/coop-live-read`, prompt templates such as `/spec-first`, `/skill:name`) | phone (MC6) | Typing `/` lists the commands Pi returned (`get_commands`) and sends the ones the window maps to **Pi** as typed; their dialogs and notices reach the phone. `/coop-approvals` and `/coop-live-read` only show or revoke, so they narrow access. |
+| Steer while coop works (Enter) and pull back queued messages (`clear_queue`, Alt+Up) | phone (MC6) | Send now and Queue while coop works; the queued messages show above the text box, and Edit queued brings them back into it. |
 | `/model`, `/thinking` (and Ctrl+P, Shift+Tab) | MC7 | Model and thinking pickers (`get_available_models`, `set_model`, `set_thinking_level`). |
 | `/compact`, `/session`, `/name`, `/copy` | MC7 | `compact`, the session's details (`get_state`, `get_session_stats`), `set_session_name`, a copy button on every answer. |
 | Thinking and tool detail (Ctrl+T, Ctrl+O) | MC8 | Thinking blocks and each tool's arguments and output, folded, opened on tap. |
@@ -318,7 +318,7 @@ terminal capability with its phone status:
 | Capability | Status | Why |
 | --- | --- | --- |
 | Approving a production action (`PRODUCTION` confirms, the G1 production-write unlock) | desk only | MC1 contract: production stays at the desk; the phone can decline. |
-| Options that allow more than the one action ("Allow … for this session", "always", "don't ask again") and grant commands that widen access (`/coop-live-read` grant, `/coop-approvals` grants, `/trust`) | desk only | MC1 contract: the phone answers for the exact action in front of it; revoking (`/coop-live-read revoke`, `/coop-approvals revoke`) narrows access and is allowed from MC6. |
+| Options that allow more than the one action ("Allow … for this session", "always", "don't ask again") and `/trust` | desk only | MC1 contract: the phone answers for the exact action in front of it. Grants only ever come from those options; `/coop-approvals` and `/coop-live-read` show or revoke and work on the phone (MC6). |
 | `!command` and `!!command` (a shell on the VM) | desk only | MC1 contract: the phone is not a remote shell; coop's own tools still run commands under the guardrails when asked in chat. |
 
 ### Not on a phone

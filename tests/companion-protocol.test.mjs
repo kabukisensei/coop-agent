@@ -12,6 +12,7 @@ import {
   CODES, LIMITS, ProtocolError, ROUTES, actionDigest, checkGrant, checkOrigin, classifyQuestion,
   decideAnswer, eventEnvelope, hashSecret, newDeviceSecret, newIncarnation, newPairingCode,
   questionId, resumePoint, secretMatches, validateRequest,
+  phoneCommand, phoneCommandList,
 } from "../desktop/lib/companion-protocol.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -25,8 +26,8 @@ const OTHER_INC = "BBBBBBBBBBBBBBBBBBBBBBBB";
 const SUB = "0f8fad5b-d9cb-469f-a165-70867728950e";
 
 // ---- the remote surface ------------------------------------------------------
-ok("only seven routes exist and every code has a status", () => {
-  assert.deepEqual(Object.values(ROUTES).sort(), ["answer", "chat", "events", "logout", "pair", "snapshot", "stop"]);
+ok("only eight routes exist and every code has a status", () => {
+  assert.deepEqual(Object.values(ROUTES).sort(), ["answer", "chat", "dequeue", "events", "logout", "pair", "snapshot", "stop"]);
   for (const status of Object.values(CODES)) assert.ok(status >= 400 && status < 600);
 });
 ok("anything else is not found, including Pi's own commands", () => {
@@ -38,12 +39,15 @@ ok("bodies over the limit are refused before parsing matters", () => {
   refuses("too-large", () => validateRequest("POST", "/api/chat", { submissionId: SUB, incarnation: INC, text: "hi" }, LIMITS.bodyBytes + 1));
 });
 ok("chat is rebuilt field by field; extra fields, commands and shell lines are refused", () => {
-  assert.deepEqual(validateRequest("POST", "/api/chat", { submissionId: SUB, incarnation: INC, text: "check the view" }), { op: "chat", submissionId: SUB, incarnation: INC, text: "check the view" });
+  assert.deepEqual(validateRequest("POST", "/api/chat", { submissionId: SUB, incarnation: INC, text: "check the view" }), { op: "chat", submissionId: SUB, incarnation: INC, text: "check the view", mode: "queue" });
+  assert.equal(validateRequest("POST", "/api/chat", { submissionId: SUB, incarnation: INC, text: "hi", mode: "steer" }).mode, "steer");
+  refuses("bad-request", () => validateRequest("POST", "/api/chat", { submissionId: SUB, incarnation: INC, text: "hi", mode: "bash" }));
   refuses("bad-request", () => validateRequest("POST", "/api/chat", { submissionId: SUB, incarnation: INC, text: "hi", type: "bash" }));
   refuses("bad-request", () => validateRequest("POST", "/api/chat", { submissionId: "1", incarnation: INC, text: "hi" }));
   refuses("bad-request", () => validateRequest("POST", "/api/chat", { submissionId: SUB, incarnation: INC, text: "   " }));
   refuses("too-large", () => validateRequest("POST", "/api/chat", { submissionId: SUB, incarnation: INC, text: "x".repeat(LIMITS.chatChars + 1) }));
-  refuses("desktop-only", () => validateRequest("POST", "/api/chat", { submissionId: SUB, incarnation: INC, text: "/new" }));
+  // A /command passes the shape check; the hub decides against Pi's list (phoneCommand).
+  assert.equal(validateRequest("POST", "/api/chat", { submissionId: SUB, incarnation: INC, text: "/start" }).text, "/start");
   refuses("desktop-only", () => validateRequest("POST", "/api/chat", { submissionId: SUB, incarnation: INC, text: "  !rm -rf x" }));
 });
 ok("an answer is exactly one of cancelled, confirmed or value", () => {
@@ -186,6 +190,18 @@ ok("reconnect replays only a gap-free tail of the same session; otherwise the sn
   assert.deepEqual(resumePoint(`${OTHER_INC}:120`, buffer), { mode: "snapshot", reason: "session-changed" });
   assert.deepEqual(resumePoint(`${INC}:5`, { incarnation: INC, firstSeq: 0, lastSeq: 9 }), { mode: "snapshot", reason: "gap" });
   assert.deepEqual(resumePoint("garbage", buffer), { mode: "snapshot", reason: "first-connect" });
+});
+
+ok("/ commands (MC6): Pi's own commands pass; built-ins, terminal screens and unknown names do not", () => {
+  const pi = [{ name: "start", description: "Start here\nmore", source: "extension" }, { name: "spec-first", source: "prompt" }, { name: "skill:coop-workflow", source: "skill" }, { name: "pets", source: "extension" }];
+  assert.deepEqual(phoneCommand("/start", pi), { ok: true });
+  assert.deepEqual(phoneCommand("  /skill:coop-workflow tidy the view", pi), { ok: true });
+  assert.deepEqual(phoneCommand("plain text", pi), { ok: true });
+  for (const builtin of ["/new", "/model x", "/trust", "/quit", "/login"]) assert.equal(phoneCommand(builtin, pi).code, "desktop-only");
+  assert.equal(phoneCommand("/pets", pi).code, "desktop-only");
+  assert.equal(phoneCommand("/nope", pi).code, "unknown-command");
+  assert.deepEqual(phoneCommandList(pi).map((c) => c.name), ["start", "spec-first", "skill:coop-workflow"]);
+  assert.equal(phoneCommandList(pi)[0].description, "Start here");
 });
 
 console.log(`✓ companion protocol (MC1): ${checks} checks`);

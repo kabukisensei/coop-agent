@@ -56,10 +56,13 @@
   </main>
 
   <footer id="composer" class="composer" hidden>
+    <div id="queue" class="queue" hidden></div>
+    <ul id="completions" class="completions" role="listbox" aria-label="Commands" hidden></ul>
     <label class="sr-only" for="message">Message coop</label>
-    <textarea id="message" rows="2" maxlength="16000" placeholder="Message coop"></textarea>
+    <textarea id="message" rows="2" maxlength="16000" placeholder="Message coop, or / for commands"></textarea>
     <div class="actions">
       <button id="stop" class="btn danger" type="button" hidden>Stop</button>
+      <button id="queue-send" class="btn" type="button" hidden>Queue</button>
       <button id="send" class="btn primary" type="button">Send</button>
     </div>
   </footer>

@@ -143,3 +143,15 @@ main { flex: 1; padding: 12px 16px 16px; }
 [data-look="site"] .card.risky h2 { background: linear-gradient(90deg, #5a1d12, var(--danger)); }
 [data-look="site"] .card.risky { outline: 2px solid var(--danger); outline-offset: -2px; }
 [data-look="site"] .composer { border-top: 2px solid var(--bevel-dark); box-shadow: inset 0 1px 0 var(--bevel-hi); }
+
+/* ---- queued messages and / commands (MC6) ---- */
+.queue { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; margin-bottom: 8px; font-size: 14px; }
+.queued { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.queued-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.queue .link { justify-self: start; }
+.completions { list-style: none; margin: 0 0 8px; padding: 0; max-height: 40vh; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.completion { display: grid; gap: 2px; width: 100%; min-height: 44px; padding: 8px 12px; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--border); color: var(--text); font: inherit; cursor: pointer; }
+.completions li:last-child .completion { border-bottom: 0; }
+.completion .name { font-family: var(--font-mono); font-weight: 600; color: var(--text-strong); }
+.completion .detail { font-size: 13px; color: var(--text-muted); }
+[data-look="site"] .completions { border-radius: 0; border-width: 2px; border-color: var(--bevel-dark) var(--bevel-hi) var(--bevel-hi) var(--bevel-dark); }

@@ -89,6 +89,7 @@ function toast(text) {
 function refusal(json) {
   const reason = REASONS[json.code];
   if (reason && ["not-paired", "revoked", "device-expired", "wrong-user", "wrong-client", "access-off", "wrong-session"].includes(json.code)) { showGate(json.code); return; }
+  if (json.message && ["desktop-only", "unknown-command"].includes(json.code)) { toast(json.message); return; }
   toast(reason ? reason[1] : json.code === "desktop-only" ? "That runs on the desktop only." : json.code === "already-answered" ? "That question was already answered." : json.code === "offline" ? "No connection to the VM. Try again." : `Not sent (${json.code}).`);
 }
 
@@ -113,8 +114,54 @@ function setStatus(state) {
   const chip = $("status");
   chip.textContent = { idle: "ready", running: "working", exited: "stopped", disconnected: "offline" }[state] || state;
   chip.className = `chip ${state}`;
-  $("stop").hidden = state !== "running";
-  $("send").disabled = !app.ready || state === "exited" || state === "disconnected";
+  const running = state === "running";
+  $("stop").hidden = !running;
+  // As in the window: while coop works, Send now steers and Queue waits its turn.
+  $("queue-send").hidden = !running;
+  $("send").textContent = running ? "Send now" : "Send";
+  const off = !app.ready || state === "exited" || state === "disconnected";
+  $("send").disabled = off;
+  $("queue-send").disabled = off;
+}
+
+function renderQueue(queue) {
+  const q = queue || { steering: [], followUp: [] };
+  const items = [...(q.steering || []).map((t) => ["Steering", t]), ...(q.followUp || []).map((t) => ["Queued", t])];
+  const box = $("queue");
+  box.hidden = !items.length;
+  box.replaceChildren(...items.map(([kind, text]) => el("div", { class: "queued" }, el("span", { class: "chip", text: kind }), el("span", { class: "queued-text", text }))));
+  if (items.length) {
+    const edit = el("button", { class: "link", type: "button", text: "Edit queued" });
+    edit.addEventListener("click", dequeue);
+    box.append(edit);
+  }
+}
+
+async function dequeue() {
+  const { json } = await submit("/api/dequeue", { incarnation: app.incarnation });
+  if (!json.ok) { refusal(json); return; }
+  const box = $("message");
+  box.value = [...(json.texts || []), box.value].filter(Boolean).join("\n\n");
+  box.focus();
+}
+
+// ---- / commands (MC6): Pi's own list, as the window's completion shows it ------
+
+function renderCompletions() {
+  const list = $("completions");
+  const match = /^\/([A-Za-z0-9:._-]*)$/.exec($("message").value.trimStart());
+  if (!match) { list.hidden = true; list.replaceChildren(); return; }
+  const query = match[1].toLowerCase();
+  const all = app.commands || [];
+  const hits = [...all.filter((c) => c.name.toLowerCase().startsWith(query)), ...(query ? all.filter((c) => !c.name.toLowerCase().startsWith(query) && c.name.toLowerCase().includes(query)) : [])].slice(0, 40);
+  list.hidden = !hits.length;
+  list.replaceChildren(...hits.map((c) => {
+    const item = el("li", { role: "option" });
+    const pick = el("button", { type: "button", class: "completion" }, el("span", { class: "name", text: `/${c.name}` }), el("span", { class: "detail", text: c.description }));
+    pick.addEventListener("click", () => { $("message").value = `/${c.name} `; renderCompletions(); $("message").focus(); });
+    item.append(pick);
+    return item;
+  }));
 }
 
 function setIdentity(s) {
@@ -240,6 +287,8 @@ async function load() {
   for (const m of s.messages) renderMessage(m);
   for (const q of s.questions) app.questions.set(q.questionId, q);
   renderQuestions();
+  app.commands = Array.isArray(s.commands) ? s.commands : [];
+  renderQueue(s.queue);
   $("gate").hidden = true;
   $("session").hidden = false;
   $("composer").hidden = false;
@@ -268,7 +317,7 @@ function openStream() {
   });
   // A gap the window can no longer fill: reload the snapshot rather than guess.
   source.addEventListener("resync", () => load());
-  on("status", (d) => setStatus(d.state));
+  on("status", (d) => { setStatus(d.state); if (d.queue) renderQueue(d.queue); });
   on("message", (d) => { renderMessage(d); app.messages.get(d.id).scrollIntoView({ block: "end" }); });
   // Keep the newest line in view, whatever kind it is.
   on("tool", (d) => { renderTool(d); app.messages.get(`tool:${d.id}`).scrollIntoView({ block: "end" }); });
@@ -293,20 +342,23 @@ function openStream() {
 
 // ---- wiring --------------------------------------------------------------------
 
-async function sendMessage() {
+async function sendMessage(mode = "steer") {
   const box = $("message");
   const text = box.value.trim();
   if (!text || !app.ready) return;
-  if (/^[/!]/.test(text)) { toast("Commands starting with / or ! run on the desktop."); return; }
+  if (/^!/.test(text)) { toast("A ! line runs a shell on the VM: use the coop window for that."); return; }
   $("send").disabled = true;
-  const { json } = await submit("/api/chat", { incarnation: app.incarnation, text });
-  if (json.ok) box.value = ""; else refusal(json);
+  $("queue-send").disabled = true;
+  const { json } = await submit("/api/chat", { incarnation: app.incarnation, text, mode });
+  if (json.ok) { box.value = ""; renderCompletions(); } else refusal(json);
   setStatus(app.status);
 }
 
 applyTheme(storedTheme());
 $("theme").addEventListener("change", (e) => { applyTheme(e.target.value); try { localStorage.setItem("coop-theme", e.target.value); } catch { /* private mode */ } });
-$("send").addEventListener("click", sendMessage);
+$("send").addEventListener("click", () => sendMessage("steer"));
+$("queue-send").addEventListener("click", () => sendMessage("queue"));
+$("message").addEventListener("input", renderCompletions);
 $("message").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendMessage(); } });
 $("stop").addEventListener("click", async () => { const { json } = await submit("/api/stop", { incarnation: app.incarnation }); if (!json.ok) refusal(json); });
 $("retry").addEventListener("click", load);

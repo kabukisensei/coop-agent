@@ -7,7 +7,7 @@ import { EventEmitter } from "node:events";
 import { basename } from "node:path";
 import { buildUiResponse } from "./rpc-commands.mjs";
 import {
-  LIMITS, classifyQuestion, decideAnswer, eventEnvelope, newIncarnation, resumePoint,
+  LIMITS, classifyQuestion, decideAnswer, eventEnvelope, newIncarnation, phoneCommand, phoneCommandList, resumePoint,
 } from "./companion-protocol.mjs";
 
 const SNAPSHOT_MESSAGES = 200;
@@ -42,6 +42,7 @@ export class CompanionHub extends EventEmitter {
     this.incarnation = "";
     this.accessOn = false;
     this.sessionName = "";
+    this.commands = [];
     this.reset();
   }
 
@@ -53,6 +54,7 @@ export class CompanionHub extends EventEmitter {
     this.byPiId = new Map();
     this.submissions = new Map();
     this.status = "idle";
+    this.queue = { steering: [], followUp: [] };
     this.partial = null;
     if (this.flushTimer) this.clearTimer(this.flushTimer);
     this.flushTimer = null;
@@ -119,7 +121,7 @@ export class CompanionHub extends EventEmitter {
   #status(state) {
     if (this.status === state) return;
     this.status = state;
-    this.#push("status", { state });
+    this.#push("status", { state, queue: this.queue });
   }
 
   #flush() {
@@ -167,6 +169,13 @@ export class CompanionHub extends EventEmitter {
         break;
       case "tool_execution_end":
         this.#push("tool", { id: String(message.toolCallId || ""), name: String(message.toolName || ""), label: "", state: message.isError ? "error" : "done" });
+        break;
+      case "queue_update":
+        this.queue = {
+          steering: Array.isArray(message.steering) ? message.steering.map(String) : [],
+          followUp: Array.isArray(message.followUp) ? message.followUp.map(String) : [],
+        };
+        this.#push("status", { state: this.status, queue: this.queue });
         break;
       case "session_info_changed":
         if (typeof message.name === "string") this.setSessionName(message.name);
@@ -264,11 +273,42 @@ export class CompanionHub extends EventEmitter {
     return this.#remember(deviceId, request.submissionId, () => {
       if (request.incarnation !== this.incarnation) return { ok: false, code: "wrong-session" };
       if (!this.pi || this.pi.exited) return { ok: false, code: "pi-not-running" };
-      // While coop works the message waits its turn; the phone never steers.
-      const command = this.status === "running" ? { type: "follow_up", message: request.text } : { type: "prompt", message: request.text };
-      this.pi.request(command, { timeoutMs: 0 }).catch(() => {});
+      // A /command goes to Pi as typed only when Pi listed it (MC6).
+      const command = phoneCommand(request.text, this.commands);
+      if (!command.ok) return command;
+      // As the window sends it: while coop works, Send now steers and Queue waits.
+      const prompt = { type: "prompt", message: request.text };
+      if (this.status === "running") prompt.streamingBehavior = request.mode === "steer" ? "steer" : "followUp";
+      this.pi.request(prompt, { timeoutMs: 0 }).catch(() => {});
       return { ok: true };
     });
+  }
+
+  /** Queued messages back to the phone's text box (the terminal's Alt+Up). */
+  dequeue(deviceId, request) {
+    return this.#remember(deviceId, request.submissionId, async () => {
+      if (request.incarnation !== this.incarnation) return { ok: false, code: "wrong-session" };
+      if (!this.pi || this.pi.exited) return { ok: false, code: "pi-not-running" };
+      try {
+        const response = await this.pi.request({ type: "clear_queue" });
+        const data = response && response.success && response.data ? response.data : {};
+        const texts = [...(data.steering || []), ...(data.followUp || [])].map(String).filter(Boolean);
+        return { ok: true, texts };
+      } catch {
+        return { ok: false, code: "pi-not-running" };
+      }
+    });
+  }
+
+  /** Pi's command list (extensions, prompt templates, skills), kept for MC6's check. */
+  async refreshCommands() {
+    if (!this.pi || this.pi.exited) return this.commands;
+    try {
+      const response = await this.pi.request({ type: "get_commands" });
+      const list = response && response.success && response.data && Array.isArray(response.data.commands) ? response.data.commands : null;
+      if (list) this.commands = list.filter((c) => c && typeof c.name === "string").map((c) => ({ name: c.name, description: String(c.description || ""), source: String(c.source || "") }));
+    } catch { /* keep the last list */ }
+    return this.commands;
   }
 
   stop(deviceId, request) {
@@ -295,6 +335,7 @@ export class CompanionHub extends EventEmitter {
           .filter((m) => m.text)
           .slice(-SNAPSHOT_MESSAGES);
       } catch { /* the stream will catch up */ }
+      await this.refreshCommands();
     }
     const last = this.buffer[this.buffer.length - 1];
     return {
@@ -303,6 +344,8 @@ export class CompanionHub extends EventEmitter {
       status: this.pi && this.pi.exited ? "exited" : this.status,
       messages: this.partial ? [...messages, { id: this.partial.id, role: "assistant", text: this.partial.text, final: false }] : messages,
       questions: this.openQuestions(),
+      queue: this.queue,
+      commands: phoneCommandList(this.commands),
       lastEventId: last ? last.id : `${this.incarnation}:0`,
     };
   }

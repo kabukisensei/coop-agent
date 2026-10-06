@@ -24,9 +24,11 @@ things and nothing else:
 
 The model sign-in, the guardrails, the standards, the files and every tool stay
 on the VM. The phone holds one revocable device credential and what is on its
-screen. It never starts, switches or ends a session, never runs a shell or a
-slash command, never reads files, never logs in to a model and never touches
-the production unlock (G1).
+screen. It never starts, switches or ends a session, never runs a shell or one
+of Pi's own built-in commands, never reads files, never logs in to a model and
+never touches the production unlock (G1). From MC6 it sends the slash commands
+Pi lists (extension commands, prompt templates, skills) as typed, as the window
+does; `desktop/PARITY.md`'s Phone companion section tracks the rest.
 
 ## Two locks, both required
 
@@ -98,17 +100,21 @@ ignored.
 | Route | Body | Does |
 | --- | --- | --- |
 | `POST /api/pair` | `code`, `deviceName` | trades a pairing code for the device cookie |
-| `GET /api/snapshot` | none | the authoritative state: session identity, status, the conversation's messages, open questions, the last event id |
+| `GET /api/snapshot` | none | the authoritative state: session identity, status, the conversation's messages, open questions, the queue, the `/` commands the phone may send, the last event id |
 | `GET /api/events` | none (`Last-Event-ID` header) | the event stream (server-sent events) |
-| `POST /api/chat` | `submissionId`, `incarnation`, `text` | sends a message; while coop works it is queued as a follow-up, never a steer |
+| `POST /api/chat` | `submissionId`, `incarnation`, `text`, `mode` | sends a message; while coop works `mode` `steer` sends it now and `queue` waits for the turn to end, as the window's Send now and Queue (MC6) |
 | `POST /api/stop` | `submissionId`, `incarnation` | stops the current turn (Pi's `abort`) |
+| `POST /api/dequeue` | `submissionId`, `incarnation` | takes the queued messages back (Pi's `clear_queue`) and returns their texts for the text box (MC6) |
 | `POST /api/answer` | `submissionId`, `incarnation`, `questionId`, `digest`, `answer` | answers one open question |
 | `POST /api/logout` | none | forgets this device |
 
-- **Chat is plain text only.** A message starting with `/` or `!` is refused
-  as `desktop-only`: slash commands open terminal screens or change the session
-  and `!` runs a shell, so both stay on the desktop in this version. At most
-  16,000 characters; no attachments.
+- **Chat is text and Pi's own `/` commands.** A message starting with `!` is
+  refused as `desktop-only`: it runs a shell on the VM. A `/command` goes to Pi
+  as typed only when Pi listed it (`get_commands`: extension commands, prompt
+  templates, skills); Pi's built-ins wait for their rows or stay in the
+  terminal, and the extension screens that exist only in the terminal stay
+  there (`phoneCommand`, refused with the reason). At most 16,000 characters;
+  no attachments.
 - **Every write is idempotent.** `submissionId` is a UUID the phone makes once
   per action and repeats on every retry. The window remembers each outcome for
   10 minutes and answers a repeat with the first outcome, so a retry after a
@@ -225,7 +231,7 @@ in review without touching the rest.
 | Access | off per window until turned on; one window at a time |
 | Reconnect retention | 2,000 events or 15 minutes, then reload the snapshot |
 | Idempotency memory | 10 minutes per `submissionId` |
-| Chat | plain text, 16,000 characters, no `/` or `!`, follow-up while busy |
+| Chat | text, 16,000 characters, no `!`; Pi's listed `/` commands; steer or queue while busy (MC6) |
 | Session-wide and production approvals | desktop only; the phone may decline |
 | Phones | iOS 17+ Safari and Android 12+ Chrome, in the browser and installed to the home screen |
 | Extension UI on the phone | the four dialog kinds and `ask_user_question` cards; notices as `notice`; everything else *Continue on the desktop* |
