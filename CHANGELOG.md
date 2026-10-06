@@ -5,8 +5,6 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
-## [0.32.0] — 2026-10-06
-
 ### Added
 
 - The coop window installer now carries everything (master plan D1k; Aaron
@@ -32,6 +30,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   every row passes (before, a `--prereqs auto` run always stopped for a new
   terminal). Enter accepts, `n` keeps the printed commands, a redirected stdin
   never asks, `--yes` answers without a console.
+
+## [0.32.0] — 2026-10-06
+
+### Added
+
 - **The phone companion's contract** (MC1, master plan section 12.4; Aaron,
   2026-10-06). `desktop/COMPANION.md` specifies how a phone will see and steer
   the same live session an open coop window runs: two locks (a sign-in-protected
