@@ -520,11 +520,24 @@ function renderPanel(p) {
   const blocks = [];
   if (panel.todo && panel.todo.length) blocks.push(["todos", panel.todo]);
   for (const w of panel.widgets || []) if (w.lines && w.lines.length) blocks.push([w.key, w.lines]);
-  const status = (panel.status || []).join(" · ");
+  // Context and usage lead, as Aaron asked (MC4 feedback); MCP connection lines go last.
+  const lines = [...(panel.status || [])].sort((a, b) => Number(/^\W*MCP\b/i.test(a)) - Number(/^\W*MCP\b/i.test(b)));
+  const status = [panel.compacting ? "Compacting…" : "", usageLine(panel.usage), ...lines].filter(Boolean).join(" · ");
   $("panel").hidden = !status && !blocks.length;
   $("panel-status").textContent = status || (panel.todo && panel.todo[0]) || "Panel";
   $("panel-body").replaceChildren(...blocks.map(([key, lines]) => el("pre", { class: `widget${key === "todos" ? " todos" : ""}` }, el("code", { text: lines.join("\n") }))));
   $("panel-toggle").disabled = !blocks.length;
+}
+
+// "4% context · 12k in, 3k out · $0.12", the window's status bar in one line.
+function usageLine(u) {
+  if (!u) return "";
+  const k = (n) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(Math.round(n)));
+  const parts = [];
+  if (Number.isFinite(u.contextPercent) && u.contextWindow) parts.push(`${Math.round(u.contextPercent)}% context`);
+  if (Number.isFinite(u.tokensIn) && Number.isFinite(u.tokensOut)) parts.push(`${k(u.tokensIn)} in, ${k(u.tokensOut)} out`);
+  if (Number(u.cost) > 0) parts.push(`$${Number(u.cost).toFixed(2)}`);
+  return parts.join(" · ");
 }
 
 function setIdentity(s) {
