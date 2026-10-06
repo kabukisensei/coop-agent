@@ -18,6 +18,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   saved session is open in one tab at most: picking one another tab or window
   holds brings that tab forward. File > New window opens a second window on the
   same folder.
+- **The window's Changes pane picks the repository** (Aaron, 2026-10-06). When
+  the open folder holds several repositories (a `devops\fabric` style folder),
+  a Repository picker lists the folder's own and each one directly inside it,
+  the same one level down lookup as the project file. Each tab keeps its
+  choice; it starts on the folder's own repository, else the first one with
+  changes, and "View in Changes" on a tool card opens the repository that
+  holds that file. The terminal coop is unchanged.
 
 ### Changed
 

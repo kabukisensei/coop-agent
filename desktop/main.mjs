@@ -25,7 +25,7 @@ import { resolveAsset, isAppUrl, CSP, APP_ORIGIN } from "./lib/serve.mjs";
 import { readBranch } from "./lib/git.mjs";
 import { listFiles, rankFiles } from "./lib/files.mjs";
 import { fitToScreen, loadSettings, saveSettings, THEMES } from "./lib/settings.mjs";
-import { listChanges, fileDiff } from "./lib/changes.mjs";
+import { changeRepos, defaultChangeRepo, listChanges, fileDiff } from "./lib/changes.mjs";
 import { readStandards, readSnapshot, readNote } from "./lib/standards-view.mjs";
 import { getTeamProject, loadProject, previewProject, saveProject, shareProject, teamStatus } from "./lib/project-form.mjs";
 import { DocsSetupRun, AnswerError, docsLocation, listDocsPages, pickedPathAnswer, readDocsPage, runDocsBuild } from "./lib/docs-setup.mjs";
@@ -309,7 +309,7 @@ function addTab(frame, { spec, rawSpec, token, extraArgs = [], noticesShown = fa
   const contents = view.webContents;
   const state = {
     frame, win: frame.win, view, contents, tabId: nextTabId++, label: "", title: "", working: false, asking: false,
-    spec, rawSpec, token, pi: null, ready: false, queue: [], sessionFile: "", changes: [], snapshots: new Map(), knowledgeRoots: new Map(), docs: null, build: null, vibeSet: "",
+    spec, rawSpec, token, pi: null, ready: false, queue: [], sessionFile: "", changes: [], changeRepo: null, changeDir: "", snapshots: new Map(), knowledgeRoots: new Map(), docs: null, build: null, vibeSet: "",
     // A second tab does not repeat the launch notices or the first-run Start menu.
     noticesShown,
   };
@@ -766,16 +766,24 @@ function toolEnv(state) {
   return piEnv(state.spec, process.env);
 }
 
-handle("coop:changes", async (state) => {
-  const result = await listChanges(state.spec.cwd);
+// The repository the panel shows: the open folder's own or one directly inside
+// it. `want` is a repository id from the last list (null keeps this tab's
+// choice); the choice stays with the tab, and paths stay in main.
+handle("coop:changes", async (state, want) => {
+  const repos = changeRepos(state.spec.cwd);
+  let repo = repos.find((r) => r.id === (typeof want === "string" ? want : state.changeRepo));
+  if (!repo) repo = await defaultChangeRepo(repos);
+  state.changeRepo = repo ? repo.id : null;
+  state.changeDir = repo ? repo.dir : state.spec.cwd;
+  const result = repo ? await listChanges(repo.dir) : { repo: false, files: [], truncated: false };
   state.changes = result.files;
-  return { success: true, data: result };
+  return { success: true, data: { ...result, repos: repos.map(({ id, label }) => ({ id, label })), current: repo ? repo.id : null } };
 });
 
 handle("coop:change-diff", async (state, path) => {
   const entry = state.changes.find((file) => file.path === path);
   if (!entry) return { success: false, error: "that file is not in the list of changes; refresh it" };
-  return { success: true, data: await fileDiff(state.spec.cwd, entry) };
+  return { success: true, data: await fileDiff(state.changeDir || state.spec.cwd, entry) };
 });
 
 handle("coop:standards", async (state) => {

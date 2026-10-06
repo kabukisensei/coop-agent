@@ -5,7 +5,8 @@
 // relative to the working folder with "/" separators, like Pi's edit paths.
 import { execFile } from "node:child_process";
 import { lstat, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join, resolve } from "node:path";
+import { childRepositories, findGitRoot } from "../../lib/project-contract.mjs";
 
 // fsmonitor would run a configured hook; no-optional-locks keeps git from
 // refreshing the index file. Output stays plain and paths unquoted.
@@ -81,6 +82,35 @@ export async function listChanges(cwd, options = {}) {
   files.sort((a, b) => a.path.localeCompare(b.path));
   const truncated = files.length > LIMITS.files || untracked.length > LIMITS.untracked || names.tooLarge || counts.tooLarge;
   return { repo: true, files: files.slice(0, LIMITS.files), truncated };
+}
+
+/**
+ * The repositories the changes panel can show for the folder coop was opened
+ * on: the folder's own repository (id "") when it is in one, then each
+ * repository directly inside it (id = its folder name), the same one level
+ * down lookup the project file uses. [{ id, label, dir }]; [] when there is
+ * no repository at all.
+ */
+export function changeRepos(cwd) {
+  const root = resolve(cwd || ".");
+  const repos = [];
+  if (findGitRoot(root)) repos.push({ id: "", label: basename(root) || root, dir: root });
+  for (const name of childRepositories(root)) repos.push({ id: name, label: name, dir: join(root, name) });
+  return repos;
+}
+
+/**
+ * The repository to show when the panel has no choice yet: the open folder's
+ * own, else the first repository one level down with changes, else the first.
+ */
+export async function defaultChangeRepo(repos, options = {}) {
+  if (!repos.length) return null;
+  if (repos[0].id === "") return repos[0];
+  for (const repo of repos) {
+    const result = await listChanges(repo.dir, options);
+    if (result.files.length) return repo;
+  }
+  return repos[0];
 }
 
 /** A new file's text as a diff that adds every line. */

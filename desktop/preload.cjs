@@ -41,7 +41,7 @@ contextBridge.exposeInMainWorld("coop", Object.freeze({
   // Window preferences kept by the main process (notifications, menu bar).
   setPref: (key, value) => ipcRenderer.invoke("coop:pref", String(key || ""), value),
   // Panes (D1b2).
-  changes: () => ipcRenderer.invoke("coop:changes"),
+  changes: (repo) => ipcRenderer.invoke("coop:changes", typeof repo === "string" ? repo : null),
   changeDiff: (path) => ipcRenderer.invoke("coop:change-diff", String(path || "")),
   standards: () => ipcRenderer.invoke("coop:standards"),
   standardsText: (domain) => ipcRenderer.invoke("coop:standards-text", String(domain || "")),
