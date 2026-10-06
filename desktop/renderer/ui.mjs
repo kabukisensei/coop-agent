@@ -133,7 +133,7 @@ function trapFocus(box, event) {
  * A filterable list (model picker, sessions, palette, extension selects).
  * items: [{ label, detail, value, hint }]. Resolves with the value or undefined.
  */
-export function pickFrom({ title, items, placeholder = "Type to filter", filter = true, message = "", detail = "", current }) {
+export function pickFrom({ title, items, placeholder = "Type to filter", filter = true, message = "", detail = "", current, onOpen }) {
   return new Promise((resolve) => {
     let done = false;
     const finish = (value) => { if (!done) { done = true; resolve(value); } };
@@ -173,6 +173,7 @@ export function pickFrom({ title, items, placeholder = "Type to filter", filter 
     const body = el("div", { class: "picker" }, message ? el("p", { class: "dialog-message", text: message }) : null,
       detail ? el("pre", { class: "dialog-code" }, el("code", { text: detail })) : null, input, list);
     const modal = openModal({ title, body, onCancel: () => finish(undefined), wide: true });
+    if (onOpen) onOpen(modal);
     render();
     if (!filter) requestAnimationFrame(() => { const node = list.children[active]; if (node) node.focus(); });
   });

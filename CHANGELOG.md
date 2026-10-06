@@ -15,8 +15,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   seven routes (read, chat, stop, answer, pair, events, sign out), first answer
   wins against the exact action, and production or session-wide approvals stay
   on the desktop. The checkable rules are `desktop/lib/companion-protocol.mjs`
-  with gate-lane fixtures. Nothing listens yet: the server and the phone page
-  are MC2 and MC3.
+  with gate-lane fixtures.
+- **coop on your phone** (MC2 and MC3, master plan section 12.4). The window
+  gets *Session > Phone*: *Pair a phone* shows a one-time code, *Allow phone
+  for this session* lets the paired phone see and steer this window's live
+  session, and *Paired phones* removes a phone at once. The phone page
+  (installable to the home screen) shows the conversation, coop's status and
+  its questions in the four themes; it sends chat, stop and answers, and a
+  question answered on either screen closes on both. The window's server
+  listens on `127.0.0.1:47821` only and Tailscale's `serve` carries the phone
+  to it inside the tailnet; setup is in `desktop/COMPANION.md`. Production and
+  "for this session" approvals stay on the desktop. Off until you allow it;
+  the terminal is unchanged.
 
 ### Changed
 

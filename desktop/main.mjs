@@ -7,14 +7,15 @@
 // allowlist (lib/rpc-commands.mjs) before it reaches Pi.
 import { app, BrowserWindow, ipcMain, protocol, session, dialog, shell, clipboard, nativeTheme, Menu, Notification } from "electron";
 import { readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { hostname, userInfo } from "node:os";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { dirname, join, basename, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseSpec, piArgv, piEnv } from "./lib/spec.mjs";
 import { PiSession } from "./lib/pi-session.mjs";
-import { IMAGE_LIMITS, buildCommand, buildUiResponse } from "./lib/rpc-commands.mjs";
+import { IMAGE_LIMITS, buildCommand } from "./lib/rpc-commands.mjs";
 import { listSessions, isSessionPath } from "./lib/sessions.mjs";
 import { consoleProcess } from "./lib/terminal.mjs";
 import { resolveAsset, isAppUrl, CSP, APP_ORIGIN } from "./lib/serve.mjs";
@@ -32,6 +33,10 @@ import { bootstrapProcess, doctorReport, findCoop, folderArgument, packagedPaths
 import { describeProject, forgetProject, projectEntries, rememberProject, startFolder, windowTitle } from "./lib/projects.mjs";
 import { menuTemplate, notificationFor } from "./lib/menu.mjs";
 import { restartOnce } from "./lib/restart.mjs";
+import { CompanionHub } from "./lib/companion-hub.mjs";
+import { DeviceStore } from "./lib/companion-devices.mjs";
+import { createCompanionServer, DEFAULT_PORT } from "./lib/companion-server.mjs";
+import { tailnetOrigin } from "./lib/companion-tailscale.mjs";
 import { profileDir } from "../lib/paths.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -53,6 +58,8 @@ const MAX_QUEUE = 20_000;
 const MAX_COPY = 4 * 1024 * 1024;
 // Pi answers these only when the work is done, which can include a question
 // an extension asks the user (a /start menu, an approval), so no deadline.
+// A new session in the same Pi: the phone's grant and questions end with the old one.
+const SESSION_CHANGES = new Set(["new_session", "switch_session", "fork", "clone"]);
 const WAITS_ON_WORK = new Set(["prompt", "steer", "follow_up", "bash", "compact", "new_session", "switch_session", "fork", "clone"]);
 
 // The spec and the Warehouse MCP token arrive in the environment (never argv
@@ -130,6 +137,7 @@ function startPi(state, extraArgs = []) {
     env: piEnv(state.spec, process.env, { fabricToken: state.token }),
   });
   state.pi = pi;
+  state.hub.attach(pi);
   pi.on("event", (message) => {
     if (state.pi !== pi) return;
     if (message.type === "extension_ui_request" && message.method === "setTitle") {
@@ -242,12 +250,13 @@ function openWindow(rawSpec, token) {
     },
   });
   const state = { win, spec, token, pi: null, ready: false, queue: [], sessionFile: "", changes: [], snapshots: new Map(), knowledgeRoots: new Map(), docs: null, build: null, vibeSet: "" };
+  state.hub = newHub(state);
   windows.set(win.webContents.id, state);
   // The picker remembers every folder a window opened (D1m), newest first.
   try { settings = saveSettings(settingsFile, rememberProject({ ...settings, lastFolder: spec.cwd }, spec.cwd)); } catch { /* keep going */ }
   if (settings.maximized) win.maximize();
   win.once("ready-to-show", () => win.show());
-  win.on("focus", () => { try { win.flashFrame(false); } catch { /* gone */ } });
+  win.on("focus", () => { try { win.flashFrame(false); } catch { /* gone */ } installMenu(); });
   win.on("close", () => {
     if (windows.size === 1) {
       const maximized = win.isMaximized();
@@ -258,6 +267,7 @@ function openWindow(rawSpec, token) {
   const id = win.webContents.id;
   win.on("closed", () => {
     windows.delete(id);
+    state.hub.setAccess(false, "window-closed");
     if (state.pi) state.pi.stop();
     if (state.docs) state.docs.cancel();
     if (state.build) { try { state.build.kill(); } catch { /* already gone */ } }
@@ -333,6 +343,7 @@ handle("coop:command", async (state, input) => {
   if (!state.pi || state.pi.exited) return { success: false, error: "coop is not running in this window; restart it" };
   const timeoutMs = WAITS_ON_WORK.has(command.type) ? 0 : undefined;
   const response = await state.pi.request(command, { timeoutMs });
+  if (SESSION_CHANGES.has(command.type) && response.success) state.hub.renew();
   if (command.type === "get_state" && response.success && response.data && typeof response.data.sessionFile === "string") {
     state.sessionFile = response.data.sessionFile;
   }
@@ -341,9 +352,9 @@ handle("coop:command", async (state, input) => {
 
 handle("coop:answer", (state, id, answer) => {
   if (!state.pi || typeof id !== "string") return { success: false, error: "no such question" };
-  const request = state.pi.dialog(id);
-  if (!request) return { success: false, error: "that question was already answered" };
-  return { success: state.pi.answer(buildUiResponse(request, answer)) };
+  // The phone companion's arbiter (MC2): the first answer from either screen wins.
+  const result = state.hub.answerFromDesktop(id, answer);
+  return { success: result.ok, error: result.error };
 });
 
 handle("coop:sessions", (state) => ({ success: true, data: listSessions({ ...process.env, ...state.spec.env }, state.spec.cwd) }));
@@ -356,7 +367,9 @@ handle("coop:files", async (state, query) => {
 
 handle("coop:switch-session", async (state, path) => {
   if (!isSessionPath({ ...process.env, ...state.spec.env }, path)) return { success: false, error: "that is not one of coop's saved sessions" };
-  return piResult(await state.pi.request({ type: "switch_session", sessionPath: path }, { timeoutMs: 0 }));
+  const response = await state.pi.request({ type: "switch_session", sessionPath: path }, { timeoutMs: 0 });
+  if (response.success) state.hub.renew();
+  return piResult(response);
 });
 
 handle("coop:export", async (state) => {
@@ -708,6 +721,114 @@ handle("coop:docs-portal", async (state) => {
   return error ? { success: false, error } : { success: true };
 });
 
+
+// --- Phone companion (master plan MC2, desktop/COMPANION.md) ---------------------
+// One loopback server per Windows user, started the first time a window allows
+// the phone; Tailscale's `serve` carries the tailnet name to it. At most one
+// window has phone access on; the phone sees that window's session.
+
+const companion = { store: null, server: null, origin: "", starting: null };
+const windowsUser = (() => { try { return `${hostname()}\\${userInfo().username}`; } catch { return ""; } })();
+
+function companionStore() {
+  if (!companion.store) companion.store = new DeviceStore(join(profileDir(process.env), "companion", "devices.json"));
+  return companion.store;
+}
+
+function companionAudit(entry) {
+  try {
+    const dir = join(profileDir(process.env), "logs");
+    mkdirSync(dir, { recursive: true });
+    appendFileSync(join(dir, "companion.jsonl"), `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`, "utf8");
+  } catch { /* the audit never stops the window */ }
+}
+
+function activeHub() {
+  for (const state of windows.values()) if (state.hub.accessOn) return state.hub;
+  return null;
+}
+
+function newHub(state) {
+  const hub = new CompanionHub({ windowsUser, client: describeProject(state.spec.cwd).client });
+  // The phone answered (or Pi's clock ran out): the desktop card closes.
+  hub.on("resolved", ({ piId, by }) => { if (by !== "desktop") send(state, "coop:dialog-closed", { id: piId }); });
+  hub.on("access", ({ on, reason }) => {
+    companionAudit({ kind: on ? "access-on" : "access-off", client: hub.client, reason });
+    if (!on && reason && reason !== "switched") send(state, "pi:notice", { level: "info", message: "Phone access is off for this window." });
+    installMenu();
+  });
+  return hub;
+}
+
+async function startCompanion() {
+  if (companion.server) return companion.origin;
+  if (!companion.starting) {
+    companion.starting = (async () => {
+      const origin = typeof settings.companionOrigin === "string" && /^https:\/\/[a-z0-9.-]+$/i.test(settings.companionOrigin) ? settings.companionOrigin : await tailnetOrigin();
+      if (!origin) throw new Error("Tailscale is not running or not signed in on this computer, so the phone cannot reach coop. Start Tailscale, sign in, and try again.");
+      const server = createCompanionServer({
+        store: companionStore(),
+        active: activeHub,
+        origin,
+        webRoot: join(HERE, "companion"),
+        shared: {
+          "/shared/dialogs.mjs": join(RENDERER, "dialogs.mjs"),
+          "/shared/markdown.mjs": join(RENDERER, "markdown.mjs"),
+          "/shared/themes.css": join(RENDERER, "styles", "themes.css"),
+        },
+        audit: companionAudit,
+        port: DEFAULT_PORT,
+      });
+      await server.listen();
+      companion.server = server;
+      companion.origin = origin;
+      return origin;
+    })().finally(() => { companion.starting = null; });
+  }
+  return companion.starting;
+}
+
+async function togglePhone(state) {
+  if (state.hub.accessOn) { state.hub.setAccess(false, "turned-off"); return; }
+  if (!state.hub.client) {
+    dialog.showMessageBox(state.win, { type: "info", title: "Phone", message: "This folder's project file names no client.", detail: "The phone is tied to one client. Open a client's project (File > Switch project), or create its project file with /setup-project, then allow the phone." });
+    return;
+  }
+  try {
+    const origin = await startCompanion();
+    for (const other of windows.values()) if (other !== state && other.hub.accessOn) other.hub.setAccess(false, "switched");
+    if (state.hub.setAccess(true)) send(state, "pi:notice", { level: "info", message: `Phone access is on for this session (${state.hub.client}). Open ${origin} on your phone.` });
+    else send(state, "pi:notice", { level: "warning", message: "coop is not running in this window, so the phone cannot be allowed." });
+  } catch (error) {
+    dialog.showMessageBox(state.win, { type: "warning", title: "Phone", message: "The phone companion could not start.", detail: /EADDRINUSE/.test(error.message) ? `Port ${DEFAULT_PORT} on this computer is taken by another program.` : error.message });
+  }
+}
+
+async function pairPhone(state) {
+  if (!state.hub.client) { togglePhone(state); return; }
+  let origin;
+  try { origin = await startCompanion(); } catch (error) {
+    dialog.showMessageBox(state.win, { type: "warning", title: "Pair a phone", message: "The phone companion could not start.", detail: error.message });
+    return;
+  }
+  const { code } = companionStore().startPairing({ windowsUser, client: state.hub.client });
+  companionAudit({ kind: "pairing-code-shown", client: state.hub.client });
+  await dialog.showMessageBox(state.win, {
+    type: "info",
+    title: "Pair a phone",
+    message: `Pairing code: ${code.slice(0, 4)}-${code.slice(4)}`,
+    detail: `1. On the phone, with Tailscale on, open ${origin}\n2. Enter this code and a name for the phone.\n\nThe code works once and for 5 minutes. The phone is paired for ${state.hub.client} as ${windowsUser}.\nAfter pairing, allow the phone with Session > Phone > Allow phone for this session.`,
+    buttons: ["Done"],
+  });
+}
+
+function removePhones(id) {
+  const removed = companionStore().revoke(id);
+  if (companion.server) companion.server.revoked(removed);
+  for (const deviceId of removed) companionAudit({ kind: "revoked", device: deviceId });
+  installMenu();
+}
+
 // --- Menu bar ------------------------------------------------------------------
 
 /** The window the menu acts on: the focused one, else the only one. */
@@ -731,6 +852,13 @@ function installMenu() {
       dialog.showMessageBox(state ? state.win : undefined, { type: "info", title: "About coop", message: `coop ${version}`, detail: PACKAGED ? "The coop window (installed package)." : "The coop window." });
     },
     isMac: process.platform === "darwin",
+    phone: {
+      accessOn: Boolean(focusedState() && focusedState().hub.accessOn),
+      devices: companionStore().list(),
+      toggleAccess: () => { const state = focusedState(); if (state) togglePhone(state); },
+      pair: () => { const state = focusedState(); if (state) pairPhone(state); },
+      remove: (id) => removePhones(id),
+    },
   });
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
