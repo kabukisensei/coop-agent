@@ -5,6 +5,34 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **The shared project file reads as shared on Windows** (C1, found on the
+  client VM, 2026-10-06). Git for Windows checks `.coop/project.yml` out with
+  CRLF while the team's copy keeps LF, so `coop project status`, the session
+  start note and the window always said "differs from the team's copy (not
+  shared yet)", even right after a share, and never offered "Get the team's
+  version". The comparison now ignores line endings.
+- **`coop init` and `/setup-project` opened in the folder that holds the
+  client's repositories propose the client home repository** (C1, found on the
+  client VM). They wrote the contract into that folder, which is in no
+  repository; they now propose `<client>-coop` beside the repositories, as
+  they do from inside one of them.
+- **The launch line on a VM set up with the machine profile names what is
+  missing** (P1, found on the client VM). With `coop onboard --machine`
+  supplying the name, every launch still said "user.json or config missing";
+  it now says only this Windows user's client settings are missing.
+- **`/setup-docs` offers the docs check workflow only where it can run**
+  (DR1, found on the client VM). Run from a source repository, the wizard
+  saves `coop-data-doc.yml` there and builds into the home repository, so the
+  offered `data-docs-check.yml` in the home repository failed with "No
+  coop-data-doc.yml found". The offer now needs the config in that repository.
+- **Lineage works from a repository the client home repository lists** (SQ8
+  and DR1, found on the client VM). Opened in `sql\` beside `<client>-coop`,
+  the edit gate, `data_doc lineage` and the session note missed the catalog
+  snapshot, the built docs and `coop-data-doc.yml` in the home repository;
+  they now find them there and run `coop-data-doc` in that folder.
+
 ## [0.33.0] — 2026-10-06
 
 ### Added
@@ -52,31 +80,6 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
-- **The shared project file reads as shared on Windows** (C1, found on the
-  client VM, 2026-10-06). Git for Windows checks `.coop/project.yml` out with
-  CRLF while the team's copy keeps LF, so `coop project status`, the session
-  start note and the window always said "differs from the team's copy (not
-  shared yet)", even right after a share, and never offered "Get the team's
-  version". The comparison now ignores line endings.
-- **`coop init` and `/setup-project` opened in the folder that holds the
-  client's repositories propose the client home repository** (C1, found on the
-  client VM). They wrote the contract into that folder, which is in no
-  repository; they now propose `<client>-coop` beside the repositories, as
-  they do from inside one of them.
-- **The launch line on a VM set up with the machine profile names what is
-  missing** (P1, found on the client VM). With `coop onboard --machine`
-  supplying the name, every launch still said "user.json or config missing";
-  it now says only this Windows user's client settings are missing.
-- **`/setup-docs` offers the docs check workflow only where it can run**
-  (DR1, found on the client VM). Run from a source repository, the wizard
-  saves `coop-data-doc.yml` there and builds into the home repository, so the
-  offered `data-docs-check.yml` in the home repository failed with "No
-  coop-data-doc.yml found". The offer now needs the config in that repository.
-- **Lineage works from a repository the client home repository lists** (SQ8
-  and DR1, found on the client VM). Opened in `sql\` beside `<client>-coop`,
-  the edit gate, `data_doc lineage` and the session note missed the catalog
-  snapshot, the built docs and `coop-data-doc.yml` in the home repository;
-  they now find them there and run `coop-data-doc` in that folder.
 - **The guardrails audit tells window tabs apart.** Each row now carries the
   coop process id, so two tabs (or terminals) on one folder no longer write
   decisions that look the same. Found in the tabs check on the client VM.
