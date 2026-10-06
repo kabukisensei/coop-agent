@@ -86,7 +86,10 @@ which:
   names the incarnation it was made against; one from an older incarnation is
   refused, and its open questions are gone. A new incarnation also turns phone
   access off: the grant was for the session the person allowed, so a restarted
-  or switched session needs *Allow phone* again at the desk.
+  or switched session needs *Allow phone* again at the desk. The one exception
+  (MC9) is a session the phone itself starts, opens, forks or clones from its
+  *Sessions* sheet: the phone asked for it, so its access carries over. A
+  session changed at the desk still turns access off.
 - **Revoking is immediate.** *Session > Phone > Paired phones* lists each
   device; *Remove* deletes it and closes its open stream at once. *Remove all
   phones* does every device. Signing out on the phone deletes its record too.
@@ -106,6 +109,8 @@ ignored.
 | `POST /api/stop` | `submissionId`, `incarnation` | stops the current turn (Pi's `abort`) |
 | `POST /api/dequeue` | `submissionId`, `incarnation` | takes the queued messages back (Pi's `clear_queue`) and returns their texts for the text box (MC6) |
 | `GET /api/detail` | `id` in the query (`t:` a tool call, `m:` an answer) | one tool call's arguments and output, or one answer's thinking, for a tapped line (MC8) |
+| `GET /api/sessions` | none | the folder's saved sessions (id, name, first prompt, time, prompt count, which is current) and this session's prompts to fork from (MC9); no paths |
+| `POST /api/sessions` | `submissionId`, `incarnation`, `action`, and `sessionId` or `entryId` | one session action (MC9): `new`, `resume` (a listed `sessionId`), `fork` (a listed `entryId`), `clone`, or `export` (HTML beside the session file on the VM); refused while coop works |
 | `GET /api/session` | none | the session sheets (MC7): model, thinking level and the levels and models Pi lists, the session's name, auto-compact, prompts, answers, tool calls, tokens, cost and context; no file paths |
 | `POST /api/session` | `submissionId`, `incarnation`, `action` and its own fields | one session control (MC7): `model` (`provider`, `modelId`, one Pi lists), `thinking` (`level`), `compact` (optional `instructions`, refused while coop works) or `name` (`name`) |
 | `POST /api/answer` | `submissionId`, `incarnation`, `questionId`, `digest`, `answer` | answers one open question |

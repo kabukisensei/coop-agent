@@ -749,7 +749,22 @@ function activeHub() {
 }
 
 function newHub(state) {
-  const hub = new CompanionHub({ windowsUser, client: describeProject(state.spec.cwd).client });
+  const env = () => ({ ...process.env, ...state.spec.env });
+  const hub = new CompanionHub({
+    windowsUser,
+    client: describeProject(state.spec.cwd).client,
+    // Session actions from the phone (MC9): the same lists and checks as the window's own.
+    host: {
+      list: () => listSessions(env(), state.spec.cwd).filter((s) => isSessionPath(env(), s.path)),
+      exportPath: async () => {
+        const file = await currentSessionFile(state);
+        if (!file || !existsSync(file)) return "";
+        const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
+        return join(dirname(file), `coop-session-${stamp}.html`);
+      },
+      changed: (action) => send(state, "coop:refresh", { by: "phone", action }),
+    },
+  });
   // The phone answered (or Pi's clock ran out): the desktop card closes.
   hub.on("resolved", ({ piId, by }) => { if (by !== "desktop") send(state, "coop:dialog-closed", { id: piId }); });
   hub.on("access", ({ on, reason }) => {

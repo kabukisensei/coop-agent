@@ -26,8 +26,8 @@ const OTHER_INC = "BBBBBBBBBBBBBBBBBBBBBBBB";
 const SUB = "0f8fad5b-d9cb-469f-a165-70867728950e";
 
 // ---- the remote surface ------------------------------------------------------
-ok("only eleven routes exist and every code has a status", () => {
-  assert.deepEqual(Object.values(ROUTES).sort(), ["answer", "chat", "control", "dequeue", "detail", "details", "events", "logout", "pair", "snapshot", "stop"]);
+ok("only thirteen routes exist and every code has a status", () => {
+  assert.deepEqual(Object.values(ROUTES).sort(), ["answer", "chat", "control", "dequeue", "detail", "details", "events", "logout", "pair", "sessionAction", "sessions", "snapshot", "stop"]);
   for (const status of Object.values(CODES)) assert.ok(status >= 400 && status < 600);
 });
 ok("anything else is not found, including Pi's own commands", () => {
@@ -218,6 +218,17 @@ ok("session controls (MC7): model, thinking, compact and name, each with only it
   }
   assert.equal(phoneCommand("/model", []).code, "desktop-only");
   assert.match(phoneCommand("/model", []).message, /menu: Model/);
+});
+
+ok("session actions (MC9): ids only, never a path", () => {
+  const base = { submissionId: SUB, incarnation: INC };
+  const v = (body) => validateRequest("POST", "/api/sessions", { ...base, ...body });
+  assert.deepEqual(v({ action: "new" }), { op: "sessionAction", ...base, action: "new" });
+  assert.equal(v({ action: "resume", sessionId: "0193-abc" }).sessionId, "0193-abc");
+  assert.equal(v({ action: "fork", entryId: "e2" }).entryId, "e2");
+  for (const bad of [{ action: "resume", sessionId: "C:\\x\\s.jsonl" }, { action: "resume", sessionPath: "/x" }, { action: "new", sessionId: "s" }, { action: "delete" }, { action: "fork" }]) {
+    assert.throws(() => v(bad), ProtocolError, JSON.stringify(bad));
+  }
 });
 
 console.log(`✓ companion protocol (MC1): ${checks} checks`);

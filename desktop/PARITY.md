@@ -306,8 +306,9 @@ terminal capability with its phone status:
 | Thinking and tool detail (Ctrl+T, Ctrl+O) | phone (MC8) | A tool line opens its arguments and output on tap, and an answer's Thinking link opens its thinking; fetched only on tap (`GET /api/detail`). |
 | Status bar, widgets and the todo panel (`setStatus`, `setWidget`, `rpiv-todo`) | phone (MC8) | Above the text box: the status line, the widgets and the todo panel rebuilt from `todo` results as the window does; a tap folds it to the status line. |
 | Search the conversation, jump between prompts (Ctrl+F, Ctrl+Up/Down) and prompt history (Up) | phone (MC8) | The menu's Find: a search over the conversation, and with no search your prompts, newest first, each to jump to or Reuse. |
-| `/new`, `/resume`, `/fork`, `/clone`, `/tree` (view) and the sessions list (`coop -c`, `-r`, `--session`) | MC9 | Session actions from the phone. A session the phone itself starts or opens keeps the phone's access (the MC1 rule that access ends at every new session stays for sessions changed at the desk). |
-| `/export` (HTML) | MC9 | `export_html` to the session folder on the VM; the file stays on the VM. |
+| `/new`, `/resume`, `/fork`, `/clone` and the sessions list (`coop -c`, `-r`, `--session`) | phone (MC9) | The menu's Sessions sheet: New session, the folder's saved sessions, Fork from a prompt and Clone. A session the phone itself starts or opens keeps the phone's access; one changed at the desk still ends it. |
+| `/tree` (view) | MC9 | The session tree, read-only, from the Sessions sheet. |
+| `/export` (HTML) | phone (MC9) | Export HTML in the Sessions sheet writes the page beside the session file on the VM (not in the project folder); the file stays on the VM. |
 | `/reload` | MC9 | Restart coop in the window on the same session; access carries over as for MC9's session actions. |
 | Attach images and files (`app.clipboard.pasteImage`) | MC10 | Photos and files from the phone, with the window's limits and readers; documents land in the project folder on the VM and are referenced by path. |
 | `@path` file mentions and Tab completion | MC10 | The window's file search over the folder (`listFiles`, `rankFiles`). |

@@ -193,6 +193,17 @@ export function createCompanionServer({ store, active, origin, webRoot = "", sha
         const result = hub.detail(id);
         return result.ok ? sendJson(res, 200, { ok: true, detail: result.detail }) : refuse(res, result.code, result.message, device.id);
       }
+      case "sessions": {
+        const result = await hub.sessions();
+        return result.ok ? sendJson(res, 200, { ok: true, sessions: result.sessions, prompts: result.prompts }) : refuse(res, result.code, undefined, device.id);
+      }
+      case "sessionAction": {
+        const result = await hub.sessionAction(device.id, request);
+        audit({ kind: "session", device: device.id, action: request.action, outcome: result.ok ? "done" : result.code });
+        if (!result.ok) return refuse(res, result.code, result.message, device.id);
+        const { ok, ...rest } = result;
+        return sendJson(res, 200, { ok: true, ...rest });
+      }
       case "details": {
         const result = await hub.details();
         return result.ok ? sendJson(res, 200, { ok: true, details: result.details }) : refuse(res, result.code, undefined, device.id);

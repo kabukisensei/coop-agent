@@ -16,6 +16,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   wins against the exact action, and production or session-wide approvals stay
   on the desktop. The checkable rules are `desktop/lib/companion-protocol.mjs`
   with gate-lane fixtures.
+- **Phone parity, part 4** (MC9). The phone's menu adds *Sessions*: start a
+  new session, open one of the folder's saved sessions, fork from an earlier
+  prompt, clone, or export the session as HTML beside its file on the VM. A
+  session the phone starts or opens keeps the phone's access; one changed at
+  the desk still turns it off. The window reloads and says what the phone did.
+  The phone sends ids only, never a path.
 - **Phone parity, part 3** (MC8). The phone shows the status line, the
   extension widgets and the todo panel above the text box, as the window does,
   and a tap folds them. Tapping a tool line opens its arguments and output, and

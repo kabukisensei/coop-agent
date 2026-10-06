@@ -47,9 +47,12 @@ export class CompanionHub extends EventEmitter {
    * identity: `{ windowsUser, client }` for this window; `sessionName` optional.
    * The timer and clock are injectable for tests.
    */
-  constructor({ windowsUser, client, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, random } = {}) {
+  constructor({ windowsUser, client, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, random, host = null } = {}) {
     super();
-    Object.assign(this, { windowsUser: windowsUser || "", client: client || "", now, setTimer, clearTimer, random });
+    // host (MC9, main.mjs): `list()` the folder's saved sessions with their
+    // paths, `exportPath()` a file beside the session, `changed(message)` tells
+    // the window the phone changed the session.
+    Object.assign(this, { windowsUser: windowsUser || "", client: client || "", now, setTimer, clearTimer, random, host });
     this.pi = null;
     this.incarnation = "";
     this.accessOn = false;
@@ -100,13 +103,14 @@ export class CompanionHub extends EventEmitter {
   }
 
   /** The session changed inside the same Pi (/new, a switch, a fork): a new incarnation too. */
-  renew() {
+  /** A new session in this window. Access ends, unless the phone itself started or opened it (MC9). */
+  renew({ keepAccess = false } = {}) {
     const pi = this.pi;
     for (const q of this.questions.values()) if (q.state === "open") this.#close(q, "cancelled", "pi");
     this.reset();
     this.pi = pi;
     this.incarnation = newIncarnation(this.random);
-    this.setAccess(false, "session-changed");
+    if (!keepAccess) this.setAccess(false, "session-changed");
     this.#push("session", this.identity());
   }
 
@@ -439,7 +443,81 @@ export class CompanionHub extends EventEmitter {
     });
   }
 
+  /**
+   * Session actions from the phone (MC9): new, resume a saved session, fork
+   * from an earlier prompt, clone, and export HTML beside the session file.
+   * Ids resolve against the window's own lists; the phone never names a path.
+   */
+  sessionAction(deviceId, request) {
+    return this.#remember(deviceId, request.submissionId, async () => {
+      if (request.incarnation !== this.incarnation) return { ok: false, code: "wrong-session" };
+      if (!this.pi || this.pi.exited) return { ok: false, code: "pi-not-running" };
+      if (this.status === "running") return { ok: false, code: "busy", message: "coop is working: stop it or wait, then try again" };
+      const ask = async (command) => {
+        try {
+          const response = await this.pi.request(command, { timeoutMs: 0 });
+          if (!response || !response.success) return { ok: false, error: response && response.error };
+          if (response.data && response.data.cancelled) return { ok: false, error: "an extension cancelled it" };
+          return { ok: true, data: response.data || {} };
+        } catch (error) {
+          return { ok: false, error: error && error.message };
+        }
+      };
+      let command;
+      switch (request.action) {
+        case "new": command = { type: "new_session" }; break;
+        case "clone": command = { type: "clone" }; break;
+        case "resume": {
+          const session = this.host ? this.host.list().find((s) => s && s.id === request.sessionId) : null;
+          if (!session) return { ok: false, code: "not-an-option", message: "That session is not one of this folder's saved sessions" };
+          command = { type: "switch_session", sessionPath: session.path };
+          break;
+        }
+        case "fork": {
+          const list = await ask({ type: "get_fork_messages" });
+          const prompts = list.ok && Array.isArray(list.data.messages) ? list.data.messages : [];
+          if (!prompts.some((m) => m && m.entryId === request.entryId)) return { ok: false, code: "not-an-option", message: "That prompt is not in this session" };
+          command = { type: "fork", entryId: request.entryId };
+          break;
+        }
+        case "export": {
+          const outputPath = this.host ? await this.host.exportPath() : "";
+          if (!outputPath) return { ok: false, code: "changed", message: "This session is not saved yet, so there is nowhere to export it" };
+          const result = await ask({ type: "export_html", outputPath });
+          return result.ok ? { ok: true, file: basename(outputPath.replace(/\\/g, "/")) } : { ok: false, code: "changed", message: String(result.error || "coop could not export").slice(0, 200) };
+        }
+        default:
+          return { ok: false, code: "bad-request" };
+      }
+      const result = await ask(command);
+      if (!result.ok) return { ok: false, code: "changed", message: String(result.error || "coop could not do that").slice(0, 200) };
+      // The phone started or opened this session, so it keeps its access.
+      this.renew({ keepAccess: true });
+      if (this.host) this.host.changed(request.action);
+      return { ok: true, ...(request.action === "fork" && typeof result.data.text === "string" ? { text: result.data.text.slice(0, LIMITS.chatChars) } : {}) };
+    });
+  }
+
   // ---- reads -------------------------------------------------------------
+
+  /** The folder's saved sessions and this session's prompts to fork from (MC9); no paths. */
+  async sessions() {
+    if (!this.pi || this.pi.exited) return { ok: false, code: "pi-not-running" };
+    const ask = (type) => this.pi.request({ type }).then((r) => (r && r.success && r.data ? r.data : {}), () => ({}));
+    const [state, fork] = await Promise.all([ask("get_state"), ask("get_fork_messages")]);
+    const list = this.host ? this.host.list() : [];
+    return {
+      ok: true,
+      sessions: list.slice(0, 50).map((s) => ({
+        id: String(s.id || ""), name: String(s.name || "").slice(0, 200), title: String(s.title || "").slice(0, 200),
+        modified: Number(s.modified) || 0, messages: Number(s.messages) || 0, current: s.path === state.sessionFile,
+      })).filter((s) => s.id),
+      prompts: (Array.isArray(fork.messages) ? fork.messages : [])
+        .filter((m) => m && typeof m.entryId === "string")
+        .map((m) => ({ entryId: m.entryId, text: String(m.text || "").split("\n")[0].slice(0, 200) })),
+    };
+  }
+
 
   /** What the phone's session sheets show (MC7): no file paths leave the VM. */
   async details() {

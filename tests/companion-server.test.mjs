@@ -32,6 +32,8 @@ class FakePi extends EventEmitter {
       : command.type === "clear_queue" ? { steering: ["look at the view"], followUp: ["then the report"] }
       : command.type === "get_available_models" ? { models: [{ provider: "openai", id: "gpt-5", name: "GPT-5", contextWindow: 400000 }, { provider: "openai", id: "gpt-5-mini", name: "GPT-5 mini" }] }
       : command.type === "get_available_thinking_levels" ? { levels: ["off", "low", "medium", "high"] }
+      : command.type === "get_fork_messages" ? { messages: [{ entryId: "e1", text: "tidy the view\nmore" }, { entryId: "e2", text: "now the report" }] }
+      : command.type === "fork" ? { text: "now the report", cancelled: false }
       : command.type === "get_state" ? { model: { provider: "openai", id: "gpt-5", name: "GPT-5" }, thinkingLevel: "medium", sessionFile: "C:\\Users\\aaron\\.coop\\s.jsonl", autoCompactionEnabled: true }
       : command.type === "get_session_stats" ? { userMessages: 3, assistantMessages: 3, toolCalls: 7, tokens: { input: 12000, output: 3400 }, cost: 0.12, contextUsage: { tokens: 15400, contextWindow: 400000, percent: 3.85 } } : {};
     return Promise.resolve({ type: "response", success: true, data });
@@ -245,6 +247,37 @@ await check("session controls (MC7): a listed model, a thinking level, compact w
   assert.equal(details.models.length, 2);
   assert.equal(details.stats.toolCalls, 7);
   assert.ok(!JSON.stringify(details).includes(".jsonl"), "the session file path stays on the VM");
+});
+
+await check("sessions (MC9): ids resolve against the window's lists; a session the phone opens keeps access, one the desk opens does not", async () => {
+  const changed = [];
+  const host = {
+    list: () => [{ id: "s-old", path: "C:\\Users\\aaron\\.coop\\sessions\\x\\old.jsonl", name: "Old", title: "tidy", modified: 1, messages: 2 }],
+    exportPath: async () => "C:\\Users\\aaron\\.coop\\sessions\\x\\coop-session-1.html",
+    changed: (action) => changed.push(action),
+  };
+  const { pi, hub } = newHub({ host });
+  hub.accessOn = true;
+  const req = (n, body) => ({ submissionId: SUB(70 + n), incarnation: hub.incarnation, ...body });
+  const listed = await hub.sessions();
+  assert.deepEqual(listed.sessions.map((s) => s.id), ["s-old"]);
+  assert.ok(!JSON.stringify(listed).includes(".jsonl"), "no session path leaves the VM");
+  assert.deepEqual(listed.prompts, [{ entryId: "e1", text: "tidy the view" }, { entryId: "e2", text: "now the report" }]);
+  assert.equal((await hub.sessionAction("d1", req(0, { action: "resume", sessionId: "nope" }))).code, "not-an-option");
+  const before = hub.incarnation;
+  assert.deepEqual(await hub.sessionAction("d1", req(1, { action: "resume", sessionId: "s-old" })), { ok: true });
+  assert.deepEqual(pi.sent.at(-1), { type: "switch_session", sessionPath: "C:\\Users\\aaron\\.coop\\sessions\\x\\old.jsonl" });
+  assert.notEqual(hub.incarnation, before);
+  assert.equal(hub.accessOn, true, "the phone opened it, so it keeps access");
+  assert.deepEqual(changed, ["resume"]);
+  assert.equal((await hub.sessionAction("d1", req(2, { action: "fork", entryId: "e9" }))).code, "not-an-option");
+  assert.deepEqual(await hub.sessionAction("d1", { submissionId: SUB(73), incarnation: hub.incarnation, action: "fork", entryId: "e2" }), { ok: true, text: "now the report" });
+  assert.deepEqual(await hub.sessionAction("d1", { submissionId: SUB(74), incarnation: hub.incarnation, action: "export" }), { ok: true, file: "coop-session-1.html" });
+  pi.emit("event", { type: "agent_start" });
+  assert.equal((await hub.sessionAction("d1", { submissionId: SUB(75), incarnation: hub.incarnation, action: "new" })).code, "busy");
+  pi.emit("event", { type: "agent_end" });
+  hub.renew();
+  assert.equal(hub.accessOn, false, "a session changed at the desk still ends access");
 });
 
 await check("access needs a client in the project file and a running Pi", () => {

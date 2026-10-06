@@ -40,6 +40,8 @@ export const ROUTES = Object.freeze({
   "POST /api/answer": "answer",
   "GET /api/session": "details",
   "GET /api/detail": "detail",
+  "GET /api/sessions": "sessions",
+  "POST /api/sessions": "sessionAction",
   "POST /api/session": "control",
   "POST /api/logout": "logout",
 });
@@ -82,6 +84,8 @@ const SUBMISSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 const INCARNATION = /^[A-Za-z0-9_-]{16,64}$/;
 const QUESTION_ID = /^q[0-9a-f]{24}$/;
 const DIGEST = /^[0-9a-f]{64}$/;
+// A saved session's id or a prompt's entry id, as Pi writes them (MC9).
+const ENTRY_ID = /^[A-Za-z0-9_.:-]{1,200}$/;
 // Crockford base32 without I, L, O, U: read off the window and typed on a phone.
 const PAIRING_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const PAIRING_CODE = /^[0-9A-HJKMNP-TV-Z]{8}$/;
@@ -173,6 +177,29 @@ export function validateRequest(method, path, body, rawBytes = 0) {
           return { ...base, action: "name", name: plainText(body.name, "session name", 200).trim() };
         default:
           throw new ProtocolError("bad-request", "action is model, thinking, compact or name");
+      }
+    }
+    case "sessionAction": {
+      // Session actions from the phone (MC9): a session the phone starts or
+      // opens keeps the phone's access; the hub resolves ids against the
+      // window's own lists, so no path ever comes from the phone.
+      onlyKeys(body, ["submissionId", "incarnation", "action", "sessionId", "entryId"]);
+      const base = { op, submissionId: field(body, "submissionId", SUBMISSION_ID), incarnation: field(body, "incarnation", INCARNATION) };
+      const only = (keys) => onlyKeys(body, ["submissionId", "incarnation", "action", ...keys]);
+      switch (body.action) {
+        case "new":
+        case "clone":
+        case "export":
+          only([]);
+          return { ...base, action: body.action };
+        case "resume":
+          only(["sessionId"]);
+          return { ...base, action: "resume", sessionId: field(body, "sessionId", ENTRY_ID) };
+        case "fork":
+          only(["entryId"]);
+          return { ...base, action: "fork", entryId: field(body, "entryId", ENTRY_ID) };
+        default:
+          throw new ProtocolError("bad-request", "action is new, resume, fork, clone or export");
       }
     }
     case "answer": {

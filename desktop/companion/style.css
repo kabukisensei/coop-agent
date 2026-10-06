@@ -302,3 +302,6 @@ body.menu-open { overflow: hidden; }
 .find-reuse { flex: none; border-radius: 0; border-width: 0 0 0 1px; min-width: 76px; }
 .find-none { padding: 12px 14px; margin: 0; }
 .msg.found { outline: 3px solid var(--accent); outline-offset: 2px; }
+/* Sessions (MC9) */
+.sheet-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.sheet-grid .btn { width: 100%; }

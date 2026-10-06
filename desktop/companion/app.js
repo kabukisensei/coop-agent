@@ -154,6 +154,36 @@ const SHEETS = {
     draw();
     openSheet("Find", el("label", { class: "sr-only", for: "find-text", text: "Search the conversation" }), field, list);
   },
+  // Sessions from the phone (MC9): the phone keeps its access to a session it
+  // starts or opens itself. Ids only; the VM resolves them.
+  async sessions() {
+    const { json } = await api("GET", "/api/sessions");
+    if (!json.ok) { refusal(json); return; }
+    const act = async (body, done) => {
+      const before = app.incarnation;
+      const { json: r } = await submit("/api/sessions", { incarnation: app.incarnation, ...body });
+      closeSheet();
+      if (!r.ok) { if (r.message) toast(r.message); else refusal(r); return; }
+      if (r.file) { toast(`Exported ${r.file} beside the session on the VM.`, "info"); return; }
+      // The new session reloads the page's view; the note and a fork's prompt follow it.
+      if (body.action === "fork" && r.text) app.pendingText = r.text;
+      app.pendingNote = done;
+      if (app.incarnation !== before && app.ready) afterReload();
+    };
+    const when = (ms) => (ms ? new Date(ms).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "");
+    const forkList = () => openSheet("Fork from a prompt",
+      el("p", { class: "note", text: "coop starts a new session from just before that prompt and puts the prompt back in the text box." }),
+      json.prompts.length ? el("div", { class: "choices" }, [...json.prompts].reverse().map((p) => choice(p.text || "(empty prompt)", "", false, () => act({ action: "fork", entryId: p.entryId }, "Forked into a new session.")))) : el("p", { class: "note", text: "There is no earlier prompt to fork from yet." }));
+    openSheet("Sessions",
+      el("div", { class: "sheet-grid" },
+        el("button", { type: "button", class: "btn primary", text: "New session", onclick: () => act({ action: "new" }, "Started a new session.") }),
+        el("button", { type: "button", class: "btn", text: "Fork…", onclick: forkList }),
+        el("button", { type: "button", class: "btn", text: "Clone", onclick: () => act({ action: "clone" }, "Cloned into a new session.") }),
+        el("button", { type: "button", class: "btn", text: "Export HTML", onclick: () => act({ action: "export" }) })),
+      el("h3", { class: "detail-label", text: "Saved in this folder" }),
+      json.sessions.length ? el("div", { class: "choices" }, json.sessions.map((s) => choice(s.name || s.title || "Untitled session", [when(s.modified), `${s.messages} prompt${s.messages === 1 ? "" : "s"}`, s.current ? "this session" : ""].filter(Boolean).join(" · "), s.current,
+        s.current ? () => closeSheet() : () => act({ action: "resume", sessionId: s.id }, "Opened the saved session.")))) : el("p", { class: "note", text: "No saved sessions yet." }));
+  },
   async details() {
     const d = await loadDetails();
     if (!d) return toast("Could not read the session. Try again.");
@@ -497,6 +527,13 @@ async function load() {
   openStream();
   const last = $("timeline").lastElementChild;
   if (last) last.scrollIntoView({ block: "end" });
+  // A fork puts its prompt back in the text box, as the window does.
+  afterReload();
+}
+
+function afterReload() {
+  if (app.pendingText) { $("message").value = app.pendingText; app.pendingText = ""; renderCompletions(); }
+  if (app.pendingNote) { toast(app.pendingNote, "info"); app.pendingNote = ""; }
 }
 
 function closeStream() {
@@ -523,7 +560,8 @@ function openStream() {
   // Keep the newest line in view, whatever kind it is.
   on("tool", (d) => { renderTool(d); app.messages.get(`tool:${d.id}`).scrollIntoView({ block: "end" }); });
   on("notice", (d) => { const note = el("li", { class: `notice ${d.level}`, text: d.text }); $("timeline").append(note); note.scrollIntoView({ block: "end" }); });
-  on("session", (d) => setIdentity(d));
+  // A new incarnation the phone keeps access to (it started or opened the session, MC9): reload.
+  on("session", (d) => { if (app.incarnation && d.incarnation !== app.incarnation) { closeStream(); load(); } else setIdentity(d); });
   on("question", (d) => { app.questions.set(d.questionId, d); renderQuestions(); });
   on("question_resolved", (d) => {
     if (!app.questions.delete(d.questionId)) return;
