@@ -293,7 +293,7 @@ terminal capability with its phone status:
 | Send a message | phone | `prompt` when idle; while coop works Send now steers and Queue waits (`streamingBehavior`), as the window's Enter and Alt+Enter (MC6). |
 | Stop a turn | phone | `abort` (the terminal's Esc). |
 | Answer coop's questions | phone | `select`, `confirm`, `input`, `editor` and `ask_user_question` cards, first answer wins against the desk. |
-| Theme | phone | The four window themes plus Site dark and Site light (MC5), kept on the phone. |
+| Theme | phone | Modern or Retro, dark or light, from the phone's menu; on the phone Retro is the coop website's look (MC5). Kept on the phone. |
 
 ### Gaps, in build order
 
@@ -311,7 +311,7 @@ terminal capability with its phone status:
 | `/reload` | MC9 | Restart coop in the window on the same session; access carries over as for MC9's session actions. |
 | Attach images and files (`app.clipboard.pasteImage`) | MC10 | Photos and files from the phone, with the window's limits and readers; documents land in the project folder on the VM and are referenced by path. |
 | `@path` file mentions and Tab completion | MC10 | The window's file search over the folder (`listFiles`, `rankFiles`). |
-| Know when coop needs you (the window's background notification) | MC11 | A notice on the phone when a question arrives or a turn ends while the page is closed. Web push goes through Apple's or Google's push service, so MC11 sends no session text, only "coop needs you", and waits on Aaron's word. |
+| Know when coop needs you (the window's background notification) | MC11 | A notice on the phone when a question arrives or a turn ends while the page is closed. Web push goes through Apple's or Google's push service, so MC11 sends no session text, only "coop needs you" (Aaron said yes, 2026-10-06 03:34). |
 
 ### Desk only (intentional)
 
@@ -319,7 +319,7 @@ terminal capability with its phone status:
 | --- | --- | --- |
 | Approving a production action (`PRODUCTION` confirms, the G1 production-write unlock) | desk only | MC1 contract: production stays at the desk; the phone can decline. |
 | Options that allow more than the one action ("Allow … for this session", "always", "don't ask again") and `/trust` | desk only | MC1 contract: the phone answers for the exact action in front of it. Grants only ever come from those options; `/coop-approvals` and `/coop-live-read` show or revoke and work on the phone (MC6). |
-| `!command` and `!!command` (a shell on the VM) | desk only | MC1 contract: the phone is not a remote shell; coop's own tools still run commands under the guardrails when asked in chat. |
+| `!command` and `!!command` (a shell on the VM) | desk only | MC1 contract, confirmed by Aaron 2026-10-06 03:34: the phone is not a remote shell; coop's own tools still run commands under the guardrails when asked in chat. |
 
 ### Not on a phone
 

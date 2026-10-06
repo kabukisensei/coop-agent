@@ -201,9 +201,9 @@ sign-in pages. Those need a remote desktop session.
 - The service worker caches the page's own static files only. No API response,
   message or question is written to any cache; closing the page leaves no
   transcript on the phone.
-- The theme choice (Modern Dark, Modern Light, Retro Dark, Retro Light, and
-  the phone-only Site Dark and Site Light, the coop website's look, MC5) may be
-  kept in `localStorage`. The Site themes' Silkscreen font ships with the page.
+- The theme choice (Modern or Retro, dark or light; on the phone Retro is the
+  coop website's look, MC5) may be kept in `localStorage`. Retro's Silkscreen
+  font ships with the page.
 - The page is served with `Content-Security-Policy: default-src 'self';
   script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src
   'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`, no

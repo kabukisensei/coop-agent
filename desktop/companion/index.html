@@ -20,17 +20,38 @@
       <div class="title">coop <span id="status" class="chip">connecting</span></div>
       <div id="identity" class="identity"></div>
     </div>
-    <label class="theme"><span class="sr-only">Theme</span>
-      <select id="theme" aria-label="Theme">
-        <option value="modern-dark">Modern dark</option>
-        <option value="modern-light">Modern light</option>
-        <option value="retro-dark">Retro dark</option>
-        <option value="retro-light">Retro light</option>
-        <option value="site-dark">Site dark</option>
-        <option value="site-light">Site light</option>
-      </select>
-    </label>
+    <button id="menu-open" class="menu-toggle" type="button" aria-label="Menu" aria-controls="menu" aria-expanded="false"><span class="hamburger"></span></button>
   </header>
+  <div id="scrim" class="scrim" hidden></div>
+  <aside id="menu" class="drawer" aria-label="Menu" aria-hidden="true">
+    <div class="drawer-head">
+      <span class="drawer-brand">coop</span>
+      <button id="menu-close" class="menu-toggle" type="button" aria-label="Close menu" aria-expanded="true"><span class="hamburger"></span></button>
+    </div>
+    <div class="drawer-sub">// menu</div>
+    <div id="menu-session" class="drawer-body" hidden>
+      <div class="drawer-cap">Session</div>
+      <ul class="drawer-list">
+        <li><button id="menu-commands" class="drawer-item" type="button"><span class="item-name">Commands</span><span class="item-detail">coop's / commands, skills and prompts</span></button></li>
+      </ul>
+      <div class="drawer-cap">This phone</div>
+      <ul class="drawer-list">
+        <li><button id="signout" class="drawer-item danger" type="button"><span class="item-name">Sign this phone out</span><span class="item-detail">Pair it again from the coop window</span></button></li>
+      </ul>
+    </div>
+    <div class="drawer-foot">
+      <div class="drawer-cap" id="style-label">Style</div>
+      <div class="seg" role="radiogroup" aria-labelledby="style-label">
+        <button class="seg-btn" type="button" role="radio" data-style="modern">Modern</button>
+        <button class="seg-btn" type="button" role="radio" data-style="retro">Retro</button>
+      </div>
+      <div class="drawer-cap" id="mode-label">Mode</div>
+      <div class="seg" role="radiogroup" aria-labelledby="mode-label">
+        <button class="seg-btn" type="button" role="radio" data-mode="dark">Dark</button>
+        <button class="seg-btn" type="button" role="radio" data-mode="light">Light</button>
+      </div>
+    </div>
+  </aside>
 
   <main id="main">
     <section id="gate" class="gate" hidden>
@@ -51,7 +72,6 @@
     <section id="session" hidden>
       <ol id="timeline" class="timeline" aria-live="polite"></ol>
       <div id="questions" class="questions"></div>
-      <div class="menu-row"><button id="signout" class="link" type="button">Sign this phone out</button></div>
     </section>
   </main>
 

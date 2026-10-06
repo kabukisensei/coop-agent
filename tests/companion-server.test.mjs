@@ -442,9 +442,11 @@ await check("page: every file the page names ships, from this origin only, with 
   for (const icon of manifest.icons) assert.ok(existsSync(join(pageDir, icon.src)));
 });
 
-await check("page: the coop site themes (MC5) ship their font, from this origin, under its licence", () => {
+await check("page: four themes from the menu, Retro in the coop site's look (MC5), its font from this origin under its licence", () => {
   const html = readFileSync(join(pageDir, "index.html"), "utf8");
-  for (const theme of ["site-dark", "site-light"]) assert.match(html, new RegExp(`<option value="${theme}">`));
+  for (const part of ['data-style="modern"', 'data-style="retro"', 'data-mode="dark"', 'data-mode="light"']) assert.ok(html.includes(part), part);
+  assert.ok(!/<select/.test(html), "the menu replaces the theme list");
+  assert.match(readFileSync(join(pageDir, "app.js"), "utf8"), /const THEMES = \["modern-dark", "modern-light", "retro-dark", "retro-light"\];/);
   const css = readFileSync(join(pageDir, "style.css"), "utf8");
   const fonts = [...css.matchAll(/url\("([^"]+)"\)/g)].map((m) => m[1]);
   assert.ok(fonts.length >= 2, "the pixel face is declared");

@@ -8,7 +8,7 @@ import { parseConfirm, confirmLabels, parseQuestionSelect, parseQuestionMulti, m
 import { renderMarkdown } from "./shared/markdown.mjs";
 
 const $ = (id) => document.getElementById(id);
-const THEMES = ["modern-dark", "modern-light", "retro-dark", "retro-light", "site-dark", "site-light"];
+const THEMES = ["modern-dark", "modern-light", "retro-dark", "retro-light"];
 const app = { incarnation: "", status: "disconnected", messages: new Map(), questions: new Map(), source: null, ready: false, retry: null };
 
 function el(tag, attrs = {}, ...children) {
@@ -25,21 +25,48 @@ function el(tag, attrs = {}, ...children) {
 }
 
 // ---- theme (the one thing kept on the phone) ----------------------------------
+// Four themes, a style and a mode (Aaron, 2026-10-06): Modern, the window's
+// look, and Retro, the coop website's look: the retro palettes (the site's own
+// colours) drawn with the site's bevels, title bars and pixel face.
 
 function storedTheme() {
-  try { const t = localStorage.getItem("coop-theme"); if (THEMES.includes(t)) return t; } catch { /* private mode */ }
+  try {
+    const t = (localStorage.getItem("coop-theme") || "").replace(/^site-/, "retro-");
+    if (THEMES.includes(t)) return t;
+  } catch { /* private mode */ }
   return matchMedia("(prefers-color-scheme: light)").matches ? "modern-light" : "modern-dark";
 }
 function applyTheme(theme) {
-  // The coop site themes are the retro palettes (the site's own colours) drawn
-  // with the site's chrome: bevels, title-bar gradients and the pixel face.
-  const site = theme.startsWith("site-");
-  document.documentElement.dataset.theme = site ? `retro-${theme.slice(5)}` : theme;
-  if (site) document.documentElement.dataset.look = "site";
+  const [style, mode] = theme.split("-");
+  document.documentElement.dataset.theme = theme;
+  if (style === "retro") document.documentElement.dataset.look = "site";
   else delete document.documentElement.dataset.look;
-  $("theme").value = theme;
+  for (const b of document.querySelectorAll(".seg-btn")) {
+    b.setAttribute("aria-checked", String(b.dataset.style === style || b.dataset.mode === mode));
+  }
   const bg = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
   if (bg) document.querySelector('meta[name="theme-color"]').setAttribute("content", bg);
+}
+function pickTheme(part) {
+  const [style, mode] = (document.documentElement.dataset.theme || "modern-dark").split("-");
+  const theme = `${part.style || style}-${part.mode || mode}`;
+  applyTheme(theme);
+  try { localStorage.setItem("coop-theme", theme); } catch { /* private mode */ }
+}
+
+// ---- the menu: a side drawer like the coop website's ------------------------------
+
+function setMenu(open) {
+  const menu = $("menu");
+  if (open === menu.classList.contains("open")) return;
+  menu.classList.toggle("open", open);
+  menu.setAttribute("aria-hidden", String(!open));
+  $("scrim").hidden = !open;
+  $("menu-open").setAttribute("aria-expanded", String(open));
+  for (const id of ["main", "composer"]) $(id).inert = open;
+  document.querySelector(".bar").inert = open;
+  document.body.classList.toggle("menu-open", open);
+  (open ? $("menu-close") : $("menu-open")).focus();
 }
 
 // ---- requests ------------------------------------------------------------------
@@ -106,6 +133,7 @@ function showGate(code) {
   $("gate").hidden = false;
   $("session").hidden = true;
   $("composer").hidden = true;
+  $("menu-session").hidden = true;
   setStatus("disconnected");
 }
 
@@ -292,6 +320,7 @@ async function load() {
   $("gate").hidden = true;
   $("session").hidden = false;
   $("composer").hidden = false;
+  $("menu-session").hidden = false;
   app.ready = true;
   setStatus(s.status);
   openStream();
@@ -355,14 +384,25 @@ async function sendMessage(mode = "steer") {
 }
 
 applyTheme(storedTheme());
-$("theme").addEventListener("change", (e) => { applyTheme(e.target.value); try { localStorage.setItem("coop-theme", e.target.value); } catch { /* private mode */ } });
+for (const b of document.querySelectorAll(".seg-btn")) b.addEventListener("click", () => pickTheme(b.dataset));
+$("menu-open").addEventListener("click", () => setMenu(true));
+$("menu-close").addEventListener("click", () => setMenu(false));
+$("scrim").addEventListener("click", () => setMenu(false));
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") setMenu(false); });
+$("menu-commands").addEventListener("click", () => {
+  setMenu(false);
+  const box = $("message");
+  if (!box.value.startsWith("/")) box.value = "/";
+  box.focus();
+  renderCompletions();
+});
 $("send").addEventListener("click", () => sendMessage("steer"));
 $("queue-send").addEventListener("click", () => sendMessage("queue"));
 $("message").addEventListener("input", renderCompletions);
 $("message").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendMessage(); } });
 $("stop").addEventListener("click", async () => { const { json } = await submit("/api/stop", { incarnation: app.incarnation }); if (!json.ok) refusal(json); });
 $("retry").addEventListener("click", load);
-$("signout").addEventListener("click", async () => { await api("POST", "/api/logout", {}); showGate("not-paired"); });
+$("signout").addEventListener("click", async () => { setMenu(false); await api("POST", "/api/logout", {}); showGate("not-paired"); });
 $("pair").addEventListener("submit", async (e) => {
   e.preventDefault();
   const { json } = await api("POST", "/api/pair", { code: $("code").value, deviceName: $("device").value.trim() });
