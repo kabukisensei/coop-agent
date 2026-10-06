@@ -231,16 +231,18 @@ in review without touching the rest.
 **The private connection, options.** Any of them sits in front of the same
 loopback server and the same device grant.
 
-1. **Microsoft dev tunnel, private to Aaron's Cooptimize account
-   (recommended).** The VM runs `devtunnel host` (outbound HTTPS only, no
+1. **Microsoft dev tunnel, private to Aaron's Cooptimize account.** The VM runs `devtunnel host` (outbound HTTPS only, no
    inbound port or firewall rule); the phone signs in with the Cooptimize
    Microsoft account (MFA, conditional access) before it reaches the page.
    Traffic passes through Microsoft's relay in transit, under the Cooptimize
    tenant, which the client-data rule allows. Cost: one Microsoft tool on the
-   VM and a sign-in on the phone.
-2. **Tailscale.** End-to-end encrypted, best home-screen experience, no relay
-   that can read traffic. A third-party service and an agent on the client VM,
-   which the client-data rule keeps out unless the client agrees.
+   VM and a sign-in on the phone; Microsoft labels it for development and
+   testing, with a monthly bandwidth cap.
+2. **Tailscale (recommended, 2026-10-06, since Cooptimize manages its own
+   VMs).** End-to-end encrypted from phone to VM, so no relay or provider can
+   read the session; Tailscale's servers only introduce the devices. The app
+   runs on the VM (admin install, a network adapter) and the phone; business
+   use is a paid per-user plan. No client data reaches Tailscale.
 3. **The client's own network or VPN.** No new service: the phone joins the
    client's VPN and reaches the VM directly. Only works where the client gives
    the phone that access, and the server would then listen on the VM's private

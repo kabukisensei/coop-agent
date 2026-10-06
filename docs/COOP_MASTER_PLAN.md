@@ -1855,8 +1855,9 @@ desktop-only (the phone may decline them), and the phone has no route to the
 unlock; first valid answer wins against the exact-action digest; reconnect
 replays a gap-free tail of the same session or reloads the snapshot; nothing is
 cached on the phone but the page and the theme. The private connection is
-Aaron's pick: a Microsoft dev tunnel private to his Cooptimize account
-(recommended), Tailscale, or the client's own VPN. MC2 and MC3 start after his
+Aaron's pick: Tailscale (recommended once Aaron confirmed Cooptimize manages
+its own VMs: end to end, nothing readable in between), a Microsoft dev tunnel
+private to his Cooptimize account, or the client's own VPN. MC2 and MC3 start after his
 review.
 
 **Decisions still needed at MC1.** Private transport/auth and device-enrollment
