@@ -37,6 +37,7 @@ import { CompanionHub } from "./lib/companion-hub.mjs";
 import { DeviceStore } from "./lib/companion-devices.mjs";
 import { createCompanionServer, DEFAULT_PORT } from "./lib/companion-server.mjs";
 import { tailnetOrigin } from "./lib/companion-tailscale.mjs";
+import { createPushSender, loadVapid } from "./lib/companion-push.mjs";
 import { profileDir } from "../lib/paths.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -783,12 +784,24 @@ function newHub(state) {
   });
   // The phone answered (or Pi's clock ran out): the desktop card closes.
   hub.on("resolved", ({ piId, by }) => { if (by !== "desktop") send(state, "coop:dialog-closed", { id: piId }); });
+  // coop asked a question or finished a turn: a closed phone page gets a notice (MC11).
+  hub.on("attention", () => { if (companion.server) companion.server.nudge(hub).catch(() => {}); });
   hub.on("access", ({ on, reason }) => {
     companionAudit({ kind: on ? "access-on" : "access-off", client: hub.client, reason });
     if (!on && reason && reason !== "switched") send(state, "pi:notice", { level: "info", message: "Phone access is off for this window." });
     installMenu();
   });
   return hub;
+}
+
+// Notices (MC11): one VAPID key pair per Windows user, beside the device list.
+// Without it the phone's Notifications sheet says notices are not set up.
+function companionPush(origin) {
+  try {
+    return createPushSender({ keys: loadVapid(join(profileDir(process.env), "companion", "push.json")), subject: origin });
+  } catch {
+    return null;
+  }
 }
 
 async function startCompanion() {
@@ -810,6 +823,7 @@ async function startCompanion() {
         },
         audit: companionAudit,
         port: DEFAULT_PORT,
+        push: companionPush(origin),
       });
       await server.listen();
       companion.server = server;

@@ -16,6 +16,8 @@ import { DeviceStore } from "../desktop/lib/companion-devices.mjs";
 import { createCompanionServer, readCookie } from "../desktop/lib/companion-server.mjs";
 import { LIMITS } from "../desktop/lib/companion-protocol.mjs";
 import { attach, saveUpload } from "../desktop/lib/attachments.mjs";
+import { createPushSender, loadVapid, pushEndpointOk, vapidAuthorization } from "../desktop/lib/companion-push.mjs";
+import { createPublicKey, verify } from "node:crypto";
 import { originFromStatus, tailscaleCommand } from "../desktop/lib/companion-tailscale.mjs";
 
 const temp = mkdtempSync(join(tmpdir(), "coop-companion-"));
@@ -390,6 +392,46 @@ await check("pairing codes work once, expire, die after five wrong tries; secret
   assert.deepEqual(store.list(), []);
 });
 
+await check("notices (MC11): known push services only, a VAPID key kept per user, an ES256 token, and no payload", async () => {
+  for (const ok of ["https://web.push.apple.com/QGx", "https://fcm.googleapis.com/fcm/send/abc", "https://updates.push.services.mozilla.com/wpush/v2/x"]) assert.ok(pushEndpointOk(ok), ok);
+  for (const bad of ["http://web.push.apple.com/x", "https://evil.example/web.push.apple.com", "https://fcm.googleapis.com:8443/x", "https://127.0.0.1/x", "https://a@fcm.googleapis.com/x", "not a url"]) assert.ok(!pushEndpointOk(bad), bad);
+  const file = join(temp, "push", "push.json");
+  const keys = loadVapid(file);
+  assert.equal(loadVapid(file).publicKey, keys.publicKey, "the key pair is kept");
+  assert.equal(Buffer.from(keys.publicKey, "base64url").length, 65);
+  const auth = vapidAuthorization("https://web.push.apple.com/QGx", keys, "https://coop-vm.example-tailnet.ts.net", 1_000_000_000_000);
+  const [, token, k] = /^vapid t=([^,]+), k=(.+)$/.exec(auth);
+  assert.equal(k, keys.publicKey);
+  const [h, c, sig] = token.split(".");
+  const claims = JSON.parse(Buffer.from(c, "base64url").toString());
+  assert.deepEqual(claims, { aud: "https://web.push.apple.com", exp: 1_000_000_000 + 12 * 3600, sub: "https://coop-vm.example-tailnet.ts.net" });
+  const raw = Buffer.from(keys.publicKey, "base64url");
+  const pub = createPublicKey({ key: { kty: "EC", crv: "P-256", x: raw.subarray(1, 33).toString("base64url"), y: raw.subarray(33).toString("base64url") }, format: "jwk" });
+  assert.ok(verify("sha256", Buffer.from(`${h}.${c}`), { key: pub, dsaEncoding: "ieee-p1363" }, Buffer.from(sig, "base64url")));
+  const requests = [];
+  const fakeRequest = (url, options, onResponse) => {
+    const req = new EventEmitter();
+    req.end = (body) => { requests.push({ url, options, body }); onResponse({ statusCode: 201, resume() {} }); };
+    return req;
+  };
+  const sender = createPushSender({ keys, subject: "https://coop-vm.example-tailnet.ts.net", request: fakeRequest });
+  assert.equal(await sender.send("https://fcm.googleapis.com/fcm/send/abc"), 201);
+  assert.equal(await sender.send("https://evil.example/x"), 0);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].options.headers["Content-Length"], "0");
+  assert.equal(requests[0].body, undefined, "a notice carries nothing");
+});
+
+await check("notices (MC11): a question or a finished turn calls for attention", () => {
+  const { pi, hub } = newHub();
+  const seen = [];
+  hub.on("attention", (e) => seen.push(e.kind));
+  pi.emit("event", { type: "agent_start" });
+  pi.emit("event", { type: "agent_end" });
+  pi.emit("event", confirmQ);
+  assert.deepEqual(seen, ["done", "question"]);
+});
+
 // ---- the server, driven like the phone page --------------------------------------
 const ORIGIN = "https://coop-vm.example-tailnet.ts.net";
 const webRoot = join(temp, "web");
@@ -438,7 +480,11 @@ const { pi, hub } = newHub();
 let activeHub = hub;
 const store = new DeviceStore(join(temp, "store2", "devices.json"));
 const audit = [];
-const companion = createCompanionServer({ store, active: () => activeHub, origin: ORIGIN, webRoot, audit: (e) => audit.push(e), port: 0 });
+const pushed = [];
+let pushStatus = 201;
+const push = { publicKey: "BPUBLIC", send: async (endpoint) => { pushed.push(endpoint); return pushStatus; } };
+let clock = 5_000_000;
+const companion = createCompanionServer({ store, active: () => activeHub, origin: ORIGIN, webRoot, audit: (e) => audit.push(e), port: 0, push, now: () => clock++ });
 await companion.listen();
 const port = companion.server.address().port;
 // The test listens on an OS-chosen port; requests name the tailnet host.
@@ -528,6 +574,26 @@ try {
       const listed = await call(port, "GET", "/api/files?q=sales", { cookie });
       assert.deepEqual(listed.json.files, ["views/sales.sql"]);
     } finally { hub.host = null; }
+  });
+
+  await check("server: notices go to a closed page only, a minute apart, and a dropped endpoint is forgotten (MC11)", async () => {
+    assert.deepEqual((await call(port, "GET", "/api/push", { cookie })).json, { ok: true, available: true, publicKey: "BPUBLIC", on: false });
+    assert.equal((await call(port, "POST", "/api/push", { cookie, body: { submissionId: SUB(96), action: "on", endpoint: "https://evil.example/x" } })).json.code, "not-an-option");
+    assert.equal((await call(port, "POST", "/api/push", { cookie, body: { submissionId: SUB(97), action: "on", endpoint: "https://web.push.apple.com/QGx" } })).status, 200);
+    assert.equal((await call(port, "GET", "/api/push", { cookie })).json.on, true);
+    const open = await stream(port, cookie);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.deepEqual(await companion.nudge(hub), [], "the page is open: no notice");
+    open.close();
+    await new Promise((r) => setTimeout(r, 50));
+    assert.deepEqual(await companion.nudge(hub), [201]);
+    assert.deepEqual(await companion.nudge(hub), [], "one a minute at most");
+    clock += 61_000;
+    pushStatus = 410;
+    assert.deepEqual(await companion.nudge(hub), [410]);
+    assert.equal((await call(port, "GET", "/api/push", { cookie })).json.on, false, "a gone subscription is dropped");
+    assert.deepEqual(pushed, ["https://web.push.apple.com/QGx", "https://web.push.apple.com/QGx"]);
+    pushStatus = 201;
   });
 
   await check("server: a tapped tool line reads its detail; a malformed id is refused (MC8)", async () => {

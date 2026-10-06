@@ -49,6 +49,8 @@ export const ROUTES = Object.freeze({
   "GET /api/detail": "detail",
   "GET /api/sessions": "sessions",
   "GET /api/tree": "tree",
+  "GET /api/push": "pushState",
+  "POST /api/push": "push",
   "POST /api/sessions": "sessionAction",
   "POST /api/session": "control",
   "POST /api/logout": "logout",
@@ -168,6 +170,16 @@ export function validateRequest(method, path, body, rawBytes = 0) {
       const mode = body.mode === undefined ? "queue" : body.mode;
       if (mode !== "queue" && mode !== "steer") throw new ProtocolError("bad-request", "mode is queue or steer");
       return { op, submissionId: field(body, "submissionId", SUBMISSION_ID), incarnation: field(body, "incarnation", INCARNATION), text, mode, attachments };
+    }
+    case "push": {
+      // Notices on this phone (MC11): the push service's endpoint, checked
+      // against the known services by the server; no keys, since a notice
+      // carries no payload.
+      onlyKeys(body, ["submissionId", "action", "endpoint"]);
+      const submissionId = field(body, "submissionId", SUBMISSION_ID);
+      if (body.action === "off") { onlyKeys(body, ["submissionId", "action"]); return { op, submissionId, action: "off" }; }
+      if (body.action !== "on") throw new ProtocolError("bad-request", "action is on or off");
+      return { op, submissionId, action: "on", endpoint: plainText(body.endpoint, "endpoint", 1000) };
     }
     case "upload": {
       // A photo or file from the phone (MC10). Only its name and bytes arrive;

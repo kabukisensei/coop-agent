@@ -94,6 +94,16 @@ export class DeviceStore {
     try { this.#save(); } catch { /* the next touch writes it */ }
   }
 
+  /** Turn notices on (a push endpoint) or off (null) for one device (MC11). */
+  setPush(id, endpoint) {
+    const device = this.get(id);
+    if (!device || device.revokedAt) return false;
+    if (endpoint) device.push = { endpoint, at: this.now() };
+    else delete device.push;
+    this.#save();
+    return true;
+  }
+
   /** Remove one device (or every device with id "*"). Returns the ids removed. */
   revoke(id) {
     const now = this.now();

@@ -26,8 +26,8 @@ const OTHER_INC = "BBBBBBBBBBBBBBBBBBBBBBBB";
 const SUB = "0f8fad5b-d9cb-469f-a165-70867728950e";
 
 // ---- the remote surface ------------------------------------------------------
-ok("only sixteen routes exist and every code has a status", () => {
-  assert.deepEqual(Object.values(ROUTES).sort(), ["answer", "chat", "control", "dequeue", "detail", "details", "events", "files", "logout", "pair", "sessionAction", "sessions", "snapshot", "stop", "tree", "upload"]);
+ok("only eighteen routes exist and every code has a status", () => {
+  assert.deepEqual(Object.values(ROUTES).sort(), ["answer", "chat", "control", "dequeue", "detail", "details", "events", "files", "logout", "pair", "push", "pushState", "sessionAction", "sessions", "snapshot", "stop", "tree", "upload"]);
   for (const status of Object.values(CODES)) assert.ok(status >= 400 && status < 600);
 });
 ok("anything else is not found, including Pi's own commands", () => {
@@ -250,6 +250,13 @@ ok("photos and files (MC10): a plain name and base64, the big body only on the u
     assert.throws(() => chat(bad), ProtocolError, JSON.stringify(bad));
   }
   assert.equal(phoneCommand("/fork").message, "On the phone, /fork is in the menu: Sessions");
+});
+
+ok("notices (MC11): on with an endpoint, off with nothing", () => {
+  const v = (body) => validateRequest("POST", "/api/push", { submissionId: SUB, ...body });
+  assert.deepEqual(v({ action: "on", endpoint: "https://web.push.apple.com/abc" }), { op: "push", submissionId: SUB, action: "on", endpoint: "https://web.push.apple.com/abc" });
+  assert.deepEqual(v({ action: "off" }), { op: "push", submissionId: SUB, action: "off" });
+  for (const bad of [{ action: "on" }, { action: "off", endpoint: "x" }, { action: "maybe" }, { action: "on", endpoint: "https://x", keys: {} }]) assert.throws(() => v(bad), ProtocolError, JSON.stringify(bad));
 });
 
 console.log(`✓ companion protocol (MC1): ${checks} checks`);

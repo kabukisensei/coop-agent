@@ -206,6 +206,21 @@ const SHEETS = {
       json.sessions.length ? el("div", { class: "choices" }, json.sessions.map((s) => choice(s.name || s.title || "Untitled session", [when(s.modified), `${s.messages} prompt${s.messages === 1 ? "" : "s"}`, s.current ? "this session" : ""].filter(Boolean).join(" · "), s.current,
         s.current ? () => closeSheet() : () => act({ action: "resume", sessionId: s.id }, "Opened the saved session.")))) : el("p", { class: "note", text: "No saved sessions yet." }));
   },
+  // Notices (MC11): an empty push through Apple's or Google's service; the
+  // phone shows a fixed line, so no session text ever leaves the tailnet.
+  async notices() {
+    const { json } = await api("GET", "/api/push");
+    if (!json.ok) { refusal(json); return; }
+    const supported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+    const apple = /iPhone|iPad|iPod/.test(navigator.userAgent);
+    const installed = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+    const explain = el("p", { class: "note", text: "A notice says only \u201ccoop is waiting for you\u201d, when coop asks a question or finishes while this page is closed. It travels through Apple's or Google's push service, so it never carries what coop said." });
+    let body;
+    if (!json.available) body = el("p", { class: "note", text: "Notices are not set up in this coop window." });
+    else if (!supported) body = el("p", { class: "note", text: apple && !installed ? "On iPhone, add coop to the Home Screen first: tap Share, then Add to Home Screen. Open coop from there and turn notices on here." : "This browser cannot show notices. Add coop to the Home Screen and open it from there." });
+    else body = el("button", { type: "button", class: `btn${json.on ? "" : " primary"}`, text: json.on ? "Turn notices off" : "Turn notices on", onclick: () => (json.on ? noticesOff() : noticesOn(json.publicKey)) });
+    openSheet("Notices", explain, body);
+  },
   async details() {
     const d = await loadDetails();
     if (!d) return toast("Could not read the session. Try again.");
@@ -225,6 +240,35 @@ const SHEETS = {
     openSheet("Session details", el("dl", { class: "facts" }, rows.flatMap(([k, v]) => [el("dt", { text: k }), el("dd", { text: String(v) })])));
   },
 };
+
+function keyBytes(base64url) {
+  const text = atob(base64url.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(base64url.length / 4) * 4, "="));
+  return Uint8Array.from(text, (c) => c.charCodeAt(0));
+}
+
+async function noticesOn(publicKey) {
+  closeSheet();
+  try {
+    if (await Notification.requestPermission() !== "granted") { toast("Notices are blocked for coop. Allow them in the phone's settings, then try again."); return; }
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = (await registration.pushManager.getSubscription()) || (await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(publicKey) }));
+    const { json } = await submit("/api/push", { action: "on", endpoint: subscription.endpoint });
+    if (json.ok) toast("Notices are on for this phone.", "info"); else refusal(json);
+  } catch (error) {
+    toast(`Notices could not be turned on: ${(error && error.message) || error}`);
+  }
+}
+
+async function noticesOff() {
+  closeSheet();
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    const subscription = await registration.pushManager.getSubscription();
+    if (subscription) await subscription.unsubscribe();
+  } catch { /* the window forgets it anyway */ }
+  const { json } = await submit("/api/push", { action: "off" });
+  if (json.ok) toast("Notices are off for this phone.", "info"); else refusal(json);
+}
 
 // ---- the menu: a side drawer like the coop website's ------------------------------
 

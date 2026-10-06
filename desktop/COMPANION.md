@@ -113,6 +113,8 @@ ignored.
 | `GET /api/detail` | `id` in the query (`t:` a tool call, `m:` an answer) | one tool call's arguments and output, or one answer's thinking, for a tapped line (MC8) |
 | `GET /api/sessions` | none | the folder's saved sessions (id, name, first prompt, time, prompt count, which is current) and this session's prompts to fork from (MC9); no paths |
 | `POST /api/sessions` | `submissionId`, `incarnation`, `action`, and `sessionId` or `entryId` | one session action (MC9): `new`, `resume` (a listed `sessionId`), `fork` (a listed `entryId`), `clone`, `export` (HTML beside the session file on the VM) or `reload` (the window restarts coop on this session, as its own `/reload`); refused while coop works |
+| `GET /api/push` | none | whether notices are set up, the window's VAPID public key, and whether this phone has them on (MC11) |
+| `POST /api/push` | `submissionId`, `action` (`on` with `endpoint`, or `off`) | turns notices on or off for this phone; the endpoint must be Apple's, Google's or Mozilla's push service (MC11) |
 | `GET /api/tree` | none | the session tree as the window's default view draws it (MC9): one line per prompt, answer or summary, indented where the session branches, a prompt's `entryId` to fork from; tool output stays on the VM |
 | `GET /api/session` | none | the session sheets (MC7): model, thinking level and the levels and models Pi lists, the session's name, auto-compact, prompts, answers, tool calls, tokens, cost and context; no file paths |
 | `POST /api/session` | `submissionId`, `incarnation`, `action` and its own fields | one session control (MC7): `model` (`provider`, `modelId`, one Pi lists), `thinking` (`level`), `compact` (optional `instructions`, refused while coop works) or `name` (`name`) |
@@ -228,14 +230,22 @@ sign-in pages. Those need a remote desktop session.
   script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src
   'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`, no
   inline script, and Markdown rendered with HTML escaped, as the desktop does.
-- No push notifications in this version. If they come later, the text is
-  generic ("coop needs you"), never a client name, question or command.
+- Notices (MC11, Aaron said yes 2026-10-06 03:34) are off until the phone
+  turns them on in the menu. When coop asks a question or finishes a turn,
+  access is on and the phone's page is closed, the window sends that phone
+  a web push with **no payload**, one a minute at most. The push service
+  (Apple's or Google's) learns only that a push was sent, and the phone shows
+  the fixed line "coop is waiting for you": never a client name, question,
+  command or answer. The window keeps one VAPID key pair per Windows user
+  (`<profile>\companion\push.json`) and only the subscription's endpoint on
+  the device record, and sends only to Apple's, Google's or Mozilla's push
+  hosts. On an iPhone, notices need coop on the Home Screen (iOS 16.4 or later).
 
 ## Audit
 
 Each Windows user's profile gets `logs\companion.jsonl`: one line per pairing,
 refused request (with its code), answer (question id, outcome, which screen),
-stop, revoke and access on/off, with the time and the device id. Never message
+stop, revoke, access on/off, notices turned on or off and each notice sent (the push service's status), with the time and the device id. Never message
 text, answers' values, cookies or codes.
 
 ## Decisions (MC1)

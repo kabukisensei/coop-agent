@@ -312,7 +312,7 @@ terminal capability with its phone status:
 | `/reload` | phone (MC9) | Restart coop in the Sessions sheet: the window restarts coop on the same session as its own `/reload` does, and the phone keeps its access. |
 | Attach images and files (`app.clipboard.pasteImage`) | phone (MC10) | Attach in the text box: photos (made JPEG, 2048 pixels on the long side, so a phone's camera photo fits the 4 MB image limit) and files, with the window's limits and readers. Each file is saved under the window's data folder on the VM, not in the project, and sent as the window sends attachments. |
 | `@path` file mentions and Tab completion | phone (MC10) | Typing `@` lists the folder's files as the window's composer does (`listFiles`, `rankFiles`); a tap puts the path in the text box. |
-| Know when coop needs you (the window's background notification) | MC11 | A notice on the phone when a question arrives or a turn ends while the page is closed. Web push goes through Apple's or Google's push service, so MC11 sends no session text, only "coop needs you" (Aaron said yes, 2026-10-06 03:34). |
+| Know when coop needs you (the window's background notification) | phone (MC11) | Notices in the menu: when a question arrives or a turn ends while the page is closed, the phone shows "coop is waiting for you". Web push goes through Apple's or Google's push service, so the push carries nothing at all (Aaron said yes, 2026-10-06 03:34). On an iPhone, coop must be on the Home Screen. |
 
 ### Desk only (intentional)
 

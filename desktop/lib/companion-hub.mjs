@@ -164,6 +164,8 @@ export class CompanionHub extends EventEmitter {
 
   #status(state) {
     if (this.status === state) return;
+    // A finished turn is worth a notice on a closed phone page (MC11).
+    if (this.status === "running" && state === "idle") this.emit("attention", { kind: "done" });
     this.status = state;
     this.#push("status", { state, queue: this.queue });
   }
@@ -312,6 +314,7 @@ export class CompanionHub extends EventEmitter {
     this.questions.set(q.questionId, q);
     this.byPiId.set(request.id, q);
     this.#push("question", phoneQuestion(q));
+    this.emit("attention", { kind: "question" });
   }
 
   #close(q, outcome, by) {

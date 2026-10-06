@@ -16,6 +16,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   wins against the exact action, and production or session-wide approvals stay
   on the desktop. The checkable rules are `desktop/lib/companion-protocol.mjs`
   with gate-lane fixtures.
+- **Phone parity, part 6** (MC11). *Notices* in the phone's menu: when coop
+  asks a question or finishes while the phone's page is closed, the phone shows
+  "coop is waiting for you". The push is empty, so Apple's or Google's push
+  service never sees what coop said; one a minute at most. On an iPhone, add
+  coop to the Home Screen first.
 - **Phone parity, part 5** (MC10). The phone's text box has *Attach*: pick
   photos or files, or take a photo, and they go with the next message as the
   window sends attachments. Photos are made JPEG at most 2048 pixels on the
