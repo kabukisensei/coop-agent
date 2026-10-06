@@ -16,6 +16,21 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   wins against the exact action, and production or session-wide approvals stay
   on the desktop. The checkable rules are `desktop/lib/companion-protocol.mjs`
   with gate-lane fixtures.
+- **Phone parity, part 1** (MC6; Aaron asked for terminal parity, 2026-10-06).
+  `desktop/PARITY.md` lists every terminal capability with its phone status.
+  The phone now sends coop's `/` commands, prompt templates and skills (typing
+  `/` lists them, from Pi's own list), and while coop works it offers *Send now*
+  (steer) and *Queue*, shows the queued messages and brings them back with *Edit
+  queued*. Pi's built-in commands, terminal-only screens and `!` shell lines
+  stay off the phone, refused with the reason.
+- **The coop website's look and menu on the phone** (MC5; Aaron, 2026-10-06).
+  The phone has four themes, Modern and Retro, each dark or light, with Modern
+  the default. Retro is the coop website's look: its colours with raised and
+  sunken bevels, title-bar gradients and Silkscreen pixel headings. Every option
+  sits in a side menu like the website's, opened from the top right, with large
+  rows and the Style and Mode switches at the bottom. The font ships with the
+  page (`desktop/companion/fonts/`, SIL Open Font License 1.1), so nothing loads
+  from outside the VM. The window's own themes are unchanged.
 - **coop on your phone** (MC2 and MC3, master plan section 12.4). The window
   gets *Session > Phone*: *Pair a phone* shows a one-time code, *Allow phone
   for this session* lets the paired phone see and steer this window's live

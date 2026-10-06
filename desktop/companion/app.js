@@ -25,16 +25,48 @@ function el(tag, attrs = {}, ...children) {
 }
 
 // ---- theme (the one thing kept on the phone) ----------------------------------
+// Four themes, a style and a mode (Aaron, 2026-10-06): Modern, the window's
+// look, and Retro, the coop website's look: the retro palettes (the site's own
+// colours) drawn with the site's bevels, title bars and pixel face.
 
 function storedTheme() {
-  try { const t = localStorage.getItem("coop-theme"); if (THEMES.includes(t)) return t; } catch { /* private mode */ }
+  try {
+    const t = (localStorage.getItem("coop-theme") || "").replace(/^site-/, "retro-");
+    if (THEMES.includes(t)) return t;
+  } catch { /* private mode */ }
   return matchMedia("(prefers-color-scheme: light)").matches ? "modern-light" : "modern-dark";
 }
 function applyTheme(theme) {
+  const [style, mode] = theme.split("-");
   document.documentElement.dataset.theme = theme;
-  $("theme").value = theme;
+  if (style === "retro") document.documentElement.dataset.look = "site";
+  else delete document.documentElement.dataset.look;
+  for (const b of document.querySelectorAll(".seg-btn")) {
+    b.setAttribute("aria-checked", String(b.dataset.style === style || b.dataset.mode === mode));
+  }
   const bg = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
   if (bg) document.querySelector('meta[name="theme-color"]').setAttribute("content", bg);
+}
+function pickTheme(part) {
+  const [style, mode] = (document.documentElement.dataset.theme || "modern-dark").split("-");
+  const theme = `${part.style || style}-${part.mode || mode}`;
+  applyTheme(theme);
+  try { localStorage.setItem("coop-theme", theme); } catch { /* private mode */ }
+}
+
+// ---- the menu: a side drawer like the coop website's ------------------------------
+
+function setMenu(open) {
+  const menu = $("menu");
+  if (open === menu.classList.contains("open")) return;
+  menu.classList.toggle("open", open);
+  menu.setAttribute("aria-hidden", String(!open));
+  $("scrim").hidden = !open;
+  $("menu-open").setAttribute("aria-expanded", String(open));
+  for (const id of ["main", "composer"]) $(id).inert = open;
+  document.querySelector(".bar").inert = open;
+  document.body.classList.toggle("menu-open", open);
+  (open ? $("menu-close") : $("menu-open")).focus();
 }
 
 // ---- requests ------------------------------------------------------------------
@@ -84,6 +116,7 @@ function toast(text) {
 function refusal(json) {
   const reason = REASONS[json.code];
   if (reason && ["not-paired", "revoked", "device-expired", "wrong-user", "wrong-client", "access-off", "wrong-session"].includes(json.code)) { showGate(json.code); return; }
+  if (json.message && ["desktop-only", "unknown-command"].includes(json.code)) { toast(json.message); return; }
   toast(reason ? reason[1] : json.code === "desktop-only" ? "That runs on the desktop only." : json.code === "already-answered" ? "That question was already answered." : json.code === "offline" ? "No connection to the VM. Try again." : `Not sent (${json.code}).`);
 }
 
@@ -100,6 +133,7 @@ function showGate(code) {
   $("gate").hidden = false;
   $("session").hidden = true;
   $("composer").hidden = true;
+  $("menu-session").hidden = true;
   setStatus("disconnected");
 }
 
@@ -108,8 +142,54 @@ function setStatus(state) {
   const chip = $("status");
   chip.textContent = { idle: "ready", running: "working", exited: "stopped", disconnected: "offline" }[state] || state;
   chip.className = `chip ${state}`;
-  $("stop").hidden = state !== "running";
-  $("send").disabled = !app.ready || state === "exited" || state === "disconnected";
+  const running = state === "running";
+  $("stop").hidden = !running;
+  // As in the window: while coop works, Send now steers and Queue waits its turn.
+  $("queue-send").hidden = !running;
+  $("send").textContent = running ? "Send now" : "Send";
+  const off = !app.ready || state === "exited" || state === "disconnected";
+  $("send").disabled = off;
+  $("queue-send").disabled = off;
+}
+
+function renderQueue(queue) {
+  const q = queue || { steering: [], followUp: [] };
+  const items = [...(q.steering || []).map((t) => ["Steering", t]), ...(q.followUp || []).map((t) => ["Queued", t])];
+  const box = $("queue");
+  box.hidden = !items.length;
+  box.replaceChildren(...items.map(([kind, text]) => el("div", { class: "queued" }, el("span", { class: "chip", text: kind }), el("span", { class: "queued-text", text }))));
+  if (items.length) {
+    const edit = el("button", { class: "link", type: "button", text: "Edit queued" });
+    edit.addEventListener("click", dequeue);
+    box.append(edit);
+  }
+}
+
+async function dequeue() {
+  const { json } = await submit("/api/dequeue", { incarnation: app.incarnation });
+  if (!json.ok) { refusal(json); return; }
+  const box = $("message");
+  box.value = [...(json.texts || []), box.value].filter(Boolean).join("\n\n");
+  box.focus();
+}
+
+// ---- / commands (MC6): Pi's own list, as the window's completion shows it ------
+
+function renderCompletions() {
+  const list = $("completions");
+  const match = /^\/([A-Za-z0-9:._-]*)$/.exec($("message").value.trimStart());
+  if (!match) { list.hidden = true; list.replaceChildren(); return; }
+  const query = match[1].toLowerCase();
+  const all = app.commands || [];
+  const hits = [...all.filter((c) => c.name.toLowerCase().startsWith(query)), ...(query ? all.filter((c) => !c.name.toLowerCase().startsWith(query) && c.name.toLowerCase().includes(query)) : [])].slice(0, 40);
+  list.hidden = !hits.length;
+  list.replaceChildren(...hits.map((c) => {
+    const item = el("li", { role: "option" });
+    const pick = el("button", { type: "button", class: "completion" }, el("span", { class: "name", text: `/${c.name}` }), el("span", { class: "detail", text: c.description }));
+    pick.addEventListener("click", () => { $("message").value = `/${c.name} `; renderCompletions(); $("message").focus(); });
+    item.append(pick);
+    return item;
+  }));
 }
 
 function setIdentity(s) {
@@ -235,9 +315,12 @@ async function load() {
   for (const m of s.messages) renderMessage(m);
   for (const q of s.questions) app.questions.set(q.questionId, q);
   renderQuestions();
+  app.commands = Array.isArray(s.commands) ? s.commands : [];
+  renderQueue(s.queue);
   $("gate").hidden = true;
   $("session").hidden = false;
   $("composer").hidden = false;
+  $("menu-session").hidden = false;
   app.ready = true;
   setStatus(s.status);
   openStream();
@@ -263,7 +346,7 @@ function openStream() {
   });
   // A gap the window can no longer fill: reload the snapshot rather than guess.
   source.addEventListener("resync", () => load());
-  on("status", (d) => setStatus(d.state));
+  on("status", (d) => { setStatus(d.state); if (d.queue) renderQueue(d.queue); });
   on("message", (d) => { renderMessage(d); app.messages.get(d.id).scrollIntoView({ block: "end" }); });
   // Keep the newest line in view, whatever kind it is.
   on("tool", (d) => { renderTool(d); app.messages.get(`tool:${d.id}`).scrollIntoView({ block: "end" }); });
@@ -288,24 +371,38 @@ function openStream() {
 
 // ---- wiring --------------------------------------------------------------------
 
-async function sendMessage() {
+async function sendMessage(mode = "steer") {
   const box = $("message");
   const text = box.value.trim();
   if (!text || !app.ready) return;
-  if (/^[/!]/.test(text)) { toast("Commands starting with / or ! run on the desktop."); return; }
+  if (/^!/.test(text)) { toast("A ! line runs a shell on the VM: use the coop window for that."); return; }
   $("send").disabled = true;
-  const { json } = await submit("/api/chat", { incarnation: app.incarnation, text });
-  if (json.ok) box.value = ""; else refusal(json);
+  $("queue-send").disabled = true;
+  const { json } = await submit("/api/chat", { incarnation: app.incarnation, text, mode });
+  if (json.ok) { box.value = ""; renderCompletions(); } else refusal(json);
   setStatus(app.status);
 }
 
 applyTheme(storedTheme());
-$("theme").addEventListener("change", (e) => { applyTheme(e.target.value); try { localStorage.setItem("coop-theme", e.target.value); } catch { /* private mode */ } });
-$("send").addEventListener("click", sendMessage);
+for (const b of document.querySelectorAll(".seg-btn")) b.addEventListener("click", () => pickTheme(b.dataset));
+$("menu-open").addEventListener("click", () => setMenu(true));
+$("menu-close").addEventListener("click", () => setMenu(false));
+$("scrim").addEventListener("click", () => setMenu(false));
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") setMenu(false); });
+$("menu-commands").addEventListener("click", () => {
+  setMenu(false);
+  const box = $("message");
+  if (!box.value.startsWith("/")) box.value = "/";
+  box.focus();
+  renderCompletions();
+});
+$("send").addEventListener("click", () => sendMessage("steer"));
+$("queue-send").addEventListener("click", () => sendMessage("queue"));
+$("message").addEventListener("input", renderCompletions);
 $("message").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendMessage(); } });
 $("stop").addEventListener("click", async () => { const { json } = await submit("/api/stop", { incarnation: app.incarnation }); if (!json.ok) refusal(json); });
 $("retry").addEventListener("click", load);
-$("signout").addEventListener("click", async () => { await api("POST", "/api/logout", {}); showGate("not-paired"); });
+$("signout").addEventListener("click", async () => { setMenu(false); await api("POST", "/api/logout", {}); showGate("not-paired"); });
 $("pair").addEventListener("submit", async (e) => {
   e.preventDefault();
   const { json } = await api("POST", "/api/pair", { code: $("code").value, deviceName: $("device").value.trim() });

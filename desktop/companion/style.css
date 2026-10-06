@@ -25,12 +25,11 @@ body {
 .chip { font: 600 12px/1 var(--font); padding: 4px 8px; border-radius: 999px; background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border); }
 .chip.running { background: var(--accent-soft); color: var(--accent-strong); border-color: var(--accent); }
 .chip.exited, .chip.disconnected { background: var(--danger-soft); color: var(--danger); border-color: var(--danger); }
-select, input, textarea {
+input, textarea {
   font: inherit; color: var(--text); background: var(--field);
   border: 1px solid var(--border-strong); border-radius: var(--radius);
   padding: 10px 12px; min-height: 44px;
 }
-select { min-width: 44px; max-width: 9.5em; }
 input, textarea { width: 100%; }
 textarea { resize: vertical; }
 :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
@@ -81,3 +80,153 @@ main { flex: 1; padding: 12px 16px 16px; }
 [data-theme^="retro"] .btn, [data-theme^="retro"] .card { border-radius: 0; }
 @media (min-width: 720px) { main, .composer { max-width: 760px; width: 100%; margin: 0 auto; } }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+
+/* ---- Retro (retro-dark, retro-light) is the coop website's look: its "pi95"
+   chrome over the retro palettes, which already carry the site's colours. Silkscreen
+   (SIL OFL 1.1, fonts/OFL.txt) ships with the page; nothing loads from outside. */
+@font-face { font-family: "Silkscreen"; font-style: normal; font-weight: 400; font-display: swap; src: url("fonts/silkscreen-400.woff2") format("woff2"); }
+@font-face { font-family: "Silkscreen"; font-style: normal; font-weight: 700; font-display: swap; src: url("fonts/silkscreen-700.woff2") format("woff2"); }
+[data-look="site"] body { font-size: 15px; }
+[data-look="site"] .bar {
+  background: linear-gradient(90deg, var(--titlebar-from), var(--titlebar-to));
+  color: var(--titlebar-text);
+  border-bottom: 2px solid var(--bevel-dark);
+}
+[data-look="site"] .title { font: 700 18px/1.2 var(--font-display); text-transform: uppercase; color: var(--titlebar-text); }
+[data-look="site"] .identity { color: var(--titlebar-text); opacity: 0.85; }
+[data-look="site"] .gate h1, [data-look="site"] .card h2 { font-family: var(--font-display); font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; }
+[data-look="site"] .chip,
+[data-look="site"] .btn,
+[data-look="site"] .msg,
+[data-look="site"] .card,
+[data-look="site"] input,
+[data-look="site"] textarea { border-radius: 0; }
+/* raised: buttons, assistant messages, question cards */
+[data-look="site"] .btn,
+[data-look="site"] .msg,
+[data-look="site"] .card {
+  border-style: solid; border-width: 2px;
+  border-color: var(--bevel-hi) var(--bevel-dark) var(--bevel-dark) var(--bevel-hi);
+  box-shadow: inset -1px -1px 0 var(--bevel-lo), inset 1px 1px 0 var(--bevel-lo);
+}
+[data-look="site"] .btn { background: var(--surface); color: var(--text-strong); }
+[data-look="site"] .btn:active:not(:disabled) {
+  border-color: var(--bevel-dark) var(--bevel-hi) var(--bevel-hi) var(--bevel-dark);
+  box-shadow: inset 1px 1px 0 var(--bevel-lo);
+}
+[data-look="site"] .btn.primary { background: var(--titlebar-to); color: #fff; text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.35); }
+[data-look="site"] .btn.danger { color: var(--danger); }
+/* sunken: fields, the status chip, code */
+[data-look="site"] input,
+[data-look="site"] textarea,
+[data-look="site"] .chip,
+[data-look="site"] .msg pre,
+[data-look="site"] .card pre {
+  border-style: solid; border-width: 2px;
+  border-color: var(--bevel-dark) var(--bevel-hi) var(--bevel-hi) var(--bevel-dark);
+  box-shadow: inset -1px -1px 0 var(--bevel-lo), inset 1px 1px 0 var(--bevel-lo);
+}
+[data-look="site"] .chip { background: var(--code-bg); color: var(--text); font: 700 11px/1 var(--font-display); text-transform: uppercase; }
+[data-look="site"] .chip.running { color: var(--accent-2); }
+[data-look="site"] .chip.exited, [data-look="site"] .chip.disconnected { color: var(--danger); }
+[data-look="site"] .msg.user { background: var(--surface-2); border-color: var(--bevel-hi) var(--bevel-dark) var(--bevel-dark) var(--bevel-hi); }
+/* a question card reads as a little window: its heading is the title bar */
+[data-look="site"] .card { padding: 0 14px 14px; background: var(--surface); }
+[data-look="site"] .card h2 {
+  margin: 0 -14px 12px; padding: 6px 10px; font-size: 13px;
+  background: linear-gradient(90deg, var(--titlebar-from), var(--titlebar-to));
+  color: var(--titlebar-text); border-bottom: 2px solid var(--bevel-dark);
+}
+[data-look="site"] .card.risky h2 { background: linear-gradient(90deg, #5a1d12, var(--danger)); }
+[data-look="site"] .card.risky { outline: 2px solid var(--danger); outline-offset: -2px; }
+[data-look="site"] .composer { border-top: 2px solid var(--bevel-dark); box-shadow: inset 0 1px 0 var(--bevel-hi); }
+
+/* ---- queued messages and / commands (MC6) ---- */
+.queue { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; margin-bottom: 8px; font-size: 14px; }
+.queued { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.queued-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.queue .link { justify-self: start; }
+.completions { list-style: none; margin: 0 0 8px; padding: 0; max-height: 40vh; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.completion { display: grid; gap: 2px; width: 100%; min-height: 44px; padding: 8px 12px; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--border); color: var(--text); font: inherit; cursor: pointer; }
+.completions li:last-child .completion { border-bottom: 0; }
+.completion .name { font-family: var(--font-mono); font-weight: 600; color: var(--text-strong); }
+.completion .detail { font-size: 13px; color: var(--text-muted); }
+[data-look="site"] .completions { border-radius: 0; border-width: 2px; border-color: var(--bevel-dark) var(--bevel-hi) var(--bevel-hi) var(--bevel-dark); }
+
+/* ---- the menu (Aaron, 2026-10-06): a side drawer like the coop website's, with
+   rows a thumb can hit (52px) and the appearance controls at the bottom, in
+   reach of the hand holding the phone. Nothing depends on hover. ---- */
+.menu-toggle {
+  position: relative; display: grid; place-items: center; flex: none;
+  width: 48px; height: 44px; padding: 0; cursor: pointer;
+  background: var(--surface-2); color: var(--text-strong);
+  border: 1px solid var(--border-strong); border-radius: var(--radius);
+}
+.hamburger, .hamburger::before, .hamburger::after { display: block; width: 20px; height: 2px; background: currentColor; }
+.hamburger::before, .hamburger::after { content: ""; position: absolute; left: 50%; margin-left: -10px; }
+.hamburger::before { top: 14px; }
+.hamburger::after { bottom: 14px; }
+[aria-expanded="true"] > .hamburger { background: transparent; }
+[aria-expanded="true"] > .hamburger::before { top: 50%; margin-top: -1px; transform: rotate(45deg); }
+[aria-expanded="true"] > .hamburger::after { bottom: 50%; margin-bottom: -1px; transform: rotate(-45deg); }
+.scrim { position: fixed; inset: 0; z-index: 9; background: rgba(0, 0, 0, 0.55); }
+.drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 10;
+  width: min(86%, 360px); display: flex; flex-direction: column; gap: 14px;
+  padding: calc(14px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
+  background: var(--panel); color: var(--text);
+  border-left: 1px solid var(--border-strong); box-shadow: -12px 0 48px rgba(0, 0, 0, 0.45);
+  overflow-y: auto; overscroll-behavior: contain;
+  transform: translateX(100%); visibility: hidden;
+  transition: transform 0.25s ease, visibility 0s 0.25s;
+}
+.drawer.open { transform: none; visibility: visible; transition: transform 0.25s ease, visibility 0s; }
+body.menu-open { overflow: hidden; }
+.drawer-head { display: flex; align-items: center; gap: 12px; }
+.drawer-brand { flex: 1; font: 700 18px/1.2 var(--font-display); color: var(--text-strong); }
+.drawer-sub { font: 12px/1 var(--font-mono); color: var(--text-muted); padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.drawer-cap { font: 700 12px/1 var(--font); letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent-2); margin: 10px 0 6px; }
+.drawer-list { list-style: none; margin: 0; padding: 0; }
+.drawer-body { counter-reset: item; }
+.drawer-list li { border-bottom: 1px solid var(--border); }
+.drawer-list li:last-child { border-bottom: 0; }
+.drawer-item {
+  counter-increment: item; display: grid; grid-template-columns: auto 1fr; column-gap: 10px; align-items: baseline;
+  width: 100%; min-height: 52px; padding: 8px 10px; text-align: left; cursor: pointer;
+  background: none; border: 0; border-radius: var(--radius); color: var(--text-strong); font: inherit;
+}
+.drawer-item::before { content: counter(item, decimal-leading-zero); grid-row: span 2; font: 12px/1 var(--font-mono); color: var(--text-muted); }
+.drawer-item:active { background: var(--selection); }
+.item-name { font-weight: 600; }
+.item-detail { grid-column: 2; font-size: 13px; color: var(--text-muted); }
+.drawer-item.danger .item-name { color: var(--danger); }
+.drawer-foot { margin-top: auto; padding-top: 12px; border-top: 2px solid var(--border-strong); }
+.seg { display: flex; }
+.seg-btn {
+  flex: 1; min-height: 48px; cursor: pointer; font: 600 15px/1 var(--font);
+  background: var(--surface); color: var(--text-muted); border: 1px solid var(--border-strong);
+}
+.seg-btn:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+.seg-btn:last-child { border-radius: 0 var(--radius) var(--radius) 0; margin-left: -1px; }
+.seg-btn[aria-checked="true"] { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+@media (prefers-reduced-motion: reduce) { .drawer, .drawer.open { transition: none; } }
+/* the drawer in the coop website's look */
+[data-look="site"] .menu-toggle, [data-look="site"] .seg-btn {
+  border-radius: 0; background: var(--surface); color: var(--text-strong);
+  border-style: solid; border-width: 2px;
+  border-color: var(--bevel-hi) var(--bevel-dark) var(--bevel-dark) var(--bevel-hi);
+}
+[data-look="site"] .menu-toggle:active { border-color: var(--bevel-dark) var(--bevel-hi) var(--bevel-hi) var(--bevel-dark); }
+[data-look="site"] .drawer { border-left: 2px solid var(--bevel-dark); }
+[data-look="site"] .drawer::before {
+  content: ""; display: block; flex: none; height: 4px;
+  margin: calc(-14px - env(safe-area-inset-top)) -16px 0;
+  background: linear-gradient(90deg, var(--titlebar-from), var(--titlebar-to));
+}
+[data-look="site"] .drawer-brand { text-transform: uppercase; }
+[data-look="site"] .drawer-cap { font-family: var(--font-display); }
+[data-look="site"] .drawer-item { border-radius: 0; }
+[data-look="site"] .drawer-item:active { background: var(--selection); color: #fff; }
+[data-look="site"] .seg-btn { font: 700 13px/1 var(--font-display); text-transform: uppercase; }
+[data-look="site"] .seg-btn + .seg-btn { margin-left: -2px; }
+[data-look="site"] .seg-btn[aria-checked="true"] { background: var(--selection); color: #fff; border-color: var(--bevel-dark) var(--bevel-hi) var(--bevel-hi) var(--bevel-dark); }

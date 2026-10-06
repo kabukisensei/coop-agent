@@ -13,7 +13,7 @@ export const DEFAULT_PORT = 47821;
 export const COOKIE = "coop_device";
 export const PAGE_CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; manifest-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 const HEARTBEAT_MS = 25_000;
-const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json", ".webmanifest": "application/manifest+json", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon" };
+const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json", ".webmanifest": "application/manifest+json", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon", ".woff2": "font/woff2" };
 const SECURITY_HEADERS = { "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "X-Frame-Options": "DENY", "Cache-Control": "no-store" };
 
 /** `coop_device=<id>.<secret>` from a Cookie header, or null. */
@@ -180,7 +180,12 @@ export function createCompanionServer({ store, active, origin, webRoot = "", sha
       case "chat": {
         const result = hub.chat(device.id, request);
         audit({ kind: "chat", device: device.id, outcome: result.ok ? "sent" : result.code });
-        return result.ok ? sendJson(res, 200, { ok: true }) : refuse(res, result.code, undefined, device.id);
+        return result.ok ? sendJson(res, 200, { ok: true }) : refuse(res, result.code, result.message, device.id);
+      }
+      case "dequeue": {
+        const result = await hub.dequeue(device.id, request);
+        audit({ kind: "dequeue", device: device.id, outcome: result.ok ? "returned" : result.code });
+        return result.ok ? sendJson(res, 200, { ok: true, texts: result.texts }) : refuse(res, result.code, undefined, device.id);
       }
       case "stop": {
         const result = hub.stop(device.id, request);
