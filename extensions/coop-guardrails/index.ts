@@ -1971,6 +1971,7 @@ type AuditEntry = {
   decision: "blocked" | "blocked-headless" | "allowed" | "declined";
   label: string;   // the short subject (offending path, danger label, tool name)
   detail: string;  // offending paths (commit, first 8) or a fixed classification; never command text
+  pid?: number;    // the coop process that decided: each window tab runs its own, so this tells tabs apart
 };
 // Older versions persisted command text in these records. Minimize both new writes
 // and displayed history without rewriting or deleting the existing audit file.
@@ -1981,7 +1982,7 @@ function withoutCommandDetail(entry: AuditEntry): AuditEntry {
 }
 function audit(entry: AuditEntry): void {
   try {
-    appendFileSync(auditPath(), JSON.stringify({ ts: new Date().toISOString(), ...withoutCommandDetail(entry) }) + "\n");
+    appendFileSync(auditPath(), JSON.stringify({ ts: new Date().toISOString(), ...withoutCommandDetail(entry), pid: process.pid }) + "\n");
   } catch {
     /* fail-open — a logging failure must never block legitimate work */
   }

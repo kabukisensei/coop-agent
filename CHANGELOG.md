@@ -50,6 +50,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **The guardrails audit tells window tabs apart.** Each row now carries the
+  coop process id, so two tabs (or terminals) on one folder no longer write
+  decisions that look the same. Found in the tabs check on the client VM.
 - Opened from the home folder, coop no longer takes its own install
   (`C:\Users\<you>\coop-agent`, which carries a sample `.coop/project.yml`) for
   the team project: the one-level-down and sibling lookups, and the project
