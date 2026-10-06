@@ -336,6 +336,8 @@ echo "→ coop window attachments (D1b2): Office and PDF text, the splash and th
 node "$ROOT/tests/desktop-attachments.test.mjs"
 echo "→ coop window package (D1c): the package bootstrap, electron-builder config, stage and installer acceptance"
 node "$ROOT/tests/desktop-installer.test.mjs"
+echo "→ phone companion contract (MC1): requests, device grants, questions, answers, reconnect"
+node "$ROOT/tests/companion-protocol.test.mjs"
 
 # ============================================================================
 # EXTENDED LANE (only with COOP_TEST_EXTENDED=1)

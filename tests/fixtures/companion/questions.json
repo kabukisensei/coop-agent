@@ -1,0 +1,45 @@
+{
+  "_about": "Pi extension_ui_request records as coop's extensions send them in --mode rpc, with what the phone companion must show for each (master plan row MC1, desktop/COMPANION.md). Synthetic: no client names, paths or data.",
+  "cases": [
+    {
+      "name": "guardrails edit approval: the session-wide option stays on the desktop",
+      "request": { "type": "extension_ui_request", "id": "ui-1", "method": "select", "title": "coop guardrails\nThis looks like a MUTATING MCP action (create/update/delete/deploy/publish):\n  powerbi-modeling.measure_operations\ncoop treats MCP as read-only (list / read / inspect). Run it?", "options": ["Allow once", "Allow powerbi-modeling edits for this session (deletes still ask; production is blocked)", "Decline"] },
+      "expect": { "phone": "answer", "options": ["Allow once", "Decline"], "hidden": 1 }
+    },
+    {
+      "name": "guardrails Warehouse SQL confirm on dev: answerable",
+      "request": { "type": "extension_ui_request", "id": "ui-2", "method": "confirm", "title": "coop guardrails", "message": "Warehouse SQL mutation/DDL call:\n  UPDATE dbo.Example SET Flag = 1 WHERE Id = 7\nDDL, DML, destructive SQL, EXEC, and batches require separate explicit approval. Run it?" },
+      "expect": { "phone": "answer", "options": [], "hidden": 0 }
+    },
+    {
+      "name": "production write under a G1 unlock: desktop only",
+      "request": { "type": "extension_ui_request", "id": "ui-3", "method": "confirm", "title": "coop guardrails", "message": "PRODUCTION Warehouse SQL mutation/DDL call:\n  UPDATE dbo.Example SET Flag = 1\nProduction write under unlock u-1 (12 min left); it asks every time. Run it?" },
+      "expect": { "phone": "desktop", "reason": "production", "options": [], "hidden": 0 }
+    },
+    {
+      "name": "production MCP write under a G1 unlock offered as a select: desktop only",
+      "request": { "type": "extension_ui_request", "id": "ui-4", "method": "select", "title": "coop guardrails\nPRODUCTION write under unlock u-1 (9 min left). This looks like a MUTATING MCP action (create/update/delete/deploy/publish):\n  fabric.item_update\ncoop treats MCP as read-only (list / read / inspect). Run it?", "options": ["Allow once", "Allow fabric edits for this session (deletes still ask; production is blocked)", "Decline"] },
+      "expect": { "phone": "desktop", "reason": "production", "options": [], "hidden": 3 }
+    },
+    {
+      "name": "ask_user_question select (numbered options): answerable as offered",
+      "request": { "type": "extension_ui_request", "id": "ui-5", "method": "select", "title": "[Scope] Which tables should the view read?", "options": ["1. Sales only — the fact table", "2. Sales and Returns — both facts", "3. Type something."] },
+      "expect": { "phone": "answer", "options": ["1. Sales only — the fact table", "2. Sales and Returns — both facts", "3. Type something."], "hidden": 0 }
+    },
+    {
+      "name": "input with a default: answerable",
+      "request": { "type": "extension_ui_request", "id": "ui-6", "method": "input", "title": "Client name  ·  Enter = Example Co", "placeholder": "Example Co" },
+      "expect": { "phone": "answer", "options": [], "hidden": 0 }
+    },
+    {
+      "name": "editor: answerable",
+      "request": { "type": "extension_ui_request", "id": "ui-7", "method": "editor", "title": "coop.yml: fix the repo path, then save", "prefill": "repos:\n  sql: ./sql\n" },
+      "expect": { "phone": "answer", "options": [], "hidden": 0 }
+    },
+    {
+      "name": "notify is not a question",
+      "request": { "type": "extension_ui_request", "id": "ui-8", "method": "notify", "message": "Standards loaded", "notifyType": "info" },
+      "expect": null
+    }
+  ]
+}

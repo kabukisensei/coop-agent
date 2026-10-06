@@ -1,0 +1,251 @@
+# coop on the phone: the companion contract
+
+Master plan section 12.4, row MC1. This is the contract the window's companion
+server (MC2) and the phone page (MC3) build to. It ships no listener, no page and
+no setting: until MC2 and MC3 merge and MC4 passes on the VM, nothing here is
+reachable and the window behaves exactly as before. The rules a program can
+check are code in `desktop/lib/companion-protocol.mjs`, checked by
+`tests/companion-protocol.test.mjs` against `tests/fixtures/companion/`.
+
+## What the phone is
+
+A web page, installable to the home screen on iOS and Android, that shows the
+**same live session** an open coop window on the VM is running. It can do four
+things and nothing else:
+
+1. read the session: the conversation, whether coop is working, the questions
+   it is waiting on;
+2. send a chat message;
+3. stop the current turn;
+4. answer a question coop is waiting on (approvals, picks, text, edits), within
+   the limits under "Questions".
+
+The model sign-in, the guardrails, the standards, the files and every tool stay
+on the VM. The phone holds one revocable device credential and what is on its
+screen. It never starts, switches or ends a session, never runs a shell or a
+slash command, never reads files, never logs in to a model and never touches
+the production unlock (G1).
+
+## Two locks, both required
+
+Reaching the page and being allowed to act are separate controls. Either one
+alone refuses everything.
+
+**Lock 1, the private connection.** The companion server listens on
+`127.0.0.1` only (default port 47821, fixed so the connection can map it; a
+taken port is an error in the window, never a fallback to another port or
+address). Nothing on the VM's network can reach it. A private connection
+carries the phone's requests to that loopback port, and it must itself require
+the person's sign-in: no anonymous URL, no public listener. The choice of
+connection is recorded under "Decisions" below; the rest of this contract does
+not depend on it.
+
+**Lock 2, coop's own device grant.** Every request carries the device
+credential, and the window checks it against the live session before anything
+else (`checkGrant`). The refusals, each with its own code so the phone can say
+which:
+
+| Code | When |
+| --- | --- |
+| `not-paired` | no credential, or one that matches no device |
+| `revoked` | the device was removed in the window |
+| `device-expired` | 30 days since pairing, or 7 days unused |
+| `wrong-user` | the device was paired by another Windows user |
+| `wrong-client` | the device was paired on another client's project, or this window has no client in its project file |
+| `access-off` | phone access is off in this window |
+| `wrong-session` | the request names a session that is not the live one |
+
+## Identity: one person, one Windows user, one client, one session
+
+- **Pairing happens at the desk.** In the window, *Phone > Pair a phone* shows
+  a QR code and an 8-character code (Crockford letters, no I, L, O or U). It
+  lasts 5 minutes, works once, and dies after 5 wrong tries. The phone opens
+  the companion address, enters or scans the code, and names itself. Nobody can
+  pair without seeing the window, so pairing proves presence at the VM.
+- **A device belongs to the Windows user and client it was paired on.** The
+  record holds the Windows account (`COMPUTER\user`), the client name from the
+  trusted project file (C1), a name, and the times. It lives in that Windows
+  user's coop profile (`<profile>\companion\devices.json`), so another client's
+  Windows user never sees it and a device paired under one client is refused
+  under another (P1: one Windows user per client).
+- **The secret is never stored.** Pairing returns a random 256-bit secret as an
+  `HttpOnly; Secure; SameSite=Strict; Path=/api` cookie. The VM keeps only its
+  SHA-256 and compares in constant time. Page scripts cannot read the cookie.
+- **Phone access is off until you turn it on, per window.** *Phone > Allow
+  phone for this session* turns it on for this window's live session; both
+  screens then show *Windows user · client · session · device*. It turns off
+  when the window closes or the session changes, and at most one window per
+  Windows user has it on (turning it on in a second window turns it off in
+  the first).
+- **A new session is a new incarnation.** Each Pi start, `/new`, session
+  switch, project switch or window restart gets a fresh random id. Every write
+  names the incarnation it was made against; one from an older incarnation is
+  refused, and its open questions are gone. A new incarnation also turns phone
+  access off: the grant was for the session the person allowed, so a restarted
+  or switched session needs *Allow phone* again at the desk.
+- **Revoking is immediate.** *Phone > Devices* lists each device with its last
+  use; *Remove* deletes it and closes its open stream at once. *Remove all*
+  does every device. Signing out on the phone deletes its record too.
+
+## Requests
+
+Seven routes; anything else is a 404 (`ROUTES`). Bodies are JSON, at most 96 KB,
+rebuilt field by field (`validateRequest`); an unknown field is a refusal, not
+ignored.
+
+| Route | Body | Does |
+| --- | --- | --- |
+| `POST /api/pair` | `code`, `deviceName` | trades a pairing code for the device cookie |
+| `GET /api/snapshot` | none | the authoritative state: session identity, status, the conversation's messages, open questions, the last event id |
+| `GET /api/events` | none (`Last-Event-ID` header) | the event stream (server-sent events) |
+| `POST /api/chat` | `submissionId`, `incarnation`, `text` | sends a message; while coop works it is queued as a follow-up, never a steer |
+| `POST /api/stop` | `submissionId`, `incarnation` | stops the current turn (Pi's `abort`) |
+| `POST /api/answer` | `submissionId`, `incarnation`, `questionId`, `digest`, `answer` | answers one open question |
+| `POST /api/logout` | none | forgets this device |
+
+- **Chat is plain text only.** A message starting with `/` or `!` is refused
+  as `desktop-only`: slash commands open terminal screens or change the session
+  and `!` runs a shell, so both stay on the desktop in this version. At most
+  16,000 characters; no attachments.
+- **Every write is idempotent.** `submissionId` is a UUID the phone makes once
+  per action and repeats on every retry. The window remembers each outcome for
+  10 minutes and answers a repeat with the first outcome, so a retry after a
+  lost reply never sends a message twice, stops twice or answers twice.
+- **Cross-site writes are impossible.** Writes need the `Origin` of the
+  companion page itself, the header `X-Coop-Companion: 1` and a JSON body
+  (`checkOrigin`), on top of the `SameSite=Strict` cookie.
+- **Rate limits.** 60 requests a minute per device, 20 answers a minute, 5
+  failed pairings an hour per address; over that is `rate-limited`.
+
+## Events and reconnect
+
+The stream carries seven event types (`EVENT_TYPES`), each wrapped with the
+session incarnation and a sequence number (`eventEnvelope`). The window maps
+Pi's RPC events onto them and drops the rest: thinking, tool arguments and tool
+output never reach the phone; a tool shows as its name and a one-line label.
+
+| Type | Carries |
+| --- | --- |
+| `status` | idle, running or exited; queued message count |
+| `message` | a user or assistant message's text, streamed, then final |
+| `tool` | name, one-line label, running / done / error |
+| `question` | an open question, as "Questions" below describes it |
+| `question_resolved` | answered, expired or cancelled, and by desktop, phone or Pi |
+| `notice` | an extension's notice (info, warning, error) |
+| `session` | the identity line: incarnation, Windows user, client, session name |
+
+**Reconnect.** The window keeps the last 2,000 events or 15 minutes. A phone
+coming back sends the last id it saw; the window replays the tail only when it
+is the same incarnation and nothing is missing, and otherwise tells the phone to
+reload the snapshot (`resumePoint`). The phone disables every button until the
+snapshot or replay has arrived, and it never re-sends an answer it is unsure
+about: an unacknowledged answer is retried with the same `submissionId`, which
+returns the first outcome, or shown as resolved by the snapshot.
+
+**Honest status.** The phone shows *running*, *idle*, *exited* (Pi ended; the
+desktop must restart it) or *disconnected* (no stream). A lost connection is
+never read as an answer or as approval.
+
+## Questions
+
+A question is a Pi dialog (`select`, `confirm`, `input`, `editor`) from any
+extension: guardrails approvals, `ask_user_question` cards, the setup forms.
+The window owns it: its id (`questionId`, opaque and different in every
+incarnation), its exact text and options, its expiry. For each one the window
+decides what the phone may do (`classifyQuestion`):
+
+- **Answerable** on the phone: the same card the desktop draws
+  (`desktop/renderer/dialogs.mjs`), with the command or SQL as code.
+- **Only the options Pi offered, minus any that widen the grant.** An option
+  that approves more than the one action shown ("Allow ... edits for this
+  session", "always", "don't ask again") stays on the desktop; the phone shows
+  how many were held back. A phone approval covers exactly one action.
+- **Production writes are desktop-only.** A question that says `PRODUCTION`
+  (G1 writes it on every production write under a human unlock, and only
+  then) is shown read-only on the phone with *Continue on the desktop*. The
+  phone can still decline it. G1's block itself is not a question, so with no
+  unlock the phone, like the desktop, only sees the write refused; the unlock
+  is a terminal command the phone has no route to.
+- **The answer must match the exact action.** The phone returns the
+  question's `digest`, a SHA-256 over method, title, message and options as Pi
+  sent them (`actionDigest`). A different command text is a different digest.
+
+**First answer wins** (`decideAnswer`). The window checks, in one synchronous
+step with the state change: the incarnation, that the question exists and is
+still open, the digest, that the phone may give that answer, and that a pick is
+one of the allowed options. The first valid answer from either screen goes to
+Pi; the question becomes answered and `question_resolved` closes the card on
+both screens. A later answer gets `already-answered`; one after expiry or
+cancellation gets `expired` or `cancelled`; a stale card gets `changed` or
+`wrong-session`. Declining (No, Cancel, or the extension's own Decline) is
+always available and is the default focus. Timeouts are Pi's and the
+extension's, enforced on the VM whether or not a phone is awake.
+
+**What the phone cannot show** says *Continue on the desktop* and leaves the
+question open: anything an extension draws in the terminal only (Pi's RPC mode
+drops custom components already), Windows sign-in, UAC and browser or model
+sign-in pages. Those need a remote desktop session.
+
+## Storage on the phone
+
+- The device cookie, as above. No credential in `localStorage`, IndexedDB or
+  the service worker.
+- The service worker caches the page's own static files only. No API response,
+  message or question is written to any cache; closing the page leaves no
+  transcript on the phone.
+- The theme choice (Modern Dark, Modern Light, Retro Dark, Retro Light) may be
+  kept in `localStorage`.
+- The page is served with `Content-Security-Policy: default-src 'self';
+  script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src
+  'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`, no
+  inline script, and Markdown rendered with HTML escaped, as the desktop does.
+- No push notifications in this version. If they come later, the text is
+  generic ("coop needs you"), never a client name, question or command.
+
+## Audit
+
+Each Windows user's profile gets `logs\companion.jsonl`: one line per pairing,
+refused request (with its code), answer (question id, outcome, which screen),
+stop, revoke and access on/off, with the time and the device id. Never message
+text, answers' values, cookies or codes.
+
+## Decisions (MC1)
+
+Recorded for Aaron's review before MC2 and MC3 start. Each default can change
+in review without touching the rest.
+
+| Decision | Default |
+| --- | --- |
+| Private connection | **Tailscale** (Aaron, 2026-10-06 02:17, "2"): `tailscale serve` publishes the loopback port as `https://<vm>.<tailnet>.ts.net` inside the tailnet only, with its own certificate; never `tailscale funnel` |
+| Device lifetime | 30 days from pairing, 7 days idle, revocable at once |
+| Pairing code | 8 characters, 5 minutes, one use, 5 tries |
+| Access | off per window until turned on; one window at a time |
+| Reconnect retention | 2,000 events or 15 minutes, then reload the snapshot |
+| Idempotency memory | 10 minutes per `submissionId` |
+| Chat | plain text, 16,000 characters, no `/` or `!`, follow-up while busy |
+| Session-wide and production approvals | desktop only; the phone may decline |
+| Phones | iOS 17+ Safari and Android 12+ Chrome, in the browser and installed to the home screen |
+| Extension UI on the phone | the four dialog kinds and `ask_user_question` cards; notices as `notice`; everything else *Continue on the desktop* |
+| Security review and VM tester | Aaron, at MC4 |
+
+**The private connection, options considered.** Any of them sits in front of
+the same loopback server and the same device grant. Aaron picked Tailscale on
+2026-10-06 at 02:17 after confirming Cooptimize manages its own VMs, so client
+IT consent is not a factor.
+
+1. **Microsoft dev tunnel, private to Aaron's Cooptimize account.** The VM runs `devtunnel host` (outbound HTTPS only, no
+   inbound port or firewall rule); the phone signs in with the Cooptimize
+   Microsoft account (MFA, conditional access) before it reaches the page.
+   Traffic passes through Microsoft's relay in transit, under the Cooptimize
+   tenant, which the client-data rule allows. Cost: one Microsoft tool on the
+   VM and a sign-in on the phone; Microsoft labels it for development and
+   testing, with a monthly bandwidth cap.
+2. **Tailscale (recommended, 2026-10-06, since Cooptimize manages its own
+   VMs).** End-to-end encrypted from phone to VM, so no relay or provider can
+   read the session; Tailscale's servers only introduce the devices. The app
+   runs on the VM (admin install, a network adapter) and the phone; business
+   use is a paid per-user plan. No client data reaches Tailscale.
+3. **The client's own network or VPN.** No new service: the phone joins the
+   client's VPN and reaches the VM directly. Only works where the client gives
+   the phone that access, and the server would then listen on the VM's private
+   address instead of loopback.
