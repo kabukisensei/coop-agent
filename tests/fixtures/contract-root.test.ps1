@@ -104,6 +104,24 @@ try {
   elseif (Find-CoopChildContract $down) { Ko 'several repositories with a contract: one was picked' }
   else { Ok 'several repositories with a contract: none is picked' }
 
+  # coop's own checkout (installed by default at C:\Users\<you>\coop-agent) is never
+  # the team project: opened from the home folder, neither the one-level-down nor
+  # the sibling lookup takes its sample contract.
+  $homeDir = Join-Path $t 'home'
+  $coopCheckout = Join-Path $homeDir 'coop-agent'
+  foreach ($sub in @('.git', '.coop', 'bin', 'lib')) { New-Item -ItemType Directory -Force -Path (Join-Path $coopCheckout $sub) | Out-Null }
+  [System.IO.File]::WriteAllText((Join-Path $coopCheckout 'bin\coop.ps1'), '')
+  [System.IO.File]::WriteAllText((Join-Path $coopCheckout 'lib\common.ps1'), '')
+  [System.IO.File]::WriteAllText((Join-Path $coopCheckout '.coop\project.yml'), "repositories:`n  fabric:`n    local_path: `"../fabric`"`n")
+  New-Item -ItemType Directory -Force -Path (Join-Path (Join-Path $homeDir 'fabric') '.git') | Out-Null
+  if (Find-CoopChildContract $homeDir) { Ko "the home folder took coop's own checkout as the project" } else { Ok "one level down skips coop's own checkout" }
+  $fromHome = Set-CoopProjectYmlEnv $homeDir
+  if ($fromHome -or $env:COOP_PROJECT_YML) { Ko "the launcher exported coop's own contract: '$fromHome'" } else { Ok "the launcher exports no contract from the home folder" }
+  Remove-Item Env:COOP_PROJECT_YML -ErrorAction SilentlyContinue
+  if (Find-CoopSiblingContract (Join-Path $homeDir 'fabric')) { Ko "a repository beside coop's checkout took its sample contract" } else { Ok "the sibling lookup skips coop's own checkout" }
+  $homeProposal = Get-CoopContractRootProposal (Join-Path $homeDir 'fabric')
+  if ($homeProposal.Kind -ne 'git-root') { Ko "coop's checkout counted as a client repository: Kind=$($homeProposal.Kind)" } else { Ok "coop's checkout never counts as a client repository" }
+
   # The bundled coop-agent contract is not a client's: the proposal never falls back to it.
   $bare = Join-Path $t 'bare'
   New-Item -ItemType Directory -Force -Path $bare | Out-Null

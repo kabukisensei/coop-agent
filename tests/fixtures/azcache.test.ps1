@@ -190,7 +190,8 @@ try {
   $out = Invoke-Preflight -AssumeYes
   if ((Get-Probes) -ne 1 -or (Get-Logins) -ne 0) { Ko 'non-auth error: 1 probe and 0 logins expected' ((Get-AzLines) -join "`n") }
   elseif ((Get-WarnCount $out) -ne 1 -or -not $out.Contains('(not an auth error)') -or $out.Contains('not signed in') -or $out.Contains('az login')) { Ko 'non-auth line mismatch' $out }
-  else { Ok "non-auth failure: no sign-in, 'not an auth error' line" }
+  elseif (-not $out.Contains('(not an auth error): HTTPSConnectionPool: connection reset by proxy')) { Ko "non-auth line does not carry az's reason" $out }
+  else { Ok "non-auth failure: no sign-in, 'not an auth error' line with az's reason" }
 
   # 12. Tenant chain (no contract / TODO contracts / purpose / no config).
   Set-Config '{"schema_version":1,"azure":{"purpose":"client_resources","tenant_id":"tenant-ccc.example"}}'

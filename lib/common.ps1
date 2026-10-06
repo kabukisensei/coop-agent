@@ -1947,16 +1947,47 @@ function Get-CoopAzTokenResources {
   return @('https://api.fabric.microsoft.com', 'https://analysis.windows.net/powerbi/api')
 }
 
+# The last non-authentication failure Get-CoopAzTokenRc saw, as one short line
+# (az's own "ERROR: ..." text, or why az could not start), so the launch and
+# doctor can say what went wrong instead of only "not an auth error".
+$script:CoopAzLastError = ''
+
+# One printable line of az's stderr: the first "ERROR:" line, else the first
+# non-blank line, without the prefix, control characters or more than 200
+# characters. --output none keeps tokens off stdout; stderr never carries one.
+function Get-CoopAzErrorLine {
+  param([string]$Text)
+  if (-not $Text) { return '' }
+  $lines = @($Text -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+  $pick = @($lines | Where-Object { $_ -match '^ERROR:' } | Select-Object -First 1)
+  if ($pick.Count -eq 0) { $pick = @($lines | Select-Object -First 1) }
+  if ($pick.Count -eq 0) { return '' }
+  $line = ($pick[0] -replace '^ERROR:\s*', '') -replace '[\x00-\x1f\x7f]', ''
+  if ($line.Length -gt 200) { $line = $line.Substring(0, 200) + '...' }
+  return $line
+}
+
 function Get-CoopAzTokenRc {
   param([string]$Tenant)
+  $script:CoopAzLastError = ''
   foreach ($resource in (Get-CoopAzTokenResources)) {
     $r = Invoke-CoopAz -Seconds 15 -Quiet -AzArgs @('account', 'get-access-token', '--tenant', $Tenant, '--resource', $resource, '--output', 'none')
     if ($r.Rc -eq 0) { continue }
     if ($r.Rc -eq 124) { return 124 }
     if (Test-CoopAzAuthError $r.Err) { return 1 }
+    if ($r.Rc -eq 127) { $script:CoopAzLastError = 'Azure CLI could not be started (az missing, or its path has a character coop will not pass to cmd.exe)' }
+    else { $script:CoopAzLastError = Get-CoopAzErrorLine $r.Err }
     return 2
   }
   return 0
+}
+
+# The "not an auth error" warning text for -Tenant, with az's reason when known.
+function Get-CoopAzFailureText {
+  param([string]$Tenant)
+  $text = "token check failed for tenant $Tenant (not an auth error)"
+  if ($script:CoopAzLastError) { $text += ": $($script:CoopAzLastError)" }
+  return $text
 }
 
 function Invoke-CoopAzPreflight {
@@ -2007,7 +2038,7 @@ function Invoke-CoopAzPreflight {
   } elseif ($rc -eq 1) {
     Coop-Warn "Azure: not signed in to tenant $tenant; continuing." (Get-CoopAzLoginHint $tenant)
   } else {
-    Coop-Warn "Azure token check failed for tenant $tenant (not an auth error); continuing." (Get-CoopAzTokenHint $tenant)
+    Coop-Warn "Azure $(Get-CoopAzFailureText $tenant); continuing." (Get-CoopAzTokenHint $tenant)
   }
 }
 
@@ -2997,6 +3028,18 @@ function Get-CoopContractLocalPaths {
   return $paths
 }
 
+# True when $Dir is a coop-agent checkout (coop's own install, by default
+# C:\Users\<you>\coop-agent, or any clone of it). Its .coop/project.yml is coop's
+# sample contract, never a client's project file, so the sibling and one-level-
+# down lookups skip it: opened from the home folder, coop must not take its own
+# checkout for the team project. Mirrors isCoopCheckout in lib/project-contract.mjs.
+function Test-CoopCheckout {
+  param([string]$Dir)
+  if (-not $Dir) { return $false }
+  return (Test-Path -LiteralPath (Join-Path $Dir 'bin\coop.ps1') -PathType Leaf) -and
+         (Test-Path -LiteralPath (Join-Path $Dir 'lib\common.ps1') -PathType Leaf)
+}
+
 # C1: the client home repository beside the repository holding $StartDir, when
 # its .coop/project.yml lists that repository (one level up only; the folder
 # between the repositories is never a home). Returns the contract path or ''.
@@ -3009,6 +3052,7 @@ function Find-CoopSiblingContract {
   $target = [System.IO.Path]::GetFullPath($gitRoot).TrimEnd('\', '/')
   foreach ($child in (Get-ChildItem -LiteralPath $parent -Directory -ErrorAction SilentlyContinue | Where-Object { -not $_.Name.StartsWith('.') } | Sort-Object Name)) {
     if ($child.FullName -eq $gitRoot) { continue }
+    if (Test-CoopCheckout $child.FullName) { continue }
     $contract = Join-Path $child.FullName '.coop\project.yml'
     if (-not (Test-Path -LiteralPath $contract -PathType Leaf)) { continue }
     foreach ($rel in (Get-CoopContractLocalPaths $contract)) {
@@ -3044,6 +3088,7 @@ function Get-CoopChildContracts {
   $found = @()
   foreach ($child in (Get-ChildItem -LiteralPath $StartDir -Directory -ErrorAction SilentlyContinue | Where-Object { -not $_.Name.StartsWith('.') } | Sort-Object Name)) {
     if (-not (Test-Path -LiteralPath (Join-Path $child.FullName '.git'))) { continue }
+    if (Test-CoopCheckout $child.FullName) { continue }
     $contract = Join-Path $child.FullName '.coop\project.yml'
     if (Test-Path -LiteralPath $contract -PathType Leaf) { $found += $contract }
   }
@@ -3106,7 +3151,7 @@ function Get-CoopContractRootProposal {
     $parent = Split-Path -Parent $gitRoot
     if ($parent -and $parent -ne $gitRoot) {
       $repos = @(Get-ChildItem -LiteralPath $parent -Directory -ErrorAction SilentlyContinue |
-        Where-Object { -not $_.Name.StartsWith('.') -and (Test-Path -LiteralPath (Join-Path $_.FullName '.git')) } |
+        Where-Object { -not $_.Name.StartsWith('.') -and (Test-Path -LiteralPath (Join-Path $_.FullName '.git')) -and -not (Test-CoopCheckout $_.FullName) } |
         Sort-Object Name | ForEach-Object { $_.Name })
       if ($repos.Count -ge 2 -and $repos -contains (Split-Path -Leaf $gitRoot)) {
         $slug = Get-CoopClientSlug $Client

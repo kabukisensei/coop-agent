@@ -41,6 +41,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- Opened from the home folder, coop no longer takes its own install
+  (`C:\Users\<you>\coop-agent`, which carries a sample `.coop/project.yml`) for
+  the team project: the one-level-down and sibling lookups, and the project
+  wizard's list of repositories, skip any coop-agent checkout.
+- "Azure token check failed ... (not an auth error)" now names az's own
+  reason (its `ERROR:` line, or that az could not start), at launch and in
+  `coop doctor`.
 - **A long conversation no longer stops on "native turn auth context
   mismatch: scopes"** (Aaron, 2026-10-06). Pi keeps reusing its cached OpenAI
   Codex connection after it refreshes your ChatGPT sign-in, and the Codex server
