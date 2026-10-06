@@ -495,8 +495,14 @@ operations and production. Manifest-pinned managed config is generated into coop
 (`~/.coop/agent/mcp-adapter.json`) from `~/.coop/config` by `coop onboard` / `coop sync`,
 and wired through `pi-mcp-adapter`. The `fabric-sqlendpoint` entry's Warehouse target
 comes from the contract above the current folder, and every launch regenerates it
-for the folder coop starts in (`Update-CoopManagedMcpConfig`), so one shared config
-follows the last launch, not the last sync.
+for the folder coop starts in (`Update-CoopManagedMcpConfig`), so the shared config
+follows the last launch, not the last sync. Each launch also writes its folder's own
+copy, `<agent dir>\mcp\<key>.json` (`Get-CoopFolderMcpConfigPath`: the first 12 hex
+characters of the SHA-256 of the lower-cased folder path), and hands that path to Pi
+(`--mcp-config`) and to coop's own readers (`COOP_MCP_CONFIG`: the guardrails'
+Warehouse environment, `fabric_sql_query`'s target check, the launch token). A coop
+already running on one folder is never retargeted by a later launch elsewhere,
+including on its next `/new`.
 
 Per `.coop/project.yml` and `docs/guardrails.md`:
 

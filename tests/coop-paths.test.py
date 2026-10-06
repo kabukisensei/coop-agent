@@ -26,7 +26,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 sys.path.insert(0, str(ROOT / "scripts"))
 import coop_paths  # noqa: E402
 
-LOCATION_VARS = ("COOP_DIR", "COOP_AGENT_DIR", "PI_CODING_AGENT_DIR", "COOP_NO_ISOLATE")
+LOCATION_VARS = ("COOP_DIR", "COOP_AGENT_DIR", "PI_CODING_AGENT_DIR", "COOP_NO_ISOLATE", "COOP_MCP_CONFIG")
 passed = 0
 
 # Windows runners default stdout to cp1252, which cannot encode the check mark.
@@ -161,8 +161,19 @@ with tempfile.TemporaryDirectory(prefix="coop-paths-") as tmp:
     assert sql_query.coop_paths is coop_paths
     src = (ROOT / "lib" / "sql_query.py").read_text(encoding="utf-8")
     assert 'os.environ.get("PI_CODING_AGENT_DIR"' not in src
-    assert "coop_paths.agent_dir()" in src
-    ok("sql_query locates mcp-adapter.json through coop_paths.agent_dir()")
+    assert "coop_paths.managed_mcp_config()" in src
+    ok("sql_query locates the managed MCP config through coop_paths.managed_mcp_config()")
+
+    # --- several coops at once: this launch's own MCP config copy ----------------
+    own = agent / "mcp" / "0123456789ab.json"
+    with mock.patch.dict(os.environ, env(home, COOP_AGENT_DIR=str(agent)), clear=True):
+        assert coop_paths.managed_mcp_config() == agent / "mcp-adapter.json"
+    with mock.patch.dict(os.environ, env(home, COOP_AGENT_DIR=str(agent), COOP_MCP_CONFIG=str(own)), clear=True):
+        assert coop_paths.managed_mcp_config() == own
+    for foreign in (agent / "other" / "0123456789ab.json", agent / "mcp" / "evil.json", agent / "mcp-adapter.json"):
+        with mock.patch.dict(os.environ, env(home, COOP_AGENT_DIR=str(agent), COOP_MCP_CONFIG=str(foreign)), clear=True):
+            assert coop_paths.managed_mcp_config() == agent / "mcp-adapter.json", foreign
+    ok("managed_mcp_config: COOP_MCP_CONFIG names <agent dir>/mcp/<12 hex>.json, else the shared mcp-adapter.json")
 
     # --- the machine-level profile (master plan P1) ---------------------------
     with mock.patch.dict(os.environ, env(home, COOP_MACHINE_DIR=str(agent)), clear=True):

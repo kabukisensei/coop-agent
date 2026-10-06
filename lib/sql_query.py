@@ -122,12 +122,11 @@ def _canonical_target(
         or not SAFE_DATABASE.fullmatch(database)
     ):
         return None, "", "target_invalid"
-    # The managed adapter config lives in the agent dir Pi actually loads (the
-    # one chain in lib/coop_paths.py); a missing or foreign file is unavailable.
-    agent_dir = coop_paths.agent_dir()
+    # The managed adapter config this launch's Pi loaded (its folder's own copy,
+    # else the shared one; lib/coop_paths.py); a missing or foreign file is unavailable.
     try:
         config = json.loads(
-            (agent_dir / "mcp-adapter.json").read_text(encoding="utf-8-sig")
+            coop_paths.managed_mcp_config().read_text(encoding="utf-8-sig")
         )
     except (OSError, ValueError):
         return None, "", "managed_config_unavailable"

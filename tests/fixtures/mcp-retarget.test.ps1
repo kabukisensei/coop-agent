@@ -9,6 +9,10 @@
 #      global again. A user-added server survives every rewrite.
 #   B. End-to-end `coop` (stub pi) from the project folder after a home-folder
 #      sync: the stub reads the config while it runs and sees the item target.
+#   C. Several coops at once (2026-10-06): each launch also writes its folder's
+#      own copy (<agent dir>\mcp\<key>.json) and hands Pi that path
+#      (--mcp-config, COOP_MCP_CONFIG); a later launch from another folder
+#      retargets the shared file but never the first launch's copy.
 # Sandboxed HOME/USERPROFILE/agent dir, never ~/.coop; COOP_SKIP_AZ=1, offline.
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '_common.ps1')
@@ -61,6 +65,10 @@ try {
   $null = New-PyStub $bin 'pi' @"
 import os, shutil, sys
 shutil.copyfile(r'''$configPath''', os.path.join(r'''$marker''', 'config-at-launch.json'))
+args = sys.argv[1:]
+given = args[args.index('--mcp-config') + 1] if '--mcp-config' in args else ''
+with open(os.path.join(r'''$marker''', 'mcp-config-arg.txt'), 'a') as f:
+    f.write(given + '|' + os.environ.get('COOP_MCP_CONFIG', '') + '\n')
 open(os.path.join(r'''$marker''', 'pi-ran'), 'w').close()
 sys.exit(0)
 "@
@@ -123,6 +131,26 @@ sys.exit(0)
     else { Ko "config pi saw: url=$($entry.url) item_name=$($entry._coop_target.item_name)" $all }
   } else { Ko 'stub pi recorded no config' $all }
   if (-not $all.Contains('could not refresh the MCP config')) { Ok 'no refresh warning on a healthy launch' } else { Ko 'the launch warned about the MCP config' $all }
+
+  # --- C. this launch's own copy, untouched by a later launch elsewhere -----------
+  $env:PI_CODING_AGENT_DIR = $agent
+  $projectCopy = Get-CoopFolderMcpConfigPath -ProjectCwd $project
+  $homeCopy = Get-CoopFolderMcpConfigPath -ProjectCwd $sandboxHome
+  Remove-Item -LiteralPath Env:PI_CODING_AGENT_DIR -ErrorAction SilentlyContinue
+  $argLines = @(Get-Content -LiteralPath (Join-Path $marker 'mcp-config-arg.txt'))
+  if ($argLines.Count -ge 1 -and $argLines[-1] -eq "$projectCopy|$projectCopy") { Ok 'pi got --mcp-config and COOP_MCP_CONFIG naming the project folder''s own copy' }
+  else { Ko "pi's --mcp-config|COOP_MCP_CONFIG: $($argLines -join ' / ') (expected $projectCopy)" }
+  if ($projectCopy -ne $homeCopy -and (Split-Path -Leaf $projectCopy) -match '^[0-9a-f]{12}\.json$' -and (Split-Path -Leaf (Split-Path -Parent $projectCopy)) -eq 'mcp') { Ok 'each folder has its own copy under <agent dir>\mcp' } else { Ko "copies: $projectCopy / $homeCopy" }
+  $entry = if (Test-Path -LiteralPath $projectCopy) { Read-Entry $projectCopy } else { $null }
+  if ($entry -and $entry.url -eq $itemUrl) { Ok 'the project folder''s copy carries the item target' } else { Ko "project copy url: $($entry.url)" }
+  $doc = Get-Content -LiteralPath $projectCopy -Raw | ConvertFrom-Json
+  if ($doc.mcpServers.'my-own') { Ok 'the copy keeps the user-added server from the shared file' } else { Ko 'the copy dropped the user-added server' }
+  # A second coop from the home folder: the shared file goes global, the project's copy stays.
+  $r = Invoke-Redirected (Join-Path $root 'bin\coop.ps1') $sandboxHome
+  $all = $r.Out + $r.Err
+  if ($r.Rc -eq 0 -and (Read-Entry $configPath).url -eq $globalUrl) { Ok 'a launch from the home folder retargets the shared file' } else { Ko "home launch: rc=$($r.Rc) shared url=$((Read-Entry $configPath).url)" $all }
+  if ((Read-Entry $projectCopy).url -eq $itemUrl) { Ok 'the project launch''s own copy still names the item (the running coop is not retargeted)' } else { Ko "project copy after the home launch: $((Read-Entry $projectCopy).url)" }
+  if ((Test-Path -LiteralPath $homeCopy) -and (Read-Entry $homeCopy).url -eq $globalUrl) { Ok 'the home launch got its own copy' } else { Ko 'no home copy' $all }
 } catch {
   Ko "fixture error: $($_.Exception.Message)" ($_.ScriptStackTrace)
 } finally {
