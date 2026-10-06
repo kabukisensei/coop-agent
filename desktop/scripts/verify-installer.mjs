@@ -23,6 +23,9 @@ import { NODE_SHIMS_DROPPED, longestPath } from "./build-installer.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const PRODUCT = "coop (window)";
+// D1m: the package's own shortcut is plain "coop" (electron-builder nsis.shortcutName);
+// the first launch adds "coop (terminal)" beside it.
+const SHORTCUT = "coop";
 
 export function assertDisposableInstallerHost(env = process.env, platform = process.platform) {
   if (platform !== "win32") throw new Error("installer acceptance runs on Windows only");
@@ -52,9 +55,10 @@ export function packagePaths(env = process.env) {
     exe: join(installDir, "coop.exe"),
     // The package's first launch writes these (scripts/install.ps1 in bundled
     // mode); the uninstaller removes them when they point into installDir.
+    // The package's own "coop" shortcut is the exe's; the launch adds "coop (terminal)".
     launcherLink: join(env.LOCALAPPDATA, "coop", "bin", "coop.cmd"),
-    terminalShortcut: join(env.USERPROFILE, "Desktop", "coop.lnk"),
-    startMenuTerminalShortcut: join(env.APPDATA, "Microsoft", "Windows", "Start Menu", "Programs", "coop.lnk"),
+    terminalShortcut: join(env.USERPROFILE, "Desktop", "coop (terminal).lnk"),
+    startMenuTerminalShortcut: join(env.APPDATA, "Microsoft", "Windows", "Start Menu", "Programs", "coop (terminal).lnk"),
     uninstaller: join(installDir, "Uninstall coop.exe"),
     // D1d: the bundled runtime and the coop snapshot beside the asar.
     runtime,
@@ -65,8 +69,8 @@ export function packagePaths(env = process.env) {
     piShim: join(runtime, "npm", "pi.cmd"),
     extensions: join(runtime, "extensions"),
     coopPs1: join(installDir, "resources", "coop", "bin", "coop.ps1"),
-    startMenuShortcut: join(env.APPDATA, "Microsoft", "Windows", "Start Menu", "Programs", `${PRODUCT}.lnk`),
-    desktopShortcut: join(env.USERPROFILE, "Desktop", `${PRODUCT}.lnk`),
+    startMenuShortcut: join(env.APPDATA, "Microsoft", "Windows", "Start Menu", "Programs", `${SHORTCUT}.lnk`),
+    desktopShortcut: join(env.USERPROFILE, "Desktop", `${SHORTCUT}.lnk`),
     // Electron's default appData folder for the product; the window keeps its
     // data under the coop profile instead, so this must never appear.
     electronAppData: join(env.APPDATA, "coop"),
@@ -111,7 +115,7 @@ async function registryEntries() {
   return Array.isArray(parsed) ? parsed : [parsed];
 }
 
-/** Write a "coop" shortcut the way scripts/install.ps1 does (powershell.exe -File <launcher>). */
+/** Write a "coop (terminal)" shortcut the way scripts/install.ps1 does (powershell.exe -File <launcher>). */
 async function writeTerminalShortcut(file, launcher) {
   const powershell = win32.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const script = `$ws = New-Object -ComObject WScript.Shell; $sc = $ws.CreateShortcut($env:COOP_LNK); $sc.TargetPath = '${powershell.replace(/'/g, "''")}'; $sc.Arguments = ('-NoLogo -NoProfile -ExecutionPolicy Bypass -File "' + $env:COOP_LAUNCHER + '"'); $sc.Save()`;
@@ -175,7 +179,7 @@ async function main(argv) {
     for (const [name, file] of [["Start Menu", paths.startMenuShortcut], ["Desktop", paths.desktopShortcut]]) {
       if (!existsSync(file)) throw new Error(`${name} shortcut missing: ${file}`);
     }
-    step("Start Menu and Desktop shortcuts", { note: PRODUCT });
+    step("Start Menu and Desktop shortcuts", { note: SHORTCUT });
 
     const doctorOut = await runOwned(paths.exe, ["--doctor"], { windowsHide: true, cwd: paths.installDir }, 60000);
     const doctorLine = doctorOut.trim().split(/\r?\n/).filter(Boolean).pop() || "";
@@ -239,9 +243,9 @@ async function main(argv) {
     step("profile untouched by install and doctor");
 
     // What the package's first launch writes (scripts/install.ps1 in bundled
-    // mode): the `coop` link and "coop" shortcut pointing into the package,
-    // which the uninstaller must remove, beside a terminal install's own
-    // shortcut pointing elsewhere, which it must keep.
+    // mode): the `coop` link and "coop (terminal)" shortcut pointing into the
+    // package, which the uninstaller must remove, beside a terminal install's
+    // own shortcut pointing elsewhere, which it must keep.
     mkdirSync(dirname(paths.launcherLink), { recursive: true });
     writeFileSync(paths.launcherLink, `@call "${join(paths.installDir, "resources", "coop", "bin", "coop.cmd")}" %*\r\n`, { flag: "wx" });
     await writeTerminalShortcut(paths.terminalShortcut, join(paths.installDir, "resources", "coop", "bin", "coop-desktop.ps1"));
@@ -266,7 +270,7 @@ async function main(argv) {
     for (const file of [paths.launcherLink, paths.terminalShortcut]) {
       if (existsSync(file)) throw new Error(`uninstall left the package's ${file}`);
     }
-    if (!existsSync(paths.startMenuTerminalShortcut)) throw new Error("uninstall removed a terminal install's own \"coop\" shortcut");
+    if (!existsSync(paths.startMenuTerminalShortcut)) throw new Error("uninstall removed a terminal install's own \"coop (terminal)\" shortcut");
     rmSync(paths.startMenuTerminalShortcut, { force: true });
     step("silent uninstall leaves no package, entry, shortcut, link or first-launch shortcut; profile data and a foreign shortcut kept", { note: `${uninstallSeconds}s`, seconds: uninstallSeconds });
     report.ok = true;
