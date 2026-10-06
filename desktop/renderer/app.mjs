@@ -69,8 +69,6 @@ const app = {
     redrawOwner(toolCallId) { const owner = app.tl.toolOwner.get(toolCallId); if (owner) redraw(owner); },
     // The timeline's links into the side pane (a tool card's file, the standards).
     openPane: (id, options) => openPane(id, options),
-    // The working line carries the vibe, as the terminal's does.
-    workingText: () => app.vibe || "Working",
   },
 };
 
@@ -151,7 +149,9 @@ function onEvent(event) {
   if (status || (event.type === "message_start" && event.message && event.message.role === "user")) { renderBusy(); renderHeader(); }
   // A name set mid-session (auto-naming runs after the turn ends) shows in the list at once.
   if (event.type === "session_info_changed") loadSessions();
-  if (event.type === "agent_start") { freshVibe(); startTurn(app.todos); renderWidgets(); }
+  if (event.type === "agent_start") { startTurn(app.todos); renderWidgets(); }
+  // A fresh vibe each turn, as the terminal's working line rotates on turn_start.
+  if (event.type === "turn_start") freshVibe();
   if (event.type === "tool_execution_end" && event.toolName === TODO_TOOL && applyTodoResult(app.todos, event.result)) renderWidgets();
   if (event.type === "agent_settled") {
     refreshState(); refreshStats(); loadSessions();
@@ -500,9 +500,9 @@ async function freshVibe(set = "") {
   const result = await coop.vibe(set);
   if (!result || !result.success) { if (set && result && result.error) toast(result.error, "warning"); return; }
   app.vibe = String(result.data || "");
+  renderWorking();
   renderStatus();
   renderEmpty({ fresh: true });
-  if (app.tl.current) redraw(app.tl.current);
 }
 
 function rerenderAll() {
@@ -893,9 +893,27 @@ function renderHeader() {
   $("terminalButton").hidden = !info.canOpenTerminal;
 }
 
+/**
+ * The working line above the composer: a spinner and the turn's vibe for the
+ * whole turn, where the terminal keeps its working message. Pi's RPC mode does
+ * not forward setWorkingMessage, so the window draws its own.
+ */
+function renderWorking() {
+  const line = $("working");
+  const busy = Boolean(app.running && app.tl.busy);
+  line.hidden = !busy;
+  if (!busy) { line.replaceChildren(); return; }
+  const text = app.vibe || "Working";
+  line.title = text;
+  line.replaceChildren(el("span", { class: "spinner", "aria-hidden": "true" }),
+    app.vibe ? el("span", { class: "vibe-mark", "aria-hidden": "true", text: "\u2b21" }) : null,
+    el("span", { class: "working-text", text }));
+}
+
 function renderBusy() {
   const busy = app.tl.busy;
   document.body.classList.toggle("busy", busy);
+  renderWorking();
   $("stopButton").hidden = !(busy || app.bashItem);
   $("queueButton").hidden = !busy;
   $("sendButton").replaceChildren(icon("send"), el("span", { text: busy ? "Send now" : "Send" }));
@@ -927,8 +945,7 @@ function renderStatus() {
   if (stats && stats.tokens) parts.push(el("span", { class: "status-item", title: "Tokens this session: in / out", text: `${formatTokens(stats.tokens.input)} in, ${formatTokens(stats.tokens.output)} out` }));
   if (stats && Number(stats.cost) > 0) parts.push(el("span", { class: "status-item", text: `$${Number(stats.cost).toFixed(2)}` }));
   for (const [key, text] of app.statuses) parts.push(el("span", { class: "status-item ext", title: key, text }));
-  const left = el("span", { class: "status-left" }, el("span", { class: "status-item status-brand", text: `coop${app.info && app.info.version ? ` v${app.info.version}` : ""}` }), el("span", { class: "status-item", text: app.running ? (app.tl.busy ? "Working" : "Ready") : "Stopped" }),
-    app.running && app.tl.busy && app.vibe ? el("span", { class: "status-item vibe", title: app.vibe }, el("span", { class: "vibe-mark", "aria-hidden": "true", text: "\u2b21" }), el("span", { text: app.vibe })) : null);
+  const left = el("span", { class: "status-left" }, el("span", { class: "status-item status-brand", text: `coop${app.info && app.info.version ? ` v${app.info.version}` : ""}` }), el("span", { class: "status-item", text: app.running ? (app.tl.busy ? "Working" : "Ready") : "Stopped" }));
   bar.replaceChildren(left, el("span", { class: "status-right" }, parts));
 }
 
