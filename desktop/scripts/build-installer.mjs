@@ -27,6 +27,14 @@
 //             as coop sync does), and coop-runtime.json naming them. Both npm
 //             trees are pruned of what nothing runs (pruneTree below), which
 //             halves the file count and keeps every path under Windows' limit.
+//             D1k (Aaron 2026-10-06, "an installer that installs everything"):
+//             also git/ (MinGit), python/ (the NuGet Python with pipx inside and
+//             a pipx.cmd shim), python-wheels/ (every Python tool coop installs,
+//             as wheels, so the first launch needs no network), az/ (the Azure
+//             CLI zip) and installers/ (the ODBC Driver 18 MSI and the VC++
+//             runtime it needs, run once with one administrator prompt). Each
+//             download is pinned by version and SHA-256 in the manifest's
+//             desktop section (bundledDownloads below).
 //   coop/     resources\coop in the package (D1d): the tracked files of this
 //             checkout except tests, desktop/, the workflows, docs/history and
 //             the repo's own dotfiles. bin/coop.ps1 runs from here; lib/common.ps1
@@ -149,6 +157,64 @@ export function nodeDownload(manifest) {
   return { version: node.version, sha256: node.sha256, folder, file: `${folder}.zip`, url: `https://nodejs.org/dist/v${node.version}/${folder}.zip` };
 }
 
+/**
+ * The tools the package carries so a teammate's machine needs nothing else
+ * (D1k): each from its publisher's own release, pinned by version and SHA-256
+ * in the manifest's desktop section. `dir` is the folder under
+ * resources\runtime; a zip unpacks there (from its `from` subfolder when set,
+ * minus `drop`), a plain file is copied in as `name`.
+ */
+export const DOWNLOAD_HOSTS = ["github.com", "api.nuget.org", "download.microsoft.com", "download.visualstudio.microsoft.com"];
+export function bundledDownloads(manifest) {
+  const d = (manifest && manifest.desktop) || {};
+  const pin = (key, versionPattern) => {
+    const p = d[key];
+    if (!p || !versionPattern.test(p.version || "") || !/^[0-9a-f]{64}$/.test(p.sha256 || "")) {
+      throw new Error(`the release manifest has no desktop.${key} { version, sha256 } pin`);
+    }
+    return p;
+  };
+  const urlPin = (key) => {
+    const p = pin(key, /^\d+(\.\d+){2,3}$/);
+    let host = "";
+    try { const u = new URL(p.url || ""); host = u.protocol === "https:" ? u.hostname : ""; } catch { host = ""; }
+    if (!DOWNLOAD_HOSTS.includes(host)) throw new Error(`desktop.${key}.url must be an https URL on ${DOWNLOAD_HOSTS.join(", ")}`);
+    return p;
+  };
+  const git = pin("git", /^\d+\.\d+\.\d+$/);
+  const python = pin("python", /^3\.(10|11|12|13)\.\d+$/);
+  const az = pin("azure_cli", /^\d+\.\d+\.\d+$/);
+  const odbc = urlPin("odbc");
+  const vc = urlPin("vc_redist");
+  return [
+    { key: "git", version: git.version, sha256: git.sha256, file: `MinGit-${git.version}-64-bit.zip`, url: `https://github.com/git-for-windows/git/releases/download/v${git.version}.windows.1/MinGit-${git.version}-64-bit.zip`, dir: "git", check: "cmd/git.exe" },
+    { key: "python", version: python.version, sha256: python.sha256, file: `python.${python.version}.nupkg`, url: `https://api.nuget.org/v3-flatcontainer/python/${python.version}/python.${python.version}.nupkg`, dir: "python", from: "tools", check: "python.exe" },
+    // The zip's Scripts\ holds pip-made launchers with the build machine's path
+    // baked in, and a `fab.exe` (Python Fabric, SSH) that would shadow the
+    // Microsoft Fabric CLI; bin\az.cmd runs the zip's own python.exe instead.
+    { key: "azure_cli", version: az.version, sha256: az.sha256, file: `azure-cli-${az.version}-x64.zip`, url: `https://github.com/Azure/azure-cli/releases/download/azure-cli-${az.version}/azure-cli-${az.version}-x64.zip`, dir: "az", drop: ["Scripts"], check: "bin/az.cmd" },
+    { key: "odbc", version: odbc.version, sha256: odbc.sha256, file: `msodbcsql-${odbc.version}-x64.msi`, url: odbc.url, dir: "installers", name: "msodbcsql.msi" },
+    { key: "vc_redist", version: vc.version, sha256: vc.sha256, file: `VC_redist-${vc.version}.x64.exe`, url: vc.url, dir: "installers", name: "VC_redist.x64.exe" },
+  ];
+}
+
+/** The manifest's Python tools as pip requirement specs (`name==pin`). */
+export function pythonToolSpecs(manifest) {
+  return Object.entries(manifest.python_tools || {}).map(([name, version]) => `${name}==${version}`);
+}
+
+/** Does the wheel folder hold a wheel of <name> at exactly <version>? (PEP 427 names: `-`/`.` become `_`.) */
+export function hasWheel(files, name, version) {
+  const normal = name.toLowerCase().replace(/[-_.]+/g, "_");
+  return files.some((file) => {
+    const parts = file.split("-");
+    return file.toLowerCase().endsWith(".whl") && parts.length >= 5 && parts[0].toLowerCase().replace(/[-_.]+/g, "_") === normal && parts[1] === version;
+  });
+}
+
+/** The bundled Python's pipx: pip's own pipx.exe carries the build machine's path, so a .cmd runs the module. */
+export const PIPX_SHIM = '@"%~dp0..\\python.exe" -m pipx %*\r\n';
+
 /** Pi and the Power BI tools, as `npm install -g` specs, into the bundled prefix. */
 export function prefixPackages(manifest) {
   const specs = [`${manifest.pi.package}@${manifest.pi.version}`];
@@ -179,6 +245,12 @@ export function runtimeMarker({ manifest, version, lockSha256 }) {
     npm: { prefix: "npm" },
     pi: manifest.pi.version,
     extensions: { dir: "extensions", lockSha256 },
+    // D1k: everything else a teammate needs, so the first launch installs
+    // nothing from the internet (lib/common.ps1 Initialize-CoopBundledRuntime).
+    git: { version: manifest.desktop.git.version, dir: "git" },
+    python: { version: manifest.desktop.python.version, dir: "python", wheels: "python-wheels" },
+    azureCli: { version: manifest.desktop.azure_cli.version, dir: "az" },
+    odbc: { version: manifest.desktop.odbc.version, dir: "installers", msi: "msodbcsql.msi", vcRedist: "VC_redist.x64.exe", vcRedistVersion: manifest.desktop.vc_redist.version },
   };
 }
 
@@ -190,6 +262,66 @@ async function download(url, file) {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
   writeFileSync(file, Buffer.from(await response.arrayBuffer()));
+}
+
+/** Download <url> into the cache once and check it against the manifest's SHA-256; the cached path. */
+async function fetchVerified({ url, file, sha256 }, cacheDir) {
+  const cached = join(cacheDir, file);
+  if (!existsSync(cached) || sha256File(cached) !== sha256) {
+    console.log(`downloading ${url}`);
+    await download(url, cached);
+  }
+  const sum = sha256File(cached);
+  if (sum !== sha256) throw new Error(`${file}: SHA-256 ${sum} does not match the manifest's ${sha256}`);
+  return cached;
+}
+
+/** Stage every bundledDownloads entry into the runtime folder (D1k). */
+export async function stageBundledTools({ manifest, runtimeDir, cacheDir }) {
+  for (const item of bundledDownloads(manifest)) {
+    const cached = await fetchVerified(item, cacheDir);
+    const target = join(runtimeDir, item.dir);
+    if (item.name) {
+      mkdirSync(target, { recursive: true });
+      cpSync(cached, join(target, item.name));
+      console.log(`staged ${item.key} ${item.version} (${item.file}, SHA-256 verified) as ${item.dir}/${item.name}`);
+      continue;
+    }
+    const unpack = join(runtimeDir, `${item.dir}-unpack`);
+    rmSync(unpack, { recursive: true, force: true });
+    extractZip(cached, unpack);
+    renameSync(item.from ? join(unpack, item.from) : unpack, target);
+    rmSync(unpack, { recursive: true, force: true });
+    for (const entry of item.drop || []) rmSync(join(target, entry), { recursive: true, force: true });
+    if (!existsSync(join(target, item.check))) throw new Error(`${item.file} did not unpack to ${item.dir}/${item.check}`);
+    console.log(`staged ${item.key} ${item.version} (${item.file}, SHA-256 verified) in ${item.dir}/`);
+  }
+}
+
+/**
+ * The bundled Python's pipx and the wheel folder (D1k): pipx installed into the
+ * bundled Python (its launchers dropped for PIPX_SHIM), then `pip wheel` of
+ * pip, setuptools, wheel, pipx and every manifest Python tool with all their
+ * dependencies, so the first launch's pipx installs read only this folder.
+ * Runs the bundled Windows Python, so on Windows only.
+ */
+export function stagePythonTools({ manifest, runtimeDir }) {
+  const pythonDir = join(runtimeDir, "python");
+  const python = join(pythonDir, "python.exe");
+  const quiet = ["--disable-pip-version-check", "--no-cache-dir"];
+  run(python, ["-m", "pip", "install", ...quiet, "--no-warn-script-location", "pipx"], runtimeDir);
+  const scripts = join(pythonDir, "Scripts");
+  rmSync(scripts, { recursive: true, force: true });
+  mkdirSync(scripts, { recursive: true });
+  writeFileSync(join(scripts, "pipx.cmd"), PIPX_SHIM);
+  const wheels = join(runtimeDir, "python-wheels");
+  mkdirSync(wheels, { recursive: true });
+  run(python, ["-m", "pip", "wheel", ...quiet, "--wheel-dir", wheels, "pip", "setuptools", "wheel", "pipx", ...pythonToolSpecs(manifest)], runtimeDir);
+  const files = readdirSync(wheels);
+  for (const [name, version] of Object.entries(manifest.python_tools || {})) {
+    if (!hasWheel(files, name, version)) throw new Error(`the wheel folder has no ${name} ${version}`);
+  }
+  console.log(`staged pipx in the bundled Python and ${files.length} wheel(s) for ${pythonToolSpecs(manifest).join(", ")}`);
 }
 
 /** bsdtar (Windows 10+, macOS) opens a zip; GNU tar does not, so Linux falls back to unzip. */
@@ -272,13 +404,7 @@ export async function stageRuntime({ root = ROOT, runtimeDir = RUNTIME, cacheDir
   mkdirSync(runtimeDir, { recursive: true });
   mkdirSync(cacheDir, { recursive: true });
 
-  const zip = join(cacheDir, node.file);
-  if (!existsSync(zip) || sha256File(zip) !== node.sha256) {
-    console.log(`downloading ${node.url}`);
-    await download(node.url, zip);
-  }
-  const sum = sha256File(zip);
-  if (sum !== node.sha256) throw new Error(`${node.file}: SHA-256 ${sum} does not match the manifest's ${node.sha256}`);
+  const zip = await fetchVerified(node, cacheDir);
   const unpack = join(runtimeDir, "node-unpack");
   extractZip(zip, unpack);
   const nodeDir = join(runtimeDir, "node");
@@ -322,6 +448,9 @@ export async function stageRuntime({ root = ROOT, runtimeDir = RUNTIME, cacheDir
   const lockSha256 = sha256File(lock);
   if (sha256File(join(extensions, "package-lock.json")) !== lockSha256) throw new Error("npm ci rewrote the extension lock");
   const prunedTree = pruneTree(join(extensions, "node_modules"));
+
+  await stageBundledTools({ manifest, runtimeDir, cacheDir });
+  stagePythonTools({ manifest, runtimeDir });
   const longest = longestPath(runtimeDir);
   console.log(`staged the extension tree (${Object.keys(manifest.extensions || {}).length} extension(s) from config/extensions-lock.json; ${prunedTree.files} declaration/map file(s) and ${prunedTree.dirs} dist-types folder(s) pruned; longest path ${longest.length} chars: ${longest.path})`);
 

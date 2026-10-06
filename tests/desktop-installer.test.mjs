@@ -24,7 +24,7 @@ import { fileURLToPath } from "node:url";
 import { bootstrapProcess, bundledCoop, doctorReport, findCoop, folderArgument, launcherPath, packagedPaths, packagedRuntime } from "../desktop/lib/bootstrap.mjs";
 import { consoleProcess } from "../desktop/lib/terminal.mjs";
 import { loadSettings, saveSettings } from "../desktop/lib/settings.mjs";
-import { NODE_SHIMS_DROPPED, longestPath, nodeDownload, prefixPackages, prunable, pruneTree, readVersion, runtimeMarker, shippedPackage, snapshotIncludes, stage, stageEntries, stagePackage } from "../desktop/scripts/build-installer.mjs";
+import { DOWNLOAD_HOSTS, NODE_SHIMS_DROPPED, PIPX_SHIM, bundledDownloads, hasWheel, longestPath, nodeDownload, prefixPackages, pythonToolSpecs, prunable, pruneTree, readVersion, runtimeMarker, shippedPackage, snapshotIncludes, stage, stageEntries, stagePackage } from "../desktop/scripts/build-installer.mjs";
 import { assertDisposableInstallerHost, nsisInvocation, packagePaths } from "../desktop/scripts/verify-installer.mjs";
 import { verifiedInstaller } from "../desktop/scripts/check-installer-report.mjs";
 
@@ -260,7 +260,48 @@ await check("runtime: the marker lib/common.ps1 reads names the folders, the pin
     npm: { prefix: "npm" },
     pi: MANIFEST.pi.version,
     extensions: { dir: "extensions", lockSha256: "ab".repeat(32) },
+    git: { version: MANIFEST.desktop.git.version, dir: "git" },
+    python: { version: MANIFEST.desktop.python.version, dir: "python", wheels: "python-wheels" },
+    azureCli: { version: MANIFEST.desktop.azure_cli.version, dir: "az" },
+    odbc: { version: MANIFEST.desktop.odbc.version, dir: "installers", msi: "msodbcsql.msi", vcRedist: "VC_redist.x64.exe", vcRedistVersion: MANIFEST.desktop.vc_redist.version },
   });
+});
+
+// --- everything else a teammate needs (D1k) ---------------------------------------
+await check("runtime: Git, Python, the Azure CLI, ODBC 18 and its VC++ runtime come from their publishers, pinned by SHA-256", () => {
+  const items = bundledDownloads(MANIFEST);
+  assert.deepEqual(items.map((i) => i.key), ["git", "python", "azure_cli", "odbc", "vc_redist"]);
+  for (const item of items) {
+    assert.match(item.sha256, /^[0-9a-f]{64}$/, `${item.key} sha256`);
+    assert.ok(DOWNLOAD_HOSTS.includes(new URL(item.url).hostname), `${item.key} from ${item.url}`);
+    assert.ok(item.url.startsWith("https://"), item.url);
+  }
+  const by = Object.fromEntries(items.map((i) => [i.key, i]));
+  assert.equal(by.git.url, `https://github.com/git-for-windows/git/releases/download/v${MANIFEST.desktop.git.version}.windows.1/MinGit-${MANIFEST.desktop.git.version}-64-bit.zip`);
+  assert.equal(by.python.url, `https://api.nuget.org/v3-flatcontainer/python/${MANIFEST.desktop.python.version}/python.${MANIFEST.desktop.python.version}.nupkg`);
+  assert.equal(by.python.from, "tools");
+  // The Fabric CLI needs 3.10-3.13.
+  assert.match(MANIFEST.desktop.python.version, /^3\.(10|11|12|13)\./);
+  // The Azure CLI zip's Scripts\ carries Python Fabric's fab.exe: dropped.
+  assert.deepEqual(by.azure_cli.drop, ["Scripts"]);
+  assert.equal(by.odbc.name, "msodbcsql.msi");
+  assert.equal(by.vc_redist.name, "VC_redist.x64.exe");
+  assert.throws(() => bundledDownloads({ desktop: { ...MANIFEST.desktop, git: undefined } }), /desktop\.git/);
+  assert.throws(() => bundledDownloads({ desktop: { ...MANIFEST.desktop, python: { version: "3.14.0", sha256: "ab".repeat(32) } } }), /desktop\.python/);
+  assert.throws(() => bundledDownloads({ desktop: { ...MANIFEST.desktop, odbc: { ...MANIFEST.desktop.odbc, url: "https://example.com/msodbcsql.msi" } } }), /desktop\.odbc\.url/);
+  assert.throws(() => bundledDownloads({ desktop: { ...MANIFEST.desktop, vc_redist: { ...MANIFEST.desktop.vc_redist, url: "http://download.microsoft.com/x.exe" } } }), /desktop\.vc_redist\.url/);
+});
+
+await check("runtime: the wheel folder must hold every manifest Python tool at its pin; pipx runs through a .cmd", () => {
+  const specs = pythonToolSpecs(MANIFEST);
+  for (const [name, pin] of Object.entries(MANIFEST.python_tools)) assert.ok(specs.includes(`${name}==${pin}`), `${name}==${pin}`);
+  const files = ["coop_data_doc-1.3.4-py3-none-any.whl", "ms_fabric_cli-1.7.0-py3-none-any.whl", "pyodbc-5.3.0-cp313-cp313-win_amd64.whl", "fabric_cicd-1.3.0-py3-none-any.whl"];
+  assert.ok(hasWheel(files, "coop-data-doc", "1.3.4"));
+  assert.ok(hasWheel(files, "ms-fabric-cli", "1.7.0"));
+  assert.ok(hasWheel(files, "pyodbc", "5.3.0"));
+  assert.ok(!hasWheel(files, "pyodbc", "5.2.0"));
+  assert.ok(!hasWheel(["coop-data-doc-1.3.4.tar.gz"], "coop-data-doc", "1.3.4"));
+  assert.equal(PIPX_SHIM, '@"%~dp0..\\python.exe" -m pipx %*\r\n');
 });
 
 await check("snapshot: coop's own files ship, the development-only ones do not", () => {

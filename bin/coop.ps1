@@ -862,10 +862,16 @@ function Invoke-CoopDesktop {
   if (-not $appExe -and $script:CoopWindowExe) { $appExe = $script:CoopWindowExe }
   if (-not $printSpec -and (Test-CoopBundledSetupPending)) {
     Coop-Head 'First launch of the coop window: setting up this computer'
-    # The installer is the user's "yes" (D1k): a missing prerequisite is installed
-    # here with winget (this console has no keyboard for a question; Windows may
-    # still ask for permission), and the install goes on when every row passes.
-    Coop-Info 'anything still missing is installed below with winget (Windows may ask for permission); the window opens once setup finishes'
+    # The installer is the user's "yes" (D1k): the package carries Git, Python,
+    # the Azure CLI, every coop tool and the ODBC driver, so this installs from
+    # the package with no network, and Windows asks for administrator permission
+    # once for the driver (this console has no keyboard for a question). An older
+    # package without them falls back to winget for a missing prerequisite.
+    if ($script:CoopBundledOdbc) {
+      Coop-Info 'everything comes from this package; Windows asks for administrator permission once, for the SQL driver. The window opens once setup finishes'
+    } else {
+      Coop-Info 'anything still missing is installed below with winget (Windows may ask for permission); the window opens once setup finishes'
+    }
     $setupRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\install.ps1') @('--prereqs', 'auto')
     if ($setupRc -ne 0) { Coop-Die 'setup did not finish: do what the lines above say, then start the coop window again' }
   }

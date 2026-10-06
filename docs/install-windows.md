@@ -14,26 +14,22 @@ line leaves the clone on main; never point teammates at an older tag.
 
 ## The short way: one command
 
-Paste this into Windows PowerShell and follow what it asks. It does steps 1 to 6
-below for you: Git through winget when missing, the clone at the newest release,
-`coop install` with the missing prerequisites installed through winget, the
-sign-ins, and the coop window installer from the same release (its SHA-256 is
-checked against the release's acceptance report before it runs).
+Paste this into Windows PowerShell. It downloads the coop window installer from
+the newest release, checks its SHA-256 against the release's acceptance report,
+installs it for your user and opens it.
 
 ```powershell
 irm https://raw.githubusercontent.com/kabukisensei/coop-agent/main/scripts/bootstrap.ps1 | iex
 ```
 
-Windows asks for permission once for each machine-wide installer (Git, the Azure
-CLI, the ODBC driver); Python and pipx install for your user only. Everything comes
-from winget's Microsoft source, nodejs.org, npm, PyPI and github.com, the same
-places `coop install` already uses. If it stops, do what its last lines say
-(usually: open a new PowerShell window) and paste the same line again; it
-continues where it stopped. Set `COOP_BOOTSTRAP_NO_WINDOW=1` first to skip the
-window, or `COOP_BOOTSTRAP_DIR` to clone somewhere other than `C:\Users\<you>\coop-agent`.
+The installer carries everything coop needs, so nothing else is downloaded and
+winget is not used: see step 6. The first launch asks Windows for administrator
+permission once, for the SQL driver. Paste the same line again to repair a
+half-finished setup. Set `COOP_BOOTSTRAP_NO_LAUNCH=1` first to install without
+opening the window.
 
-The rest of this page is the same setup by hand, for when you want to see each
-step or already have part of it.
+Steps 1 to 5 are the terminal-only setup from a Git clone, for maintainers or
+when you want to see each step.
 
 ## 1. Install the prerequisites
 
@@ -174,12 +170,16 @@ PowerShell or double-click the **coop** icon: either opens the same screen.
 ## 6. The coop window: one download
 
 coop also runs in its own window: the same agent and rules, drawn as a modern
-app with four themes. The window installer brings Node, Pi and coop with it.
+app with four themes. The window installer carries everything: Node, Pi, coop,
+Git, Python with pipx and every coop tool, the Azure CLI, and the ODBC Driver 18
+with the VC++ runtime it needs. It is a large download and works offline.
 
 - **New to coop:** download and run the window installer below; that is the
-  whole install. Git, Python, pipx, the Azure CLI and the ODBC driver from
-  step 1 are not in the package: the first launch installs the missing ones
-  through winget (Windows may ask for permission), then carries on.
+  whole install. Nothing from step 1 is needed and nothing is fetched from the
+  internet. The first launch asks Windows for administrator permission once, to
+  install the ODBC driver for live SQL; choosing **Yes** accepts Microsoft's
+  license for the driver. Choose **No** and everything else still works; the next
+  launch asks again.
 - **Already have coop:** run `coop update` in PowerShell, then run the same
   installer. Your sessions, memory, settings and sign-ins stay where they are,
   and `coop` in the terminal keeps working as before. The update comes first
@@ -199,8 +199,9 @@ app with four themes. The window installer brings Node, Pi and coop with it.
    home repository beside them) so the team's `.coop/project.yml` is found.
    Tick **Open this one next time** and the icon opens straight on it from then
    on (File > Switch project changes it). The first time, a console runs the same
-   checklist as `coop install` (prerequisites, installed for you when
-   missing, then the tools and the Azure and OpenAI sign-ins): follow what it prints, then start the window again if it stopped.
+   checklist as `coop install` (prerequisites from the package, the coop tools
+   from the package, the ODBC driver, then the Azure and OpenAI sign-ins): follow
+   what it prints, then start the window again if it stopped.
    After that the console only shows coop's launch checks and closes on its own.
 
 With the terminal coop from steps 1 to 5 as well, the window shares your

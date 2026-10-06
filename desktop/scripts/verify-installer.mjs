@@ -19,7 +19,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
-import { NODE_SHIMS_DROPPED, longestPath } from "./build-installer.mjs";
+import { NODE_SHIMS_DROPPED, bundledDownloads, hasWheel, longestPath } from "./build-installer.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const PRODUCT = "coop (window)";
@@ -219,6 +219,27 @@ async function main(argv) {
     const npmOut = (await runOwned(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", npmScript], { windowsHide: true, env: { ...process.env, COOP_NODE_DIR: paths.nodeDir, COOP_NPM_PREFIX: paths.npmPrefix } }, 120000)).trim();
     if (npmOut.toLowerCase() !== paths.npmPrefix.toLowerCase()) throw new Error(`\`& npm prefix -g\` under PowerShell printed ${npmOut || "nothing"}, not the bundled prefix ${paths.npmPrefix}`);
     step("PowerShell's `& npm` runs the bundled npm.cmd", { note: npmOut });
+
+    // D1k: Git, Python with pipx, the Azure CLI, the wheel folder and the ODBC
+    // installers are in the package and answer, so a teammate installs nothing else.
+    const gitOut = (await runOwned(join(paths.runtime, "git", "cmd", "git.exe"), ["--version"], { windowsHide: true }, 60000)).trim();
+    if (!gitOut.includes(manifest.desktop.git.version)) throw new Error(`bundled git --version printed ${gitOut}`);
+    const pyOut = (await runOwned(join(paths.runtime, "python", "python.exe"), ["--version"], { windowsHide: true }, 60000)).trim();
+    if (pyOut !== `Python ${manifest.desktop.python.version}`) throw new Error(`bundled python --version printed ${pyOut}`);
+    const pipxOut = (await runOwned(process.env.ComSpec || "cmd.exe", ["/d", "/c", join(paths.runtime, "python", "Scripts", "pipx.cmd"), "--version"], { windowsHide: true }, 60000)).trim();
+    if (!/^\d+\.\d+/.test(pipxOut)) throw new Error(`bundled pipx.cmd --version printed ${pipxOut || "nothing"}`);
+    const azOut = await runOwned(process.env.ComSpec || "cmd.exe", ["/d", "/c", join(paths.runtime, "az", "bin", "az.cmd"), "version", "--output", "json"], { windowsHide: true }, 180000);
+    if (!azOut.includes(`"${manifest.desktop.azure_cli.version}"`)) throw new Error(`bundled az version printed ${azOut.trim().slice(-300)}`);
+    if (existsSync(join(paths.runtime, "az", "Scripts", "fab.exe"))) throw new Error("the bundled Azure CLI still carries Scripts\\fab.exe (Python Fabric)");
+    const wheels = readdirSync(join(paths.runtime, "python-wheels"));
+    for (const [name, pin] of Object.entries(manifest.python_tools || {})) {
+      if (!hasWheel(wheels, name, pin)) throw new Error(`the bundled wheel folder has no ${name} ${pin}`);
+    }
+    for (const item of bundledDownloads(manifest).filter((i) => i.name)) {
+      const file = join(paths.runtime, item.dir, item.name);
+      if (!existsSync(file) || sha256(file) !== item.sha256) throw new Error(`the bundled ${item.name} is missing or not the manifest's ${item.key} ${item.version}`);
+    }
+    step("bundled Git, Python with pipx, the Azure CLI, the Python tool wheels and the ODBC installers", { note: `${gitOut}; ${pyOut}; pipx ${pipxOut}; az ${manifest.desktop.azure_cli.version}; ${wheels.length} wheel(s)` });
 
     // Every bundled file must fit Windows' 260-character path limit in a
     // teammate's profile: the runner's user name is short, so measure against

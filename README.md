@@ -113,7 +113,10 @@ for that, the Windows row prints the admin-free repair instead of a Python insta
 not count as an interpreter.
 
 - `coop install --prereqs auto` runs the printed commands for you, with their output
-  visible, re-checks, and still asks you to open a new terminal.
+  visible, re-checks, and carries on in the same window when every row passes. At a
+  keyboard, `coop install` offers to do this itself (Enter accepts).
+- The coop window package carries rows 1 to 6 itself, so its rows pass and say
+  "bundled with the coop window".
 - `coop install --no-prereqs` prints the list and continues anyway.
 
 ---
@@ -131,9 +134,11 @@ cd coop-agent
 .\bin\coop.cmd install   # bootstraps pi, extensions, pipx tools, Fabric CLI, links coop onto PATH
 ```
 
-Or, with nothing installed yet, one line in Windows PowerShell does all of it,
-the coop window included (`scripts/bootstrap.ps1`; the details and the two
-opt-outs are in `docs/install-windows.md`):
+Or, with nothing installed yet, one line in Windows PowerShell downloads and
+runs the coop window installer, which carries everything above (Git, Python with
+pipx and the coop tools, the Azure CLI, ODBC 18) and needs no winget; its first
+launch asks for administrator permission once, for the ODBC driver
+(`scripts/bootstrap.ps1`; details in `docs/install-windows.md`):
 
 ```powershell
 irm https://raw.githubusercontent.com/kabukisensei/coop-agent/main/scripts/bootstrap.ps1 | iex
@@ -231,13 +236,14 @@ you ticked to open next time), then runs the bundled
 `coop desktop --app <its exe>` in a console, so the window gets the same launch
 checks, spec and token as `coop desktop`. The bundled coop finds its runtime by
 location (`resources\runtime\coop-runtime.json` next to `resources\coop`): it
-puts the bundled Node and the npm prefix holding Pi first on its `PATH`, so a
-terminal `coop` installed later and the package never fight over Pi. The first
-launch runs `scripts\install.ps1` in that console (Git, Python, pipx, the Azure
-CLI and ODBC are still prerequisites; Node is not) with `--prereqs auto`, so
-the missing ones are installed through winget unattended (at a keyboard,
-`Install coop.cmd` and `coop install` ask first; `--yes` answers for them) and
-it stops with the exact lines to fix only when that does not work; `coop sync`
+puts the bundled Node, the npm prefix holding Pi, Git, Python (with pipx) and
+the Azure CLI first on its `PATH`, so a terminal `coop` installed later and the
+package never fight over them. The first launch runs `scripts\install.ps1` in
+that console with `--prereqs auto`: every prerequisite row is met by the package,
+the coop Python tools install from the bundled wheel folder with no network, and
+the ODBC Driver 18 MSI and its VC++ runtime install in one elevated step (one
+Windows administrator prompt). It stops with the exact lines to fix only when
+that does not work; `coop sync`
 then copies the bundled
 extension tree into `~/.coop/agent` instead of downloading it. `coop doctor`
 names the bundled versions on its coop window row. On a machine that already

@@ -7,27 +7,29 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
-- One install for the window and the terminal (master plan D1k; Aaron
-  2026-10-05, "both"). `coop install` now offers to install a missing required
-  prerequisite itself when it runs at a console with winget (or brew) at hand:
-  the same commands its table prints, run visibly, then the table again, and
-  the install continues in the same window when every row passes (before, a
-  `--prereqs auto` run always stopped for a new terminal). `Install coop.cmd`
-  and `coop install` make the offer at a keyboard (Enter accepts, `n` keeps the
-  printed commands, a redirected stdin never asks, `--yes` answers without a
-  console); the coop window's first launch runs the install with
-  `--prereqs auto`, the installer being the yes. winget steps run unattended
-  with its agreement flags, as the ODBC step already did, and say so. New
-  `scripts/bootstrap.ps1`, the
-  one-command terminal path for Windows
+- The coop window installer now carries everything (master plan D1k; Aaron
+  2026-10-06, "an installer that installs everything"): besides Node, Pi and
+  coop, the package holds Git (MinGit 2.56.0), Python 3.13.16 with pipx, a wheel
+  folder of every coop Python tool (coop-data-doc, the Fabric CLI, fabric-cicd,
+  pyodbc), the Azure CLI 2.91.0 and the ODBC Driver 18.6.2.1 with its VC++
+  runtime, each pinned by version and SHA-256 in the release manifest. The
+  first launch installs nothing from the internet and needs no winget; it asks
+  Windows for administrator permission once, for the ODBC driver. coop's pipx
+  installs read the bundled wheels offline only for exact pins, so a pip you run
+  yourself still reaches PyPI (`COOP_PIP_ONLINE=1` keeps the index for coop too).
+- `scripts/bootstrap.ps1`, one command for Windows
   (`irm https://raw.githubusercontent.com/kabukisensei/coop-agent/main/scripts/bootstrap.ps1 | iex`):
-  Git through winget when missing, the clone at the newest release tag,
-  `coop install --prereqs auto`, then the release's window installer, its
-  SHA-256 checked against the release's `installer-acceptance.json` before the
-  silent per-user install (`COOP_BOOTSTRAP_NO_WINDOW=1` skips it,
-  `COOP_BOOTSTRAP_DIR` moves the clone, `COOP_BOOTSTRAP_DRY_RUN=1` only prints
-  the steps). Only winget's Microsoft source, nodejs.org, npm, PyPI and
-  github.com are contacted. `docs/install-windows.md` opens with the one line.
+  downloads the newest release's window installer, checks its SHA-256 against
+  the release's `installer-acceptance.json`, installs it for the user and opens
+  it (`COOP_BOOTSTRAP_NO_LAUNCH=1` installs only, `COOP_BOOTSTRAP_DRY_RUN=1`
+  prints the steps). Only github.com is contacted. `docs/install-windows.md`
+  opens with the one line.
+- For a terminal clone, `coop install` offers to install a missing required
+  prerequisite itself at a console with winget (or brew): the same commands its
+  table prints, run visibly, and the install continues in the same window when
+  every row passes (before, a `--prereqs auto` run always stopped for a new
+  terminal). Enter accepts, `n` keeps the printed commands, a redirected stdin
+  never asks, `--yes` answers without a console.
 - **The phone companion's contract** (MC1, master plan section 12.4; Aaron,
   2026-10-06). `desktop/COMPANION.md` specifies how a phone will see and steer
   the same live session an open coop window runs: two locks (a sign-in-protected

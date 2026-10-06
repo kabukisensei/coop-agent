@@ -302,7 +302,7 @@ try {
     # injection and the driver check; the unit already counted the failure (#213).
     if (-not $script:CoopUnitLastOk) { Coop-Warn 'skipping the Fabric Python runtime (Fabric CLI did not converge)' }
     elseif (-not (Sync-CoopFabricPythonPackages $EDGE)) { Coop-Warn 'failed to converge the Fabric Python runtime'; $script:InstallFailures++ }
-    elseif (-not (Ensure-CoopFabricOdbcDriver (-not $NO_PREREQS))) { Coop-Warn 'Fabric SQL fallback is not ready'; $script:InstallFailures++ }
+    elseif (-not (Ensure-CoopFabricOdbcDriver (-not $NO_PREREQS) $PREREQS_AUTO)) { Coop-Warn 'Fabric SQL fallback is not ready'; $script:InstallFailures++ }
   }
 
   # --- 4. Python tools (pipx) -----------------------------------------------
