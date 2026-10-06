@@ -490,8 +490,8 @@ cfg_json "$dp4/.coop/config" | grep -q 'kb.git' && ok "the switch preserves the 
 # (a fixture folder; never %ProgramData% or /etc here), nothing client-shaped; a
 # Windows user with no profile reads it, and its own profile wins.
 mp="$(mktemp -d)"; mdir="$mp/machine"; mkdir -p "$mdir"
-m_out="$(printf 'Joel Leichty\n1\n' | HOME="$mp" COOP_DIR="$mp" COOP_MACHINE_DIR="$mdir" COOP_AZ_BIN=/nonexistent/az \
-  "$PY" "$ROOT/scripts/onboard.py" onboard --machine --json 2>"$mp/m.txt")"
+printf 'Joel Leichty\n1\n' | HOME="$mp" COOP_DIR="$mp" COOP_MACHINE_DIR="$mdir" COOP_AZ_BIN=/nonexistent/az \
+  "$PY" "$ROOT/scripts/onboard.py" onboard --machine --json >"$mp/m.json" 2>"$mp/m.txt"
 [ -f "$mdir/user.json" ] && ok "onboard --machine writes the machine profile" || ko "machine profile missing: $(cat "$mp/m.txt")"
 [ ! -f "$mp/.coop/user.json" ] && ok "onboard --machine writes no per-user profile" || ko "--machine wrote the per-user file"
 m_keys="$("$PY" -c 'import json,sys; print(",".join(sorted(json.load(open(sys.argv[1])).keys())))' "$mdir/user.json")"
