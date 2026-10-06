@@ -48,6 +48,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **The guardrails audit tells window tabs apart.** Each row now carries the
+  coop process id, so two tabs (or terminals) on one folder no longer write
+  decisions that look the same. Found in the tabs check on the client VM.
 - **A long conversation no longer stops on "native turn auth context
   mismatch: scopes"** (Aaron, 2026-10-06). Pi keeps reusing its cached OpenAI
   Codex connection after it refreshes your ChatGPT sign-in, and the Codex server

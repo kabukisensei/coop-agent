@@ -1116,6 +1116,7 @@ await t("Warehouse SQL MCP audit never logs raw SQL or args", async () => {
   const e = readAudit().filter((x) => x.kind === "mcp-confirm");
   assert.ok(e.length > 0);
   assert.equal(JSON.stringify(e).includes("SecretTable"), false);
+  assert.ok(e.every((x) => x.pid === process.pid), "each row names the coop process, so two window tabs stay apart");
   clearAudit();
   await handle(
     { toolName: "executeSQL", input: { sql: "SELECT secret_value INTO dbo.LeakedName FROM dbo.Source", arguments: { password: "never-log-me" } } },
