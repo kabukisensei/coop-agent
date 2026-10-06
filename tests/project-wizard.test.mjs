@@ -551,6 +551,36 @@ await t("C1: proposeContractRoot names the client home repository beside several
   assert.match(contractCreatedNote(client), /Share \.coop\/project\.yml with the team .*Open coop at or below /);
 });
 
+await t("C1: opened in the folder that holds the repositories, the one repository inside it with a contract is used", async () => {
+  const client = trackFixture(mkdtempSync(join(tmpdir(), "coop-c1-child-")));
+  skipIfContaminated(client);
+  for (const name of ["analytics", "reports"]) mkdirSync(join(client, name, ".git"), { recursive: true });
+  mkdirSync(join(client, "notes"));
+  assert.equal(lib.findChildContract(client), null, "no repository inside has a contract");
+  mkdirSync(join(client, "analytics", ".coop"));
+  const contract = join(client, "analytics", ".coop", "project.yml");
+  writeFileSync(contract, "profile:\n  client: 'Contoso'\n");
+  assert.equal(lib.findChildContract(client), contract);
+  assert.equal(findProjectContract(client, {}), contract, "the standards finder (the window's) looks one level down too");
+  const where = proposeContractRoot(client);
+  assert.deepEqual([where.kind, where.root, where.path, where.child, where.sibling], ["existing", join(client, "analytics"), contract, true, false]);
+  assert.match(contractLocationNote(where), /in the repository analytics inside it\. Coop edits it and never writes a second copy here/);
+  // Inside a repository coop never looks down: a nested folder is not a client folder.
+  assert.equal(lib.findChildContract(join(client, "reports")), null);
+  // A folder that is not a repository (no .git) does not count.
+  mkdirSync(join(client, "notes", ".coop"));
+  writeFileSync(join(client, "notes", ".coop", "project.yml"), "profile:\n  client: 'Notes'\n");
+  assert.equal(lib.findChildContract(client), contract);
+  // Several repositories with a contract: none is picked, and the note names them.
+  mkdirSync(join(client, "reports", ".coop"));
+  writeFileSync(join(client, "reports", ".coop", "project.yml"), "profile:\n  client: 'Contoso'\n");
+  assert.equal(lib.findChildContract(client), null);
+  assert.equal(findProjectContract(client, {}), null);
+  const several = proposeContractRoot(client);
+  assert.deepEqual([several.kind, several.children], ["folder", ["analytics", "reports"]]);
+  assert.match(contractLocationNote(several), /Several repositories inside this folder have a project file \(analytics, reports\)\. Open coop in the repository you mean/);
+});
+
 await t("C1: /setup-project below a committed root contract edits that contract and writes no copy", async () => {
   const client = trackFixture(mkdtempSync(join(tmpdir(), "coop-c1-edit-")));
   skipIfContaminated(client);
