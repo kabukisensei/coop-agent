@@ -165,8 +165,9 @@ function thinkingView(block, index, item, blocks, prefs) {
 
 // A run of tool calls and thinking between two pieces of prose folds into one
 // line: what coop did, or the step running now. Open it for the tool cards
-// (Ctrl+O opens them all); a failed step opens on its own. The session file
-// keeps everything either way.
+// (Ctrl+O opens them all). A failed step keeps the line folded and marks it
+// with the red cross; opening it shows the failed card already open. The
+// session file keeps everything either way.
 function activityView(entries, tl, prefs, { last }) {
   const key = `${entries[0].item.id}:${entries[0].index}`;
   const run = entries.map((entry) => entry.block);
@@ -181,11 +182,11 @@ function activityView(entries, tl, prefs, { last }) {
     return tool.status === "pending" || tool.status === "running";
   })();
   const remembered = prefs.activityOpen.get(key);
-  const open = remembered !== undefined ? remembered : (prefs.expandTools || failed);
+  const open = remembered !== undefined ? remembered : prefs.expandTools;
   const steps = run.filter((block) => block.type === "tool").length;
   const details = el("details", { class: `activity ${running ? "running" : ""} ${failed ? "failed" : ""}`, open },
     el("summary", { class: "activity-head" },
-      el("span", { class: "activity-status" }, running ? el("span", { class: "spinner" }) : failed ? icon("warn", "A step failed") : icon("check", "Done")),
+      el("span", { class: "activity-status" }, running ? el("span", { class: "spinner" }) : failed ? icon("close", "A step failed") : icon("check", "Done")),
       el("span", { class: "activity-text", text: activitySummary(run, tl.tools, { live: running }) }),
       steps ? el("span", { class: "activity-count", text: `${steps} ${steps === 1 ? "step" : "steps"}` }) : null,
       icon("chevron")),

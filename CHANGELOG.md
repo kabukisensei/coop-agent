@@ -14,6 +14,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   launch, and edits that file instead of offering to create a new one in a folder
   no teammate could get. When several repositories inside have one, coop picks
   none and names them so you open the one you mean.
+- **A failed step no longer opens the window's activity line** (Aaron,
+  2026-10-06). The line stays folded and shows a red cross; open it to see the
+  failed step, whose card is already open. Ctrl+O still opens everything. The
+  phone already worked this way.
 
 ## [0.32.0] — 2026-10-06
 
