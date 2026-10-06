@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.31.0] — 2026-10-05
+
 ### Added
 
 - **The icon is the front door** (D1m, master plan section 12.3; Aaron,
