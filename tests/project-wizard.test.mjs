@@ -581,6 +581,35 @@ await t("C1: opened in the folder that holds the repositories, the one repositor
   assert.match(contractLocationNote(several), /Several repositories inside this folder have a project file \(analytics, reports\)\. Open coop in the repository you mean/);
 });
 
+await t("C1: opened in the folder above that (the user folder over devops/fabric), the one repository two levels down is used", () => {
+  const user = trackFixture(mkdtempSync(join(tmpdir(), "coop-c1-two-")));
+  skipIfContaminated(user);
+  const fabric = join(user, "devops", "fabric");
+  mkdirSync(join(fabric, ".git"), { recursive: true });
+  mkdirSync(join(fabric, ".coop"));
+  const contract = join(fabric, ".coop", "project.yml");
+  writeFileSync(contract, "profile:\n  client: 'Contoso'\n");
+  // AppData is never searched, and neither is the inside of a repository.
+  for (const repo of [join(user, "AppData", "tool"), join(user, "outer", "nested")]) {
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    mkdirSync(join(repo, ".coop"));
+    writeFileSync(join(repo, ".coop", "project.yml"), "profile:\n  client: 'Other'\n");
+  }
+  mkdirSync(join(user, "outer", ".git"));
+  assert.equal(lib.findChildContract(user), contract);
+  assert.equal(findProjectContract(user, {}), contract, "the standards finder (the window's) looks two levels down too");
+  const where = proposeContractRoot(user);
+  assert.deepEqual([where.kind, where.path, where.child, where.childPath], ["existing", contract, true, join("devops", "fabric")]);
+  assert.match(contractLocationNote(where), /in the repository devops.fabric inside it\./);
+  // A second client repository two levels down: none is picked, and the note names both by path.
+  const other = join(user, "clients", "reports");
+  mkdirSync(join(other, ".git"), { recursive: true });
+  mkdirSync(join(other, ".coop"));
+  writeFileSync(join(other, ".coop", "project.yml"), "profile:\n  client: 'Contoso'\n");
+  assert.equal(lib.findChildContract(user), null);
+  assert.deepEqual(proposeContractRoot(user).children, [join("clients", "reports"), join("devops", "fabric")]);
+});
+
 await t("C1: coop's own checkout is never the team project (home folder, sibling, proposal)", () => {
   const home = trackFixture(mkdtempSync(join(tmpdir(), "coop-c1-home-")));
   skipIfContaminated(home);
