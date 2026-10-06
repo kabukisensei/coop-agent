@@ -40,11 +40,11 @@ const tools = await import(pathToFileURL(join(dist, "coop-tools.mjs")).href);
 
 const { parseUnifiedDiff, pairAndEmphasize, buildSplitRows, computeMatches, hunkStats } = await import("../desktop/renderer/unified-diff.mjs");
 const { unifiedDiff } = await import("../desktop/lib/text-diff.mjs");
-const { listChanges, fileDiff, parseNameStatus, parseNumstat, newFileDiff } = await import("../desktop/lib/changes.mjs");
+const { listChanges, fileDiff, parseNameStatus, parseNumstat, newFileDiff, changeRepos, defaultChangeRepo } = await import("../desktop/lib/changes.mjs");
 const { readStandards, readSnapshot, readNote, listNotes, knowledgeView, domainView, DOMAINS, KNOWLEDGE_LABELS } = await import("../desktop/lib/standards-view.mjs");
 const { loadProject, previewProject, saveProject, settingsFromForm } = await import("../desktop/lib/project-form.mjs");
 const docs = await import("../desktop/lib/docs-setup.mjs");
-const { normalizePath } = await import("../desktop/renderer/pane-changes.mjs");
+const { normalizePath, repoForPath } = await import("../desktop/renderer/pane-changes.mjs");
 const { articleOutline, sourceLine, noteLabel, isKnowledgeId, STATE_LABELS, KNOWLEDGE_STATE_LABELS } = await import("../desktop/renderer/pane-standards.mjs");
 const { initialValues, formInput, platformHint, ROLE_LABELS } = await import("../desktop/renderer/pane-project.mjs");
 const { resolvePage, isDocsLink, stripFrontMatter, answerLabel, typeLabel } = await import("../desktop/renderer/pane-docs.mjs");
@@ -231,6 +231,48 @@ await check("changes: a tool call's path finds its file in the list", () => {
   assert.equal(normalizePath("./sql/b.sql", "/w/repo"), "sql/b.sql");
   assert.equal(normalizePath("@sql/b.sql", "/w/repo"), "sql/b.sql");
   assert.equal(normalizePath("/elsewhere/x.md", "/w/repo"), "", "outside the folder: not in the list");
+});
+
+await check("changes: the repository picker lists the folder's repository and those one level down", async () => {
+  // A folder that holds the client's repositories (devops\\fabric style).
+  const holder = join(temp, "holder");
+  for (const name of ["alpha", "beta"]) {
+    const dir = join(holder, name);
+    mkdirSync(dir, { recursive: true });
+    git(dir, "init", "-q");
+    writeFileSync(join(dir, "f.txt"), "one\n");
+    git(dir, "add", "-A");
+    git(dir, "commit", "-q", "-m", "base");
+  }
+  mkdirSync(join(holder, "notes"));
+  mkdirSync(join(holder, ".hidden", ".git"), { recursive: true });
+  if (!foreignMarkerAbove(holder)) {
+    assert.deepEqual(changeRepos(holder).map((r) => [r.id, r.label]), [["alpha", "alpha"], ["beta", "beta"]]);
+    // No changes anywhere: the first; then the one with changes.
+    assert.equal((await defaultChangeRepo(changeRepos(holder))).id, "alpha");
+    writeFileSync(join(holder, "beta", "f.txt"), "two\n");
+    const beta = await defaultChangeRepo(changeRepos(holder));
+    assert.equal(beta.id, "beta");
+    assert.deepEqual((await listChanges(beta.dir)).files.map((f) => f.path), ["f.txt"]);
+    assert.equal(await defaultChangeRepo([]), null);
+  }
+  // A repository with a nested one: its own first, and it always wins the default.
+  const outer = join(temp, "outer");
+  mkdirSync(join(outer, "inner"), { recursive: true });
+  git(outer, "init", "-q");
+  git(join(outer, "inner"), "init", "-q");
+  const repos = changeRepos(outer);
+  assert.deepEqual(repos.map((r) => r.id), ["", "inner"]);
+  assert.equal(repos[0].label, "outer");
+  assert.equal((await defaultChangeRepo(repos)).id, "");
+
+  // A tool card's path picks the repository that holds it.
+  const listed = [{ id: "" }, { id: "inner" }, { id: "inner2" }];
+  assert.deepEqual(repoForPath(listed, "inner/sql/a.sql"), { id: "inner", path: "sql/a.sql" });
+  assert.deepEqual(repoForPath(listed, "inner2/x.md"), { id: "inner2", path: "x.md" });
+  assert.deepEqual(repoForPath(listed, "innerx/y.md"), { id: "", path: "innerx/y.md" });
+  assert.equal(repoForPath([{ id: "alpha" }], "notes/n.md"), null, "outside every repository: keep the current one");
+  assert.equal(repoForPath(listed, ""), null);
 });
 
 // --- The standards pane ---------------------------------------------------------
