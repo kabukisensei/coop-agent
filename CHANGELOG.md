@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.32.0] — 2026-10-06
+
 ### Added
 
 - **The phone companion's contract** (MC1, master plan section 12.4; Aaron,
