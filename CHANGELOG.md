@@ -5,6 +5,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **The project file is found one folder down** (C1 follow-up; Aaron,
+  2026-10-06). Opened in the folder that holds a client's repositories (a folder
+  that is not itself a repository), coop now uses the project file of the one
+  repository directly inside it that has a `.coop/project.yml`, says which on
+  launch, and edits that file instead of offering to create a new one in a folder
+  no teammate could get. When several repositories inside have one, coop picks
+  none and names them so you open the one you mean.
+
 ### Fixed
 
 - The window's session list shows a session's name. It read only the first
