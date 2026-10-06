@@ -74,7 +74,7 @@ try {
   const origin = join(tmp, "origin.git");
   git(tmp, "init", "--bare", "--initial-branch=main", "origin.git");
   const a = join(tmp, "a");
-  git(tmp, "clone", "--quiet", origin, "a");
+  git(tmp, "clone", "-c", "core.autocrlf=false", "--quiet", origin, "a");
   identity(a);
   writeFileSync(join(a, "README.md"), "# a\n");
   git(a, "add", "README.md");
@@ -112,7 +112,7 @@ try {
   });
 
   const b = join(tmp, "b");
-  git(tmp, "clone", "--quiet", origin, "b");
+  git(tmp, "clone", "-c", "core.autocrlf=false", "--quiet", origin, "b");
   identity(b);
   // b was cloned before the share: the team has the file, this checkout does not.
   git(b, "reset", "--quiet", "--hard", "HEAD~1");
@@ -179,7 +179,7 @@ try {
 
   await t("/setup-project in a fresh clone offers the team's project file before creating one", async () => {
     const c = join(tmp, "c");
-    git(tmp, "clone", "--quiet", origin, "c");
+    git(tmp, "clone", "-c", "core.autocrlf=false", "--quiet", origin, "c");
     identity(c);
     git(c, "reset", "--quiet", "--hard", "HEAD~2");
     assert.equal(existsSync(join(c, ".coop", "project.yml")), false);
@@ -191,7 +191,7 @@ try {
     assert.ok(readFileSync(join(c, ".coop", "project.yml"), "utf8").includes("Contoso Europe"));
     assert.ok(ctx.notes.some((m) => m.startsWith("Edit this Coop project")), "the wizard then edits the team's file, never a second copy: " + ctx.notes.join("\n"));
     const declined = join(tmp, "d");
-    git(tmp, "clone", "--quiet", origin, "d");
+    git(tmp, "clone", "-c", "core.autocrlf=false", "--quiet", origin, "d");
     identity(declined);
     git(declined, "reset", "--quiet", "--hard", "HEAD~2");
     const ctx2 = makeCtx(declined, [false]);

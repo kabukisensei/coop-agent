@@ -41,13 +41,13 @@ try {
   git(tmp, "init", "--bare", "--initial-branch=main", "origin.git");
   const a = join(tmp, "a");
   const b = join(tmp, "b");
-  git(tmp, "clone", "--quiet", origin, "a");
+  git(tmp, "clone", "-c", "core.autocrlf=false", "--quiet", origin, "a");
   identity(a);
   writeFileSync(join(a, "README.md"), "# a\n");
   git(a, "add", "README.md");
   git(a, "commit", "--quiet", "-m", "init");
   git(a, "push", "--quiet", "origin", "main");
-  git(tmp, "clone", "--quiet", origin, "b");
+  git(tmp, "clone", "-c", "core.autocrlf=false", "--quiet", origin, "b");
   identity(b);
 
   await t("status: none, not-shared; share commits only .coop/project.yml with the fixed message and audits it", () => {
