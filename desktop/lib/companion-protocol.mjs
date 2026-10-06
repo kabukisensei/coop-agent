@@ -48,6 +48,7 @@ export const ROUTES = Object.freeze({
   "GET /api/session": "details",
   "GET /api/detail": "detail",
   "GET /api/sessions": "sessions",
+  "GET /api/tree": "tree",
   "POST /api/sessions": "sessionAction",
   "POST /api/session": "control",
   "POST /api/logout": "logout",
@@ -219,6 +220,7 @@ export function validateRequest(method, path, body, rawBytes = 0) {
         case "new":
         case "clone":
         case "export":
+        case "reload":
           only([]);
           return { ...base, action: body.action };
         case "resume":
@@ -228,7 +230,7 @@ export function validateRequest(method, path, body, rawBytes = 0) {
           only(["entryId"]);
           return { ...base, action: "fork", entryId: field(body, "entryId", ENTRY_ID) };
         default:
-          throw new ProtocolError("bad-request", "action is new, resume, fork, clone or export");
+          throw new ProtocolError("bad-request", "action is new, resume, fork, clone, export or reload");
       }
     }
     case "answer": {
@@ -421,7 +423,7 @@ const BUILTIN_NAMES = new Set(BUILTINS.map((command) => command.name));
  */
 // The built-ins the phone's menu covers (MC7): typing one points there.
 const ON_THE_MENU = Object.freeze({ model: "Model", thinking: "Thinking", compact: "Compact", name: "Name this session", session: "Session details", copy: "Copy, under each answer",
-  new: "Sessions", resume: "Sessions", fork: "Sessions", clone: "Sessions", export: "Sessions" });
+  new: "Sessions", resume: "Sessions", fork: "Sessions", clone: "Sessions", export: "Sessions", tree: "Sessions", reload: "Sessions" });
 
 export function phoneCommand(text, piCommands = []) {
   const match = /^\s*\/([A-Za-z0-9:._-]+)/.exec(String(text || ""));

@@ -1519,6 +1519,11 @@ async function boot() {
   coop.onTheme((theme) => applyTheme(theme));
   coop.onMenu((menu) => { if (menu && typeof menu.action === "string") runAction(menu.action); });
   coop.onRefresh(async (change) => {
+    if (change && change.action === "reload") {
+      await restart();
+      toast("The phone restarted coop on this session.", "info");
+      return;
+    }
     await refreshAll();
     const what = { new: "started a new session", resume: "opened a saved session", fork: "forked the session", clone: "cloned the session" }[change && change.action];
     if (what) toast(`The phone ${what}.`, "info");

@@ -151,6 +151,18 @@ main { flex: 1; padding: 12px 16px 16px; }
 .completions li:last-child .completion { border-bottom: 0; }
 .completion .name { font-family: var(--font-mono); font-weight: 600; color: var(--text-strong); }
 .completion .detail { font-size: 13px; color: var(--text-muted); }
+/* The session tree (MC9): one line per prompt or answer, indented where it branches. */
+.tree { display: grid; gap: 2px; }
+.tree-row { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: 2px 8px; width: 100%; min-height: 40px; padding: 8px 10px 8px calc(10px + var(--depth, 0) * 14px); text-align: left; background: none; border: 0; border-left: 2px solid transparent; color: var(--text); font: inherit; font-size: 14px; }
+button.tree-row { cursor: pointer; border-radius: var(--radius); }
+button.tree-row:active { background: var(--surface-2); }
+.tree-row.current { border-left-color: var(--accent); }
+.tree-role { font-size: 12px; font-weight: 600; color: var(--text-muted); }
+.tree-row.user .tree-role { color: var(--accent-strong); }
+.tree-row .chip { grid-column: 2; justify-self: start; }
+.tree-text { grid-column: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+[data-look="site"] button.tree-row { border-radius: 0; }
+
 /* Photos and files waiting to be sent (MC10), and the files a sent message carried. */
 .attachments { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; padding: 0; }
 .attachment { display: flex; align-items: center; gap: 4px; max-width: 100%; min-height: 36px; padding: 2px 4px 2px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); font-size: 13px; }

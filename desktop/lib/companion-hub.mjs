@@ -28,6 +28,11 @@ const DETAIL_TEXT_CHARS = 16_000;
 // Photos and files from the phone (MC10) wait here, per device, until a chat names them.
 const UPLOAD_KEEP = 10;
 const UPLOAD_MS = 30 * 60_000;
+const RELOAD_CARRY_MS = 60_000;
+// The session tree (MC9): what the window's default view shows, as rows.
+const TREE_ROWS = 400;
+const TREE_TEXT_CHARS = 160;
+const TREE_ROLES = new Set(["user", "assistant", "compactionSummary", "branchSummary", "compaction", "branch_summary"]);
 const PHONE_IMAGE_LIMITS = Object.freeze({ images: IMAGE_LIMITS.maxImages, imageBytes: IMAGE_LIMITS.maxImageBytes, imageTotalBytes: IMAGE_LIMITS.maxTotalBytes });
 const thinkingText = (content) => (Array.isArray(content) ? content.filter((p) => p && p.type === "thinking" && typeof p.thinking === "string").map((p) => p.thinking).join("\n\n").trim() : "");
 const resultText = (result) => messageText(result && result.content);
@@ -73,6 +78,8 @@ export class CompanionHub extends EventEmitter {
     this.sessionName = "";
     this.commands = [];
     this.uploads = new Map();
+    // A reload the phone asked for (MC9) keeps its access through the restart.
+    this.carryUntil = 0;
     this.reset();
   }
 
@@ -108,7 +115,9 @@ export class CompanionHub extends EventEmitter {
     this.reset();
     this.pi = pi;
     this.incarnation = newIncarnation(this.random);
-    this.setAccess(false, "session-changed");
+    const carrying = this.now() < this.carryUntil;
+    this.carryUntil = 0;
+    if (!carrying) this.setAccess(false, "session-changed");
     if (pi) {
       pi.on("event", (message) => { if (this.pi === pi) this.onPiEvent(message); });
       pi.on("exit", () => { if (this.pi === pi) this.onPiExit(); });
@@ -288,7 +297,7 @@ export class CompanionHub extends EventEmitter {
     for (const q of this.questions.values()) if (q.state === "open") this.#close(q, "cancelled", "pi");
     this.partial = null;
     this.#status("exited");
-    this.setAccess(false, "pi-exited");
+    if (this.now() >= this.carryUntil) this.setAccess(false, "pi-exited");
   }
 
   // ---- questions: one arbiter for both screens ---------------------------------
@@ -551,6 +560,14 @@ export class CompanionHub extends EventEmitter {
           command = { type: "fork", entryId: request.entryId };
           break;
         }
+        case "reload": {
+          // The window restarts coop on this session as its own /reload does;
+          // the phone keeps access to the new coop for the next minute.
+          if (!this.host || typeof this.host.reload !== "function") return { ok: false, code: "desktop-only", message: "this window cannot restart from the phone" };
+          this.carryUntil = this.now() + RELOAD_CARRY_MS;
+          this.host.reload();
+          return { ok: true };
+        }
         case "export": {
           const outputPath = this.host ? await this.host.exportPath() : "";
           if (!outputPath) return { ok: false, code: "changed", message: "This session is not saved yet, so there is nowhere to export it" };
@@ -570,6 +587,50 @@ export class CompanionHub extends EventEmitter {
   }
 
   // ---- reads -------------------------------------------------------------
+
+  /**
+   * The session tree as the window's default view draws it (MC9): prompts,
+   * answers and summaries, one line each, indented where the session branches.
+   * Tool output stays on the VM. Rows: `{ depth, role, text, label, entryId, current }`;
+   * a prompt's entryId is what Fork takes.
+   */
+  async tree() {
+    if (!this.pi || this.pi.exited) return { ok: false, code: "pi-not-running" };
+    let data = {};
+    try {
+      const response = await this.pi.request({ type: "get_tree" });
+      data = response && response.success && response.data ? response.data : {};
+    } catch { /* an empty tree */ }
+    const rows = [];
+    const leaf = data.leafId;
+    const lineOf = (entry) => {
+      const message = entry.message || {};
+      let text = messageText(message.content);
+      if (!text && message.role === "assistant") {
+        const tools = (Array.isArray(message.content) ? message.content : []).filter((c) => c && c.type === "toolCall").map((c) => c.name);
+        text = tools.length ? `Runs ${tools.join(", ")}` : "";
+      }
+      if (!text) text = message.summary || entry.summary || "";
+      return String(text).replace(/\s+/g, " ").trim().slice(0, TREE_TEXT_CHARS);
+    };
+    const walk = (start, depth) => {
+      let node = start;
+      while (node && rows.length < TREE_ROWS) {
+        const entry = node.entry || {};
+        const role = (entry.message && entry.message.role) || entry.type;
+        const text = TREE_ROLES.has(role) ? lineOf(entry) : "";
+        if (text || (TREE_ROLES.has(role) && node.label)) {
+          rows.push({ depth, role, text, label: typeof node.label === "string" ? node.label.slice(0, 60) : "", ...(role === "user" && typeof entry.id === "string" ? { entryId: entry.id } : {}), current: entry.id === leaf });
+        }
+        const kids = Array.isArray(node.children) ? node.children : [];
+        if (kids.length === 1) { node = kids[0]; continue; }
+        for (const kid of kids) walk(kid, depth + 1);
+        node = null;
+      }
+    };
+    for (const root of Array.isArray(data.tree) ? data.tree : []) walk(root, 0);
+    return { ok: true, rows, truncated: rows.length >= TREE_ROWS };
+  }
 
   /** The folder's saved sessions and this session's prompts to fork from (MC9); no paths. */
   async sessions() {

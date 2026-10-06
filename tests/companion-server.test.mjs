@@ -35,6 +35,7 @@ class FakePi extends EventEmitter {
       : command.type === "get_available_thinking_levels" ? { levels: ["off", "low", "medium", "high"] }
       : command.type === "get_fork_messages" ? { messages: [{ entryId: "e1", text: "tidy the view\nmore" }, { entryId: "e2", text: "now the report" }] }
       : command.type === "fork" ? { text: "now the report", cancelled: false }
+      : command.type === "get_tree" ? this.tree || { tree: [] }
       : command.type === "get_state" ? { model: { provider: "openai", id: "gpt-5", name: "GPT-5" }, thinkingLevel: "medium", sessionFile: "C:\\Users\\aaron\\.coop\\s.jsonl", autoCompactionEnabled: true }
       : command.type === "get_session_stats" ? { userMessages: 3, assistantMessages: 3, toolCalls: 7, tokens: { input: 12000, output: 3400 }, cost: 0.12, contextUsage: { tokens: 15400, contextWindow: 400000, percent: 3.85 } } : {};
     return Promise.resolve({ type: "response", success: true, data });
@@ -186,7 +187,7 @@ await check("/ commands (MC6): Pi's listed commands go as typed; built-ins and u
   const snap = await hub.snapshot();
   assert.deepEqual(snap.commands.map((c) => c.name), ["start"]);
   assert.deepEqual(hub.chat("d1", { submissionId: SUB(20), incarnation: hub.incarnation, text: "/start", mode: "steer" }), { ok: true });
-  const refused = hub.chat("d1", { submissionId: SUB(21), incarnation: hub.incarnation, text: "/reload", mode: "steer" });
+  const refused = hub.chat("d1", { submissionId: SUB(21), incarnation: hub.incarnation, text: "/hotkeys", mode: "steer" });
   assert.equal(refused.code, "desktop-only");
   assert.match(refused.message, /coop window/);
   assert.equal(hub.chat("d1", { submissionId: SUB(22), incarnation: hub.incarnation, text: "/pets", mode: "steer" }).code, "desktop-only");
@@ -313,6 +314,38 @@ await check("photos and files (MC10): saved under the window's data folder, sent
   assert.equal(hub.buffer.at(-1).data.images, 1, "an image-only message still shows, as a count");
   assert.deepEqual((await hub.files("sales")).files, ["views/sales.sql"]);
   assert.deepEqual((await newHub().hub.files("x")).files, [], "no host, no list");
+});
+
+await check("the session tree (MC9): prompts and answers as indented rows, tool output left on the VM; a phone reload keeps access", async () => {
+  const reloads = [];
+  const { pi, hub } = newHub({ host: { list: () => [], exportPath: async () => "", changed: () => {}, reload: () => reloads.push(1) } });
+  const node = (id, message, children = [], label) => ({ entry: { id, type: "message", message }, children, ...(label ? { label } : {}) });
+  pi.tree = { leafId: "a2", tree: [node("u1", { role: "user", content: "tidy the view" }, [
+    node("a1", { role: "assistant", content: [{ type: "toolCall", name: "read" }] }, [
+      node("t1", { role: "toolResult", toolName: "read", content: [{ type: "text", text: "SECRET ROWS" }] }, [
+        node("u2", { role: "user", content: "now the report" }, [node("a2", { role: "assistant", content: [{ type: "text", text: "Done." }] })], "checkpoint"),
+        node("u3", { role: "user", content: "or the model" }),
+      ]),
+    ]),
+  ])] };
+  const tree = await hub.tree();
+  assert.deepEqual(tree.rows.map((r) => [r.depth, r.role, r.text, r.entryId || "", r.current]), [
+    [0, "user", "tidy the view", "u1", false], [0, "assistant", "Runs read", "", false],
+    [1, "user", "now the report", "u2", false], [1, "assistant", "Done.", "", true], [1, "user", "or the model", "u3", false],
+  ]);
+  assert.equal(tree.rows[2].label, "checkpoint");
+  assert.ok(!JSON.stringify(tree).includes("SECRET"), "tool output stays on the VM");
+  hub.accessOn = true;
+  assert.deepEqual(await hub.sessionAction("d1", { submissionId: SUB(95), incarnation: hub.incarnation, action: "reload" }), { ok: true });
+  assert.equal(reloads.length, 1);
+  pi.exited = true;
+  pi.emit("exit", {});
+  assert.equal(hub.accessOn, true, "the old coop exiting during the phone's reload keeps access");
+  const next = new FakePi();
+  hub.attach(next);
+  assert.equal(hub.accessOn, true, "the restarted coop keeps the phone's access");
+  hub.attach(new FakePi());
+  assert.equal(hub.accessOn, false, "a later restart at the desk ends it");
 });
 
 await check("access needs a client in the project file and a running Pi", () => {

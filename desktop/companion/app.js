@@ -175,12 +175,33 @@ const SHEETS = {
     const forkList = () => openSheet("Fork from a prompt",
       el("p", { class: "note", text: "coop starts a new session from just before that prompt and puts the prompt back in the text box." }),
       json.prompts.length ? el("div", { class: "choices" }, [...json.prompts].reverse().map((p) => choice(p.text || "(empty prompt)", "", false, () => act({ action: "fork", entryId: p.entryId }, "Forked into a new session.")))) : el("p", { class: "note", text: "There is no earlier prompt to fork from yet." }));
+    // The session tree, read-only as in the window (MC9): a prompt forks from there.
+    const treeView = async () => {
+      const { json: t } = await api("GET", "/api/tree");
+      if (!t.ok) { refusal(t); return; }
+      const who = { user: "You", assistant: "coop" };
+      const rows = t.rows.map((r) => {
+        const body = [el("span", { class: "tree-role", text: who[r.role] || "summary" }), r.label ? el("span", { class: "chip", text: r.label }) : null, el("span", { class: "tree-text", text: r.text })];
+        const row = r.entryId
+          ? el("button", { type: "button", class: `tree-row ${r.role}${r.current ? " current" : ""}`, "aria-label": `Fork from: ${r.text}` }, ...body)
+          : el("div", { class: `tree-row ${r.role}${r.current ? " current" : ""}` }, ...body);
+        if (r.entryId) row.addEventListener("click", () => act({ action: "fork", entryId: r.entryId }, "Forked into a new session."));
+        row.style.setProperty("--depth", String(Math.min(r.depth, 8)));
+        return row;
+      });
+      openSheet("Session tree",
+        el("p", { class: "note", text: "Tap one of your prompts to fork a new session from just before it. Moving within the session and labels are in the terminal's /tree." }),
+        rows.length ? el("div", { class: "tree" }, rows) : el("p", { class: "note", text: "Nothing in this session yet." }),
+        t.truncated ? el("p", { class: "note", text: "The tree is longer than the phone shows; the window shows all of it." }) : null);
+    };
     openSheet("Sessions",
       el("div", { class: "sheet-grid" },
         el("button", { type: "button", class: "btn primary", text: "New session", onclick: () => act({ action: "new" }, "Started a new session.") }),
         el("button", { type: "button", class: "btn", text: "Fork…", onclick: forkList }),
         el("button", { type: "button", class: "btn", text: "Clone", onclick: () => act({ action: "clone" }, "Cloned into a new session.") }),
-        el("button", { type: "button", class: "btn", text: "Export HTML", onclick: () => act({ action: "export" }) })),
+        el("button", { type: "button", class: "btn", text: "Export HTML", onclick: () => act({ action: "export" }) }),
+        el("button", { type: "button", class: "btn", text: "Tree", onclick: treeView }),
+        el("button", { type: "button", class: "btn", text: "Restart coop", onclick: () => act({ action: "reload" }, "coop restarted on this session.") })),
       el("h3", { class: "detail-label", text: "Saved in this folder" }),
       json.sessions.length ? el("div", { class: "choices" }, json.sessions.map((s) => choice(s.name || s.title || "Untitled session", [when(s.modified), `${s.messages} prompt${s.messages === 1 ? "" : "s"}`, s.current ? "this session" : ""].filter(Boolean).join(" · "), s.current,
         s.current ? () => closeSheet() : () => act({ action: "resume", sessionId: s.id }, "Opened the saved session.")))) : el("p", { class: "note", text: "No saved sessions yet." }));

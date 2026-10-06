@@ -26,8 +26,8 @@ const OTHER_INC = "BBBBBBBBBBBBBBBBBBBBBBBB";
 const SUB = "0f8fad5b-d9cb-469f-a165-70867728950e";
 
 // ---- the remote surface ------------------------------------------------------
-ok("only fifteen routes exist and every code has a status", () => {
-  assert.deepEqual(Object.values(ROUTES).sort(), ["answer", "chat", "control", "dequeue", "detail", "details", "events", "files", "logout", "pair", "sessionAction", "sessions", "snapshot", "stop", "upload"]);
+ok("only sixteen routes exist and every code has a status", () => {
+  assert.deepEqual(Object.values(ROUTES).sort(), ["answer", "chat", "control", "dequeue", "detail", "details", "events", "files", "logout", "pair", "sessionAction", "sessions", "snapshot", "stop", "tree", "upload"]);
   for (const status of Object.values(CODES)) assert.ok(status >= 400 && status < 600);
 });
 ok("anything else is not found, including Pi's own commands", () => {
@@ -226,6 +226,7 @@ ok("session actions (MC9): ids only, never a path", () => {
   assert.deepEqual(v({ action: "new" }), { op: "sessionAction", ...base, action: "new" });
   assert.equal(v({ action: "resume", sessionId: "0193-abc" }).sessionId, "0193-abc");
   assert.equal(v({ action: "fork", entryId: "e2" }).entryId, "e2");
+  assert.equal(v({ action: "reload" }).action, "reload");
   for (const bad of [{ action: "resume", sessionId: "C:\\x\\s.jsonl" }, { action: "resume", sessionPath: "/x" }, { action: "new", sessionId: "s" }, { action: "delete" }, { action: "fork" }]) {
     assert.throws(() => v(bad), ProtocolError, JSON.stringify(bad));
   }

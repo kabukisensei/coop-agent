@@ -777,6 +777,8 @@ function newHub(state) {
         }
       },
       files: (query) => folderFiles(state, query),
+      // /reload from the phone (MC9): the window restarts coop as its own /reload does.
+      reload: () => send(state, "coop:refresh", { by: "phone", action: "reload" }),
     },
   });
   // The phone answered (or Pi's clock ran out): the desktop card closes.

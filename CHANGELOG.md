@@ -24,7 +24,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   files to mention.
 - **Phone parity, part 4** (MC9). The phone's menu adds *Sessions*: start a
   new session, open one of the folder's saved sessions, fork from an earlier
-  prompt, clone, or export the session as HTML beside its file on the VM. A
+  prompt, clone, export the session as HTML beside its file on the VM, see
+  the session tree and fork from any prompt in it, or restart coop. A
   session the phone starts or opens keeps the phone's access; one changed at
   the desk still turns it off. The window reloads and says what the phone did.
   The phone sends ids only, never a path.
