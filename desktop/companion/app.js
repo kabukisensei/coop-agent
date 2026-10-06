@@ -8,7 +8,7 @@ import { parseConfirm, confirmLabels, parseQuestionSelect, parseQuestionMulti, m
 import { renderMarkdown } from "./shared/markdown.mjs";
 
 const $ = (id) => document.getElementById(id);
-const THEMES = ["modern-dark", "modern-light", "retro-dark", "retro-light"];
+const THEMES = ["modern-dark", "modern-light", "retro-dark", "retro-light", "site-dark", "site-light"];
 const app = { incarnation: "", status: "disconnected", messages: new Map(), questions: new Map(), source: null, ready: false, retry: null };
 
 function el(tag, attrs = {}, ...children) {
@@ -31,7 +31,12 @@ function storedTheme() {
   return matchMedia("(prefers-color-scheme: light)").matches ? "modern-light" : "modern-dark";
 }
 function applyTheme(theme) {
-  document.documentElement.dataset.theme = theme;
+  // The coop site themes are the retro palettes (the site's own colours) drawn
+  // with the site's chrome: bevels, title-bar gradients and the pixel face.
+  const site = theme.startsWith("site-");
+  document.documentElement.dataset.theme = site ? `retro-${theme.slice(5)}` : theme;
+  if (site) document.documentElement.dataset.look = "site";
+  else delete document.documentElement.dataset.look;
   $("theme").value = theme;
   const bg = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
   if (bg) document.querySelector('meta[name="theme-color"]').setAttribute("content", bg);

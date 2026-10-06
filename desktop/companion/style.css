@@ -81,3 +81,65 @@ main { flex: 1; padding: 12px 16px 16px; }
 [data-theme^="retro"] .btn, [data-theme^="retro"] .card { border-radius: 0; }
 @media (min-width: 720px) { main, .composer { max-width: 760px; width: 100%; margin: 0 auto; } }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+
+/* ---- Coop site look (site-dark, site-light): the coop website's "pi95" chrome
+   over the retro palettes, which already carry the site's colours. Silkscreen
+   (SIL OFL 1.1, fonts/OFL.txt) ships with the page; nothing loads from outside. */
+@font-face { font-family: "Silkscreen"; font-style: normal; font-weight: 400; font-display: swap; src: url("fonts/silkscreen-400.woff2") format("woff2"); }
+@font-face { font-family: "Silkscreen"; font-style: normal; font-weight: 700; font-display: swap; src: url("fonts/silkscreen-700.woff2") format("woff2"); }
+[data-look="site"] body { font-size: 15px; }
+[data-look="site"] .bar {
+  background: linear-gradient(90deg, var(--titlebar-from), var(--titlebar-to));
+  color: var(--titlebar-text);
+  border-bottom: 2px solid var(--bevel-dark);
+}
+[data-look="site"] .title { font: 700 18px/1.2 var(--font-display); text-transform: uppercase; color: var(--titlebar-text); }
+[data-look="site"] .identity { color: var(--titlebar-text); opacity: 0.85; }
+[data-look="site"] .gate h1, [data-look="site"] .card h2 { font-family: var(--font-display); font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; }
+[data-look="site"] .chip,
+[data-look="site"] .btn,
+[data-look="site"] .msg,
+[data-look="site"] .card,
+[data-look="site"] select,
+[data-look="site"] input,
+[data-look="site"] textarea { border-radius: 0; }
+/* raised: buttons, assistant messages, question cards */
+[data-look="site"] .btn,
+[data-look="site"] .msg,
+[data-look="site"] .card {
+  border-style: solid; border-width: 2px;
+  border-color: var(--bevel-hi) var(--bevel-dark) var(--bevel-dark) var(--bevel-hi);
+  box-shadow: inset -1px -1px 0 var(--bevel-lo), inset 1px 1px 0 var(--bevel-lo);
+}
+[data-look="site"] .btn { background: var(--surface); color: var(--text-strong); }
+[data-look="site"] .btn:active:not(:disabled) {
+  border-color: var(--bevel-dark) var(--bevel-hi) var(--bevel-hi) var(--bevel-dark);
+  box-shadow: inset 1px 1px 0 var(--bevel-lo);
+}
+[data-look="site"] .btn.primary { background: var(--titlebar-to); color: #fff; text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.35); }
+[data-look="site"] .btn.danger { color: var(--danger); }
+/* sunken: fields, the status chip, code */
+[data-look="site"] select,
+[data-look="site"] input,
+[data-look="site"] textarea,
+[data-look="site"] .chip,
+[data-look="site"] .msg pre,
+[data-look="site"] .card pre {
+  border-style: solid; border-width: 2px;
+  border-color: var(--bevel-dark) var(--bevel-hi) var(--bevel-hi) var(--bevel-dark);
+  box-shadow: inset -1px -1px 0 var(--bevel-lo), inset 1px 1px 0 var(--bevel-lo);
+}
+[data-look="site"] .chip { background: var(--code-bg); color: var(--text); font: 700 11px/1 var(--font-display); text-transform: uppercase; }
+[data-look="site"] .chip.running { color: var(--accent-2); }
+[data-look="site"] .chip.exited, [data-look="site"] .chip.disconnected { color: var(--danger); }
+[data-look="site"] .msg.user { background: var(--surface-2); border-color: var(--bevel-hi) var(--bevel-dark) var(--bevel-dark) var(--bevel-hi); }
+/* a question card reads as a little window: its heading is the title bar */
+[data-look="site"] .card { padding: 0 14px 14px; background: var(--surface); }
+[data-look="site"] .card h2 {
+  margin: 0 -14px 12px; padding: 6px 10px; font-size: 13px;
+  background: linear-gradient(90deg, var(--titlebar-from), var(--titlebar-to));
+  color: var(--titlebar-text); border-bottom: 2px solid var(--bevel-dark);
+}
+[data-look="site"] .card.risky h2 { background: linear-gradient(90deg, #5a1d12, var(--danger)); }
+[data-look="site"] .card.risky { outline: 2px solid var(--danger); outline-offset: -2px; }
+[data-look="site"] .composer { border-top: 2px solid var(--bevel-dark); box-shadow: inset 0 1px 0 var(--bevel-hi); }

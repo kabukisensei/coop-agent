@@ -201,6 +201,7 @@ const ORIGIN = "https://coop-vm.example-tailnet.ts.net";
 const webRoot = join(temp, "web");
 mkdirSync(webRoot);
 writeFileSync(join(webRoot, "index.html"), "<!doctype html><title>coop</title>");
+writeFileSync(join(webRoot, "pixel.woff2"), "wOF2");
 writeFileSync(join(temp, "secret.txt"), "not served");
 
 function call(port, method, path, { body, cookie, origin = ORIGIN, host = new URL(ORIGIN).host, headers = {} } = {}) {
@@ -254,6 +255,7 @@ try {
     const page = await call(port, "GET", "/");
     assert.equal(page.status, 200);
     assert.match(page.headers["content-security-policy"], /default-src 'self'/);
+    assert.equal((await call(port, "GET", "/pixel.woff2")).headers["content-type"], "font/woff2");
     assert.equal((await call(port, "GET", "/../secret.txt")).status, 404);
     assert.equal((await call(port, "GET", "/%2e%2e/secret.txt")).status, 404);
   });
@@ -399,6 +401,19 @@ await check("page: every file the page names ships, from this origin only, with 
   const manifest = JSON.parse(readFileSync(join(pageDir, "manifest.webmanifest"), "utf8"));
   assert.equal(manifest.display, "standalone");
   for (const icon of manifest.icons) assert.ok(existsSync(join(pageDir, icon.src)));
+});
+
+await check("page: the coop site themes (MC5) ship their font, from this origin, under its licence", () => {
+  const html = readFileSync(join(pageDir, "index.html"), "utf8");
+  for (const theme of ["site-dark", "site-light"]) assert.match(html, new RegExp(`<option value="${theme}">`));
+  const css = readFileSync(join(pageDir, "style.css"), "utf8");
+  const fonts = [...css.matchAll(/url\("([^"]+)"\)/g)].map((m) => m[1]);
+  assert.ok(fonts.length >= 2, "the pixel face is declared");
+  for (const ref of fonts) {
+    assert.ok(!/^[a-z]+:|^\/\//i.test(ref), `no outside font: ${ref}`);
+    assert.ok(existsSync(join(pageDir, ref)), `ships: ${ref}`);
+  }
+  assert.match(readFileSync(join(pageDir, "fonts", "OFL.txt"), "utf8"), /SIL OPEN FONT LICENSE Version 1\.1/);
 });
 
 console.log(`✓ companion server (MC2) and page (MC3): ${checks} checks`);

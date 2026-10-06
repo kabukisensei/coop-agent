@@ -16,6 +16,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   wins against the exact action, and production or session-wide approvals stay
   on the desktop. The checkable rules are `desktop/lib/companion-protocol.mjs`
   with gate-lane fixtures.
+- **The coop website's look on the phone** (MC5; Aaron, 2026-10-06). The phone
+  page's theme menu adds *Site dark* and *Site light*: the coop website's colours
+  with its raised and sunken bevels, title-bar gradients and Silkscreen pixel
+  headings. The font ships with the page (`desktop/companion/fonts/`, SIL Open
+  Font License 1.1), so nothing loads from outside the VM. The window's four
+  themes are unchanged.
 - **coop on your phone** (MC2 and MC3, master plan section 12.4). The window
   gets *Session > Phone*: *Pair a phone* shows a one-time code, *Allow phone
   for this session* lets the paired phone see and steer this window's live
