@@ -35,6 +35,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **The coop window shows the vibe for the whole working turn** (Aaron,
+  2026-10-06). The vibe sat in the conversation only until coop's first thought
+  or step appeared, so during real work it vanished after a moment. It now sits
+  on a working line just above the message box, with a spinner, from the start
+  of the turn to the end, the same place the terminal keeps its working line,
+  and a fresh one comes with each turn as the terminal's does. Each tab shows its
+  own.
+
 - The window's session list shows a session's name. It read only the first
   256 KB of each session file, so a name set after a few turns (auto-naming,
   `/name`, `/rename`) was missed in any session with large tool output, and the

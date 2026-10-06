@@ -223,7 +223,7 @@ function assistantView(items, tl, prefs) {
     if (!prefs.activityFold) { for (const { block, index, item, blocks } of group.entries) node.append(block.type === "thinking" ? thinkingView(block, index, item, blocks, prefs) : toolCard(block, tl, prefs)); return; }
     node.append(activityView(group.entries, tl, prefs, { last: g === groups.length - 1 }));
   });
-  if (last.streaming && !last.blocks.filter(Boolean).length) node.append(el("div", { class: "working" }, el("span", { class: "spinner" }), el("span", { text: prefs.workingText ? prefs.workingText() : "Working" })));
+  if (last.streaming && !last.blocks.filter(Boolean).length) node.append(el("div", { class: "working", title: "Working" }, el("span", { class: "spinner" })));
   if (last.stopReason === "error" || last.errorMessage) {
     node.append(el("div", { class: "notice error" }, icon("warn"), el("span", { text: last.errorMessage || "The model stopped with an error." })));
   } else if (last.stopReason === "aborted") {
