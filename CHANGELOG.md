@@ -21,6 +21,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- Phone companion feedback (Aaron, 2026-10-06). Attach is a paperclip; button
+  labels sit centred on one line ("Send now" no longer wraps). The phone shows a
+  compaction as the window does: "compacting the conversation", then how far it
+  shrank. The status line leads with context and usage (`38% context · 152k in,
+  21k out · $1.84`), read after each turn, with MCP connection lines last.
+
 - **The project file is found one folder down** (C1 follow-up; Aaron,
   2026-10-06). Opened in the folder that holds a client's repositories (a folder
   that is not itself a repository), coop now uses the project file of the one
