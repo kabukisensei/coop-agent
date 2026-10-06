@@ -1,11 +1,12 @@
 // coop desktop: the Electron main process (master plan row D1b).
 //
-// One window per working folder, each with its own Pi in RPC mode, started
-// from the launch spec `coop desktop` built with the same Build-CoopPiArgs the
+// One window per working folder; each tab in it is one session with its own Pi
+// in RPC mode (several sessions at once, as each terminal runs its own coop),
+// started from the launch spec `coop desktop` built with the same Build-CoopPiArgs the
 // terminal uses. The renderer is untrusted: it is sandboxed, sees only the
 // small bridge in preload.cjs, and every command it sends is rebuilt from an
 // allowlist (lib/rpc-commands.mjs) before it reaches Pi.
-import { app, BrowserWindow, ipcMain, protocol, session, dialog, shell, clipboard, nativeTheme, Menu, Notification, screen } from "electron";
+import { app, BrowserWindow, WebContentsView, ipcMain, protocol, session, dialog, shell, clipboard, nativeTheme, Menu, Notification, screen } from "electron";
 import { readFile } from "node:fs/promises";
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { hostname, userInfo } from "node:os";
@@ -17,6 +18,8 @@ import { parseSpec, piArgv, piEnv } from "./lib/spec.mjs";
 import { PiSession } from "./lib/pi-session.mjs";
 import { IMAGE_LIMITS, buildCommand } from "./lib/rpc-commands.mjs";
 import { listSessions, isSessionPath } from "./lib/sessions.mjs";
+import { ownerOf, markOpenElsewhere } from "./lib/session-owners.mjs";
+import { MAX_TABS, TAB_STRIP_HEIGHT, afterClose, stripRows, tabFor, tabKey } from "./lib/tabs.mjs";
 import { consoleProcess } from "./lib/terminal.mjs";
 import { resolveAsset, isAppUrl, CSP, APP_ORIGIN } from "./lib/serve.mjs";
 import { readBranch } from "./lib/git.mjs";
@@ -111,23 +114,27 @@ protocol.registerSchemesAsPrivileged([
   { scheme: "coop", privileges: { standard: true, secure: true, supportFetchAPI: false, corsEnabled: false } },
 ]);
 
-/** @type {Map<number, any>} window state by webContents id */
+/** @type {Map<number, any>} tab state by its page's webContents id (one Pi each) */
 const windows = new Map();
+/** @type {Map<number, any>} each coop window (a frame of tabs) by BrowserWindow id */
+const frames = new Map();
 const runningPis = new Set();
+let nextTabId = 1;
 
 function send(state, channel, payload) {
-  if (state.win.isDestroyed() || state.win.webContents.isDestroyed()) return;
+  if (state.win.isDestroyed() || state.contents.isDestroyed()) return;
   if (!state.ready) {
     if (state.queue.length < MAX_QUEUE) state.queue.push([channel, payload]);
     return;
   }
   // A page that is reloading or crashing has no frame to receive this; the
   // reloaded page asks for the state again (coop:ready).
-  try { state.win.webContents.send(channel, payload); } catch { /* frame gone */ }
+  try { state.contents.send(channel, payload); } catch { /* frame gone */ }
 }
 
 function broadcast(channel, payload) {
   for (const state of windows.values()) send(state, channel, payload);
+  for (const frame of frames.values()) sendStrip(frame, channel, payload);
   // The project picker follows the theme too.
   if (picker.win && !picker.win.isDestroyed()) { try { picker.win.webContents.send(channel, payload); } catch { /* gone */ } }
 }
@@ -146,16 +153,18 @@ function startPi(state, extraArgs = []) {
     if (state.pi !== pi) return;
     if (message.type === "extension_ui_request" && message.method === "setTitle") {
       const title = typeof message.title === "string" ? message.title.replace(/[\0-\x1f]/g, " ").slice(0, 120) : "";
-      if (title && !state.win.isDestroyed()) state.win.setTitle(title);
+      if (title) { state.title = title; if (state.frame.active === state && !state.win.isDestroyed()) state.win.setTitle(title); }
       return;
     }
     notifyInBackground(state, message);
     send(state, "pi:event", message);
+    trackTab(state, message);
   });
   pi.on("protocol-error", (text) => send(state, "pi:notice", { level: "error", message: String(text) }));
   pi.on("exit", ({ code, reason, stderr }) => {
     runningPis.delete(pi);
     if (state.pi !== pi) return;
+    if (state.working) { state.working = false; pushTabs(state.frame); }
     send(state, "pi:exit", { code, reason, stderr: String(stderr || "").slice(-4000) });
   });
   runningPis.add(pi);
@@ -171,14 +180,15 @@ function startPi(state, extraArgs = []) {
 // Windows notification (clicking it brings the window up) and a taskbar flash,
 // cleared when the window gets focus. Off with the Settings toggle.
 function notifyInBackground(state, message) {
-  if (!settings.notify || state.win.isDestroyed() || state.win.isFocused()) return;
+  // A tab behind another counts as the background too.
+  if (!settings.notify || state.win.isDestroyed() || (state.win.isFocused() && state.frame.active === state)) return;
   const body = notificationFor(message, { folder: basename(state.spec.cwd) });
   if (!body) return;
   try {
     state.win.flashFrame(true);
     if (Notification.isSupported()) {
       const note = new Notification({ title: "coop", body, silent: false });
-      note.on("click", () => { if (!state.win.isDestroyed()) { state.win.show(); state.win.focus(); } });
+      note.on("click", () => raise(state));
       note.show();
     }
   } catch { /* a desktop without notifications */ }
@@ -223,6 +233,17 @@ function vibeFor(state) {
   return fillVibe(pickVibe(loadVibes(vibesDir(REPO), state.vibeSet)), userName({ ...process.env, ...state.spec.env }));
 }
 
+const tabPreferences = () => ({
+  preload: join(HERE, "preload.cjs"),
+  contextIsolation: true,
+  sandbox: true,
+  nodeIntegration: false,
+  webSecurity: true,
+  spellcheck: true,
+  devTools: process.env.COOP_DESKTOP_DEVTOOLS === "1",
+});
+
+/** A new coop window on the spec's folder, with one tab. */
 function openWindow(rawSpec, token) {
   let spec;
   try {
@@ -235,6 +256,7 @@ function openWindow(rawSpec, token) {
   // The saved size, cut down to the screen it opens on (a small VM display).
   let fit = { width: settings.width, height: settings.height };
   try { fit = fitToScreen(fit, screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workAreaSize); } catch { /* keep the saved size */ }
+  // The window's own page is the tab strip; each tab's session page is a view below it.
   const win = new BrowserWindow({
     width: fit.width,
     height: fit.height,
@@ -246,51 +268,158 @@ function openWindow(rawSpec, token) {
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#0f1318" : "#f6f7f9",
     autoHideMenuBar: !settings.menuBar,
     icon: existsSync(join(HERE, "..", "themes", "coop.ico")) ? join(HERE, "..", "themes", "coop.ico") : undefined,
-    webPreferences: {
-      preload: join(HERE, "preload.cjs"),
-      contextIsolation: true,
-      sandbox: true,
-      nodeIntegration: false,
-      webSecurity: true,
-      spellcheck: true,
-      devTools: process.env.COOP_DESKTOP_DEVTOOLS === "1",
-    },
+    webPreferences: { ...tabPreferences(), spellcheck: false },
   });
-  const state = { win, spec, token, pi: null, ready: false, queue: [], sessionFile: "", changes: [], snapshots: new Map(), knowledgeRoots: new Map(), docs: null, build: null, vibeSet: "" };
-  state.hub = newHub(state);
-  windows.set(win.webContents.id, state);
+  const frame = { win, id: win.id, tabs: [], active: null, stripReady: false, title: win.getTitle() };
+  frames.set(frame.id, frame);
   // The picker remembers every folder a window opened (D1m), newest first.
   try { settings = saveSettings(settingsFile, rememberProject({ ...settings, lastFolder: spec.cwd }, spec.cwd)); } catch { /* keep going */ }
   if (settings.maximized) win.maximize();
   win.once("ready-to-show", () => win.show());
-  win.on("focus", () => { try { win.flashFrame(false); } catch { /* gone */ } installMenu(); });
+  win.on("focus", () => {
+    try { win.flashFrame(false); } catch { /* gone */ }
+    if (frame.active && !frame.active.contents.isDestroyed()) frame.active.contents.focus();
+    installMenu();
+  });
+  for (const event of ["resize", "maximize", "unmaximize", "restore", "enter-full-screen", "leave-full-screen"]) win.on(event, () => layout(frame));
   win.on("close", () => {
-    if (windows.size === 1) {
+    if (frames.size === 1) {
       const maximized = win.isMaximized();
       const [width, height] = maximized ? [settings.width, settings.height] : win.getSize();
       try { settings = saveSettings(settingsFile, { ...settings, width, height, maximized }); } catch { /* keep going */ }
     }
   });
-  const id = win.webContents.id;
   win.on("closed", () => {
-    windows.delete(id);
-    state.hub.setAccess(false, "window-closed");
-    if (state.pi) state.pi.stop();
-    if (state.docs) state.docs.cancel();
-    if (state.build) { try { state.build.kill(); } catch { /* already gone */ } }
+    frames.delete(frame.id);
+    // A view's page outlives its window unless it is closed too.
+    for (const tab of [...frame.tabs]) { endTab(tab); try { if (!tab.contents.isDestroyed()) tab.contents.close(); } catch { /* already gone */ } }
+    frame.tabs = [];
+    installMenu();
   });
+  win.webContents.on("before-input-event", (event, input) => onTabKey(frame, event, input));
+  win.loadURL(`${APP_ORIGIN}/tabs.html`);
+  addTab(frame, { spec, rawSpec, token });
+}
+
+/** A new tab in `frame`: the session page and its own Pi, on a new session unless `extraArgs` name one. */
+function addTab(frame, { spec, rawSpec, token, extraArgs = [], noticesShown = false }) {
+  if (frame.tabs.length >= MAX_TABS) return null;
+  const view = new WebContentsView({ webPreferences: tabPreferences() });
+  view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#0f1318" : "#f6f7f9");
+  const contents = view.webContents;
+  const state = {
+    frame, win: frame.win, view, contents, tabId: nextTabId++, label: "", title: "", working: false, asking: false,
+    spec, rawSpec, token, pi: null, ready: false, queue: [], sessionFile: "", changes: [], snapshots: new Map(), knowledgeRoots: new Map(), docs: null, build: null, vibeSet: "",
+    // A second tab does not repeat the launch notices or the first-run Start menu.
+    noticesShown,
+  };
+  state.hub = newHub(state);
+  windows.set(contents.id, state);
+  frame.tabs.push(state);
+  frame.win.contentView.addChildView(view);
   // A renderer that crashed or reloaded subscribes again; replaying keeps
   // dialogs Pi is waiting on visible.
-  win.webContents.on("did-start-loading", () => { state.ready = false; });
+  contents.on("did-start-loading", () => { state.ready = false; });
   // A crashed page is reloaded once a minute at most; Pi keeps running meanwhile.
   let lastReload = 0;
-  win.webContents.on("render-process-gone", (_event, details) => {
-    if (details.reason === "clean-exit" || win.isDestroyed() || Date.now() - lastReload < 60_000) return;
+  contents.on("render-process-gone", (_event, details) => {
+    if (details.reason === "clean-exit" || contents.isDestroyed() || Date.now() - lastReload < 60_000) return;
     lastReload = Date.now();
-    win.webContents.reload();
+    contents.reload();
   });
-  win.loadURL(`${APP_ORIGIN}/index.html`);
-  startPi(state);
+  contents.on("before-input-event", (event, input) => onTabKey(frame, event, input));
+  contents.loadURL(`${APP_ORIGIN}/index.html`);
+  startPi(state, extraArgs);
+  selectTab(state);
+  return state;
+}
+
+/** Stop a tab's Pi and work, as closing its window did. */
+function endTab(state) {
+  windows.delete(state.contents.id);
+  state.hub.setAccess(false, "window-closed");
+  if (state.pi) state.pi.stop();
+  if (state.docs) state.docs.cancel();
+  if (state.build) { try { state.build.kill(); } catch { /* already gone */ } }
+}
+
+/** Close one tab; the last tab closes its window. */
+function closeTab(state) {
+  const { frame } = state;
+  if (!frame.tabs.includes(state)) return;
+  if (frame.tabs.length === 1) { if (!frame.win.isDestroyed()) frame.win.close(); return; }
+  const next = afterClose(frame.tabs, state, frame.active);
+  frame.tabs = frame.tabs.filter((tab) => tab !== state);
+  endTab(state);
+  try { frame.win.contentView.removeChildView(state.view); } catch { /* window gone */ }
+  try { if (!state.contents.isDestroyed()) state.contents.close(); } catch { /* already gone */ }
+  if (next) selectTab(next);
+  else pushTabs(frame);
+}
+
+/** Show one tab: only the active tab's view is visible, under the strip. */
+function selectTab(state) {
+  const { frame } = state;
+  frame.active = state;
+  layout(frame);
+  if (!frame.win.isDestroyed()) {
+    frame.win.setTitle(state.title || frame.title);
+    if (frame.win.isFocused() && !state.contents.isDestroyed()) state.contents.focus();
+  }
+  pushTabs(frame);
+  installMenu();
+}
+
+function layout(frame) {
+  if (frame.win.isDestroyed()) return;
+  const [width, height] = frame.win.getContentSize();
+  for (const tab of frame.tabs) {
+    tab.view.setBounds({ x: 0, y: TAB_STRIP_HEIGHT, width, height: Math.max(0, height - TAB_STRIP_HEIGHT) });
+    tab.view.setVisible(tab === frame.active);
+  }
+}
+
+function sendStrip(frame, channel, payload) {
+  if (!frame.stripReady || frame.win.isDestroyed() || frame.win.webContents.isDestroyed()) return;
+  try { frame.win.webContents.send(channel, payload); } catch { /* reloading */ }
+}
+
+function pushTabs(frame) {
+  sendStrip(frame, "coop:tabs", { tabs: stripRows(frame.tabs, frame.active), canAdd: frame.tabs.length < MAX_TABS });
+}
+
+/** A tab's working and asking marks follow its Pi's events. */
+function trackTab(state, message) {
+  let working = state.working;
+  if (message.type === "agent_start") working = true;
+  // Done when Pi settles (queued follow-ups run after agent_end), as the page's busy mark.
+  else if (message.type === "agent_settled") working = false;
+  const asking = Boolean(state.pi && state.pi.openDialogs().length);
+  if (working === state.working && asking === state.asking) return;
+  state.working = working;
+  state.asking = asking;
+  pushTabs(state.frame);
+}
+
+/** A new tab on this window's folder, from the same launch spec: a new session, or the saved one `sessionPath` names. */
+function newTab(frame, sessionPath = "") {
+  const from = frame.active || frame.tabs[0];
+  if (!from) return { success: false, error: "this window has no coop" };
+  if (frame.tabs.length >= MAX_TABS) return { success: false, error: `A window holds up to ${MAX_TABS} tabs. Close one, or open a new window.` };
+  const extraArgs = sessionPath ? ["--session", sessionPath] : [];
+  addTab(frame, { spec: from.spec, rawSpec: from.rawSpec, token: from.token, extraArgs, noticesShown: true });
+  return { success: true };
+}
+
+// Tab keys work from the strip and from every tab's page, before the page sees them.
+function onTabKey(frame, event, input) {
+  const action = tabKey(input);
+  if (!action) return;
+  event.preventDefault();
+  if (action.type === "new") { const result = newTab(frame); if (!result.success && frame.active) send(frame.active, "pi:notice", { level: "warning", message: result.error }); return; }
+  if (action.type === "close") { if (frame.active) closeTab(frame.active); return; }
+  const target = tabFor(action, frame.tabs, frame.active);
+  if (target && target !== frame.active) selectTab(target);
 }
 
 // --- IPC ---------------------------------------------------------------------
@@ -350,7 +479,7 @@ handle("coop:command", async (state, input) => {
   if (!state.pi || state.pi.exited) return { success: false, error: "coop is not running in this window; restart it" };
   const timeoutMs = WAITS_ON_WORK.has(command.type) ? 0 : undefined;
   const response = await state.pi.request(command, { timeoutMs });
-  if (SESSION_CHANGES.has(command.type) && response.success) state.hub.renew();
+  if (SESSION_CHANGES.has(command.type) && response.success) { state.hub.renew(); await currentSessionFile(state); }
   if (command.type === "get_state" && response.success && response.data && typeof response.data.sessionFile === "string") {
     state.sessionFile = response.data.sessionFile;
   }
@@ -361,10 +490,83 @@ handle("coop:answer", (state, id, answer) => {
   if (!state.pi || typeof id !== "string") return { success: false, error: "no such question" };
   // The phone companion's arbiter (MC2): the first answer from either screen wins.
   const result = state.hub.answerFromDesktop(id, answer);
+  trackTab(state, {});
   return { success: result.ok, error: result.error };
 });
 
-handle("coop:sessions", (state) => ({ success: true, data: listSessions({ ...process.env, ...state.spec.env }, state.spec.cwd) }));
+handle("coop:sessions", (state) => ({ success: true, data: markOpenElsewhere(listSessions({ ...process.env, ...state.spec.env }, state.spec.cwd), windows.values(), state) }));
+
+/**
+ * The other window that has `path` open, asking each live Pi for its current
+ * session first (a session started there since the last check counts too).
+ */
+async function sessionOwner(state, path) {
+  await Promise.all([...windows.values()].filter((other) => other !== state).map((other) => currentSessionFile(other)));
+  return ownerOf(windows.values(), state, path);
+}
+
+/** Bring a tab and its window to the front. */
+function raise(state) {
+  if (state.win.isDestroyed()) return;
+  if (state.win.isMinimized()) state.win.restore();
+  state.win.show();
+  state.win.focus();
+  if (state.frame.active !== state) selectTab(state);
+}
+
+// Several sessions at once: another window on this folder with its own coop,
+// from the same launch spec (the same arguments, environment and Warehouse
+// token this window started with, as a restart reuses them). Its Pi starts a
+// new session; approvals, guardrails and phone access are its own.
+handle("coop:new-window", (state) => {
+  openWindow(state.rawSpec, state.token);
+  return { success: true };
+});
+
+handle("coop:new-tab", async (state, path) => {
+  if (path === undefined || path === null || path === "") return newTab(state.frame);
+  if (!isSessionPath({ ...process.env, ...state.spec.env }, path)) return { success: false, error: "that is not one of coop's saved sessions" };
+  const owner = await sessionOwner(null, path);
+  if (owner) { raise(owner); return { success: false, openElsewhere: true, error: "That session is open in another tab, so that tab is now in front." }; }
+  return newTab(state.frame, path);
+});
+handle("coop:close-tab", (state) => { closeTab(state); return { success: true }; });
+// The page names its tab: the session's name or first prompt.
+handle("coop:tab-label", (state, label) => {
+  const text = typeof label === "string" ? label.slice(0, 200) : "";
+  if (text !== state.label) { state.label = text; pushTabs(state.frame); }
+  return { success: true };
+});
+
+// --- The tab strip: the window's own page ------------------------------------
+
+function stripFor(event) {
+  for (const frame of frames.values()) {
+    if (!frame.win.isDestroyed() && frame.win.webContents.id === event.sender.id && event.senderFrame && isAppUrl(event.senderFrame.url)) return frame;
+  }
+  throw new Error("not a tab strip");
+}
+
+function stripHandle(channel, fn) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    const frame = stripFor(event);
+    try {
+      return await fn(frame, ...args);
+    } catch (error) {
+      return { success: false, error: error && error.message ? error.message : String(error) };
+    }
+  });
+}
+
+const tabById = (frame, id) => frame.tabs.find((tab) => tab.tabId === id);
+
+stripHandle("coop:strip-ready", (frame) => {
+  frame.stripReady = true;
+  return { theme: settings.theme, systemDark: nativeTheme.shouldUseDarkColors, tabs: stripRows(frame.tabs, frame.active), canAdd: frame.tabs.length < MAX_TABS };
+});
+stripHandle("coop:strip-select", (frame, id) => { const tab = tabById(frame, id); if (tab) selectTab(tab); return { success: Boolean(tab) }; });
+stripHandle("coop:strip-close", (frame, id) => { const tab = tabById(frame, id); if (tab) closeTab(tab); return { success: Boolean(tab) }; });
+stripHandle("coop:strip-new", (frame) => newTab(frame));
 
 // @ mentions: the folder's file list, read once and kept for 20 seconds.
 async function folderFiles(state, query) {
@@ -376,6 +578,9 @@ handle("coop:files", async (state, query) => ({ success: true, data: await folde
 
 handle("coop:switch-session", async (state, path) => {
   if (!isSessionPath({ ...process.env, ...state.spec.env }, path)) return { success: false, error: "that is not one of coop's saved sessions" };
+  // One window per session: two coops writing one session file would mix it up.
+  const owner = await sessionOwner(state, path);
+  if (owner) { raise(owner); return { success: false, openElsewhere: true, error: "That session is open in another tab, so that tab is now in front." }; }
   const response = await state.pi.request({ type: "switch_session", sessionPath: path }, { timeoutMs: 0 });
   if (response.success) state.hub.renew();
   return piResult(response);
@@ -500,7 +705,7 @@ pickerHandle("coop:picker-cancel", () => { finishPicker(""); return true; });
 handle("coop:restart", (state) => restartOnce(state, async () => {
   const sessionFile = await currentSessionFile(state);
   if (state.pi) await state.pi.stop();
-  if (state.win.isDestroyed()) return { success: false, error: "the window closed during the restart" };
+  if (state.contents.isDestroyed()) return { success: false, error: "the tab closed during the restart" };
   startPi(state, sessionFile && existsSync(sessionFile) ? ["--session", sessionFile] : []);
   return { success: true };
 }));
@@ -546,7 +751,7 @@ handle("coop:open-external", async (state, url) => {
 });
 
 handle("coop:zoom", (state, step) => {
-  const contents = state.win.webContents;
+  const contents = state.contents;
   const level = step === 0 ? 0 : Math.max(-3, Math.min(4, contents.getZoomLevel() + (step > 0 ? 0.5 : -0.5)));
   contents.setZoomLevel(level);
   return { success: true, level };
@@ -763,7 +968,8 @@ function newHub(state) {
     client: describeProject(state.spec.cwd).client,
     // Session actions from the phone (MC9): the same lists and checks as the window's own.
     host: {
-      list: () => listSessions(env(), state.spec.cwd).filter((s) => isSessionPath(env(), s.path)),
+      // A session another window holds stays off the phone's list (one window per session).
+      list: () => listSessions(env(), state.spec.cwd).filter((s) => isSessionPath(env(), s.path) && !ownerOf(windows.values(), state, s.path)),
       exportPath: async () => {
         const file = await currentSessionFile(state);
         if (!file || !existsSync(file)) return "";
@@ -786,7 +992,7 @@ function newHub(state) {
     },
   });
   // The phone answered (or Pi's clock ran out): the desktop card closes.
-  hub.on("resolved", ({ piId, by }) => { if (by !== "desktop") send(state, "coop:dialog-closed", { id: piId }); });
+  hub.on("resolved", ({ piId, by }) => { if (by !== "desktop") send(state, "coop:dialog-closed", { id: piId }); trackTab(state, {}); });
   // coop asked a question or finished a turn: a closed phone page gets a notice (MC11).
   hub.on("attention", () => { if (companion.server) companion.server.nudge(hub).catch(() => {}); });
   hub.on("access", ({ on, reason }) => {
@@ -880,15 +1086,28 @@ function removePhones(id) {
 
 // --- Menu bar ------------------------------------------------------------------
 
-/** The window the menu acts on: the focused one, else the only one. */
+/** The tab the menu acts on: the focused window's tab in front, else the first window's. */
+function focusedFrame() {
+  const win = BrowserWindow.getFocusedWindow();
+  const frame = win ? frames.get(win.id) : undefined;
+  return frame || frames.values().next().value;
+}
+
 function focusedState() {
-  const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-  return win ? windows.get(win.webContents.id) : undefined;
+  const frame = focusedFrame();
+  return frame ? frame.active || undefined : undefined;
 }
 
 function installMenu() {
   const template = menuTemplate({
     run: (action) => { const state = focusedState(); if (state) send(state, "coop:menu", { action }); },
+    tabs: {
+      add: () => { const frame = focusedFrame(); if (frame) newTab(frame); },
+      close: () => { const state = focusedState(); if (state) closeTab(state); },
+      next: () => { const frame = focusedFrame(); const tab = frame && tabFor({ type: "next" }, frame.tabs, frame.active); if (tab) selectTab(tab); },
+      prev: () => { const frame = focusedFrame(); const tab = frame && tabFor({ type: "prev" }, frame.tabs, frame.active); if (tab) selectTab(tab); },
+      newWindow: () => { const state = focusedState(); if (state) openWindow(state.rawSpec, state.token); },
+    },
     setTheme: (theme) => { if (THEMES.includes(theme)) { settings = saveSettings(settingsFile, { ...settings, theme }); applyNativeTheme(theme); broadcast("coop:theme", { theme, systemDark: nativeTheme.shouldUseDarkColors }); } },
     theme: settings.theme,
     themes: THEMES,
@@ -914,10 +1133,10 @@ function installMenu() {
 
 function setMenuBar(visible) {
   settings = saveSettings(settingsFile, { ...settings, menuBar: visible });
-  for (const state of windows.values()) {
-    if (state.win.isDestroyed()) continue;
-    state.win.setAutoHideMenuBar(!visible);
-    state.win.setMenuBarVisibility(visible);
+  for (const frame of frames.values()) {
+    if (frame.win.isDestroyed()) continue;
+    frame.win.setAutoHideMenuBar(!visible);
+    frame.win.setMenuBarVisibility(visible);
   }
   installMenu();
 }

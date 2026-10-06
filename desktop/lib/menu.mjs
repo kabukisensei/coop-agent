@@ -12,12 +12,15 @@ export const INSTALL_GUIDE_URL = "https://github.com/kabukisensei/coop-agent/blo
  * app.mjs ACTIONS); `setTheme(theme)` and `toggleMenuBar()` act in the main
  * process; `openExternal(url)` opens the browser; `about()` shows the version.
  */
-export function menuTemplate({ run, setTheme, theme, themes, menuBar, toggleMenuBar, openExternal, about, isMac = false, phone }) {
+export function menuTemplate({ run, setTheme, theme, themes, menuBar, toggleMenuBar, openExternal, about, isMac = false, phone, tabs }) {
   const action = (label, id, accelerator) => ({ label, accelerator, click: () => run(id) });
+  // Tab keys are caught before the page (main.mjs onTabKey), so the menu only shows them.
+  const tabItem = (label, fn, accelerator) => ({ label, accelerator, registerAccelerator: false, click: () => fn() });
   return [
     {
       label: "&File",
       submenu: [
+        ...(tabs ? [tabItem("New tab", tabs.add, "CmdOrCtrl+N"), { label: "New window", click: () => tabs.newWindow() }] : []),
         action("New session", "new", "CmdOrCtrl+Shift+N"),
         action("Sessions...", "resume", "CmdOrCtrl+Shift+R"),
         action("Switch project...", "switch"),
@@ -26,7 +29,8 @@ export function menuTemplate({ run, setTheme, theme, themes, menuBar, toggleMenu
         action("Open in terminal", "terminal"),
         action("Restart coop on this session", "reload"),
         { type: "separator" },
-        isMac ? { role: "close" } : action("Close window", "quit", "CmdOrCtrl+W"),
+        ...(tabs ? [tabItem("Next tab", tabs.next, "CmdOrCtrl+Tab"), tabItem("Previous tab", tabs.prev, "CmdOrCtrl+Shift+Tab"), { type: "separator" }] : []),
+        tabs ? tabItem("Close tab", tabs.close, "CmdOrCtrl+W") : isMac ? { role: "close" } : action("Close window", "quit", "CmdOrCtrl+W"),
       ],
     },
     {
