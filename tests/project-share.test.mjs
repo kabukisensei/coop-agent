@@ -83,12 +83,15 @@ try {
     assert.equal(readFileSync(join(b, ".coop", "project.yml"), "utf8"), CONTRACT);
     assert.equal(ps.teamFileStatus(b).state, "shared");
     assert.equal(ps.getTeamContract(b).method, "none");
+    // Git for Windows (core.autocrlf=true) checks the file out with CRLF; the blob keeps LF.
+    writeFileSync(join(b, ".coop", "project.yml"), CONTRACT.replace(/\n/g, "\r\n"));
+    assert.equal(ps.teamFileStatus(b).state, "shared", "line endings alone are not a difference");
   });
 
   await t("get: a modified checkout gets only the file (with a backup); team-newer when the local copy is unmodified", () => {
     writeFileSync(join(a, ".coop", "project.yml"), CONTRACT + "  timezone: 'Europe/Amsterdam'\n");
     assert.equal(ps.shareContract(a, { name: "Aaron" }).ok, true);
-    // b: unmodified local file, origin moved.
+    // b: unmodified local file (still the CRLF checkout), origin moved.
     assert.equal(ps.teamFileStatus(b, { fetch: true, now: Date.now() + ps.FETCH_MAX_AGE_MS + 1 }).state, "team-newer");
     // b with local edits: not-shared; get keeps a backup and touches nothing else.
     writeFileSync(join(b, ".coop", "project.yml"), CONTRACT + "  timezone: 'America/Chicago'\n");

@@ -529,6 +529,11 @@ await t("C1: proposeContractRoot names the client home repository beside several
   assert.deepEqual([proposeContractRoot(join(single, "sub")).kind, proposeContractRoot(join(single, "sub")).root], ["git-root", single]);
   const plain = proposeContractRoot(join(client, "notes"));
   assert.deepEqual([plain.kind, plain.root], ["folder", join(client, "notes")]);
+  // Opened in the folder that holds the repositories: the same home repository, never the folder.
+  const fromParent = proposeContractRoot(client, { existing: null });
+  assert.deepEqual([fromParent.kind, fromParent.root, fromParent.repos, fromParent.parent, fromParent.pending], ["home-repo", join(client, "<client>-coop"), ["analytics", "reports"], client, true]);
+  assert.match(contractLocationNote(fromParent), /This folder holds 2 side by side \(analytics, reports\)/);
+  assert.equal(proposeContractRoot(client, { existing: null, client: "Contoso Retail" }).root, join(client, "contoso-retail-coop"));
   // A home repository beside the repositories whose contract lists this one: found from inside it.
   mkdirSync(join(client, "contoso-coop", ".coop"), { recursive: true });
   mkdirSync(join(client, "contoso-coop", ".git"));

@@ -44,6 +44,11 @@ try {
   if ($alone.Kind -ne 'git-root' -or $alone.Root -ne (Join-Path $single 'work')) { Ko "the only repository in its folder: Kind=$($alone.Kind) Root=$($alone.Root)" }
   else { Ok 'the only repository in its folder: its root is proposed' }
 
+  $fromParent = Get-CoopContractRootProposal $client 'Contoso Retail'
+  if ($fromParent.Kind -ne 'home-repo' -or $fromParent.Root -ne (Join-Path $client 'contoso-retail-coop') -or $fromParent.Parent -ne $client) { Ko "opened in the folder holding the repositories: Kind=$($fromParent.Kind) Root=$($fromParent.Root)" }
+  elseif (($fromParent.Repos -join ',') -ne 'analytics,reports') { Ko "from the parent folder the home lists $($fromParent.Repos -join ',')" }
+  else { Ok 'opened in the folder holding the repositories: the same home repository beside them, never the folder' }
+
   $plain = Get-CoopContractRootProposal (Join-Path $client 'notes')
   if ($plain.Kind -ne 'folder' -or $plain.Root -ne (Join-Path $client 'notes')) { Ko "a folder outside Git: Kind=$($plain.Kind) Root=$($plain.Root)" }
   else { Ok 'a folder outside Git: the folder itself' }
