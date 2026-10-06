@@ -18,6 +18,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   with gate-lane fixtures. Nothing listens yet: the server and the phone page
   are MC2 and MC3.
 
+### Changed
+
+- `coop-data-doc` pin 1.3.1 -> 1.3.4 (`config/release-manifest.json`):
+  `coop-data-doc lineage` now names the Power BI tables that load an object
+  (`loaded_by`), and answers for a view the docs do not hold when a model loads
+  it (coop-data-doc #69), so the "Loaded by" lines coop renders now appear.
+  1.3.2 and 1.3.3 were published without that change and are skipped.
+  `coop sync` installs 1.3.4; `coop doctor` reports an older copy as stale.
+
 ## [0.31.0] — 2026-10-05
 
 ### Added
