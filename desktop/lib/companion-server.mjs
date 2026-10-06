@@ -177,7 +177,9 @@ export function createCompanionServer({ store, active, origin, webRoot = "", sha
     const cookie = readCookie(req.headers.cookie);
     const device = cookie ? store.get(cookie.id) : null;
     const hub = active();
-    const binding = hub ? hub.binding : { windowsUser: "", client: "", incarnation: "", accessOn: false };
+    // No window has phone access on: a paired phone hears "access off", not
+    // "another Windows user" (MC4). The store is this Windows user's own.
+    const binding = hub ? hub.binding : { windowsUser: device ? device.windowsUser : "", client: device ? device.client : "", incarnation: "", accessOn: false };
     if (request.op === "logout") {
       // Signing out works whatever the session: it removes this device.
       if (device && cookie && checkGrant({ device, secret: cookie.secret, binding: { ...binding, windowsUser: device.windowsUser, client: device.client, accessOn: true }, now: now() }) === null) {

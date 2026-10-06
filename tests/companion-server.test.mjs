@@ -670,12 +670,12 @@ try {
     assert.equal((await call(port, "GET", "/api/snapshot", { cookie: other })).json.code, "wrong-client");
   });
 
-  await check("server: no window with access on refuses everything", async () => {
+  await check("server: no window with access on refuses everything, as access off", async () => {
     activeHub = null;
     const { code } = store.startPairing({ windowsUser: "VM\\aaron", client: "Example Co" });
     const res = await call(port, "POST", "/api/pair", { body: { code, deviceName: "phone" } });
     const fresh = String(res.headers["set-cookie"]).split(";")[0];
-    assert.equal((await call(port, "GET", "/api/snapshot", { cookie: fresh })).json.code, "wrong-user");
+    assert.equal((await call(port, "GET", "/api/snapshot", { cookie: fresh })).json.code, "access-off");
   });
 
   await check("server: the audit log names outcomes, never message text or answers", () => {
