@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en" data-theme="modern-dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f1318">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="coop">
+  <title>coop</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <link rel="stylesheet" href="shared/themes.css">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="bar">
+    <div class="who">
+      <div class="title">coop <span id="status" class="chip">connecting</span></div>
+      <div id="identity" class="identity"></div>
+    </div>
+    <label class="theme"><span class="sr-only">Theme</span>
+      <select id="theme" aria-label="Theme">
+        <option value="modern-dark">Modern dark</option>
+        <option value="modern-light">Modern light</option>
+        <option value="retro-dark">Retro dark</option>
+        <option value="retro-light">Retro light</option>
+      </select>
+    </label>
+  </header>
+
+  <main id="main">
+    <section id="gate" class="gate" hidden>
+      <h1 id="gate-title"></h1>
+      <p id="gate-text"></p>
+      <form id="pair" class="pair" hidden>
+        <label>Pairing code
+          <input id="code" name="code" inputmode="text" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" maxlength="9" placeholder="ABCD-EFGH" required>
+        </label>
+        <label>Name this phone
+          <input id="device" name="device" maxlength="60" placeholder="Aaron's phone" required>
+        </label>
+        <button class="btn primary" type="submit">Pair</button>
+      </form>
+      <button id="retry" class="btn" type="button" hidden>Try again</button>
+    </section>
+
+    <section id="session" hidden>
+      <ol id="timeline" class="timeline" aria-live="polite"></ol>
+      <div id="questions" class="questions"></div>
+      <div class="menu-row"><button id="signout" class="link" type="button">Sign this phone out</button></div>
+    </section>
+  </main>
+
+  <footer id="composer" class="composer" hidden>
+    <label class="sr-only" for="message">Message coop</label>
+    <textarea id="message" rows="2" maxlength="16000" placeholder="Message coop"></textarea>
+    <div class="actions">
+      <button id="stop" class="btn danger" type="button" hidden>Stop</button>
+      <button id="send" class="btn primary" type="button">Send</button>
+    </div>
+  </footer>
+</body>
+</html>

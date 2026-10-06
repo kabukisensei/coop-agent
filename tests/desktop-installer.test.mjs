@@ -300,7 +300,7 @@ await check("desktop/installer pins electron-builder with a lockfile and no othe
 await check("stage: every module the window imports, the vibes, the splash and the icon ship", () => {
   const entries = stageEntries(ROOT);
   for (const entry of entries) assert.ok(existsSync(join(ROOT, entry)), `${entry} exists`);
-  assert.ok(entries.includes("desktop/main.mjs") && entries.includes("desktop/preload.cjs") && entries.includes("desktop/lib/") && entries.includes("desktop/renderer/"));
+  assert.ok(entries.includes("desktop/main.mjs") && entries.includes("desktop/preload.cjs") && entries.includes("desktop/lib/") && entries.includes("desktop/renderer/") && entries.includes("desktop/companion/"));
   assert.ok(entries.includes("desktop/scripts/pdf-text.mjs"));
   assert.ok(entries.includes("vibes/") && entries.includes("themes/coop.ico") && entries.includes("extensions/coop-powerline/assets/splash.ansi"));
   // Every `../../lib/<x>.mjs` and `../lib/<x>.mjs` import under desktop/ is staged.

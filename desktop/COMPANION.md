@@ -1,11 +1,13 @@
 # coop on the phone: the companion contract
 
-Master plan section 12.4, row MC1. This is the contract the window's companion
-server (MC2) and the phone page (MC3) build to. It ships no listener, no page and
-no setting: until MC2 and MC3 merge and MC4 passes on the VM, nothing here is
-reachable and the window behaves exactly as before. The rules a program can
-check are code in `desktop/lib/companion-protocol.mjs`, checked by
-`tests/companion-protocol.test.mjs` against `tests/fixtures/companion/`.
+Master plan section 12.4. MC1 is this contract; the rules a program can check
+are `desktop/lib/companion-protocol.mjs`, checked by
+`tests/companion-protocol.test.mjs` against `tests/fixtures/companion/`. MC2 is
+the window's side (`desktop/lib/companion-hub.mjs`, `companion-devices.mjs`,
+`companion-server.mjs`, `companion-tailscale.mjs`) and MC3 the phone page
+(`desktop/companion/`), both checked by `tests/companion-server.test.mjs`.
+Nothing listens until someone chooses *Session > Phone* in the window; until
+MC4 passes on the VM it is for Aaron only.
 
 ## What the phone is
 
@@ -57,10 +59,10 @@ which:
 
 ## Identity: one person, one Windows user, one client, one session
 
-- **Pairing happens at the desk.** In the window, *Phone > Pair a phone* shows
-  a QR code and an 8-character code (Crockford letters, no I, L, O or U). It
+- **Pairing happens at the desk.** In the window, *Session > Phone > Pair a
+  phone* shows the address and an 8-character code (Crockford letters, no I, L, O or U). It
   lasts 5 minutes, works once, and dies after 5 wrong tries. The phone opens
-  the companion address, enters or scans the code, and names itself. Nobody can
+  the companion address, enters the code, and names itself. Nobody can
   pair without seeing the window, so pairing proves presence at the VM.
 - **A device belongs to the Windows user and client it was paired on.** The
   record holds the Windows account (`COMPUTER\user`), the client name from the
@@ -71,8 +73,8 @@ which:
 - **The secret is never stored.** Pairing returns a random 256-bit secret as an
   `HttpOnly; Secure; SameSite=Strict; Path=/api` cookie. The VM keeps only its
   SHA-256 and compares in constant time. Page scripts cannot read the cookie.
-- **Phone access is off until you turn it on, per window.** *Phone > Allow
-  phone for this session* turns it on for this window's live session; both
+- **Phone access is off until you turn it on, per window.** *Session > Phone >
+  Allow phone for this session* turns it on for this window's live session; both
   screens then show *Windows user · client · session · device*. It turns off
   when the window closes or the session changes, and at most one window per
   Windows user has it on (turning it on in a second window turns it off in
@@ -83,9 +85,9 @@ which:
   refused, and its open questions are gone. A new incarnation also turns phone
   access off: the grant was for the session the person allowed, so a restarted
   or switched session needs *Allow phone* again at the desk.
-- **Revoking is immediate.** *Phone > Devices* lists each device with its last
-  use; *Remove* deletes it and closes its open stream at once. *Remove all*
-  does every device. Signing out on the phone deletes its record too.
+- **Revoking is immediate.** *Session > Phone > Paired phones* lists each
+  device; *Remove* deletes it and closes its open stream at once. *Remove all
+  phones* does every device. Signing out on the phone deletes its record too.
 
 ## Requests
 
@@ -249,3 +251,31 @@ IT consent is not a factor.
    client's VPN and reaches the VM directly. Only works where the client gives
    the phone that access, and the server would then listen on the VM's private
    address instead of loopback.
+
+## Setting it up (Tailscale)
+
+Once per VM, and once per phone. Nothing here changes the terminal coop.
+
+1. **Tailscale on the VM.** Install Tailscale for Windows from
+   `https://tailscale.com/download/windows` (needs admin), sign in with the
+   Cooptimize account, then in a normal PowerShell window run
+   `tailscale serve --bg 47821`. That publishes coop's loopback port as
+   `https://<vm>.<tailnet>.ts.net`, inside the tailnet only (the first time,
+   Tailscale asks to turn on MagicDNS and HTTPS certificates for the tailnet).
+   Never use `tailscale funnel`, which would make it public.
+2. **Tailscale on the phone.** Install the Tailscale app (App Store or Google
+   Play) and sign in with the same account.
+3. **Pair.** In the coop window, open the client's project, then *Session >
+   Phone > Pair a phone*. On the phone, with Tailscale on, open the address
+   the window shows, enter the code and name the phone. Add it to the home
+   screen (Safari: Share > Add to Home Screen; Chrome: menu > Add to Home
+   screen / Install app).
+4. **Use.** In the window, *Session > Phone > Allow phone for this session*.
+   The phone shows the conversation, coop's status and its questions; send a
+   message, stop a turn, or answer. Allow it again after a new session or a
+   restart.
+
+coop reads the address from `tailscale status --json`. The window's
+`settings.json` key `companionOrigin` (an `https://` address) overrides it.
+The audit log is `<profile>\logs\companion.jsonl`; the paired phones are in
+`<profile>\companion\devices.json`.

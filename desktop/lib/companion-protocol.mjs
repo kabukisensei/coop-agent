@@ -267,6 +267,9 @@ export function classifyQuestion(request, incarnation) {
     message: String(request.message || ""),
     digest: actionDigest(request),
     timeoutMs: Number.isSafeInteger(request.timeout) && request.timeout > 0 ? request.timeout : null,
+    // What the desktop's input and editor cards start with.
+    placeholder: typeof request.placeholder === "string" ? request.placeholder.slice(0, 200) : "",
+    prefill: request.method === "editor" && typeof request.prefill === "string" ? request.prefill.slice(0, LIMITS.answerChars) : "",
   };
   if (PRODUCTION.test(base.title) || PRODUCTION.test(base.message)) {
     return { ...base, phone: "desktop", reason: "production", options: [], hidden: Array.isArray(request.options) ? request.options.length : 0 };

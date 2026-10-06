@@ -1,0 +1,318 @@
+// One window's side of the phone companion (master plan row MC2, contract in
+// desktop/COMPANION.md): the live session's incarnation, the phone's event
+// stream and its buffer, the questions Pi is waiting on with one arbiter for
+// both screens, and the idempotent chat, stop and answer the phone may send.
+// The HTTP server (companion-server.mjs) only authenticates and routes to this.
+import { EventEmitter } from "node:events";
+import { basename } from "node:path";
+import { buildUiResponse } from "./rpc-commands.mjs";
+import {
+  LIMITS, classifyQuestion, decideAnswer, eventEnvelope, newIncarnation, resumePoint,
+} from "./companion-protocol.mjs";
+
+const SNAPSHOT_MESSAGES = 200;
+const NOTICE_CHARS = 500;
+const FLUSH_MS = 200;
+
+/** The text parts of a Pi message's content, joined; thinking and tool calls are left out. */
+export function messageText(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.filter((part) => part && part.type === "text" && typeof part.text === "string").map((part) => part.text).join("");
+}
+
+/** A tool as the phone sees it: its name and, for file tools, the file's name only. */
+export function toolLabel(name, args) {
+  const path = args && typeof args === "object" ? args.path || args.file_path || args.filePath : "";
+  return typeof path === "string" && path ? basename(path.replace(/\\/g, "/")).slice(0, 80) : "";
+}
+
+/** The phone's view of a question: everything but Pi's own id. */
+const phoneQuestion = ({ piId, state, timer, request, ...rest }) => ({ ...rest, state });
+
+export class CompanionHub extends EventEmitter {
+  /**
+   * identity: `{ windowsUser, client }` for this window; `sessionName` optional.
+   * The timer and clock are injectable for tests.
+   */
+  constructor({ windowsUser, client, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, random } = {}) {
+    super();
+    Object.assign(this, { windowsUser: windowsUser || "", client: client || "", now, setTimer, clearTimer, random });
+    this.pi = null;
+    this.incarnation = "";
+    this.accessOn = false;
+    this.sessionName = "";
+    this.reset();
+  }
+
+  reset() {
+    for (const q of this.questions?.values() || []) if (q.timer) this.clearTimer(q.timer);
+    this.seq = 0;
+    this.buffer = [];
+    this.questions = new Map();
+    this.byPiId = new Map();
+    this.submissions = new Map();
+    this.status = "idle";
+    this.partial = null;
+    if (this.flushTimer) this.clearTimer(this.flushTimer);
+    this.flushTimer = null;
+  }
+
+  /** What checkGrant compares a device against. */
+  get binding() {
+    return { windowsUser: this.windowsUser, client: this.client, incarnation: this.incarnation, accessOn: this.accessOn };
+  }
+
+  identity() {
+    return { incarnation: this.incarnation, windowsUser: this.windowsUser, client: this.client, sessionName: this.sessionName };
+  }
+
+  /** Follow a new Pi (a new incarnation): access goes off, old questions and submissions are void. */
+  attach(pi) {
+    this.reset();
+    this.pi = pi;
+    this.incarnation = newIncarnation(this.random);
+    this.setAccess(false, "session-changed");
+    if (pi) {
+      pi.on("event", (message) => { if (this.pi === pi) this.onPiEvent(message); });
+      pi.on("exit", () => { if (this.pi === pi) this.onPiExit(); });
+    }
+    this.#push("session", this.identity());
+    return this.incarnation;
+  }
+
+  /** The session changed inside the same Pi (/new, a switch, a fork): a new incarnation too. */
+  renew() {
+    const pi = this.pi;
+    for (const q of this.questions.values()) if (q.state === "open") this.#close(q, "cancelled", "pi");
+    this.reset();
+    this.pi = pi;
+    this.incarnation = newIncarnation(this.random);
+    this.setAccess(false, "session-changed");
+    this.#push("session", this.identity());
+  }
+
+  setAccess(on, reason = "") {
+    const next = on === true && Boolean(this.pi) && !this.pi.exited && Boolean(this.client);
+    if (next === this.accessOn) return this.accessOn;
+    this.accessOn = next;
+    this.emit("access", { on: next, reason });
+    return next;
+  }
+
+  setSessionName(name) {
+    this.sessionName = String(name || "").slice(0, 200);
+    this.#push("session", this.identity());
+  }
+
+  // ---- events --------------------------------------------------------------
+
+  #push(type, data) {
+    const event = eventEnvelope({ seq: ++this.seq, incarnation: this.incarnation, type, data, at: this.now() });
+    this.buffer.push(event);
+    const oldest = this.now() - LIMITS.eventBufferMs;
+    while (this.buffer.length > LIMITS.eventBufferCount || (this.buffer.length > 1 && this.buffer[0].at < oldest)) this.buffer.shift();
+    this.emit("event", event);
+    return event;
+  }
+
+  #status(state) {
+    if (this.status === state) return;
+    this.status = state;
+    this.#push("status", { state });
+  }
+
+  #flush() {
+    this.flushTimer = null;
+    if (this.partial) this.#push("message", { id: this.partial.id, role: "assistant", text: this.partial.text, final: false });
+  }
+
+  onPiEvent(message) {
+    if (!message || typeof message !== "object") return;
+    switch (message.type) {
+      case "agent_start":
+        this.#status("running");
+        break;
+      case "agent_end":
+      case "agent_settled":
+        this.#status("idle");
+        break;
+      case "message_start":
+        if (message.message && message.message.role === "user") {
+          const text = messageText(message.message.content);
+          if (text) this.#push("message", { id: `u${this.seq + 1}`, role: "user", text, final: true });
+        } else if (message.message && message.message.role === "assistant") {
+          this.partial = { id: `a${this.seq + 1}`, text: "" };
+        }
+        break;
+      case "message_update": {
+        const delta = message.assistantMessageEvent;
+        if (!delta || delta.type !== "text_delta" || typeof delta.delta !== "string") break;
+        if (!this.partial) this.partial = { id: `a${this.seq + 1}`, text: "" };
+        this.partial.text += delta.delta;
+        if (!this.flushTimer) this.flushTimer = this.setTimer(() => this.#flush(), FLUSH_MS);
+        break;
+      }
+      case "message_end":
+        if (message.message && message.message.role === "assistant") {
+          if (this.flushTimer) { this.clearTimer(this.flushTimer); this.flushTimer = null; }
+          const id = this.partial ? this.partial.id : `a${this.seq + 1}`;
+          this.partial = null;
+          const text = messageText(message.message.content);
+          if (text) this.#push("message", { id, role: "assistant", text, final: true });
+        }
+        break;
+      case "tool_execution_start":
+        this.#push("tool", { id: String(message.toolCallId || ""), name: String(message.toolName || ""), label: toolLabel(message.toolName, message.args), state: "running" });
+        break;
+      case "tool_execution_end":
+        this.#push("tool", { id: String(message.toolCallId || ""), name: String(message.toolName || ""), label: "", state: message.isError ? "error" : "done" });
+        break;
+      case "session_info_changed":
+        if (typeof message.name === "string") this.setSessionName(message.name);
+        break;
+      case "extension_ui_request":
+        if (message.method === "notify") {
+          const level = ["info", "warning", "error"].includes(message.notifyType) ? message.notifyType : "info";
+          const text = String(message.message || "").trim().slice(0, NOTICE_CHARS);
+          if (text) this.#push("notice", { level, text });
+        } else {
+          this.#openQuestion(message);
+        }
+        break;
+      default:
+        break;
+    }
+  }
+
+  onPiExit() {
+    for (const q of this.questions.values()) if (q.state === "open") this.#close(q, "cancelled", "pi");
+    this.partial = null;
+    this.#status("exited");
+    this.setAccess(false, "pi-exited");
+  }
+
+  // ---- questions: one arbiter for both screens ---------------------------------
+
+  #openQuestion(request) {
+    const shape = classifyQuestion(request, this.incarnation);
+    if (!shape || this.byPiId.has(request.id)) return;
+    const q = { ...shape, state: "open", request, timer: null };
+    // Pi ends a dialog with a timeout on its own; the window follows its clock,
+    // whether or not a phone is awake.
+    if (q.timeoutMs) q.timer = this.setTimer(() => { if (q.state === "open") this.#close(q, "expired", "pi"); }, q.timeoutMs);
+    this.questions.set(q.questionId, q);
+    this.byPiId.set(request.id, q);
+    this.#push("question", phoneQuestion(q));
+  }
+
+  #close(q, outcome, by) {
+    q.state = outcome;
+    if (q.timer) { this.clearTimer(q.timer); q.timer = null; }
+    this.#push("question_resolved", { questionId: q.questionId, outcome, by });
+    this.emit("resolved", { piId: q.piId, outcome, by });
+  }
+
+  /** Open questions as the phone sees them. */
+  openQuestions() {
+    return [...this.questions.values()].filter((q) => q.state === "open").map(phoneQuestion);
+  }
+
+  /**
+   * The desktop's answer, through the same arbiter: the desktop may pick any
+   * option Pi offered. Returns `{ ok, error? }`; nothing reaches Pi twice.
+   */
+  answerFromDesktop(piId, answer) {
+    if (!this.pi) return { ok: false, error: "no such question" };
+    const q = this.byPiId.get(piId);
+    if (q && q.state !== "open") return { ok: false, error: q.state === "answered" ? "that question was already answered" : `that question ${q.state === "expired" ? "expired" : "was cancelled"}` };
+    const request = q ? q.request : this.pi.dialog(piId);
+    if (!request) return { ok: false, error: "that question was already answered" };
+    const response = buildUiResponse(request, answer);
+    if (q) this.#close(q, "answered", "desktop");
+    return { ok: this.pi.answer(response) };
+  }
+
+  // ---- phone writes, idempotent per device and submission ------------------------
+
+  #remember(deviceId, submissionId, run) {
+    const key = `${deviceId}:${submissionId}`;
+    const now = this.now();
+    for (const [k, v] of this.submissions) if (now - v.at > LIMITS.submissionMemoryMs) this.submissions.delete(k);
+    const known = this.submissions.get(key);
+    if (known) return known.result;
+    const result = run();
+    this.submissions.set(key, { at: now, result });
+    return result;
+  }
+
+  /** `request` is validateRequest's answer op. Resolves to `{ ok, code? }`. */
+  answerFromPhone(deviceId, request) {
+    return this.#remember(deviceId, request.submissionId, () => {
+      const q = this.questions.get(request.questionId);
+      const decision = decideAnswer({ question: q, request, incarnation: this.incarnation });
+      if (!decision.ok) return decision;
+      // Decided and closed in this same synchronous step: a desktop answer
+      // arriving next finds the question answered.
+      this.#close(q, "answered", "phone");
+      if (!this.pi || !this.pi.answer(decision.response)) return { ok: false, code: "already-answered" };
+      return { ok: true };
+    });
+  }
+
+  chat(deviceId, request) {
+    return this.#remember(deviceId, request.submissionId, () => {
+      if (request.incarnation !== this.incarnation) return { ok: false, code: "wrong-session" };
+      if (!this.pi || this.pi.exited) return { ok: false, code: "pi-not-running" };
+      // While coop works the message waits its turn; the phone never steers.
+      const command = this.status === "running" ? { type: "follow_up", message: request.text } : { type: "prompt", message: request.text };
+      this.pi.request(command, { timeoutMs: 0 }).catch(() => {});
+      return { ok: true };
+    });
+  }
+
+  stop(deviceId, request) {
+    return this.#remember(deviceId, request.submissionId, () => {
+      if (request.incarnation !== this.incarnation) return { ok: false, code: "wrong-session" };
+      if (!this.pi || this.pi.exited) return { ok: false, code: "pi-not-running" };
+      this.pi.request({ type: "abort" }).catch(() => {});
+      return { ok: true };
+    });
+  }
+
+  // ---- reads -------------------------------------------------------------
+
+  /** The authoritative state for a phone that is starting or resyncing. */
+  async snapshot() {
+    let messages = [];
+    if (this.pi && !this.pi.exited) {
+      try {
+        const response = await this.pi.request({ type: "get_messages" });
+        const list = response.success && response.data && Array.isArray(response.data.messages) ? response.data.messages : [];
+        messages = list
+          .filter((m) => m && (m.role === "user" || m.role === "assistant"))
+          .map((m, i) => ({ id: `h${i}`, role: m.role, text: messageText(m.content), final: true }))
+          .filter((m) => m.text)
+          .slice(-SNAPSHOT_MESSAGES);
+      } catch { /* the stream will catch up */ }
+    }
+    const last = this.buffer[this.buffer.length - 1];
+    return {
+      v: 1,
+      ...this.identity(),
+      status: this.pi && this.pi.exited ? "exited" : this.status,
+      messages: this.partial ? [...messages, { id: this.partial.id, role: "assistant", text: this.partial.text, final: false }] : messages,
+      questions: this.openQuestions(),
+      lastEventId: last ? last.id : `${this.incarnation}:0`,
+    };
+  }
+
+  /** Where a reconnecting stream starts: `{ mode: "replay", events }` or `{ mode: "snapshot", reason }`. */
+  resume(lastEventId) {
+    const first = this.buffer[0];
+    const last = this.buffer[this.buffer.length - 1];
+    const point = resumePoint(lastEventId, { incarnation: this.incarnation, firstSeq: first ? first.seq : 0, lastSeq: last ? last.seq : 0 });
+    if (point.mode !== "replay") return point;
+    return { mode: "replay", events: this.buffer.filter((event) => event.seq >= point.from) };
+  }
+}

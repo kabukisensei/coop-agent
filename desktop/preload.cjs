@@ -68,6 +68,8 @@ contextBridge.exposeInMainWorld("coop", Object.freeze({
   // A fresh vibe (tip) for the empty screen and the working line; a set name switches the pool.
   vibe: (set) => ipcRenderer.invoke("coop:vibe", String(set || "")),
   onEvent: listen("pi:event"),
+  // A question answered on the phone, or expired (MC2): its card closes here.
+  onDialogClosed: listen("coop:dialog-closed"),
   onExit: listen("pi:exit"),
   onNotice: listen("pi:notice"),
   onTheme: listen("coop:theme"),

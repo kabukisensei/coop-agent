@@ -338,6 +338,8 @@ echo "→ coop window package (D1c): the package bootstrap, electron-builder con
 node "$ROOT/tests/desktop-installer.test.mjs"
 echo "→ phone companion contract (MC1): requests, device grants, questions, answers, reconnect"
 node "$ROOT/tests/companion-protocol.test.mjs"
+echo "→ phone companion server and page (MC2, MC3): hub, arbiter, loopback server, the page"
+node "$ROOT/tests/companion-server.test.mjs"
 
 # ============================================================================
 # EXTENDED LANE (only with COOP_TEST_EXTENDED=1)

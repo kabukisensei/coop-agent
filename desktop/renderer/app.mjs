@@ -222,11 +222,25 @@ function answer(request, value) {
   });
 }
 
+// Cards Pi is waiting on, by dialog id, so an answer given on the phone (MC2)
+// closes the same card here.
+const openCards = new Map();
+
+/** The phone answered this question, or it expired: close its card without answering. */
+function closeDialog(id) {
+  const card = openCards.get(id);
+  if (!card) return;
+  openCards.delete(id);
+  card.answered();
+  card.modal.close();
+}
+
 function showDialog(request) {
   let answered = false;
-  const reply = (value) => { if (!answered) { answered = true; answer(request, value); } };
+  const reply = (value) => { if (!answered) { answered = true; openCards.delete(request.id); answer(request, value); } };
   const title = clean(request.title);
   let modal;
+  const track = (m) => { modal = m; openCards.set(request.id, { modal: m, answered: () => { answered = true; } }); };
   if (request.method === "select") {
     const options = Array.isArray(request.options) ? request.options.map(String) : [];
     // An ask_user_question (its RPC form numbers the options): a card with the
@@ -240,6 +254,7 @@ function showDialog(request) {
         ? question.options.map((option) => ({ label: clean(option.label), detail: clean(option.description), value: option.value, className: option.other ? "other" : "" }))
         : options.map((option) => ({ label: clean(option), value: option })),
       filter: !question && options.length > 12,
+      onOpen: track,
     }).then((value) => reply(value === undefined ? { cancelled: true } : { value }));
   } else if (request.method === "confirm") {
     // An approval card: what is being approved stands apart as code, the
@@ -253,7 +268,7 @@ function showDialog(request) {
         ? el("pre", { class: "dialog-code" }, el("code", { text: block.text }))
         : el("p", { class: "dialog-message", text: block.text }))),
       parsed.question ? el("p", { class: "dialog-question", text: parsed.question }) : null);
-    modal = openModal({
+    track(openModal({
       title: title || "coop",
       titleIcon: /guardrail/i.test(title) ? "shield" : "",
       body,
@@ -263,7 +278,7 @@ function showDialog(request) {
         { label: labels.yes, kind: labels.risky ? "danger" : "", onClick: () => reply({ confirmed: true }) },
         { label: labels.no, kind: "primary", onClick: () => reply({ confirmed: false }) },
       ],
-    });
+    }));
     // The safe answer has the focus and the primary style: Enter alone never approves.
     requestAnimationFrame(() => { const no = modal.root.querySelectorAll(".modal-buttons .btn")[1]; if (no) no.focus(); });
   } else if (request.method === "input" && parseQuestionMulti(title)) {
@@ -278,13 +293,13 @@ function showDialog(request) {
       el("span", { class: "check-text" }, el("span", { class: "option-label", text: clean(option.label) }), option.description ? el("span", { class: "option-detail", text: clean(option.description) }) : null)));
     const submit = () => reply({ value: multiAnswer(selected, typed.value) });
     typed.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); submit(); modal.close(); } });
-    modal = openModal({
+    track(openModal({
       title: question.header ? `Question: ${clean(question.header)}` : "Question",
       body: el("div", { class: "dialog-text" }, el("p", { class: "dialog-message", text: clean(question.question) }), el("div", { class: "check-list" }, rows), typed, el("p", { class: "hint", text: "Tick all that apply, or type an answer." })),
       wide: true,
       onCancel: () => reply({ cancelled: true }),
       buttons: [{ label: "Answer", kind: "primary", onClick: submit }, { label: "Cancel", onClick: () => reply({ cancelled: true }) }],
-    });
+    }));
   } else {
     const multi = request.method === "editor";
     const field = multi
@@ -295,17 +310,17 @@ function showDialog(request) {
     field.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && (!multi || event.ctrlKey)) { event.preventDefault(); submit(); modal.close(); }
     });
-    modal = openModal({
+    track(openModal({
       title: multi ? title || "Edit" : "coop",
       body: el("div", { class: "dialog-text" }, multi ? null : el("p", { class: "dialog-message", text: title }), field, multi ? el("p", { class: "hint", text: "Ctrl+Enter saves" }) : null),
       wide: multi,
       onCancel: () => reply({ cancelled: true }),
       buttons: [{ label: multi ? "Save" : "OK", kind: "primary", onClick: submit }, { label: "Cancel", onClick: () => reply({ cancelled: true }) }],
-    });
+    }));
   }
   if (Number(request.timeout) > 0 && modal) {
     // Pi answers for the user when the question times out.
-    setTimeout(() => { if (!answered) { answered = true; modal.close(); } }, Number(request.timeout));
+    setTimeout(() => { if (!answered) { answered = true; openCards.delete(request.id); modal.close(); } }, Number(request.timeout));
   }
 }
 
@@ -1498,6 +1513,7 @@ async function boot() {
   registerPanes();
   wire();
   coop.onEvent(onEvent);
+  coop.onDialogClosed((closed) => { if (closed && typeof closed.id === "string") closeDialog(closed.id); });
   coop.onExit(onExit);
   coop.onNotice((notice) => toast(clean(notice.message), notice.level || "info"));
   coop.onTheme((theme) => applyTheme(theme));
