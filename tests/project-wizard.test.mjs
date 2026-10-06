@@ -581,6 +581,22 @@ await t("C1: opened in the folder that holds the repositories, the one repositor
   assert.match(contractLocationNote(several), /Several repositories inside this folder have a project file \(analytics, reports\)\. Open coop in the repository you mean/);
 });
 
+await t("C1: coop's own checkout is never the team project (home folder, sibling, proposal)", () => {
+  const home = trackFixture(mkdtempSync(join(tmpdir(), "coop-c1-home-")));
+  skipIfContaminated(home);
+  const coop = join(home, "coop-agent");
+  for (const sub of [".git", ".coop", "bin", "lib"]) mkdirSync(join(coop, sub), { recursive: true });
+  writeFileSync(join(coop, "bin", "coop.ps1"), "");
+  writeFileSync(join(coop, "lib", "common.ps1"), "");
+  writeFileSync(join(coop, ".coop", "project.yml"), "repositories:\n  fabric:\n    local_path: \"../fabric\"\n");
+  mkdirSync(join(home, "fabric", ".git"), { recursive: true });
+  assert.equal(lib.isCoopCheckout(coop), true);
+  assert.equal(lib.findChildContract(home), null, "opened from the home folder, coop's checkout is not the project");
+  assert.deepEqual(lib.childRepositories(home), ["fabric"]);
+  assert.equal(findSiblingContract(join(home, "fabric")), null, "a repository beside coop's checkout never takes its sample");
+  assert.equal(proposeContractRoot(join(home, "fabric")).kind, "git-root");
+});
+
 await t("C1: /setup-project below a committed root contract edits that contract and writes no copy", async () => {
   const client = trackFixture(mkdtempSync(join(tmpdir(), "coop-c1-edit-")));
   skipIfContaminated(client);
