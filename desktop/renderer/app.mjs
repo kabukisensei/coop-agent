@@ -13,6 +13,8 @@ import { mountProject } from "./pane-project.mjs";
 import { mountDocs } from "./pane-docs.mjs";
 import { makeResizer, sidebarMaxWidth } from "./resize.mjs";
 import { attachmentNote } from "./attach-note.mjs";
+import { widgetView } from "./widgets.mjs";
+import { COLLAPSE_KEY, TODO_TOOL, applyTodoResult, createTodos, startTurn, todoLines, todosFromMessages } from "./todos.mjs";
 import { setupItems, setupItem, setupSummary, EXAMPLES } from "./welcome.mjs";
 import { parseConfirm, confirmLabels, parseQuestionSelect, parseQuestionMulti, multiAnswer } from "./dialogs.mjs";
 import { imageBudgetProblem, restoreDraft } from "./draft.mjs";
@@ -36,6 +38,8 @@ const app = {
   sessions: [],
   statuses: new Map(),
   widgets: new Map(),
+  widgetsCollapsed: false, // Alt+T: the widgets above the prompt show only their first line
+  todos: createTodos(), // the todo panel, rebuilt from the session's `todo` tool results (todos.mjs)
   attachments: [], // { kind: image | text | office | pdf | pending, ... } from lib/attachments.mjs
   vibe: "", // the tip under the splash and on the working line; a fresh one each turn
   setup: [], // what this machine still owes before coop works fully (welcome.mjs)
@@ -111,6 +115,7 @@ async function refreshCommands() {
 /** Reload everything from Pi: after start, a session switch, new, fork. */
 async function refreshAll() {
   const [state, messages] = await Promise.all([cmd({ type: "get_state" }), cmd({ type: "get_messages" })]);
+  const previousSession = app.state ? app.state.sessionId : undefined;
   if (state.success && state.data) {
     app.state = state.data;
     app.tl.sessionName = state.data.sessionName;
@@ -118,6 +123,11 @@ async function refreshAll() {
   }
   if (messages.success && messages.data) {
     loadMessages(app.tl, messages.data.messages);
+    // The todo panel follows the session: a compaction leaves the list in the
+    // session branch but out of get_messages, so the same session keeps its panel.
+    const todos = todosFromMessages(messages.data.messages);
+    if (todos.found || !app.state || app.state.sessionId !== previousSession) app.todos = todos;
+    renderWidgets();
     app.tl.busy = Boolean(app.state && app.state.isStreaming);
     app.tl.sessionName = app.state ? app.state.sessionName : undefined;
     app.tl.thinkingLevel = app.state ? app.state.thinkingLevel : undefined;
@@ -138,7 +148,8 @@ function onEvent(event) {
   const { changed, status } = applyEvent(app.tl, event);
   for (const id of changed) redraw(id);
   if (status) { renderBusy(); renderHeader(); }
-  if (event.type === "agent_start") freshVibe();
+  if (event.type === "agent_start") { freshVibe(); startTurn(app.todos); renderWidgets(); }
+  if (event.type === "tool_execution_end" && event.toolName === TODO_TOOL && applyTodoResult(app.todos, event.result)) renderWidgets();
   if (event.type === "agent_settled") {
     refreshState(); refreshStats(); loadSessions();
     // The changes pane follows coop's edits.
@@ -211,11 +222,25 @@ function answer(request, value) {
   });
 }
 
+// Cards Pi is waiting on, by dialog id, so an answer given on the phone (MC2)
+// closes the same card here.
+const openCards = new Map();
+
+/** The phone answered this question, or it expired: close its card without answering. */
+function closeDialog(id) {
+  const card = openCards.get(id);
+  if (!card) return;
+  openCards.delete(id);
+  card.answered();
+  card.modal.close();
+}
+
 function showDialog(request) {
   let answered = false;
-  const reply = (value) => { if (!answered) { answered = true; answer(request, value); } };
+  const reply = (value) => { if (!answered) { answered = true; openCards.delete(request.id); answer(request, value); } };
   const title = clean(request.title);
   let modal;
+  const track = (m) => { modal = m; openCards.set(request.id, { modal: m, answered: () => { answered = true; } }); };
   if (request.method === "select") {
     const options = Array.isArray(request.options) ? request.options.map(String) : [];
     // An ask_user_question (its RPC form numbers the options): a card with the
@@ -229,6 +254,7 @@ function showDialog(request) {
         ? question.options.map((option) => ({ label: clean(option.label), detail: clean(option.description), value: option.value, className: option.other ? "other" : "" }))
         : options.map((option) => ({ label: clean(option), value: option })),
       filter: !question && options.length > 12,
+      onOpen: track,
     }).then((value) => reply(value === undefined ? { cancelled: true } : { value }));
   } else if (request.method === "confirm") {
     // An approval card: what is being approved stands apart as code, the
@@ -242,7 +268,7 @@ function showDialog(request) {
         ? el("pre", { class: "dialog-code" }, el("code", { text: block.text }))
         : el("p", { class: "dialog-message", text: block.text }))),
       parsed.question ? el("p", { class: "dialog-question", text: parsed.question }) : null);
-    modal = openModal({
+    track(openModal({
       title: title || "coop",
       titleIcon: /guardrail/i.test(title) ? "shield" : "",
       body,
@@ -252,7 +278,7 @@ function showDialog(request) {
         { label: labels.yes, kind: labels.risky ? "danger" : "", onClick: () => reply({ confirmed: true }) },
         { label: labels.no, kind: "primary", onClick: () => reply({ confirmed: false }) },
       ],
-    });
+    }));
     // The safe answer has the focus and the primary style: Enter alone never approves.
     requestAnimationFrame(() => { const no = modal.root.querySelectorAll(".modal-buttons .btn")[1]; if (no) no.focus(); });
   } else if (request.method === "input" && parseQuestionMulti(title)) {
@@ -267,13 +293,13 @@ function showDialog(request) {
       el("span", { class: "check-text" }, el("span", { class: "option-label", text: clean(option.label) }), option.description ? el("span", { class: "option-detail", text: clean(option.description) }) : null)));
     const submit = () => reply({ value: multiAnswer(selected, typed.value) });
     typed.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); submit(); modal.close(); } });
-    modal = openModal({
+    track(openModal({
       title: question.header ? `Question: ${clean(question.header)}` : "Question",
       body: el("div", { class: "dialog-text" }, el("p", { class: "dialog-message", text: clean(question.question) }), el("div", { class: "check-list" }, rows), typed, el("p", { class: "hint", text: "Tick all that apply, or type an answer." })),
       wide: true,
       onCancel: () => reply({ cancelled: true }),
       buttons: [{ label: "Answer", kind: "primary", onClick: submit }, { label: "Cancel", onClick: () => reply({ cancelled: true }) }],
-    });
+    }));
   } else {
     const multi = request.method === "editor";
     const field = multi
@@ -284,17 +310,17 @@ function showDialog(request) {
     field.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && (!multi || event.ctrlKey)) { event.preventDefault(); submit(); modal.close(); }
     });
-    modal = openModal({
+    track(openModal({
       title: multi ? title || "Edit" : "coop",
       body: el("div", { class: "dialog-text" }, multi ? null : el("p", { class: "dialog-message", text: title }), field, multi ? el("p", { class: "hint", text: "Ctrl+Enter saves" }) : null),
       wide: multi,
       onCancel: () => reply({ cancelled: true }),
       buttons: [{ label: multi ? "Save" : "OK", kind: "primary", onClick: submit }, { label: "Cancel", onClick: () => reply({ cancelled: true }) }],
-    });
+    }));
   }
   if (Number(request.timeout) > 0 && modal) {
     // Pi answers for the user when the question times out.
-    setTimeout(() => { if (!answered) { answered = true; modal.close(); } }, Number(request.timeout));
+    setTimeout(() => { if (!answered) { answered = true; openCards.delete(request.id); modal.close(); } }, Number(request.timeout));
   }
 }
 
@@ -844,8 +870,9 @@ function modelLabel() {
 
 function renderHeader() {
   const info = app.info || {};
-  $("folderName").textContent = info.folder || "";
-  $("folderName").title = info.cwd || "";
+  // The client the project file names, then the folder (D1m).
+  $("folderName").textContent = info.client ? `${info.client} · ${info.folder}` : (info.folder || "");
+  $("folderName").title = info.contract ? `${info.cwd}\n${info.contract}` : (info.cwd || "");
   $("branchName").textContent = info.branch || "";
   $("branchName").hidden = !info.branch;
   const name = app.tl.sessionName || (app.state && app.state.sessionName) || "";
@@ -903,8 +930,12 @@ function renderWidgets() {
   for (const placement of ["above", "below"]) {
     const box = $(placement === "above" ? "widgetsAbove" : "widgetsBelow");
     const widgets = [...app.widgets.entries()].filter(([, widget]) => widget.placement === placement);
+    const collapsed = placement === "above" && app.widgetsCollapsed;
+    // The todo panel first, as the extension's overlay sits right above the prompt.
+    const todo = placement === "above" ? todoLines(app.todos, { collapsed, rows: app.prefs.expandTools ? Infinity : undefined }) : [];
+    if (todo.length) widgets.unshift(["coop-todos", { lines: todo, placement, rendered: true }]);
     box.hidden = !widgets.length;
-    box.replaceChildren(...widgets.map(([key, widget]) => el("pre", { class: "widget", title: key }, el("code", { text: widget.lines.join("\n") }))));
+    box.replaceChildren(...widgets.map(([key, widget]) => el("pre", { class: `widget${collapsed ? " collapsed" : ""}${key === "coop-todos" ? " todos" : ""}`, title: key }, el("code", { text: (widget.rendered ? widget.lines : widgetView(widget, collapsed)).join("\n") }))));
   }
 }
 
@@ -994,6 +1025,7 @@ async function restartNow() {
   app.running = true;
   app.statuses.clear();
   app.widgets.clear();
+  app.todos = createTodos();
   renderWidgets();
   const result = await coop.restart();
   if (!result.success) { toast(result.error || "Could not restart coop.", "error"); return; }
@@ -1232,12 +1264,20 @@ function hotkeys() {
     // The tree view's own controls are listed in that view, not here.
     ...Object.entries(KEYS).filter(([id, k]) => !id.startsWith("app.tree.") && k.keys && k.keys !== "native" && k.keys !== "terminal").map(([, k]) => [k.keys, k.does]),
     ["Ctrl+= / Ctrl+-", "Zoom in or out (Ctrl+0 resets)"],
+    // The same key collapses the todo panel in the terminal (coop sync seeds it).
+    [COLLAPSE_KEY, "Collapse or expand the panels above the prompt (the todo list)"],
     // The side pane is the window's own; it has no terminal key to map.
     ...Object.values(ACTIONS).filter((action) => action.pane && action.keys).map((action) => [action.keys, action.label]),
   ];
   const seen = new Set();
   const unique = rows.filter(([keys, does]) => { const key = `${keys}|${does}`; if (seen.has(key)) return false; seen.add(key); return true; });
   openModal({ title: "Keyboard shortcuts", wide: true, body: el("table", { class: "keys" }, el("tbody", {}, unique.map(([keys, does]) => el("tr", {}, el("td", {}, el("kbd", { text: keys })), el("td", { text: does }))))), buttons: [{ label: "Close", kind: "primary" }] });
+}
+
+async function switchProject() {
+  const result = await coop.switchProject();
+  if (result.success) toast("Opening that project in a new coop window. A console shows coop's launch checks first, then the window opens.", "info");
+  else if (!result.cancelled) toast(result.error || "Could not open the project.", "warning");
 }
 
 async function openFolder() {
@@ -1265,6 +1305,7 @@ const ACTIONS = {
   quit: { label: "Close this window", keys: "Ctrl+W", run: () => window.close() },
   terminal: { label: "Open in terminal", run: (arg, name) => openTerminal(name ? `Run /${name}${arg ? ` ${arg}` : ""} there.` : "") },
   theme: { label: "Theme", run: () => chooseTheme() },
+  switch: { label: "Switch project", run: () => switchProject() },
   folder: { label: "Open a folder in a new window", run: () => openFolder() },
   start: { label: "Start menu: common tasks", run: () => sendPrompt("/start") },
   changes: { label: "Changes since the last commit", keys: "Ctrl+Shift+D", pane: true, run: () => openPane("changes") },
@@ -1370,6 +1411,7 @@ function onGlobalKey(event) {
   if (modalOpen()) return;
   if (ctrl && !event.shiftKey && !event.altKey && (event.key === "\\" || event.code === "Backslash")) { event.preventDefault(); togglePane(app.lastPane); return; }
   if (ctrl && !event.shiftKey && key === "f") { event.preventDefault(); app.finder.open(); return; }
+  if (event.altKey && !ctrl && !event.shiftKey && key === "t") { event.preventDefault(); app.widgetsCollapsed = !app.widgetsCollapsed; renderWidgets(); return; }
   if (ctrl && (event.key === "ArrowUp" || event.key === "ArrowDown")) { event.preventDefault(); jumpPrompt(event.key === "ArrowUp" ? -1 : 1); return; }
   // Page keys scroll the conversation from the prompt, as in the terminal,
   // unless the prompt itself is long enough to need them.
@@ -1471,10 +1513,21 @@ async function boot() {
   registerPanes();
   wire();
   coop.onEvent(onEvent);
+  coop.onDialogClosed((closed) => { if (closed && typeof closed.id === "string") closeDialog(closed.id); });
   coop.onExit(onExit);
   coop.onNotice((notice) => toast(clean(notice.message), notice.level || "info"));
   coop.onTheme((theme) => applyTheme(theme));
   coop.onMenu((menu) => { if (menu && typeof menu.action === "string") runAction(menu.action); });
+  coop.onRefresh(async (change) => {
+    if (change && change.action === "reload") {
+      await restart();
+      toast("The phone restarted coop on this session.", "info");
+      return;
+    }
+    await refreshAll();
+    const what = { new: "started a new session", resume: "opened a saved session", fork: "forked the session", clone: "cloned the session" }[change && change.action];
+    if (what) toast(`The phone ${what}.`, "info");
+  });
   app.info = await coop.ready();
   app.vibe = String(app.info.vibe || "");
   applyTheme(app.info);

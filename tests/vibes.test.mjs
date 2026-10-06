@@ -323,11 +323,11 @@ const powerlineSrc = readFileSync(join(ROOT, "extensions/coop-powerline/index.ts
   else ko("{user} placeholder used in a tips section", placeholderTips.map(({ line }) => line).join(" | "));
   const substitutes =
     powerlineSrc.includes("function fillVibe(") &&
-    powerlineSrc.includes('readFileSync(userProfilePath(), "utf8")') &&
+    powerlineSrc.includes("effectiveProfileName()") &&
     powerlineSrc.includes("userInfo().username") &&
     powerlineSrc.includes('return "Dave";') &&
     /const pickVibe = \(\): string => fillVibe\(/.test(powerlineSrc);
-  if (substitutes) ok("coop-powerline fills {user} from the COOP profile, then the OS login, then Dave");
+  if (substitutes) ok("coop-powerline fills {user} from the COOP profile (per-user, else machine-level), then the OS login, then Dave");
   else ko("coop-powerline does not substitute {user} in picked vibes");
 }
 

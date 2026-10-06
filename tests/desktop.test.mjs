@@ -19,7 +19,8 @@ import { JsonlSplitter, encodeLine } from "../desktop/lib/jsonl.mjs";
 import { SpecError, parseSpec, piArgv, piEnv } from "../desktop/lib/spec.mjs";
 import { CommandError, IMAGE_LIMITS, buildCommand, buildUiResponse } from "../desktop/lib/rpc-commands.mjs";
 import { CSP, isAppUrl, resolveAsset } from "../desktop/lib/serve.mjs";
-import { THEMES, loadSettings, saveSettings } from "../desktop/lib/settings.mjs";
+import { THEMES, fitToScreen, loadSettings, saveSettings } from "../desktop/lib/settings.mjs";
+import { MAX_PROJECTS, describeProject, forgetProject, projectEntries, rememberProject, startFolder, teamWord, windowTitle } from "../desktop/lib/projects.mjs";
 import { isSessionPath, listSessions, sessionFolderName } from "../desktop/lib/sessions.mjs";
 import { readBranch } from "../desktop/lib/git.mjs";
 import { consoleProcess } from "../desktop/lib/terminal.mjs";
@@ -35,6 +36,8 @@ import { activitySummary, applyEvent, createTimeline, finishBash, loadMessages, 
 import { isSafeLink, parseMarkdown } from "../desktop/renderer/markdown.mjs";
 import { diffStats, parseEditDiff } from "../desktop/renderer/diff.mjs";
 import { matchOffsets } from "../desktop/renderer/find.mjs";
+import { widgetView } from "../desktop/renderer/widgets.mjs";
+import { COLLAPSE_KEY, MAX_ROWS, applyTodoResult, createTodos, startTurn, todoLines, todosFromMessages } from "../desktop/renderer/todos.mjs";
 import { lockProblems, runtimePackageJson } from "../desktop/scripts/runtime-lock.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -194,6 +197,14 @@ await check("replay: every recorded event type and extension request is one the 
   for (const method of UI_METHODS) assert.ok(app.includes(`"${method}"`) || main.includes(`"${method}"`), `no handler names ${method}`);
 });
 
+await check("theme: the native title bar and menu bar follow the chosen theme", () => {
+  const main = readFileSync(join(ROOT, "desktop", "main.mjs"), "utf8");
+  assert.match(main, /nativeTheme\.themeSource = theme === "auto" \? "system" : theme\.endsWith\("-dark"\) \? "dark" : "light"/, "themeSource maps auto/dark/light");
+  assert.ok(main.includes("applyNativeTheme(settings.theme);"), "applied at start, before any window opens");
+  // Every place a theme is chosen (the IPC handler and the menu) applies it natively.
+  assert.equal((main.match(/applyNativeTheme\(theme\);/g) || []).length, 2, "the IPC theme handler and the menu both apply it");
+});
+
 function replay() {
   const tl = createTimeline();
   const bash = new Map();
@@ -214,13 +225,13 @@ function shape(tl) {
 await check("replay: the live events build the conversation the terminal shows", () => {
   const tl = replay();
   const { kinds, tools } = shape(tl);
-  assert.deepEqual(kinds, ["user", "standards", "assistant", "assistant", "assistant", "assistant"]);
-  assert.deepEqual(tools, ["ask_user_question:done", "edit:done", "bash:error"]);
+  assert.deepEqual(kinds, ["user", "standards", "assistant", "assistant", "assistant", "assistant", "assistant"]);
+  assert.deepEqual(tools, ["ask_user_question:done", "todo:done", "edit:done", "todo:done", "bash:error"]);
   assert.equal(tl.items.find((i) => i.kind === "user").text, "Tidy report.sql and clear the build folder");
   const answers = tl.items.filter((i) => i.kind === "assistant");
   assert.ok(answers.every((item) => !item.streaming));
   assert.ok(answers[0].blocks.some((b) => b.type === "thinking" && b.text.includes("Ask which layout first")));
-  assert.match(answers[3].blocks.find((b) => b.type === "text").text, /\| Object \| Change \|/);
+  assert.match(answers[4].blocks.find((b) => b.type === "text").text, /\| Object \| Change \|/);
   const bashTool = [...tl.tools.values()].find((t) => t.name === "bash");
   assert.match(bashTool.result.text, /blocked the rm -rf command \(you declined\)/);
   assert.equal(toolSummary("bash", bashTool.args), "rm -rf build");
@@ -241,7 +252,7 @@ await check("replay: the edit's diff, the shell command and the compaction notic
   assert.equal(shell.running, false);
   const compacted = tl.items.filter((i) => i.kind === "notice");
   assert.equal(compacted.length, 1);
-  assert.match(compacted[0].text, /^Compacted the conversation: about 2k tokens down to \d+k\.$/);
+  assert.match(compacted[0].text, /^Compacted the conversation: about \dk tokens down to \d+k\.$/);
 });
 
 await check("replay: a saved conversation (get_messages) loads the same as the live one", () => {
@@ -435,7 +446,7 @@ await check("menu: the template runs window actions, themes are radios, notifica
   const theme = view.find((item) => item.label === "Theme");
   assert.deepEqual(theme.submenu.map((item) => [item.label, item.checked]), [["Match Windows", false], ["Modern dark", false], ["Modern light", false], ["Retro dark", true], ["Retro light", false]]);
   for (const menu of template) for (const item of menu.submenu) if (item.click && item.label && !item.role && !item.submenu && item.type !== "checkbox" && !/Install guide|About/.test(item.label)) item.click();
-  assert.ok(ran.includes("new") && ran.includes("hotkeys") && ran.includes("start") && ran.includes("pane"));
+  assert.ok(ran.includes("new") && ran.includes("hotkeys") && ran.includes("start") && ran.includes("pane") && ran.includes("switch"), "File > Switch project runs the picker action (D1m)");
   assert.equal(notificationFor({ type: "agent_end" }, { folder: "work" }), "coop finished in work.");
   assert.equal(notificationFor({ type: "extension_ui_request", method: "confirm", title: "coop guardrails" }), "coop is waiting for your answer: coop guardrails");
   assert.equal(notificationFor({ type: "extension_ui_request", method: "setStatus" }), "");
@@ -507,10 +518,65 @@ await check("settings: unknown values fall back, the four themes and auto are ke
   assert.deepEqual(THEMES, ["auto", "modern-dark", "modern-light", "retro-dark", "retro-light"]);
   const file = join(temp, "settings", "window.json");
   assert.equal(loadSettings(file).theme, "auto");
-  assert.deepEqual(saveSettings(file, { theme: "retro-light", width: 99999, height: 900, maximized: "yes", extra: 1 }), { theme: "retro-light", width: 1280, height: 900, maximized: false, lastFolder: "", notify: true, menuBar: true });
+  assert.deepEqual(saveSettings(file, { theme: "retro-light", width: 99999, height: 900, maximized: "yes", extra: 1 }), { theme: "retro-light", width: 1280, height: 900, maximized: false, lastFolder: "", notify: true, menuBar: true, projects: [], openNextTime: "", companionOrigin: "" });
   assert.equal(loadSettings(file).theme, "retro-light");
+  assert.deepEqual(saveSettings(file, { projects: ["C:\\work\\a", 7, "bad\nname", "C:\\work\\b"], openNextTime: "C:\\work\\a" }).projects, ["C:\\work\\a", "C:\\work\\b"]);
+  assert.equal(loadSettings(file).openNextTime, "C:\\work\\a");
   writeFileSync(file, "{not json");
   assert.equal(loadSettings(file).theme, "auto");
+  // The window fits a small screen (MC4 on a VM display): never larger than the work area, never under the minimums.
+  assert.deepEqual(fitToScreen({ width: 1280, height: 860 }, { width: 1366, height: 728 }), { width: 1280, height: 728 });
+  assert.deepEqual(fitToScreen({ width: 1280, height: 860 }, { width: 600, height: 400 }), { width: 640, height: 420 });
+  assert.deepEqual(fitToScreen({ width: 1000, height: 700 }, undefined), { width: 1000, height: 700 });
+});
+
+await check("D1m projects: the picker's list, the folder the icon opens, the team word and the title", () => {
+  let settings = { projects: [], openNextTime: "" };
+  settings = rememberProject(settings, "C:\\work\\contoso-analytics", "win32");
+  settings = rememberProject(settings, "C:\\work\\fabrikam", "win32");
+  settings = rememberProject(settings, "c:\\WORK\\contoso-analytics", "win32");
+  assert.deepEqual(settings.projects, ["c:\\WORK\\contoso-analytics", "C:\\work\\fabrikam"], "newest first, one entry per folder whatever the case on Windows");
+  for (let i = 0; i < 20; i += 1) settings = rememberProject(settings, `/work/p${i}`, "linux");
+  assert.equal(settings.projects.length, MAX_PROJECTS);
+  settings = rememberProject({ projects: ["/a", "/b"], openNextTime: "/b" }, "/c", "linux");
+  assert.equal(startFolder(settings, () => true), "/b");
+  assert.equal(startFolder(settings, () => false), "", "a folder that is gone asks again");
+  assert.equal(startFolder({ projects: [], openNextTime: "" }, () => true), "");
+  settings = forgetProject(settings, "/b", "linux");
+  assert.deepEqual([settings.projects, settings.openNextTime], [["/c", "/a"], ""], "forgetting the default clears it");
+  assert.equal(teamWord({ state: "not-shared" }), "Not shared yet");
+  assert.equal(teamWord({ state: "no-remote", localExists: true }), "Not shared yet");
+  assert.equal(teamWord({ state: "no-remote", localExists: false }), "");
+  assert.equal(teamWord({ state: "team-newer" }), "The team has a newer file");
+  assert.equal(teamWord({ state: "shared" }), "");
+  assert.equal(teamWord(null), "");
+
+  const root = join(temp, "picker");
+  const home = join(root, "contoso-coop");
+  const analytics = join(root, "contoso-analytics");
+  mkdirSync(join(home, ".coop"), { recursive: true });
+  mkdirSync(analytics, { recursive: true });
+  writeFileSync(join(home, ".coop", "project.yml"), "profile:\n  client: 'Contoso Retail'\nrepositories:\n  analytics:\n    local_path: '../contoso-analytics'\n");
+  const readers = {
+    contractFor: (folder) => (folder === analytics || folder === home ? join(home, ".coop", "project.yml") : null),
+    branch: (folder) => (folder === analytics ? "main" : ""),
+    team: (dir) => ({ state: dir === home ? "not-shared" : "shared", localExists: true }),
+  };
+  const fromSource = describeProject(analytics, readers);
+  assert.deepEqual(fromSource, { path: analytics, name: "contoso-analytics", exists: true, contract: join(home, ".coop", "project.yml"), root: home, client: "Contoso Retail", home: true, branch: "main", team: "Not shared yet" }, "a source repository shows the client from the home repository beside it");
+  const fromHome = describeProject(home, readers);
+  assert.deepEqual([fromHome.client, fromHome.home, fromHome.branch], ["Contoso Retail", false, ""]);
+  const plain = describeProject(join(root, "plain"), readers);
+  assert.equal(plain.exists, false);
+  mkdirSync(join(root, "plain"));
+  assert.deepEqual([describeProject(join(root, "plain"), readers).client, describeProject(join(root, "plain"), readers).contract], ["", ""], "a folder with no project file is listed without a client");
+  const entries = projectEntries({ projects: [analytics, join(root, "gone"), home] }, readers);
+  assert.deepEqual(entries.map((entry) => entry.name), ["contoso-analytics", "contoso-coop"], "a folder that is gone is dropped");
+  assert.equal(windowTitle(fromSource), "coop - Contoso Retail · contoso-analytics");
+  assert.equal(windowTitle(describeProject(join(root, "plain"), readers)), "coop - plain");
+  assert.equal(resolveAsset(join(ROOT, "desktop", "renderer"), "coop://app/picker.html").type, "text/html; charset=utf-8", "the picker page is served like the main one");
+  const preload = readFileSync(join(ROOT, "desktop", "preload.cjs"), "utf8");
+  for (const name of ["switchProject", "pickerList", "pickerOpen", "pickerBrowse", "pickerForget", "pickerCancel", "pickerTheme"]) assert.ok(preload.includes(`${name}:`), `preload exposes ${name}`);
 });
 
 await check("sessions: Pi's folder naming, listing and the switch guard", () => {
@@ -682,6 +748,80 @@ await check("turns: consecutive assistant messages are one turn, anything else b
   const tl = createTimeline();
   for (const line of out((m) => typeof m.type === "string")) applyEvent(tl, line);
   for (const turn of turns(tl.items).filter((t) => t[0].kind === "assistant")) assert.ok(turn.every((item) => item.kind === "assistant") && turnOf(tl.items, turn[0].id).length === turn.length);
+});
+
+// --- The todo panel (desktop/renderer/todos.mjs) -------------------------------
+// rpiv-todo draws its panel as a TUI component, which Pi's RPC mode drops (the
+// recording carries only its setWidget removal), so the window rebuilds the
+// panel from the `todo` tool results, live and on load.
+await check("todos: the recording carries the todo tool's results, not a widget, and the live events build the panel", () => {
+  const widgets = out((m) => m.type === "extension_ui_request" && m.method === "setWidget" && m.widgetKey === "rpiv-todos");
+  assert.ok(widgets.every((m) => m.widgetLines === undefined), "RPC now forwards rpiv-todo's panel: render it from setWidget instead");
+  const state = createTodos();
+  const lines = [];
+  for (const { dir, msg } of FIXTURE) {
+    if (dir !== "out") continue;
+    if (msg.type === "agent_start") startTurn(state);
+    if (msg.type === "tool_execution_end" && msg.toolName === "todo" && applyTodoResult(state, msg.result)) lines.push(todoLines(state));
+  }
+  assert.deepEqual(lines, [
+    ["● Todos (0/1)", "└─ ○ Format report.sql"],
+    ["○ Todos (1/1)", "└─ ✓ Format report.sql"],
+  ]);
+  // The completed row leaves the panel when the next turn starts.
+  startTurn(state);
+  assert.deepEqual(todoLines(state), []);
+});
+
+await check("todos: a saved conversation (get_messages) loads the list; after a compaction the same session keeps it", () => {
+  const [before, after] = response("get_messages");
+  const loaded = todosFromMessages(before.data.messages);
+  assert.equal(loaded.found, true);
+  assert.deepEqual(loaded.tasks.map((t) => [t.id, t.status]), [[1, "completed"]]);
+  assert.deepEqual(todoLines(loaded), [], "rows completed in an earlier turn stay out of the way on a resume");
+  const compacted = todosFromMessages(after.data.messages);
+  assert.equal(compacted.found, false);
+  assert.deepEqual(compacted.tasks, []);
+  assert.deepEqual(todosFromMessages(undefined).tasks, []);
+});
+
+await check("todos: the panel's lines follow the terminal overlay (glyphs, activeForm, dependencies, ids, budget, collapse)", () => {
+  const state = createTodos();
+  const task = (id, status, extra = {}) => ({ id, subject: `Task ${id}`, status, ...extra });
+  applyTodoResult(state, { details: { nextId: 4, tasks: [task(1, "completed"), task(2, "in_progress", { activeForm: "doing two" }), task(3, "pending")] } });
+  assert.deepEqual(todoLines(state), ["● Todos (1/3)", "├─ ✓ Task 1", "├─ ◐ Task 2 (doing two)", "└─ ○ Task 3"]);
+  assert.deepEqual(todoLines(state, { collapsed: true }), ["● Todos (1/3)", `└─ collapsed, ${COLLAPSE_KEY} expands`]);
+  // Ids show only when a dependency points at them; deleted tasks never show.
+  applyTodoResult(state, { details: { nextId: 5, tasks: [task(1, "deleted"), task(2, "in_progress"), task(3, "pending", { blockedBy: [2] }), task(4, "pending")] } });
+  assert.deepEqual(todoLines(state), ["● Todos (0/3)", "├─ ◐ #2 Task 2", "├─ ○ #3 Task 3 ⛓ #2", "└─ ○ #4 Task 4"]);
+  // A result without the snapshot changes nothing; a `clear` resets the hidden set.
+  assert.equal(applyTodoResult(state, { details: { error: "nope" } }), false);
+  assert.equal(applyTodoResult(state, undefined), false);
+  assert.equal(todoLines(state).length, 4);
+  // Budget: completed rows drop first, then the tail of the unfinished ones.
+  const many = Array.from({ length: 15 }, (_, i) => task(i + 1, i < 5 ? "completed" : "pending"));
+  applyTodoResult(state, { details: { nextId: 16, tasks: many } });
+  const full = todoLines(state);
+  assert.equal(full.length, MAX_ROWS);
+  assert.equal(full[0], "○ Todos (5/15)".replace("○", "●"));
+  // Eleven body rows, one of them the summary: the ten unfinished rows fill it and every completed row drops.
+  assert.equal(full[full.length - 1], "└─ +5 more (5 completed)");
+  assert.equal(todoLines(state, { rows: Infinity }).length, 16);
+  const unfinished = Array.from({ length: 15 }, (_, i) => task(i + 1, "pending"));
+  applyTodoResult(state, { details: { nextId: 16, tasks: unfinished } });
+  assert.equal(todoLines(state)[MAX_ROWS - 1], "└─ +5 more (5 pending)");
+  assert.equal(COLLAPSE_KEY, "Alt+T");
+  assert.match(PARITY, /Alt\+T collapses/);
+});
+
+await check("widgets: Alt+T collapses a widget to its heading and a count; a one-line widget stays as it is", () => {
+  const panel = { lines: ["● Todos (0/1)", "└─ ○ Format report.sql", ""] };
+  assert.deepEqual(widgetView(panel, false), panel.lines);
+  assert.deepEqual(widgetView(panel, true), ["● Todos (0/1)", "  … 1 more line (Alt+T expands)"]);
+  assert.deepEqual(widgetView({ lines: ["heading", "a", "b", "c"] }, true)[1], "  … 3 more lines (Alt+T expands)");
+  assert.deepEqual(widgetView({ lines: ["only a heading"] }, true), ["only a heading"]);
+  assert.deepEqual(widgetView({ lines: ["heading", "", " "] }, true), ["heading"]);
+  assert.deepEqual(widgetView({}, true), []);
 });
 
 // --- Terminal parity (desktop/PARITY.md) -------------------------------------------

@@ -227,8 +227,20 @@ evidence state, then the object's doc page and one line per upstream object,
 downstream object and relationship (`- name (type)`). The full slice is in
 `details.lineage` → the parsed JSON `{ object, schema, layer, source_file, upstream[],
 downstream[], relationships[], evidence }` (each up/downstream entry carries `id`,
-`name`, `type`, and `doc`, the per-object Markdown path). An ambiguous `object`
-lists the candidates (`{ query, ambiguous: true, matches[] }` in details; re-call
+`name`, `type`, and `doc`, the per-object Markdown path). With coop-data-doc 1.3.2+
+the slice also carries `loaded_by[]` (the Power BI tables whose partition names the
+object: `{ table, source, linked }`), rendered as a "Loaded by" list; a hit with
+`linked: false` is connected by name only (the SQL object is not documented or
+not resolved). A view the docs do not hold at all but a model loads
+(`{ object: null, undocumented_source: true, loaded_by[], downstream[] }`) is
+reported as "not a documented object, but N Power BI table(s) load it by name"
+instead of a failure, so the SQL side can stay outside the docs. When the contract
+declares `power_bi.table_mapping` (below), every slice about a SQL object ends with
+one "Declared mapping" line: `holds` when a loading table is one the rule or an
+override predicts, else `does not match`, naming the table the rule expected and
+none documented, the table that loads it outside the rule, or the missing prefix,
+so an empty "Loaded by" is never read as "no Power BI dependents". An ambiguous `object`
+lists the candidates (`{ query, ambiguous: true, matches[], loaded_by[] }` in details; re-call
 with a specific name); when there's
 no built graph, `content` says so and points at `build` / `/setup-docs` — you can
 still proceed without it. `object` is required: a blank one returns a usage note, not
@@ -297,7 +309,7 @@ catalog queries with the name bound through `OBJECT_ID(?)`, never spliced in:
 
 | Section | Query | Notes |
 | --- | --- | --- |
-| `downstream` | `sys.dm_sql_referencing_entities(?, 'OBJECT')` joined to `sys.objects` | who references the object, resolved at call time; where the target rejects that function (Fabric Warehouse), the `sys.sql_expression_dependencies` rows whose `referenced_id` is the object |
+| `downstream` | `sys.dm_sql_referencing_entities(?, 'OBJECT')` joined to `sys.objects` | who references the object, resolved at call time; where the target rejects that function (Fabric Warehouse), the `sys.sql_expression_dependencies` rows whose `referenced_id` is the object. Each dependent then carries `columns`, the object's columns it reads, from one bound `sys.dm_sql_referenced_entities(?, 'OBJECT')` query per dependent filtered to `referenced_minor_name` (SQ8; the first 50 dependents, the section's `column_references` says `ok`, `partial`, `unavailable` or `none`) |
 | `upstream` | `sys.sql_expression_dependencies` for the object's referenced entities, joined to `sys.objects` | each item carries `resolved`; an unresolved or ambiguous one (dropped, cross-database) adds `mentioned_in_definition` from a `sys.sql_modules` `LIKE` check |
 | `columns` | `INFORMATION_SCHEMA.COLUMNS` | name, type, nullability, position, so a before/after comparison knows what to count |
 
@@ -331,7 +343,97 @@ audit records a fixed label and the environment, never the object name. The tool
 text output adds a `data_doc` lineage hint when built docs exist in the folder, and
 the `impact-analysis` prompt and the `coop-workflow` skill call `sql_impact` before
 any live SQL edit. The text lists every item in each section (`- schema.name (type)`,
-unresolved references flagged; columns as `- name type NULL|NOT NULL`).
+unresolved references flagged, dependents with `uses <columns>`; columns as
+`- name type NULL|NOT NULL`). With a declared `power_bi.table_mapping`, an
+empty downstream list also says which semantic-model table the mapping expects
+to load the object, and that the catalog cannot see Power BI, so `data_doc
+lineage` confirms it.
+
+### Session lineage context (`lib/lineage-context.mjs`, `/impact`)
+
+Master plan row SQ8: coop holds the downstream of every SQL object it is about to
+change, filled once per object from the cheapest fresh source, and never re-runs a
+lookup it already holds. The store is one JSON file per Pi process under the agent
+dir (`lineage-context/<pid>.json`, keyed by lower-cased `schema.name`), because
+`coop-tools` fills it and `coop-guardrails` reads it; `session_start` and
+`session_shutdown` clear it, and files of Pi processes that are gone are pruned.
+
+| Step | Where | What happens |
+| --- | --- | --- |
+| before an `edit` or `write` of a `.sql` file | `coop-tools` `tool_call` hook (it loads before the guardrails, so it runs first) | the object comes from the file's `CREATE` statement, else the snapshot layout `<schema>/<name>.sql`, else `dbo.<stem>`; the committed catalog snapshot (SQ9) is scanned for the object's columns and every definition that names it, with the columns each one mentions; when built lineage docs exist, `coop-data-doc lineage` adds the docs' downstream and the Power BI tables that load it. A source already recorded for the object is not asked again |
+| the same call | `coop-guardrails` `tool_call` hook | `editGateDecision`: the edit goes through when any source holds the object, when every source that exists was tried, or when the file defines no object coop can name (a script); it is blocked, with a reason naming `sql_impact` for the object, when a live target (the contract's `sql_targets`, or a managed dev/test Fabric entry) could still answer and was never asked, including when the snapshot's answer is older than `catalog.max_age_days`. Audit kind `lineage-gate`, label the path, detail `lineage-not-held`; `read` is never gated |
+| `sql_impact` and `data_doc lineage` results | `coop-tools` `tool_result` hook | recorded for the object as the `live` and `docs` sources (any `sql_impact` answer counts as asked, so an unreachable target is a miss the gate accepts, never a lookup owed forever) |
+| the edit's result | `coop-tools` `tool_result` hook | one line appended: `Downstream of <object>: <dependent> (<kind>, uses <columns>); …` with the follow-on rule (a renamed or removed column breaks each one that uses it; an added column reaches them only when each is updated) and `/impact shows the detail`; with nothing found, the line says which sources were checked and that an empty result is not proof of zero impact |
+| `/impact [schema.name]` | registered command, no model turn, no budget cost | the detail for one object (sources, columns, each dependent with the columns it uses) or the summary line of every object held; `/explain impact` points here |
+
+A source's state per object is `hit`, `miss`, `stale` (the snapshot answered but is
+older than the contract's age, so a live lookup is still owed) or `absent` (the
+source does not exist here, or was never asked). The gate is the enforcement; the
+`coop-workflow` skill's step 3 describes the same order as guidance.
+
+### Declared layout and table mapping (`fabric.layout`, `power_bi.table_mapping`)
+
+Master plan C2 (demo of 2026-10-05: "I don't want the tool to assume anything").
+The contract states the two things coop used to assume; `lib/project-contract.mjs`
+reads and writes both, and `/setup-project`, the window's Project form and
+`coop init` ask for them with the Fabric / Power BI questions.
+
+| Key | Values | Meaning |
+| --- | --- | --- |
+| `fabric.layout` | `warehouse`, `lakehouse`, `sql_database`, `mixed`, or blank | The Fabric item kinds that hold the client's SQL. Proposed from `fabric.default_sql_endpoint.item_type`, then the dev `sql_targets` kind. Informational today: nothing is blocked by it. |
+| `power_bi.table_mapping.rule` | `same_name` (default) or `prefix` | `same_name`: a model table is named like the SQL object it loads (`dbo.vSales` or `vSales` loads `dbo.vSales`), the rule the "Loaded by" lineage uses. `prefix`: table `<name>` loads `default_schema.<view_prefix><name>`. |
+| `power_bi.table_mapping.default_schema` | one SQL identifier (default `dbo`) | The schema assumed for a model table named without one. |
+| `power_bi.table_mapping.view_prefix` | letters, digits, `_` (blank unless `rule: prefix`) | The prefix the model table names drop. |
+| `power_bi.table_mapping.overrides` | mapping, model table name to `schema.object` | Hand-edited exceptions; they win over the rule and are never rewritten by the wizard or the form (the form shows them read-only). |
+
+`tableMappingFromContract(text)` returns `{ declared, rule, defaultSchema,
+viewPrefix, overrides, layout }`; `declared` is false without the block, and an
+undeclared mapping is checked against nothing (older contracts keep today's
+behavior until `/setup-project` runs once). `expectedModelTables(mapping, schema,
+name)` and `expectedSqlObject(mapping, table)` are the two directions of the rule;
+`mappingCheckLines` (lineage) and `mappingExpectationLine` (sql_impact) render the
+texts above. The wizard writes `view_prefix: ''` for a `same_name` rule and never
+touches `overrides` once it holds entries.
+
+### `catalog_snapshot` (committed dev catalog snapshot)
+
+The committed dev catalog snapshot (master plan row SQ9, Joel's "schema file coop
+must follow" and "export of object definitions into a read-only folder" as one
+feature), implemented by `lib/catalog_snapshot.py` over the same connection path
+as `sql_impact` (`open_connection`: the contract's ready dev or test default,
+never production; same identity pinning, driver, encryption and timeouts). The
+tool accepts one optional field, `command`:
+
+| Command | What it does |
+| --- | --- |
+| `status` (default) | Reads the snapshot folder only, no connection: `missing`, `ok` or `stale` with the path, the time it was taken, its age and the object counts. |
+| `snapshot` | Runs three fixed, parameter-free catalog queries (`sys.objects`, `INFORMATION_SCHEMA.COLUMNS`, `sys.sql_modules`) and rewrites the folder: one `<schema>/<name>.sql` per object (tables as a `CREATE TABLE` built from their columns, types and nullability; views, procedures and functions as the definition the catalog holds), `manifest.json` (time taken, target environment, kind and database, counts, file list, anything unavailable or skipped) and a `README.md`. |
+
+The folder is `catalog.path` from the contract (relative to the contract root),
+else `<data_docs repository>/catalog/<environment>` when the contract names a
+`data_docs` repository, else `.coop/catalog/<environment>` beside the contract;
+`catalog.max_age_days` (default 7) decides when `status` and the session-start
+note call it stale. A folder that is not a snapshot (no `manifest.json`, not
+empty) is never overwritten (`output_not_snapshot`). No row data, credential,
+connection string or server name is written; a snapshot of a production target is
+refused (`target_not_dev_or_test`). Caps: 5000 objects, 200,000 columns, one
+million characters per definition; an object whose name is not a plain identifier,
+or whose definition the principal cannot read, is skipped and listed in the
+manifest. On a Lakehouse SQL endpoint the definitions are unavailable and the
+manifest says so; tables still land.
+
+Governance (`extensions/coop-guardrails`): `status` runs without a prompt or an
+audit row (it reads a folder); `snapshot` follows the `sql_impact` rule (a resolved
+dev or test target runs without a prompt, production or an unresolved target asks
+once per call and is blocked headlessly, any other field or command is blocked).
+The session-start note names the snapshot's state so coop reads the object's file
+before writing SQL, offers a refresh when it is stale, and offers the first
+snapshot when none exists (only where the contract has a `sql_targets` section;
+`coop doctor` applies the same gate). `coop catalog snapshot` and `coop catalog status` are
+the terminal forms; `coop doctor` reports the state in the project-contract
+section; `coop init --seed-docs` uses the folder as coop-data-doc's SQL source when
+the contract has no SQL repository. The snapshot is reference, never a deployment
+artifact: nothing runs from it.
 
 ---
 
@@ -391,7 +493,10 @@ semantic model edit can land (#159): the guardrail reads each call's
 session), and asks every time for deletes, whole-model imports, deploys, unknown
 operations and production. Manifest-pinned managed config is generated into coop's isolated agent dir
 (`~/.coop/agent/mcp-adapter.json`) from `~/.coop/config` by `coop onboard` / `coop sync`,
-and wired through `pi-mcp-adapter`.
+and wired through `pi-mcp-adapter`. The `fabric-sqlendpoint` entry's Warehouse target
+comes from the contract above the current folder, and every launch regenerates it
+for the folder coop starts in (`Update-CoopManagedMcpConfig`), so one shared config
+follows the last launch, not the last sync.
 
 Per `.coop/project.yml` and `docs/guardrails.md`:
 

@@ -197,7 +197,7 @@ dialogs as cards and lists.
 | `/start` | coop-tools | Pi | The Start Here menu, as a list. The empty window offers it too, and the first launch on a profile (`COOP_FIRST_RUN`, as the terminal) opens it once. |
 | `/setup-project` | coop-tools | Pi | The project wizard's questions, one dialog each. |
 | `/setup-docs` | coop-tools | Pi | The docs wizard's questions, or a notice when coop-data-doc lacks the native wizard. |
-| `/standards-status` | coop-tools | Pi | A notice and the JSON status in the conversation. |
+| `/standards-status` | coop-tools | Pi | A notice and the JSON status in the conversation. The Standards pane (Ctrl+Shift+S) shows the same status's domains and its team knowledge sources (`cooptimize/incremental-bi`, `cooptimize/coop-team-knowledge`), the notes of each clone readable one at a time; the terminal reads those clones through the team-knowledge skill's search. |
 | `/coop-live-read` | coop-tools | Pi | The live-read grant, or its revocation (`/coop-live-read revoke`). |
 | `/coop-approvals` | coop-tools | Pi | Edit approvals (`status`, `revoke`). |
 | `/coop-guardrails` | coop-guardrails | Pi | What the guardrails enforce. |
@@ -226,6 +226,7 @@ dialogs as cards and lists.
 | `/google-account` | pi-web-access | Pi | Answers in the conversation. |
 | `/search` | pi-web-access | Pi | Stored results, as a list or a notice. |
 | `/rename` | pi-lovely-rename | Pi | Names the session from the conversation. |
+| `/todos` | rpiv-todo | Pi | The task list grouped by status, as a notice (it joins the conversation when it is longer than a line). The live panel is the window's own (see Extension UI): the extension draws it as a TUI component, which RPC drops, so the window rebuilds the same panel from the `todo` tool results in the session (`desktop/renderer/todos.mjs`). Alt+T collapses it in both. |
 | `/llama` | Pi | terminal | The llama.cpp manager is interactive-mode only (Pi says so). |
 
 ## Prompt templates and skills
@@ -248,7 +249,7 @@ Pi's `docs/rpc-extension-ui.md`: what an extension can ask the window to show.
 | `editor` | window | A card with a multi-line editor. |
 | `notify` | window | One-line notices are toasts; longer reports join the conversation. |
 | `setStatus` | window | The status bar. |
-| `setWidget` | window | Lines above or below the prompt. |
+| `setWidget` | window | Lines above or below the prompt. Alt+T collapses the ones above the prompt to their first line and a count. The todo panel (`rpiv-todo`) is the one exception: it uses the factory form, which Pi drops in RPC (only its removal arrives), so the window draws that panel itself from the session's `todo` tool results, on load from `get_messages` and then from every `todo` result, with the overlay's glyphs, row budget and "completed rows leave at the next turn" rule; after a compaction the same session keeps its panel, and a reload after one starts it at the next `todo` call. Alt+T collapses it to the heading, the key `coop sync` seeds for the terminal panel (`~/.config/rpiv-todo/config.json`; the extension's default, Ctrl+Shift+T, is Pi's tree key). |
 | `setTitle` | window | The window title. |
 | `set_editor_text` | window | Fills the prompt. |
 | `custom()`, `setFooter`, `setHeader`, `setEditorComponent`, `onTerminalInput` | terminal | Terminal-only drawing. Pi makes them no-ops in RPC; each pinned extension's use is listed under Extension commands, and those screens open in the terminal. |
@@ -269,3 +270,63 @@ window's actions above; View > Menu bar hides it, Alt shows it again) and a
 Windows notification plus taskbar flash when a turn ends (`agent_end`) or an
 extension asks a question while the window is in the background (Settings >
 Notify in the background).
+
+## Phone companion
+
+Master plan rows MC1–MC11 (section 12.4): what a paired phone can do with the
+same live session, measured against the terminal rows above. Aaron asked on
+2026-10-06 for the phone to reach terminal parity over time. Each line is one
+terminal capability with its phone status:
+
+- **phone**: the phone does it today.
+- **MCn**: a gap, closed by that plan row.
+- **desk only**: deliberately not on the phone (the MC1 contract,
+  `desktop/COMPANION.md`); not a gap.
+- **not on a phone**: the window itself hands it to the terminal, or it ends
+  the phone's own access; the reason is given.
+
+### What the phone does today (MC2, MC3)
+
+| Capability | Status | On the phone |
+| --- | --- | --- |
+| Read the session | phone | The conversation's prompts and answers (Markdown), tool lines, notices and coop's status, live, with resume after a dropped connection. |
+| Send a message | phone | `prompt` when idle; while coop works Send now steers and Queue waits (`streamingBehavior`), as the window's Enter and Alt+Enter (MC6). |
+| Stop a turn | phone | `abort` (the terminal's Esc). |
+| Answer coop's questions | phone | `select`, `confirm`, `input`, `editor` and `ask_user_question` cards, first answer wins against the desk. |
+| Theme | phone | Modern or Retro, dark or light, from the phone's menu; on the phone Retro is the coop website's look (MC5). Kept on the phone. |
+
+### Gaps, in build order
+
+| Capability | Status | What closes it |
+| --- | --- | --- |
+| Extension commands, prompt templates and skills (`/start`, `/standards-status`, `/todos`, `/memory-*`, `/rename`, `/websearch`, `/search`, `/coop-approvals`, `/coop-live-read`, prompt templates such as `/spec-first`, `/skill:name`) | phone (MC6) | Typing `/` lists the commands Pi returned (`get_commands`) and sends the ones the window maps to **Pi** as typed; their dialogs and notices reach the phone. `/coop-approvals` and `/coop-live-read` only show or revoke, so they narrow access. |
+| Steer while coop works (Enter) and pull back queued messages (`clear_queue`, Alt+Up) | phone (MC6) | Send now and Queue while coop works; the queued messages show above the text box, and Edit queued brings them back into it. |
+| `/model`, `/thinking` (and Ctrl+P, Shift+Tab) | phone (MC7) | The menu's Model and Thinking sheets (`get_available_models`, `set_model`, `set_thinking_level`); a model must be one Pi lists. Typing `/model` or `/thinking` points to the menu. |
+| `/compact`, `/session`, `/name`, `/copy` | phone (MC7) | The menu's Compact (with optional instructions, when coop is idle), Session details (`get_state`, `get_session_stats`, without file paths) and Name this session sheets, and Copy under every answer. |
+| Thinking and tool detail (Ctrl+T, Ctrl+O) | phone (MC8) | A tool line opens its arguments and output on tap, and an answer's Thinking link opens its thinking; fetched only on tap (`GET /api/detail`). |
+| Status bar, widgets and the todo panel (`setStatus`, `setWidget`, `rpiv-todo`) | phone (MC8) | Above the text box: the status line, the widgets and the todo panel rebuilt from `todo` results as the window does; a tap folds it to the status line. |
+| Search the conversation, jump between prompts (Ctrl+F, Ctrl+Up/Down) and prompt history (Up) | phone (MC8) | The menu's Find: a search over the conversation, and with no search your prompts, newest first, each to jump to or Reuse. |
+| `/new`, `/resume`, `/fork`, `/clone` and the sessions list (`coop -c`, `-r`, `--session`) | phone (MC9) | The menu's Sessions sheet: New session, the folder's saved sessions, Fork from a prompt and Clone. A session the phone itself starts or opens keeps the phone's access; one changed at the desk still ends it. |
+| `/tree` (view) | phone (MC9) | Tree in the Sessions sheet: the window's default view, one line per prompt and answer, indented where the session branches; a tap on a prompt forks from it. Moving within the session and labels stay in the terminal's `/tree`, as in the window. |
+| `/export` (HTML) | phone (MC9) | Export HTML in the Sessions sheet writes the page beside the session file on the VM (not in the project folder); the file stays on the VM. |
+| `/reload` | phone (MC9) | Restart coop in the Sessions sheet: the window restarts coop on the same session as its own `/reload` does, and the phone keeps its access. |
+| Attach images and files (`app.clipboard.pasteImage`) | phone (MC10) | Attach in the text box: photos (made JPEG, 2048 pixels on the long side, so a phone's camera photo fits the 4 MB image limit) and files, with the window's limits and readers. Each file is saved under the window's data folder on the VM, not in the project, and sent as the window sends attachments. |
+| `@path` file mentions and Tab completion | phone (MC10) | Typing `@` lists the folder's files as the window's composer does (`listFiles`, `rankFiles`); a tap puts the path in the text box. |
+| Know when coop needs you (the window's background notification) | phone (MC11) | Notices in the menu: when a question arrives or a turn ends while the page is closed, the phone shows "coop is waiting for you". Web push goes through Apple's or Google's push service, so the push carries nothing at all (Aaron said yes, 2026-10-06 03:34). On an iPhone, coop must be on the Home Screen. |
+
+### Desk only (intentional)
+
+| Capability | Status | Why |
+| --- | --- | --- |
+| Approving a production action (`PRODUCTION` confirms, the G1 production-write unlock) | desk only | MC1 contract: production stays at the desk; the phone can decline. |
+| Options that allow more than the one action ("Allow … for this session", "always", "don't ask again") and `/trust` | desk only | MC1 contract: the phone answers for the exact action in front of it. Grants only ever come from those options; `/coop-approvals` and `/coop-live-read` show or revoke and work on the phone (MC6). |
+| `!command` and `!!command` (a shell on the VM) | desk only | MC1 contract, confirmed by Aaron 2026-10-06 03:34: the phone is not a remote shell; coop's own tools still run commands under the guardrails when asked in chat. |
+
+### Not on a phone
+
+| Capability | Status | Why |
+| --- | --- | --- |
+| `/login`, `/logout`, `/mcp-auth`, `/google-account` sign-in | not on a phone | Credentials are entered on the VM; the window also hands them to the terminal. |
+| `/scoped-models`, `/import`, `/share`, `/bug`, `/changelog`, `/memory-skills`, `/openai-settings`, `/pets`, `/llama`, tree label edits, session delete, saving default models and thinking | not on a phone | Terminal screens; the window opens them in a terminal on the VM too. `/share` and `/bug` upload a session, which the client-data rule keeps off client VMs anyway. |
+| `/quit`, `app.exit`, `app.suspend`, `coop -p` | not on a phone | Closing the window ends the phone's access with no way back from the phone; suspend and print mode are not sessions. |
+| Keyboard-only actions (cursor, selection, scrolling keys) | not on a phone | Touch does them natively; the gaps above cover every action that has an effect. |

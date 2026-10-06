@@ -87,6 +87,8 @@ if ($env:COOP_SKIP_FABRIC_SYNC -ne '1' -and ($env:COOP_FABRIC_PYTHON -or (Get-Co
 Coop-Info "Coop keeps its extensions in $PI_AGENT and pins the versions tested"
 Coop-Info "together with this Coop release. Your personal Pi extensions are unchanged."
 $script:SyncFailures += [int](Sync-CoopExtensionFleet -AgentDir $PI_AGENT)
+# The todo panel's collapse key (Set-CoopTodoConfig): seeded once, never rewritten.
+if (Set-CoopTodoConfig) { Coop-Ok 'Todo panel key set to Alt+T (~/.config/rpiv-todo/config.json)' }
 
 # --- 4c. The coop window's runtime (master plan D1b; only where installed) ----
 # `coop desktop` installs Electron on first use. Sync keeps an installed runtime
@@ -103,14 +105,13 @@ if ($desktopState -eq 'stale') {
 
 # --- 5. MCP config — manifest-pinned, ownership-aware, non-destructive --------
 # pi-mcp-adapter 3.x reads mcp-adapter.json; the generator migrates an old mcp.json.
+# The Warehouse target follows the folder sync runs in; every launch rewrites it
+# for its own folder (Update-CoopManagedMcpConfig), so sync's choice is not final.
 $MCP_DST = Join-Path $PI_AGENT 'mcp-adapter.json'
-$mcpPy = Get-CoopPython
-if ($mcpPy) {
-  & $mcpPy (Join-Path $script:CoopRoot 'lib\mcp_config.py') --config (Get-CoopConfigFile) --output $MCP_DST
-  if ($LASTEXITCODE -eq 0) { Coop-Ok "generated manifest-pinned MCP config -> $MCP_DST" }
-  else { Coop-Warn 'could not generate MCP config — run: coop onboard --edit, then coop sync' }
-} else {
-  Coop-Warn 'python missing — cannot generate MCP config'
+switch (Update-CoopManagedMcpConfig -OutputPath $MCP_DST) {
+  'ok' { Coop-Ok "generated manifest-pinned MCP config -> $MCP_DST" }
+  'no_python' { Coop-Warn 'python missing — cannot generate MCP config' }
+  default { Coop-Warn 'could not generate MCP config — run: coop onboard --edit, then coop sync' }
 }
 
 # --- 5b. Team knowledge (optional; fail-soft — never blocks sync) -------------

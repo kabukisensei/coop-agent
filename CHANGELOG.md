@@ -28,6 +28,357 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `COOP_BOOTSTRAP_DIR` moves the clone, `COOP_BOOTSTRAP_DRY_RUN=1` only prints
   the steps). Only winget's Microsoft source, nodejs.org, npm, PyPI and
   github.com are contacted. `docs/install-windows.md` opens with the one line.
+- **The phone companion's contract** (MC1, master plan section 12.4; Aaron,
+  2026-10-06). `desktop/COMPANION.md` specifies how a phone will see and steer
+  the same live session an open coop window runs: two locks (a sign-in-protected
+  private connection to a loopback-only server, and coop's own device grant,
+  paired at the desk and bound to one Windows user, one client and one session),
+  seven routes (read, chat, stop, answer, pair, events, sign out), first answer
+  wins against the exact action, and production or session-wide approvals stay
+  on the desktop. The checkable rules are `desktop/lib/companion-protocol.mjs`
+  with gate-lane fixtures.
+- **Phone parity, part 6** (MC11). *Notices* in the phone's menu: when coop
+  asks a question or finishes while the phone's page is closed, the phone shows
+  "coop is waiting for you". The push is empty, so Apple's or Google's push
+  service never sees what coop said; one a minute at most. On an iPhone, add
+  coop to the Home Screen first.
+- **Phone parity, part 5** (MC10). The phone's text box has *Attach*: pick
+  photos or files, or take a photo, and they go with the next message as the
+  window sends attachments. Photos are made JPEG at most 2048 pixels on the
+  long side, so a camera photo fits. Each file is saved in the window's own
+  data folder on the VM, never in the project. Typing `@` lists the folder's
+  files to mention.
+- **Phone parity, part 4** (MC9). The phone's menu adds *Sessions*: start a
+  new session, open one of the folder's saved sessions, fork from an earlier
+  prompt, clone, export the session as HTML beside its file on the VM, see
+  the session tree and fork from any prompt in it, or restart coop. A
+  session the phone starts or opens keeps the phone's access; one changed at
+  the desk still turns it off. The window reloads and says what the phone did.
+  The phone sends ids only, never a path.
+- **Phone parity, part 3** (MC8). The phone shows the status line, the
+  extension widgets and the todo panel above the text box, as the window does,
+  and a tap folds them. Tapping a tool line opens its arguments and output, and
+  an answer's *Thinking* link opens its thinking; both are fetched only on tap
+  and kept in the window's memory only. The menu's *Find* searches the
+  conversation and lists your prompts to jump to or reuse.
+- **Phone parity, part 2** (MC7). The phone's menu adds *Model*, *Thinking*,
+  *Compact*, *Name this session* and *Session details*, each a sheet that opens
+  from the bottom of the screen, and every finished answer has *Copy*. The phone
+  can only pick a model coop lists, compacts only while coop is idle, and the
+  details carry no file paths. Typing `/model`, `/thinking`, `/compact`,
+  `/name`, `/session` or `/copy` on the phone points to the menu.
+- **Phone parity, part 1** (MC6; Aaron asked for terminal parity, 2026-10-06).
+  `desktop/PARITY.md` lists every terminal capability with its phone status.
+  The phone now sends coop's `/` commands, prompt templates and skills (typing
+  `/` lists them, from Pi's own list), and while coop works it offers *Send now*
+  (steer) and *Queue*, shows the queued messages and brings them back with *Edit
+  queued*. Pi's built-in commands, terminal-only screens and `!` shell lines
+  stay off the phone, refused with the reason.
+- **The coop website's look and menu on the phone** (MC5; Aaron, 2026-10-06).
+  The phone has four themes, Modern and Retro, each dark or light, with Modern
+  the default. Retro is the coop website's look: its colours with raised and
+  sunken bevels, title-bar gradients and Silkscreen pixel headings. Every option
+  sits in a side menu like the website's, opened from the top right, with large
+  rows and the Style and Mode switches at the bottom. The font ships with the
+  page (`desktop/companion/fonts/`, SIL Open Font License 1.1), so nothing loads
+  from outside the VM. The window's own themes are unchanged.
+- **coop on your phone** (MC2 and MC3, master plan section 12.4). The window
+  gets *Session > Phone*: *Pair a phone* shows a one-time code, *Allow phone
+  for this session* lets the paired phone see and steer this window's live
+  session, and *Paired phones* removes a phone at once. The phone page
+  (installable to the home screen) shows the conversation, coop's status and
+  its questions in the four themes; it sends chat, stop and answers, and a
+  question answered on either screen closes on both. The window's server
+  listens on `127.0.0.1:47821` only and Tailscale's `serve` carries the phone
+  to it inside the tailnet; setup is in `desktop/COMPANION.md`. Production and
+  "for this session" approvals stay on the desktop. Off until you allow it;
+  the terminal is unchanged.
+
+### Changed
+
+- `coop-data-doc` pin 1.3.1 -> 1.3.4 (`config/release-manifest.json`):
+  `coop-data-doc lineage` now names the Power BI tables that load an object
+  (`loaded_by`), and answers for a view the docs do not hold when a model loads
+  it (coop-data-doc #69), so the "Loaded by" lines coop renders now appear.
+  1.3.2 and 1.3.3 were published without that change and are skipped.
+  `coop sync` installs 1.3.4; `coop doctor` reports an older copy as stale.
+
+### Fixed
+
+- Phone companion fixes from the VM check (MC4). Starting a new session at the
+  desk while a phone was connected no longer shows a "write after end" error box
+  in the window. Tapping a tool line on the phone no longer answers "id is
+  malformed" for models whose tool ids contain a `|`. The window opens no larger
+  than the screen it opens on. With no window allowing the phone, the phone
+  now says "Phone access is off" instead of "Different Windows user". In the Retro looks, tapping a text
+  field on an iPhone no longer zooms the phone page wider than the screen.
+
+## [0.31.0] — 2026-10-05
+
+### Added
+
+- **The icon is the front door** (D1m, master plan section 12.3; Aaron,
+  2026-10-05). One **coop** icon on the Desktop and in the Start Menu opens the
+  window (once the window runtime is installed, or from the window package,
+  whose shortcut is now plain "coop"); **coop (terminal)** opens the terminal
+  for daily terminal work, and `coop` in any terminal is unchanged. Started from
+  the icon with no folder, the window shows a project picker instead of the OS
+  folder dialog: the folders opened before, newest first, each with the client
+  its `.coop/project.yml` names (found above the folder or in the client home
+  repository beside it), the Git branch and "Not shared yet" or "The team has a
+  newer file" when the project file is out of step, a Browse button, and "Open
+  this one next time", which makes the icon open straight on that project; a
+  folder with no project file is listed as such (`/setup-project` creates one).
+  The window title and header name the client and the folder, and File > Switch
+  project opens the same picker for another window. `coop desktop` from a
+  terminal keeps opening the current folder.
+- **The shared project file** (C1, master plan section 12.3; Joel, Eric and
+  Aaron in the 2026-10-05 demo; the design Aaron approved the same evening,
+  `demo/c1-shared-contract-design.md`). Every client has one `.coop/project.yml`,
+  committed in a repository the whole team clones, and nobody needs Git to use
+  it. Where it lives: a client with one repository keeps it at that repository's
+  root; a client with several repositories side by side gets a small **client
+  home repository** `<client>-coop` beside them (the project file, and later the
+  lineage docs, the catalog snapshot and the client's prompts and skills); the
+  folder between the repositories is never used. How coop finds it: the nearest
+  contract above the folder coop opens in, else the sibling `*-coop` repository
+  whose contract lists this repository, in every reader (`lib/standards.mjs`,
+  the guardrails, `lib/common.ps1`, the Python SQL target readers); the launcher
+  hands a sibling hit to the extensions as `COOP_PROJECT_YML`. **Get the team's
+  project file:** when origin has the file and this checkout does not,
+  `/setup-project`, the window's Project pane and `/project-get` offer it before
+  any create (a fast-forward pull when nothing else would move, else only that
+  file with a backup). **Share with the team:** after a save, `/setup-project`,
+  the pane's button, `/project-share` and `coop project share` ask once and then
+  commit only `.coop/project.yml` (message `coop: project file updated by
+  <name>`) and push the current branch, nothing else staged; from another branch
+  they ask again first. It is the one Git write coop performs on its own, always
+  after a yes, logged in the guardrails audit as kind `project-share`. **Kept
+  current:** every session start compares the local file with origin's (one
+  fetch, at most every ten minutes) and says one line when the team's copy is
+  newer, when this copy carries unshared edits, or when the team has a file this
+  checkout lacks (`COOP_PROJECT_SYNC=0` silences it); nothing is applied
+  silently, and the guardrails keep the snapshot they started with until `/new`.
+  `/setup-project`, the pane and `coop init` propose the home repository after the
+  client's name, create it (`git init`, README from `templates/client-home/`) with
+  every sibling repository listed as `../<name>`, and never write a second copy
+  below an existing contract. `coop project status|get|share` is the shell form.
+- **Production is never modified from a session** (G1, master plan section 12.3;
+  asked for in the 2026-10-05 demo). Production writes are a hard block in
+  `coop-guardrails`, the same class as a source commit: a Warehouse SQL
+  `CREATE`/`ALTER`/`INSERT`/`UPDATE`/`DELETE`/`DROP`/`MERGE`/`EXEC` whose target
+  the trusted contract or managed server resolves to `production`, a Power BI
+  Modeling edit after a production connection, a Fabric or proxied MCP mutation
+  naming prod, and a shell Fabric write (`az rest`, `fab`) naming production get
+  no prompt and no session grant; the model is told to work on dev and leave the
+  change to the pipeline or a human. Production reads still ask with a scope.
+  The environment comes from trusted configuration, so a dev target with a
+  `prod_staging` schema is not blocked. `/coop-approvals status` says so, the
+  session-approval option reads "deletes still ask; production is blocked", and
+  every block is audited as `production write`.
+- `coop unlock-prod <client> [--minutes <n>]`, the human-only way to allow a
+  production change through coop when one really must happen: run in the
+  person's own terminal, never from a session, it writes a time-bounded grant
+  (default 30 minutes, at most 8 hours) to `~/.coop/prod-unlock.json`, outside
+  every repository. While it holds for the contract's client, the same writes
+  fall back to a per-call production prompt prefixed with the grant id and the
+  minutes left, audited as `prod-unlock:<id>`. `--status` and `--revoke` manage
+  it; the file is a secret path for the agent. The command is absent from
+  `coop help`, the `/` menu and the window, documented only in
+  `docs/guardrails-reference.md` (Production writes).
+
+- **The lineage docs live with the project file** (DR1, master plan section
+  12.3, demo of 2026-10-05; reshaped onto the approved C1 design). The docs
+  coop-data-doc builds belong beside the committed `.coop/project.yml`: in the
+  client home repository `<client>-coop` when the client has several
+  repositories (one private repository per client, cloned beside the others),
+  else in the client's one repository. `/setup-docs` run from any of the client's
+  repositories proposes that `data-docs` folder as the output, so the build never
+  lands in a source tree; after a setup whose output is in that repository and it
+  has no CI yet, coop offers its `data-docs-check.yml` workflow
+  (`templates/client-home/`), which runs `coop-data-doc check` on every push. coop
+  writes the file; a human commits it with the docs.
+- `NOTICE.md`, the third-party notices and license review master plan row L1
+  asked for (section 12.3; Aaron raised it in the 2026-10-05 demo): every pin in
+  `config/release-manifest.json` and `config/microsoft-skills.json` with its
+  copyright line, license, how coop distributes it (installed, launched,
+  redistributed in the window installer, copied, prerequisite) and the terms
+  coop honors. It names the Power BI Authoring MCP EULA that `--accept-eula`
+  accepts, who accepted it for Cooptimize and when, and the Microsoft telemetry
+  both MCP servers may send. It ships in the window package's repository
+  snapshot, so Pi's MIT notice (absent from the 0.87.1 npm tarball) travels with
+  the redistributed copy. The review's four findings were decided by Aaron the
+  same day and the file records them: the installer keeps bundling the Power BI
+  Authoring MCP server under the package's MIT file (#304), coop does not show
+  the EULA per user (#305), and the installer license-file check and the skills
+  catalog LICENSE copies are parked (#306, #307).
+
+- A machine-level profile for the team's VMs (master plan P1, demo of
+  2026-10-05): every client is its own Windows user there and one person owns the
+  machine, so `coop onboard --machine` writes the person's name and communication
+  preference once per machine to `%ProgramData%\coop\user.json` (`/etc/coop` off
+  Windows; `COOP_MACHINE_DIR` for tests and sandboxes; one elevated terminal,
+  once). coop-profile, the vibes, the window's set-up card and `/setup-project`'s
+  name question read it when the per-user `~/.coop/user.json` is missing, and the
+  per-user file wins field by field when both exist. `coop profile` and
+  `coop doctor` name the file that supplied the name. The machine file carries
+  only the name and the communication preference, never a client, tenant,
+  workspace, contract, memory or session: everything client-shaped stays in the
+  client's Windows user, and nothing in coop reads another user's profile.
+- The project contract declares what coop used to assume about a client's layout
+  (master plan C2, from the 2026-10-05 demo: "I don't want the tool to assume
+  anything"). `power_bi.table_mapping` states how a semantic-model table maps to
+  the SQL object it loads: `rule: same_name` (a table is named like its view, the
+  rule the "Loaded by" lineage uses) or `rule: prefix` (table `<name>` loads
+  `default_schema.<view_prefix><name>`), plus hand-edited `overrides` (model table
+  to `schema.object`) that win over the rule. `fabric.layout` names the Fabric
+  item kinds that hold the SQL (`warehouse`, `lakehouse`, `sql_database`, `mixed`).
+  `/setup-project`, the window's Project form and `coop init` write both blocks
+  (the layout proposed from the default SQL endpoint type and the dev `sql_targets`
+  kind; a new contract also seeds `warehouse_names` / `lakehouse_names` from the
+  default endpoint item). `data_doc lineage` checks the mapping on every SQL object
+  and says "Declared mapping does not match" (with the table the rule expected, or
+  the table that loads it outside the rule) instead of leaving an empty "Loaded by"
+  to read as no dependents; `sql_impact` adds the same expectation to an empty
+  downstream list. A contract without the block declares nothing and is checked
+  against nothing.
+- **Personal, client and shipped prompts and skills** (master plan PR1, section
+  12.3). coop loads three tiers at launch, shipped first, then the client's
+  `.coop/prompts/` and `.coop/skills/` beside the committed contract, then your
+  `~/.coop/prompts/` and `~/.coop/skills/`; a name clash resolves in that order
+  (a shadowed skill is skipped with a warning, Pi keeps the first `/prompt`).
+  `coop doctor` gains a "Prompts and skills" section listing each tier and every
+  shadowed name; `coop new-skill` and `coop new-prompt` take `--client` or
+  `--personal`; `docs/extending.md` section 8 documents the layout.
+- **Committed dev catalog snapshot** (master plan SQ9, section 12.3; Joel's
+  schema file and read-only definitions export as one feature). `coop catalog
+  snapshot`, or the new `catalog_snapshot` tool (`command="snapshot"`), reads the
+  contract's default dev/test target read-only over the `sql_impact` connection
+  path and writes one file per table (a `CREATE TABLE` from its columns), view,
+  procedure and function, plus `manifest.json` and a README, under `catalog.path`,
+  else the `data_docs` repository's `catalog/<env>`, else `.coop/catalog/<env>`
+  beside the contract; the user commits the folder. No row data, credential or
+  server name is written, production is refused, and a folder that is not a
+  snapshot is never overwritten. The session-start note tells coop to read an
+  object's file before writing SQL, to offer a refresh when the snapshot is older
+  than `catalog.max_age_days` (default 7), or to offer the first snapshot;
+  `catalog_snapshot` `status` and `coop catalog status` report the same;
+  `coop doctor` shows it in the project-contract section; `coop init --seed-docs`
+  uses the folder as coop-data-doc's SQL source when the contract has no SQL
+  repository; the guardrails treat `snapshot` like `sql_impact` (dev/test runs,
+  anything else asks) and `status` as a folder read.
+- **Session lineage context** (master plan row SQ8, demo feedback 2026-10-05):
+  coop holds the downstream of every SQL object it is about to change and never
+  re-runs a lookup it already holds. Before an `edit` or `write` of a `.sql` file,
+  `coop-tools` names the object (its `CREATE` statement, else the snapshot layout,
+  else `dbo.<stem>`) and fills the context from the committed catalog snapshot
+  (SQ9: the object's columns and every definition that names it, with the columns
+  each one mentions) and, when built docs exist, `coop-data-doc lineage` (the
+  docs' downstream and the Power BI tables that load it); `sql_impact` and
+  `data_doc lineage` results land in the same context. The guardrails stop a SQL
+  edit whose object no source holds while a live target could still answer (or
+  whose snapshot answer is older than `catalog.max_age_days`), naming `sql_impact`
+  for the object; a script that defines no object is never gated. The edit's
+  result ends with one line naming each downstream object, the columns it uses
+  and the follow-on rule; `/impact [schema.name]` prints the detail without a
+  model turn (`/explain impact` points there). `sql_impact` now also reports,
+  per dependent, which of the object's columns it reads
+  (`sys.dm_sql_referenced_entities` with `referenced_minor_name`, one bound query
+  per dependent, the first 50). The store is one JSON file per Pi process under
+  the agent dir, cleared at every session start and shutdown. No new tool: the
+  context budget is unchanged (`lib/lineage-context.mjs`,
+  `tests/lineage-context.test.mjs`, `tests/lineage-context-runtime.test.mjs`).
+
+- `@juicesharp/rpiv-todo` **2.12.0** joins the pinned extensions (Aaron, 2026-10-03,
+  from the pi.dev package review): a `todo` tool and a live task panel above the
+  prompt, so a multi-step session shows what coop is doing, what is done and what
+  is queued; `/todos` prints the list. The list is rebuilt from the session's
+  own `todo` tool results (nothing on disk), so it survives `/reload`, compaction
+  and resume. The extension draws the panel as a TUI component, which Pi's RPC
+  mode drops, so the coop window draws the same panel itself from those tool
+  results (`desktop/renderer/todos.mjs`: on load from `get_messages`, then from
+  every `todo` result, with the overlay's glyphs, row budget and the rule that
+  completed rows leave at the next turn). Same author, monorepo and
+  `rpiv-config` dependency as the pinned `rpiv-ask-user-question`, so the
+  extension tree gains no new dependency family (`config/extensions-lock.json`
+  regenerated). The tool adds one schema and eight guideline bullets to the
+  model's tool list, roughly 700 tokens by the `ceil(chars/4)` estimate; the
+  injected prompt files are unchanged.
+- The todo panel's collapse key is **Alt+T** in both the terminal and the window.
+  The extension's default, Ctrl+Shift+T, is Pi's own tree key, and Pi runs
+  extension shortcuts first, so `coop sync` seeds `~/.config/rpiv-todo/config.json`
+  with `collapseKey: "alt+t"` once (`Set-CoopTodoConfig` in `lib/common.ps1`; a
+  file the user already has is never rewritten). The window binds the same Alt+T
+  to collapse every widget above the prompt to its first line and a count
+  (`desktop/renderer/widgets.mjs`), and lists it under `/hotkeys`. The desktop
+  RPC fixture is re-recorded with the extension loaded and now carries one
+  `todo` create and one update, so the window tests build the panel from them.
+
+### Changed
+
+- `data_doc lineage` names the Power BI tables that load an object even when the
+  SQL side is not in the docs. coop-data-doc's `lineage` (1.3.2+) carries
+  `loaded_by`: the semantic model tables whose partition names the object, with
+  the source string and whether the graph holds the resolved link. The tool text
+  renders it as a "Loaded by" list; a view the docs do not hold at all but a model
+  loads is reported as "not a documented object, but N Power BI table(s) load it by
+  name" instead of "lineage failed", so `sql_impact` (live SQL dependents) and
+  `data_doc lineage` (the Power BI dependents) together cover a view edit without
+  documenting the SQL repository (Aaron, 2026-10-05). Older coop-data-doc releases
+  answer without the field and the text is unchanged.
+
+## [0.30.4] — 2026-10-05
+
+### Added
+
+- coop window: the Standards pane lists the team knowledge repositories next to
+  the standards domains, one chip each: **Incremental BI** (the
+  `cooptimize/incremental-bi` approved patterns) and **Team knowledge** (the
+  TeamAI team share, `cooptimize/coop-team-knowledge`). A chip opens the clone's
+  Markdown notes one at a time (pick one from the list, search it like an
+  article); a repository that is not cloned here shows how to get it (`coop
+  onboard`, then `coop sync`). The pane reads the same clones the terminal's
+  team-knowledge skill searches and the same `/standards-status` sources; the
+  clone's location never leaves the main process.
+- The team knowledge source in `/standards-status` and `coop doctor` now falls
+  back to the TeamAI trial's isolated clone (recorded at `coop teamai init`)
+  when `knowledge.repos` does not list `coop-team-knowledge`, so the team share
+  counts as available wherever the trial is initialised.
+
+### Changed
+
+- coop window: the native title bar and the File/Edit/View menu bar follow the
+  chosen theme (dark for the dark themes, light for the light ones, the OS
+  setting for "auto") instead of always taking the OS colours (asked
+  2026-10-05 after v0.30.3).
+- coop window: the Changes pane's unified diff wraps long lines instead of
+  running past the pane's right edge; side by side already wrapped per cell
+  (asked 2026-10-05).
+
+## [0.30.3] — 2026-10-05
+
+### Fixed
+
+- The managed Warehouse MCP entry in the shared `mcp-adapter.json` carries one
+  project's target: the contract above the folder it was generated in. Only
+  `coop sync` wrote it, so a `coop update` or the window's first launch run from
+  the home folder (seen 2026-10-05, right after 0.30.2) left the project folder
+  on the global endpoint: `fabric_sql_query unavailable: target_mismatch`, doctor
+  `target_invalid`, and no `fabric-sqlendpoint.execute_query` tool. Every launch
+  (terminal and window) now rewrites the entry for the folder it starts in
+  (`Update-CoopManagedMcpConfig`, the same ownership-aware generator sync runs),
+  so the last launch wins, not the last sync. Fail-soft: a launch that cannot
+  refresh it warns and starts anyway.
+- coop window: with a long session list the sidebar grew past the window (a
+  grid item's minimum height is its content), so the composer sat below the
+  fold ("no way to type"), and focusing it after New session scrolled the whole
+  document: the top bar and the session list's head went off the top and the
+  conversation no longer scrolled (seen 2026-10-05). The sidebar now keeps to
+  the window's height (its session list scrolls) and the document can never
+  scroll (`overflow: clip`).
+- coop window: Chromium's own log lines (the GPU driver "GetGpuDriverOverlayInfo"
+  error some Windows drivers print) no longer land in the terminal that ran
+  `coop desktop`; only fatal ones remain.
 
 ## [0.30.2] — 2026-10-05
 

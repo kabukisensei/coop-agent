@@ -8,8 +8,8 @@ At launch, `bin/coop.ps1` loads, from this repo:
 
 | What | Where | How it's loaded |
 |------|-------|-----------------|
-| Skills | `skills/<name>/SKILL.md` | each first-party folder auto-loaded; Microsoft skills come from the pinned catalog launch slot |
-| Prompt templates | `prompts/<name>.md` | whole folder via `--prompt-template` |
+| Skills | `skills/<name>/SKILL.md` | each first-party folder auto-loaded, then the client's `.coop/skills/` and your `~/.coop/skills/` (section 8); Microsoft skills come from the pinned catalog launch slot |
+| Prompt templates | `prompts/<name>.md` | whole folder via `--prompt-template`; the client's `.coop/prompts/` and your `~/.coop/prompts/` follow it (section 8) |
 | Theme | `themes/cooptimize.json` | registered via `--theme`; a user picks it in `/settings` |
 | Guardrails prompt | `docs/guardrails.md` | via `--append-system-prompt` (advisory; the `coop-guardrails` extension enforces it) |
 | Companion extensions | `extensions/coop-*/` (`coop-powerline`, `coop-tools`, `coop-guardrails`, `coop-profile`) | via `pi -e` |
@@ -169,8 +169,9 @@ under the Pi package's `examples/extensions/` (the patterns coop's extensions fo
 
 ## 5. Scaffold a work repo (`coop init`)
 
-Skills and prompts lean on the project contract — `.coop/project.yml` in the work
-repo — for repo paths, workspaces, and standards. Scaffolding a new work repo is
+Skills and prompts lean on the project contract — `.coop/project.yml`, the one
+committed team file at the client's Git root — for repo paths, workspaces, and
+standards. Scaffolding a new work repo is
 two commands:
 
 ```bash
@@ -179,7 +180,8 @@ coop init --seed-docs     # then, once repositories: is filled — generates a m
                           # coop-data-doc.yml from the contract's repositories: paths
 ```
 
-`coop init --template` copies the documented template into `<repo>/.coop/project.yml`;
+`coop init --template` copies the documented template into `<Git root>/.coop/project.yml`
+(a contract found above the folder is edited, never shadowed by a second copy);
 plain `coop init` runs the safe guided wizard, and `coop onboard --edit` owns global
 integration/MCP settings. Verify with `coop doctor`. `coop init --seed-docs` generates/patches `coop-data-doc.yml`
 from the contract's `repositories:` (via `coop-data-doc config-set`), so repo
@@ -237,6 +239,42 @@ Configuration lives in `~/.coop/config` under the `knowledge` block:
 - **Recall**: The `team-knowledge` skill guides the agent to query team patterns via the bundled local-search helper (`scripts/search-knowledge.py`, repository-bound, structured JSON status) before non-trivial work, and injects a hidden startup note when knowledge is available.
 - **Contributing learnings**: Draft discoveries with `/share-learning`, which generates a YAML frontmatter note under the user-selected clone's `learnings/` and routes publication via a plain Git pull request. Never commit directly to main.
 - **TeamAI trial (K1)**: an optional `knowledge.teamai` block (`enabled`, `team_repo`, `provider`, `role`) turns on the isolated `teamai-cli` adapter (`lib/teamai.py`, reached only through `coop teamai`, see `README.md`). It is a second read-only source for the `team-knowledge` skill, not a replacement for the local search; the skill consults it only when `coop teamai status` reports `ok`. Sharing into that repository goes through `/share-learning` and `coop teamai contribute` (preview, then `--approve` stages a `coop/learning/...` branch for a pull request); the CLI's own publish and push are never used. With `knowledge.teamai.skills` true (K3), the team repository's `skills/*/SKILL.md` load at launch through the same subordinate slot as the knowledge repos' skills (a Cooptimize skill wins any name or folder clash; `coop teamai skills` lists them); `coop teamai maintenance` and `coop teamai compare --query <text>` are read-only reports.
+
+---
+
+## 8. Where prompts and skills live: three tiers
+
+A prompt or skill does not have to live in this repository. coop loads three
+tiers at every launch, in this order, and a name clash resolves in the same
+order: the shipped copy wins, then the client's, then yours.
+
+| Tier | Prompts | Skills | Who sees it | Scaffold |
+|------|---------|--------|-------------|----------|
+| shipped | `prompts/<name>.md` (this repo) | `skills/<name>/SKILL.md` (this repo) | everyone, at the next release | `coop new-prompt <name>`, `coop new-skill <name>` |
+| client | `.coop/prompts/<name>.md` beside the committed `.coop/project.yml` | `.coop/skills/<name>/SKILL.md` beside it | everyone working in that client repository (commit them with the contract) | `coop new-prompt <name> --client`, `coop new-skill <name> --client` (run inside the client repository) |
+| personal | `~/.coop/prompts/<name>.md` | `~/.coop/skills/<name>/SKILL.md` | you, on this machine (`COOP_DIR` moves it with the rest of the profile) | `coop new-prompt <name> --personal`, `coop new-skill <name> --personal` |
+
+How it works:
+
+- `bin/coop.ps1` (`Get-CoopResourceTiers` in `lib/common.ps1`) passes one
+  `--prompt-template` per tier, shipped first, and one `--skill` per skill folder
+  in the same order. Pi keeps the first `/name` it loads and reports the later one
+  as a collision; a skill whose folder name or frontmatter `name:` is already
+  loaded by a higher tier is skipped at launch with a warning on stderr.
+- The client tier exists only inside a repository with a committed contract
+  (`coop init` or `/setup-project`); coop's own bundled `.coop/project.yml` never
+  counts as a client. Team-knowledge skills (section 7) stay subordinate to all
+  three tiers.
+- `coop doctor` has a "Prompts and skills" section: one row per tier with its
+  counts and folder, and a warning for every shadowed prompt or skill, naming the
+  tier that won. Rename the lower copy, or delete the one you do not want.
+- The `/` menu in the terminal shows Pi's own source tag for every entry; the
+  tier is in `coop doctor`. The window's command palette (D1j) will show the tier
+  beside each entry when it lands.
+
+Promote a prompt or skill by moving the file up a tier: a personal prompt the
+team adopts becomes a pull request against `prompts/` here; a client-specific one
+is committed in the client repository's `.coop/`.
 
 ---
 

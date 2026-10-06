@@ -37,7 +37,8 @@ review, diff summary, and human commit.
 
 ## Before you start
 
-Read the project contract `.coop/project.yml` (coop loads the nearest one). It is
+Read the project contract `.coop/project.yml` (the team's committed file at the
+client's Git root; coop loads the nearest one walking up). It is
 the source of truth for repo paths, Fabric/Power BI workspaces, backup/log rules,
 allowed/blocked commit paths, and the approval policy. It may provide deliberate
 project standards overrides; otherwise COOP's resolved standards task authority is
@@ -57,7 +58,16 @@ partial, or connected project without requiring the user to edit YAML.
    relationships. Before planning or editing a live SQL object (view, table, procedure,
    function), call `sql_impact` with its name for the live dependents, references and
    columns on the contract's default dev/test target, then `data_doc` lineage for the
-   same object when built docs exist; report drift between the two. If local source is missing or partial, use read-only dev/test live
+   same object when built docs exist; report drift between the two. Before writing or
+   changing SQL, read the object's file in the committed catalog snapshot
+   (`<schema>/<name>.sql` under the folder the session-start note names) so the
+   tables and columns you use exist; when the snapshot is missing or stale, offer
+   `catalog_snapshot` (`command="snapshot"`) once rather than guessing. coop holds
+   what it learns in the session's lineage context: a SQL edit whose object no
+   source holds is stopped by the guardrails until `sql_impact` has been asked, a
+   repeat edit of the same object costs no new call, the edit's result ends with one
+   line naming each downstream object, and `/impact` shows the detail. If local
+   source is missing or partial, use read-only dev/test live
    metadata/schema/code to fill gaps. Mark each fact's provenance (repo or live
    environment) and report drift. Use **Microsoft Learn** for current Microsoft docs.
 4. **Plan the first slice + get approval.** For multi-step work, write a short PLAN

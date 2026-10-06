@@ -30,7 +30,7 @@ try {
   if ((Coop-ManifestGet -Key 'pi.version') -ceq '0.87.1') { Ok 'Coop-ManifestGet pi.version' } else { Ko "Coop-ManifestGet pi.version (got '$(Coop-ManifestGet -Key 'pi.version')')" }
   if ((Coop-ManifestGet -Key 'node.min') -ceq '22.19.0') { Ok 'Coop-ManifestGet node.min' } else { Ko 'Coop-ManifestGet node.min' }
   if ((Coop-ManifestGet -Key 'extensions.pi-mcp-adapter') -ceq '3.3.0') { Ok 'Coop-ManifestGet extensions.pi-mcp-adapter' } else { Ko 'Coop-ManifestGet extensions.pi-mcp-adapter' }
-  if ((Coop-ManifestGet -Key 'python_tools.coop-data-doc') -ceq '1.3.1') { Ok 'Coop-ManifestGet python_tools.coop-data-doc' } else { Ko 'Coop-ManifestGet python_tools.coop-data-doc' }
+  if ((Coop-ManifestGet -Key 'python_tools.coop-data-doc') -ceq '1.3.4') { Ok 'Coop-ManifestGet python_tools.coop-data-doc' } else { Ko 'Coop-ManifestGet python_tools.coop-data-doc' }
   if ((Coop-ManifestGet -Key 'missing.key') -eq '') { Ok 'Coop-ManifestGet missing key returns empty' } else { Ko 'missing key should return empty' }
   if ((Coop-ManifestExtensionSpec 'pi-mcp-adapter') -ceq 'npm:pi-mcp-adapter@3.3.0') { Ok 'literal extension spec: pi-mcp-adapter' } else { Ko 'extension spec mismatch' }
   if ((Coop-ManifestExtensionSpec '@juicesharp/rpiv-ask-user-question') -ceq 'npm:@juicesharp/rpiv-ask-user-question@2.12.0') { Ok 'literal scoped extension spec' } else { Ko 'scoped extension spec mismatch' }
@@ -58,7 +58,7 @@ assert '@microsoft/powerbi-modeling-mcp' in m['npm_tools']
 # (master plan section 6): the global Bridge pin must satisfy that range.
 assert m['npm_tools']['@microsoft/powerbi-desktop-bridge-cli'] == '1.0.0'
 assert m['npm_tools']['@microsoft/powerbi-report-authoring-cli'] == '0.4.0'
-for p in ['pi-mcp-adapter','pi-hermes-memory','pi-better-openai','pi-web-access','@juicesharp/rpiv-ask-user-question','@xl0/pi-lovely-rename']:
+for p in ['pi-mcp-adapter','pi-hermes-memory','pi-better-openai','pi-web-access','@juicesharp/rpiv-ask-user-question','@juicesharp/rpiv-todo','@xl0/pi-lovely-rename']:
     assert p in m['extensions']
 # context-mode is retired (U1): Remove-CoopRetiredExtensions uninstalls it.
 assert 'context-mode' not in m['extensions']

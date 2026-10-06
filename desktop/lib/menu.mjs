@@ -12,7 +12,7 @@ export const INSTALL_GUIDE_URL = "https://github.com/kabukisensei/coop-agent/blo
  * app.mjs ACTIONS); `setTheme(theme)` and `toggleMenuBar()` act in the main
  * process; `openExternal(url)` opens the browser; `about()` shows the version.
  */
-export function menuTemplate({ run, setTheme, theme, themes, menuBar, toggleMenuBar, openExternal, about, isMac = false }) {
+export function menuTemplate({ run, setTheme, theme, themes, menuBar, toggleMenuBar, openExternal, about, isMac = false, phone }) {
   const action = (label, id, accelerator) => ({ label, accelerator, click: () => run(id) });
   return [
     {
@@ -20,6 +20,7 @@ export function menuTemplate({ run, setTheme, theme, themes, menuBar, toggleMenu
       submenu: [
         action("New session", "new", "CmdOrCtrl+Shift+N"),
         action("Sessions...", "resume", "CmdOrCtrl+Shift+R"),
+        action("Switch project...", "switch"),
         action("Open folder in a new window...", "folder"),
         { type: "separator" },
         action("Open in terminal", "terminal"),
@@ -72,6 +73,7 @@ export function menuTemplate({ run, setTheme, theme, themes, menuBar, toggleMenu
         action("Clone this session", "clone"),
         action("Compact the conversation", "compact"),
         action("Export as a web page", "export"),
+        ...(phone ? [{ type: "separator" }, phoneMenu(phone)] : []),
       ],
     },
     {
@@ -98,4 +100,25 @@ export function notificationFor(event, { folder = "" } = {}) {
     return `coop is waiting for your answer${where}${title ? `: ${title}` : "."}`;
   }
   return "";
+}
+
+/**
+ * Session > Phone (master plan row MC2): allow the phone on this window's
+ * session, pair a phone, and remove phones. `phone` is `{ accessOn, devices,
+ * toggleAccess(), pair(), remove(id) }`; remove("*") removes every phone.
+ */
+export function phoneMenu({ accessOn, devices = [], toggleAccess, pair, remove }) {
+  return {
+    label: "Phone",
+    submenu: [
+      { label: "Allow phone for this session", type: "checkbox", checked: Boolean(accessOn), click: () => toggleAccess() },
+      { label: "Pair a phone...", click: () => pair() },
+      {
+        label: "Paired phones",
+        submenu: devices.length
+          ? [...devices.map((device) => ({ label: `Remove ${device.name}${device.client ? ` (${device.client})` : ""}`, click: () => remove(device.id) })), { type: "separator" }, { label: "Remove all phones", click: () => remove("*") }]
+          : [{ label: "No phones paired", enabled: false }],
+      },
+    ],
+  };
 }

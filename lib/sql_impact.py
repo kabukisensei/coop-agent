@@ -8,7 +8,10 @@ queries, never free text:
 - downstream (who references this object): `sys.dm_sql_referencing_entities`
   joined to `sys.objects`, resolved at call time; where a target lacks that
   function (Fabric Warehouse), the same catalog's `sys.sql_expression_dependencies`
-  rows whose `referenced_id` is this object;
+  rows whose `referenced_id` is this object; each dependent then names the
+  object's columns it uses (`sys.dm_sql_referenced_entities` with
+  `referenced_minor_name`, master plan SQ8), so a changed column is matched to
+  the views and procedures that read it;
 - upstream (what this object references): `sys.sql_expression_dependencies`
   for the object's own referenced entities, with a `sys.sql_modules` text check
   for each dependency the catalog could not resolve (a dropped or cross-database
@@ -37,6 +40,9 @@ import sql_query
 
 MAX_DEPENDENCIES = 500
 MAX_COLUMNS = 1000
+# Column-level references are one query per dependent; past this many dependents
+# the rest carry no column list and the section says so.
+MAX_COLUMN_REFERENCE_DEPENDENTS = 50
 _IDENT = r"[A-Za-z_][A-Za-z0-9_@#$]{0,127}"
 OBJECT_NAME = re.compile(rf"^(?:(?:\[({_IDENT})\]|({_IDENT}))\.)?(?:\[({_IDENT})\]|({_IDENT}))$")
 DEFAULT_SCHEMA = "dbo"
@@ -69,6 +75,14 @@ DOWNSTREAM_CATALOG_SQL = (
     "JOIN sys.schemas AS s ON s.schema_id = o.schema_id "
     "WHERE d.referenced_id = OBJECT_ID(?) "
     "ORDER BY s.name, o.name"
+)
+# The columns of this object one dependent reads (SQ8): the dependent is the
+# first bound name, this object the second; minor id 0 is the object itself.
+COLUMN_REFERENCES_SQL = (
+    f"SELECT DISTINCT TOP ({MAX_COLUMNS + 1}) re.referenced_minor_name "
+    "FROM sys.dm_sql_referenced_entities(?, 'OBJECT') AS re "
+    "WHERE re.referenced_id = OBJECT_ID(?) AND re.referenced_minor_id > 0 "
+    "ORDER BY re.referenced_minor_name"
 )
 MODULE_MENTION_SQL = (
     "SELECT TOP (1) 1 FROM sys.sql_modules WHERE object_id = OBJECT_ID(?) AND definition LIKE ? ESCAPE '\\'"
@@ -147,6 +161,29 @@ def _unavailable(reason: str) -> dict[str, Any]:
     return {"state": "unavailable", "reason": reason, "items": [], "count": 0, "truncated": False}
 
 
+def _column_references(cursor: Any, qualified: str, items: list[dict[str, Any]]) -> str:
+    """Add `columns` (this object's columns the dependent reads) to each dependent.
+
+    Returns the section's state: "ok" (every dependent asked), "partial" (the
+    first MAX_COLUMN_REFERENCE_DEPENDENTS asked, the rest skipped), "unavailable"
+    (the DMV failed on this target: no dependent carries `columns`) or "none" (no
+    dependents to ask)."""
+    if not items:
+        return "none"
+    for index, item in enumerate(items):
+        if index >= MAX_COLUMN_REFERENCE_DEPENDENTS:
+            return "partial"
+        dependent = _bracketed(item["schema"] or DEFAULT_SCHEMA, item["name"])
+        try:
+            rows = _rows(cursor, COLUMN_REFERENCES_SQL, (dependent, qualified), MAX_COLUMNS)
+        except Exception:
+            for done in items[:index]:
+                done.pop("columns", None)
+            return "unavailable"
+        item["columns"] = [_text(r[0]) for r in rows[:MAX_COLUMNS] if _text(r[0])]
+    return "ok"
+
+
 def trace(cursor: Any, kind: str, schema: str, name: str) -> dict[str, Any]:
     """Run the three catalog queries on an open cursor; each section fails on its own."""
     qualified = _bracketed(schema, name)
@@ -174,6 +211,7 @@ def trace(cursor: Any, kind: str, schema: str, name: str) -> dict[str, Any]:
                 for r in rows[:MAX_DEPENDENCIES]
             ]
             sections["downstream"] = _section(items, len(rows) > MAX_DEPENDENCIES, DOWNSTREAM_COVERAGE)
+            sections["downstream"]["column_references"] = _column_references(cursor, qualified, items)
 
     try:
         rows = _rows(cursor, UPSTREAM_SQL, (qualified,), MAX_DEPENDENCIES)

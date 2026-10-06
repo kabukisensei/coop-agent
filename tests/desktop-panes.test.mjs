@@ -41,11 +41,11 @@ const tools = await import(pathToFileURL(join(dist, "coop-tools.mjs")).href);
 const { parseUnifiedDiff, pairAndEmphasize, buildSplitRows, computeMatches, hunkStats } = await import("../desktop/renderer/unified-diff.mjs");
 const { unifiedDiff } = await import("../desktop/lib/text-diff.mjs");
 const { listChanges, fileDiff, parseNameStatus, parseNumstat, newFileDiff } = await import("../desktop/lib/changes.mjs");
-const { readStandards, readSnapshot, domainView, DOMAINS } = await import("../desktop/lib/standards-view.mjs");
+const { readStandards, readSnapshot, readNote, listNotes, knowledgeView, domainView, DOMAINS, KNOWLEDGE_LABELS } = await import("../desktop/lib/standards-view.mjs");
 const { loadProject, previewProject, saveProject, settingsFromForm } = await import("../desktop/lib/project-form.mjs");
 const docs = await import("../desktop/lib/docs-setup.mjs");
 const { normalizePath } = await import("../desktop/renderer/pane-changes.mjs");
-const { articleOutline, sourceLine, STATE_LABELS } = await import("../desktop/renderer/pane-standards.mjs");
+const { articleOutline, sourceLine, noteLabel, isKnowledgeId, STATE_LABELS, KNOWLEDGE_STATE_LABELS } = await import("../desktop/renderer/pane-standards.mjs");
 const { initialValues, formInput, platformHint, ROLE_LABELS } = await import("../desktop/renderer/pane-project.mjs");
 const { resolvePage, isDocsLink, stripFrontMatter, answerLabel, typeLabel } = await import("../desktop/renderer/pane-docs.mjs");
 const { paneLinksForTool, paneLinksForText } = await import("../desktop/renderer/view.mjs");
@@ -266,6 +266,51 @@ await check("standards: resolve-many then status, paths stay in the main process
   await assert.rejects(readStandards({ node: process.execPath, repoRoot: ROOT, cwd: temp, env: process.env, execFileImpl: (f, a, o, cb) => cb(new Error("x"), "", "registry unreadable\n") }), /registry unreadable/);
 });
 
+await check("standards: the team knowledge repositories from status, one note at a time, paths stay in the main process", async () => {
+  // Mirrors cooptimize/incremental-bi: layer folders, `title:` front matter, an unlayered guide, a non-Markdown file.
+  const clone = join(temp, "knowledge", "incremental-bi");
+  mkdirSync(join(clone, "Gold"), { recursive: true });
+  mkdirSync(join(clone, ".obsidian"), { recursive: true });
+  writeFileSync(join(clone, "AGENTS.md"), "# Writing and editing this wiki\nEditing guide.\n");
+  writeFileSync(join(clone, "Gold", "Fact Partition Rebuild.md"), "\uFEFF---\ntitle: \"Fact partition rebuild\"\nlayer: gold\n---\n## Rebuild the partition\nDrop and reload the window.\n");
+  writeFileSync(join(clone, "Gold", "notes.txt"), "not a note");
+  writeFileSync(join(clone, ".obsidian", "hidden.md"), "# Hidden\n");
+  const listing = listNotes(clone);
+  assert.deepEqual(listing.notes.map((n) => [n.path, n.title, n.folder]), [["AGENTS.md", "Writing and editing this wiki", ""], ["Gold/Fact Partition Rebuild.md", "Fact partition rebuild", "Gold"]]);
+  assert.equal(listing.truncated, false);
+  assert.equal(noteLabel(listing.notes[1]), "Gold / Fact partition rebuild");
+  const execFileImpl = (file, args, options, callback) => {
+    const out = args[1] === "resolve-many"
+      ? { sql: { state: "unavailable", path: null } }
+      : { repository: "https://github.com/cooptimize/coop-standards.git", authoritative_branch: "main", freshness: "fresh", sources: [
+        { id: "cooptimize-formal-standards", authority_class: "formal_standard", state: "available", path: join(temp, "canonical") },
+        { id: "cooptimize/incremental-bi", authority_class: "approved_pattern", state: "dirty_preserved", revision: "0123456789abcdef0123", path: clone },
+        { id: "cooptimize/coop-team-knowledge", authority_class: "team_knowledge", state: "unavailable", revision: null, path: null },
+      ] };
+    setImmediate(() => callback(null, JSON.stringify(out), ""));
+  };
+  const result = await readStandards({ node: process.execPath, repoRoot: ROOT, cwd: temp, env: process.env, execFileImpl });
+  assert.deepEqual(result.knowledge.map((k) => [k.id, k.label, k.state, k.available, k.revision, k.notes.length]), [
+    ["cooptimize/incremental-bi", "Incremental BI", "dirty_preserved", true, "0123456789ab", 2],
+    ["cooptimize/coop-team-knowledge", "Team knowledge", "unavailable", false, "", 0],
+  ]);
+  assert.equal(JSON.stringify(result.knowledge).includes(temp), false, "no clone path crosses to the window");
+  assert.deepEqual([...result.roots.keys()], ["cooptimize/incremental-bi"]);
+  const note = await readNote(result.roots.get("cooptimize/incremental-bi"), "Gold/Fact Partition Rebuild.md");
+  assert.equal(note.text, "## Rebuild the partition\nDrop and reload the window.\n", "front matter and BOM dropped");
+  assert.equal(note.truncated, false);
+  await assert.rejects(readNote(clone, "../outside.md"), /not in the knowledge repository/);
+  await assert.rejects(readNote(clone, ""), /not in the knowledge repository/);
+  await assert.rejects(readNote(clone, join(temp, "canonical", "x.md")), /not in the knowledge repository/);
+  assert.equal(knowledgeView({ id: "cooptimize/other-kb", authority_class: "team_knowledge", state: "available", path: clone }, listing).label, "other-kb");
+  assert.ok(isKnowledgeId("knowledge:cooptimize/incremental-bi") && !isKnowledgeId("sql"));
+  for (const id of Object.keys(KNOWLEDGE_LABELS)) assert.ok(KNOWLEDGE_LABELS[id], id);
+  for (const state of ["available", "dirty_preserved", "unavailable"]) assert.ok(KNOWLEDGE_STATE_LABELS[state], state);
+  // No status at all (an older resolver): no knowledge row, no crash.
+  const bare = await readStandards({ node: process.execPath, repoRoot: ROOT, cwd: temp, env: process.env, execFileImpl: (f, a, o, cb) => setImmediate(() => cb(a[1] === "status" ? new Error("x") : null, a[1] === "status" ? "" : "{}", "")) });
+  assert.deepEqual(bare.knowledge, []);
+});
+
 // --- The project form -------------------------------------------------------------
 
 const ORIGINAL = `# keep this client comment
@@ -314,7 +359,7 @@ const ANSWERS = {
   client: "Contoso",
   analytics: { description: "Warehouse SQL", role: "mixed", localPath: ".", remoteName: "origin", defaultBranch: "main" },
   added: { name: "Reports Repo", description: "Power BI reports", role: "powerbi", localPath: "../reports", remoteName: "origin", defaultBranch: "release" },
-  fabric: { tenantId: "11111111-1111-1111-1111-111111111111", fabricWorkspaceName: "Contoso WS", fabricWorkspaceId: "22222222-2222-2222-2222-222222222222", sqlEndpointItemType: "Warehouse", sqlEndpointItemName: "ContosoDW", sqlEndpointItemId: "33333333-3333-3333-3333-333333333333", sqlEndpointPropertiesId: "", powerBiWorkspaceName: "Contoso WS", powerBiWorkspaceId: "" },
+  fabric: { tenantId: "11111111-1111-1111-1111-111111111111", fabricWorkspaceName: "Contoso WS", fabricWorkspaceId: "22222222-2222-2222-2222-222222222222", sqlEndpointItemType: "Warehouse", sqlEndpointItemName: "ContosoDW", sqlEndpointItemId: "33333333-3333-3333-3333-333333333333", sqlEndpointPropertiesId: "", powerBiWorkspaceName: "Contoso WS", powerBiWorkspaceId: "", fabricLayout: "warehouse", tableMappingRule: "prefix", tableMappingSchema: "dbo", tableMappingPrefix: "v_" },
   target: { sqlTargetKind: "azure_sql", sqlTargetServer: "Contoso-Dev.Database.Windows.Net", sqlTargetDatabase: "ContosoDW" },
   te: { tabularEditorPath: "te", bpaRulesPath: "rules/bpa.json" },
 };
@@ -344,6 +389,7 @@ function wizardCtx(root, { fresh = false, localSource = true } = {}) {
             tenantId: "Azure tenant ID", fabricWorkspaceName: "Default Fabric workspace name", fabricWorkspaceId: "Default Fabric workspace ID",
             sqlEndpointItemType: "Default SQL endpoint item type", sqlEndpointItemName: "Default SQL endpoint item name", sqlEndpointItemId: "Default SQL endpoint item ID",
             sqlEndpointPropertiesId: "Lakehouse sqlEndpointProperties.id", powerBiWorkspaceName: "Default Power BI workspace name", powerBiWorkspaceId: "Default Power BI workspace ID",
+            fabricLayout: "Fabric layout", tableMappingRule: "Semantic-model table to SQL object rule", tableMappingSchema: "Default schema for a model table", tableMappingPrefix: "View prefix the model table names drop",
             sqlTargetKind: "Dev SQL target kind", sqlTargetServer: "Dev SQL server host", sqlTargetDatabase: "Dev database name",
             tabularEditorPath: "Tabular Editor CLI command or path", bpaRulesPath: "BPA rules file path",
           };
@@ -394,13 +440,17 @@ await check("project form: loads the wizard's fields; dropped fields never reach
   assert.deepEqual(data.commitLists.top, ["docs/**"]);
   assert.deepEqual(data.commitLists.repositories.analytics, { allowed: ["special-docs/**"], never: ["secrets/**", "bin/**"] });
   assert.equal(data.profileMissing, false);
+  assert.match(data.locationNote, /A contract already covers this folder/);
+  const fresh = loadProject(projectFixture("fresh-note"), { env: process.env });
+  assert.deepEqual([fresh.exists, fresh.path], [false, join(fresh.root, ".coop", "project.yml")]);
+  assert.match(fresh.locationNote, /Coop proposes this repository's root/);
   assert.deepEqual(data.guardrailFields.sort(), ["client", "commitLists", "repositories.localPath", "sqlTargetDatabase", "sqlTargetKind", "sqlTargetServer", "tenantId"]);
   const shown = JSON.stringify(data);
   for (const dropped of ["live_discovery", "allowed_default_actions", "requires_approval_actions", "list_workspaces", "run_query", "future_setting", "custom_profile_key"]) {
     assert.equal(shown.includes(dropped), false, `${dropped} reaches the window`);
   }
   const input = formInput(initialValues(data));
-  assert.deepEqual(Object.keys(input).sort(), ["bpaRulesPath", "client", "defaultBranch", "fabricEnabled", "fabricWorkspaceId", "fabricWorkspaceName", "organization", "powerBiWorkspaceId", "powerBiWorkspaceName", "profileName", "repositories", "sqlEndpointItemId", "sqlEndpointItemName", "sqlEndpointItemType", "sqlEndpointPropertiesId", "sqlTargetDatabase", "sqlTargetKind", "sqlTargetServer", "tabularEditorEnabled", "tabularEditorPath", "tenantId", "timezone"]);
+  assert.deepEqual(Object.keys(input).sort(), ["bpaRulesPath", "client", "defaultBranch", "fabricEnabled", "fabricLayout", "fabricWorkspaceId", "fabricWorkspaceName", "organization", "powerBiWorkspaceId", "powerBiWorkspaceName", "profileName", "repositories", "sqlEndpointItemId", "sqlEndpointItemName", "sqlEndpointItemType", "sqlEndpointPropertiesId", "sqlTargetDatabase", "sqlTargetKind", "sqlTargetServer", "tableMappingPrefix", "tableMappingRule", "tableMappingSchema", "tabularEditorEnabled", "tabularEditorPath", "tenantId", "timezone"]);
   assert.equal(platformHint("azure_sql"), "This machine is set up as an Azure SQL client, so No is the usual answer.");
   assert.equal(platformHint(""), "");
 });
@@ -430,6 +480,11 @@ await check("project form: the same answers write the same file as /setup-projec
   assert.equal(projectYamlScalar(written, ["profile", "client"]), "Contoso");
   assert.equal(projectYamlScalar(written, ["repositories", "Reports-Repo", "local_path"]), "../reports");
   assert.equal(projectYamlScalar(written, ["sql_targets", "dev", "server"]), "contoso-dev.database.windows.net");
+  assert.equal(projectYamlScalar(written, ["fabric", "layout"]), "warehouse");
+  assert.equal(projectYamlScalar(written, ["power_bi", "table_mapping", "rule"]), "prefix");
+  assert.equal(projectYamlScalar(written, ["power_bi", "table_mapping", "view_prefix"]), "v_");
+  assert.deepEqual(data.mappingOverrides, {});
+  assert.deepEqual(data.layouts, ["warehouse", "lakehouse", "sql_database", "mixed"]);
   for (const kept of ["# keep this client comment", "custom_profile_key: 'keep-me'", "- 'special-docs/**'", "agent_never_commit: ['secrets/**', 'bin/**']", "live_discovery:", "allowed_default_actions:", "future_setting: 42"]) {
     assert.ok(written.includes(kept), `unowned text kept: ${kept}`);
   }
@@ -458,6 +513,7 @@ await check("project form: a new contract and discovery mode match /setup-projec
     assert.equal(preview.mode, localSource ? "partial" : "discovery");
     const saved = saveProject(viaForm, input, preview.token, { env: process.env });
     assert.deepEqual([saved.created, saved.backup], [true, null]);
+    assert.match(saved.next, /^Share \.coop\/project\.yml with the team/);
     assert.equal(readFileSync(join(viaForm, ".coop", "project.yml"), "utf8"), expected, `new contract, local source ${localSource}`);
   }
 });
@@ -751,8 +807,9 @@ await check("bridge: every pane call in preload.cjs has a handler in main.mjs", 
   const preload = readFileSync(join(ROOT, "desktop", "preload.cjs"), "utf8");
   const main = readFileSync(join(ROOT, "desktop", "main.mjs"), "utf8");
   const invoked = [...preload.matchAll(/ipcRenderer\.invoke\("(coop:[a-z-]+)"/g)].map((m) => m[1]);
-  const handled = new Set([...main.matchAll(/handle\("(coop:[a-z-]+)"/g)].map((m) => m[1]));
-  for (const channel of ["coop:changes", "coop:change-diff", "coop:standards", "coop:standards-text", "coop:project-load", "coop:project-preview", "coop:project-save", "coop:pick-folder", "coop:docs-start", "coop:docs-answer", "coop:docs-cancel", "coop:docs-build", "coop:docs-page", "coop:docs-portal"]) {
+  // handle(...) for a window, pickerHandle(...) for the project picker (D1m).
+  const handled = new Set([...main.matchAll(/[hH]andle\("(coop:[a-z-]+)"/g)].map((m) => m[1]));
+  for (const channel of ["coop:changes", "coop:change-diff", "coop:standards", "coop:standards-text", "coop:knowledge-note", "coop:project-load", "coop:project-preview", "coop:project-save", "coop:pick-folder", "coop:docs-start", "coop:docs-answer", "coop:docs-cancel", "coop:docs-build", "coop:docs-page", "coop:docs-portal"]) {
     assert.ok(invoked.includes(channel), `preload exposes ${channel}`);
   }
   for (const channel of invoked) assert.ok(handled.has(channel), `main handles ${channel}`);
@@ -828,6 +885,33 @@ await check("resize: every pane drags, within limits that keep the conversation 
   const css = readFileSync(join(ROOT, "desktop", "renderer", "styles", "app.css"), "utf8");
   for (const variable of ["--sidebar-width", "--pane-width", "--change-list-height"]) assert.ok(css.includes(`var(${variable}`), `app.css sizes with ${variable}`);
   assert.equal(/grid-template-columns: 264px/.test(css), false, "the sidebar column follows --sidebar-width");
+});
+
+await check("styles: a long session list never pushes the window past its height", () => {
+  // 2026-10-05: the sidebar grew with its list, the composer sat below the fold
+  // and focusing it scrolled the whole document (top bar and sidebar head gone).
+  const css = readFileSync(join(ROOT, "desktop", "renderer", "styles", "app.css"), "utf8");
+  const sidebar = css.match(/\n\.sidebar \{([^}]*)\}/);
+  assert.ok(sidebar, ".sidebar rule");
+  assert.match(sidebar[1], /min-height: 0/, "the sidebar keeps to its grid row");
+  assert.match(sidebar[1], /overflow: hidden/, "the sidebar clips instead of growing");
+  const body = css.match(/\nbody \{([^}]*)\}/);
+  assert.ok(body, "body rule");
+  assert.match(body[1], /overflow: clip/, "the document can never scroll");
+  assert.match(css, /\.session-list \{[^}]*overflow-y: auto/, "the session list scrolls on its own");
+});
+
+await check("styles: the unified diff wraps long lines instead of scrolling sideways", () => {
+  // 2026-10-05: a wide unified diff ran past the pane's right edge; Aaron asked
+  // for word wrap in unified mode (side by side already wraps per cell).
+  const css = readFileSync(join(ROOT, "desktop", "renderer", "styles", "app.css"), "utf8");
+  assert.ok(!/\.diff-view\.unified \{[^}]*max-content/.test(css), "the unified view no longer forces its content width");
+  const row = css.match(/\n\.diff-view\.unified \.diff-row \{([^}]*)\}/);
+  assert.ok(row, ".diff-view.unified .diff-row rule");
+  assert.match(row[1], /white-space: pre-wrap/, "unified rows wrap");
+  assert.match(row[1], /minmax\(0, 1fr\)/, "the text column can shrink below its content");
+  assert.match(css, /\.diff-view\.unified \.diff-text \{[^}]*overflow-wrap: anywhere/, "long tokens break too");
+  assert.match(css, /\n\.diff-cell \{[^}]*white-space: pre-wrap/, "side by side keeps wrapping");
 });
 
 rmSync(temp, { recursive: true, force: true });

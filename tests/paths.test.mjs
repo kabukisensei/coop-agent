@@ -14,7 +14,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const { agentDir, configPath, coopAgentDir, noIsolate, personalPiAgentDir, profileDir, userProfilePath } =
+const { agentDir, configPath, coopAgentDir, machineProfileDir, machineProfilePath, noIsolate, personalPiAgentDir, profileDir, userProfilePath } =
   await import("../lib/paths.mjs");
 
 const home = homedir();
@@ -93,5 +93,15 @@ if (dist && existsSync(toolsPath)) {
 } else {
   console.log("  - bundled coop-tools not present (COOP_TEST_DIST); extension chain check skipped");
 }
+
+t("machine profile (P1): COOP_MACHINE_DIR, else %ProgramData%\\coop on Windows, else /etc/coop", () => {
+  assert.equal(machineProfileDir({ COOP_MACHINE_DIR: cdir }, "win32"), cdir);
+  assert.equal(machineProfilePath({ COOP_MACHINE_DIR: cdir }, "linux"), join(cdir, "user.json"));
+  assert.equal(machineProfileDir({ ProgramData: "D:\\PD" }, "win32"), join("D:\\PD", "coop"));
+  assert.equal(machineProfileDir({}, "win32"), join("C:\\ProgramData", "coop"));
+  assert.equal(machineProfileDir({}, "linux"), "/etc/coop");
+  assert.equal(machineProfilePath({}, "darwin"), join("/etc/coop", "user.json"));
+  assert.notEqual(machineProfilePath({ COOP_DIR: cdir }), userProfilePath({ COOP_DIR: cdir }), "COOP_DIR never moves the machine file");
+});
 
 console.log(`  ${n} paths tests passed`);

@@ -1312,6 +1312,40 @@ function Get-CoopConfigFile { return (Join-Path (Get-CoopProfileDir) 'config') }
 # The local user profile written by scripts/onboard.py.
 function Get-CoopUserProfileFile { return (Join-Path (Get-CoopProfileDir) 'user.json') }
 
+# The machine-level profile (master plan P1): one user.json per machine for the
+# team's VMs, where every client is its own Windows user and one person owns the
+# machine. COOP_MACHINE_DIR names its folder (tests, sandboxes); else
+# %ProgramData%\coop on Windows and /etc/coop elsewhere. It holds only the
+# person's name and communication preference, never anything client-shaped; the
+# per-user file wins field by field (mirror of lib/paths.mjs machineProfilePath).
+function Get-CoopMachineProfileDir {
+  if ($env:COOP_MACHINE_DIR) { return [string]$env:COOP_MACHINE_DIR }
+  if ($env:ProgramData) { return (Join-Path $env:ProgramData 'coop') }
+  if ([System.IO.Path]::DirectorySeparatorChar -eq '\') { return 'C:\ProgramData\coop' }
+  return '/etc/coop'
+}
+function Get-CoopMachineProfileFile { return (Join-Path (Get-CoopMachineProfileDir) 'user.json') }
+
+# The name coop calls the person and the file that supplied it: @{ Name; Source }
+# with Source 'user', 'machine' or '' (no usable name anywhere). Same resolution
+# as lib/user-profile.mjs effectiveProfile; a malformed file counts as absent.
+function Get-CoopEffectiveProfileName {
+  foreach ($pair in @(@('user', (Get-CoopUserProfileFile)), @('machine', (Get-CoopMachineProfileFile)))) {
+    $file = $pair[1]
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { continue }
+    try {
+      $raw = Get-Content -LiteralPath $file -Raw -Encoding UTF8 | ConvertFrom-Json
+      if ($null -eq $raw -or $raw.schema_version -ne 1) { continue }
+      $name = [string]$raw.name
+      $name = ($name -replace '[\x00-\x1f\x7f-\x9f\u2028\u2029]+', ' ') -replace '\s+', ' '
+      $name = $name.Trim()
+      if ($name.Length -gt 100) { $name = $name.Substring(0, 100) }
+      if ($name) { return @{ Name = $name; Source = $pair[0] } }
+    } catch { }
+  }
+  return @{ Name = ''; Source = '' }
+}
+
 # True when COOP_NO_ISOLATE asks for the personal ~/.pi/agent (1|true|yes|on).
 function Test-CoopNoIsolate { return ([string]$env:COOP_NO_ISOLATE).Trim() -match '^(1|true|yes|on)$' }
 
@@ -1331,6 +1365,41 @@ function Get-CoopEffectiveAgentDir {
   if ($env:PI_CODING_AGENT_DIR) { return $env:PI_CODING_AGENT_DIR }
   if (Test-CoopNoIsolate) { return (Get-CoopPersonalPiAgentDir) }
   return (Get-CoopPiAgentDir)
+}
+
+# The managed MCP config (mcp-adapter.json in the agent dir Pi loads) carries the
+# Warehouse target of ONE project: the contract above the folder it was generated
+# in. `coop sync` writes it, and every launch rewrites it for the folder coop
+# starts in (same generator, ownership-aware, non-destructive), so a `coop update`
+# or the window's first launch run from the home folder never leaves the project
+# folder pointed at the global endpoint ("target_mismatch", no execute_query tool;
+# seen 2026-10-05). Returns 'ok', 'no_python' or 'failed'; -Quiet keeps the
+# generator's stderr off the console (the launch prints its own one-line warning).
+function Update-CoopManagedMcpConfig {
+  param(
+    [string]$OutputPath = (Join-Path (Get-CoopEffectiveAgentDir) 'mcp-adapter.json'),
+    [string]$ProjectCwd = (Get-Location).Path,
+    [switch]$Quiet
+  )
+  $py = Get-CoopPython
+  if (-not $py) { return 'no_python' }
+  $generator = Join-Path $script:CoopRoot 'lib\mcp_config.py'
+  $previousEap = $ErrorActionPreference
+  $rc = 1
+  try {
+    # Native stderr under Windows PowerShell 5.1 would otherwise become a
+    # terminating error; capture it and decide below.
+    $ErrorActionPreference = 'Continue'
+    $out = @(& $py $generator --config (Get-CoopConfigFile) --output $OutputPath --project-cwd $ProjectCwd 2>&1)
+    $rc = $LASTEXITCODE
+  } catch {
+    $rc = 1
+  } finally {
+    $ErrorActionPreference = $previousEap
+  }
+  if ($rc -eq 0) { return 'ok' }
+  if (-not $Quiet) { foreach ($line in $out) { Write-Host ([string]$line) } }
+  return 'failed'
 }
 
 # True when Pi has a stored provider credential in the agent tree Coop will
@@ -1483,6 +1552,30 @@ function Remove-CoopRetiredExtensions([string]$AgentDir) {
     }
   }
   return $failures
+}
+
+# --- The todo panel's key (@juicesharp/rpiv-todo) --------------------------------
+# rpiv-todo collapses its task panel with Ctrl+Shift+T by default, which is also
+# Pi's `app.session.tree` key; Pi's editor runs extension shortcuts first, so the
+# tree would never open from that key in a coop terminal. The extension reads only
+# `~/.config/rpiv-todo/config.json` (no agent-dir setting), so sync seeds that file
+# once with Alt+T, free in Pi, Windows Terminal and the coop window, which binds
+# the same key (desktop/PARITY.md). A file the user already has is never
+# rewritten. Best-effort: returns $true only when it wrote the file.
+function Set-CoopTodoConfig {
+  param([string]$HomeDir = $HOME)
+  $dir = Join-Path (Join-Path $HomeDir '.config') 'rpiv-todo'
+  $file = Join-Path $dir 'config.json'
+  if (Test-Path -LiteralPath $file) { return $false }
+  try {
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    $json = "{`n  `"collapseKey`": `"alt+t`"`n}`n"
+    [System.IO.File]::WriteAllText($file, $json, (New-Object System.Text.UTF8Encoding $false))
+    return $true
+  } catch {
+    Coop-Warn "could not write $file ($($_.Exception.Message))" 'the todo panel keeps Ctrl+Shift+T until collapseKey is set there'
+    return $false
+  }
 }
 
 # --- Extension fleet convergence (the ONE `pi install` path; S2, #222) ---------
@@ -2786,12 +2879,217 @@ function Find-CoopProjectYml {
     if ($parent -eq $dir -or -not $parent) { break }
     $dir = $parent
   }
+  # C1: the contract this launch resolved, else the client home repository
+  # beside this one (its contract lists this repository).
+  if ($env:COOP_PROJECT_YML -and (Test-Path -LiteralPath $env:COOP_PROJECT_YML -PathType Leaf)) { return $env:COOP_PROJECT_YML }
+  $sibling = Find-CoopSiblingContract $StartDir
+  if ($sibling) { return $sibling }
   $bundled = Join-Path $script:CoopRoot '.coop\project.yml'
   if (Test-Path -LiteralPath $bundled -PathType Leaf) { return $bundled }
   return ''
 }
 
+# Prompt and skill tiers (master plan PR1). Three places hold prompts and
+# skills, with one precedence rule, shipped > client > personal:
+#   shipped  — this repository's prompts\ and skills\ (as always)
+#   client   — .coop\prompts and .coop\skills beside the committed contract (C1),
+#              so a client's own travel with its repository
+#   personal — <profile>\prompts and <profile>\skills (~/.coop by default)
+# Returns the tiers in precedence order. The client tier is listed only when a
+# real contract is found (the bundled .coop/project.yml is coop's own, not a
+# client's). A tier's folders may be missing; callers test them.
+function Get-CoopResourceTiers {
+  param([string]$StartDir = (Get-Location).Path)
+  $tiers = @()
+  $tiers += [pscustomobject]@{ Tier = 'shipped'; Root = $script:CoopRoot; Skills = (Join-Path $script:CoopRoot 'skills'); Prompts = (Join-Path $script:CoopRoot 'prompts') }
+  $proj = Find-CoopProjectYml -StartDir $StartDir
+  $bundled = [System.IO.Path]::GetFullPath((Join-Path $script:CoopRoot '.coop\project.yml'))
+  if ($proj -and ([System.IO.Path]::GetFullPath($proj) -ne $bundled)) {
+    $coopDir = Split-Path -Parent $proj
+    $tiers += [pscustomobject]@{ Tier = 'client'; Root = (Split-Path -Parent $coopDir); Skills = (Join-Path $coopDir 'skills'); Prompts = (Join-Path $coopDir 'prompts') }
+  }
+  $profileDir = Get-CoopProfileDir
+  $tiers += [pscustomobject]@{ Tier = 'personal'; Root = $profileDir; Skills = (Join-Path $profileDir 'skills'); Prompts = (Join-Path $profileDir 'prompts') }
+  return @($tiers)
+}
+
+# The skills one tier folder holds: every <dir>\SKILL.md, as @{ Folder; Dir; Name }
+# where Name is the frontmatter name, or the folder name when the file has none
+# (Pi falls back the same way). Subordinate slot folders are never a tier skill.
+function Get-CoopTierSkills {
+  param([string]$SkillsDir)
+  $out = @()
+  if (-not (Test-Path -LiteralPath $SkillsDir -PathType Container)) { return @() }
+  foreach ($d in (Get-ChildItem -LiteralPath $SkillsDir -Directory | Where-Object { $_.Name -notin @('_microsoft', '_microsoft_fabric') })) {
+    $sk = Join-Path $d.FullName 'SKILL.md'
+    if (-not (Test-Path -LiteralPath $sk -PathType Leaf)) { continue }
+    $fm = Get-CoopSkillName $sk
+    $out += [pscustomobject]@{ Folder = $d.Name; Dir = $d.FullName; Name = $(if ($fm) { $fm } else { $d.Name }) }
+  }
+  return @($out)
+}
+
+# The prompt templates one tier folder holds: every top-level *.md, as
+# @{ Name; File } where Name is the /command (the file name without .md).
+function Get-CoopTierPrompts {
+  param([string]$PromptsDir)
+  $out = @()
+  if (-not (Test-Path -LiteralPath $PromptsDir -PathType Container)) { return @() }
+  foreach ($f in (Get-ChildItem -LiteralPath $PromptsDir -File -Filter '*.md')) {
+    $out += [pscustomobject]@{ Name = ($f.Name -replace '\.md$', ''); File = $f.FullName }
+  }
+  return @($out)
+}
+
+# The nearest folder at or above $StartDir with a .git entry, or ''.
+function Find-CoopGitRoot {
+  param([string]$StartDir = (Get-Location).Path)
+  $dir = [System.IO.Path]::GetFullPath($StartDir).TrimEnd('\', '/')
+  while ($dir) {
+    if (Test-Path -LiteralPath (Join-Path $dir '.git')) { return $dir }
+    $parent = Split-Path -Parent $dir
+    if ($parent -eq $dir -or -not $parent) { break }
+    $dir = $parent
+  }
+  return ''
+}
+
+# The `repositories.*.local_path` values of a block-YAML contract (a line scan:
+# no Python needed at launch), quotes stripped.
+function Get-CoopContractLocalPaths {
+  param([string]$File)
+  $paths = @()
+  $inRepos = $false
+  foreach ($line in (Get-Content -LiteralPath $File -ErrorAction SilentlyContinue)) {
+    if ($line -match '^\S') { $inRepos = ($line -match '^repositories:\s*(#.*)?$'); continue }
+    if (-not $inRepos) { continue }
+    if ($line -match '^\s+local_path:\s*(.+?)\s*$') {
+      $value = $Matches[1].Trim()
+      if ($value.Length -ge 2 -and (($value[0] -eq '"' -and $value[-1] -eq '"') -or ($value[0] -eq "'" -and $value[-1] -eq "'"))) { $value = $value.Substring(1, $value.Length - 2) }
+      if ($value -and $value -notmatch '^TODO') { $paths += $value }
+    }
+  }
+  return $paths
+}
+
+# C1: the client home repository beside the repository holding $StartDir, when
+# its .coop/project.yml lists that repository (one level up only; the folder
+# between the repositories is never a home). Returns the contract path or ''.
+function Find-CoopSiblingContract {
+  param([string]$StartDir = (Get-Location).Path)
+  $gitRoot = Find-CoopGitRoot $StartDir
+  if (-not $gitRoot) { return '' }
+  $parent = Split-Path -Parent $gitRoot
+  if (-not $parent -or $parent -eq $gitRoot) { return '' }
+  $target = [System.IO.Path]::GetFullPath($gitRoot).TrimEnd('\', '/')
+  foreach ($child in (Get-ChildItem -LiteralPath $parent -Directory -ErrorAction SilentlyContinue | Where-Object { -not $_.Name.StartsWith('.') } | Sort-Object Name)) {
+    if ($child.FullName -eq $gitRoot) { continue }
+    $contract = Join-Path $child.FullName '.coop\project.yml'
+    if (-not (Test-Path -LiteralPath $contract -PathType Leaf)) { continue }
+    foreach ($rel in (Get-CoopContractLocalPaths $contract)) {
+      $expanded = $rel
+      if ($expanded -match '^~([\\/]|$)') { $expanded = (Join-Path $HOME $expanded.Substring(1).TrimStart('\', '/')) }
+      $resolved = [System.IO.Path]::GetFullPath((Join-Path $child.FullName $expanded)).TrimEnd('\', '/')
+      if ($resolved -eq $target) { return $contract }
+    }
+  }
+  return ''
+}
+
+# Hand the resolved contract to Pi and the window (COOP_PROJECT_YML) when it
+# lives in the client home repository beside the launch folder, so every finder
+# (coop-tools, the guardrails, the Python helpers) reads the same file.
+function Set-CoopProjectYmlEnv {
+  param([string]$StartDir = (Get-Location).Path)
+  Remove-Item Env:COOP_PROJECT_YML -ErrorAction SilentlyContinue
+  $dir = $StartDir
+  while ($dir) {
+    if (Test-Path -LiteralPath (Join-Path $dir '.coop\project.yml') -PathType Leaf) { return '' }
+    $parent = Split-Path -Parent $dir
+    if ($parent -eq $dir -or -not $parent) { break }
+    $dir = $parent
+  }
+  $sibling = Find-CoopSiblingContract $StartDir
+  if ($sibling) { $env:COOP_PROJECT_YML = $sibling }
+  return $sibling
+}
+
 # Confirm a potentially-destructive action unless --yes / COOP_ASSUME_YES is set.
+# C1: where a project contract belongs for a folder (the shared project file
+# design: one committed contract per client, in a repository the team clones).
+# Mirrors proposeContractRoot in lib/project-contract.mjs. Returns a hashtable
+# with Kind ('existing' | 'home-repo' | 'git-root' | 'folder'), Root, Path, Repos
+# and, for home-repo, Parent (the folder holding the repositories; Root is the
+# home repository <Parent>\<client>-coop once -Client is known, else a placeholder).
+function Get-CoopContractRootProposal {
+  param([string]$StartDir = (Get-Location).Path, [string]$Client = '')
+  $start = [System.IO.Path]::GetFullPath($StartDir).TrimEnd('\', '/')
+  if (-not $start) { $start = $StartDir }
+  $dir = $start
+  $gitRoot = ''
+  while ($dir) {
+    $candidate = Join-Path $dir '.coop\project.yml'
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+      return @{ Kind = 'existing'; Root = $dir; Path = $candidate; Repos = @(); Sibling = $false }
+    }
+    if (-not $gitRoot -and (Test-Path -LiteralPath (Join-Path $dir '.git'))) { $gitRoot = $dir }
+    $parent = Split-Path -Parent $dir
+    if ($parent -eq $dir -or -not $parent) { break }
+    $dir = $parent
+  }
+  $sibling = Find-CoopSiblingContract $start
+  if ($sibling) {
+    return @{ Kind = 'existing'; Root = (Split-Path -Parent (Split-Path -Parent $sibling)); Path = $sibling; Repos = @(); Sibling = $true }
+  }
+  if ($gitRoot) {
+    $parent = Split-Path -Parent $gitRoot
+    if ($parent -and $parent -ne $gitRoot) {
+      $repos = @(Get-ChildItem -LiteralPath $parent -Directory -ErrorAction SilentlyContinue |
+        Where-Object { -not $_.Name.StartsWith('.') -and (Test-Path -LiteralPath (Join-Path $_.FullName '.git')) } |
+        Sort-Object Name | ForEach-Object { $_.Name })
+      if ($repos.Count -ge 2 -and $repos -contains (Split-Path -Leaf $gitRoot)) {
+        $slug = Get-CoopClientSlug $Client
+        $homeRepo = if ($Client) { Join-Path $parent ($slug + '-coop') } else { Join-Path $parent '<client>-coop' }
+        $others = @($repos | Where-Object { $_ -ne (Split-Path -Leaf $homeRepo) })
+        return @{ Kind = 'home-repo'; Root = $homeRepo; Path = (Join-Path $homeRepo '.coop\project.yml'); Repos = $others; Parent = $parent; Pending = (-not $Client) }
+      }
+    }
+    return @{ Kind = 'git-root'; Root = $gitRoot; Path = (Join-Path $gitRoot '.coop\project.yml'); Repos = @() }
+  }
+  return @{ Kind = 'folder'; Root = $start; Path = (Join-Path $start '.coop\project.yml'); Repos = @() }
+}
+
+# A short, safe slug of the client name for folder names (mirrors clientSlug).
+function Get-CoopClientSlug {
+  param([string]$Client)
+  $slug = ([string]$Client).ToLowerInvariant() -replace '[^a-z0-9]+', '-'
+  $slug = $slug.Trim('-')
+  if (-not $slug) { $slug = 'client' }
+  return $slug
+}
+
+# Create the client home repository (folder, `git init`, README from
+# templates\client-home) when it does not exist yet. Returns $true on success.
+function New-CoopHomeRepository {
+  param([string]$Root, [string]$Client)
+  if (-not (Test-Path -LiteralPath $Root)) { New-Item -ItemType Directory -Force -Path $Root | Out-Null }
+  if (-not (Test-Path -LiteralPath (Join-Path $Root '.git'))) {
+    if (-not (Test-Have 'git')) { Coop-Warn 'git is not installed: the home repository folder was created without `git init`'; }
+    else {
+      & git -C $Root init --quiet 2>$null
+      if ($LASTEXITCODE -ne 0) { Coop-Warn "git init failed in $Root"; return $false }
+    }
+  }
+  $readme = Join-Path $Root 'README.md'
+  if (-not (Test-Path -LiteralPath $readme)) {
+    $template = Join-Path $script:CoopRoot 'templates\client-home\README.md'
+    $text = if (Test-Path -LiteralPath $template -PathType Leaf) { [System.IO.File]::ReadAllText($template) } else { "# $(Split-Path -Leaf $Root)`n`nThe coop client home repository for $Client.`n" }
+    $text = $text.Replace('<client>', $Client).Replace('<slug>', (Get-CoopClientSlug $Client))
+    [System.IO.File]::WriteAllText($readme, $text, (New-Object System.Text.UTF8Encoding($false)))
+  }
+  return $true
+}
+
 function Coop-Confirm {
   param([string]$Prompt = 'Proceed?')
   if ($env:COOP_ASSUME_YES -eq '1') { return $true }
@@ -2801,10 +3099,12 @@ function Coop-Confirm {
   if ($ans -match '^(y|yes)$') { return $true } else { return $false }
 }
 
-# Test whether the local COOP user profile exists (in the profile dir onboarding
-# writes to, so COOP_DIR is honoured).
+# Test whether a COOP user profile exists: the per-user file (in the profile dir
+# onboarding writes to, so COOP_DIR is honoured) or the machine-level file
+# (master plan P1), which stands in for it on a one-user-per-client VM.
 function Test-CoopUserProfileMissing {
-  return -not (Test-Path -LiteralPath (Get-CoopUserProfileFile) -PathType Leaf)
+  if (Test-Path -LiteralPath (Get-CoopUserProfileFile) -PathType Leaf) { return $false }
+  return -not (Test-Path -LiteralPath (Get-CoopMachineProfileFile) -PathType Leaf)
 }
 
 function Test-CoopOnboardingMissing {
@@ -3104,15 +3404,14 @@ function Get-CoopShortcutDirs {
   return $dirs
 }
 
-# --- Double-click launcher (Start Menu + Desktop) ------------------------------
-# One "coop" shortcut on the Start Menu and Desktop opens the terminal agent through
-# bin\coop-desktop.ps1 (its own console, home folder, coop.ico). Before S5 the "coop"
-# shortcut ran `coop web` in a minimized console, and "coop (terminal)" was the
-# terminal. install writes the shortcut; update rewrites it only where a coop
-# shortcut already exists (-OnlyIfPresent), so old shortcuts are repaired and a
-# removed one stays removed. The target folders come from Get-CoopShortcutDirs, so
-# an isolated install (redirected profile) writes into its sandbox, never onto the
-# real Desktop. Best-effort: returns $true when a shortcut was written.
+# The double-click launchers (master plan D1m: the icon is the front door).
+# "coop" opens the window once the window runtime is installed (or the installed
+# package wrote its own "coop" shortcut, which is left alone) and the terminal
+# until then; "coop (terminal)" always opens the terminal, for daily terminal
+# work. Both run bin\coop-desktop.ps1 in a console so the launch checks show and
+# stay readable on an error. Same folders either way (Get-CoopShortcutDirs); an
+# isolated install keeps them inside its profile. Best-effort: returns $true when
+# a shortcut was written. -OnlyIfPresent (update) refreshes only what exists.
 function Set-CoopDesktopShortcuts {
   param([switch]$OnlyIfPresent)
   if ($env:OS -ne 'Windows_NT') { return $false }
@@ -3120,67 +3419,72 @@ function Set-CoopDesktopShortcuts {
   if (-not (Test-Path -LiteralPath $desktopLauncher)) { return $false }
   $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
   $icon  = Join-Path $script:CoopRoot 'themes\coop.ico'
+  $window = Test-CoopWindowAvailable
   $ws = New-Object -ComObject WScript.Shell
   $wrote = $false
   foreach ($dir in (Get-CoopShortcutDirs)) {
     if (-not $dir) { continue }
     $main = Join-Path $dir 'coop.lnk'
-    $legacyTerminal = Join-Path $dir 'coop (terminal).lnk'
-    $present = (Test-Path -LiteralPath $main) -or (Test-Path -LiteralPath $legacyTerminal)
+    $terminal = Join-Path $dir 'coop (terminal).lnk'
+    $legacyWindow = Join-Path $dir 'coop (window).lnk'
+    $present = (Test-Path -LiteralPath $main) -or (Test-Path -LiteralPath $terminal) -or (Test-Path -LiteralPath $legacyWindow)
     if ($OnlyIfPresent -and -not $present) { continue }
     # A fresh sandbox profile has no Desktop / Start Menu folder yet.
     if (-not (Test-Path -LiteralPath $dir -PathType Container)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    # "coop": the window when there is one, else the terminal. The installed
+    # window package (D1c) writes a "coop" shortcut that starts its own exe;
+    # that one belongs to its installer and stays.
+    # Under -OnlyIfPresent a removed "coop" stays removed (the older "coop
+    # (window)" folds into it, so that one still counts as present).
+    $keepMain = (-not $OnlyIfPresent) -or (Test-Path -LiteralPath $main) -or (Test-Path -LiteralPath $legacyWindow)
     $sc = $ws.CreateShortcut($main)
-    $sc.TargetPath       = $psExe
-    $sc.Arguments        = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$desktopLauncher`""
-    $sc.WorkingDirectory = $HOME
-    $sc.Description      = 'coop - the Cooptimize analytics agent'
-    $sc.WindowStyle      = 1
-    # ',0' = explicit icon index; some shells show a generic icon without it.
-    if (Test-Path -LiteralPath $icon) { $sc.IconLocation = "$icon,0" }
-    $sc.Save()
+    $packaged = (Test-Path -LiteralPath $main) -and $sc.TargetPath -and ($sc.TargetPath -notlike '*powershell.exe')
+    if ($keepMain -and -not $packaged) {
+      $sc.TargetPath       = $psExe
+      $sc.Arguments        = if ($window) { "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$desktopLauncher`" desktop" } else { "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$desktopLauncher`"" }
+      $sc.WorkingDirectory = $HOME
+      $sc.Description      = if ($window) { 'coop - the Cooptimize analytics agent, in a window' } else { 'coop - the Cooptimize analytics agent' }
+      $sc.WindowStyle      = 1
+      # ',0' = explicit icon index; some shells show a generic icon without it.
+      if (Test-Path -LiteralPath $icon) { $sc.IconLocation = "$icon,0" }
+      $sc.Save()
+      $wrote = $true
+    }
+    # "coop (terminal)": always the terminal.
+    $tc = $ws.CreateShortcut($terminal)
+    $tc.TargetPath       = $psExe
+    $tc.Arguments        = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$desktopLauncher`""
+    $tc.WorkingDirectory = $HOME
+    $tc.Description      = 'coop - the Cooptimize analytics agent, in a terminal'
+    $tc.WindowStyle      = 1
+    if (Test-Path -LiteralPath $icon) { $tc.IconLocation = "$icon,0" }
+    $tc.Save()
     $wrote = $true
-    if (Test-Path -LiteralPath $legacyTerminal) { Remove-Item -LiteralPath $legacyTerminal -Force -ErrorAction SilentlyContinue }
+    # The older "coop (window)" shortcut this script wrote is folded into "coop";
+    # the package's own (an exe target) stays.
+    if (Test-Path -LiteralPath $legacyWindow) {
+      $lc = $ws.CreateShortcut($legacyWindow)
+      if (-not $lc.TargetPath -or ($lc.TargetPath -like '*powershell.exe')) { Remove-Item -LiteralPath $legacyWindow -Force -ErrorAction SilentlyContinue }
+    }
   }
-  # The window shortcut, only where one exists (Set-CoopWindowShortcut, below).
-  [void](Set-CoopWindowShortcut -OnlyIfPresent)
   return $wrote
 }
 
-# The "coop (window)" shortcut beside "coop": the same bin\coop-desktop.ps1 front
-# door with `desktop`, so the console shows the launch checks and stays open on an
-# error. The window is opt-in while it is new (master plan D1b): the first
-# `coop desktop` that installs the window runtime writes this shortcut, and
-# install/update rewrite it only where it already exists. Same folders as
-# Set-CoopDesktopShortcuts. Best-effort: returns $true when a shortcut was written.
+# The window runtime is on this profile (Electron's binary in ~/.coop/desktop), or
+# this coop is the installed window package's own snapshot (D1d): "coop" opens the window.
+function Test-CoopWindowAvailable {
+  if ($script:CoopBundledRuntime) { return $true }
+  try { return [bool](Get-CoopDesktopElectronExe) } catch { return $false }
+}
+
+# After the first `coop desktop` installed the window runtime (master plan D1b,
+# D1m): "coop" now opens the window and "coop (terminal)" the terminal, in the
+# folders that already have a "coop" shortcut (the install wrote it) or, with
+# none, both folders. Best-effort: returns $true when a shortcut was written.
 function Set-CoopWindowShortcut {
   param([switch]$OnlyIfPresent)
   if ($env:OS -ne 'Windows_NT') { return $false }
-  $desktopLauncher = Join-Path $script:CoopRoot 'bin\coop-desktop.ps1'
-  if (-not (Test-Path -LiteralPath $desktopLauncher)) { return $false }
-  $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-  $icon  = Join-Path $script:CoopRoot 'themes\coop.ico'
-  $ws = New-Object -ComObject WScript.Shell
-  $wrote = $false
-  foreach ($dir in (Get-CoopShortcutDirs)) {
-    if (-not $dir) { continue }
-    $lnk = Join-Path $dir 'coop (window).lnk'
-    if ($OnlyIfPresent -and -not (Test-Path -LiteralPath $lnk)) { continue }
-    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-    $sc = $ws.CreateShortcut($lnk)
-    # The installed window package (master plan D1c) writes a shortcut of the
-    # same name that starts its own exe; leave that one to its installer.
-    if ((Test-Path -LiteralPath $lnk) -and $sc.TargetPath -and ($sc.TargetPath -notlike '*powershell.exe')) { continue }
-    $sc.TargetPath       = $psExe
-    $sc.Arguments        = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$desktopLauncher`" desktop"
-    $sc.WorkingDirectory = $HOME
-    $sc.Description      = 'coop - the Cooptimize analytics agent, in a window'
-    $sc.WindowStyle      = 1
-    if (Test-Path -LiteralPath $icon) { $sc.IconLocation = "$icon,0" }
-    $sc.Save()
-    $wrote = $true
-  }
-  return $wrote
+  return (Set-CoopDesktopShortcuts -OnlyIfPresent:$OnlyIfPresent)
 }
 
 # --- coop desktop: the window's runtime (master plan D1b) ---------------------

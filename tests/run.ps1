@@ -273,6 +273,24 @@ try {
     }
   }
 
+  # --- 0e. The todo panel's key is seeded once and never rewritten ---------------
+  # Set-CoopTodoConfig (lib/common.ps1): rpiv-todo's default collapse key is Pi's
+  # tree key, so sync writes ~/.config/rpiv-todo/config.json with Alt+T when the
+  # file is absent, and leaves a user's own file alone.
+  Head 'Todo panel key (Set-CoopTodoConfig)'
+  $todoHome = Join-Path $stub 'todo-home'
+  New-Item -ItemType Directory -Path $todoHome -Force | Out-Null
+  $todoFile = Join-Path (Join-Path (Join-Path $todoHome '.config') 'rpiv-todo') 'config.json'
+  $wroteFirst = Set-CoopTodoConfig -HomeDir $todoHome
+  $todoJson = if (Test-Path -LiteralPath $todoFile) { (Get-Content -LiteralPath $todoFile -Raw | ConvertFrom-Json) } else { $null }
+  if ($wroteFirst -eq $true -and $todoJson -and $todoJson.collapseKey -ceq 'alt+t') { Ok 'an absent config is seeded with collapseKey alt+t' } else { Ko "first call returned [$wroteFirst]; file: $(if (Test-Path -LiteralPath $todoFile) { Get-Content -LiteralPath $todoFile -Raw } else { 'missing' })" }
+  $todoBytes = [System.IO.File]::ReadAllBytes($todoFile)
+  if ($todoBytes.Length -gt 3 -and -not ($todoBytes[0] -eq 0xEF -and $todoBytes[1] -eq 0xBB -and $todoBytes[2] -eq 0xBF)) { Ok 'the config is UTF-8 without a BOM (node reads it as JSON)' } else { Ko 'the config carries a BOM or is empty' }
+  [System.IO.File]::WriteAllText($todoFile, "{`n  `"collapseKey`": `"ctrl+]`"`n}`n")
+  $wroteAgain = Set-CoopTodoConfig -HomeDir $todoHome
+  $kept = (Get-Content -LiteralPath $todoFile -Raw | ConvertFrom-Json).collapseKey
+  if ($wroteAgain -eq $false -and $kept -ceq 'ctrl+]') { Ok "a user's own config is never rewritten" } else { Ko "second call returned [$wroteAgain]; collapseKey is now [$kept]" }
+
   # --- 1. launch-spec resolves the governed pi invocation --------------------
   Head 'launch-spec (shared launch builder) test'
   # Join-Path emits native separators, so on Windows PowerShell 5.1 the spec paths
@@ -586,13 +604,17 @@ print("resume verdict contract OK")
     @{ Name = 'login-present';          Lane = 'gate';     Head = 'model login detection ignores Pi''s empty startup auth.json (#167)' },
     @{ Name = 'extensions-lock';        Lane = 'gate';     Head = 'extension lockfile applied through the helpers (#152)' },
     @{ Name = 'team-skills';            Lane = 'gate';     Head = 'team knowledge skills launch slot (launch-spec --json)' },
+    @{ Name = 'prompt-skill-tiers';     Lane = 'gate';     Head = 'prompt and skill tiers: shipped, client, personal (launch-spec, doctor, scaffolds; PR1)' },
     @{ Name = 'desktop-spec';           Lane = 'gate';     Head = 'coop desktop: the window''s launch spec and runtime state (D1b)' },
     @{ Name = 'desktop-bundle';         Lane = 'gate';     Head = 'coop window package: the bundled Node, Pi and extension tree (D1d)' },
     @{ Name = 'staleness';              Lane = 'gate';     Head = 'repo staleness nudge (throttled fetch + behind-count)' },
     @{ Name = 'coop-unit';              Lane = 'gate';     Head = 'Coop-Unit: the 5.1 job persistence path, and a job that returns nothing is re-run in-process' },
     @{ Name = 'doctor-project';         Lane = 'gate';     Head = 'doctor.ps1 project contract rows' },
     @{ Name = 'first-run';              Lane = 'gate';     Head = 'first-run launcher continuation (onboarding gate)' },
+    @{ Name = 'mcp-retarget';           Lane = 'gate';     Head = 'managed Warehouse MCP entry follows the launch folder' },
     @{ Name = 'profile-root';           Lane = 'gate';     Head = 'one profile root: COOP_DIR parent of .coop, one agent-dir chain (S3, #220)' },
+    @{ Name = 'contract-root';          Lane = 'gate';     Head = 'Get-CoopContractRootProposal: one committed contract at the client Git root (C1)' },
+    @{ Name = 'unlock-prod';            Lane = 'gate';     Head = 'coop unlock-prod: the human-only production-write unlock (G1)' },
     @{ Name = 'sync-knowledge';         Lane = 'gate';     Head = 'team knowledge sync (sync-knowledge.ps1; hang cases in the extended lane)' },
     @{ Name = 'teamai';                 Lane = 'gate';     Head = 'coop teamai: isolated TeamAI adapter entry (K1; off by default)' },
     @{ Name = 'fleet-execution';        Lane = 'extended'; Head = 'fleet execution (install/update/sync against stubs)' },

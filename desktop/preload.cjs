@@ -34,9 +34,21 @@ contextBridge.exposeInMainWorld("coop", Object.freeze({
   changeDiff: (path) => ipcRenderer.invoke("coop:change-diff", String(path || "")),
   standards: () => ipcRenderer.invoke("coop:standards"),
   standardsText: (domain) => ipcRenderer.invoke("coop:standards-text", String(domain || "")),
+  knowledgeNote: (source, path) => ipcRenderer.invoke("coop:knowledge-note", String(source || ""), String(path || "")),
   projectLoad: () => ipcRenderer.invoke("coop:project-load"),
   projectPreview: (input) => ipcRenderer.invoke("coop:project-preview", input),
   projectSave: (input, token) => ipcRenderer.invoke("coop:project-save", input, token),
+  projectTeam: () => ipcRenderer.invoke("coop:project-team"),
+  projectGet: () => ipcRenderer.invoke("coop:project-get"),
+  projectShare: (force) => ipcRenderer.invoke("coop:project-share", force === true),
+  // The project picker (D1m): its own page, before any window, or File > Switch project.
+  switchProject: () => ipcRenderer.invoke("coop:switch-project"),
+  pickerList: () => ipcRenderer.invoke("coop:picker-list"),
+  pickerOpen: (path, openNextTime) => ipcRenderer.invoke("coop:picker-open", String(path || ""), openNextTime === true),
+  pickerBrowse: () => ipcRenderer.invoke("coop:picker-browse"),
+  pickerForget: (path) => ipcRenderer.invoke("coop:picker-forget", String(path || "")),
+  pickerCancel: () => ipcRenderer.invoke("coop:picker-cancel"),
+  pickerTheme: () => ipcRenderer.invoke("coop:picker-theme"),
   pickFolder: (purpose, current) => ipcRenderer.invoke("coop:pick-folder", String(purpose || ""), String(current || "")),
   docsStart: () => ipcRenderer.invoke("coop:docs-start"),
   docsState: () => ipcRenderer.invoke("coop:docs-state"),
@@ -56,9 +68,13 @@ contextBridge.exposeInMainWorld("coop", Object.freeze({
   // A fresh vibe (tip) for the empty screen and the working line; a set name switches the pool.
   vibe: (set) => ipcRenderer.invoke("coop:vibe", String(set || "")),
   onEvent: listen("pi:event"),
+  // A question answered on the phone, or expired (MC2): its card closes here.
+  onDialogClosed: listen("coop:dialog-closed"),
   onExit: listen("pi:exit"),
   onNotice: listen("pi:notice"),
   onTheme: listen("coop:theme"),
   onMenu: listen("coop:menu"),
   onDocs: listen("coop:docs"),
+  // The phone started, opened, forked or cloned a session (MC9): reload it here.
+  onRefresh: listen("coop:refresh"),
 }));

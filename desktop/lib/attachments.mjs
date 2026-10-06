@@ -125,6 +125,19 @@ export function saveExtract(store, { name, source, label, detail, text }, now = 
   return { id, file };
 }
 
+/**
+ * Save a file the phone sent (MC10) under the store as <id>/<name>, so it can
+ * be attached like any file on the VM; pruned with the store. Returns the path.
+ */
+export function saveUpload(store, name, bytes, now = new Date()) {
+  const id = `${now.getTime().toString(36)}-${randomBytes(3).toString("hex")}`;
+  const dir = join(store, id);
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, safeName(basename(String(name || "").replace(/\\/g, "/"))));
+  writeFileSync(file, bytes);
+  return file;
+}
+
 /** Drop stored extracts older than maxAgeMs, and all but the newest keep. */
 export function pruneStore(store, { maxAgeMs = 7 * 24 * 3600 * 1000, keep = 100, now = Date.now() } = {}) {
   let entries = [];

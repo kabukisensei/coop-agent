@@ -7,7 +7,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
-import { userProfilePath } from "../../lib/paths.mjs";
+import { effectiveProfileName } from "../../lib/user-profile.mjs";
 
 export const FALLBACK_VIBES = Object.freeze([
   "Type /start anytime to open the Start Here menu of common tasks.",
@@ -43,14 +43,12 @@ export function vibeSets(dir) {
   try { return readdirSync(dir).filter((name) => name.endsWith(".txt")).map((name) => name.replace(/\.txt$/, "")); } catch { return []; }
 }
 
-/** The name {user} becomes: the profile name, else the OS login, else Dave. */
+/** The name {user} becomes: the profile name (per-user, else the machine-level
+ *  file; lib/user-profile.mjs), else the OS login, else Dave. */
 export function userName(env = process.env) {
   try {
-    const raw = JSON.parse(readFileSync(userProfilePath(env), "utf8"));
-    if (raw && typeof raw.name === "string") {
-      const name = raw.name.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 100);
-      if (name) return name;
-    }
+    const name = effectiveProfileName(env);
+    if (name) return name;
   } catch { /* no profile */ }
   try { const login = userInfo().username; if (login) return login; } catch { /* no login */ }
   return "Dave";

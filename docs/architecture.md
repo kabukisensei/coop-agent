@@ -118,6 +118,10 @@ for the Node tools and extensions; no script builds these paths inline.
      Coop user profile (`user.json`, written by `coop onboard`) as a small hidden
      instruction at session start, so the agent addresses the member by name and
      in their preferred style without the profile ever appearing in the chat.
+     The per-user file is filled field by field from the machine-level
+     `%ProgramData%\coop\user.json` (`coop onboard --machine`, master plan P1;
+     `lib/user-profile.mjs`), which holds only a name and a communication
+     preference for VMs with one Windows user per client.
    - **`coop-guardrails` extension** — `extensions/coop-guardrails/`: **enforces**
      governance at runtime via a `tool_call` hook (blocks the agent committing
      source; confirms destructive commands). Complements the advisory
@@ -153,6 +157,12 @@ for the Node tools and extensions; no script builds these paths inline.
      the web tools when it needs them.
    - `@juicesharp/rpiv-ask-user-question` — lets the model put a structured,
      typed-option question to the user instead of guessing (fits consent rounds).
+   - `@juicesharp/rpiv-todo` — gives the model a `todo` tool and shows the task
+     list above the prompt (Alt+T collapses it, `/todos` prints it). The list is
+     rebuilt from the session's own `todo` tool results, so it survives
+     `/reload`, compaction and resume with no file on disk. The window draws the
+     same panel itself from those results (`desktop/renderer/todos.mjs`), since
+     the extension's TUI widget does not cross Pi's RPC.
    - `@xl0/pi-lovely-rename` — names an unnamed session after three user turns
      (`/rename` regenerates; a manual `/name` always wins). The name shows in
      coop's footer and terminal title.
@@ -196,10 +206,12 @@ for the Node tools and extensions; no script builds these paths inline.
 
 7. **Approval-gated MCP servers** (all optional; `coop` runs without them). Generated as
    manifest-pinned, COOP-managed entries in coop's isolated agent dir
-   (`~/.coop/agent/mcp-adapter.json`) by `coop onboard` / `coop sync`:
+   (`~/.coop/agent/mcp-adapter.json`) by `coop onboard` / `coop sync`, and
+   re-targeted at every launch to the contract above the folder coop starts in:
    - `fabric` — `@microsoft/fabric-mcp` (AzureCliCredential).
    - `powerbi-modeling-mcp` — `@microsoft/powerbi-modeling-mcp --start --readwrite
-     --accept-eula`, the only Power BI MCP. Reads run freely; the guardrail classifies
+     --accept-eula`, the only Power BI MCP (the EULA that flag accepts, and every other
+     component's license, is listed in `NOTICE.md`). Reads run freely; the guardrail classifies
      each call's `request.operation` and asks before any edit (#159). (`powerbi-mcp-server`, the former `powerbi` entry, is
      retired: it ignores `--readonly` and exposes `refresh_dataset`, a write, #93.
      `coop sync` removes the entry it generated; `coop doctor` warns about a
@@ -328,6 +340,7 @@ flowchart TD
       bopenai["pi-better-openai\nplan usage limits (5h/7d)"]
       webacc["pi-web-access"]
       askq["rpiv-ask-user-question"]
+      todo["rpiv-todo"]
       rename["pi-lovely-rename"]
     end
     pi --> PIEXT

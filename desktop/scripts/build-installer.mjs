@@ -59,6 +59,8 @@ export function stageEntries(root = ROOT) {
     "desktop/PARITY.md",
     "desktop/lib/",
     "desktop/renderer/",
+    // The phone companion's page (MC3), served by the window's loopback server.
+    "desktop/companion/",
     "desktop/scripts/pdf-text.mjs",
     ...libModules,
     // lib/standards.mjs imports the registry and names the bundled standards.

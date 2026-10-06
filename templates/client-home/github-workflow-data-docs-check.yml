@@ -1,0 +1,30 @@
+# Lineage docs freshness gate for a client's home repository (coop master plan
+# DR1): the lineage docs coop-data-doc builds live beside the project file, in
+# <client>-coop. coop's /setup-docs offers this file as
+# .github/workflows/data-docs-check.yml when the repository has none.
+#
+# `coop-data-doc check` compares the COMMITTED docs with the source repositories
+# named in coop-data-doc.yml: exit 1 means someone changed source without
+# rebuilding the docs, exit 2 means unresolved references, risky parses or
+# corrupt files. Keep the pin equal to coop's release manifest
+# (config/release-manifest.json, python_tools.coop-data-doc); `coop update`
+# moves the tool, a PR here moves the pin.
+name: data-docs check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    name: Lineage docs freshness (coop-data-doc check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install coop-data-doc
+        run: pipx install coop-data-doc==1.3.4
+
+      - name: Docs freshness gate
+        run: coop-data-doc check

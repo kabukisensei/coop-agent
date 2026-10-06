@@ -1,8 +1,9 @@
 # Cooptimize agent — bundled project contract (the live default for coop-agent).
-# When you run `coop` inside one of your work repos, coop uses THAT repo's
-# .coop/project.yml instead (it walks up from your working directory). This file
-# is the fallback + a worked example. See .coop/project.example.yml for the fully
-# documented template, and copy it into each work repo.
+# When you run `coop` under a client's Git root, coop uses THAT client's committed
+# .coop/project.yml instead (the nearest one walking up from your working
+# directory). This file is the fallback + a worked example. See
+# .coop/project.example.yml for the fully documented template, and copy it once to
+# each client's Git root and commit it there.
 
 profile:
   organization: "Cooptimize"
@@ -48,6 +49,8 @@ fabric:
   tenant_id: "TODO: tenant id"
   default_workspace_name: "TODO: dev Warehouse / Lakehouse workspace name"
   default_workspace_id: "TODO: dev Warehouse / Lakehouse workspace id"
+  # The Fabric item kinds that hold this client's SQL (master plan C2).
+  layout: ""
   # Optional Warehouse/Lakehouse SQL endpoint MCP target. Leave IDs blank unless
   # copied from Fabric. Lakehouse targets use sqlEndpointProperties.id.
   default_sql_endpoint:
@@ -65,6 +68,12 @@ fabric:
 power_bi:
   default_workspace_name: "TODO: dev semantic-model workspace name"
   default_workspace_id: "TODO: dev semantic-model workspace id"
+  # How a semantic-model table maps to the SQL object it loads (master plan C2).
+  table_mapping:
+    rule: "same_name"
+    default_schema: "dbo"
+    view_prefix: ""
+    overrides: {}
   # Semantic-model workspace for each deployment environment.
   environment_names:
     dev:  "TODO: dev semantic-model workspace"

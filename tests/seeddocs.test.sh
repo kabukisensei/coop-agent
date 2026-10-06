@@ -64,6 +64,30 @@ assert p["powerbi"]["path"].endswith("source"), p
 PYEOF
 pass "mixed repository seeds both SQL and Power BI sources"
 
+# A contract with no SQL repository but a committed catalog snapshot (SQ9): the
+# snapshot folder becomes repos.sql, so lineage builds without SQL source control.
+mkdir -p "$TMP/snap/.coop/catalog/dev/dbo" "$TMP/snap/pbirepo"
+cat > "$TMP/snap/.coop/project.yml" <<EOF
+repositories:
+  fabric:
+    description: "Semantic models and reports"
+    role: powerbi
+    local_path: "$TMP/snap/pbirepo"
+sql_targets:
+  default_environment: dev
+EOF
+printf '{"coop_catalog_snapshot": true, "taken_at": "2026-10-05T22:00:00Z", "objects": {"tables": 1}, "files": ["dbo/Orders.sql"]}\n' > "$TMP/snap/.coop/catalog/dev/manifest.json"
+printf 'CREATE TABLE [dbo].[Orders] ([OrderId] int NOT NULL);\n' > "$TMP/snap/.coop/catalog/dev/dbo/Orders.sql"
+patch="$("$PY" "$ROOT/lib/_seeddocs.py" "$TMP/snap/.coop/project.yml" 2>"$TMP/snap-notes.txt")" || fail "snapshot contract should seed"
+"$PY" - "$patch" <<'PYEOF' || fail "snapshot patch wrong shape"
+import json, sys
+p = json.loads(sys.argv[1])["repos"]
+assert set(p) == {"sql", "powerbi"}, p
+assert p["sql"]["path"].replace("\\", "/").endswith(".coop/catalog/dev"), p
+PYEOF
+grep -q "committed catalog snapshot is the SQL source" "$TMP/snap-notes.txt" || fail "snapshot note missing on stderr"
+pass "a committed catalog snapshot is the SQL source when the contract has no SQL repository"
+
 # 2. All-TODO contract -> exit 3, no patch.
 mkdir -p "$TMP/empty/.coop"
 printf 'repositories:\n  fabric:\n    local_path: "TODO: /x"\n' > "$TMP/empty/.coop/project.yml"

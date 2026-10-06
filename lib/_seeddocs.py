@@ -58,6 +58,18 @@ def classify(name, entry):
     return None
 
 
+def catalog_snapshot_dir(project, project_path):
+    """The committed catalog snapshot folder (lib/catalog_snapshot.py's rule)
+    when one has been written, else ''."""
+    try:
+        import catalog_snapshot
+        from pathlib import Path
+        folder, _chosen = catalog_snapshot.resolve_output(project, Path(project_path), catalog_snapshot.default_environment(project))
+        return str(folder) if catalog_snapshot.read_manifest(folder) else ''
+    except Exception:
+        return ''
+
+
 def main(argv):
     if len(argv) != 2:
         sys.stderr.write('usage: _seeddocs.py <path-to-project.yml>\n')
@@ -68,9 +80,12 @@ def main(argv):
         sys.stderr.write('could not read {}: {}\n'.format(argv[1], e))
         return 2
     repos = data.get('repositories') if isinstance(data, dict) else None
-    if not isinstance(repos, dict) or not repos:
+    snapshot_dir = catalog_snapshot_dir(data if isinstance(data, dict) else {}, argv[1])
+    if (not isinstance(repos, dict) or not repos) and not snapshot_dir:
         sys.stderr.write('no repositories: section in {} — nothing to seed.\n'.format(argv[1]))
         return 3
+    if not isinstance(repos, dict):
+        repos = {}
 
     slots = {}
     todo = []
@@ -110,6 +125,12 @@ def main(argv):
     if len(unclassified) == 1 and len(slots) == 1:
         other = 'powerbi' if 'sql' in slots else 'sql'
         slots[other] = unclassified.pop()
+
+    # No SQL repository but a committed catalog snapshot (master plan SQ9): the
+    # snapshot folder is the SQL source, so lineage works without SQL source control.
+    if 'sql' not in slots and snapshot_dir:
+        slots['sql'] = ('catalog snapshot', snapshot_dir)
+        sys.stderr.write('note: no SQL repository; the committed catalog snapshot is the SQL source.\n')
 
     for name in todo:
         sys.stderr.write('note: repositories.{}.local_path is a TODO placeholder — skipped.\n'.format(name))

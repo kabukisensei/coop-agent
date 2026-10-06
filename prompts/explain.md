@@ -13,3 +13,8 @@ Cover:
 - **Alternatives considered** — and why this one was picked.
 - **Risks or trade-offs** — that should be watched.
 - **Stop-and-ask triggers** — conditions where I should pause.
+
+`/explain impact`: explain the downstream of each SQL object in the current slice
+(the session's lineage context, which coop filled before the edit) and the
+follow-on edit each dependent would need. For the raw detail without a model turn,
+the user can run `/impact [schema.name]`.

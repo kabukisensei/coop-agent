@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en" data-theme="modern-dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f1318">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="coop">
+  <title>coop</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <link rel="stylesheet" href="shared/themes.css">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="bar">
+    <div class="who">
+      <div class="title">coop <span id="status" class="chip">connecting</span></div>
+      <div id="identity" class="identity"></div>
+    </div>
+    <button id="menu-open" class="menu-toggle" type="button" aria-label="Menu" aria-controls="menu" aria-expanded="false"><span class="hamburger"></span></button>
+  </header>
+  <div id="scrim" class="scrim" hidden></div>
+  <aside id="menu" class="drawer" aria-label="Menu" aria-hidden="true">
+    <div class="drawer-head">
+      <span class="drawer-brand">coop</span>
+      <button id="menu-close" class="menu-toggle" type="button" aria-label="Close menu" aria-expanded="true"><span class="hamburger"></span></button>
+    </div>
+    <div class="drawer-sub">// menu</div>
+    <div id="menu-session" class="drawer-body" hidden>
+      <div class="drawer-cap">Session</div>
+      <ul class="drawer-list">
+        <li><button id="menu-commands" class="drawer-item" type="button"><span class="item-name">Commands</span><span class="item-detail">coop's / commands, skills and prompts</span></button></li>
+        <li><button id="menu-sessions" class="drawer-item" type="button"><span class="item-name">Sessions</span><span class="item-detail">New, open a saved one, fork, clone, export</span></button></li>
+        <li><button id="menu-find" class="drawer-item" type="button"><span class="item-name">Find</span><span class="item-detail">Search the conversation, jump to or reuse a prompt</span></button></li>
+        <li><button id="menu-model" class="drawer-item" type="button"><span class="item-name">Model</span><span class="item-detail" id="menu-model-now">Choose the model coop uses</span></button></li>
+        <li><button id="menu-thinking" class="drawer-item" type="button"><span class="item-name">Thinking</span><span class="item-detail" id="menu-thinking-now">How hard the model thinks</span></button></li>
+        <li><button id="menu-compact" class="drawer-item" type="button"><span class="item-name">Compact</span><span class="item-detail">Summarize the conversation to free context</span></button></li>
+        <li><button id="menu-name" class="drawer-item" type="button"><span class="item-name">Name this session</span><span class="item-detail" id="menu-name-now">Not named</span></button></li>
+        <li><button id="menu-details" class="drawer-item" type="button"><span class="item-name">Session details</span><span class="item-detail">Tokens, cost and context</span></button></li>
+      </ul>
+      <div class="drawer-cap">This phone</div>
+      <ul class="drawer-list">
+        <li><button id="menu-notices" class="drawer-item" type="button"><span class="item-name">Notices</span><span class="item-detail">When coop needs you and this page is closed</span></button></li>
+        <li><button id="signout" class="drawer-item danger" type="button"><span class="item-name">Sign this phone out</span><span class="item-detail">Pair it again from the coop window</span></button></li>
+      </ul>
+    </div>
+    <div class="drawer-foot">
+      <div class="drawer-cap" id="style-label">Style</div>
+      <div class="seg" role="radiogroup" aria-labelledby="style-label">
+        <button class="seg-btn" type="button" role="radio" data-style="modern">Modern</button>
+        <button class="seg-btn" type="button" role="radio" data-style="retro">Retro</button>
+      </div>
+      <div class="drawer-cap" id="mode-label">Mode</div>
+      <div class="seg" role="radiogroup" aria-labelledby="mode-label">
+        <button class="seg-btn" type="button" role="radio" data-mode="dark">Dark</button>
+        <button class="seg-btn" type="button" role="radio" data-mode="light">Light</button>
+      </div>
+    </div>
+  </aside>
+  <dialog id="sheet" class="sheet" aria-labelledby="sheet-title">
+    <div class="sheet-head">
+      <h2 id="sheet-title"></h2>
+      <button id="sheet-close" class="menu-toggle" type="button" aria-label="Close" aria-expanded="true"><span class="hamburger"></span></button>
+    </div>
+    <div id="sheet-body" class="sheet-body"></div>
+  </dialog>
+
+  <main id="main">
+    <section id="gate" class="gate" hidden>
+      <h1 id="gate-title"></h1>
+      <p id="gate-text"></p>
+      <form id="pair" class="pair" hidden>
+        <label>Pairing code
+          <input id="code" name="code" inputmode="text" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" maxlength="9" placeholder="ABCD-EFGH" required>
+        </label>
+        <label>Name this phone
+          <input id="device" name="device" maxlength="60" placeholder="Aaron's phone" required>
+        </label>
+        <button class="btn primary" type="submit">Pair</button>
+      </form>
+      <button id="retry" class="btn" type="button" hidden>Try again</button>
+    </section>
+
+    <section id="session" hidden>
+      <ol id="timeline" class="timeline" aria-live="polite"></ol>
+      <div id="questions" class="questions"></div>
+    </section>
+  </main>
+
+  <footer id="composer" class="composer" hidden>
+    <div id="panel" class="panel" hidden>
+      <button id="panel-toggle" class="panel-head" type="button" aria-expanded="true" aria-controls="panel-body"><span id="panel-status" class="panel-status"></span><span class="panel-fold" aria-hidden="true"></span></button>
+      <div id="panel-body" class="panel-body"></div>
+    </div>
+    <div id="queue" class="queue" hidden></div>
+    <ul id="completions" class="completions" role="listbox" aria-label="Commands and files" hidden></ul>
+    <ul id="attachments" class="attachments" aria-label="Attached files" hidden></ul>
+    <input id="file-pick" type="file" multiple hidden>
+    <label class="sr-only" for="message">Message coop</label>
+    <textarea id="message" rows="2" maxlength="16000" placeholder="Message coop, / for commands, @ for files"></textarea>
+    <div class="actions">
+      <button id="attach" class="btn attach" type="button" aria-label="Attach a photo or file">Attach</button>
+      <button id="stop" class="btn danger" type="button" hidden>Stop</button>
+      <button id="queue-send" class="btn" type="button" hidden>Queue</button>
+      <button id="send" class="btn primary" type="button">Send</button>
+    </div>
+  </footer>
+</body>
+</html>
