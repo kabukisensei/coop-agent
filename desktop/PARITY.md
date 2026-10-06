@@ -58,7 +58,7 @@ only, so the window runs each one itself.
 | `/reload` | window | Restarts coop in the window on the same session (`--session`), which reloads extensions, skills and prompts. |
 | `/hotkeys` | window | Keyboard shortcuts table (from `KEYS`). |
 | `/changelog` | terminal | Pi's changelog viewer is a terminal screen. |
-| `/quit` | window | Closes the window, which stops Pi and its children. Ctrl+W. |
+| `/quit` | window | Closes this tab, which stops its Pi and its children (the last tab closes the window). Ctrl+W. |
 
 ## Composer prefixes
 
@@ -95,7 +95,7 @@ Pi 0.87.1, `docs/keybindings.md`: every action id, with the window's key.
 | --- | --- | --- |
 | `app.interrupt` | rpc | Esc: `abort` (or `abort_bash`, `abort_retry`); queued messages come back to the prompt first (`clear_queue`). |
 | `app.clear` | native | Ctrl+C copies in a window; clear the prompt with Ctrl+A, Delete. |
-| `app.exit` | window | Ctrl+W closes the window. |
+| `app.exit` | window | Ctrl+W closes the tab (the last tab closes the window). |
 | `app.suspend` | terminal | Job control has no window form (and none on Windows). |
 | `app.editor.external` | window | Ctrl+G opens a larger editor for the prompt. |
 | `app.clipboard.pasteImage` | window | Ctrl+V, drag and drop or the paperclip attaches files (up to ten a message): images go with the prompt when the model reads them (five, 4 MB each); text files are referenced by path; Word, Excel, PowerPoint and PDF are read to Markdown (pdf.js in its own time-limited process) and referenced by path, so coop reads them through its guarded read tool. |
@@ -270,6 +270,23 @@ window's actions above; View > Menu bar hides it, Alt shows it again) and a
 Windows notification plus taskbar flash when a turn ends (`agent_end`) or an
 extension asks a question while the window is in the background (Settings >
 Notify in the background).
+
+## Tabs (several sessions at once)
+
+The window's own addition, matching how the terminal runs one coop per
+console: each tab is one session with its own Pi process
+(`desktop/lib/tabs.mjs`, `addTab` in `desktop/main.mjs`), so its approvals,
+guardrails, questions and phone access are its own. Tabs share the window's
+folder, launch spec and Warehouse target. Ctrl+N (or the strip's +) opens a
+tab on a new session; New session or a click on another saved session while
+coop works opens it in a new tab instead of refusing. Ctrl+W closes a tab,
+Ctrl+Tab and Ctrl+Shift+Tab move between them, Ctrl+1 to Ctrl+9 jump. A tab
+shows a dot while coop works and a mark while it waits on a question; a
+background tab's finished turn or question gets the notification. A saved
+session is open in one tab at most (`desktop/lib/session-owners.mjs`): picking
+one that another tab or window holds brings that tab forward, and the phone's
+session list leaves it out. File > New window opens another window on the same
+folder.
 
 ## Phone companion
 

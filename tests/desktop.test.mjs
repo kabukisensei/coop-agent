@@ -9,7 +9,7 @@
  */
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -31,6 +31,8 @@ import { setupItems, setupItem, setupSummary, EXAMPLES } from "../desktop/render
 import { parseConfirm, confirmLabels, parseQuestionSelect, parseQuestionMulti, multiAnswer } from "../desktop/renderer/dialogs.mjs";
 import { menuTemplate, notificationFor } from "../desktop/lib/menu.mjs";
 import { restartOnce } from "../desktop/lib/restart.mjs";
+import { markOpenElsewhere, ownerOf, sameSessionPath } from "../desktop/lib/session-owners.mjs";
+import { MAX_TABS, TAB_STRIP_HEIGHT, afterClose, stripRows, tabFor, tabKey, tabLabel } from "../desktop/lib/tabs.mjs";
 import { imageBudgetProblem, imageBytes, restoreDraft } from "../desktop/renderer/draft.mjs";
 import { activitySummary, applyEvent, createTimeline, finishBash, loadMessages, startBash, toolSummary, turnOf, turns } from "../desktop/renderer/timeline.mjs";
 import { isSafeLink, parseMarkdown } from "../desktop/renderer/markdown.mjs";
@@ -446,11 +448,68 @@ await check("menu: the template runs window actions, themes are radios, notifica
   const theme = view.find((item) => item.label === "Theme");
   assert.deepEqual(theme.submenu.map((item) => [item.label, item.checked]), [["Match Windows", false], ["Modern dark", false], ["Modern light", false], ["Retro dark", true], ["Retro light", false]]);
   for (const menu of template) for (const item of menu.submenu) if (item.click && item.label && !item.role && !item.submenu && item.type !== "checkbox" && !/Install guide|About/.test(item.label)) item.click();
+  const tabbed = [];
+  const withTabs = menuTemplate({ run() {}, setTheme() {}, theme: "auto", themes, menuBar: true, toggleMenuBar() {}, openExternal() {}, about() {}, tabs: { add: () => tabbed.push("add"), close: () => tabbed.push("close"), next() {}, prev() {}, newWindow: () => tabbed.push("window") } });
+  const file = withTabs[0].submenu;
+  assert.deepEqual(file.slice(0, 3).map((item) => item.label), ["New tab", "New window", "New session"]);
+  for (const label of ["New tab", "Close tab", "Next tab"]) assert.equal(file.find((item) => item.label === label).registerAccelerator, false, `${label}: main catches the key before the page`);
+  file.find((item) => item.label === "Close tab").click();
+  file.find((item) => item.label === "New tab").click();
+  file.find((item) => item.label === "New window").click();
+  assert.deepEqual(tabbed, ["close", "add", "window"]);
   assert.ok(ran.includes("new") && ran.includes("hotkeys") && ran.includes("start") && ran.includes("pane") && ran.includes("switch"), "File > Switch project runs the picker action (D1m)");
   assert.equal(notificationFor({ type: "agent_end" }, { folder: "work" }), "coop finished in work.");
   assert.equal(notificationFor({ type: "extension_ui_request", method: "confirm", title: "coop guardrails" }), "coop is waiting for your answer: coop guardrails");
   assert.equal(notificationFor({ type: "extension_ui_request", method: "setStatus" }), "");
   assert.equal(notificationFor({ type: "message_update" }), "");
+});
+
+await check("tabs: keys, order after a close, labels and the strip's rows", () => {
+  const key = (k, mods = {}) => tabKey({ type: "keyDown", key: k, control: true, ...mods });
+  assert.deepEqual(key("n"), { type: "new" });
+  assert.deepEqual(key("N"), { type: "new" }, "Caps Lock still opens a tab");
+  assert.equal(key("n", { shift: true }), null, "Ctrl+Shift+N stays New session");
+  assert.deepEqual(key("w"), { type: "close" });
+  assert.deepEqual(key("Tab"), { type: "next" });
+  assert.deepEqual(key("Tab", { shift: true }), { type: "prev" });
+  assert.deepEqual(key("PageDown"), { type: "next" });
+  assert.deepEqual(key("3"), { type: "index", index: 2 });
+  assert.deepEqual(key("9"), { type: "last" });
+  assert.equal(key("t"), null, "Ctrl+T stays Show thinking");
+  assert.equal(tabKey({ type: "keyUp", key: "n", control: true }), null);
+  assert.equal(tabKey({ type: "keyDown", key: "n" }), null);
+  assert.equal(key("n", { alt: true }), null);
+  const [a, b, c] = [{ tabId: 1, label: "first task" }, { tabId: 2, label: "", working: true }, { tabId: 3, label: "x".repeat(90), asking: true }];
+  const tabs = [a, b, c];
+  assert.equal(tabFor({ type: "next" }, tabs, c), a, "next wraps");
+  assert.equal(tabFor({ type: "prev" }, tabs, a), c, "previous wraps");
+  assert.equal(tabFor({ type: "index", index: 7 }, tabs, a), null);
+  assert.equal(tabFor({ type: "last" }, tabs, a), c);
+  assert.equal(afterClose(tabs, b, b), c, "closing the tab in front shows the one to its right");
+  assert.equal(afterClose(tabs, c, c), b, "else the one to its left");
+  assert.equal(afterClose(tabs, a, c), c, "closing a tab behind keeps the one in front");
+  assert.equal(afterClose([a], a, a), null);
+  assert.equal(tabLabel(""), "New session");
+  assert.equal(tabLabel("line one\nline two"), "line one line two");
+  assert.ok(tabLabel("x".repeat(90)).length <= 60);
+  assert.deepEqual(stripRows(tabs, b).map((row) => [row.id, row.working, row.asking, row.active]), [[1, false, false, false], [2, true, false, true], [3, false, true, false]]);
+  assert.ok(MAX_TABS >= 8 && TAB_STRIP_HEIGHT > 0);
+});
+
+await check("tabs: a saved session is open in one tab at most", () => {
+  assert.ok(sameSessionPath("C:\\Users\\a\\s.jsonl", "c:/users/A/S.jsonl", "win32"));
+  assert.ok(!sameSessionPath("/a/S.jsonl", "/a/s.jsonl", "linux"));
+  assert.ok(!sameSessionPath("", "", "linux"));
+  const live = { exited: false };
+  const self = { pi: live, sessionFile: "/s/one.jsonl" };
+  const other = { pi: live, sessionFile: "/s/two.jsonl" };
+  const gone = { pi: { exited: true }, sessionFile: "/s/three.jsonl" };
+  const states = new Map([[1, self], [2, other], [3, gone]]);
+  assert.equal(ownerOf(states.values(), self, "/s/two.jsonl", "linux"), other);
+  assert.equal(ownerOf(states.values(), self, "/s/one.jsonl", "linux"), null, "a tab's own session is not elsewhere");
+  assert.equal(ownerOf(states.values(), self, "/s/three.jsonl", "linux"), null, "a tab whose coop exited holds nothing");
+  const marked = markOpenElsewhere([{ path: "/s/one.jsonl" }, { path: "/s/two.jsonl" }, { path: "/s/three.jsonl" }], states.values(), self, "linux");
+  assert.deepEqual(marked.map((session) => Boolean(session.openElsewhere)), [false, true, false], "a Map's values iterator is read for every session");
 });
 
 await check("composer: @ file ranking", () => {
@@ -597,6 +656,20 @@ await check("sessions: Pi's folder naming, listing and the switch guard", () => 
   const listed = listSessions(env, cwd);
   assert.equal(listed.length, 1);
   assert.deepEqual([listed[0].title, listed[0].name, listed[0].messages], ["Tidy report.sql", "Desktop fixture", 1]);
+  // A long session: the name and later prompts sit past the first megabytes, and
+  // the file grows between listings (auto-naming appends after a few turns).
+  const long = join(folder, "2026-10-03T00-00-00-000Z_def.jsonl");
+  const bulky = { type: "message", message: { role: "toolResult", content: [{ type: "text", text: "x".repeat(700 * 1024) }] } };
+  const prompt = (text) => ({ type: "message", message: { role: "user", content: [{ type: "text", text }] } });
+  writeFileSync(long, [{ type: "session", id: "def", cwd, timestamp: "2026-10-03T00:00:00.000Z" }, prompt("First ask"), bulky, bulky, prompt("Second ask")]
+    .map((e) => JSON.stringify(e) + "\n").join(""));
+  let summary = listSessions(env, cwd).find((s) => s.id === "def");
+  assert.deepEqual([summary.title, summary.name, summary.messages], ["First ask", "", 2]);
+  appendFileSync(long, [bulky, prompt("Third ask"), { type: "session_info", name: "Fiscal period label" }].map((e) => JSON.stringify(e) + "\n").join(""));
+  summary = listSessions(env, cwd).find((s) => s.id === "def");
+  assert.deepEqual([summary.title, summary.name, summary.messages], ["First ask", "Fiscal period label", 3]);
+  assert.equal(listSessions(env, cwd).find((s) => s.id === "def").messages, 3, "a second listing does not count twice");
+  rmSync(long);
   assert.ok(isSessionPath(env, file));
   const outside = join(temp, "outside.jsonl");
   writeFileSync(outside, "{}");

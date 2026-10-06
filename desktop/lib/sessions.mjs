@@ -4,7 +4,11 @@
 import { openSync, readSync, closeSync, readdirSync, statSync, realpathSync } from "node:fs";
 import { join, resolve, sep, relative, isAbsolute } from "node:path";
 
-const HEAD_BYTES = 256 * 1024;
+// Read in chunks so a long session never sits in memory whole.
+const CHUNK_BYTES = 1024 * 1024;
+// path -> what the file held up to `offset` (the end of its last full line).
+// Pi only appends, so a grown file is read from there on, not from the start.
+const scanned = new Map();
 
 export function sessionsRoot(env) {
   if (env.PI_CODING_AGENT_SESSION_DIR) return resolve(env.PI_CODING_AGENT_SESSION_DIR);
@@ -17,17 +21,6 @@ export function sessionFolderName(cwd) {
   return `--${String(cwd).replace(/^[/\\]+/, "").replace(/[/\\:]/g, "-")}--`;
 }
 
-function readHead(file) {
-  const fd = openSync(file, "r");
-  try {
-    const buffer = Buffer.alloc(HEAD_BYTES);
-    const read = readSync(fd, buffer, 0, HEAD_BYTES, 0);
-    return buffer.subarray(0, read).toString("utf8");
-  } finally {
-    closeSync(fd);
-  }
-}
-
 function firstText(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -35,34 +28,80 @@ function firstText(content) {
   return block ? block.text : "";
 }
 
-/** Summarize one session file from its first part; null when it is not a session. */
-export function summarizeSession(file) {
-  let head;
-  try { head = readHead(file); } catch { return null; }
-  const lines = head.split("\n");
-  let header = null;
-  let title = "";
-  let name = "";
-  let messages = 0;
-  for (const line of lines) {
-    if (!line.trim()) continue;
-    let entry;
-    try { entry = JSON.parse(line); } catch { continue; }
-    if (!header) {
-      if (entry.type !== "session") return null;
-      header = entry;
-      continue;
+function readLines(file, state, size) {
+  const fd = openSync(file, "r");
+  try {
+    const buffer = Buffer.alloc(CHUNK_BYTES);
+    let carry = Buffer.alloc(0);
+    let position = state.offset;
+    while (position < size) {
+      const read = readSync(fd, buffer, 0, Math.min(CHUNK_BYTES, size - position), position);
+      if (read <= 0) break;
+      position += read;
+      let data = Buffer.concat([carry, buffer.subarray(0, read)]);
+      let newline;
+      while ((newline = data.indexOf(10)) >= 0) {
+        if (!readLine(state, data.subarray(0, newline).toString("utf8"))) return false;
+        state.offset += newline + 1;
+        data = data.subarray(newline + 1);
+      }
+      carry = Buffer.from(data);
     }
-    if (entry.type === "session_info" && typeof entry.name === "string") name = entry.name;
-    if (entry.type === "message" && entry.message && entry.message.role === "user") {
-      messages += 1;
-      if (!title) title = firstText(entry.message.content).trim().split("\n")[0].slice(0, 140);
+    // A last line without a newline is complete when it parses; Pi may still be writing it otherwise.
+    if (carry.length) {
+      const text = carry.toString("utf8");
+      let whole = true;
+      try { JSON.parse(text); } catch { whole = false; }
+      if (whole) {
+        if (!readLine(state, text)) return false;
+        state.offset += carry.length;
+      }
     }
+    return true;
+  } finally {
+    closeSync(fd);
   }
+}
+
+/** One line into the summary; false when the file is not a session. */
+function readLine(state, line) {
+  if (!line.trim()) return true;
+  // Only the header, names and user prompts count: skip parsing everything else.
+  if (state.header && !line.includes('"session_info"') && !line.includes('"user"')) return true;
+  let entry;
+  try { entry = JSON.parse(line); } catch { return true; }
+  if (!state.header) {
+    if (!entry || entry.type !== "session") return false;
+    state.header = entry;
+    return true;
+  }
+  if (entry.type === "session_info" && typeof entry.name === "string") state.name = entry.name;
+  if (entry.type === "message" && entry.message && entry.message.role === "user") {
+    state.messages += 1;
+    if (!state.title) state.title = firstText(entry.message.content).trim().split("\n")[0].slice(0, 140);
+  }
+  return true;
+}
+
+/** Summarize one session file; null when it is not a session. The name is Pi's last session_info, wherever it sits. */
+export function summarizeSession(file) {
+  let stat;
+  try { stat = statSync(file); } catch { scanned.delete(file); return null; }
+  let state = scanned.get(file);
+  if (!state || stat.size < state.size) state = { offset: 0, size: 0, header: null, name: "", title: "", messages: 0 };
+  if (stat.size !== state.size || !state.header) {
+    // Read the new part into a copy so a failed read leaves the cache as it was.
+    const next = { ...state };
+    try {
+      if (!readLines(file, next, stat.size)) { scanned.delete(file); return null; }
+    } catch { return null; }
+    next.size = stat.size;
+    state = next;
+    scanned.set(file, state);
+  }
+  const header = state.header;
   if (!header) return null;
-  let modified = 0;
-  try { modified = statSync(file).mtimeMs; } catch { /* keep 0 */ }
-  return { path: file, id: String(header.id || ""), cwd: String(header.cwd || ""), started: String(header.timestamp || ""), modified, name, title, messages };
+  return { path: file, id: String(header.id || ""), cwd: String(header.cwd || ""), started: String(header.timestamp || ""), modified: stat.mtimeMs, name: state.name, title: state.title, messages: state.messages };
 }
 
 /** Recent sessions for one working folder, newest first. */

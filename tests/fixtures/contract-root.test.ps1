@@ -1,5 +1,5 @@
 ﻿#!/usr/bin/env pwsh
-# Get-CoopContractRootProposal, Find-CoopSiblingContract and Set-CoopProjectYmlEnv
+# Get-CoopContractRootProposal, Find-CoopSiblingContract, Find-CoopChildContract and Set-CoopProjectYmlEnv
 # (lib/common.ps1), master plan C1: one committed contract per client in a
 # repository the team clones. A contract above the folder, or in the client home
 # repository beside it, is "existing" and `coop init` never writes a second copy;
@@ -78,6 +78,31 @@ try {
   Remove-Item Env:COOP_PROJECT_YML -ErrorAction SilentlyContinue
   $none2 = Set-CoopProjectYmlEnv (Join-Path $homeRepo 'reports')
   if ($none2 -or $env:COOP_PROJECT_YML) { Ko "Set-CoopProjectYmlEnv exported '$env:COOP_PROJECT_YML' for an unlisted repository" } else { Ok 'nothing is exported for a repository no home lists' }
+
+  # Opened in the folder that holds the repositories (in no repository): the one
+  # repository directly inside it with a contract is used; several, none is.
+  $down = Join-Path $t 'down'
+  foreach ($name in @('analytics', 'reports')) { New-Item -ItemType Directory -Force -Path (Join-Path (Join-Path $down $name) '.git') | Out-Null }
+  if (Find-CoopChildContract $down) { Ko 'one level down with no contract found something' } else { Ok 'one level down: nothing when no repository inside has a contract' }
+  New-Item -ItemType Directory -Force -Path (Join-Path (Join-Path $down 'analytics') '.coop') | Out-Null
+  $childContract = Join-Path (Join-Path $down 'analytics') '.coop\project.yml'
+  [System.IO.File]::WriteAllText($childContract, "profile:`n  client: 'Contoso'`n")
+  $foundDown = Find-CoopChildContract $down
+  if ($foundDown -ne $childContract) { Ko "one level down returned '$foundDown'" } else { Ok 'one level down: the one repository inside with a contract' }
+  if (Find-CoopChildContract (Join-Path $down 'reports')) { Ko 'inside a repository coop looked down' } else { Ok 'inside a repository coop never looks down' }
+  $viaChild = Get-CoopContractRootProposal $down
+  if ($viaChild.Kind -ne 'existing' -or $viaChild.Path -ne $childContract -or -not $viaChild.Child) { Ko "proposal from the parent folder: Kind=$($viaChild.Kind) Path=$($viaChild.Path)" } else { Ok 'the proposal from the parent folder is that contract, so no second one is created' }
+  Remove-Item Env:COOP_PROJECT_YML -ErrorAction SilentlyContinue
+  $exportedDown = Set-CoopProjectYmlEnv $down
+  if ($exportedDown -ne $childContract -or $env:COOP_PROJECT_YML -ne $childContract) { Ko "Set-CoopProjectYmlEnv from the parent folder exported '$env:COOP_PROJECT_YML'" } else { Ok 'the launcher hands the contract one level down to Pi as COOP_PROJECT_YML' }
+  Remove-Item Env:COOP_PROJECT_YML -ErrorAction SilentlyContinue
+  if ((Find-CoopProjectYml $down) -ne $childContract) { Ko 'Find-CoopProjectYml missed the contract one level down' } else { Ok 'Find-CoopProjectYml resolves the contract one level down' }
+  New-Item -ItemType Directory -Force -Path (Join-Path (Join-Path $down 'reports') '.coop') | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path (Join-Path $down 'reports') '.coop\project.yml'), "profile:`n  client: 'Contoso'`n")
+  $both = @(Get-CoopChildContracts $down)
+  if ($both.Count -ne 2) { Ko "Get-CoopChildContracts listed $($both.Count), expected 2" }
+  elseif (Find-CoopChildContract $down) { Ko 'several repositories with a contract: one was picked' }
+  else { Ok 'several repositories with a contract: none is picked' }
 
   # The bundled coop-agent contract is not a client's: the proposal never falls back to it.
   $bare = Join-Path $t 'bare'

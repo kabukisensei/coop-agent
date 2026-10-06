@@ -22,6 +22,17 @@ contextBridge.exposeInMainWorld("coop", Object.freeze({
   exportHtml: () => ipcRenderer.invoke("coop:export"),
   openTerminal: () => ipcRenderer.invoke("coop:open-terminal"),
   openFolder: () => ipcRenderer.invoke("coop:open-folder"),
+  // Several sessions at once: tabs, each with its own coop, and new windows.
+  newTab: (path) => ipcRenderer.invoke("coop:new-tab", typeof path === "string" ? path : ""),
+  closeTab: () => ipcRenderer.invoke("coop:close-tab"),
+  newWindow: () => ipcRenderer.invoke("coop:new-window"),
+  tabLabel: (label) => ipcRenderer.invoke("coop:tab-label", String(label || "")),
+  // The tab strip (the window's own page).
+  stripReady: () => ipcRenderer.invoke("coop:strip-ready"),
+  stripSelect: (id) => ipcRenderer.invoke("coop:strip-select", Number(id)),
+  stripClose: (id) => ipcRenderer.invoke("coop:strip-close", Number(id)),
+  stripNew: () => ipcRenderer.invoke("coop:strip-new"),
+  onTabs: listen("coop:tabs"),
   restart: () => ipcRenderer.invoke("coop:restart"),
   setTheme: (theme) => ipcRenderer.invoke("coop:theme", theme),
   copy: (text) => ipcRenderer.invoke("coop:copy", text),

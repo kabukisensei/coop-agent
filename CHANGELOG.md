@@ -30,6 +30,40 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   every row passes (before, a `--prereqs auto` run always stopped for a new
   terminal). Enter accepts, `n` keeps the printed commands, a redirected stdin
   never asks, `--yes` answers without a console.
+- **Several sessions at once in the coop window: tabs** (Aaron, 2026-10-06).
+  Each tab is its own session with its own coop process, so its approvals,
+  guardrails, questions and phone access are its own, as each terminal runs its
+  own coop. Ctrl+N or the strip's + opens a tab; New session, or a click on
+  another saved session, while coop works opens it in a new tab instead of
+  refusing ("Stop it (Esc) before starting a new session"). Ctrl+W closes a tab
+  (the last closes the window), Ctrl+Tab and Ctrl+1 to Ctrl+9 move between
+  them, and a tab shows a dot while coop works and a mark while it asks. A
+  saved session is open in one tab at most: picking one another tab or window
+  holds brings that tab forward. File > New window opens a second window on the
+  same folder.
+
+### Changed
+
+- **The project file is found one folder down** (C1 follow-up; Aaron,
+  2026-10-06). Opened in the folder that holds a client's repositories (a folder
+  that is not itself a repository), coop now uses the project file of the one
+  repository directly inside it that has a `.coop/project.yml`, says which on
+  launch, and edits that file instead of offering to create a new one in a folder
+  no teammate could get. When several repositories inside have one, coop picks
+  none and names them so you open the one you mean.
+- **A failed step no longer opens the window's activity line** (Aaron,
+  2026-10-06). The line stays folded and shows a red cross; open it to see the
+  failed step, whose card is already open. Ctrl+O still opens everything. The
+  phone already worked this way.
+
+### Fixed
+
+- The window's session list shows a session's name. It read only the first
+  256 KB of each session file, so a name set after a few turns (auto-naming,
+  `/name`, `/rename`) was missed in any session with large tool output, and the
+  prompt count stopped early. It now reads the whole file, picking up from where
+  it stopped when the file grows, and refreshes the list the moment a session is
+  named.
 
 ## [0.32.0] — 2026-10-06
 

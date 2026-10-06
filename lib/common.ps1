@@ -3015,6 +3015,8 @@ function Find-CoopProjectYml {
   if ($env:COOP_PROJECT_YML -and (Test-Path -LiteralPath $env:COOP_PROJECT_YML -PathType Leaf)) { return $env:COOP_PROJECT_YML }
   $sibling = Find-CoopSiblingContract $StartDir
   if ($sibling) { return $sibling }
+  $child = Find-CoopChildContract $StartDir
+  if ($child) { return $child }
   $bundled = Join-Path $script:CoopRoot '.coop\project.yml'
   if (Test-Path -LiteralPath $bundled -PathType Leaf) { return $bundled }
   return ''
@@ -3127,20 +3129,52 @@ function Find-CoopSiblingContract {
   return ''
 }
 
-# Hand the resolved contract to Pi and the window (COOP_PROJECT_YML) when it
-# lives in the client home repository beside the launch folder, so every finder
-# (coop-tools, the guardrails, the Python helpers) reads the same file.
-function Set-CoopProjectYmlEnv {
+# The nearest .coop/project.yml at or above $StartDir, or ''.
+function Find-CoopContractAbove {
   param([string]$StartDir = (Get-Location).Path)
-  Remove-Item Env:COOP_PROJECT_YML -ErrorAction SilentlyContinue
   $dir = $StartDir
   while ($dir) {
-    if (Test-Path -LiteralPath (Join-Path $dir '.coop\project.yml') -PathType Leaf) { return '' }
+    $candidate = Join-Path $dir '.coop\project.yml'
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
     $parent = Split-Path -Parent $dir
     if ($parent -eq $dir -or -not $parent) { break }
     $dir = $parent
   }
+  return ''
+}
+
+# C1: coop opened in the folder that holds the client's repositories ($StartDir
+# in no repository): the one repository directly inside it with a committed
+# .coop/project.yml. '' when none or several do (with several, the user opens
+# the repository they mean). Mirrors findChildContract in lib/project-contract.mjs.
+function Get-CoopChildContracts {
+  param([string]$StartDir = (Get-Location).Path)
+  $found = @()
+  foreach ($child in (Get-ChildItem -LiteralPath $StartDir -Directory -ErrorAction SilentlyContinue | Where-Object { -not $_.Name.StartsWith('.') } | Sort-Object Name)) {
+    if (-not (Test-Path -LiteralPath (Join-Path $child.FullName '.git'))) { continue }
+    $contract = Join-Path $child.FullName '.coop\project.yml'
+    if (Test-Path -LiteralPath $contract -PathType Leaf) { $found += $contract }
+  }
+  return $found
+}
+function Find-CoopChildContract {
+  param([string]$StartDir = (Get-Location).Path)
+  if (Find-CoopGitRoot $StartDir) { return '' }
+  $found = @(Get-CoopChildContracts $StartDir)
+  if ($found.Count -eq 1) { return $found[0] }
+  return ''
+}
+
+# Hand the resolved contract to Pi and the window (COOP_PROJECT_YML) when it
+# lives in the client home repository beside the launch folder, or in the one
+# repository inside it (opened in the folder that holds the repositories), so every finder
+# (coop-tools, the guardrails, the Python helpers) reads the same file.
+function Set-CoopProjectYmlEnv {
+  param([string]$StartDir = (Get-Location).Path)
+  Remove-Item Env:COOP_PROJECT_YML -ErrorAction SilentlyContinue
+  if (Find-CoopContractAbove $StartDir) { return '' }
   $sibling = Find-CoopSiblingContract $StartDir
+  if (-not $sibling) { $sibling = Find-CoopChildContract $StartDir }
   if ($sibling) { $env:COOP_PROJECT_YML = $sibling }
   return $sibling
 }
@@ -3171,6 +3205,10 @@ function Get-CoopContractRootProposal {
   $sibling = Find-CoopSiblingContract $start
   if ($sibling) {
     return @{ Kind = 'existing'; Root = (Split-Path -Parent (Split-Path -Parent $sibling)); Path = $sibling; Repos = @(); Sibling = $true }
+  }
+  $child = Find-CoopChildContract $start
+  if ($child) {
+    return @{ Kind = 'existing'; Root = (Split-Path -Parent (Split-Path -Parent $child)); Path = $child; Repos = @(); Sibling = $false; Child = $true }
   }
   if ($gitRoot) {
     $parent = Split-Path -Parent $gitRoot
