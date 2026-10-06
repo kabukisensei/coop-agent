@@ -565,8 +565,10 @@ is `.coop/project.yml`. It may provide deliberate project standards overrides;
 otherwise COOP's resolved standards task authority is authoritative. It is one
 committed team file per client, in the repository root or the client home
 repository `<client>-coop` beside several repositories: run **`/setup-project`**
-inside Coop or `coop init` (both edit a contract found above the folder, or in the
-home repository beside it, instead of creating a second one), then share it with
+inside Coop or `coop init` (both edit a contract found above the folder, in the
+home repository beside it, or, opened in the folder that holds the client's
+repositories, in the one repository inside it that has one, instead of creating a
+second one), then share it with
 `/project-share` or `coop project share`, the one Git write coop performs on its
 own, after your yes and only for that file. Use `coop init --template` only when
 you intentionally want the full legacy template.
