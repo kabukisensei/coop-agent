@@ -375,4 +375,85 @@ await t("sql_impact and fabric_sql_query render their items and rows as text", a
   assert.deepEqual(sqlRowLines({ columns: ["id", "name"], rows: [[1, "a"], [2, null]] }), ['Columns: ["id","name"]', '[1,"a"]', "[2,null]"]);
 });
 
+// --- C2: the declared mapping, checked by lineage and sql_impact -----------------
+
+const CONTRACT_WITH_MAPPING = `profile:
+  client: 'Contoso'
+fabric:
+  layout: 'warehouse'
+power_bi:
+  table_mapping:
+    rule: 'same_name'
+    default_schema: 'dbo'
+    view_prefix: ''
+    overrides:
+      Calendar: 'dim.vDate'
+`;
+
+function estateWithContract(text = CONTRACT_WITH_MAPPING) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "coop-lineage-c2-")));
+  mkdirSync(join(root, ".coop"));
+  writeFileSync(join(root, ".coop", "project.yml"), text);
+  return root;
+}
+
+await t("C2: lineage on a SQL object checks the declared mapping and reports a mismatch, not 'no dependents'", async () => {
+  const root = estateWithContract();
+  // No Power BI table loads it: the mapping says one should.
+  let slice = { object: { name: "dbo.vSales", type: "view" }, upstream: [], downstream: [], relationships: [], loaded_by: [] };
+  let { tools } = boot(() => ({ code: 0, stdout: JSON.stringify(slice), stderr: "" }));
+  let r = await lineage(tools, { command: "lineage", object: "dbo.vSales" }, root);
+  assert.match(r.content[0].text, /Downstream: none observed\nDeclared mapping does not match \(power_bi\.table_mapping in \.coop\/project\.yml\): rule same_name.*'vSales' or 'dbo\.vSales' would load dbo\.vSales, and none is documented/);
+  // Loaded by the predicted table: the mapping holds.
+  slice = { ...slice, loaded_by: [{ table: { name: "vSales", type: "pbi_table" }, source: ["dbo.vSales"], linked: true }] };
+  ({ tools } = boot(() => ({ code: 0, stdout: JSON.stringify(slice), stderr: "" })));
+  r = await lineage(tools, { command: "lineage", object: "dbo.vSales" }, root);
+  assert.match(r.content[0].text, /Loaded by .*\n- vSales \(pbi_table\) loads dbo\.vSales\nDeclared mapping holds .*'vSales' loads dbo\.vSales/);
+  // Loaded under a name the rule does not predict, and no override names it.
+  slice = { ...slice, loaded_by: [{ table: { name: "Sales Facts" }, source: "dbo.vSales", linked: false }] };
+  ({ tools } = boot(() => ({ code: 0, stdout: JSON.stringify(slice), stderr: "" })));
+  r = await lineage(tools, { command: "lineage", object: "dbo.vSales" }, root);
+  assert.match(r.content[0].text, /Declared mapping does not match .*loaded by 'Sales Facts', which rule same_name.*does not predict/);
+  // An override is honoured.
+  slice = { object: { name: "dim.vDate", type: "view" }, upstream: [], downstream: [], relationships: [], loaded_by: [{ table: { name: "Calendar" }, source: "dim.vDate", linked: true }] };
+  ({ tools } = boot(() => ({ code: 0, stdout: JSON.stringify(slice), stderr: "" })));
+  r = await lineage(tools, { command: "lineage", object: "dim.vDate" }, root);
+  assert.match(r.content[0].text, /Declared mapping holds .*'Calendar' loads dim\.vDate/);
+  // The undocumented-source shape (the view is not in the docs, a model names it) is checked too.
+  const undocumented = { object: null, undocumented_source: true, loaded_by: [{ table: { name: "Budget" }, source: "dbo.vBudget", linked: false }], downstream: [] };
+  ({ tools } = boot(() => ({ code: 0, stdout: JSON.stringify(undocumented), stderr: "" })));
+  r = await lineage(tools, { command: "lineage", object: "dbo.vBudget" }, root);
+  assert.match(r.content[0].text, /not a documented object, but 1 Power BI table\(s\) load it by name/);
+  assert.match(r.content[0].text, /Declared mapping does not match .*loaded by 'Budget'/);
+});
+
+await t("C2: a semantic-model object, or a folder without a declared mapping, gets no mapping line", async () => {
+  const root = estateWithContract();
+  const measure = { object: { name: "Sales.Total Sales", type: "measure" }, upstream: [{ name: "dbo.vSales" }], downstream: [], relationships: [] };
+  let { tools } = boot(() => ({ code: 0, stdout: JSON.stringify(measure), stderr: "" }));
+  let r = await lineage(tools, { command: "lineage", object: "Total Sales" }, root);
+  assert.doesNotMatch(r.content[0].text, /Declared mapping/);
+  const plain = estateWithContract("profile:\n  client: 'Contoso'\n");
+  ({ tools } = boot(() => ({ code: 0, stdout: JSON.stringify(SLICE), stderr: "" })));
+  r = await lineage(tools, { command: "lineage", object: "dbo.fact_sales" }, plain);
+  assert.doesNotMatch(r.content[0].text, /Declared mapping/, "an older contract declares nothing, so nothing is checked");
+});
+
+await t("C2: sql_impact's empty downstream list names what the declared mapping expects on the Power BI side", async () => {
+  const { tableMappingFromContract } = await import("../lib/project-contract.mjs");
+  const mapping = tableMappingFromContract(CONTRACT_WITH_MAPPING);
+  const details = {
+    object: { schema: "dbo", name: "vSales", type: "VIEW" },
+    downstream: { state: "ok", count: 0, truncated: false, items: [], coverage: "this database only" },
+    upstream: { state: "ok", count: 0, truncated: false, items: [] },
+    columns: { state: "ok", count: 0, truncated: false, items: [] },
+  };
+  const lines = sqlImpactLines(details, mapping);
+  assert.equal(lines[0], "Downstream (0; this database only):");
+  assert.match(lines[1], /^- none visible/);
+  assert.match(lines[2], /^- Declared mapping \(power_bi\.table_mapping, rule same_name.*'vSales' or 'dbo\.vSales' is expected to load dbo\.vSales; .*confirm with data_doc lineage/);
+  assert.equal(sqlImpactLines(details, null).length, 4, "no mapping, no expectation line");
+  assert.equal(sqlImpactLines({ ...details, downstream: { ...details.downstream, count: 1, items: [{ schema: "dbo", name: "vTop", type: "VIEW" }] } }, mapping).some((l) => /Declared mapping/.test(l)), false, "visible dependents need no expectation line");
+});
+
 console.log(`  ${n} lineage tests passed`);

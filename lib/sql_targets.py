@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from dataclasses import asdict, dataclass, field
@@ -314,6 +315,11 @@ def find_project_yml(start: Path) -> Path | None:
         if d.parent == d:
             break
         d = d.parent
+    # The launcher's answer (COOP_PROJECT_YML, bin/coop.ps1): the contract in the
+    # client home repository beside this one (master plan C1).
+    launched = os.environ.get("COOP_PROJECT_YML", "")
+    if launched and Path(launched).is_file():
+        return Path(launched)
     return None
 
 

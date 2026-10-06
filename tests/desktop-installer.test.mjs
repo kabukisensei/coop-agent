@@ -166,7 +166,7 @@ await check("electron-builder: NSIS per-user, no elevation, data kept, shortcuts
   assert.equal(config.nsis.runAfterFinish, false);
   assert.equal(config.nsis.createDesktopShortcut, true);
   assert.equal(config.nsis.createStartMenuShortcut, true);
-  assert.equal(config.nsis.shortcutName, "coop (window)");
+  assert.equal(config.nsis.shortcutName, "coop");
   assert.match(config.artifactName, /^coop-window-\$\{version\}-\$\{os\}-\$\{arch\}\.\$\{ext\}$/);
   assert.equal(config.nsis.artifactName, config.artifactName);
   // D1d: the uninstaller drops the first launch's `coop` link and "coop"
@@ -387,8 +387,11 @@ await check("verify-installer: the package's paths follow electron-builder's per
   const paths = packagePaths(env);
   assert.equal(paths.exe, join("C:\\Users\\me\\AppData\\Local", "Programs", "coop", "coop.exe"));
   assert.equal(paths.uninstaller, join("C:\\Users\\me\\AppData\\Local", "Programs", "coop", "Uninstall coop.exe"));
-  assert.match(paths.startMenuShortcut, /Start Menu[\\/]Programs[\\/]coop \(window\)\.lnk$/);
-  assert.match(paths.desktopShortcut, /Desktop[\\/]coop \(window\)\.lnk$/);
+  // D1m: the package's shortcut is plain "coop"; the first launch adds "coop (terminal)".
+  assert.match(paths.startMenuShortcut, /Start Menu[\\/]Programs[\\/]coop\.lnk$/);
+  assert.match(paths.desktopShortcut, /Desktop[\\/]coop\.lnk$/);
+  assert.match(paths.terminalShortcut, /Desktop[\\/]coop \(terminal\)\.lnk$/);
+  assert.match(paths.startMenuTerminalShortcut, /Start Menu[\\/]Programs[\\/]coop \(terminal\)\.lnk$/);
   assert.equal(paths.profileData, join("C:\\Users\\me", ".coop", "desktop", "data"));
   assert.equal(paths.electronAppData, join("C:\\Users\\me\\AppData\\Roaming", "coop"));
   // D1d: the runtime and the snapshot beside the asar.

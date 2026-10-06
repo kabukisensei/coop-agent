@@ -108,6 +108,7 @@ answers = {
         (None, "CrossDbView", "OtherDb", None, True, None, None),
     ],
     si.MODULE_MENTION_SQL: [(1,)],
+    si.COLUMN_REFERENCES_SQL: [("amount",), ("region",)],
     si.COLUMNS_SQL: [("region", "nvarchar", "NO", 1), ("amount", "decimal", "YES", 2)],
 }
 cursor = FakeCursor(answers)
@@ -118,7 +119,11 @@ assert out["ok"] and out["state"] == "ok", out
 assert out["target"] == {"environment": "dev", "kind": "azure_sql", "database": "ContosoDW"}
 assert out["object"] == {"schema": "dbo", "name": "vw_Sales", "type": "VIEW"}
 assert out["downstream"]["state"] == "ok" and out["downstream"]["count"] == 2
-assert out["downstream"]["items"][0] == {"schema": "rpt", "name": "vw_SalesByRegion", "type": "VIEW"}
+assert out["downstream"]["items"][0] == {"schema": "rpt", "name": "vw_SalesByRegion", "type": "VIEW", "columns": ["amount", "region"]}
+# SQ8: each dependent names the columns of this object it reads, from one bound
+# query per dependent (the dependent first, this object second).
+assert out["downstream"]["column_references"] == "ok"
+assert out["downstream"]["items"][1]["columns"] == ["amount", "region"]
 # #285: a successful dependents query says what it could see, so zero rows never
 # read as zero impact; upstream and columns carry no such caveat.
 assert out["downstream"]["coverage"] == si.DOWNSTREAM_COVERAGE and "this principal can read" in out["downstream"]["coverage"]
@@ -126,6 +131,15 @@ assert "coverage" not in out["upstream"] and "coverage" not in out["columns"]
 with mock.patch.object(sq, "open_connection", return_value=(FakeConnection(FakeCursor({**answers, si.DOWNSTREAM_SQL: []})), target(), "ODBC Driver 18 for SQL Server", None)):
     empty = si.execute({"object": "vw_Sales"})
 assert empty["downstream"]["state"] == "ok" and empty["downstream"]["count"] == 0 and empty["downstream"]["coverage"] == si.DOWNSTREAM_COVERAGE
+assert empty["downstream"]["column_references"] == "none"
+# A target without sys.dm_sql_referenced_entities: the dependents stay, none carries
+# `columns`, and the section says the column level was unavailable.
+no_refs = FakeCursor(answers, failing={si.COLUMN_REFERENCES_SQL})
+with mock.patch.object(sq, "open_connection", return_value=(FakeConnection(no_refs), target(), "d", None)):
+    without = si.execute({"object": "vw_Sales"})
+assert without["downstream"]["column_references"] == "unavailable" and without["downstream"]["count"] == 2
+assert all("columns" not in item for item in without["downstream"]["items"])
+assert "Invalid object name" not in json.dumps(without)
 up = out["upstream"]["items"]
 assert up[0] == {"schema": "dbo", "name": "Orders", "type": "USER_TABLE", "resolved": True}
 assert up[1]["resolved"] is False and up[1]["mentioned_in_definition"] is True and up[1]["type"] == "unknown"
@@ -142,6 +156,8 @@ assert cursor.calls[1][1] == ("[dbo].[vw_Sales]",)
 mention_calls = [c for c in cursor.calls if c[0] is si.MODULE_MENTION_SQL]
 assert len(mention_calls) == 2 and mention_calls[0][1] == ("[dbo].[vw_Sales]", "%Dropped\\_Table%")
 assert [c for c in cursor.calls if c[0] is si.COLUMNS_SQL][0][1] == ("dbo", "vw_Sales")
+reference_calls = [c[1] for c in cursor.calls if c[0] is si.COLUMN_REFERENCES_SQL]
+assert reference_calls == [("[rpt].[vw_SalesByRegion]", "[dbo].[vw_Sales]"), ("[dbo].[usp_Refresh]", "[dbo].[vw_Sales]")]
 blob = json.dumps(out)
 assert AZ_HOST not in blob and "ODBC Driver" not in blob
 
@@ -152,7 +168,7 @@ fabric = FakeCursor(fabric_answers, failing={si.DOWNSTREAM_SQL})
 with mock.patch.object(sq, "open_connection", return_value=(FakeConnection(fabric), target("fabric_warehouse"), "d", None)):
     out = si.execute({"object": "dbo.vw_Sales"})
 assert out["downstream"]["state"] == "ok", out["downstream"]
-assert out["downstream"]["items"] == [{"schema": "finance", "name": "ForecastVersion", "type": "VIEW"}]
+assert out["downstream"]["items"] == [{"schema": "finance", "name": "ForecastVersion", "type": "VIEW", "columns": ["amount", "region"]}]
 fallback = [c for c in fabric.calls if c[0] is si.DOWNSTREAM_CATALOG_SQL]
 assert fallback and fallback[0][1] == ("[dbo].[vw_Sales]",), "the fallback binds the name too"
 assert out["upstream"]["state"] == "ok" and out["columns"]["state"] == "ok"

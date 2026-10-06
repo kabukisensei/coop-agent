@@ -1,17 +1,18 @@
 /**
  * coop-profile — inject the local COOP user profile as a tiny hidden instruction.
  *
- * Reads the COOP user profile (<profile dir>/user.json, the file scripts/onboard.py
- * writes; see lib/paths.mjs) before each turn and contributes a stable system-prompt
- * instruction, without appending persistent session messages.
+ * Reads the COOP user profile before each turn and contributes a stable
+ * system-prompt instruction, without appending persistent session messages. The
+ * profile is the per-user <profile dir>/user.json (scripts/onboard.py), filled
+ * field by field from the machine-level file (`coop onboard --machine`, master
+ * plan P1) when the per-user file lacks a field or is missing (lib/user-profile.mjs).
  *
  * Failure is graceful: if the file is missing, malformed, or the schema is unknown,
  * the extension silently does nothing.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { existsSync, readFileSync } from "node:fs";
-import { userProfilePath } from "../../lib/paths.mjs";
+import { effectiveProfile } from "../../lib/user-profile.mjs";
 
 type CommunicationPreset = "concise" | "balanced" | "teaching" | "custom";
 
@@ -36,23 +37,15 @@ function isValidPreset(p: string): p is CommunicationPreset {
 }
 
 export function loadProfile(): UserProfile | null {
-  const userJson = userProfilePath();
-  if (!existsSync(userJson)) return null;
   try {
-    const raw = JSON.parse(readFileSync(userJson, "utf8"));
-    if (typeof raw !== "object" || raw === null || raw.schema_version !== 1) return null;
-    if (typeof raw.name !== "string" || !sanitize(raw.name)) return null;
-    if (typeof raw.communication !== "object" || raw.communication === null) return null;
-    const preset = raw.communication.preset;
-    if (typeof preset !== "string" || !isValidPreset(preset)) return null;
+    const { profile } = effectiveProfile();
+    if (!profile || !sanitize(profile.name) || !isValidPreset(profile.communication.preset)) return null;
     return {
       schema_version: 1,
-      name: sanitize(raw.name),
+      name: sanitize(profile.name),
       communication: {
-        preset,
-        custom_instructions: typeof raw.communication.custom_instructions === "string"
-          ? sanitize(raw.communication.custom_instructions, 1000)
-          : "",
+        preset: profile.communication.preset,
+        custom_instructions: sanitize(profile.communication.custom_instructions || "", 1000),
       },
     };
   } catch {

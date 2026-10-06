@@ -17,9 +17,9 @@ $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-profile-root-' + [guid]:
 function Same([string]$Label, [string]$Got, [string]$Want) {
   if ([System.IO.Path]::GetFullPath($Got) -eq [System.IO.Path]::GetFullPath($Want)) { Ok $Label } else { Ko "$Label (got '$Got', want '$Want')" }
 }
-function Clear-Vars { foreach ($n in @('COOP_DIR', 'COOP_AGENT_DIR', 'PI_CODING_AGENT_DIR', 'COOP_NO_ISOLATE')) { Remove-Item "Env:\$n" -ErrorAction SilentlyContinue } }
+function Clear-Vars { foreach ($n in @('COOP_DIR', 'COOP_AGENT_DIR', 'PI_CODING_AGENT_DIR', 'COOP_NO_ISOLATE', 'COOP_MACHINE_DIR')) { Remove-Item "Env:\$n" -ErrorAction SilentlyContinue } }
 
-$saved = Save-Env @('COOP_DIR', 'COOP_AGENT_DIR', 'PI_CODING_AGENT_DIR', 'COOP_NO_ISOLATE')
+$saved = Save-Env @('COOP_DIR', 'COOP_AGENT_DIR', 'PI_CODING_AGENT_DIR', 'COOP_NO_ISOLATE', 'COOP_MACHINE_DIR')
 try {
   $cdir = Join-Path $t 'cdir'; $agent = Join-Path $t 'agent'; $pidir = Join-Path $t 'pidir'
   New-Item -ItemType Directory -Force -Path $cdir, $agent, $pidir | Out-Null
@@ -77,6 +77,32 @@ try {
     if (Test-CoopNoIsolate) { Ko "COOP_NO_ISOLATE='$v' must not be truthy" } else { Ok "COOP_NO_ISOLATE='$v' is not truthy" }
     Same "COOP_NO_ISOLATE='$v': effective agent dir stays isolated" (Get-CoopEffectiveAgentDir) $agent
   }
+
+  # --- the machine-level profile (master plan P1) ------------------------------
+  # COOP_MACHINE_DIR names the folder (a fixture here, never %ProgramData%); the
+  # per-user file wins; a machine file alone satisfies the profile gate.
+  Clear-Vars; $env:COOP_DIR = $cdir
+  $mdir = Join-Path $t 'machine'; New-Item -ItemType Directory -Force -Path $mdir | Out-Null
+  $env:COOP_MACHINE_DIR = $mdir
+  Same 'COOP_MACHINE_DIR=M: machine profile is M\user.json' (Get-CoopMachineProfileFile) (Join-Path $mdir 'user.json')
+  Remove-Item -LiteralPath (Join-Path $cdir '.coop\user.json') -Force
+  if (Test-CoopUserProfileMissing) { Ok 'no per-user and no machine file: the profile gate reports missing' } else { Ko 'empty machine folder must not satisfy the profile gate' }
+  $who = Get-CoopEffectiveProfileName
+  if ($who.Name -eq '' -and $who.Source -eq '') { Ok 'no files: no effective name' } else { Ko "no files: got name '$($who.Name)' from '$($who.Source)'" }
+  [System.IO.File]::WriteAllText((Join-Path $mdir 'user.json'), '{"schema_version":1,"name":"Joel","communication":{"preset":"concise"},"client":"Contoso"}')
+  if (-not (Test-CoopUserProfileMissing)) { Ok 'a machine file alone satisfies the profile gate' } else { Ko 'machine file must satisfy the profile gate' }
+  $who = Get-CoopEffectiveProfileName
+  if ($who.Name -eq 'Joel' -and $who.Source -eq 'machine') { Ok 'machine file alone: the name comes from it' } else { Ko "machine file alone: got '$($who.Name)' from '$($who.Source)'" }
+  [System.IO.File]::WriteAllText((Join-Path $cdir '.coop\user.json'), '{"schema_version":1,"name":" Joel  L ","communication":{"preset":"teaching"}}')
+  $who = Get-CoopEffectiveProfileName
+  if ($who.Name -eq 'Joel L' -and $who.Source -eq 'user') { Ok 'per-user file wins over the machine file (name trimmed and collapsed)' } else { Ko "per-user precedence: got '$($who.Name)' from '$($who.Source)'" }
+  [System.IO.File]::WriteAllText((Join-Path $cdir '.coop\user.json'), '{broken')
+  $who = Get-CoopEffectiveProfileName
+  if ($who.Name -eq 'Joel' -and $who.Source -eq 'machine') { Ok 'a malformed per-user file counts as absent' } else { Ko "malformed per-user: got '$($who.Name)' from '$($who.Source)'" }
+  Remove-Item -LiteralPath (Join-Path $mdir 'user.json') -Force
+  Remove-Item "Env:\COOP_MACHINE_DIR" -ErrorAction SilentlyContinue
+  $defaultMachine = Get-CoopMachineProfileDir
+  if ($defaultMachine -and -not $defaultMachine.StartsWith($cdir)) { Ok 'without COOP_MACHINE_DIR the machine folder is outside the profile dir (ProgramData or /etc/coop)' } else { Ko "default machine dir '$defaultMachine'" }
 
   # --- no inline duplicates of the chain or the profile paths remain -----------
   $inline = @()
