@@ -490,23 +490,24 @@ cfg_json "$dp4/.coop/config" | grep -q 'kb.git' && ok "the switch preserves the 
 # (a fixture folder; never %ProgramData% or /etc here), nothing client-shaped; a
 # Windows user with no profile reads it, and its own profile wins.
 mp="$(mktemp -d)"; mdir="$mp/machine"; mkdir -p "$mdir"
-m_out="$(printf 'Joel Leichty\n1\n' | HOME="$mp" COOP_DIR="$mp" COOP_MACHINE_DIR="$mdir" COOP_AZ_BIN=/nonexistent/az \
-  "$PY" "$ROOT/scripts/onboard.py" onboard --machine --json 2>"$mp/m.txt")"
+printf 'Joel Leichty\n1\n' | HOME="$mp" COOP_DIR="$mp" COOP_MACHINE_DIR="$mdir" COOP_AZ_BIN=/nonexistent/az \
+  "$PY" "$ROOT/scripts/onboard.py" onboard --machine --json >"$mp/m.json" 2>"$mp/m.txt"
 [ -f "$mdir/user.json" ] && ok "onboard --machine writes the machine profile" || ko "machine profile missing: $(cat "$mp/m.txt")"
 [ ! -f "$mp/.coop/user.json" ] && ok "onboard --machine writes no per-user profile" || ko "--machine wrote the per-user file"
 m_keys="$("$PY" -c 'import json,sys; print(",".join(sorted(json.load(open(sys.argv[1])).keys())))' "$mdir/user.json")"
 [ "$m_keys" = "communication,name,schema_version" ] && ok "machine profile holds only name, communication and the schema" || ko "machine profile keys: $m_keys"
 grep -q "never holds a client" "$mp/m.txt" && ok "--machine says what the file never holds" || ko "--machine intro missing"
-# No per-user file: coop profile shows the machine name and names the file.
+# No per-user file: coop profile shows the machine name and names the file (the path
+# tail only: Git Bash hands the test a /tmp path while Python prints the Windows form).
 p_out="$(HOME="$mp" COOP_DIR="$mp" COOP_MACHINE_DIR="$mdir" "$PY" "$ROOT/scripts/onboard.py" profile 2>/dev/null)"
-case "$p_out" in *"Name: Joel Leichty"*"$mdir/user.json"*) ok "coop profile falls back to the machine profile and names the file" ;; *) ko "profile fallback: $p_out" ;; esac
+case "$p_out" in *"Name: Joel Leichty"*"machine"?"user.json"*) ok "coop profile falls back to the machine profile and names the file" ;; *) ko "profile fallback: $p_out" ;; esac
 # A fresh per-user onboarding offers the machine name as the default (Enter keeps it).
 printf '\n2\n' | HOME="$mp" COOP_DIR="$mp" COOP_MACHINE_DIR="$mdir" COOP_AZ_BIN=/nonexistent/az "$PY" "$ROOT/scripts/onboard.py" onboard >/dev/null 2>"$mp/o.txt"
 u_name="$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$mp/.coop/user.json" 2>/dev/null)"
 [ "$u_name" = "Joel Leichty" ] && ok "per-user onboarding defaults the name to the machine profile" || ko "per-user default name: '$u_name' ($(cat "$mp/o.txt" | tail -n 3))"
 u_preset="$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["communication"]["preset"])' "$mp/.coop/user.json" 2>/dev/null)"
 p_out="$(HOME="$mp" COOP_DIR="$mp" COOP_MACHINE_DIR="$mdir" "$PY" "$ROOT/scripts/onboard.py" profile 2>/dev/null)"
-case "$p_out" in *"Communication: $u_preset"*"$mp/.coop/user.json"*) ok "the per-user profile wins over the machine one" ;; *) ko "per-user precedence: $p_out" ;; esac
+case "$p_out" in *"Communication: $u_preset"*".coop"?"user.json"*) ok "the per-user profile wins over the machine one" ;; *) ko "per-user precedence: $p_out" ;; esac
 HOME="$mp" COOP_DIR="$mp" COOP_MACHINE_DIR="$mdir" "$PY" "$ROOT/scripts/onboard.py" onboard --machine --reset >/dev/null 2>&1
 [ ! -f "$mdir/user.json" ] && ok "onboard --machine --reset removes the machine profile" || ko "machine reset left the file"
 rm -rf "$mp"
