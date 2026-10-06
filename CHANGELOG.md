@@ -21,7 +21,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 - **The window's Changes pane picks the repository** (Aaron, 2026-10-06). When
   the open folder holds several repositories (a `devops\fabric` style folder),
   a Repository picker lists the folder's own and each one directly inside it,
-  the same one level down lookup as the project file. Each tab keeps its
+  the same one level down lookup as the project file, plus the other
+  repositories the project file lists (`repositories.<name>.local_path`, for
+  example `../fabric-dw` beside the open folder). Each tab keeps its
   choice; it starts on the folder's own repository, else the first one with
   changes, and "View in Changes" on a tool card opens the repository that
   holds that file. The terminal coop is unchanged.

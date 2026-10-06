@@ -4,9 +4,11 @@
 // shows it, so a large change set never crosses IPC at once. Paths are
 // relative to the working folder with "/" separators, like Pi's edit paths.
 import { execFile } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { lstat, readFile } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
-import { childRepositories, findGitRoot } from "../../lib/project-contract.mjs";
+import { homedir } from "node:os";
+import { basename, join, relative, resolve } from "node:path";
+import { childRepositories, findGitRoot, projectYamlScalar, proposeContractRoot, repositoryNames } from "../../lib/project-contract.mjs";
 
 // fsmonitor would run a configured hook; no-optional-locks keeps git from
 // refreshing the index file. Output stays plain and paths unquoted.
@@ -85,17 +87,52 @@ export async function listChanges(cwd, options = {}) {
 }
 
 /**
+ * The repositories the project file lists (`repositories.<name>.local_path`),
+ * found the way coop finds the file for `cwd`, as [{ name, dir }] for those
+ * that are git repositories on this machine.
+ */
+export function contractRepos(cwd) {
+  let where;
+  try { where = proposeContractRoot(cwd); } catch { return []; }
+  if (!where || where.kind !== "existing") return [];
+  let text = "";
+  try { text = readFileSync(where.path, "utf8"); } catch { return []; }
+  const out = [];
+  for (const name of repositoryNames(text)) {
+    const localPath = projectYamlScalar(text, ["repositories", name, "local_path"]);
+    if (!localPath || /^TODO\b/i.test(localPath)) continue;
+    const dir = resolve(where.root, localPath.replace(/^~(?=$|[\\/])/, homedir()));
+    if (existsSync(join(dir, ".git"))) out.push({ name, dir });
+  }
+  return out;
+}
+
+/** `dir` relative to `cwd` with "/" separators ("" for cwd itself). */
+function relativeTo(cwd, dir) {
+  return relative(cwd, dir).replace(/\\/g, "/");
+}
+
+/**
  * The repositories the changes panel can show for the folder coop was opened
- * on: the folder's own repository (id "") when it is in one, then each
- * repository directly inside it (id = its folder name), the same one level
- * down lookup the project file uses. [{ id, label, dir }]; [] when there is
- * no repository at all.
+ * on: the folder's own repository (id "") when it is in one, each repository
+ * directly inside it (id = its folder name, the same one level down lookup
+ * the project file uses), then each other repository the project file lists
+ * (id "project:<name>"). [{ id, label, dir, rel }], `rel` being the
+ * repository's folder relative to the open folder; [] when there is none.
  */
 export function changeRepos(cwd) {
   const root = resolve(cwd || ".");
   const repos = [];
-  if (findGitRoot(root)) repos.push({ id: "", label: basename(root) || root, dir: root });
-  for (const name of childRepositories(root)) repos.push({ id: name, label: name, dir: join(root, name) });
+  const gitRoot = findGitRoot(root);
+  if (gitRoot) repos.push({ id: "", label: basename(root) || root, dir: root, rel: "" });
+  for (const name of childRepositories(root)) repos.push({ id: name, label: name, dir: join(root, name), rel: name });
+  const key = (dir) => (process.platform === "win32" ? dir.toLowerCase() : dir);
+  const seen = new Set([...repos.map((r) => key(r.dir)), ...(gitRoot ? [key(gitRoot)] : [])]);
+  for (const { name, dir } of contractRepos(root)) {
+    if (seen.has(key(dir))) continue;
+    seen.add(key(dir));
+    repos.push({ id: `project:${name}`, label: name, dir, rel: relativeTo(root, dir) });
+  }
   return repos;
 }
 
