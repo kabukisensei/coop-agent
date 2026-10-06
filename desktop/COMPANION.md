@@ -105,6 +105,7 @@ ignored.
 | `POST /api/chat` | `submissionId`, `incarnation`, `text`, `mode` | sends a message; while coop works `mode` `steer` sends it now and `queue` waits for the turn to end, as the window's Send now and Queue (MC6) |
 | `POST /api/stop` | `submissionId`, `incarnation` | stops the current turn (Pi's `abort`) |
 | `POST /api/dequeue` | `submissionId`, `incarnation` | takes the queued messages back (Pi's `clear_queue`) and returns their texts for the text box (MC6) |
+| `GET /api/detail` | `id` in the query (`t:` a tool call, `m:` an answer) | one tool call's arguments and output, or one answer's thinking, for a tapped line (MC8) |
 | `GET /api/session` | none | the session sheets (MC7): model, thinking level and the levels and models Pi lists, the session's name, auto-compact, prompts, answers, tool calls, tokens, cost and context; no file paths |
 | `POST /api/session` | `submissionId`, `incarnation`, `action` and its own fields | one session control (MC7): `model` (`provider`, `modelId`, one Pi lists), `thinking` (`level`), `compact` (optional `instructions`, refused while coop works) or `name` (`name`) |
 | `POST /api/answer` | `submissionId`, `incarnation`, `questionId`, `digest`, `answer` | answers one open question |
@@ -129,10 +130,14 @@ ignored.
 
 ## Events and reconnect
 
-The stream carries seven event types (`EVENT_TYPES`), each wrapped with the
+The stream carries eight event types (`EVENT_TYPES`), each wrapped with the
 session incarnation and a sequence number (`eventEnvelope`). The window maps
 Pi's RPC events onto them and drops the rest: thinking, tool arguments and tool
-output never reach the phone; a tool shows as its name and a one-line label.
+output are never in the stream; a tool shows as its name and a one-line label.
+Since MC8 the phone can open one tool call's arguments and output, or one
+answer's thinking, when you tap it (`GET /api/detail`). The window keeps the
+last 300 of those in memory only, each capped (arguments 4,000 characters,
+output and thinking 16,000), and nothing is fetched until a tap.
 
 | Type | Carries |
 | --- | --- |
@@ -143,6 +148,7 @@ output never reach the phone; a tool shows as its name and a one-line label.
 | `question_resolved` | answered, expired or cancelled, and by desktop, phone or Pi |
 | `notice` | an extension's notice (info, warning, error) |
 | `session` | the identity line: incarnation, Windows user, client, session name |
+| `panel` | the status line, the widgets and the todo panel above the prompt (MC8) |
 
 **Reconnect.** The window keeps the last 2,000 events or 15 minutes. A phone
 coming back sends the last id it saw; the window replays the tail only when it

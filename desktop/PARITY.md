@@ -303,9 +303,9 @@ terminal capability with its phone status:
 | Steer while coop works (Enter) and pull back queued messages (`clear_queue`, Alt+Up) | phone (MC6) | Send now and Queue while coop works; the queued messages show above the text box, and Edit queued brings them back into it. |
 | `/model`, `/thinking` (and Ctrl+P, Shift+Tab) | phone (MC7) | The menu's Model and Thinking sheets (`get_available_models`, `set_model`, `set_thinking_level`); a model must be one Pi lists. Typing `/model` or `/thinking` points to the menu. |
 | `/compact`, `/session`, `/name`, `/copy` | phone (MC7) | The menu's Compact (with optional instructions, when coop is idle), Session details (`get_state`, `get_session_stats`, without file paths) and Name this session sheets, and Copy under every answer. |
-| Thinking and tool detail (Ctrl+T, Ctrl+O) | MC8 | Thinking blocks and each tool's arguments and output, folded, opened on tap. |
-| Status bar, widgets and the todo panel (`setStatus`, `setWidget`, `rpiv-todo`) | MC8 | The status line and the widgets above the prompt, the todo panel rebuilt from `todo` results as the window does. |
-| Search the conversation, jump between prompts (Ctrl+F, Ctrl+Up/Down) and prompt history (Up) | MC8 | A search box, prompt jumps and the last prompts sent. |
+| Thinking and tool detail (Ctrl+T, Ctrl+O) | phone (MC8) | A tool line opens its arguments and output on tap, and an answer's Thinking link opens its thinking; fetched only on tap (`GET /api/detail`). |
+| Status bar, widgets and the todo panel (`setStatus`, `setWidget`, `rpiv-todo`) | phone (MC8) | Above the text box: the status line, the widgets and the todo panel rebuilt from `todo` results as the window does; a tap folds it to the status line. |
+| Search the conversation, jump between prompts (Ctrl+F, Ctrl+Up/Down) and prompt history (Up) | phone (MC8) | The menu's Find: a search over the conversation, and with no search your prompts, newest first, each to jump to or Reuse. |
 | `/new`, `/resume`, `/fork`, `/clone`, `/tree` (view) and the sessions list (`coop -c`, `-r`, `--session`) | MC9 | Session actions from the phone. A session the phone itself starts or opens keeps the phone's access (the MC1 rule that access ends at every new session stays for sessions changed at the desk). |
 | `/export` (HTML) | MC9 | `export_html` to the session folder on the VM; the file stays on the VM. |
 | `/reload` | MC9 | Restart coop in the window on the same session; access carries over as for MC9's session actions. |

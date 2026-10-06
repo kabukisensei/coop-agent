@@ -33,6 +33,7 @@
       <div class="drawer-cap">Session</div>
       <ul class="drawer-list">
         <li><button id="menu-commands" class="drawer-item" type="button"><span class="item-name">Commands</span><span class="item-detail">coop's / commands, skills and prompts</span></button></li>
+        <li><button id="menu-find" class="drawer-item" type="button"><span class="item-name">Find</span><span class="item-detail">Search the conversation, jump to or reuse a prompt</span></button></li>
         <li><button id="menu-model" class="drawer-item" type="button"><span class="item-name">Model</span><span class="item-detail" id="menu-model-now">Choose the model coop uses</span></button></li>
         <li><button id="menu-thinking" class="drawer-item" type="button"><span class="item-name">Thinking</span><span class="item-detail" id="menu-thinking-now">How hard the model thinks</span></button></li>
         <li><button id="menu-compact" class="drawer-item" type="button"><span class="item-name">Compact</span><span class="item-detail">Summarize the conversation to free context</span></button></li>
@@ -88,6 +89,10 @@
   </main>
 
   <footer id="composer" class="composer" hidden>
+    <div id="panel" class="panel" hidden>
+      <button id="panel-toggle" class="panel-head" type="button" aria-expanded="true" aria-controls="panel-body"><span id="panel-status" class="panel-status"></span><span class="panel-fold" aria-hidden="true"></span></button>
+      <div id="panel-body" class="panel-body"></div>
+    </div>
     <div id="queue" class="queue" hidden></div>
     <ul id="completions" class="completions" role="listbox" aria-label="Commands" hidden></ul>
     <label class="sr-only" for="message">Message coop</label>

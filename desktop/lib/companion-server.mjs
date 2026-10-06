@@ -7,7 +7,7 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize, sep } from "node:path";
-import { CODES, LIMITS, ProtocolError, checkGrant, checkOrigin, validateRequest } from "./companion-protocol.mjs";
+import { CODES, DETAIL_ID, LIMITS, ProtocolError, checkGrant, checkOrigin, validateRequest } from "./companion-protocol.mjs";
 
 export const DEFAULT_PORT = 47821;
 export const COOKIE = "coop_device";
@@ -186,6 +186,12 @@ export function createCompanionServer({ store, active, origin, webRoot = "", sha
         const result = await hub.dequeue(device.id, request);
         audit({ kind: "dequeue", device: device.id, outcome: result.ok ? "returned" : result.code });
         return result.ok ? sendJson(res, 200, { ok: true, texts: result.texts }) : refuse(res, result.code, undefined, device.id);
+      }
+      case "detail": {
+        const id = String(query.get("id") || "");
+        if (!DETAIL_ID.test(id)) return refuse(res, "bad-request", "id is malformed", device.id);
+        const result = hub.detail(id);
+        return result.ok ? sendJson(res, 200, { ok: true, detail: result.detail }) : refuse(res, result.code, result.message, device.id);
       }
       case "details": {
         const result = await hub.details();

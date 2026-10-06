@@ -16,6 +16,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   wins against the exact action, and production or session-wide approvals stay
   on the desktop. The checkable rules are `desktop/lib/companion-protocol.mjs`
   with gate-lane fixtures.
+- **Phone parity, part 3** (MC8). The phone shows the status line, the
+  extension widgets and the todo panel above the text box, as the window does,
+  and a tap folds them. Tapping a tool line opens its arguments and output, and
+  an answer's *Thinking* link opens its thinking; both are fetched only on tap
+  and kept in the window's memory only. The menu's *Find* searches the
+  conversation and lists your prompts to jump to or reuse.
 - **Phone parity, part 2** (MC7). The phone's menu adds *Model*, *Thinking*,
   *Compact*, *Name this session* and *Session details*, each a sheet that opens
   from the bottom of the screen, and every finished answer has *Copy*. The phone

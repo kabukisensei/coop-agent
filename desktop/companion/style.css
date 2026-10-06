@@ -267,3 +267,38 @@ body.menu-open { overflow: hidden; }
 [data-look="site"] .choices { border-radius: 0; border-width: 2px; border-color: var(--bevel-dark) var(--bevel-hi) var(--bevel-hi) var(--bevel-dark); }
 [data-look="site"] .choice.current { background: var(--selection); color: #fff; box-shadow: none; }
 [data-look="site"] .choice.current .item-detail { color: #fff; opacity: 0.85; }
+
+/* ---- the panel above the prompt (MC8): status line, widgets, todos ---- */
+.panel { margin-bottom: 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.panel-head {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 40px; padding: 6px 10px;
+  background: none; border: 0; color: var(--text-muted); font: 13px/1.3 var(--font); text-align: left; cursor: pointer;
+}
+.panel-head:disabled { cursor: default; }
+.panel-status { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.panel-fold::before { content: "▾"; }
+.panel-head[aria-expanded="false"] .panel-fold::before { content: "▸"; }
+.panel-head:disabled .panel-fold { display: none; }
+.panel-body { max-height: 30vh; overflow-y: auto; padding: 0 10px 8px; }
+.panel-body .widget { margin: 0 0 6px; font: 12px/1.4 var(--font-mono); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.panel-body .widget:last-child { margin-bottom: 0; }
+.panel-body .todos { color: var(--text-strong); }
+[data-look="site"] .panel { border-radius: 0; border-width: 2px; border-color: var(--bevel-dark) var(--bevel-hi) var(--bevel-hi) var(--bevel-dark); background: var(--code-bg); }
+/* tool lines open their detail on tap (MC8) */
+.tool-open { display: block; width: 100%; min-height: 36px; padding: 6px 0; text-align: left; background: none; border: 0; color: inherit; font: inherit; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+.msg-actions { gap: 12px; }
+.detail-label { margin: 4px 0 -4px; font: 700 12px/1 var(--font); letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent-2); }
+.detail-text { margin: 0; max-height: 50dvh; overflow: auto; background: var(--code-bg); color: var(--text); padding: 10px; border-radius: var(--radius); font: 13px/1.4 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.detail-text.error { color: var(--danger); }
+.detail-text.thinking { font-family: var(--font); font-style: italic; color: var(--text-muted); }
+[data-look="site"] .detail-text { border-radius: 0; border: 2px solid; border-color: var(--bevel-dark) var(--bevel-hi) var(--bevel-hi) var(--bevel-dark); }
+[data-look="site"] .detail-label { font-family: var(--font-display); }
+/* Find (MC8): matches and your prompts, newest first */
+.find-results { max-height: 55dvh; overflow-y: auto; }
+.find-row { display: flex; align-items: stretch; border-bottom: 1px solid var(--border); }
+.find-row:last-child { border-bottom: 0; }
+.find-row .choice { flex: 1; border-bottom: 0; min-width: 0; }
+.find-row .choice .item-name { font-weight: 400; overflow-wrap: anywhere; }
+.find-reuse { flex: none; border-radius: 0; border-width: 0 0 0 1px; min-width: 76px; }
+.find-none { padding: 12px 14px; margin: 0; }
+.msg.found { outline: 3px solid var(--accent); outline-offset: 2px; }

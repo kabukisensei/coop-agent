@@ -26,8 +26,8 @@ const OTHER_INC = "BBBBBBBBBBBBBBBBBBBBBBBB";
 const SUB = "0f8fad5b-d9cb-469f-a165-70867728950e";
 
 // ---- the remote surface ------------------------------------------------------
-ok("only ten routes exist and every code has a status", () => {
-  assert.deepEqual(Object.values(ROUTES).sort(), ["answer", "chat", "control", "dequeue", "details", "events", "logout", "pair", "snapshot", "stop"]);
+ok("only eleven routes exist and every code has a status", () => {
+  assert.deepEqual(Object.values(ROUTES).sort(), ["answer", "chat", "control", "dequeue", "detail", "details", "events", "logout", "pair", "snapshot", "stop"]);
   for (const status of Object.values(CODES)) assert.ok(status >= 400 && status < 600);
 });
 ok("anything else is not found, including Pi's own commands", () => {

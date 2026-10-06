@@ -6,6 +6,7 @@
 import { EventEmitter } from "node:events";
 import { basename } from "node:path";
 import { buildUiResponse } from "./rpc-commands.mjs";
+import { TODO_TOOL, applyTodoResult, createTodos, startTurn, todoLines, todosFromMessages } from "../renderer/todos.mjs";
 import {
   LIMITS, classifyQuestion, decideAnswer, eventEnvelope, newIncarnation, phoneCommand, phoneCommandList, resumePoint,
 } from "./companion-protocol.mjs";
@@ -13,6 +14,17 @@ import {
 const SNAPSHOT_MESSAGES = 200;
 const NOTICE_CHARS = 500;
 const FLUSH_MS = 200;
+// The status line and widgets above the prompt (MC8), bounded as notices are.
+const PANEL_LINES = 40;
+const PANEL_CHARS = 300;
+const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+// Tool arguments and output and thinking, fetched on tap (MC8): bounded, kept in memory only.
+const DETAIL_KEEP = 300;
+const DETAIL_ARGS_CHARS = 4000;
+const DETAIL_TEXT_CHARS = 16_000;
+const thinkingText = (content) => (Array.isArray(content) ? content.filter((p) => p && p.type === "thinking" && typeof p.thinking === "string").map((p) => p.thinking).join("\n\n").trim() : "");
+const resultText = (result) => messageText(result && result.content);
+const panelText = (text) => String(text === undefined || text === null ? "" : text).replace(ANSI, "").slice(0, PANEL_CHARS);
 
 /** The text parts of a Pi message's content, joined; thinking and tool calls are left out. */
 export function messageText(content) {
@@ -55,6 +67,10 @@ export class CompanionHub extends EventEmitter {
     this.submissions = new Map();
     this.status = "idle";
     this.queue = { steering: [], followUp: [] };
+    this.statuses = new Map();
+    this.widgets = new Map();
+    this.todos = createTodos();
+    this.kept = new Map();
     this.partial = null;
     if (this.flushTimer) this.clearTimer(this.flushTimer);
     this.flushTimer = null;
@@ -133,7 +149,10 @@ export class CompanionHub extends EventEmitter {
     if (!message || typeof message !== "object") return;
     switch (message.type) {
       case "agent_start":
+        // A new turn: the rows completed in the last one leave the todo panel.
+        startTurn(this.todos);
         this.#status("running");
+        if (this.todos.found) this.#pushPanel();
         break;
       case "agent_end":
       case "agent_settled":
@@ -161,15 +180,27 @@ export class CompanionHub extends EventEmitter {
           const id = this.partial ? this.partial.id : `a${this.seq + 1}`;
           this.partial = null;
           const text = messageText(message.message.content);
-          if (text) this.#push("message", { id, role: "assistant", text, final: true });
+          const thinking = this.#keepThinking(`m:${id}`, message.message.content);
+          if (text) this.#push("message", { id, role: "assistant", text, final: true, ...(thinking ? { thinking: true } : {}) });
         }
         break;
-      case "tool_execution_start":
-        this.#push("tool", { id: String(message.toolCallId || ""), name: String(message.toolName || ""), label: toolLabel(message.toolName, message.args), state: "running" });
+      case "tool_execution_start": {
+        const id = String(message.toolCallId || "");
+        let args = "";
+        try { args = message.args === undefined ? "" : JSON.stringify(message.args, null, 2); } catch { /* not JSON */ }
+        this.#keep(`t:${id}`, { kind: "tool", name: String(message.toolName || ""), args: String(args || "").slice(0, DETAIL_ARGS_CHARS), output: "", isError: false });
+        this.#push("tool", { id, name: String(message.toolName || ""), label: toolLabel(message.toolName, message.args), state: "running", detail: true });
         break;
-      case "tool_execution_end":
-        this.#push("tool", { id: String(message.toolCallId || ""), name: String(message.toolName || ""), label: "", state: message.isError ? "error" : "done" });
+      }
+      case "tool_execution_end": {
+        const id = String(message.toolCallId || "");
+        const kept = this.kept.get(`t:${id}`) || { kind: "tool", name: String(message.toolName || ""), args: "" };
+        this.#keep(`t:${id}`, { ...kept, output: resultText(message.result).slice(0, DETAIL_TEXT_CHARS), isError: Boolean(message.isError) });
+        this.#push("tool", { id, name: String(message.toolName || ""), label: "", state: message.isError ? "error" : "done", detail: true });
+        // The todo panel, rebuilt from the `todo` results as the window does (MC8).
+        if (message.toolName === TODO_TOOL && applyTodoResult(this.todos, message.result)) this.#pushPanel();
         break;
+      }
       case "queue_update":
         this.queue = {
           steering: Array.isArray(message.steering) ? message.steering.map(String) : [],
@@ -181,7 +212,15 @@ export class CompanionHub extends EventEmitter {
         if (typeof message.name === "string") this.setSessionName(message.name);
         break;
       case "extension_ui_request":
-        if (message.method === "notify") {
+        if (message.method === "setStatus") {
+          const key = String(message.statusKey || "");
+          if (message.statusText) this.statuses.set(key, panelText(message.statusText)); else this.statuses.delete(key);
+          this.#pushPanel();
+        } else if (message.method === "setWidget") {
+          const key = String(message.widgetKey || "");
+          if (Array.isArray(message.widgetLines)) this.widgets.set(key, message.widgetLines.slice(0, PANEL_LINES).map(panelText)); else this.widgets.delete(key);
+          this.#pushPanel();
+        } else if (message.method === "notify") {
           const level = ["info", "warning", "error"].includes(message.notifyType) ? message.notifyType : "info";
           const text = String(message.message || "").trim().slice(0, NOTICE_CHARS);
           if (text) this.#push("notice", { level, text });
@@ -192,6 +231,37 @@ export class CompanionHub extends EventEmitter {
       default:
         break;
     }
+  }
+
+  /** The status line, the widgets and the todo panel, as the window shows them above the prompt. */
+  panel() {
+    return {
+      status: [...this.statuses.values()].filter(Boolean),
+      widgets: [...this.widgets].map(([key, lines]) => ({ key: key.slice(0, 80), lines })),
+      todo: todoLines(this.todos),
+    };
+  }
+
+  #keep(key, value) {
+    this.kept.delete(key);
+    this.kept.set(key, value);
+    while (this.kept.size > DETAIL_KEEP) this.kept.delete(this.kept.keys().next().value);
+  }
+
+  #keepThinking(key, content) {
+    const thinking = thinkingText(content).slice(0, DETAIL_TEXT_CHARS);
+    if (thinking) this.#keep(key, { kind: "thinking", thinking });
+    return Boolean(thinking);
+  }
+
+  /** One tool call's arguments and output, or one answer's thinking, for the phone that taps it (MC8). */
+  detail(id) {
+    const value = this.kept.get(id);
+    return value ? { ok: true, detail: value } : { ok: false, code: "not-found", message: "That detail is no longer kept on the VM" };
+  }
+
+  #pushPanel() {
+    this.#push("panel", this.panel());
   }
 
   onPiExit() {
@@ -412,11 +482,14 @@ export class CompanionHub extends EventEmitter {
       try {
         const response = await this.pi.request({ type: "get_messages" });
         const list = response.success && response.data && Array.isArray(response.data.messages) ? response.data.messages : [];
+        // A resumed session's list is in its history; after that the events keep it.
+        if (!this.todos.found) { const todos = todosFromMessages(list); if (todos.found) this.todos = todos; }
         messages = list
           .filter((m) => m && (m.role === "user" || m.role === "assistant"))
-          .map((m, i) => ({ id: `h${i}`, role: m.role, text: messageText(m.content), final: true }))
+          .map((m, i) => ({ id: `h${i}`, role: m.role, text: messageText(m.content), final: true, content: m.content }))
           .filter((m) => m.text)
-          .slice(-SNAPSHOT_MESSAGES);
+          .slice(-SNAPSHOT_MESSAGES)
+          .map(({ content, ...m }) => (m.role === "assistant" && this.#keepThinking(`m:${m.id}`, content) ? { ...m, thinking: true } : m));
       } catch { /* the stream will catch up */ }
       await this.refreshCommands();
     }
@@ -429,6 +502,7 @@ export class CompanionHub extends EventEmitter {
       questions: this.openQuestions(),
       queue: this.queue,
       commands: phoneCommandList(this.commands),
+      panel: this.panel(),
       lastEventId: last ? last.id : `${this.incarnation}:0`,
     };
   }

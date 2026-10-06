@@ -58,7 +58,7 @@ const confirmQ = { type: "extension_ui_request", id: "c1", method: "confirm", ti
 const selectQ = { type: "extension_ui_request", id: "s1", method: "select", title: "coop guardrails\nThis looks like a MUTATING MCP action:\n  fabric.x\nRun it?", options: ["Allow once", "Allow fabric edits for this session (deletes still ask; production is blocked)", "Decline"] };
 
 // ---- the hub -------------------------------------------------------------------
-await check("Pi's events become the phone's seven types; thinking and tool output stay behind", () => {
+await check("Pi's events become the phone's types; thinking and tool output stay out of the stream, on tap only (MC8)", () => {
   const { pi, hub } = newHub();
   const types = [];
   hub.on("event", (e) => types.push([e.type, e.data]));
@@ -77,9 +77,16 @@ await check("Pi's events become the phone's seven types; thinking and tool outpu
   pi.emit("event", { type: "agent_end" });
   const text = JSON.stringify(types);
   assert.ok(!text.includes("secret plan") && !text.includes("SELECT secret") && !text.includes("diff with client data") && !text.includes("C:\\\\work"));
-  assert.deepEqual(types.map(([t]) => t), ["status", "message", "message", "message", "tool", "tool", "notice", "status"]);
+  assert.deepEqual(types.map(([t]) => t), ["status", "message", "message", "message", "tool", "tool", "notice", "panel", "status"]);
   assert.deepEqual(types[2][1], { id: types[3][1].id, role: "assistant", text: "One question.", final: false });
-  assert.deepEqual(types[4][1], { id: "t1", name: "edit", label: "report.sql", state: "running" });
+  assert.deepEqual(types[3][1], { id: types[3][1].id, role: "assistant", text: "One question.", final: true, thinking: true });
+  assert.deepEqual(types[4][1], { id: "t1", name: "edit", label: "report.sql", state: "running", detail: true });
+  // Only the phone that taps a line reads what is behind it.
+  assert.equal(hub.detail(`m:${types[3][1].id}`).detail.thinking, "secret plan");
+  const tool = hub.detail("t1".replace(/^/, "t:")).detail;
+  assert.equal(tool.output, "diff with client data");
+  assert.match(tool.args, /SELECT secret/);
+  assert.equal(hub.detail("t:nope").code, "not-found");
   assert.equal(messageText("plain"), "plain");
   assert.equal(toolLabel("bash", { command: "rm -rf x" }), "");
 });
@@ -195,6 +202,23 @@ await check("queue (MC6): Pi's queue reaches the phone; Edit queued brings the t
   const back = await hub.dequeue("d1", { submissionId: SUB(30), incarnation: hub.incarnation });
   assert.deepEqual(back, { ok: true, texts: ["look at the view", "then the report"] });
   assert.equal((await hub.dequeue("d1", { submissionId: SUB(31), incarnation: "CCCCCCCCCCCCCCCCCCCCCCCC" })).code, "wrong-session");
+});
+
+await check("panel (MC8): status line, widgets and the todo panel above the prompt", async () => {
+  const { pi, hub } = newHub();
+  const panels = [];
+  hub.on("event", (e) => { if (e.type === "panel") panels.push(e.data); });
+  pi.emit("event", { type: "extension_ui_request", id: "s1", method: "setStatus", statusKey: "std", statusText: "\x1b[32mstandards: bundled\x1b[0m" });
+  pi.emit("event", { type: "extension_ui_request", id: "w1", method: "setWidget", widgetKey: "ctx", widgetLines: ["line 1", "line 2"] });
+  pi.emit("event", { type: "tool_execution_end", toolCallId: "t9", toolName: "todo", result: { content: [], details: { tasks: [{ id: 1, subject: "Read the view", status: "in_progress", activeForm: "Reading" }, { id: 2, subject: "Fix it", status: "pending" }], nextId: 3 } } });
+  const last = panels.at(-1);
+  assert.deepEqual(last.status, ["standards: bundled"], "ANSI colours are dropped");
+  assert.deepEqual(last.widgets, [{ key: "ctx", lines: ["line 1", "line 2"] }]);
+  assert.equal(last.todo[0], "● Todos (0/2)");
+  assert.match(last.todo[1], /Read the view \(Reading\)/);
+  assert.deepEqual((await hub.snapshot()).panel, last);
+  pi.emit("event", { type: "extension_ui_request", id: "s2", method: "setStatus", statusKey: "std" });
+  assert.deepEqual(panels.at(-1).status, []);
 });
 
 await check("session controls (MC7): a listed model, a thinking level, compact when idle, a name; details carry no paths", async () => {
@@ -385,6 +409,15 @@ try {
     assert.equal((await call(port, "POST", "/api/chat", { cookie, body })).status, 200);
     assert.equal(pi.sent.filter((c) => c.message === "what changed?").length, 1);
     assert.equal((await call(port, "POST", "/api/chat", { cookie, body: { ...body, submissionId: SUB(22), text: "/new" } })).json.code, "desktop-only");
+  });
+
+  await check("server: a tapped tool line reads its detail; a malformed id is refused (MC8)", async () => {
+    pi.emit("event", { type: "tool_execution_start", toolCallId: "call_7", toolName: "read", args: { path: "a.sql" } });
+    const read = await call(port, "GET", "/api/detail?id=t%3Acall_7", { cookie });
+    assert.equal(read.status, 200);
+    assert.equal(read.json.detail.name, "read");
+    assert.equal((await call(port, "GET", "/api/detail?id=..%2Fetc", { cookie })).json.code, "bad-request");
+    assert.equal((await call(port, "GET", "/api/detail?id=t%3Agone", { cookie })).status, 404);
   });
 
   await check("server: the session sheets read details and set the thinking level (MC7)", async () => {

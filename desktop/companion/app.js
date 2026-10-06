@@ -123,6 +123,37 @@ const SHEETS = {
     openSheet("Name this session", el("label", { class: "sr-only", for: "name-text", text: "Session name" }), field,
       el("div", { class: "sheet-actions" }, el("button", { type: "button", class: "btn primary", text: "Save", onclick: save })));
   },
+  // Search, prompt jumps and prompt history in one sheet (MC8): the terminal's
+  // Ctrl+F, Ctrl+Up/Down and Up. It reads only what this page already shows.
+  find() {
+    const field = el("input", { id: "find-text", type: "search", placeholder: "Search the conversation", enterkeyhint: "search", autocomplete: "off" });
+    const list = el("div", { class: "choices find-results" });
+    const jump = (node) => {
+      closeSheet();
+      node.scrollIntoView({ block: "center" });
+      node.classList.add("found");
+      setTimeout(() => node.classList.remove("found"), 1600);
+    };
+    const reuse = (text) => { closeSheet(); $("message").value = text; $("message").focus(); renderCompletions(); };
+    const draw = () => {
+      const q = field.value.trim().toLowerCase();
+      const nodes = [...$("timeline").querySelectorAll(".msg")];
+      const textOf = (n) => texts.get(n) || n.textContent;
+      const hits = q ? nodes.filter((n) => textOf(n).toLowerCase().includes(q)) : nodes.filter((n) => n.classList.contains("user"));
+      list.replaceChildren(...hits.reverse().slice(0, 50).map((n) => {
+        const text = textOf(n);
+        const at = q ? Math.max(0, text.toLowerCase().indexOf(q) - 30) : 0;
+        const row = el("div", { class: "find-row" },
+          choice(`${at ? "…" : ""}${text.slice(at, at + 120)}`, n.classList.contains("user") ? "Your prompt" : "coop", false, () => jump(n)));
+        if (n.classList.contains("user")) row.append(el("button", { type: "button", class: "btn find-reuse", text: "Reuse", "aria-label": "Put this prompt in the text box", onclick: () => reuse(textOf(n)) }));
+        return row;
+      }));
+      if (!hits.length) list.replaceChildren(el("p", { class: "note find-none", text: q ? "Nothing matches." : "No prompts yet." }));
+    };
+    field.addEventListener("input", draw);
+    draw();
+    openSheet("Find", el("label", { class: "sr-only", for: "find-text", text: "Search the conversation" }), field, list);
+  },
   async details() {
     const d = await loadDetails();
     if (!d) return toast("Could not read the session. Try again.");
@@ -281,10 +312,27 @@ function renderCompletions() {
   }));
 }
 
+// The status line, the widgets and the todo panel above the prompt (MC8). A
+// tap on the line folds the panel to that line, as Alt+T does in the terminal.
+function renderPanel(p) {
+  const panel = p || { status: [], widgets: [], todo: [] };
+  const blocks = [];
+  if (panel.todo && panel.todo.length) blocks.push(["todos", panel.todo]);
+  for (const w of panel.widgets || []) if (w.lines && w.lines.length) blocks.push([w.key, w.lines]);
+  const status = (panel.status || []).join(" · ");
+  $("panel").hidden = !status && !blocks.length;
+  $("panel-status").textContent = status || (panel.todo && panel.todo[0]) || "Panel";
+  $("panel-body").replaceChildren(...blocks.map(([key, lines]) => el("pre", { class: `widget${key === "todos" ? " todos" : ""}` }, el("code", { text: lines.join("\n") }))));
+  $("panel-toggle").disabled = !blocks.length;
+}
+
 function setIdentity(s) {
   app.incarnation = s.incarnation;
   $("identity").textContent = [s.windowsUser, s.client, s.sessionName || "this session", app.deviceName].filter(Boolean).join(" · ");
 }
+
+// Each message's own text, for Find (MC8): not the buttons drawn under it.
+const texts = new WeakMap();
 
 function renderMessage(m) {
   let node = app.messages.get(m.id);
@@ -294,11 +342,17 @@ function renderMessage(m) {
     $("timeline").append(node);
   }
   node.className = `msg ${m.role}${m.final ? "" : " partial"}`;
+  texts.set(node, m.text);
   node.replaceChildren();
   if (m.role === "assistant") renderMarkdown(document, m.text, node);
   else node.append(el("p", { text: m.text }));
   // The terminal's /copy: every finished answer copies as Markdown (MC7).
-  if (m.role === "assistant" && m.final) node.append(el("div", { class: "msg-actions" }, el("button", { type: "button", class: "link", text: "Copy", onclick: (e) => copyText(m.text, e.currentTarget) })));
+  if (m.role === "assistant" && m.final) {
+    node.append(el("div", { class: "msg-actions" },
+      // The thinking behind the answer, folded as the window's Ctrl+T does (MC8).
+      m.thinking ? el("button", { type: "button", class: "link", text: "Thinking", onclick: () => showDetail(`m:${m.id}`, "Thinking") }) : null,
+      el("button", { type: "button", class: "link", text: "Copy", onclick: (e) => copyText(m.text, e.currentTarget) })));
+  }
 }
 
 async function copyText(text, button) {
@@ -321,7 +375,19 @@ function renderTool(t) {
   const label = t.label ? ` ${t.label}` : "";
   if (t.state === "running" || !node.dataset.label) node.dataset.label = label;
   node.className = `tool ${t.state}`;
-  node.textContent = `${t.state === "running" ? "Running" : t.state === "error" ? "Failed" : "Ran"} ${t.name}${node.dataset.label}`;
+  const line = `${t.state === "running" ? "Running" : t.state === "error" ? "Failed" : "Ran"} ${t.name}${node.dataset.label}`;
+  // A tap opens the call's arguments and output, as the window's Ctrl+O does (MC8).
+  if (t.detail) node.replaceChildren(el("button", { type: "button", class: "tool-open", "aria-label": `${line}: show details`, onclick: () => showDetail(`t:${t.id}`, line) }, el("span", { text: line })));
+  else node.textContent = line;
+}
+
+async function showDetail(id, title) {
+  const { json } = await api("GET", `/api/detail?id=${encodeURIComponent(id)}`);
+  if (!json.ok) { toast(json.message || "That detail is no longer kept on the VM."); return; }
+  const d = json.detail;
+  const block = (label, text, cls = "") => (text ? [el("h3", { class: "detail-label", text: label }), el("pre", { class: `detail-text ${cls}` }, el("code", { text }))] : []);
+  if (d.kind === "thinking") openSheet(title, el("pre", { class: "detail-text thinking" }, el("code", { text: d.thinking })));
+  else openSheet(title, ...block("Arguments", d.args), ...block(d.isError ? "Error" : "Output", d.output || (d.isError ? "" : "(no output yet)"), d.isError ? "error" : ""));
 }
 
 // ---- questions: the window's own parsers, the VM's own options --------------------
@@ -421,6 +487,7 @@ async function load() {
   renderQuestions();
   app.commands = Array.isArray(s.commands) ? s.commands : [];
   renderQueue(s.queue);
+  renderPanel(s.panel);
   $("gate").hidden = true;
   $("session").hidden = false;
   $("composer").hidden = false;
@@ -450,6 +517,7 @@ function openStream() {
   });
   // A gap the window can no longer fill: reload the snapshot rather than guess.
   source.addEventListener("resync", () => load());
+  on("panel", (d) => renderPanel(d));
   on("status", (d) => { setStatus(d.state); if (d.queue) renderQueue(d.queue); });
   on("message", (d) => { renderMessage(d); app.messages.get(d.id).scrollIntoView({ block: "end" }); });
   // Keep the newest line in view, whatever kind it is.
@@ -492,6 +560,11 @@ for (const b of document.querySelectorAll(".seg-btn")) b.addEventListener("click
 $("menu-open").addEventListener("click", () => { setMenu(true); loadDetails(); });
 for (const name of Object.keys(SHEETS)) $(`menu-${name}`).addEventListener("click", () => SHEETS[name]());
 $("sheet-close").addEventListener("click", closeSheet);
+$("panel-toggle").addEventListener("click", () => {
+  const open = $("panel-toggle").getAttribute("aria-expanded") !== "true";
+  $("panel-toggle").setAttribute("aria-expanded", String(open));
+  $("panel-body").hidden = !open;
+});
 $("sheet").addEventListener("click", (e) => { if (e.target === $("sheet")) closeSheet(); });
 $("menu-close").addEventListener("click", () => setMenu(false));
 $("scrim").addEventListener("click", () => setMenu(false));

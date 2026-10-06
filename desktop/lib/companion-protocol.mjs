@@ -39,6 +39,7 @@ export const ROUTES = Object.freeze({
   "POST /api/dequeue": "dequeue",
   "POST /api/answer": "answer",
   "GET /api/session": "details",
+  "GET /api/detail": "detail",
   "POST /api/session": "control",
   "POST /api/logout": "logout",
 });
@@ -388,13 +389,17 @@ export function phoneCommandList(piCommands = []) {
 /** The only event types the phone receives; MC2 maps Pi's RPC events onto these. */
 export const EVENT_TYPES = Object.freeze([
   "status",            // { state: "idle" | "running" | "exited", queue?: { steering: [], followUp: [] } }
-  "message",           // { id, role: "user" | "assistant", text, final }
-  "tool",              // { id, name, label, state: "running" | "done" | "error" }
+  "message",           // { id, role: "user" | "assistant", text, final, thinking? } (thinking: GET /api/detail has it, MC8)
+  "tool",              // { id, name, label, state: "running" | "done" | "error", detail? } (detail: arguments and output on tap, MC8)
   "question",          // classifyQuestion's result without piId
   "question_resolved", // { questionId, outcome: "answered" | "expired" | "cancelled", by: "desktop" | "phone" | "pi" }
   "notice",            // { level: "info" | "warning" | "error", text }
   "session",           // { incarnation, windowsUser, client, sessionName }
+  "panel",             // { status: [text], widgets: [{ key, lines }], todo: [line] } (MC8)
 ]);
+
+/** What `GET /api/detail?id=` names (MC8): `t:` a tool call, `m:` an answer's thinking. */
+export const DETAIL_ID = /^[tm]:[A-Za-z0-9_.:-]{1,120}$/;
 
 /** One event as sent on the stream; `id` is the SSE id the phone echoes in Last-Event-ID. */
 export function eventEnvelope({ seq, incarnation, type, data, at = Date.now() }) {
