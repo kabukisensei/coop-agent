@@ -1,7 +1,7 @@
 /* The phone companion (master plan MC3). Colours come from the window's own
    theme tokens (shared/themes.css); this file is layout for small screens. */
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; }
+html, body { margin: 0; }
 body {
   background: var(--bg);
   color: var(--text);

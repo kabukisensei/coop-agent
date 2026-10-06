@@ -265,8 +265,9 @@ function openStream() {
   source.addEventListener("resync", () => load());
   on("status", (d) => setStatus(d.state));
   on("message", (d) => { renderMessage(d); app.messages.get(d.id).scrollIntoView({ block: "end" }); });
-  on("tool", renderTool);
-  on("notice", (d) => $("timeline").append(el("li", { class: `notice ${d.level}`, text: d.text })));
+  // Keep the newest line in view, whatever kind it is.
+  on("tool", (d) => { renderTool(d); app.messages.get(`tool:${d.id}`).scrollIntoView({ block: "end" }); });
+  on("notice", (d) => { const note = el("li", { class: `notice ${d.level}`, text: d.text }); $("timeline").append(note); note.scrollIntoView({ block: "end" }); });
   on("session", (d) => setIdentity(d));
   on("question", (d) => { app.questions.set(d.questionId, d); renderQuestions(); });
   on("question_resolved", (d) => {
@@ -311,6 +312,14 @@ $("pair").addEventListener("submit", async (e) => {
   if (json.ok) { $("code").value = ""; load(); }
   else $("gate-text").textContent = json.code === "rate-limited" ? "Too many tries. Wait a while, then show a new code in the coop window." : "That code is wrong or has expired. Show a new one in the coop window: Session > Phone > Pair a phone.";
 });
+// The bar and the composer stay on screen, so "scroll into view" must stop
+// short of them or the newest line lands underneath the composer.
+function keepClear() {
+  const root = document.documentElement.style;
+  root.scrollPaddingTop = `${document.querySelector(".bar").offsetHeight + 8}px`;
+  root.scrollPaddingBottom = `${$("composer").hidden ? 0 : $("composer").offsetHeight + 8}px`;
+}
+if ("ResizeObserver" in window) { const watch = new ResizeObserver(keepClear); watch.observe(document.querySelector(".bar")); watch.observe($("composer")); }
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && !app.source) load(); });
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 load();
