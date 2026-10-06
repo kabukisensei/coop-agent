@@ -86,6 +86,21 @@ def personal_pi_agent_dir() -> Path:
     return home_dir() / ".pi" / "agent"
 
 
+def managed_mcp_config() -> Path:
+    """The managed MCP config this launch's Pi loaded: the launch folder's own
+    copy (COOP_MCP_CONFIG, an `<agent dir>/mcp/<12 hex>.json` file that coop
+    passed to Pi as --mcp-config), else the shared mcp-adapter.json. Anything
+    else in the variable is ignored."""
+    base = agent_dir()
+    configured = _env("COOP_MCP_CONFIG")
+    if configured:
+        path = Path(configured)
+        same = os.path.normcase(os.path.abspath(path.parent)) == os.path.normcase(os.path.abspath(base / "mcp"))
+        if same and re.fullmatch(r"[0-9a-f]{12}\.json", path.name):
+            return path
+    return base / "mcp-adapter.json"
+
+
 def agent_dir() -> Path:
     """The agent dir Pi will ACTUALLY load (mirror of Get-CoopEffectiveAgentDir)."""
     configured = _env("PI_CODING_AGENT_DIR")

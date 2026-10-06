@@ -49,6 +49,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   prompt count stopped early. It now reads the whole file, picking up from where
   it stopped when the file grows, and refreshes the list the moment a session is
   named.
+- **Several coops at once keep their own Warehouse target.** The managed MCP
+  config was one shared file that every launch retargeted to its folder, so a
+  coop already running on another project read the newer target at its next
+  `/new`, and its guardrails read the wrong Warehouse environment (a production
+  target could look like dev). Each launch now also writes its folder's own copy
+  (`<agent dir>\mcp\<key>.json`) and runs on it: Pi gets `--mcp-config`, and
+  the guardrails, `fabric_sql_query` and the launch token read
+  `COOP_MCP_CONFIG`. The shared `mcp-adapter.json` still follows the last launch
+  for `coop doctor` and `coop sync`.
 
 ## [0.32.0] — 2026-10-06
 

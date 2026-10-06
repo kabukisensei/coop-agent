@@ -1379,6 +1379,7 @@ function Update-CoopManagedMcpConfig {
   param(
     [string]$OutputPath = (Join-Path (Get-CoopEffectiveAgentDir) 'mcp-adapter.json'),
     [string]$ProjectCwd = (Get-Location).Path,
+    [string]$ExistingPath = '',
     [switch]$Quiet
   )
   $py = Get-CoopPython
@@ -1390,7 +1391,9 @@ function Update-CoopManagedMcpConfig {
     # Native stderr under Windows PowerShell 5.1 would otherwise become a
     # terminating error; capture it and decide below.
     $ErrorActionPreference = 'Continue'
-    $out = @(& $py $generator --config (Get-CoopConfigFile) --output $OutputPath --project-cwd $ProjectCwd 2>&1)
+    $genArgs = @('--config', (Get-CoopConfigFile), '--output', $OutputPath, '--project-cwd', $ProjectCwd)
+    if ($ExistingPath) { $genArgs += @('--existing', $ExistingPath) }
+    $out = @(& $py $generator @genArgs 2>&1)
     $rc = $LASTEXITCODE
   } catch {
     $rc = 1
@@ -1400,6 +1403,26 @@ function Update-CoopManagedMcpConfig {
   if ($rc -eq 0) { return 'ok' }
   if (-not $Quiet) { foreach ($line in $out) { Write-Host ([string]$line) } }
   return 'failed'
+}
+
+# One managed MCP config per launch folder (several coop windows or terminals at
+# once, 2026-10-06). The shared mcp-adapter.json keeps the last launch's target
+# for doctor and sync, but a coop already running on another folder would read
+# it again at its next session start (pi-mcp-adapter reloads on /new), and the
+# guardrails read the Warehouse environment from it. So each launch also writes
+# <agent dir>\mcp\<key>.json for its own folder and hands that one path to Pi
+# (--mcp-config) and to coop's own readers (COOP_MCP_CONFIG). The key is the
+# first 12 hex characters of the SHA-256 of the lower-cased full folder path.
+function Get-CoopFolderMcpConfigPath {
+  param([string]$ProjectCwd = (Get-Location).Path)
+  $full = [System.IO.Path]::GetFullPath($ProjectCwd).TrimEnd([char[]]@('\', '/')).ToLowerInvariant()
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $hash = -join ($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($full)) | ForEach-Object { $_.ToString('x2') })
+  } finally {
+    $sha.Dispose()
+  }
+  return (Join-Path (Join-Path (Get-CoopEffectiveAgentDir) 'mcp') ($hash.Substring(0, 12) + '.json'))
 }
 
 # True when Pi has a stored provider credential in the agent tree Coop will

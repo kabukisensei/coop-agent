@@ -197,8 +197,10 @@ A `"scope": "global"` line while the project's `.coop\project.yml` names a
 `default_sql_endpoint` item is the mismatch.
 
 **Fix.** Start coop (or open the window) in the project folder: every launch
-now rewrites the entry for its own folder. On a build without the fix, run
-`coop sync` from the project folder first.
+now rewrites the entry for its own folder, and runs on its own copy of it
+(`~\.coop\agent\mcp\<key>.json`), so a coop started later in another folder
+does not change it. On a build without the fix, run `coop sync` from the
+project folder first.
 
 **Verify.** `coop doctor` shows `fabric-sqlendpoint registered` and a
 `SELECT TOP 1 1` runs.

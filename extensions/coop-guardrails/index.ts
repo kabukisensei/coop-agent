@@ -38,7 +38,7 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { appendFileSync, existsSync, readFileSync, renameSync, statSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { agentDir as coopAgentDir, profileDir as coopProfileDir } from "../../lib/paths.mjs";
 import { editGateDecision } from "../../lib/lineage-context.mjs";
 
@@ -1328,6 +1328,17 @@ export function boundedSelectLimit(sql: string): number | null {
   return Number.isSafeInteger(limit) ? limit : null;
 }
 
+/** The managed MCP config this Pi loaded: the launch folder's own copy that
+ *  coop passed as --mcp-config (COOP_MCP_CONFIG, a `<agent dir>/mcp/<12 hex>.json`
+ *  file), else the shared mcp-adapter.json. Anything else in the variable is
+ *  ignored, so it can only ever point at coop's own generated files. */
+export function managedMcpConfigPath(agentDir: string, env: NodeJS.ProcessEnv = process.env, platform: string = process.platform): string {
+  const configured = typeof env.COOP_MCP_CONFIG === "string" ? env.COOP_MCP_CONFIG : "";
+  const same = (a: string, b: string) => (platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b);
+  if (configured && /^[0-9a-f]{12}\.json$/.test(basename(configured)) && same(resolve(dirname(configured)), resolve(agentDir, "mcp"))) return configured;
+  return join(agentDir, "mcp-adapter.json");
+}
+
 export type LiveReadResolverDeps = {
   readText: (path: string) => string;
   agentDir: string;
@@ -1362,7 +1373,7 @@ export function resolveLiveReadScope(event: any, deps: LiveReadResolverDeps): Li
     if (contract?.configured) return contractLiveReadScope(event, contract, deps);
   }
   let mcp: any;
-  try { mcp = JSON.parse(deps.readText(join(deps.agentDir, "mcp-adapter.json"))); } catch { return null; }
+  try { mcp = JSON.parse(deps.readText(managedMcpConfigPath(deps.agentDir))); } catch { return null; }
   // The adapter normalizes hyphens in server namespaces. An ambiguous namespace
   // must not acquire a grant using the managed server's otherwise valid metadata.
   const aliases = Object.keys(mcp?.mcpServers || {}).filter((name) => name.replace(/-/g, "_") === "fabric_sqlendpoint");
@@ -1515,7 +1526,7 @@ export function trustedWriteEnvironment(event: any, deps: LiveReadResolverDeps, 
  *  still a production write (#283). */
 export function managedSqlEnvironment(deps: LiveReadResolverDeps): string {
   try {
-    const mcp = JSON.parse(deps.readText(join(deps.agentDir, "mcp-adapter.json")));
+    const mcp = JSON.parse(deps.readText(managedMcpConfigPath(deps.agentDir)));
     const aliases = Object.keys(mcp?.mcpServers || {}).filter((name) => name.replace(/-/g, "_") === "fabric_sqlendpoint");
     if (aliases.length !== 1 || aliases[0] !== MANAGED_SQL_SERVER) return "";
     const managed = Array.isArray(mcp?._coop?.managed_servers) && mcp._coop.managed_servers.includes(MANAGED_SQL_SERVER);
