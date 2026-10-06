@@ -50,6 +50,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **Share with the team works in a repository that ignores `.coop`**
+  (Aaron, 2026-10-06). Git refuses a plain add of an ignored path, so Share
+  failed with a Git hint ("git config advice.addIgnoredFile false") instead of
+  sharing. Share now adds `.coop/project.yml` alone with `--force` when the
+  repository's `.gitignore` covers it, says so, and leaves the rest of `.coop`
+  (backups, catalog) ignored.
 - **The guardrails audit tells window tabs apart.** Each row now carries the
   coop process id, so two tabs (or terminals) on one folder no longer write
   decisions that look the same. Found in the tabs check on the client VM.

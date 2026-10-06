@@ -123,6 +123,32 @@ try {
     assert.deepEqual(audit.map((x) => x.decision), ["allowed", "allowed", "allowed", "blocked"]);
   });
 
+  await t("share: a .gitignore that covers .coop/ still shares project.yml alone; backups beside it stay ignored", () => {
+    git(tmp, "init", "--bare", "--initial-branch=main", "ignored-origin.git");
+    const c = join(tmp, "c");
+    git(tmp, "clone", "-c", "core.autocrlf=false", "--quiet", join(tmp, "ignored-origin.git"), "c");
+    identity(c);
+    writeFileSync(join(c, ".gitignore"), ".coop/\n");
+    git(c, "add", ".gitignore");
+    git(c, "commit", "--quiet", "-m", "init");
+    git(c, "push", "--quiet", "origin", "main");
+    mkdirSync(join(c, ".coop", "backups"), { recursive: true });
+    writeFileSync(join(c, ".coop", "project.yml"), CONTRACT);
+    writeFileSync(join(c, ".coop", "project.yml.bak"), "old\n");
+    writeFileSync(join(c, ".coop", "backups", "x.yml"), "backup\n");
+    assert.equal(ps.teamFileStatus(c).state, "not-shared");
+    const shared = ps.shareContract(c, { name: "Aaron" });
+    assert.deepEqual([shared.ok, shared.state, shared.ignored], [true, "shared", true], JSON.stringify(shared));
+    assert.deepEqual(git(c, "show", "--name-only", "--format=", "HEAD").split("\n"), [".coop/project.yml"]);
+    assert.equal(git(c, "ls-files", ".coop"), ".coop/project.yml", "the rest of .coop is not tracked");
+    assert.equal(ps.teamFileStatus(c).state, "shared");
+    // Tracked now, yet git still refuses a plain add under an ignored folder: every share forces that one path.
+    writeFileSync(join(c, ".coop", "project.yml"), CONTRACT + "  timezone: 'America/Chicago'\n");
+    const next = ps.shareContract(c, { name: "Aaron" });
+    assert.deepEqual([next.ok, next.ignored], [true, true], JSON.stringify(next));
+    assert.equal(git(c, "ls-files", ".coop"), ".coop/project.yml");
+  });
+
   await t("fetch throttle: one fetch per ten minutes per repository", () => {
     const now = Date.now();
     const first = ps.fetchOrigin(b, { now: now + ps.FETCH_MAX_AGE_MS + 1 });
