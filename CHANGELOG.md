@@ -35,6 +35,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **A long conversation no longer stops on "native turn auth context
+  mismatch: scopes"** (Aaron, 2026-10-06). Pi keeps reusing its cached OpenAI
+  Codex connection after it refreshes your ChatGPT sign-in, and the Codex server
+  can then reject the next turn; Pi treated that as final, so the session needed
+  a restart. coop now drops the session's Codex connections when the sign-in
+  token changes, as the official Codex client does, and if a turn still hits the
+  error it resets them and lets Pi's auto-retry send it again. Window and
+  terminal alike; other providers and errors are unchanged.
+
 - **The coop window shows the vibe for the whole working turn** (Aaron,
   2026-10-06). The vibe sat in the conversation only until coop's first thought
   or step appeared, so during real work it vanished after a moment. It now sits

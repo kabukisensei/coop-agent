@@ -32,6 +32,7 @@
 import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -2235,6 +2236,103 @@ export function createCompactionTransportHandler(deps: CompactionTransportDeps =
   };
 }
 
+// ---------------------------------------------------------------------------
+// Codex sign-in refresh on a long session
+//
+// Pi 0.87.1 (and still 1.0.4) caches the OpenAI Codex WebSocket per session and
+// account for up to 55 minutes and keeps reusing it after Pi refreshes the
+// ChatGPT sign-in token, so a long conversation keeps talking over a connection
+// opened with the previous token. The official Codex client keys its cached
+// connection on the auth revision and drops it on every refresh. After a refresh
+// the Codex backend can reject the next turn with "native turn auth context
+// mismatch: scopes"; Pi treats that as final, so the session stayed stuck until
+// coop was restarted.
+//
+// coop mirrors the official client and recovers in place:
+// - before each Codex request, when the stored sign-in token differs from the one
+//   the session last used, close the session's cached Codex connections
+//   (pi-ai's `cleanupSessionResources`) so the request opens a fresh one;
+// - when a turn still fails with an auth context mismatch, close them too and mark
+//   the error as a lost connection, so Pi's own auto-retry (`retry` settings,
+//   backoff, failed attempt kept out of the model's view) sends it again.
+// Only a token fingerprint is kept in memory, never the token. Other providers,
+// other errors and every failure on the way in leave Pi's behaviour unchanged.
+
+/** The Codex backend's rejection of a turn sent with a stale sign-in context. */
+export const CODEX_AUTH_CONTEXT_MISMATCH = /auth context mismatch/i;
+/** Appended to the error so Pi's retry pattern ("connection lost") picks it up. */
+export const CODEX_AUTH_RETRY_NOTE = "coop reset the Codex connection after a sign-in refresh: connection lost, retrying";
+
+/** Seams for tests; production loads pi-ai's `cleanupSessionResources` lazily. */
+export interface CodexAuthRecoveryDeps {
+  loadCleanup: () => Promise<(sessionId?: string) => void>;
+}
+
+const defaultCodexAuthRecoveryDeps: CodexAuthRecoveryDeps = {
+  loadCleanup: async () => (await import("@earendil-works/pi-ai")).cleanupSessionResources,
+};
+
+function isCodexModel(model: any): boolean {
+  return Boolean(model) && TRANSPORT_AWARE_APIS.has(String(model.api));
+}
+
+function sessionIdOf(ctx: any): string | undefined {
+  try {
+    const id = ctx?.sessionManager?.getSessionId?.();
+    return typeof id === "string" && id ? id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `before_provider_request` + `message_end` handlers for the Codex sign-in refresh. */
+export function createCodexAuthRecovery(deps: CodexAuthRecoveryDeps = defaultCodexAuthRecoveryDeps) {
+  const lastTokenBySession = new Map<string, string>();
+  const resetConnections = async (sessionId: string): Promise<boolean> => {
+    try {
+      const cleanup = await deps.loadCleanup();
+      if (typeof cleanup !== "function") return false;
+      cleanup(sessionId);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  return {
+    /** Never changes the payload; closes stale connections when the token changed. */
+    beforeProviderRequest: async (_event: any, ctx: any): Promise<undefined> => {
+      try {
+        const model = ctx?.model;
+        const sessionId = sessionIdOf(ctx);
+        if (!sessionId || !isCodexModel(model)) return undefined;
+        const auth = await ctx.modelRegistry?.getApiKeyAndHeaders?.(model);
+        if (!auth || auth.ok === false || typeof auth.apiKey !== "string" || !auth.apiKey) return undefined;
+        const fingerprint = createHash("sha256").update(auth.apiKey).digest("hex").slice(0, 16);
+        const previous = lastTokenBySession.get(sessionId);
+        lastTokenBySession.set(sessionId, fingerprint);
+        if (previous !== undefined && previous !== fingerprint) await resetConnections(sessionId);
+      } catch {
+        // Best effort: the request goes out exactly as Pi built it.
+      }
+      return undefined;
+    },
+    /** Turns the stale-sign-in rejection into a retryable error after a reset. */
+    messageEnd: async (event: any, ctx: any): Promise<{ message: any } | undefined> => {
+      const message = event?.message;
+      if (!message || message.role !== "assistant" || message.stopReason !== "error") return undefined;
+      const text = typeof message.errorMessage === "string" ? message.errorMessage : "";
+      if (!CODEX_AUTH_CONTEXT_MISMATCH.test(text) || text.includes(CODEX_AUTH_RETRY_NOTE)) return undefined;
+      if (message.api !== undefined && !TRANSPORT_AWARE_APIS.has(String(message.api))) return undefined;
+      const sessionId = sessionIdOf(ctx);
+      if (!sessionId || !(await resetConnections(sessionId))) return undefined;
+      lastTokenBySession.delete(sessionId);
+      return { message: { ...message, errorMessage: `${text} (${CODEX_AUTH_RETRY_NOTE})` } };
+    },
+    /** Forget fingerprints when the process's sessions end. */
+    clear: () => lastTokenBySession.clear(),
+  };
+}
+
 export default function coopTools(pi: ExtensionAPI) {
   pi.registerTool({
     name: "sql_impact",
@@ -2582,6 +2680,11 @@ export default function coopTools(pi: ExtensionAPI) {
     createCompactionTransportHandler({ ...defaultCompactionTransportDeps, getThinkingLevel: () => pi.getThinkingLevel() }),
   );
 
+  // A long Codex session survives a sign-in refresh (see createCodexAuthRecovery).
+  const codexAuthRecovery = createCodexAuthRecovery();
+  pi.on("before_provider_request", codexAuthRecovery.beforeProviderRequest);
+  pi.on("message_end", codexAuthRecovery.messageEnd);
+
   pi.on("session_start", async (_event: SessionStartEvent, ctx: ExtensionContext) => {
     // The contract native SQL runs against is the one this session starts with
     // (#284); /new, /resume and /fork re-read it here.
@@ -2840,6 +2943,7 @@ export default function coopTools(pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", async () => {
+    codexAuthRecovery.clear();
     clearLineageContext();
     pendingSqlEdits.clear();
   });
