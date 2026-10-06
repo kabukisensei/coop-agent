@@ -3434,9 +3434,12 @@ function Set-CoopDesktopShortcuts {
     # "coop": the window when there is one, else the terminal. The installed
     # window package (D1c) writes a "coop" shortcut that starts its own exe;
     # that one belongs to its installer and stays.
+    # Under -OnlyIfPresent a removed "coop" stays removed (the older "coop
+    # (window)" folds into it, so that one still counts as present).
+    $keepMain = (-not $OnlyIfPresent) -or (Test-Path -LiteralPath $main) -or (Test-Path -LiteralPath $legacyWindow)
     $sc = $ws.CreateShortcut($main)
     $packaged = (Test-Path -LiteralPath $main) -and $sc.TargetPath -and ($sc.TargetPath -notlike '*powershell.exe')
-    if (-not $packaged) {
+    if ($keepMain -and -not $packaged) {
       $sc.TargetPath       = $psExe
       $sc.Arguments        = if ($window) { "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$desktopLauncher`" desktop" } else { "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$desktopLauncher`"" }
       $sc.WorkingDirectory = $HOME
