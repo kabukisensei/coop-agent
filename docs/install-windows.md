@@ -112,11 +112,12 @@ coop
 
 Or double-click the **coop** icon on your Desktop or in the Start Menu, which opens
 the same coop in a terminal window. The icon starts coop in your home folder. For
-client work, start coop from the project folder instead, so project setup and
-`/setup-docs` use that folder:
+client work, start coop from the client's Git root (the folder that holds the
+client's repositories, where the team's committed `.coop/project.yml` lives) or
+any folder under it, so coop finds the contract and `/setup-docs` uses that folder:
 
 ```powershell
-cd <project folder>
+cd <client Git root>
 coop
 ```
 
@@ -165,20 +166,25 @@ app with four themes. The window installer brings Node, Pi and coop with it.
    the only time you see it.
 3. Click **Next** and **Install**. No administrator password is asked; it
    installs for your user only, under `%LOCALAPPDATA%\Programs\coop`.
-4. Double-click the new **coop (window)** icon on your Desktop or Start Menu
-   and pick the project folder. The first time, a console runs the same
+4. Double-click the new **coop** icon on your Desktop or Start Menu. It asks
+   which project to open: the folders you opened before, each with its client
+   and branch, or **Browse** to one of the client's repositories (or the client
+   home repository beside them) so the team's `.coop/project.yml` is found.
+   Tick **Open this one next time** and the icon opens straight on it from then
+   on (File > Switch project changes it). The first time, a console runs the same
    checklist as `coop install` (prerequisites, tools, the Azure and OpenAI
    sign-ins): follow what it prints, then start the window again if it stopped.
    After that the console only shows coop's launch checks and closes on its own.
 
 With the terminal coop from steps 1 to 5 as well, the window shares your
 `~/.coop` settings, sign-ins and sessions, leaves your `coop` command and the
-"coop" icon with the terminal install, and uses its own bundled copy of coop.
+"coop (terminal)" icon with the terminal install, and uses its own bundled copy
+of coop.
 Keep both at the same release: `coop update` for the terminal, then the newer
 installer for the window. To remove the window, use **Add or
 remove programs** and pick **coop (window)**; your settings under `~/.coop`
-stay, and so do a terminal install's `coop` command and "coop" icon (the ones
-the window wrote for itself go with it). A newer window comes as a newer
+stay, and so do a terminal install's `coop` command and "coop (terminal)" icon
+(the ones the window wrote for itself go with it). A newer window comes as a newer
 installer: run it over the old one.
 
 Next: [onboarding](onboarding.md) has a safe first task and the day-to-day commands.

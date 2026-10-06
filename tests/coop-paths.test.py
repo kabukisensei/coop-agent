@@ -164,4 +164,14 @@ with tempfile.TemporaryDirectory(prefix="coop-paths-") as tmp:
     assert "coop_paths.agent_dir()" in src
     ok("sql_query locates mcp-adapter.json through coop_paths.agent_dir()")
 
+    # --- the machine-level profile (master plan P1) ---------------------------
+    with mock.patch.dict(os.environ, env(home, COOP_MACHINE_DIR=str(agent)), clear=True):
+        assert coop_paths.machine_profile_dir() == agent
+        assert coop_paths.machine_profile_path() == agent / "user.json"
+    with mock.patch.dict(os.environ, env(home), clear=True):
+        expected = (Path(os.environ.get("ProgramData") or r"C:\ProgramData") / "coop") if os.name == "nt" else Path("/etc/coop")
+        assert coop_paths.machine_profile_dir() == expected
+        assert coop_paths.machine_profile_path() != coop_paths.user_profile_path()
+    ok("machine_profile_path: COOP_MACHINE_DIR, else %ProgramData%\\coop (Windows) or /etc/coop; never under COOP_DIR")
+
 print(f"  coop-paths tests passed ({passed} checks)")

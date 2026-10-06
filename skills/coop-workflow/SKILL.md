@@ -37,7 +37,8 @@ review, diff summary, and human commit.
 
 ## Before you start
 
-Read the project contract `.coop/project.yml` (coop loads the nearest one). It is
+Read the project contract `.coop/project.yml` (the team's committed file at the
+client's Git root; coop loads the nearest one walking up). It is
 the source of truth for repo paths, Fabric/Power BI workspaces, backup/log rules,
 allowed/blocked commit paths, and the approval policy. It may provide deliberate
 project standards overrides; otherwise COOP's resolved standards task authority is

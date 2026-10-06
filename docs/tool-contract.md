@@ -234,7 +234,12 @@ object: `{ table, source, linked }`), rendered as a "Loaded by" list; a hit with
 not resolved). A view the docs do not hold at all but a model loads
 (`{ object: null, undocumented_source: true, loaded_by[], downstream[] }`) is
 reported as "not a documented object, but N Power BI table(s) load it by name"
-instead of a failure, so the SQL side can stay outside the docs. An ambiguous `object`
+instead of a failure, so the SQL side can stay outside the docs. When the contract
+declares `power_bi.table_mapping` (below), every slice about a SQL object ends with
+one "Declared mapping" line: `holds` when a loading table is one the rule or an
+override predicts, else `does not match`, naming the table the rule expected and
+none documented, the table that loads it outside the rule, or the missing prefix,
+so an empty "Loaded by" is never read as "no Power BI dependents". An ambiguous `object`
 lists the candidates (`{ query, ambiguous: true, matches[], loaded_by[] }` in details; re-call
 with a specific name); when there's
 no built graph, `content` says so and points at `build` / `/setup-docs` — you can
@@ -338,7 +343,34 @@ audit records a fixed label and the environment, never the object name. The tool
 text output adds a `data_doc` lineage hint when built docs exist in the folder, and
 the `impact-analysis` prompt and the `coop-workflow` skill call `sql_impact` before
 any live SQL edit. The text lists every item in each section (`- schema.name (type)`,
-unresolved references flagged; columns as `- name type NULL|NOT NULL`).
+unresolved references flagged; columns as `- name type NULL|NOT NULL`). With a
+declared `power_bi.table_mapping`, an empty downstream list also says which
+semantic-model table the mapping expects to load the object, and that the catalog
+cannot see Power BI, so `data_doc lineage` confirms it.
+
+### Declared layout and table mapping (`fabric.layout`, `power_bi.table_mapping`)
+
+Master plan C2 (demo of 2026-10-05: "I don't want the tool to assume anything").
+The contract states the two things coop used to assume; `lib/project-contract.mjs`
+reads and writes both, and `/setup-project`, the window's Project form and
+`coop init` ask for them with the Fabric / Power BI questions.
+
+| Key | Values | Meaning |
+| --- | --- | --- |
+| `fabric.layout` | `warehouse`, `lakehouse`, `sql_database`, `mixed`, or blank | The Fabric item kinds that hold the client's SQL. Proposed from `fabric.default_sql_endpoint.item_type`, then the dev `sql_targets` kind. Informational today: nothing is blocked by it. |
+| `power_bi.table_mapping.rule` | `same_name` (default) or `prefix` | `same_name`: a model table is named like the SQL object it loads (`dbo.vSales` or `vSales` loads `dbo.vSales`), the rule the "Loaded by" lineage uses. `prefix`: table `<name>` loads `default_schema.<view_prefix><name>`. |
+| `power_bi.table_mapping.default_schema` | one SQL identifier (default `dbo`) | The schema assumed for a model table named without one. |
+| `power_bi.table_mapping.view_prefix` | letters, digits, `_` (blank unless `rule: prefix`) | The prefix the model table names drop. |
+| `power_bi.table_mapping.overrides` | mapping, model table name to `schema.object` | Hand-edited exceptions; they win over the rule and are never rewritten by the wizard or the form (the form shows them read-only). |
+
+`tableMappingFromContract(text)` returns `{ declared, rule, defaultSchema,
+viewPrefix, overrides, layout }`; `declared` is false without the block, and an
+undeclared mapping is checked against nothing (older contracts keep today's
+behavior until `/setup-project` runs once). `expectedModelTables(mapping, schema,
+name)` and `expectedSqlObject(mapping, table)` are the two directions of the rule;
+`mappingCheckLines` (lineage) and `mappingExpectationLine` (sql_impact) render the
+texts above. The wizard writes `view_prefix: ''` for a `same_name` rule and never
+touches `overrides` once it holds entries.
 
 ### `catalog_snapshot` (committed dev catalog snapshot)
 

@@ -289,6 +289,16 @@ if (Test-Have 'pi') {
   }
 }
 
+# The person's name (master plan P1): the per-user user.json, else the
+# machine-level file; doctor says which one supplied it.
+$who = Get-CoopEffectiveProfileName
+if ($who.Name) {
+  $whoFile = if ($who.Source -eq 'machine') { Get-CoopMachineProfileFile } else { Get-CoopUserProfileFile }
+  D-Ok ("profile name '" + $who.Name + "' from " + $whoFile)
+} else {
+  D-Warn 'no COOP profile name yet' ('run: coop onboard  (or once per machine, from an elevated terminal: coop onboard --machine; files: ' + (Get-CoopUserProfileFile) + ', ' + (Get-CoopMachineProfileFile) + ')')
+}
+
 # The client tenant, resolved once through the one predicate (Get-CoopTenant:
 # Rc 0 resolved, 1 none, 2 not a GUID or domain name). The Azure sign-in row, the
 # Warehouse MCP row and the project contract row all read this result; no row
@@ -639,6 +649,45 @@ if ($catPy) {
   D-Warn 'Microsoft skills catalog status unavailable' 'Python is required'
 }
 
+D-Head 'Prompts and skills'
+# The three tiers (master plan PR1) in precedence order, shipped > client >
+# personal, and every name a lower tier loses to a higher one: the launcher
+# skips a shadowed skill and Pi keeps the first /prompt it loads, so a shadowed
+# file is silent at launch unless doctor names it here.
+$tierSkillOwner = @{}
+$tierPromptOwner = @{}
+foreach ($tier in (Get-CoopResourceTiers)) {
+  $tierSkills = @(Get-CoopTierSkills $tier.Skills)
+  $tierPrompts = @(Get-CoopTierPrompts $tier.Prompts)
+  $where = if ($tier.Tier -eq 'client') { "beside the contract, $($tier.Root)" } else { $tier.Root }
+  if ($tier.Tier -ne 'shipped' -and -not (Test-Path -LiteralPath $tier.Skills -PathType Container) -and -not (Test-Path -LiteralPath $tier.Prompts -PathType Container)) {
+    $folders = if ($tier.Tier -eq 'client') { '.coop\skills or .coop\prompts' } else { 'skills or prompts folder' }
+    D-Ok "$($tier.Tier) tier: none (no $folders at $($tier.Root))"
+  } else {
+    D-Ok "$($tier.Tier) tier: $($tierSkills.Count) skill(s), $($tierPrompts.Count) prompt(s) ($where)"
+  }
+  foreach ($ts in $tierSkills) {
+    $owner = $null
+    if ($tierSkillOwner.ContainsKey($ts.Name)) { $owner = $tierSkillOwner[$ts.Name] } elseif ($tierSkillOwner.ContainsKey($ts.Folder)) { $owner = $tierSkillOwner[$ts.Folder] }
+    if ($owner) {
+      D-Warn "$($tier.Tier) skill '$($ts.Folder)' is not loaded: the $owner tier already has '$($ts.Name)'" "rename it (name: in SKILL.md and the folder), or delete the copy you do not want"
+      continue
+    }
+    $tierSkillOwner[$ts.Name] = $tier.Tier
+    $tierSkillOwner[$ts.Folder] = $tier.Tier
+  }
+  foreach ($tp in $tierPrompts) {
+    if ($tierPromptOwner.ContainsKey($tp.Name)) {
+      D-Warn "$($tier.Tier) prompt '/$($tp.Name)' is not loaded: the $($tierPromptOwner[$tp.Name]) tier already has it" "rename the file, or delete the copy you do not want"
+      continue
+    }
+    $tierPromptOwner[$tp.Name] = $tier.Tier
+  }
+}
+if (-not (Get-CoopResourceTiers | Where-Object { $_.Tier -eq 'client' })) {
+  D-Ok 'client tier: no committed .coop/project.yml above this folder, so nothing to load'
+}
+
 D-Head 'Standards'
 if (Test-Have 'node') {
   $standardsCli = Join-Path $env:COOP_ROOT 'lib\standards-cli.mjs'
@@ -783,7 +832,7 @@ if ($proj) {
     }
   }
 } else {
-  D-Warn 'no .coop/project.yml found' "copy $($script:CoopRoot)/.coop/project.example.yml to your repo's .coop/project.yml"
+  D-Warn 'no .coop/project.yml found' "run /setup-project inside coop at the client's Git root (or coop init there), then commit the file with the repository"
 }
 
 D-Head 'coop-agent repository'
