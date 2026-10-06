@@ -309,8 +309,12 @@ Once per VM, and once per phone. Nothing here changes the terminal coop.
    screen / Install app).
 4. **Use.** In the window, *Session > Phone > Allow phone for this session*.
    The phone shows the conversation, coop's status and its questions; send a
-   message, stop a turn, or answer. Allow it again after a new session or a
-   restart.
+   message, stop a turn, or answer, and the rest is in its menu. Allow it
+   again after a new session or a restart started at the desk; one the phone
+   starts keeps its access.
+5. **Notices (optional).** In the phone's menu, *Notices > Turn notices on*.
+   On an iPhone this works only from the Home Screen app (iOS 16.4 or later).
+   The VM needs to reach Apple's and Google's push services over HTTPS.
 
 coop reads the address from `tailscale status --json`. The window's
 `settings.json` key `companionOrigin` (an `https://` address) overrides it.
