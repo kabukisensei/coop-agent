@@ -70,6 +70,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   saves `coop-data-doc.yml` there and builds into the home repository, so the
   offered `data-docs-check.yml` in the home repository failed with "No
   coop-data-doc.yml found". The offer now needs the config in that repository.
+- **Lineage works from a repository the client home repository lists** (SQ8
+  and DR1, found on the client VM). Opened in `sql\` beside `<client>-coop`,
+  the edit gate, `data_doc lineage` and the session note missed the catalog
+  snapshot, the built docs and `coop-data-doc.yml` in the home repository;
+  they now find them there and run `coop-data-doc` in that folder.
 - **The guardrails audit tells window tabs apart.** Each row now carries the
   coop process id, so two tabs (or terminals) on one folder no longer write
   decisions that look the same. Found in the tabs check on the client VM.

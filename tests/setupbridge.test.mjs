@@ -436,6 +436,24 @@ await t("data-doc config follows ancestors and authoritative missing env path", 
   assert.equal(mod.findDataDocConfig(nested, { COOP_DATA_DOC_CONFIG: "missing.yml" }), join(nested, "missing.yml"));
 });
 
+await t("a repository the client home repository lists uses the data-doc config there (DR1)", async () => {
+  const client = realpathSync(mkdtempSync(join(tmpdir(), "coop-doc-home-")));
+  const home = join(client, "contoso-coop");
+  const sql = join(client, "sql");
+  mkdirSync(join(home, ".git"), { recursive: true });
+  mkdirSync(join(home, ".coop"), { recursive: true });
+  mkdirSync(join(sql, ".git"), { recursive: true });
+  writeFileSync(join(home, ".coop", "project.yml"), "profile:\n  client: Contoso\nrepositories:\n  sql:\n    local_path: ../sql\n");
+  assert.equal(mod.findDataDocConfig(sql, {}), null, "no config in the home repository yet");
+  assert.equal(mod.dataDocCwd(sql, {}), sql);
+  writeFileSync(join(home, "coop-data-doc.yml"), "project_name: Test\n");
+  assert.equal(mod.findDataDocConfig(sql, {}), join(home, "coop-data-doc.yml"));
+  assert.equal(mod.dataDocCwd(sql, {}), home, "coop-data-doc runs where its config lives");
+  mkdirSync(join(home, "data-docs"), { recursive: true });
+  writeFileSync(join(home, "data-docs", "graph.json"), "{}");
+  assert.equal(mod.builtLineageDir(sql, {}), join(home, "data-docs"));
+});
+
 await t("data_doc failure/check claims no generated artifacts; lineage qualifies evidence", async () => {
   const tools = {};
   let result = { code: 2, stdout: "", stderr: "validation failed" };

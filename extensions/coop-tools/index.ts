@@ -657,6 +657,18 @@ function isBuilt(outAbs: string): boolean {
   return existsSync(join(outAbs, "manifest.json")) || existsSync(join(outAbs, "index.md"));
 }
 
+/** Where coop-data-doc runs for `cwd`: the folder of the config it would use,
+ *  which for a repository the client home repository lists is that home
+ *  repository (DR1), else `cwd` itself. */
+export function dataDocCwd(cwd: string, env: Record<string, string | undefined> = process.env): string {
+  try {
+    const ymlPath = findDataDocConfig(cwd, env);
+    return ymlPath ? dirname(ymlPath) : cwd;
+  } catch {
+    return cwd;
+  }
+}
+
 /** The output dir holding the built lineage graph (graph.json, what `data_doc
  *  lineage` reads) for the companion's config (environment, then this folder or
  *  a parent; output.dir resolves against the config's folder), or null. One
@@ -2558,7 +2570,7 @@ export default function coopTools(pi: ExtensionAPI) {
         args.push("--", p.object.trim());
         let res;
         try {
-          res = await pi.exec("coop-data-doc", args, { cwd: ctx.cwd, signal });
+          res = await pi.exec("coop-data-doc", args, { cwd: dataDocCwd(ctx.cwd), signal });
         } catch (e: any) {
           return {
             content: [{ type: "text" as const, text: `coop-data-doc could not run: ${errMsg(e)}. Is it installed? (coop install)` }],
@@ -2647,7 +2659,7 @@ export default function coopTools(pi: ExtensionAPI) {
       // --- scan / build / check ---
       let res;
       try {
-        res = await pi.exec("coop-data-doc", [command], { cwd: ctx.cwd, signal });
+        res = await pi.exec("coop-data-doc", [command], { cwd: dataDocCwd(ctx.cwd), signal });
       } catch (e: any) {
         return {
           content: [{ type: "text" as const, text: `coop-data-doc could not run: ${errMsg(e)}. Is it installed? (coop install)` }],
@@ -2906,7 +2918,7 @@ export default function coopTools(pi: ExtensionAPI) {
       let found: any = null;
       let asked = false;
       try {
-        const res = await pi.exec("coop-data-doc", ["lineage", "--", prepared.object], { cwd: ctx.cwd });
+        const res = await pi.exec("coop-data-doc", ["lineage", "--", prepared.object], { cwd: dataDocCwd(ctx.cwd) });
         asked = true;
         let parsed: any = null;
         try { parsed = JSON.parse(res.stdout); } catch { parsed = null; }
