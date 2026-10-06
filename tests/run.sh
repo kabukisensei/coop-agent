@@ -194,6 +194,9 @@ node "$ROOT/tests/sql-formatting.test.mjs"
 echo "→ compaction over the configured transport (#236) tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/compaction-transport.test.mjs"
 
+echo "→ Codex sign-in refresh on a long session tests"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/codex-auth-recovery.test.mjs"
+
 echo "→ coop-profile tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/coop-profile.test.mjs"
 
