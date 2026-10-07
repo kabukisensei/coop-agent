@@ -699,9 +699,8 @@ function Invoke-CoopPiProcess {
   if ($sibling) {
     if (-not (Find-CoopGitRoot (Get-Location).Path)) { Coop-Info "project file: $sibling (the repository $(Get-CoopChildRepositoryName $sibling) inside this folder holds it)" }
     else { Coop-Info "project file: $sibling (the client home repository beside this one lists this repository)" }
-  } elseif (-not (Find-CoopContractAbove (Get-Location).Path) -and -not (Find-CoopGitRoot (Get-Location).Path)) {
-    $several = @(Get-CoopChildContracts (Get-Location).Path)
-    if ($several.Count -gt 1) { Coop-Warn "no project file for this folder: several repositories inside it have one ($((@($several | ForEach-Object { Get-CoopChildRepositoryName $_ })) -join ', ')). Open coop in the repository you mean." }
+  } else {
+    Write-CoopSeveralContractsWarning (Get-Location).Path
   }
   $token = Get-CoopFabricMcpToken
   if ($token) { $env:COOP_FABRIC_MCP_TOKEN = $token }
@@ -755,6 +754,9 @@ function Initialize-CoopLaunch {
   # (`coop update`, the window's first launch). Fail-soft: the token helper
   # below reports whatever the config still says.
   $script:CoopMcpConfig = ''
+  # The window shows this as a notice (its console closes); the terminal prints it
+  # just before Pi starts (Invoke-CoopPiProcess).
+  if ($Window) { Write-CoopSeveralContractsWarning (Get-Location).Path }
   $mcpState = Update-CoopManagedMcpConfig -Quiet
   if ($mcpState -eq 'failed') {
     Coop-Warn 'could not refresh the MCP config for this folder; run: coop sync   (from this folder)'

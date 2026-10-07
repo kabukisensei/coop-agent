@@ -9,6 +9,12 @@
 #      global again. A user-added server survives every rewrite.
 #   B. End-to-end `coop` (stub pi) from the project folder after a home-folder
 #      sync: the stub reads the config while it runs and sees the item target.
+#   D. Opened from the folder above the client repository (2026-10-07: a teammate
+#      launched from the user folder holding <user>\fabric; the managed entry was
+#      the global endpoint with blank targets and the guardrails refused a dev
+#      write): `coop sync` and a launch from that folder use the repository's
+#      project file. With two repositories that each have one, nothing is
+#      guessed: the entry stays global (no_project_file) and the launch warns.
 #   C. Several coops at once (2026-10-06): each launch also writes its folder's
 #      own copy (<agent dir>\mcp\<key>.json) and hands Pi that path
 #      (--mcp-config, COOP_MCP_CONFIG); a later launch from another folder
@@ -151,6 +157,42 @@ sys.exit(0)
   if ($r.Rc -eq 0 -and (Read-Entry $configPath).url -eq $globalUrl) { Ok 'a launch from the home folder retargets the shared file' } else { Ko "home launch: rc=$($r.Rc) shared url=$((Read-Entry $configPath).url)" $all }
   if ((Read-Entry $projectCopy).url -eq $itemUrl) { Ok 'the project launch''s own copy still names the item (the running coop is not retargeted)' } else { Ko "project copy after the home launch: $((Read-Entry $projectCopy).url)" }
   if ((Test-Path -LiteralPath $homeCopy) -and (Read-Entry $homeCopy).url -eq $globalUrl) { Ok 'the home launch got its own copy' } else { Ko 'no home copy' $all }
+
+  # --- D. opened from the folder above the client repository ----------------------
+  $userDir = Join-Path $t 'users\josh'
+  $clientRepo = Join-Path $userDir 'fabric'
+  New-Item -ItemType Directory -Force -Path (Join-Path $clientRepo '.git'), (Join-Path $clientRepo '.coop') | Out-Null
+  Copy-Item -LiteralPath (Join-Path $project '.coop\project.yml') -Destination (Join-Path $clientRepo '.coop\project.yml')
+  $env:PI_CODING_AGENT_DIR = $agent
+  Push-Location -LiteralPath $userDir
+  $state = Update-CoopManagedMcpConfig -Quiet
+  Pop-Location
+  Remove-Item -LiteralPath Env:PI_CODING_AGENT_DIR -ErrorAction SilentlyContinue
+  $entry = Read-Entry $configPath
+  if ($state -eq 'ok' -and $entry.url -eq $itemUrl -and $entry._coop_target.scope -eq 'item' -and $entry._coop_target.workspace_id -eq $workspace -and $entry._coop_target.item_id -eq $item) { Ok 'sync from the folder above the client repository: the entry is that repository''s item target' }
+  else { Ko "folder above the repository: state=$state url=$($entry.url) scope=$($entry._coop_target.scope) workspace=$($entry._coop_target.workspace_id)" }
+  Remove-Item -LiteralPath (Join-Path $marker 'config-at-launch.json') -Force -ErrorAction SilentlyContinue
+  $r = Invoke-Redirected (Join-Path $root 'bin\coop.ps1') $userDir
+  $all = $r.Out + $r.Err
+  $seen = Join-Path $marker 'config-at-launch.json'
+  $entry = if (Test-Path -LiteralPath $seen) { Read-Entry $seen } else { $null }
+  $env:PI_CODING_AGENT_DIR = $agent
+  $userCopy = Get-CoopFolderMcpConfigPath -ProjectCwd $userDir
+  Remove-Item -LiteralPath Env:PI_CODING_AGENT_DIR -ErrorAction SilentlyContinue
+  $copyEntry = if (Test-Path -LiteralPath $userCopy) { Read-Entry $userCopy } else { $null }
+  if ($r.Rc -eq 0 -and $entry -and $entry.url -eq $itemUrl -and $entry._coop_target.item_name -eq 'CustomerWarehouse' -and $copyEntry -and $copyEntry.url -eq $itemUrl) { Ok 'launch from the folder above the client repository: Pi sees the item target, in the shared file and the folder''s own copy' }
+  else { Ko "launch from the user folder: rc=$($r.Rc) shared=$($entry.url) copy=$($copyEntry.url)" $all }
+  # A second client repository with its own project file: which one is meant is unknown.
+  $otherRepo = Join-Path $userDir 'reports'
+  New-Item -ItemType Directory -Force -Path (Join-Path $otherRepo '.git'), (Join-Path $otherRepo '.coop') | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $otherRepo '.coop\project.yml'), "profile:`n  client: `"Other`"`n", $utf8)
+  $r = Invoke-Redirected (Join-Path $root 'bin\coop.ps1') $userDir
+  $all = $r.Out + $r.Err
+  $entry = Read-Entry $configPath
+  if ($r.Rc -eq 0 -and $entry.url -eq $globalUrl -and $entry._coop_target.workspace_id -eq '' -and $entry._coop_target.reason -eq 'no_project_file') { Ok 'two repositories with project files: nothing is guessed, the target stays blank (no_project_file)' }
+  else { Ko "two repositories: rc=$($r.Rc) url=$($entry.url) reason=$($entry._coop_target.reason)" $all }
+  if ($all -match 'several repositories inside it have one \(fabric, reports\)' -and $all -match 'writes are refused') { Ok 'the launch says which repositories hold one and to open coop in the one meant' }
+  else { Ko 'no several-project-files warning' $all }
 } catch {
   Ko "fixture error: $($_.Exception.Message)" ($_.ScriptStackTrace)
 } finally {

@@ -2373,6 +2373,50 @@ await t("G1: without a human unlock a production write is blocked with no prompt
   }
 });
 
+await t("an unconfirmed Warehouse target is still refused, and the refusal says why and what to do (2026-10-07)", async () => {
+  removeUnlock();
+  const savedCoopDir = process.env.COOP_DIR;
+  process.env.COOP_DIR = UNLOCK_HOME;
+  try {
+    const sqlWrite = (query) => ({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify({ query }) } });
+    process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+    confirmAnswer = true;
+    // coop opened in a folder with no project file it could use: the target is blank.
+    writeManagedTarget({ scope: "global", workspace_id: "", item_id: "", item_type: "", environment: "", client: "", tenant_id: "", item_name: "", reason: "no_project_file" });
+    await handleSessionStart({ reason: "new" }, liveCtx);
+    confirmCount = 0;
+    let r = await handle(sqlWrite("ALTER VIEW dbo.V AS SELECT 1 AS x"), liveCtx);
+    assert.equal(blocked(r), true, "a blank target never writes");
+    assert.equal(confirmCount, 0, "no prompt");
+    assert.match(r.reason, /treated as production and blocked/);
+    assert.match(r.reason, /found no project file for the folder it was opened in/);
+    assert.match(r.reason, /open it in the repository that holds the project file/);
+    // A project file without a default Warehouse.
+    writeManagedTarget({ scope: "global", workspace_id: "", item_id: "", item_type: "", environment: "", reason: "missing_unambiguous_project_ids" });
+    await handleSessionStart({ reason: "new" }, liveCtx);
+    r = await handle(sqlWrite("UPDATE dbo.T SET a = 1"), liveCtx);
+    assert.equal(blocked(r), true);
+    assert.match(r.reason, /names no default Warehouse/);
+    // An item whose workspace the project file does not label dev or test.
+    writeManagedTarget({ environment: "" });
+    await handleSessionStart({ reason: "new" }, liveCtx);
+    r = await handle(sqlWrite("UPDATE dbo.T SET a = 1"), liveCtx);
+    assert.equal(blocked(r), true);
+    assert.match(r.reason, /does not label this Warehouse's workspace as dev or test/);
+    // A labelled production target keeps the plain production refusal.
+    writeManagedTarget({ environment: "production" });
+    await handleSessionStart({ reason: "new" }, liveCtx);
+    r = await handle(sqlWrite("UPDATE dbo.T SET a = 1"), liveCtx);
+    assert.equal(blocked(r), true);
+    assert.match(r.reason, /Production writes are blocked/);
+    assert.equal(confirmCount, 0, "none of these asks");
+  } finally {
+    if (savedCoopDir === undefined) delete process.env.COOP_DIR; else process.env.COOP_DIR = savedCoopDir;
+    writeManagedTarget();
+    await handleSessionStart({ reason: "new" }, liveCtx);
+  }
+});
+
 await t("G1: a session can never grant itself the production unlock", async () => {
   for (const cmd of ["coop unlock-prod Contoso --minutes 5", "pwsh -File bin/coop.ps1 unlock-prod Contoso", "echo {} > ~/.coop/prod-unlock.json", "cat ~/.coop/prod-unlock.json"]) {
     const r = await call(cmd, { confirm: true });
