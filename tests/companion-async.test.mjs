@@ -86,6 +86,41 @@ await check("rejected old export RPC cannot report old-session errors after repl
   await wait.entered; hub.attach(new Pi()); wait.reject(new Error("SYNTHETIC_OLD_SESSION_ERROR")); await rejected;
 });
 
+for (const change of ["renew", "revoke", "access-off", "replace"]) {
+  await check(`queued phone session transition validates actual host wiring after ${change}`, async () => {
+    const queued = deferred(); let sent = 0, denied = null;
+    let hub;
+    ({ hub } = fixture({ host: {
+      sessionCommand: async (_command, validate) => { await queued.promise; validate(); sent++; return { success: true }; },
+      changed: () => {},
+    } }));
+    const pending = hub.sessionAction("d", request(hub, "new"), () => denied);
+    const rejected = stale(pending, change === "revoke" ? "revoked" : change === "access-off" ? "access-off" : "wrong-session");
+    if (change === "renew") hub.renew();
+    if (change === "revoke") denied = "revoked";
+    if (change === "access-off") hub.setAccess(false);
+    if (change === "replace") hub.attach(new Pi());
+    queued.resolve(); await rejected; assert.equal(sent, 0);
+  });
+}
+await check("owned queued transition adopts only its returned incarnation and retains app access", async () => {
+  let hub, changed = 0;
+  ({ hub } = fixture({ host: {
+    sessionCommand: async (_command, validate) => { validate(); hub.renew({ keepAccess: true }); return { success: true, incarnation: hub.incarnation }; },
+    changed: () => { changed++; },
+  } }));
+  assert.deepEqual(await hub.sessionAction("d", request(hub, "new")), { ok: true });
+  assert.equal(changed, 1); assert.equal(hub.accessOn, true);
+});
+await check("another transition after owned renew prevents stale completion", async () => {
+  let hub;
+  ({ hub } = fixture({ host: {
+    sessionCommand: async (_command, validate) => { validate(); hub.renew({ keepAccess: true }); const incarnation = hub.incarnation; hub.renew(); return { success: true, incarnation }; },
+    changed: () => { throw new Error("stale completion published"); },
+  } }));
+  await stale(hub.sessionAction("d", request(hub, "new")));
+});
+
 function http(port, path, cookie, body) {
   return new Promise((resolve, reject) => {
     const data = body ? JSON.stringify(body) : "";

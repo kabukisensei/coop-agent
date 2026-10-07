@@ -8,6 +8,7 @@
  * Re-record the fixture with: node desktop/scripts/record-fixture.mjs
  */
 import assert from "node:assert/strict";
+import { runInNewContext } from "node:vm";
 import { EventEmitter } from "node:events";
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,7 +17,7 @@ import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 
 import { JsonlSplitter, encodeLine } from "../desktop/lib/jsonl.mjs";
-import { SpecError, parseSpec, piArgv, piEnv } from "../desktop/lib/spec.mjs";
+import { SpecError, parseSpec, piArgv, piEnv, freshSessionSpec, launchSessionPath, desktopSessionPath } from "../desktop/lib/spec.mjs";
 import { CommandError, IMAGE_LIMITS, buildCommand, buildUiResponse } from "../desktop/lib/rpc-commands.mjs";
 import { CSP, isAppUrl, resolveAsset } from "../desktop/lib/serve.mjs";
 import { THEMES, fitToScreen, loadSettings, saveSettings } from "../desktop/lib/settings.mjs";
@@ -31,7 +32,7 @@ import { setupItems, setupItem, setupSummary, EXAMPLES } from "../desktop/render
 import { parseConfirm, confirmLabels, parseQuestionSelect, parseQuestionMulti, multiAnswer } from "../desktop/renderer/dialogs.mjs";
 import { menuTemplate, notificationFor } from "../desktop/lib/menu.mjs";
 import { restartOnce } from "../desktop/lib/restart.mjs";
-import { markOpenElsewhere, ownerOf, sameSessionPath } from "../desktop/lib/session-owners.mjs";
+import { markOpenElsewhere, ownerOf, sameSessionPath, SessionArbiter } from "../desktop/lib/session-owners.mjs";
 import { MAX_TABS, TAB_STRIP_HEIGHT, afterClose, stripRows, tabFor, tabKey, tabLabel } from "../desktop/lib/tabs.mjs";
 import { imageBudgetProblem, imageBytes, restoreDraft } from "../desktop/renderer/draft.mjs";
 import { activitySummary, applyEvent, createTimeline, finishBash, loadMessages, startBash, toolSummary, turnOf, turns } from "../desktop/renderer/timeline.mjs";
@@ -973,6 +974,173 @@ await check("parity: the recorded launch adds nothing to coop's arguments", () =
   // The recorder ran Pi with `coop launch-spec --json` plus --mode rpc only.
   assert.ok(!/"--approve"|"-a"/.test(readFileSync(join(ROOT, "desktop", "lib", "spec.mjs"), "utf8")));
   assert.match(PARITY, /never `--approve`/);
+});
+
+await check("effective launch reserves inherited session arguments and rejects duplicate workers", async () => {
+  const source = readFileSync(join(ROOT, "desktop/main.mjs"), "utf8");
+  class Worker extends EventEmitter {
+    constructor(options) { super(); this.options = options; this.exited = false; }
+    start() { if (this.options.cwd === "/fail") throw new Error("spawn refused"); }
+  }
+  const arbiter = new SessionArbiter();
+  let raised = 0;
+  const windows = new Map();
+  const context = { windows, sessionOwner: async (state, path) => ownerOf(arbiter.states, state, path), PiSession: Worker, piArgv, piEnv: () => ({}), desktopSessionPath, process,
+    sessionArbiter: arbiter, ownerOf, runningPis: new Set(), send() {}, raise() { raised++; } };
+  runInNewContext(source.slice(source.indexOf("function startPi("), source.indexOf("// A finished turn")), context);
+  const spec = { node: "/node", entry: "/pi", cwd: "/synthetic", args: ["--session", "/saved.jsonl"] };
+  let counter = 0;
+  const make = (launch = spec) => { const state = { contents: { id: ++counter }, spec: launch, sessionFile: "", hub: { attach() {} } }; windows.set(counter, state); return state; };
+  const a = make(); const b = make();
+  await Promise.all([context.startPi(a), context.startPi(b)]);
+  assert.equal(a.sessionFile, "/saved.jsonl"); assert.equal(a.sessionPending, true);
+  assert.equal(b.pi, undefined); assert.equal(raised, 1);
+  a.pi.exited = true; a.pi.emit("exit", {});
+  assert.equal(arbiter.states.has(a), false);
+  await context.startPi(b); assert.ok(b.pi);
+  const failed = make({ ...spec, cwd: "/fail", args: ["--session=/failed.jsonl"] });
+  await context.startPi(failed); assert.equal(arbiter.states.has(failed), false);
+  assert.equal(ownerOf(arbiter.states, null, "/failed.jsonl"), null);
+  const fresh = freshSessionSpec({ ...spec, args: ["--model", "test", "--session=/saved.jsonl", "-c", "--resume", "--session", "/saved2.jsonl", "--session-id", "abc"] });
+  assert.deepEqual(fresh.args, ["--model", "test"]);
+  assert.equal(launchSessionPath([...piArgv(fresh).args, "--session", "/override.jsonl"]), "/override.jsonl");
+  assert.equal(desktopSessionPath(["--session", "./saved.jsonl"], "/synthetic"), "/synthetic/saved.jsonl");
+  for (const selector of [["-c"], ["--resume"], ["--session-id", "abc"], ["--session", "abc"]]) {
+    const unsupported = make({ ...spec, args: selector });
+    await context.startPi(unsupported); assert.equal(unsupported.pi, undefined);
+    assert.throws(() => desktopSessionPath(selector, "/synthetic"), /desktop Sessions/);
+  }
+});
+
+await check("actual initial launch waits behind a pending switch and never starts a second writer", async () => {
+  const source = readFileSync(join(ROOT, "desktop/main.mjs"), "utf8");
+  const arbiter = new SessionArbiter(), windows = new Map();
+  let release, entered, starts = 0;
+  const blocked = new Promise((r) => { release = r; }), switching = new Promise((r) => { entered = r; });
+  const target = "/synthetic/saved.jsonl";
+  const a = { contents: { id: 1 }, spec: { cwd: "/synthetic", env: {} }, sessionFile: "/synthetic/old.jsonl", hub: { renew() {} } };
+  a.pi = { exited: false, request: async (command) => {
+    if (command.type === "get_state") return { success: true, data: { sessionFile: a.sessionFile } };
+    entered(); await blocked; return { success: true };
+  } };
+  const b = { contents: { id: 2 }, spec: { node: "/node", entry: "/pi", cwd: "/synthetic", env: {}, args: ["--session", target] }, sessionFile: "", hub: { attach() {} } };
+  windows.set(1, a); windows.set(2, b); arbiter.add(a);
+  class Worker extends EventEmitter { constructor() { super(); this.exited = false; } start() { starts++; } }
+  const context = { windows, sessionArbiter: arbiter, ownerOf, process, isSessionPath: () => true, raise() {}, send() {},
+    PiSession: Worker, piArgv, piEnv: () => ({}), desktopSessionPath, runningPis: new Set() };
+  runInNewContext(source.slice(source.indexOf("async function currentSessionFile("), source.indexOf("function isDialog(")), context);
+  runInNewContext(source.slice(source.indexOf("async function sessionOwner("), source.indexOf("/** Bring a tab")), context);
+  runInNewContext(source.slice(source.indexOf("async function sessionCommand("), source.indexOf('handle("coop:switch-session"')), context);
+  runInNewContext(source.slice(source.indexOf("function startPi("), source.indexOf("// A finished turn")), context);
+  const transition = context.sessionCommand(a, { type: "switch_session", sessionPath: target }); await switching;
+  const launch = context.startPi(b); assert.equal(starts, 0);
+  release(); assert.equal((await transition).success, true); await launch;
+  assert.equal(starts, 0); assert.equal(b.pi, undefined); assert.equal(ownerOf(arbiter.states, null, target), a);
+});
+
+await check("session ownership compares existing symlink aliases by real path", () => {
+  const path = join(temp, "owner-target.jsonl");
+  const alias = join(temp, "owner-alias.jsonl");
+  writeFileSync(path, "synthetic"); symlinkSync(path, alias);
+  assert.equal(sameSessionPath(path, alias), true);
+});
+
+await check("actual desktop handlers reject overlapping resumes, including pending tabs and phone", async () => {
+  const source = readFileSync(join(ROOT, "desktop/main.mjs"), "utf8");
+  const arbiter = new SessionArbiter();
+  const handlers = new Map();
+  const windows = new Map();
+  let release;
+  let barrier = new Promise((resolve) => { release = resolve; });
+  let switches = 0;
+  const renewals = [];
+  const frame = { tabs: [] };
+  const make = (id, file) => {
+    const state = { contents: { id }, spec: { env: {} }, frame, sessionFile: file, hub: { renew(options) { renewals.push({ id, options }); } } };
+    state.pi = { exited: false, request: async (command) => {
+      if (command.type === "get_state") return { success: true, data: { sessionFile: state.sessionPending ? "" : state.sessionFile } };
+      switches++; await barrier; return { success: true, data: {} };
+    } };
+    windows.set(id, state); arbiter.add(state); frame.tabs.push(state);
+    return state;
+  };
+  const a = make(1, "/old-a"); const b = make(2, "/old-b");
+  let nextId = 3;
+  const context = { process, Promise, windows, sessionArbiter: arbiter, ownerOf,
+    isSessionPath: () => true, raise() {}, piResult: (r) => r,
+    handle: (name, fn) => handlers.set(name, fn),
+    newTab: (_frame, path) => { const tab = make(nextId++, path); tab.sessionPending = true; return { success: true }; },
+  };
+  const section = (from, to) => source.slice(source.indexOf(from), source.indexOf(to, source.indexOf(from)));
+  runInNewContext(section("async function currentSessionFile", "function isDialog") +
+    section("async function sessionOwner", "/** Bring a tab") +
+    section('handle("coop:new-tab"', 'handle("coop:close-tab"') +
+    section("async function sessionCommand", 'handle("coop:export"'), context);
+  const first = handlers.get("coop:switch-session")(a, "/saved");
+  // The phone host calls exactly this same sessionCommand entry point.
+  const phone = context.sessionCommand(b, { type: "switch_session", sessionPath: "/saved" });
+  await new Promise(setImmediate);
+  assert.equal(switches, 1);
+  release();
+  const results = await Promise.all([first, phone]);
+  assert.equal(results[0].success, true); assert.equal(results[1].openElsewhere, true);
+  assert.equal(a.sessionFile, "/saved", "successful switch updates ownership before releasing the arbiter");
+  assert.deepEqual(renewals.map((row) => row.id), [1]);
+  a.pi.request = async () => ({ success: true, data: { sessionFile: "/stale-old" } });
+  await context.currentSessionFile(a);
+  assert.equal(a.sessionFile, "/saved", "a stale worker report cannot undo an explicit successful switch");
+  const phoneRenew = await context.sessionCommand(b, { type: "new_session" }, undefined, { keepAccess: true });
+  assert.equal(phoneRenew.success, true);
+  assert.equal(renewals.at(-1).options.keepAccess, true);
+  const starts = await Promise.all([handlers.get("coop:new-tab")(b, "/pending"), handlers.get("coop:new-tab")(b, "/pending")]);
+  assert.equal(starts[0].success, true); assert.equal(starts[1].openElsewhere, true);
+  assert.equal(frame.tabs.filter((tab) => tab.sessionFile === "/pending").length, 1);
+  const callsBeforeRevocation = switches;
+  await assert.rejects(context.sessionCommand(b, { type: "switch_session", sessionPath: "/revoked" }, () => { throw new Error("revoked while queued"); }), /revoked while queued/);
+  assert.equal(switches, callsBeforeRevocation);
+  a.pi.request = async () => { throw new Error("switch failed"); };
+  await assert.rejects(handlers.get("coop:switch-session")(a, "/retry"), /switch failed/);
+  b.pi.request = async (command) => command.type === "get_state" ? { success: true, data: { sessionFile: b.sessionFile } } : { success: true };
+  assert.equal((await handlers.get("coop:switch-session")(b, "/retry")).success, true);
+  const same = await handlers.get("coop:switch-session")(b, "/retry");
+  assert.equal(same.success, true, "same-worker transitions remain valid");
+  // Close while a lookup waits: queued transition must not touch the closed worker.
+  windows.delete(b.contents.id);
+  assert.equal((await handlers.get("coop:switch-session")(b, "/closed")).success, false);
+});
+
+await check("session transitions serialize before lookup and retain pending startup ownership", async () => {
+  const arbiter = new SessionArbiter();
+  const states = arbiter.states;
+  const a = { pi: { exited: false }, sessionFile: "/old-a" };
+  const b = { pi: { exited: false }, sessionFile: "/old-b" };
+  arbiter.add(a); arbiter.add(b);
+  let release;
+  const wait = new Promise((resolve) => { release = resolve; });
+  let switches = 0;
+  const resume = (state) => arbiter.run(async () => {
+    if (ownerOf(states, state, "/saved")) return false;
+    switches++;
+    await wait;
+    state.sessionFile = "/saved";
+    return true;
+  });
+  const first = resume(a); const second = resume(b);
+  await new Promise(setImmediate);
+  assert.equal(switches, 1);
+  release();
+  assert.deepEqual(await Promise.all([first, second]), [true, false]);
+  // Pending startup owns its argument before Pi's first get_state response.
+  const pending = { pi: null, sessionPending: true, sessionFile: "C:\\Saved\\One.jsonl" };
+  arbiter.add(pending);
+  assert.equal(ownerOf(states, b, "c:/saved/ONE.jsonl", "win32"), pending);
+  // Shutdown continues to own the file until explicitly released.
+  pending.pi = { exited: true };
+  assert.equal(ownerOf(states, b, "c:/saved/one.jsonl", "win32"), pending);
+  arbiter.remove(pending);
+  assert.equal(ownerOf(states, b, "c:/saved/one.jsonl", "win32"), null);
+  await assert.rejects(arbiter.run(() => { throw new Error("startup failed"); }), /startup failed/);
+  assert.equal(await arbiter.run(() => "next request"), "next request");
 });
 
 rmSync(temp, { recursive: true, force: true });

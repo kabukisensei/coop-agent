@@ -5,6 +5,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Saved sessions are claimed atomically across desktop tabs and phone resumes
+  (#344). Pending tab startup and worker shutdown retain ownership; overlapping
+  requests raise the existing tab instead of starting a second writer.
+
 ### Changed
 
 - **Pair the phone once** (Aaron, 2026-10-07). Phone access is now one switch

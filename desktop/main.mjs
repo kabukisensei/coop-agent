@@ -14,11 +14,11 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { dirname, join, basename, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseSpec, piArgv, piEnv } from "./lib/spec.mjs";
+import { parseSpec, piArgv, piEnv, freshSessionSpec, desktopSessionPath } from "./lib/spec.mjs";
 import { PiSession } from "./lib/pi-session.mjs";
 import { IMAGE_LIMITS, buildCommand } from "./lib/rpc-commands.mjs";
 import { listSessions, isSessionPath } from "./lib/sessions.mjs";
-import { ownerOf, markOpenElsewhere } from "./lib/session-owners.mjs";
+import { ownerOf, markOpenElsewhere, SessionArbiter } from "./lib/session-owners.mjs";
 import { MAX_TABS, TAB_STRIP_HEIGHT, afterClose, stripRows, tabFor, tabKey, tabLabel } from "./lib/tabs.mjs";
 import { consoleProcess } from "./lib/terminal.mjs";
 import { resolveAsset, isAppUrl, CSP, APP_ORIGIN } from "./lib/serve.mjs";
@@ -63,6 +63,7 @@ const MAX_COPY = 4 * 1024 * 1024;
 // Pi answers these only when the work is done, which can include a question
 // an extension asks the user (a /start menu, an approval), so no deadline.
 // A new session in the same Pi: the phone's grant and questions end with the old one.
+const sessionArbiter = new SessionArbiter();
 const SESSION_CHANGES = new Set(["new_session", "switch_session", "fork", "clone"]);
 const WAITS_ON_WORK = new Set(["prompt", "steer", "follow_up", "bash", "compact", "new_session", "switch_session", "fork", "clone"]);
 
@@ -139,15 +140,34 @@ function broadcast(channel, payload) {
   if (picker.win && !picker.win.isDestroyed()) { try { picker.win.webContents.send(channel, payload); } catch { /* gone */ } }
 }
 
-function startPi(state, extraArgs = []) {
+function startPi(state, extraArgs = [], ownershipHeld = false) {
   const { command, args } = piArgv(state.spec);
+  const effectiveArgs = [...args, ...extraArgs];
+  let sessionPath;
+  try { sessionPath = desktopSessionPath(effectiveArgs, state.spec.cwd); }
+  catch (error) { send(state, "pi:notice", { level: "error", message: error.message }); return; }
+  if (sessionPath && !ownershipHeld) {
+    // Initial and second-instance launches must wait behind pending switches,
+    // not merely check the cache before the other worker reports its target.
+    return sessionArbiter.run(async () => {
+      if (!windows.has(state.contents.id)) return;
+      const owner = await sessionOwner(state, sessionPath);
+      if (owner) { raise(owner); send(state, "pi:notice", { level: "warning", message: "That session is already open in another tab." }); return; }
+      if (windows.has(state.contents.id)) startPi(state, extraArgs, true);
+    });
+  }
+  const owner = sessionPath && ownerOf(sessionArbiter.states, state, sessionPath);
+  if (owner) { raise(owner); send(state, "pi:notice", { level: "warning", message: "That session is already open in another tab." }); return; }
   const pi = new PiSession({
     command,
-    args: [...args, ...extraArgs],
+    args: effectiveArgs,
     cwd: state.spec.cwd,
     env: piEnv(state.spec, process.env, { fabricToken: state.token }),
   });
   state.pi = pi;
+  state.sessionPending = Boolean(sessionPath);
+  state.sessionFile = sessionPath;
+  sessionArbiter.add(state);
   state.hub.attach(pi);
   pi.on("event", (message) => {
     if (state.pi !== pi) return;
@@ -164,6 +184,7 @@ function startPi(state, extraArgs = []) {
   pi.on("exit", ({ code, reason, stderr }) => {
     runningPis.delete(pi);
     if (state.pi !== pi) return;
+    if (!state.restarting) { state.sessionPending = false; sessionArbiter.remove(state); }
     if (state.working) { state.working = false; pushTabs(state.frame); }
     send(state, "pi:exit", { code, reason, stderr: String(stderr || "").slice(-4000) });
   });
@@ -172,6 +193,8 @@ function startPi(state, extraArgs = []) {
     pi.start();
   } catch (error) {
     runningPis.delete(pi);
+    state.sessionPending = false;
+    sessionArbiter.remove(state);
     send(state, "pi:exit", { code: null, reason: error.message, stderr: "" });
   }
 }
@@ -302,7 +325,7 @@ function openWindow(rawSpec, token) {
 }
 
 /** A new tab in `frame`: the session page and its own Pi, on a new session unless `extraArgs` name one. */
-function addTab(frame, { spec, rawSpec, token, extraArgs = [], noticesShown = false }) {
+function addTab(frame, { spec, rawSpec, token, extraArgs = [], noticesShown = false, ownershipHeld = false }) {
   if (frame.tabs.length >= MAX_TABS) return null;
   const view = new WebContentsView({ webPreferences: tabPreferences() });
   view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#0f1318" : "#f6f7f9");
@@ -331,7 +354,7 @@ function addTab(frame, { spec, rawSpec, token, extraArgs = [], noticesShown = fa
   });
   contents.on("before-input-event", (event, input) => onTabKey(frame, event, input));
   contents.loadURL(`${APP_ORIGIN}/index.html`);
-  startPi(state, extraArgs);
+  startPi(state, extraArgs, ownershipHeld);
   selectTab(state);
   return state;
 }
@@ -340,7 +363,8 @@ function addTab(frame, { spec, rawSpec, token, extraArgs = [], noticesShown = fa
 function endTab(state) {
   windows.delete(state.contents.id);
   state.hub.setAccess(false, "window-closed");
-  if (state.pi) state.pi.stop();
+  state.sessionPending = true;
+  Promise.resolve(state.pi ? state.pi.stop() : null).finally(() => { state.sessionPending = false; sessionArbiter.remove(state); });
   if (state.docs) state.docs.cancel();
   if (state.build) { try { state.build.kill(); } catch { /* already gone */ } }
 }
@@ -409,7 +433,7 @@ function newTab(frame, sessionPath = "") {
   if (!from) return { success: false, error: "this window has no coop" };
   if (frame.tabs.length >= MAX_TABS) return { success: false, error: `A window holds up to ${MAX_TABS} tabs. Close one, or open a new window.` };
   const extraArgs = sessionPath ? ["--session", sessionPath] : [];
-  addTab(frame, { spec: from.spec, rawSpec: from.rawSpec, token: from.token, extraArgs, noticesShown: true });
+  addTab(frame, { spec: freshSessionSpec(from.spec), rawSpec: JSON.stringify({ ...freshSessionSpec(from.spec), schema: 1 }), token: from.token, extraArgs, noticesShown: true, ownershipHeld: Boolean(sessionPath) });
   return { success: true };
 }
 
@@ -450,8 +474,13 @@ function piResult(response) {
 async function currentSessionFile(state) {
   if (state.pi && !state.pi.exited) {
     try {
-      const response = await state.pi.request({ type: "get_state" });
-      if (response.success && response.data && typeof response.data.sessionFile === "string") state.sessionFile = response.data.sessionFile;
+      const pi = state.pi;
+      const before = state.sessionFile;
+      const response = await pi.request({ type: "get_state" });
+      if (state.pi === pi && state.sessionFile === before && response.success && typeof response.data?.sessionFile === "string" && (!state.sessionPending || response.data.sessionFile === state.sessionFile)) {
+        state.sessionFile = response.data.sessionFile;
+        state.sessionPending = false;
+      }
     } catch { /* fall back to the last known file */ }
   }
   return state.sessionFile;
@@ -480,11 +509,11 @@ handle("coop:command", async (state, input) => {
   const command = buildCommand(input);
   if (!state.pi || state.pi.exited) return { success: false, error: "coop is not running in this window; restart it" };
   const timeoutMs = WAITS_ON_WORK.has(command.type) ? 0 : undefined;
-  const response = await state.pi.request(command, { timeoutMs });
-  if (SESSION_CHANGES.has(command.type) && response.success) { state.hub.renew(); await currentSessionFile(state); }
-  if (command.type === "get_state" && response.success && response.data && typeof response.data.sessionFile === "string") {
-    state.sessionFile = response.data.sessionFile;
-  }
+  const response = SESSION_CHANGES.has(command.type) ? await sessionCommand(state, command) : command.type === "get_state" ? await sessionArbiter.run(async () => {
+    const response = await state.pi.request(command, { timeoutMs });
+    if (response.success && typeof response.data?.sessionFile === "string" && (!state.sessionPending || response.data.sessionFile === state.sessionFile)) { state.sessionFile = response.data.sessionFile; state.sessionPending = false; }
+    return response;
+  }) : await state.pi.request(command, { timeoutMs });
   return piResult(response);
 });
 
@@ -496,15 +525,15 @@ handle("coop:answer", (state, id, answer) => {
   return { success: result.ok, error: result.error };
 });
 
-handle("coop:sessions", (state) => ({ success: true, data: markOpenElsewhere(listSessions({ ...process.env, ...state.spec.env }, state.spec.cwd), windows.values(), state) }));
+handle("coop:sessions", (state) => ({ success: true, data: markOpenElsewhere(listSessions({ ...process.env, ...state.spec.env }, state.spec.cwd), sessionArbiter.states, state) }));
 
 /**
  * The other window that has `path` open, asking each live Pi for its current
  * session first (a session started there since the last check counts too).
  */
 async function sessionOwner(state, path) {
-  await Promise.all([...windows.values()].filter((other) => other !== state).map((other) => currentSessionFile(other)));
-  return ownerOf(windows.values(), state, path);
+  await Promise.all([...sessionArbiter.states].filter((other) => other !== state).map((other) => currentSessionFile(other)));
+  return ownerOf(sessionArbiter.states, state, path);
 }
 
 /** Bring a tab and its window to the front. */
@@ -521,17 +550,18 @@ function raise(state) {
 // token this window started with, as a restart reuses them). Its Pi starts a
 // new session; approvals, guardrails and questions are its own.
 handle("coop:new-window", (state) => {
-  openWindow(state.rawSpec, state.token);
+  openWindow(JSON.stringify({ ...freshSessionSpec(state.spec), schema: 1 }), state.token);
   return { success: true };
 });
 
-handle("coop:new-tab", async (state, path) => {
+handle("coop:new-tab", (state, path) => sessionArbiter.run(async () => {
   if (path === undefined || path === null || path === "") return newTab(state.frame);
   if (!isSessionPath({ ...process.env, ...state.spec.env }, path)) return { success: false, error: "that is not one of coop's saved sessions" };
   const owner = await sessionOwner(null, path);
   if (owner) { raise(owner); return { success: false, openElsewhere: true, error: "That session is open in another tab, so that tab is now in front." }; }
+  if (!windows.has(state.contents.id)) return { success: false, error: "the tab closed" };
   return newTab(state.frame, path);
-});
+}));
 handle("coop:close-tab", (state) => { closeTab(state); return { success: true }; });
 // The page names its tab: the session's name or first prompt.
 handle("coop:tab-label", (state, label) => {
@@ -578,14 +608,30 @@ async function folderFiles(state, query) {
 
 handle("coop:files", async (state, query) => ({ success: true, data: await folderFiles(state, query) }));
 
+async function sessionCommand(state, command, validate = () => {}, renewOptions = {}) {
+  return sessionArbiter.run(async () => {
+    if (!windows.has(state.contents.id) || !state.pi || state.pi.exited) return { success: false, error: "coop is not running in this tab" };
+    if (command.type === "switch_session") {
+      if (!isSessionPath({ ...process.env, ...state.spec.env }, command.sessionPath)) return { success: false, error: "that is not one of coop's saved sessions" };
+      const owner = await sessionOwner(state, command.sessionPath);
+      if (owner) { raise(owner); return { success: false, openElsewhere: true, error: "That session is open in another tab, so that tab is now in front." }; }
+    }
+    if (!windows.has(state.contents.id) || state.pi.exited) return { success: false, error: "the tab closed" };
+    validate();
+    const response = await state.pi.request(command, { timeoutMs: 0 });
+    if (response.success && !response.data?.cancelled) {
+      if (command.type === "switch_session") { state.sessionFile = command.sessionPath; state.sessionPending = true; }
+      else await currentSessionFile(state);
+      state.hub.renew(renewOptions);
+      return { ...response, incarnation: state.hub.incarnation };
+    }
+    return response;
+  });
+}
+
 handle("coop:switch-session", async (state, path) => {
-  if (!isSessionPath({ ...process.env, ...state.spec.env }, path)) return { success: false, error: "that is not one of coop's saved sessions" };
-  // One window per session: two coops writing one session file would mix it up.
-  const owner = await sessionOwner(state, path);
-  if (owner) { raise(owner); return { success: false, openElsewhere: true, error: "That session is open in another tab, so that tab is now in front." }; }
-  const response = await state.pi.request({ type: "switch_session", sessionPath: path }, { timeoutMs: 0 });
-  if (response.success) state.hub.renew();
-  return piResult(response);
+  const response = await sessionCommand(state, { type: "switch_session", sessionPath: path });
+  return { ...piResult(response), ...(response.openElsewhere ? { openElsewhere: true } : {}) };
 });
 
 handle("coop:export", async (state) => {
@@ -704,13 +750,14 @@ pickerHandle("coop:picker-cancel", () => { finishPicker(""); return true; });
 
 // One restart at a time per window (#286): a second request during the
 // shutdown gets the same restart, and a window closed meanwhile starts nothing.
-handle("coop:restart", (state) => restartOnce(state, async () => {
+handle("coop:restart", (state) => restartOnce(state, () => sessionArbiter.run(async () => {
   const sessionFile = await currentSessionFile(state);
+  state.sessionPending = Boolean(sessionFile);
   if (state.pi) await state.pi.stop();
-  if (state.contents.isDestroyed()) return { success: false, error: "the tab closed during the restart" };
-  startPi(state, sessionFile && existsSync(sessionFile) ? ["--session", sessionFile] : []);
+  if (state.contents.isDestroyed()) { state.sessionPending = false; sessionArbiter.remove(state); return { success: false, error: "the tab closed during the restart" }; }
+  startPi(state, sessionFile && existsSync(sessionFile) ? ["--session", sessionFile] : [], true);
   return { success: true };
-}));
+})));
 
 handle("coop:theme", (state, theme) => {
   if (!THEMES.includes(theme)) return { success: false, error: "unknown theme" };
@@ -1004,8 +1051,9 @@ function newHub(state) {
     appAccess: () => settings.phoneAccess,
     // Session actions from the phone (MC9): the same lists and checks as the window's own.
     host: {
+      sessionCommand: (command, validate) => sessionCommand(state, command, validate, { keepAccess: true }),
       // A session another window holds stays off the phone's list (one window per session).
-      list: () => listSessions(env(), state.spec.cwd).filter((s) => isSessionPath(env(), s.path) && !ownerOf(windows.values(), state, s.path)),
+      list: () => listSessions(env(), state.spec.cwd).filter((s) => isSessionPath(env(), s.path) && !ownerOf(sessionArbiter.states, state, s.path)),
       exportPath: async () => {
         const file = await currentSessionFile(state);
         if (!file || !existsSync(file)) return "";
@@ -1156,7 +1204,7 @@ function installMenu() {
       close: () => { const state = focusedState(); if (state) closeTab(state); },
       next: () => { const frame = focusedFrame(); const tab = frame && tabFor({ type: "next" }, frame.tabs, frame.active); if (tab) selectTab(tab); },
       prev: () => { const frame = focusedFrame(); const tab = frame && tabFor({ type: "prev" }, frame.tabs, frame.active); if (tab) selectTab(tab); },
-      newWindow: () => { const state = focusedState(); if (state) openWindow(state.rawSpec, state.token); },
+      newWindow: () => { const state = focusedState(); if (state) openWindow(JSON.stringify({ ...freshSessionSpec(state.spec), schema: 1 }), state.token); },
     },
     setTheme: (theme) => { if (THEMES.includes(theme)) { settings = saveSettings(settingsFile, { ...settings, theme }); applyNativeTheme(theme); broadcast("coop:theme", { theme, systemDark: nativeTheme.shouldUseDarkColors }); } },
     theme: settings.theme,

@@ -2,7 +2,7 @@
 // built by bin/coop.ps1 from the same Build-CoopPiArgs the terminal uses, so the
 // window never assembles Pi's arguments itself. This module only validates it
 // and adds `--mode rpc`.
-import { isAbsolute } from "node:path";
+import { resolve, isAbsolute } from "node:path";
 import { win32, posix } from "node:path";
 
 const ENV_KEY = /^(PI|COOP)_[A-Z0-9_]{1,80}$/;
@@ -64,4 +64,40 @@ export function piEnv(spec, baseEnv, { fabricToken = "" } = {}) {
   env.COOP_DESKTOP = "1";
   if (fabricToken) env.COOP_FABRIC_MCP_TOKEN = fabricToken;
   return env;
+}
+
+/** Fresh tabs/windows must not inherit the launcher's saved-session selection. */
+export function freshSessionSpec(spec) {
+  const args = [];
+  for (let i = 0; i < spec.args.length; i++) {
+    const arg = spec.args[i];
+    if (arg === "--session" || arg === "--session-id") { i++; continue; }
+    if (arg.startsWith("--session=") || arg.startsWith("--session-id=") || ["--resume", "-r", "--continue", "-c"].includes(arg)) continue;
+    args.push(arg);
+  }
+  return { ...spec, args };
+}
+
+/** Explicit path in effective Pi argv; extra arguments take precedence. */
+export function launchSessionPath(args) {
+  let path = "";
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--session") path = args[++i] || "";
+    else if (args[i].startsWith("--session=")) path = args[i].slice(10);
+  }
+  return path;
+}
+
+/** The desktop needs a known writer path before a worker starts. Pi's terminal
+ * picker/UUID lookup cannot run outside the main-process ownership boundary. */
+export function desktopSessionPath(args, cwd) {
+  if (args.some((arg) => ["--resume", "-r", "--continue", "-c", "--session-id"].includes(arg) || arg.startsWith("--session-id="))) {
+    throw new SpecError("Use the desktop Sessions list to resume a session; terminal session selectors are not supported in a desktop launch.");
+  }
+  const path = launchSessionPath(args);
+  if (!path) return "";
+  if (!path.includes("/") && !path.includes("\\") && !path.endsWith(".jsonl")) {
+    throw new SpecError("Use the desktop Sessions list to resume a session by ID; a desktop --session launch requires a file path.");
+  }
+  return isAbsolute(path) ? resolve(path) : win32.isAbsolute(path) ? win32.normalize(path) : resolve(cwd, path);
 }
