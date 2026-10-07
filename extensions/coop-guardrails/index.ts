@@ -902,8 +902,8 @@ function readProdUnlock(): ProdUnlock | null {
 }
 
 const prodUnlockMinutesLeft = (unlock: ProdUnlock, now = Date.now()) => Math.max(1, Math.ceil((unlock.expiresAt - now) / 60_000));
-const PROD_WRITE_HEADLESS = "coop guardrails: blocked a production write. Production changes run only when a person confirms each one at the desk under their unlock, and this session cannot ask. Work on the dev target instead.";
-const PROD_WRITE_LOCKED = "coop guardrails: blocked a production write. Production changes need a person's separate go-ahead, given outside this session, and then each write still asks at the desk. Work on the dev target, or tell the person this change needs production.";
+const PROD_WRITE_HEADLESS = "coop guardrails: blocked a production write. Production writes are blocked. Work on the dev target.";
+const PROD_WRITE_LOCKED = "coop guardrails: blocked a production write. Production writes are blocked. Work on the dev target.";
 const PROD_WRITE_DECLINED = "coop guardrails: blocked the production write (not permitted). Coop changes production only when you confirm that write yourself; work on the dev target, or ask again and confirm it when coop asks.";
 
 export type ProductionVerdict = { decision: "allowed" | "declined" | "blocked-headless" | "blocked"; detail: string; reason: string };
@@ -929,7 +929,7 @@ export async function askProductionWrite(ctx: any, what: string, unlock: ProdUnl
 export function touchesProdUnlock(cmd: string): boolean {
   return /\bunlock-prod\b/i.test(cmd) || /prod-unlock\.json/i.test(cmd);
 }
-const PROD_UNLOCK_SELF_BLOCK = "coop guardrails: blocked. Only a person gives the production go-ahead, outside this session; a session never grants it.";
+const PROD_UNLOCK_SELF_BLOCK = "coop guardrails: blocked. A session never changes production access.";
 const SQL_ENDPOINT_TOOL = /(^|[_\-.:/])(executeSQL|execute_query|fabric-sqlendpoint-execute_query|fabric_sqlendpoint_execute_query)([_\-.:/]|$)/i;
 const MANAGED_SQL_SERVER = "fabric-sqlendpoint";
 const FABRIC_SQL_FALLBACK_TOOL = "fabric_sql_query";
@@ -2626,14 +2626,14 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         message = [
           "coop edit approvals: active for this session",
           ...[...editApprovals].sort().map((key) => `  • ${sessionApprovalLabel(key)}${key.startsWith("sql:") ? " (single INSERT/UPDATE/CREATE/ALTER statements)" : ""}`),
-          "Deletes and drops still ask every time; production writes run only under a human unlock and ask each time. Ends at /new or exit; /coop-approvals revoke ends it now.",
+          "Deletes and drops still ask every time; production writes are blocked. Ends at /new or exit; /coop-approvals revoke ends it now.",
         ].join("\n");
       }
       if (action === "status") {
         const unlock = activeProdUnlock(ctx);
         message += unlock
           ? `\nPRODUCTION WRITES UNLOCKED by a human for ${unlock.client} (grant ${unlock.id}, ${prodUnlockMinutesLeft(unlock)} min left): each production write asks yes/no at the desk and is audited.`
-          : "\nProduction writes: blocked without a person's go-ahead; then each one asks at the desk; never for the whole session.";
+          : "\nProduction writes: blocked.";
       }
       try { if (typeof ctx.ui?.notify === "function") ctx.ui.notify(message, "info"); } catch { /* ignore */ }
     },
@@ -2651,7 +2651,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         "  • secret files — confirms read/edit/write AND bash access (cat .env etc.) of .env / keys / credentials",
         `  • live data — allows dev/test metadata and one plain bounded SELECT on the dev target; elsewhere bounded matching reads may reuse one session grant (${liveReadGrant ? "active" : "none"}; /coop-live-read status|revoke)`,
         "  • mutating MCP actions — confirms create/update/delete/deploy/publish-looking Fabric/Power BI/MCP tool calls (best-effort)",
-        `  • production writes — SQL on a production target, model edits after a production connection, Fabric writes naming prod: blocked unless a human unlock is active, then each asks at the desk and is audited; never session-wide (${activeProdUnlock(ctx) ? "unlock active" : "no unlock active"})`,
+        `  • production writes — SQL on a production target, model edits after a production connection, Fabric writes naming prod: blocked and audited; never session-wide${activeProdUnlock(ctx) ? " (unlock active)" : ""}`,
         "  • Power BI Desktop reloads — reads `powerbi-desktop status` before `powerbi-desktop reload` / `powerbi-report-author preview`; asks on unsaved changes, blocks when the instance can't be verified",
         `  • edit approvals — approving an edit can cover that server for the session; deletes and drops still ask (${editApprovals.size ? `${editApprovals.size} active` : "none"}; /coop-approvals status|revoke)`,
         "Advisory rules live in docs/guardrails.md. Disable with COOP_NO_GUARDRAILS=1.",
