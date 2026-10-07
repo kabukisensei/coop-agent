@@ -857,6 +857,11 @@ await check("page: four themes from the menu, Retro in the coop site's look (MC5
   assert.match(css, /\.btn \{[^}]*justify-content: center;[^}]*white-space: nowrap;/);
   const app = readFileSync(join(pageDir, "app.js"), "utf8");
   assert.match(app, /panel\.compacting \? "Compacting…" : "", usageLine\(panel\.usage\), \.\.\.lines/);
+  // In the background the phone closes its stream on purpose, so the window sends
+  // notices, and back in front it resumes from the last event (Aaron, 2026-10-07).
+  assert.match(app, /addEventListener\("visibilitychange", \(\) => \{ if \(document\.visibilityState === "hidden"\) pause\(\); else resume\(\); \}\)/);
+  assert.match(app, /window\.addEventListener\("pagehide", pause\);/);
+  assert.match(app, /function resume\(\) \{[\s\S]*?if \(app\.paused && app\.ready\) \{[\s\S]*?openStream\(\);/);
   // Fields stay at 16px or more in every look, or iPhone Safari zooms the page past the screen (MC4).
   assert.match(css, /input, textarea, select \{ font-size: max\(16px, 1em\); \}/);
   for (const m of css.matchAll(/(?:^|\n)([^{}\n]*\b(?:input|textarea)\b[^{}]*)\{([^}]*)\}/g)) {

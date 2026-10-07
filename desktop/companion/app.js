@@ -710,6 +710,8 @@ function renderQuestions() {
 
 async function load() {
   clearTimeout(app.retry);
+  app.paused = false;
+  app.failures = 0;
   let res;
   try { res = await api("GET", "/api/snapshot"); } catch { showGate("offline"); return; }
   if (!res.json.ok) { showGate(res.json.code); return; }
@@ -754,6 +756,7 @@ function openStream() {
   // Start right after the snapshot's last event, so nothing between the two is lost.
   const source = new EventSource(`/api/events?after=${encodeURIComponent(app.lastEventId || "")}`);
   app.source = source;
+  source.onopen = () => { app.failures = 0; };
   const on = (type, fn) => source.addEventListener(type, (e) => {
     let ev;
     try { ev = JSON.parse(e.data); } catch { return; }
@@ -779,13 +782,44 @@ function openStream() {
     else if (d.outcome !== "answered") toast(d.outcome === "expired" ? "The question timed out." : "The question was cancelled.");
   });
   source.onerror = () => {
-    // The stream ends when access goes off, the session changes or the VM is
-    // out of reach; buttons wait for the reloaded snapshot, never guess.
     closeStream();
+    // In the background the phone stops the stream on purpose; it picks up
+    // again where it left off when the page is back (resume).
+    if (document.visibilityState === "hidden") { app.paused = true; return; }
+    // A dropped connection gets one quiet retry from the last event first, so
+    // a blip never flashes "offline" or redraws the page.
+    app.failures = (app.failures || 0) + 1;
+    if (app.failures === 1 && app.ready) { app.retry = setTimeout(openStream, 500); return; }
+    // Then the stream ends for a reason (access off, the session changed, the
+    // VM out of reach): buttons wait for the reloaded snapshot, never guess.
     app.ready = false;
     setStatus("disconnected");
     app.retry = setTimeout(load, 3000);
   };
+}
+
+// Phones suspend a page in the background, so the live stream cannot stay
+// open. Going away closes it on purpose: the window then knows this phone is
+// not watching and sends a notice when coop asks or finishes (MC11). Coming
+// back reopens it from the last event seen, and the window replays what
+// happened meanwhile: nothing is lost and the page is not redrawn. Only a gap
+// longer than the window keeps (15 minutes or 2,000 events) reloads it.
+function pause() {
+  if (!app.ready || !app.source) return;
+  clearTimeout(app.retry);
+  closeStream();
+  app.paused = true;
+}
+
+function resume() {
+  if (document.visibilityState === "hidden") return;
+  if (app.paused && app.ready) {
+    app.paused = false;
+    clearTimeout(app.retry);
+    openStream();
+    return;
+  }
+  if (!app.source) load();
 }
 
 // ---- wiring --------------------------------------------------------------------
@@ -855,6 +889,9 @@ function keepClear() {
   root.scrollPaddingBottom = `${$("composer").hidden ? 0 : $("composer").offsetHeight + 8}px`;
 }
 if ("ResizeObserver" in window) { const watch = new ResizeObserver(keepClear); watch.observe(document.querySelector(".bar")); watch.observe($("composer")); }
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && !app.source) load(); });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") pause(); else resume(); });
+window.addEventListener("pagehide", pause);
+window.addEventListener("pageshow", resume);
+window.addEventListener("online", resume);
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 load();
