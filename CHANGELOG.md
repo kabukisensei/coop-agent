@@ -48,6 +48,22 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   the edit gate, `data_doc lineage` and the session note missed the catalog
   snapshot, the built docs and `coop-data-doc.yml` in the home repository;
   they now find them there and run `coop-data-doc` in that folder.
+- **`coop catalog` works from a repository the client home repository lists**
+  (SQ9, found on the client VM). Run in `sql\` beside `<client>-coop` it failed
+  with "project_unavailable"; it now reads the home repository's project file,
+  as a session does, and runs on the Fabric Python that has pyodbc.
+- **The catalog snapshot gets five minutes** (SQ9, found on the client VM). The
+  first snapshot of a real warehouse (517 objects) timed out at the one-minute
+  limit that suits one query.
+- **`coop init --seed-docs` works under Windows PowerShell 5.1** (found on the
+  client VM). The patch now reaches `coop-data-doc config-set` as a file
+  without a byte order mark, instead of a pipe that could add one.
+- **`coop sync` refreshes the Microsoft skills catalog again.** It said
+  "python missing" with Python installed, since the step lost its Python lookup
+  in #297. Found on the client VM.
+- **A new client home repository ignores the project file's backup.** Its
+  `.gitignore` lists `.coop/*.bak`, so the `project.yml.bak` that `/setup-project`
+  keeps no longer shows as a file to commit.
 
 ## [0.33.0] — 2026-10-06
 

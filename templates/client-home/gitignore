@@ -1,0 +1,3 @@
+# coop keeps a backup of the project file beside it before each edit; the
+# committed file's history is in Git, so the backup stays on this computer.
+.coop/*.bak
