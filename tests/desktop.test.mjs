@@ -12,7 +12,7 @@ import { runInNewContext } from "node:vm";
 import { EventEmitter } from "node:events";
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 
@@ -993,18 +993,18 @@ await check("effective launch reserves inherited session arguments and rejects d
   const make = (launch = spec) => { const state = { contents: { id: ++counter }, spec: launch, sessionFile: "", hub: { attach() {} } }; windows.set(counter, state); return state; };
   const a = make(); const b = make();
   await Promise.all([context.startPi(a), context.startPi(b)]);
-  assert.equal(a.sessionFile, "/saved.jsonl"); assert.equal(a.sessionPending, true);
+  assert.equal(a.sessionFile, resolve("/saved.jsonl")); assert.equal(a.sessionPending, true);
   assert.equal(b.pi, undefined); assert.equal(raised, 1);
   a.pi.exited = true; a.pi.emit("exit", {});
   assert.equal(arbiter.states.has(a), false);
   await context.startPi(b); assert.ok(b.pi);
   const failed = make({ ...spec, cwd: "/fail", args: ["--session=/failed.jsonl"] });
   await context.startPi(failed); assert.equal(arbiter.states.has(failed), false);
-  assert.equal(ownerOf(arbiter.states, null, "/failed.jsonl"), null);
+  assert.equal(ownerOf(arbiter.states, null, resolve("/failed.jsonl")), null);
   const fresh = freshSessionSpec({ ...spec, args: ["--model", "test", "--session=/saved.jsonl", "-c", "--resume", "--session", "/saved2.jsonl", "--session-id", "abc"] });
   assert.deepEqual(fresh.args, ["--model", "test"]);
   assert.equal(launchSessionPath([...piArgv(fresh).args, "--session", "/override.jsonl"]), "/override.jsonl");
-  assert.equal(desktopSessionPath(["--session", "./saved.jsonl"], "/synthetic"), "/synthetic/saved.jsonl");
+  assert.equal(desktopSessionPath(["--session", "./saved.jsonl"], "/synthetic"), resolve("/synthetic", "saved.jsonl"));
   for (const selector of [["-c"], ["--resume"], ["--session-id", "abc"], ["--session", "abc"]]) {
     const unsupported = make({ ...spec, args: selector });
     await context.startPi(unsupported); assert.equal(unsupported.pi, undefined);
@@ -1017,7 +1017,7 @@ await check("actual initial launch waits behind a pending switch and never start
   const arbiter = new SessionArbiter(), windows = new Map();
   let release, entered, starts = 0;
   const blocked = new Promise((r) => { release = r; }), switching = new Promise((r) => { entered = r; });
-  const target = "/synthetic/saved.jsonl";
+  const target = resolve("/synthetic", "saved.jsonl");
   const a = { contents: { id: 1 }, spec: { cwd: "/synthetic", env: {} }, sessionFile: "/synthetic/old.jsonl", hub: { renew() {} } };
   a.pi = { exited: false, request: async (command) => {
     if (command.type === "get_state") return { success: true, data: { sessionFile: a.sessionFile } };
