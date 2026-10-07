@@ -2280,13 +2280,20 @@ export default function coopGuardrails(pi: ExtensionAPI) {
             ? trustedWriteEnvironment(event, liveReadDeps, ensureSessionGovernance(ctx.cwd).sqlContract)
             : "";
           const production = decision.environment === "production" || decision.scope?.environment === "production" || writeEnvironment === "production";
+          // A write on a target coop's config cannot confirm as dev or test (the global
+          // endpoint, blank environment_names with no matching sql_targets ids) may be
+          // production, so it needs the same permit (Aaron, 2026-10-07: he had written
+          // to production through such a target with only the ordinary approval).
+          const unconfirmedWrite = decision.kind === "ddl-dml-destructive" && writeEnvironment !== "dev" && writeEnvironment !== "test";
           const sqlProductionWrite = decision.kind === "ddl-dml-destructive" && (
-            writeEnvironment === "production" || decision.scope?.environment === "production" ||
-            (decision.environment === "production" && writeEnvironment !== "dev" && writeEnvironment !== "test"));
+            unconfirmedWrite || decision.scope?.environment === "production");
           if (sqlProductionWrite) {
             // Permitted once above for the same call, or asked now; never a session approval.
             if (productionPermitted) return;
-            const refused = await permitProductionWrite(ctx, "mcp-confirm", "governed-live-read", decision.label || "Warehouse SQL write");
+            const what = writeEnvironment === "production" || decision.environment === "production" || decision.scope?.environment === "production"
+              ? decision.label || "Warehouse SQL write"
+              : `${decision.label || "Warehouse SQL write"} (target not confirmed as dev or test; treated as production)`;
+            const refused = await permitProductionWrite(ctx, "mcp-confirm", "governed-live-read", what);
             return refused || undefined;
           }
           if (sqlEditKey && editApprovals.has(sqlEditKey)) {

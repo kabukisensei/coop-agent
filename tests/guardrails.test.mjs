@@ -1201,6 +1201,17 @@ await t("a production Warehouse write is blocked whatever its SQL says; dev and 
   // mid-session is not a thing (it is coop's file), but a new session re-reads it.
   const test = await run("test");
   assert.equal(test.selects, 1, "test offers the session option too");
+  // A target coop cannot confirm as dev or test may be production (Aaron had
+  // written to production through one with only the ordinary approval): the
+  // same permit, no ordinary prompt and no session option.
+  const unconfirmed = await run("");
+  assert.deepEqual(unconfirmed, { first: true, second: true, selects: 0, confirms: 0 }, "unconfirmed: no ordinary approval path");
+  writeManagedTarget({ environment: "" });
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  let prompt = "";
+  const deskUi = { notify: () => {}, confirm: async () => true, select: async (_t, options) => options[1], input: async (title, message) => { prompt = `${title}\n${message || ""}`; return (/type (\S+) to run this one write/.exec(prompt) || [])[1] || ""; } };
+  assert.equal(blocked(await handle(sqlWrite("INSERT INTO dbo.T (a) VALUES (1)"), { ...liveCtx, ui: deskUi })), false, "the typed client name runs it");
+  assert.ok(/treated as production/.test(prompt), prompt);
   writeManagedTarget();
   await handleSessionStart({ reason: "new" }, liveCtx);
 });

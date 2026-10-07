@@ -15,6 +15,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   session, never headless, never from the phone; every attempt is audited,
   allowed or refused. A session can no longer run `coop unlock-prod` or touch
   `prod-unlock.json` from its shell, nor edit or write the file (it used to ask).
+  A Warehouse write on a target coop cannot confirm as dev or test (the
+  workspace-wide endpoint, or a contract whose `environment_names` are blank and
+  whose `sql_targets` do not carry the endpoint's ids) now needs the same
+  permit: before, it got the ordinary approval, which is how a production
+  write could run. The managed endpoint now also reads its environment from the
+  `sql_targets` entry with its ids, so a wizard-made contract stays dev.
 - **Pair the phone once** (Aaron, 2026-10-07). Phone access is now one switch
   for the whole coop window app, **Session > Phone > Allow phone access**.
   Pairing a phone turns it on and the window remembers it across restarts, so

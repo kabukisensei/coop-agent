@@ -295,4 +295,22 @@ m=json.load(open(sys.argv[1]))
 assert m['mcpServers']['custom']=={'command':'custom'}, 'the per-folder copy lost the user server'
 assert 'fabric' in m['_coop']['managed_servers'], 'the per-folder copy lost coop ownership'
 PY
+# The managed endpoint's environment also comes from the sql_targets entry whose
+# Fabric ids it carries (the wizard leaves environment_names blank); two sources
+# that disagree resolve to neither, which the guardrails treat as production.
+"$PY" - "$ROOT/lib" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from mcp_config import target_environment
+from warehouse_mcp import SqlEndpointTarget
+ws, item = "22222222-2222-4222-8222-222222222222", "33333333-3333-4333-8333-333333333333"
+t = SqlEndpointTarget(url="u", scope="item", workspace_id=ws, item_id=item, validation_item_id=item, item_type="Warehouse")
+entry = lambda: {"kind": "fabric_warehouse", "database": "WH", "workspace_id": ws, "item_id": item}
+assert target_environment({"sql_targets": {"default_environment": "dev", "dev": entry()}}, t, "") == "dev"
+assert target_environment({"sql_targets": {"default_environment": "dev", "prod": entry()}}, t, "") == "production"
+assert target_environment({"sql_targets": {"default_environment": "dev", "dev": entry(), "prod": entry()}}, t, "") == ""
+assert target_environment({"sql_targets": {"default_environment": "dev", "dev": entry()}}, t, "production") == ""
+assert target_environment({}, t, "test") == "test"
+assert target_environment({"sql_targets": {"default_environment": "dev", "dev": entry()}}, SqlEndpointTarget(url="g", scope="global"), "") == ""
+PY
 printf '  ✓ MCP config is pinned, safe, ownership-aware, and placeholder-free\n'
