@@ -1301,6 +1301,26 @@ function Get-CoopPrereqs([bool]$NoFabric = $false) {
 #   -> COOP_NO_ISOLATE truthy (1|true|yes|on, any case) -> $HOME\.pi\agent
 #   -> COOP_AGENT_DIR -> <profile dir>\agent.
 # With no variables set every helper yields the historical ~/.coop/... path.
+# Write the production unlock grant (master plan G1) for one client; returns the grant.
+# The caller has already checked that a person asked for it at their own console.
+function Write-CoopProdUnlock {
+  param([string]$File, [string]$Client, [int]$Minutes)
+  $now = (Get-Date).ToUniversalTime()
+  $grant = [ordered]@{
+    schema_version = 1
+    id             = ([guid]::NewGuid().ToString('N')).Substring(0, 8)
+    client         = $Client
+    minutes        = $Minutes
+    created_at     = $now.ToString('o')
+    expires_at     = $now.AddMinutes($Minutes).ToString('o')
+  }
+  $dir = Split-Path -Parent $File
+  if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+  $json = [pscustomobject]$grant | ConvertTo-Json -Compress
+  [System.IO.File]::WriteAllText($File, $json, (New-Object System.Text.UTF8Encoding $false))
+  return $grant
+}
+
 function Get-CoopProfileDir {
   $base = if ($env:COOP_DIR) { $env:COOP_DIR } else { $HOME }
   return (Join-Path $base '.coop')
