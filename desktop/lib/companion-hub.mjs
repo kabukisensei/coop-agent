@@ -72,14 +72,17 @@ export class CompanionHub extends EventEmitter {
    * identity: `{ windowsUser, client }` for this window; `sessionName` optional.
    * The timer and clock are injectable for tests.
    */
-  constructor({ windowsUser, client, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, random, host = null } = {}) {
+  constructor({ windowsUser, client, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, random, host = null, appAccess = null } = {}) {
     super();
     // host (MC9, main.mjs): `list()` the folder's saved sessions with their
     // paths, `exportPath()` a file beside the session, `changed(message)` tells
     // the window the phone changed the session; (MC10) `attach(name, bytes)`
     // saves and reads a phone's file as the window attaches one, and
     // `files(query)` lists the folder's files for @ mentions.
-    Object.assign(this, { windowsUser: windowsUser || "", client: client || "", now, setTimer, clearTimer, random, host });
+    // appAccess (pair once): the window's app-wide phone switch. When given,
+    // every new session in this tab follows it, so a paired phone keeps its
+    // access through desk new sessions, switches and restarts.
+    Object.assign(this, { windowsUser: windowsUser || "", client: client || "", now, setTimer, clearTimer, random, host, appAccess });
     this.pi = null;
     this.incarnation = "";
     this.accessOn = false;
@@ -122,14 +125,19 @@ export class CompanionHub extends EventEmitter {
     return { incarnation: this.incarnation, windowsUser: this.windowsUser, client: this.client, sessionName: this.sessionName };
   }
 
-  /** Follow a new Pi (a new incarnation): access goes off, old questions and submissions are void. */
+  /** What a new session's access is: the app-wide switch, or off when there is none. */
+  #followAccess() {
+    return typeof this.appAccess === "function" && this.appAccess() === true;
+  }
+
+  /** Follow a new Pi (a new incarnation): access follows the app switch, old questions and submissions are void. */
   attach(pi) {
     this.reset();
     this.pi = pi;
     this.incarnation = newIncarnation(this.random);
     const carrying = this.now() < this.carryUntil;
     this.carryUntil = 0;
-    if (!carrying) this.setAccess(false, "session-changed");
+    if (!carrying) this.setAccess(this.#followAccess(), "session-changed");
     if (pi) {
       pi.on("event", (message) => { if (this.pi === pi) this.onPiEvent(message); });
       pi.on("exit", () => { if (this.pi === pi) this.onPiExit(); });
@@ -138,15 +146,18 @@ export class CompanionHub extends EventEmitter {
     return this.incarnation;
   }
 
-  /** The session changed inside the same Pi (/new, a switch, a fork): a new incarnation too. */
-  /** A new session in this window. Access ends, unless the phone itself started or opened it (MC9). */
+  /**
+   * A new session in this window (/new, a switch, a fork): a new incarnation.
+   * Access follows the app switch; without one it ends, unless the phone
+   * itself started or opened the session (MC9).
+   */
   renew({ keepAccess = false } = {}) {
     const pi = this.pi;
     for (const q of this.questions.values()) if (q.state === "open") this.#close(q, "cancelled", "pi");
     this.reset();
     this.pi = pi;
     this.incarnation = newIncarnation(this.random);
-    if (!keepAccess) this.setAccess(false, "session-changed");
+    if (!keepAccess) this.setAccess(this.#followAccess(), "session-changed");
     this.#push("session", this.identity());
   }
 

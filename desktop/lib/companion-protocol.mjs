@@ -54,6 +54,9 @@ export const ROUTES = Object.freeze({
   "POST /api/sessions": "sessionAction",
   "POST /api/session": "control",
   "POST /api/logout": "logout",
+  // Pair once: the sessions open in the coop window, and which one this phone uses.
+  "GET /api/tabs": "tabs",
+  "POST /api/tabs": "selectTab",
 });
 
 /** Refusal codes the phone shows in words; each maps to one HTTP status. */
@@ -270,6 +273,13 @@ export function validateRequest(method, path, body, rawBytes = 0) {
         digest: field(body, "digest", DIGEST),
         answer: clean,
       };
+    }
+    case "selectTab": {
+      // A tab the window listed (GET /api/tabs), by its number; the server
+      // checks it is open, on this phone's client, before it switches.
+      onlyKeys(body, ["submissionId", "tabId"]);
+      if (!Number.isSafeInteger(body.tabId) || body.tabId < 1) throw new ProtocolError("bad-request", "tabId is missing or malformed");
+      return { op, submissionId: field(body, "submissionId", SUBMISSION_ID), tabId: body.tabId };
     }
     case "logout":
       onlyKeys(body, []);

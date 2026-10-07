@@ -2,7 +2,8 @@
 // desktop/COMPANION.md). It listens on 127.0.0.1 only; Tailscale's `serve`
 // carries the phone's requests to it inside the tailnet. Every API request is
 // checked here, in order: host, origin, size, shape (companion-protocol.mjs),
-// rate, then the device grant against the window that has phone access on.
+// rate, then the device grant against the session this phone uses: one of the
+// window's open tabs with phone access on, on the phone's own client (pair once).
 // The phone page's own files (MC3) are served from `webRoot` under a strict CSP.
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
@@ -44,12 +45,18 @@ class Limiter {
   }
 }
 
+const sameName = (a, b) => typeof a === "string" && typeof b === "string" && a.length > 0 && a.toLocaleLowerCase() === b.toLocaleLowerCase();
+
 /**
- * Build the server. `active()` returns the hub of the window whose phone access
- * is on (or null); `origin` is the companion's public origin, the Tailscale name
- * (`https://<vm>.<tailnet>.ts.net`); `audit(entry)` writes one log line.
+ * Build the server. `tabs()` lists the window's open sessions, front tab first:
+ * `[{ id, hub, label, folder, working, asking }]` (pair once); a phone uses the
+ * one it chose, else the first open to it. `active()` (one hub or null) is the
+ * older single-session form. `origin` is the companion's public origin, the
+ * Tailscale name (`https://<vm>.<tailnet>.ts.net`); `audit(entry)` writes one
+ * log line.
  */
-export function createCompanionServer({ store, active, origin, webRoot = "", shared = {}, audit = () => {}, now = Date.now, port = DEFAULT_PORT, push = null }) {
+export function createCompanionServer({ store, tabs = null, active = null, origin, webRoot = "", shared = {}, audit = () => {}, now = Date.now, port = DEFAULT_PORT, push = null }) {
+  const listTabs = typeof tabs === "function" ? tabs : () => { const hub = active ? active() : null; return hub ? [{ id: 1, hub, label: "" }] : []; };
   const allowedHosts = new Set([new URL(origin).host, `127.0.0.1:${port}`, `localhost:${port}`]);
   const requests = new Limiter(LIMITS.requestsPerMinute, 60_000, now);
   const answers = new Limiter(LIMITS.answersPerMinute, 60_000, now);
@@ -58,6 +65,21 @@ export function createCompanionServer({ store, active, origin, webRoot = "", sha
   const streams = new Map();
   // When each device last got a notice (MC11): one a minute at most.
   const lastNotice = new Map();
+  // The tab each phone chose (pair once); a phone that chose none, or whose
+  // tab closed, uses the first open to it.
+  const chosen = new Map();
+
+  /** The sessions this device may use: phone access on, its Windows user and client. */
+  function openTo(device) {
+    if (!device) return [];
+    return listTabs().filter((tab) => tab && tab.hub && tab.hub.accessOn && sameName(tab.hub.windowsUser, device.windowsUser) && sameName(tab.hub.client, device.client));
+  }
+
+  /** The tab a device's request goes to, or null. */
+  function tabFor(device) {
+    const open = openTo(device);
+    return open.find((tab) => tab.id === chosen.get(device.id)) || open[0] || null;
+  }
 
   function sendJson(res, status, body, headers = {}) {
     res.writeHead(status, { ...SECURITY_HEADERS, "Content-Type": "application/json", ...headers });
@@ -166,20 +188,28 @@ export function createCompanionServer({ store, active, origin, webRoot = "", sha
 
     if (request.op === "pair") {
       if (!pairs.take(ip)) return refuse(res, "rate-limited");
-      const result = store.redeem(request.code, request.deviceName);
+      // A phone paired before presents its old cookie: the new pairing replaces it.
+      const before = readCookie(req.headers.cookie);
+      const old = before ? store.get(before.id) : null;
+      const replaces = old && checkGrant({ device: old, secret: before.secret, binding: { windowsUser: old.windowsUser, client: old.client, accessOn: true }, now: now() }) === null ? old.id : "";
+      const result = store.redeem(request.code, request.deviceName, { replaces });
       if (result.error) return refuse(res, result.error, "that pairing code is wrong or has expired");
       // Pairing a code does not count against the failures.
       pairs.hits.delete(ip);
-      audit({ kind: "paired", device: result.device.id, client: result.device.client });
+      for (const id of result.replaced || []) { closeStreams(id); chosen.delete(id); }
+      audit({ kind: "paired", device: result.device.id, client: result.device.client, replaced: (result.replaced || []).length });
       return sendJson(res, 200, { ok: true, device: { id: result.device.id, name: result.device.name, client: result.device.client } }, { "Set-Cookie": deviceCookie(result.device.id, result.secret) });
     }
 
     const cookie = readCookie(req.headers.cookie);
     const device = cookie ? store.get(cookie.id) : null;
-    const hub = active();
-    // No window has phone access on: a paired phone hears "access off", not
+    const tab = device ? tabFor(device) : null;
+    const hub = tab ? tab.hub : null;
+    // No session open to this phone: a session with access on for another user
+    // or client says so; with none, a paired phone hears "access off", not
     // "another Windows user" (MC4). The store is this Windows user's own.
-    const binding = hub ? hub.binding : { windowsUser: device ? device.windowsUser : "", client: device ? device.client : "", incarnation: "", accessOn: false };
+    const other = hub ? null : listTabs().find((t) => t && t.hub && t.hub.accessOn);
+    const binding = hub ? hub.binding : other ? other.hub.binding : { windowsUser: device ? device.windowsUser : "", client: device ? device.client : "", incarnation: "", accessOn: false };
     if (request.op === "logout") {
       // Signing out works whatever the session: it removes this device.
       if (device && cookie && checkGrant({ device, secret: cookie.secret, binding: { ...binding, windowsUser: device.windowsUser, client: device.client, accessOn: true }, now: now() }) === null) {
@@ -195,6 +225,17 @@ export function createCompanionServer({ store, active, origin, webRoot = "", sha
     store.touch(device.id);
 
     switch (request.op) {
+      case "tabs":
+        return sendJson(res, 200, { ok: true, tabs: openTo(device).map((t) => ({ id: t.id, label: String(t.label || ""), folder: String(t.folder || ""), sessionName: t.hub.sessionName || "", working: Boolean(t.working), asking: Boolean(t.asking), current: t === tab })) });
+      case "selectTab": {
+        const next = openTo(device).find((t) => t.id === request.tabId);
+        if (!next) return refuse(res, "not-found", "That session is no longer open in the coop window", device.id);
+        chosen.set(device.id, next.id);
+        // The phone reloads on the chosen session; its old stream ends here.
+        if (next !== tab) closeStreams(device.id);
+        audit({ kind: "tab", device: device.id, tab: next.id });
+        return sendJson(res, 200, { ok: true });
+      }
       case "snapshot":
         return sendJson(res, 200, { ok: true, snapshot: await hub.snapshot(), device: { id: device.id, name: device.name } });
       case "events":

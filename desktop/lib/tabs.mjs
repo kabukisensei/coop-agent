@@ -1,6 +1,6 @@
 // Tabs (several sessions at once): one coop window holds tabs, and each tab is
 // the whole session page with its own Pi, as each terminal tab runs its own
-// coop. A tab's approvals, guardrails, questions and phone access are its own;
+// coop. A tab's approvals, guardrails and questions are its own;
 // tabs share only the window's folder. These are the plain parts main.mjs
 // uses (keys, the strip's rows, which tab comes forward after a close), so
 // tests can run them without Electron.

@@ -107,15 +107,15 @@ export function notificationFor(event, { folder = "" } = {}) {
 }
 
 /**
- * Session > Phone (master plan row MC2): allow the phone on this window's
- * session, pair a phone, and remove phones. `phone` is `{ accessOn, devices,
+ * Session > Phone (master plan row MC2): phone access for the whole app (pair
+ * once), pair a phone, and remove phones. `phone` is `{ accessOn, devices,
  * toggleAccess(), pair(), remove(id) }`; remove("*") removes every phone.
  */
 export function phoneMenu({ accessOn, devices = [], toggleAccess, pair, remove }) {
   return {
     label: "Phone",
     submenu: [
-      { label: "Allow phone for this session", type: "checkbox", checked: Boolean(accessOn), click: () => toggleAccess() },
+      { label: "Allow phone access", type: "checkbox", checked: Boolean(accessOn), click: () => toggleAccess() },
       { label: "Pair a phone...", click: () => pair() },
       {
         label: "Paired phones",
