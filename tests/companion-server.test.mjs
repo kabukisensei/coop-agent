@@ -713,6 +713,102 @@ try {
   rmSync(temp, { recursive: true, force: true });
 }
 
+// ---- pair once (Aaron, 2026-10-07): one app switch, the phone picks the tab ----------
+await check("hub: with the app switch on, a desk new session, a switch and a new Pi keep phone access", () => {
+  let appOn = true;
+  const { pi, hub } = newHub({ appAccess: () => appOn });
+  assert.equal(hub.accessOn, true, "a new Pi starts with access when the app switch is on");
+  const before = hub.incarnation;
+  const seen = [];
+  hub.on("event", (e) => seen.push(e));
+  hub.renew();
+  assert.equal(hub.accessOn, true);
+  assert.notEqual(hub.incarnation, before, "still a new incarnation");
+  assert.equal(seen.at(-1).type, "session", "the phone hears the new session and reloads onto it");
+  pi.exit();
+  assert.equal(hub.accessOn, false, "no Pi, no access");
+  hub.attach(new FakePi());
+  assert.equal(hub.accessOn, true, "a restarted Pi follows the switch");
+  appOn = false;
+  hub.renew();
+  assert.equal(hub.accessOn, false, "switch off: a new session has none");
+  assert.equal(newHub({ appAccess: () => true, client: "" }).hub.accessOn, false, "a tab with no client never has access");
+});
+
+{
+  const dir = mkdtempSync(join(tmpdir(), "coop-companion-tabs-"));
+  const tabStore = new DeviceStore(join(dir, "devices.json"));
+  const one = newHub({ appAccess: () => true });
+  const two = newHub({ appAccess: () => true });
+  const other = newHub({ appAccess: () => true, client: "Other Co" });
+  two.hub.setSessionName("report tidy");
+  let rows = [
+    { id: 1, hub: one.hub, label: "New session", folder: "fabric", working: false, asking: false },
+    { id: 2, hub: two.hub, label: "Tidy the report", folder: "fabric", working: true, asking: false },
+    { id: 3, hub: other.hub, label: "Other client", folder: "other", working: false, asking: false },
+  ];
+  const tabAudit = [];
+  const server = createCompanionServer({ store: tabStore, tabs: () => rows, origin: ORIGIN, webRoot, audit: (e) => tabAudit.push(e), port: 0 });
+  await server.listen();
+  const tport = server.server.address().port;
+  const pair = async (name, extra = {}) => {
+    const { code } = tabStore.startPairing({ windowsUser: "VM\\aaron", client: "Example Co" });
+    const res = await call(tport, "POST", "/api/pair", { body: { code, deviceName: name }, ...extra });
+    return String(res.headers["set-cookie"]).split(";")[0];
+  };
+  try {
+    const phone = await pair("Aaron's iPhone");
+    await check("tabs: the phone lists only the open tabs on its own client, and uses the front one", async () => {
+      const res = await call(tport, "GET", "/api/tabs", { cookie: phone });
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.json.tabs.map((t) => [t.id, t.current]), [[1, true], [2, false]]);
+      assert.equal(res.json.tabs[1].sessionName, "report tidy");
+      assert.equal(res.json.tabs[1].working, true);
+      assert.equal((await call(tport, "GET", "/api/snapshot", { cookie: phone })).json.snapshot.incarnation, one.hub.incarnation);
+    });
+    await check("tabs: picking a tab moves the phone there; writes for the old tab are refused as wrong-session", async () => {
+      const live = await stream(tport, phone);
+      const res = await call(tport, "POST", "/api/tabs", { cookie: phone, body: { submissionId: SUB(901), tabId: 2 } });
+      assert.equal(res.status, 200);
+      await live.ended;
+      assert.equal((await call(tport, "GET", "/api/snapshot", { cookie: phone })).json.snapshot.incarnation, two.hub.incarnation);
+      const stale = await call(tport, "POST", "/api/stop", { cookie: phone, body: { submissionId: SUB(902), incarnation: one.hub.incarnation } });
+      assert.equal(stale.json.code, "wrong-session");
+      assert.ok(tabAudit.some((e) => e.kind === "tab" && e.tab === 2));
+    });
+    await check("tabs: another client's tab cannot be picked, and an unknown tab is not found", async () => {
+      for (const tabId of [3, 99]) {
+        const res = await call(tport, "POST", "/api/tabs", { cookie: phone, body: { submissionId: SUB(910 + tabId), tabId } });
+        assert.equal(res.json.code, "not-found");
+      }
+      assert.equal((await call(tport, "GET", "/api/snapshot", { cookie: phone })).json.snapshot.client, "Example Co");
+    });
+    await check("tabs: when the picked tab closes, the phone falls back to the next open one", async () => {
+      rows = rows.filter((r) => r.id !== 2);
+      assert.equal((await call(tport, "GET", "/api/snapshot", { cookie: phone })).json.snapshot.incarnation, one.hub.incarnation);
+    });
+    await check("tabs: with only another client's tab open the phone hears wrong-client; with none, access-off", async () => {
+      rows = rows.filter((r) => r.id === 3);
+      assert.equal((await call(tport, "GET", "/api/snapshot", { cookie: phone })).json.code, "wrong-client");
+      rows = [];
+      assert.equal((await call(tport, "GET", "/api/snapshot", { cookie: phone })).json.code, "access-off");
+    });
+    await check("pairing the same phone again replaces its old entry, by its cookie or by its name", async () => {
+      const again = await pair("New name", { cookie: phone });
+      assert.deepEqual(tabStore.list().map((d) => d.name), ["New name"]);
+      assert.equal((await call(tport, "GET", "/api/tabs", { cookie: phone })).json.code, "not-paired", "the old entry is gone");
+      await pair("new NAME");
+      assert.deepEqual(tabStore.list().map((d) => d.name), ["new NAME"]);
+      assert.equal((await call(tport, "GET", "/api/tabs", { cookie: again })).json.code, "not-paired");
+      await pair("Work iPad");
+      assert.equal(tabStore.list().length, 2, "a phone with another name is a second device");
+    });
+  } finally {
+    await server.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 await check("tailscale: the origin is the VM's tailnet name, and nothing when Tailscale is off", () => {
   assert.equal(originFromStatus(JSON.stringify({ BackendState: "Running", Self: { DNSName: "coop-vm.example-tailnet.ts.net." } })), "https://coop-vm.example-tailnet.ts.net");
   assert.equal(originFromStatus(JSON.stringify({ BackendState: "Stopped", Self: { DNSName: "coop-vm.example-tailnet.ts.net." } })), "");

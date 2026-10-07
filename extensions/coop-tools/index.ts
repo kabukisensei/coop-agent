@@ -311,6 +311,13 @@ export function contractChangedSince(snapshot: { path: string | null; text: stri
 
 export const CONTRACT_CHANGED_HINT = "the project contract (.coop/project.yml) changed during this session; coop keeps native SQL on the target the session started with. Start a new session (/new) to use the edited contract.";
 
+/** How long a helper may run. One bounded query or one object's trace answers
+ *  in seconds; a catalog snapshot reads every object's definition (hundreds on
+ *  a real warehouse, which took over a minute on the client VM). */
+export function sqlHelperTimeoutMs(helper: SqlHelper): number {
+  return helper === "catalog_snapshot.py" ? 300_000 : 60_000;
+}
+
 async function runFabricSqlHelper(params: any, signal: AbortSignal | undefined, cwd: string, helper: SqlHelper = "sql_query.py"): Promise<any> {
   if (signal?.aborted) return { ok: false, state: "aborted" };
   if (!contractSnapshot) noteContractSnapshot(cwd);
@@ -342,7 +349,7 @@ async function runFabricSqlHelper(params: any, signal: AbortSignal | undefined, 
       reapTimer = setTimeout(() => finish({ ok: false, state }), 1_000);
     };
     const onAbort = () => stop("aborted");
-    const timer = setTimeout(() => stop("timeout"), 60_000);
+    const timer = setTimeout(() => stop("timeout"), sqlHelperTimeoutMs(helper));
     signal?.addEventListener("abort", onAbort, { once: true });
     child.stdout?.on("data", (data: any) => {
       if (stopState) return;

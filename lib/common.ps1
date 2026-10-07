@@ -3355,8 +3355,8 @@ function Get-CoopClientSlug {
   return $slug
 }
 
-# Create the client home repository (folder, `git init`, README from
-# templates\client-home) when it does not exist yet. Returns $true on success.
+# Create the client home repository (folder, `git init`, README and .gitignore
+# from templates\client-home) when it does not exist yet. Returns $true on success.
 function New-CoopHomeRepository {
   param([string]$Root, [string]$Client)
   if (-not (Test-Path -LiteralPath $Root)) { New-Item -ItemType Directory -Force -Path $Root | Out-Null }
@@ -3373,6 +3373,13 @@ function New-CoopHomeRepository {
     $text = if (Test-Path -LiteralPath $template -PathType Leaf) { [System.IO.File]::ReadAllText($template) } else { "# $(Split-Path -Leaf $Root)`n`nThe coop client home repository for $Client.`n" }
     $text = $text.Replace('<client>', $Client).Replace('<slug>', (Get-CoopClientSlug $Client))
     [System.IO.File]::WriteAllText($readme, $text, (New-Object System.Text.UTF8Encoding($false)))
+  }
+  # The .gitignore keeps the project file's local backup (.coop\project.yml.bak) out of commits.
+  $ignore = Join-Path $Root '.gitignore'
+  if (-not (Test-Path -LiteralPath $ignore)) {
+    $template = Join-Path $script:CoopRoot 'templates\client-home\gitignore'
+    $text = if (Test-Path -LiteralPath $template -PathType Leaf) { [System.IO.File]::ReadAllText($template).Replace("`r`n", "`n") } else { ".coop/*.bak`n" }
+    [System.IO.File]::WriteAllText($ignore, $text, (New-Object System.Text.UTF8Encoding($false)))
   }
   return $true
 }

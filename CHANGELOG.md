@@ -33,6 +33,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- **Pair the phone once** (Aaron, 2026-10-07). Phone access is now one switch
+  for the whole coop window app, **Session > Phone > Allow phone access**.
+  Pairing a phone turns it on and the window remembers it across restarts, so
+  a desk new session, a session switch or a restart no longer turns it off.
+  The phone's new **Switch session** menu item lists every tab open on its own
+  client, in every coop window, and moves between them. Pairing the same phone
+  again replaces its old row under Paired phones. Production approvals,
+  session-wide options and the `!` shell stay at the desk.
 - **The project file is found two levels down** (Aaron, 2026-10-06). Most
   teammates open coop in their user folder, and the client's repositories sit
   one folder further down (`devops\fabric`). Opened in a folder that is not a
@@ -42,6 +50,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   searched inside, and with several it still names them and picks none.
 
 ### Fixed
+
+- **Phone requests stay on the session they started on** (#342). Pending snapshots
+  and controls are refused after session replacement, tab selection, access-off
+  or device revocation. App-wide pairing still follows new same-client sessions
+  on the next request.
 
 - **Share with the team works in a repository that ignores `.coop`**
   (Aaron, 2026-10-06). Git refuses a plain add of an ignored path, so Share
@@ -74,6 +87,22 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   the edit gate, `data_doc lineage` and the session note missed the catalog
   snapshot, the built docs and `coop-data-doc.yml` in the home repository;
   they now find them there and run `coop-data-doc` in that folder.
+- **`coop catalog` works from a repository the client home repository lists**
+  (SQ9, found on the client VM). Run in `sql\` beside `<client>-coop` it failed
+  with "project_unavailable"; it now reads the home repository's project file,
+  as a session does, and runs on the Fabric Python that has pyodbc.
+- **The catalog snapshot gets five minutes** (SQ9, found on the client VM). The
+  first snapshot of a real warehouse (517 objects) timed out at the one-minute
+  limit that suits one query.
+- **`coop init --seed-docs` works under Windows PowerShell 5.1** (found on the
+  client VM). The patch now reaches `coop-data-doc config-set` as a file
+  without a byte order mark, instead of a pipe that could add one.
+- **`coop sync` refreshes the Microsoft skills catalog again.** It said
+  "python missing" with Python installed, since the step lost its Python lookup
+  in #297. Found on the client VM.
+- **A new client home repository ignores the project file's backup.** Its
+  `.gitignore` lists `.coop/*.bak`, so the `project.yml.bak` that `/setup-project`
+  keeps no longer shows as a file to commit.
 
 ## [0.33.0] — 2026-10-06
 

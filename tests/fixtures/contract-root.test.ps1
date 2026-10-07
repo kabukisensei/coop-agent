@@ -156,6 +156,12 @@ try {
   $none = Get-CoopContractRootProposal $bare
   if ($none.Kind -eq 'existing') { Ko "an empty folder resolved to an existing contract: $($none.Path)" }
   else { Ok 'an empty folder never resolves to the bundled contract' }
+
+  # New-CoopHomeRepository: README and a .gitignore that keeps the project file's backup out of commits.
+  $newHome = Join-Path $t 'made\contoso-coop'
+  if (-not (New-CoopHomeRepository -Root $newHome -Client 'Contoso')) { Ko 'New-CoopHomeRepository failed' }
+  $ignoreText = [System.IO.File]::ReadAllText((Join-Path $newHome '.gitignore'))
+  if ($ignoreText -match '(?m)^\.coop/\*\.bak$') { Ok 'the home repository ignores .coop/*.bak' } else { Ko "the home repository .gitignore is '$ignoreText'" }
 } finally {
   Restore-Env $saved
   Remove-Item -Recurse -Force $t -ErrorAction SilentlyContinue

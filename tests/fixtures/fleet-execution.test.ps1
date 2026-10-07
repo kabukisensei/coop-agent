@@ -309,6 +309,8 @@ try {
   Remove-Item -LiteralPath (Join-Path $m.Agent 'npm\node_modules') -Recurse -Force -ErrorAction SilentlyContinue
   $out = Invoke-Fleet 'sync.ps1'
   if ($rc -eq 0) { Ok 'production sync exits 0' } else { Ko "production sync failed unexpectedly (rc=$rc)" $out }
+  # The Microsoft skills step finds Python as the MCP step does (it once lost its lookup).
+  if ($out.Contains('cannot generate MCP config') -or -not $out.Contains('cannot refresh Microsoft skills catalog')) { Ok 'sync looks Python up for the Microsoft skills catalog' } else { Ko 'sync said python missing for the Microsoft skills catalog while the MCP step had Python' $out }
   $missing = @($extSpecs | Where-Object { -not (Test-CallLiteral $m "PI install $_") })
   if ($missing.Count -eq 0) { Ok 'sync installs every manifest extension at its exact pin' } else { Ko "missing sync spec(s): $($missing -join ', ')" (Get-Calls $m) }
   foreach ($ext in @('pi-mcp-adapter', '@juicesharp/rpiv-ask-user-question')) {

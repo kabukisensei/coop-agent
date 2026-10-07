@@ -115,6 +115,9 @@ try {
   const impactChanged = await impactTool.execute("1c", { object: "dbo.t" }, undefined, undefined, { cwd: root });
   assert.equal(impactChanged.details.state, "contract_changed", "sql_impact shares the same contract check");
   assert.equal(mod.contractChangedSince(mod.contractSnapshotFor(root), root), false);
+  // A catalog snapshot reads every object: it gets longer than one query.
+  assert.equal(mod.sqlHelperTimeoutMs("sql_query.py"), 60_000);
+  assert.equal(mod.sqlHelperTimeoutMs("catalog_snapshot.py"), 300_000);
   assert.equal(typeof hooks.session_start, "function", "session_start re-reads the contract (noteContractSnapshot)");
   mod.noteContractSnapshot(root);
   const reread = await tool.execute("1d", { query: "SELECT TOP (1) x FROM dbo.t" }, undefined, undefined, { cwd: root });

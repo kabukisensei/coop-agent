@@ -59,7 +59,7 @@ which:
 | `access-off` | phone access is off in this window |
 | `wrong-session` | the request names a session that is not the live one |
 
-## Identity: one person, one Windows user, one client, one session
+## Identity: one person, one Windows user, one client
 
 - **Pairing happens at the desk.** In the window, *Session > Phone > Pair a
   phone* shows the address and an 8-character code (Crockford letters, no I, L, O or U). It
@@ -75,29 +75,32 @@ which:
 - **The secret is never stored.** Pairing returns a random 256-bit secret as an
   `HttpOnly; Secure; SameSite=Strict; Path=/api` cookie. The VM keeps only its
   SHA-256 and compares in constant time. Page scripts cannot read the cookie.
-- **Phone access is off until you turn it on, per tab.** *Session > Phone >
-  Allow phone for this session* turns it on for the live session of the tab in
-  front (each tab is its own session and Pi); both screens then show
-  *Windows user · client · session · device*. It turns off when the tab or
-  window closes or the session changes, and at most one tab per Windows user
-  has it on (turning it on in a second tab or window turns it off in the
-  first).
+- **Pair once: phone access is one switch for the app.** *Session > Phone >
+  Allow phone access* turns it on or off for every tab and window of this
+  Windows user, and the window keeps it in its settings across restarts.
+  Pairing a phone turns it on. While it is on, every tab whose project file
+  names a client has phone access, through new sessions, switches and
+  restarts; a tab with no client never does. Pairing the same phone again
+  (its old cookie, or the same name) replaces its old entry.
+- **The phone picks the session.** A paired phone uses one open tab on its own
+  Windows user and client: the one it chose under *Switch session*
+  (`GET`/`POST /api/tabs`), else the focused window's front tab. Tabs on
+  another client are never listed or reachable. Both screens show
+  *Windows user · client · session · device*. A tab that closes drops the phone
+  to the next one.
 - **A new session is a new incarnation.** Each Pi start, `/new`, session
   switch, project switch or window restart gets a fresh random id. Every write
   names the incarnation it was made against; one from an older incarnation is
-  refused, and its open questions are gone. A new incarnation also turns phone
-  access off: the grant was for the session the person allowed, so a restarted
-  or switched session needs *Allow phone* again at the desk. The one exception
-  (MC9) is a session the phone itself starts, opens, forks or clones from its
-  *Sessions* sheet: the phone asked for it, so its access carries over. A
-  session changed at the desk still turns access off.
+  refused, and its open questions are gone. The phone hears the new
+  incarnation on its stream and reloads onto it; access follows the app
+  switch.
 - **Revoking is immediate.** *Session > Phone > Paired phones* lists each
   device; *Remove* deletes it and closes its open stream at once. *Remove all
   phones* does every device. Signing out on the phone deletes its record too.
 
 ## Requests
 
-Seven routes; anything else is a 404 (`ROUTES`). Bodies are JSON, at most 96 KB,
+Twenty routes; anything else is a 404 (`ROUTES`). Bodies are JSON, at most 96 KB,
 rebuilt field by field (`validateRequest`); an unknown field is a refusal, not
 ignored.
 
@@ -120,6 +123,8 @@ ignored.
 | `GET /api/session` | none | the session sheets (MC7): model, thinking level and the levels and models Pi lists, the session's name, auto-compact, prompts, answers, tool calls, tokens, cost and context; no file paths |
 | `POST /api/session` | `submissionId`, `incarnation`, `action` and its own fields | one session control (MC7): `model` (`provider`, `modelId`, one Pi lists), `thinking` (`level`), `compact` (optional `instructions`, refused while coop works) or `name` (`name`) |
 | `POST /api/answer` | `submissionId`, `incarnation`, `questionId`, `digest`, `answer` | answers one open question |
+| `GET /api/tabs` | none | the sessions open in the coop window that this phone may use (pair once): tab number, label, folder, session name, working or asking, which one the phone is on |
+| `POST /api/tabs` | `submissionId`, `tabId` | uses that open tab from now on; the phone's stream ends and it reloads onto the tab |
 | `POST /api/logout` | none | forgets this device |
 
 - **Chat is text and Pi's own `/` commands.** A message starting with `!` is
@@ -259,7 +264,7 @@ in review without touching the rest.
 | Private connection | **Tailscale** (Aaron, 2026-10-06 02:17, "2"): `tailscale serve` publishes the loopback port as `https://<vm>.<tailnet>.ts.net` inside the tailnet only, with its own certificate; never `tailscale funnel` |
 | Device lifetime | 30 days from pairing, 7 days idle, revocable at once |
 | Pairing code | 8 characters, 5 minutes, one use, 5 tries |
-| Access | off per tab until turned on; one tab at a time |
+| Access | pair once (Aaron, 2026-10-07): one app-wide switch, on from pairing and kept across restarts; every tab on the phone's client, picked under *Switch session* |
 | Reconnect retention | 2,000 events or 15 minutes, then reload the snapshot |
 | Idempotency memory | 10 minutes per `submissionId` |
 | Chat | text, 16,000 characters, no `!`; Pi's listed `/` commands; steer or queue while busy (MC6) |
@@ -308,11 +313,11 @@ Once per VM, and once per phone. Nothing here changes the terminal coop.
    the window shows, enter the code and name the phone. Add it to the home
    screen (Safari: Share > Add to Home Screen; Chrome: menu > Add to Home
    screen / Install app).
-4. **Use.** In the window, *Session > Phone > Allow phone for this session*.
-   The phone shows the conversation, coop's status and its questions; send a
-   message, stop a turn, or answer, and the rest is in its menu. Allow it
-   again after a new session or a restart started at the desk; one the phone
-   starts keeps its access.
+4. **Use.** Pairing turns *Session > Phone > Allow phone access* on, for the
+   app and across restarts. The phone shows the conversation, coop's status
+   and its questions; send a message, stop a turn, or answer, and the rest is
+   in its menu. *Switch session* in the phone's menu moves between the tabs
+   open on its client.
 5. **Notices (optional).** In the phone's menu, *Notices > Turn notices on*.
    On an iPhone this works only from the Home Screen app (iOS 16.4 or later).
    The VM needs to reach Apple's and Google's push services over HTTPS.

@@ -93,6 +93,25 @@ function choice(label, detail, current, onclick) {
 }
 
 const SHEETS = {
+  // Pair once: every tab open in the coop window on this phone's client. The
+  // phone uses the one picked here until it closes, then the window's front tab.
+  async tabs() {
+    const { json } = await api("GET", "/api/tabs");
+    if (!json.ok) { refusal(json); return; }
+    const pick = async (tab) => {
+      closeSheet();
+      if (tab.current) return;
+      closeStream();
+      const { json: r } = await submit("/api/tabs", { tabId: tab.id });
+      if (!r.ok) { if (r.message) toast(r.message); else refusal(r); load(); return; }
+      app.pendingNote = `Switched to ${tab.sessionName || tab.label}.`;
+      load();
+    };
+    const state = (t) => (t.asking ? "waiting for you" : t.working ? "working" : "");
+    openSheet("Switch session",
+      el("p", { class: "note", text: "The sessions open in the coop window on the VM for this client. New ones appear when you open a tab there." }),
+      json.tabs.length ? el("div", { class: "choices" }, json.tabs.map((t) => choice(t.sessionName || t.label || "New session", [t.folder, state(t), t.current ? "on this phone" : ""].filter(Boolean).join(" · "), t.current, () => pick(t)))) : el("p", { class: "note", text: "No session is open for this client." }));
+  },
   async model() {
     const d = await loadDetails();
     if (!d) return toast("Could not read the session. Try again.");
@@ -293,8 +312,8 @@ const REASONS = {
   "device-expired": ["Pairing expired", "Pair this phone again from the coop window: Session > Phone > Pair a phone."],
   "wrong-user": ["Different Windows user", "This phone was paired by another Windows user on this computer. Pair it again from your own coop window: Session > Phone > Pair a phone."],
   "wrong-client": ["Different client", "This phone was paired for another client. Pair it for this client from the coop window."],
-  "access-off": ["Phone access is off", "In the coop window on the VM, choose Session > Phone > Allow phone for this session. It turns off when the session changes."],
-  "wrong-session": ["The session changed", "coop started a new session. Allow the phone again in the coop window."],
+  "access-off": ["Phone access is off", "Open coop on the VM with this client's project, and check Session > Phone > Allow phone access in the coop window."],
+  "wrong-session": ["The session changed", "coop moved to another session, and the phone followed it. Nothing was sent; send it again if you still want it."],
   "pi-not-running": ["coop is not running", "coop stopped in the window on the VM. Restart it there."],
   "rate-limited": ["Too many requests", "Wait a minute and try again."],
 };
@@ -331,7 +350,9 @@ function toast(text, level = "warning") {
 
 function refusal(json) {
   const reason = REASONS[json.code];
-  if (reason && ["not-paired", "revoked", "device-expired", "wrong-user", "wrong-client", "access-off", "wrong-session"].includes(json.code)) { showGate(json.code); return; }
+  // Pair once: the session moved on (a desk /new, another tab): follow it.
+  if (json.code === "wrong-session") { app.pendingNote = reason[1]; closeStream(); load(); return; }
+  if (reason && ["not-paired", "revoked", "device-expired", "wrong-user", "wrong-client", "access-off"].includes(json.code)) { showGate(json.code); return; }
   if (json.message && ["desktop-only", "unknown-command", "not-an-option", "too-large", "not-found", "busy"].includes(json.code)) { toast(json.message); return; }
   toast(reason ? reason[1] : json.code === "desktop-only" ? "That runs on the desktop only." : json.code === "already-answered" ? "That question was already answered." : json.code === "offline" ? "No connection to the VM. Try again." : `Not sent (${json.code}).`);
 }
