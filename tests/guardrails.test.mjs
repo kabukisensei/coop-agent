@@ -487,6 +487,25 @@ await t("Fabric / Azure REST writes from the shell ask; reads pass", async () =>
   assert.equal(blocked(await handle({ toolName: "bash", input: { command: "fab deploy -p ./pipeline.yml" } }, headless)), true);
   assert.equal(blocked(await handle({ toolName: "bash", input: { command: "fab ls ws.Workspace" } }, headless)), false);
 });
+await t("a shell Fabric write can ride a session approval per command kind; a delete asks every time (Aaron, 2026-10-07)", async () => {
+  await handleSessionStart({ reason: "new" }, ctx);
+  let asked = 0; let offered = [];
+  const ui = { notify: () => {}, confirm: async () => { asked++; return true; }, select: async (_t, options) => { asked++; offered = options; return options[1]; } };
+  const c = { ...ctx, ui };
+  const bash = (command) => ({ toolName: "bash", input: { command } });
+  assert.equal(blocked(await handle(bash("fab deploy -p ./pipeline.yml"), c)), false);
+  assert.equal(blocked(await handle(bash("fab deploy -p ./other.yml"), c)), false);
+  assert.equal(asked, 1, "the second deploy rides the session approval");
+  assert.equal(blocked(await handle(bash('az rest --method post --url "https://api.fabric.microsoft.com/v1/workspaces/w/items"'), c)), false);
+  assert.equal(asked, 2, "another command kind asks for itself");
+  offered = [];
+  assert.equal(blocked(await handle(bash('az rest --method delete --url "https://api.fabric.microsoft.com/v1/workspaces/w/items/i"'), c)), false);
+  assert.equal(blocked(await handle(bash('az rest --method delete --url "https://api.fabric.microsoft.com/v1/workspaces/w/items/j"'), c)), false);
+  assert.equal(asked, 4, "a delete asks every time");
+  assert.deepEqual(offered, [], "and never offers the session option");
+  assert.equal(cg.fabricShellSessionKey("fab rm"), null);
+  await handleSessionStart({ reason: "new" }, ctx);
+});
 await t("blocks declined git push --force", async () => {
   assert.equal(blocked(await call("git push --force origin main", { confirm: false })), true);
 });
@@ -877,10 +896,13 @@ await t("a Warehouse SQL write approval lasts for the session; DELETE still asks
 });
 await t("session approval keys: SQL writes vs destructive SQL, deletes and production (#156)", () => {
   const sql = (query) => ({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify({ query }) } });
-  for (const q of ["INSERT INTO dbo.T (a) VALUES (1)", "UPDATE dbo.T SET a = 2 WHERE id = 1", "CREATE OR ALTER VIEW dbo.V AS SELECT 1 AS a", "ALTER TABLE dbo.T ADD b int", "UPDATE dbo.T SET note = 'DELETE me' WHERE id = 1"]) {
+  // Aaron, 2026-10-07: dev writes ride the session approval, batches and MERGE included.
+  for (const q of ["INSERT INTO dbo.T (a) VALUES (1)", "UPDATE dbo.T SET a = 2 WHERE id = 1", "CREATE OR ALTER VIEW dbo.V AS SELECT 1 AS a", "ALTER TABLE dbo.T ADD b int", "UPDATE dbo.T SET note = 'DELETE me' WHERE id = 1",
+    "SELECT * INTO dbo.T2 FROM dbo.T", "MERGE dbo.T AS t USING s ON t.id = s.id WHEN MATCHED THEN UPDATE SET a = s.a;", "INSERT INTO dbo.T VALUES (1); UPDATE dbo.T SET a = 2", "CREATE TABLE dbo.X (a int)\nGO\nINSERT INTO dbo.X VALUES (1)"]) {
     assert.equal(cg.sessionApprovalKey(sql(q)), "sql:fabric-sqlendpoint", q);
   }
-  for (const q of ["DELETE FROM dbo.T", "DROP TABLE dbo.T", "TRUNCATE TABLE dbo.T", "MERGE dbo.T AS t USING s ON 1=1 WHEN MATCHED THEN DELETE;", "EXEC dbo.p", "INSERT INTO dbo.T VALUES (1); DELETE FROM dbo.T", "SELECT * INTO dbo.T2 FROM dbo.T", "GRANT SELECT ON dbo.T TO u", "SELECT TOP 5 * FROM dbo.T"]) {
+  // Deletes (DELETE, DROP, TRUNCATE, a dropped column, a MERGE that deletes), procedures and permissions ask every time.
+  for (const q of ["DELETE FROM dbo.T", "DROP TABLE dbo.T", "TRUNCATE TABLE dbo.T", "ALTER TABLE dbo.T DROP COLUMN b", "MERGE dbo.T AS t USING s ON 1=1 WHEN MATCHED THEN DELETE;", "EXEC dbo.p", "EXEC sp_rename 'dbo.T', 'T2'", "INSERT INTO dbo.T VALUES (1); DELETE FROM dbo.T", "GRANT SELECT ON dbo.T TO u", "REVOKE SELECT ON dbo.T FROM u", "SELECT TOP 5 * FROM dbo.T"]) {
     assert.equal(cg.sessionApprovalKey(sql(q)), null, q);
   }
   assert.equal(cg.sessionApprovalKey(sql("INSERT INTO dbo.T VALUES (1)"), "production"), null, "a production target always asks");
@@ -1342,8 +1364,8 @@ await t("contract sql_targets scope: a dev default target runs read-only SQL wit
   // The managed MCP proxy still resolves against the managed (production) entry and asks.
   assert.equal(blocked(await handle(sqlRead(), liveCtx)), true, "managed production Warehouse still asks");
   assert.equal(blocked(await handle(nativeRead("INSERT INTO dbo.Account (id) VALUES (1)"), liveCtx)), true, "a write on dev still asks");
-  assert.equal(blocked(await handle(nativeRead("SELECT name FROM dbo.Account"), liveCtx)), true, "an unbounded read still asks");
-  assert.equal(confirmCount, 3);
+  assert.equal(blocked(await handle(nativeRead("SELECT name FROM dbo.Account"), liveCtx)), false, "an unbounded read on dev runs too (Aaron, 2026-10-07)");
+  assert.equal(confirmCount, 2);
   removeContract();
 });
 
@@ -1589,9 +1611,6 @@ await t("dev auto-allow covers only provably read-only SQL on the trusted dev ta
     "select into": sqlRead("SELECT TOP (10) * INTO dbo.Copy FROM dbo.Customer"),
     "exec": sqlRead("EXEC dbo.Report"),
     "batch": sqlRead("SELECT TOP (1) 1; SELECT TOP (1) 2"),
-    "unbounded": sqlRead("SELECT customer_id FROM dbo.Customer"),
-    "cte": sqlRead("WITH c AS (SELECT TOP (5) id FROM dbo.Customer) SELECT * FROM c"),
-    "union": sqlRead("SELECT TOP (5) id FROM dbo.A UNION SELECT id FROM dbo.B"),
     "cross-database": sqlRead("SELECT TOP (5) id FROM Other.dbo.Customer"),
     "unclosed quote": sqlRead("SELECT TOP (5) 'x FROM dbo.Customer"),
     "unknown execution control": sqlRead(undefined, { timeout: 1 }),
@@ -1604,6 +1623,12 @@ await t("dev auto-allow covers only provably read-only SQL on the trusted dev ta
     assert.equal(blocked(await handle(event, liveCtx)), true, why);
     assert.equal(confirmCount, 1, `${why} asks`);
   }
+  // Aaron, 2026-10-07: a plain read on dev needs no permission, bounded or not.
+  confirmCount = 0;
+  for (const q of ["SELECT customer_id FROM dbo.Customer", "WITH c AS (SELECT TOP (5) id FROM dbo.Customer) SELECT * FROM c", "SELECT TOP (5) id FROM dbo.A UNION SELECT id FROM dbo.B"]) {
+    assert.equal(blocked(await handle(sqlRead(q), liveCtx)), false, `a plain read on dev runs: ${q}`);
+  }
+  assert.equal(confirmCount, 0);
   // The same read asks on test and production, and when the target or identity
   // cannot be trusted.
   for (const [why, setup] of Object.entries({

@@ -1401,6 +1401,26 @@ function reusableSqlSurface(event: any): boolean {
 }
 
 /** Admit one plain, literal-TOP SELECT, including bracket-delimited identifiers. */
+/** Aaron, 2026-10-07: a read on dev needs no permission, bounded or not. On a dev
+ *  target, a call the classifier finds is a plain read (no mutation, nothing
+ *  ambiguous) resolves with no row bound; test and production keep the literal
+ *  TOP rule. Identity checks (client, tenant, target) still apply. */
+function devReadLimit(event: any, environment: string): number | null {
+  return environment === "dev" && plainDevRead(callSqlText(event)) ? Number.MAX_SAFE_INTEGER : null;
+}
+
+/** One read statement on this database: CTEs, unions, joins and subqueries are
+ *  fine; another database (three-part names), procedures, session settings,
+ *  transactions and anything the classifier cannot call a read still ask. */
+export function plainDevRead(sql: string): boolean {
+  if (classifySqlOperation(sql) !== "read" || /"/.test(sql)) return false;
+  const masked = sqlWithoutComments(sql, true).trim().replace(/;\s*$/, "");
+  if (!masked || masked.includes("]") || masked.includes(";")) return false;
+  if (!/^(?:SELECT|WITH)\b/i.test(masked)) return false;
+  if (/\b(EXEC(?:UTE)?|OPENROWSET|OPENQUERY|OPENDATASOURCE|BACKUP|RESTORE|DBCC|WAITFOR|USE|SET|DECLARE|BEGIN|COMMIT|ROLLBACK|SAVE|TRANSACTION|PRINT|RAISERROR|THROW|KILL|SHUTDOWN|BULK|OPTION|INTO)\b/i.test(masked)) return false;
+  return !/\b[A-Za-z_][\w$#]*\s*\.\s*(?:[A-Za-z_][\w$#]*\s*)?\.\s*[A-Za-z_][\w$#]*\b/i.test(masked);
+}
+
 export function boundedSelectLimit(sql: string): number | null {
   // Double-quote semantics depend on session settings; keep that syntax per-call.
   if (classifySqlOperation(sql) !== "read" || /"/.test(sql)) return null;
@@ -1495,7 +1515,7 @@ export function resolveLiveReadScope(event: any, deps: LiveReadResolverDeps): Li
   if (!exactEntry || entry.url !== expectedUrl || entry.auth !== false || entry.lifecycle !== "lazy"
       || entry.requestTimeoutMs !== PINNED_MCP_REQUEST_TIMEOUT_MS || !exactHeaderCommand
   ) return null;
-  let resultLimit = boundedSelectLimit(callSqlText(event));
+  let resultLimit = boundedSelectLimit(callSqlText(event)) || devReadLimit(event, environment || "");
   if (!resultLimit) return null;
   if (event?.toolName === FABRIC_SQL_FALLBACK_TOOL && Number.isInteger(event?.input?.maximum_rows)) {
     resultLimit = Math.min(resultLimit, event.input.maximum_rows);
@@ -1525,7 +1545,7 @@ function contractLiveReadScope(event: any, contract: ContractSqlScope, deps: Liv
   if (contract.tenant && (!UUID.test(contract.tenant) || contract.tenant !== identity.tenant)) return null;
   const database = strictResolvedText(target.database);
   if (!database) return null;
-  let resultLimit = boundedSelectLimit(callSqlText(event));
+  let resultLimit = boundedSelectLimit(callSqlText(event)) || devReadLimit(event, target.environment);
   if (!resultLimit) return null;
   if (Number.isInteger(event?.input?.maximum_rows)) resultLimit = Math.min(resultLimit, event.input.maximum_rows);
   const discovered = SQL_TARGET_KINDS[target.kind]?.discovered;
@@ -1673,7 +1693,7 @@ export function decideLiveRead(event: any, grant: LiveReadGrant | null, resolved
 // multi-step change asks once. Deletes and drops, anything that names production,
 // and destructive or multi-statement Warehouse SQL still ask on every call.
 const DESTRUCTIVE_VERB = /(^|[_\-.:/])(delete|remove|drop|truncate|purge|destroy|revoke)([_\-.:/A-Z]|$)/i;
-const SQL_DESTRUCTIVE = /\b(DELETE|DROP|TRUNCATE|MERGE|EXEC|EXECUTE|GRANT|REVOKE|DENY|RENAME)\b/i;
+const SQL_SESSION_NEVER = /\b(DELETE|DROP|TRUNCATE|EXEC|EXECUTE|GRANT|REVOKE|DENY|sp_rename)\b/i;
 
 /** A single dev/test SQL write a session approval may cover: one INSERT, UPDATE,
  * CREATE or ALTER statement, with no delete, drop, truncate, merge, execute or
@@ -1681,9 +1701,12 @@ const SQL_DESTRUCTIVE = /\b(DELETE|DROP|TRUNCATE|MERGE|EXEC|EXECUTE|GRANT|REVOKE
 export function sqlWriteIsSessionApprovable(sql: string): boolean {
   if (classifySqlOperation(sql) !== "mutation") return false;
   const masked = sqlWithoutComments(sql).trim().replace(/;\s*$/, "");
-  if (!masked || masked.includes(";") || /^\s*GO\s*$/im.test(masked)) return false;
-  if (SQL_DESTRUCTIVE.test(masked) || SQL_MUTATING_INTO.test(masked)) return false;
-  return /^\s*(?:INSERT|UPDATE|CREATE|ALTER)\b/i.test(masked);
+  if (!masked) return false;
+  // Aaron, 2026-10-07: dev writes may ride the session approval, batches and
+  // MERGE included; anything that deletes (DELETE, DROP, TRUNCATE, an ALTER that
+  // drops a column), runs a procedure (EXEC: it may delete inside) or changes
+  // permissions still asks every time.
+  return !SQL_SESSION_NEVER.test(masked);
 }
 
 /** The server a session approval covers for this edit, or null when the call must
@@ -1724,7 +1747,7 @@ function mutationCallText(event: any, target: MutationTarget): string {
 
 /** Human label for an approval key: the server name without its kind prefix. */
 export function sessionApprovalLabel(key: string): string {
-  return key.replace(/^(?:mcp|sql):/, "");
+  return key.replace(/^(?:mcp|sql|shell):/, "");
 }
 
 export type EditApprovalChoice = "once" | "session" | "declined";
@@ -1868,6 +1891,13 @@ function optionValue(toks: string[], names: string[]): string | null {
  *  (`npx rayfin up`, Fabric Apps) deploys the same way. Reads (`--method get`,
  *  `fab api <path>`, `fab ls`, `rayfin up --dry-run`) pass. Segment-scoped and quote-aware:
  *  `echo "az rest --method post"` is one quoted token, not a command. */
+/** The session-approval key for a shell Fabric write of this kind, or null when
+ *  it must ask every time (a delete, remove or unassign). */
+export function fabricShellSessionKey(label: string | null): string | null {
+  if (!label || /\b(delete|rm|remove|unassign|drop|destroy|purge)\b/i.test(label)) return null;
+  return `shell:${label.toLowerCase()}`;
+}
+
 export function fabricWriteLabel(cmd: string): string | null {
   for (const { segment } of splitShellSegments(cmd)) {
     const toks = tokenizeArgs(segment.trim()).map((t) => t.replace(/^['"]|['"]$/g, ""));
@@ -2486,13 +2516,25 @@ export default function coopGuardrails(pi: ExtensionAPI) {
             audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "blocked-headless", label: fabricWrite, detail: fabricWrite });
             return { block: true, reason: `coop guardrails: blocked ${fabricWrite}; approval is unavailable in headless mode.` };
           }
-          const ok = await ctx.ui.confirm(
-            "coop guardrails",
-            `Fabric / Azure write from the shell (${fabricWrite}):\n  ${cmd.slice(0, 200)}\n` +
-              (rayfin ? rayfinTargetNote(cmd, governance.devWorkspaceId) : "") +
-              `coop treats Fabric item create/update/deploy/delete as approval-gated, like a mutating MCP call. Run it?`,
-          );
-          audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: ok ? "allowed" : "declined", label: fabricWrite, detail: fabricWrite });
+          // Aaron, 2026-10-07: a write may ride a session approval (per command kind,
+          // e.g. `fab deploy`); a delete asks every time.
+          const shellKey = fabricShellSessionKey(fabricWrite);
+          let ok = true;
+          if (shellKey && editApprovals.has(shellKey)) {
+            audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "allowed", label: fabricWrite, detail: "session-approval" });
+          } else {
+            const choice = await askEditApproval(
+              ctx,
+              "coop guardrails",
+              `Fabric / Azure write from the shell (${fabricWrite}):\n  ${cmd.slice(0, 200)}\n` +
+                (rayfin ? rayfinTargetNote(cmd, governance.devWorkspaceId) : "") +
+                `coop treats Fabric item create/update/deploy/delete as approval-gated, like a mutating MCP call. Run it?`,
+              shellKey,
+            );
+            ok = choice !== "declined";
+            if (choice === "session" && shellKey) editApprovals.add(shellKey);
+            audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: ok ? "allowed" : "declined", label: fabricWrite, detail: choice === "session" ? "session-approval-granted" : fabricWrite });
+          }
           if (!ok) {
             return { block: true, reason: `coop guardrails: blocked the ${fabricWrite} command (you declined). Fabric writes need explicit approval; read with \`--method get\` or make the change in the Fabric UX.` };
           }

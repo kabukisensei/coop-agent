@@ -20,6 +20,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `sql_targets` entry with its ids, so a wizard-made contract stays dev. A
   Fabric, Modeling or shell write naming a workspace, server or id the project
   file labels prod counts as production even without the word "prod".
+- **Dev reads and writes ask less** (Aaron, 2026-10-07). A plain read on a
+  confirmed dev target (one `SELECT` or `WITH` statement, bounded or not) runs
+  without asking. Any dev or test Warehouse write can be allowed for the
+  session, batches and `MERGE` included; deletes (`DELETE`, `DROP`, `TRUNCATE`,
+  a dropped column), procedures and permission changes still ask every time.
+  Fabric writes from the shell (`fab deploy`, `az rest POST`) get the same
+  allow-for-session option per command kind; a delete asks every time.
 - **Pair the phone once** (Aaron, 2026-10-07). Phone access is now one switch
   for the whole coop window app, **Session > Phone > Allow phone access**.
   Pairing a phone turns it on and the window remembers it across restarts, so
