@@ -20,10 +20,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `sql_targets` entry with its ids, so a wizard-made contract stays dev. A
   Fabric, Modeling or shell write naming a workspace, server or id the project
   file labels prod counts as production even without the word "prod".
-- **Dev reads and writes ask less** (Aaron, 2026-10-07). A plain read on a
-  confirmed dev target (one `SELECT` or `WITH` statement, bounded or not) runs
-  without asking. Any dev or test Warehouse write can be allowed for the
-  session, batches and `MERGE` included; deletes (`DELETE`, `DROP`, `TRUNCATE`,
+- **Reads never ask, production included** (Aaron, 2026-10-07: people compare
+  prod with dev; only changes to production need a person's go-ahead). A plain
+  SQL read (one `SELECT` or `WITH` statement, bounded or not) runs without asking
+  on dev, test, production and unlabelled targets, as do catalog and impact
+  lookups, Power BI DAX queries, Fabric read commands and metadata that names
+  production. `fabric_sql_query` takes an optional `environment` (`dev`, `test`
+  or `prod`) to read another `sql_targets` entry; it only ever runs one bounded
+  `SELECT`. Reads coop cannot classify still ask, and the per-session read grant
+  (`/coop-live-read`) is no longer needed.
+- **Dev writes ask less** (Aaron, 2026-10-07). Any dev or test Warehouse write
+  can be allowed for the session, batches and `MERGE` included; deletes (`DELETE`, `DROP`, `TRUNCATE`,
   a dropped column), procedures and permission changes still ask every time.
   Fabric writes from the shell (`fab deploy`, `az rest POST`) get the same
   allow-for-session option per command kind; a delete asks every time.

@@ -419,18 +419,15 @@ servers. Generated config stores no OAuth token. The Azure DevOps MCP organizati
 in `~/.coop/config`; batch digest client/project/team/recipient records live separately in
 private `~/.coop/devops/clients.yml`.
 
-**Approval boundary.** Dev/test metadata reads proceed by default. Row reads, production
-reads, mutation-looking MCP actions, and **every Warehouse SQL call** require explicit
-approval; approval-required calls fail closed when no UI is available. A production write
+**Approval boundary.** Reads proceed on every environment, production included, so you can
+compare prod with dev. Mutation-looking MCP actions, Warehouse SQL writes, and reads coop
+cannot classify require explicit approval; approval-required calls fail closed when no UI is available. A production write
 runs only with a person's separate go-ahead, and then asks you a yes/no at the desk for each
 write; never session-wide (`docs/guardrails-reference.md`, Production writes). Warehouse SQL is
-classified as `row-data` or `ddl-dml-destructive`: one bounded `SELECT` on the resolved
-**dev** target runs without a prompt, bounded reads on test/production targets still ask,
-and DDL/DML, permissions, `SELECT … INTO`, and `COPY INTO` receive mutation-specific
-confirmation. Audit entries record the tool/risk decision, never raw SQL or arguments.
-Central `mcp` and dynamic `mcp__fabric_sqlendpoint` calls share the same verified
-bounded SQL grant: approve once, then approve again only for an expanded scope.
-Mutations and calls outside the verified grant remain separately gated.
+classified as `row-data` or `ddl-dml-destructive`: a plain read on a resolved target runs
+without a prompt on any environment, and DDL/DML, permissions, `SELECT … INTO`, and
+`COPY INTO` receive mutation-specific confirmation. Audit entries record the tool/risk
+decision, never raw SQL or arguments.
 
 **Warehouse targeting and auth.** Set machine enablement with
 `integrations.fabric_sql_endpoint`; an absent canonical flag inherits the legacy Fabric
@@ -516,7 +513,7 @@ launch.
 4. **Never commit source** — never commit SQL, DAX, semantic model, report,
    Python, or notebook source. Make the edit, show the diff, let a human commit.
    Only docs / logs / diagrams / glossary / site may be committed, after approval.
-5. Dev/test metadata/schema/code is read-only by default; actual rows and all production access ask first.
+5. Reads need no approval on any environment, production included; only changes ask.
 6. Production changes only with your go-ahead: each production write then asks you at the desk and is audited.
 7. Managed integrations are read-only first; mutation and Warehouse SQL calls are approval-gated.
 8. Never expose secrets.

@@ -257,7 +257,7 @@ export function resetSessionGovernance(): void {
 // lib/sql_query.py will connect to. Anything the port cannot vouch for resolves to
 // null, which means "ask on every call" (never a grant).
 export type ContractSqlTarget = {
-  environment: "dev" | "test";
+  environment: "dev" | "test" | "production";
   kind: string;
   database: string;
   server: string;
@@ -267,7 +267,11 @@ export type ContractSqlTarget = {
 };
 /** `configured` mirrors lib/sql_query.py: once the section exists, the executor
  *  uses it (or fails closed) and never falls back to the managed Fabric target. */
-export type ContractSqlScope = { configured: boolean; client: string; tenant: string; target: ContractSqlTarget | null };
+export type ContractSqlScope = {
+  configured: boolean; client: string; tenant: string; target: ContractSqlTarget | null;
+  /** Every ready entry by the contract's name (dev, test, prod): a read may name one. */
+  entries?: Record<string, ContractSqlTarget>;
+};
 
 const SQL_HOST_LABEL = "[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?";
 const SQL_TARGET_KINDS: Record<string, { host: RegExp; discovered: boolean }> = {
@@ -374,7 +378,7 @@ function sqlPlaceholder(value: string): boolean { return !value || value.toUpper
 /** One `sql_targets` entry, or null unless it is exactly ready (lib/sql_targets.py's
  *  "ready" state): placeholders, unknown or credential keys, a host that does not
  *  match its kind, ids for a direct kind, a hand-written host for a discovered kind. */
-function readySqlTarget(environment: "dev" | "test", raw: unknown): ContractSqlTarget | null {
+function readySqlTarget(environment: ContractSqlTarget["environment"], raw: unknown): ContractSqlTarget | null {
   if (!raw || typeof raw !== "object") return null;
   const entry = raw as Record<string, string>;
   if (Object.keys(entry).some((key) => !SQL_TARGET_KEYS.has(key))) return null;
@@ -414,10 +418,15 @@ export function parseContractSqlScope(text: string): ContractSqlScope | null {
   const tenant = typeof fabric.tenant_id === "string" ? fabric.tenant_id.trim().toLowerCase() : "";
   const envs = ["dev", "test", "prod"];
   if (Object.keys(section).some((key) => key !== "default_environment" && !envs.includes(key))) return { configured: true, client, tenant, target: null };
+  const entries: Record<string, ContractSqlTarget> = {};
+  for (const env of envs) {
+    const ready = readySqlTarget(env === "prod" ? "production" : env as "dev" | "test", section[env]);
+    if (ready) entries[env] = ready;
+  }
   const rawDefault = typeof section.default_environment === "string" ? section.default_environment.trim().toLowerCase() : "";
   const environment = rawDefault === "" ? "dev" : rawDefault;
-  if (environment !== "dev" && environment !== "test") return { configured: true, client, tenant, target: null };
-  return { configured: true, client, tenant, target: readySqlTarget(environment, section[environment]) };
+  if (environment !== "dev" && environment !== "test") return { configured: true, client, tenant, target: null, entries };
+  return { configured: true, client, tenant, target: readySqlTarget(environment, section[environment]), entries };
 }
 
 function ensureSessionGovernance(sessionCwd: string): SessionGovernance {
@@ -1249,15 +1258,18 @@ export function modelingConnectsProduction(event: any): boolean {
 
 export type LiveReadRisk = {
   label: string;
-  kind: "row-data" | "production-metadata";
+  kind: "row-data";
   environment: "production" | "dev/test/unspecified";
 };
 
 /** Classify approval-required live reads without retaining or logging arguments.
- * Dev/test/unspecified metadata calls (list/get/describe/schema/inspect) return null.
- * Query/execute/sample/export-style calls can return actual rows and always ask.
- * Any read whose tool identity or arguments explicitly name prod/production asks,
- * even when it appears metadata-only. Mutations are handled by mcpMutationLabel. */
+ * Aaron, 2026-10-07: reading needs no permission on any environment, production
+ * included (people compare prod with dev); only changes to production need a
+ * person's go-ahead. So metadata calls (list/get/describe/schema/inspect) and the
+ * row reads coop can classify (a Power BI DAX query, a Fabric router read command)
+ * return null. A query/execute/sample-style call coop cannot classify may change
+ * data, so it still asks; export and download keep their own gate. Mutations are
+ * handled by mcpMutationLabel. */
 export function mcpLiveReadRisk(event: any): LiveReadRisk | null {
   const target = effectiveMutationTarget(event);
   if (mcpEditLabel(event)) return null;
@@ -1269,10 +1281,12 @@ export function mcpLiveReadRisk(event: any): LiveReadRisk | null {
   try { inputText = JSON.stringify(normalizeMcpCall(event).args || {}); } catch { inputText = ""; }
   const production = PRODUCTION_WORD.test(`${name} ${target.server || ""} ${inputText}`);
   const rows = ROW_READ_VERB.test(name);
-  if (!production && !rows) return null;
+  if (!rows) return null;
+  const classifiedRead = modelingCall(event)?.kind === "read" || fabricRouterCall(event)?.kind === "read";
+  if (classifiedRead && !/export|download/i.test(name)) return null;
   return {
     label: fixedLiveReadLabel(event),
-    kind: rows ? "row-data" : "production-metadata",
+    kind: "row-data",
     environment: production ? "production" : "dev/test/unspecified",
   };
 }
@@ -1396,17 +1410,17 @@ function reusableSqlSurface(event: any): boolean {
   if (target.outerTool !== FABRIC_SQL_FALLBACK_TOOL || target.innerTool) return false;
   const input = event?.input;
   if (!input || typeof input !== "object" || Array.isArray(input)) return false;
-  return Object.keys(input).every((key) => key === "query" || key === "maximum_rows")
+  if (input.environment !== undefined && !["dev", "test", "prod"].includes(input.environment)) return false;
+  return Object.keys(input).every((key) => key === "query" || key === "maximum_rows" || key === "environment")
     && (input.maximum_rows === undefined || (Number.isInteger(input.maximum_rows) && input.maximum_rows >= 1 && input.maximum_rows <= 1000));
 }
 
-/** Admit one plain, literal-TOP SELECT, including bracket-delimited identifiers. */
-/** Aaron, 2026-10-07: a read on dev needs no permission, bounded or not. On a dev
- *  target, a call the classifier finds is a plain read (no mutation, nothing
- *  ambiguous) resolves with no row bound; test and production keep the literal
- *  TOP rule. Identity checks (client, tenant, target) still apply. */
-function devReadLimit(event: any, environment: string): number | null {
-  return environment === "dev" && plainDevRead(callSqlText(event)) ? Number.MAX_SAFE_INTEGER : null;
+/** Aaron, 2026-10-07: a read needs no permission, bounded or not, on dev and on
+ *  production alike (people compare the two). A call the classifier finds is a
+ *  plain read (no mutation, nothing ambiguous) resolves with no row bound.
+ *  Identity checks (client, tenant, target) still apply. */
+function plainReadLimit(event: any): number | null {
+  return plainDevRead(callSqlText(event)) ? Number.MAX_SAFE_INTEGER : null;
 }
 
 /** One read statement on this database: CTEs, unions, joins and subqueries are
@@ -1477,6 +1491,8 @@ export function resolveLiveReadScope(event: any, deps: LiveReadResolverDeps): Li
     // comes from the trusted snapshot, never from the managed Fabric entry.
     const contract = deps.contract?.() ?? null;
     if (contract?.configured) return contractLiveReadScope(event, contract, deps);
+    // Without sql_targets there is one target, so naming an entry cannot resolve.
+    if (event?.input?.environment !== undefined) return null;
   }
   let mcp: any;
   try { mcp = JSON.parse(deps.readText(managedMcpConfigPath(deps.agentDir))); } catch { return null; }
@@ -1489,7 +1505,10 @@ export function resolveLiveReadScope(event: any, deps: LiveReadResolverDeps): Li
   const target = entry?._coop_target;
   const client = strictResolvedText(target?.client);
   const tenant = strictResolvedText(target?.tenant_id)?.toLowerCase();
-  const environment = strictResolvedText(target?.environment)?.toLowerCase();
+  // An endpoint the project file does not label is treated as production; its
+  // reads run like any other read.
+  const labelled = typeof target?.environment === "string" ? target.environment.trim() : "";
+  const environment = labelled ? strictResolvedText(labelled)?.toLowerCase() : "production";
   const itemName = strictResolvedText(target?.item_name);
   const workspaceId = typeof target?.workspace_id === "string" ? target.workspace_id.toLowerCase() : "";
   const itemId = typeof target?.item_id === "string" ? target.item_id.toLowerCase() : "";
@@ -1515,7 +1534,7 @@ export function resolveLiveReadScope(event: any, deps: LiveReadResolverDeps): Li
   if (!exactEntry || entry.url !== expectedUrl || entry.auth !== false || entry.lifecycle !== "lazy"
       || entry.requestTimeoutMs !== PINNED_MCP_REQUEST_TIMEOUT_MS || !exactHeaderCommand
   ) return null;
-  let resultLimit = boundedSelectLimit(callSqlText(event)) || devReadLimit(event, environment || "");
+  let resultLimit = boundedSelectLimit(callSqlText(event)) || plainReadLimit(event);
   if (!resultLimit) return null;
   if (event?.toolName === FABRIC_SQL_FALLBACK_TOOL && Number.isInteger(event?.input?.maximum_rows)) {
     resultLimit = Math.min(resultLimit, event.input.maximum_rows);
@@ -1538,14 +1557,16 @@ export function resolveLiveReadScope(event: any, deps: LiveReadResolverDeps): Li
  *  `kind/host/database` for direct kinds and `workspace/item/database` for
  *  discovered ones, so a Warehouse named both ways shares one grant. */
 function contractLiveReadScope(event: any, contract: ContractSqlScope, deps: LiveReadResolverDeps): LiveReadScope | null {
-  const target = contract.target;
+  const requested = event?.input?.environment;
+  const target = requested === undefined ? contract.target
+    : typeof requested === "string" ? contract.entries?.[requested] ?? null : null;
   const client = strictResolvedText(contract.client);
   const identity = launchIdentity(deps.token());
   if (!target || !client || !identity) return null;
   if (contract.tenant && (!UUID.test(contract.tenant) || contract.tenant !== identity.tenant)) return null;
   const database = strictResolvedText(target.database);
   if (!database) return null;
-  let resultLimit = boundedSelectLimit(callSqlText(event)) || devReadLimit(event, target.environment);
+  let resultLimit = boundedSelectLimit(callSqlText(event)) || plainReadLimit(event);
   if (!resultLimit) return null;
   if (Number.isInteger(event?.input?.maximum_rows)) resultLimit = Math.min(resultLimit, event.input.maximum_rows);
   const discovered = SQL_TARGET_KINDS[target.kind]?.discovered;
@@ -1600,17 +1621,17 @@ export function decideCatalogSnapshot(event: any, deps: LiveReadResolverDeps): S
   return decideLiveMetadataRead(deps);
 }
 
-/** The target rule both live metadata tools share: a resolved dev or test target
- *  runs without a prompt, anything else asks. */
+/** The target rule both live metadata tools share: catalog metadata is a read,
+ *  and reads need no permission on any environment (Aaron, 2026-10-07). Every
+ *  call is audited with the environment it resolved. */
 function decideLiveMetadataRead(deps: LiveReadResolverDeps): SqlImpactDecision {
   const contract = deps.contract?.() ?? null;
   if (contract?.configured) {
     if (contract.target) return { action: "allow", environment: contract.target.environment, reason: "contract sql_targets default" };
-    return { action: "prompt", environment: "unresolved", reason: "the contract's sql_targets default is not a ready dev or test entry" };
+    return { action: "allow", environment: "unresolved", reason: "the contract's sql_targets default is not a ready dev or test entry" };
   }
   const environment = managedSqlEnvironment(deps);
-  if (environment === "dev" || environment === "test") return { action: "allow", environment, reason: "managed Fabric target" };
-  return { action: "prompt", environment: environment || "unresolved", reason: environment === "production" ? "production target" : "no dev or test target resolved" };
+  return { action: "allow", environment: environment || "unresolved", reason: "managed Fabric target" };
 }
 
 /** The environment a SQL write would land in, from coop's trusted sources only
@@ -1621,7 +1642,11 @@ function decideLiveMetadataRead(deps: LiveReadResolverDeps): SqlImpactDecision {
 export function trustedWriteEnvironment(event: any, deps: LiveReadResolverDeps, contract: ContractSqlScope | null): string {
   const target = effectiveMutationTarget(event);
   const name = target.innerTool || target.outerTool;
-  if (name === FABRIC_SQL_FALLBACK_TOOL && contract?.configured) return contract.target ? contract.target.environment : "unresolved";
+  if (name === FABRIC_SQL_FALLBACK_TOOL && contract?.configured) {
+    const requested = event?.input?.environment;
+    if (requested !== undefined) return requested === "dev" || requested === "test" ? requested : "production";
+    return contract.target ? contract.target.environment : "unresolved";
+  }
   return managedSqlEnvironment(deps);
 }
 
@@ -1660,7 +1685,7 @@ export function liveReadGrantMatches(grant: LiveReadGrant | null, requested: Liv
 }
 
 export type LiveReadDecision = {
-  action: "none" | "allow-grant" | "allow-dev" | "prompt-once" | "prompt-and-grant" | "separate-gate";
+  action: "none" | "allow-grant" | "allow-read" | "prompt-once" | "prompt-and-grant" | "separate-gate";
   label?: string;
   kind?: SqlMcpRisk["kind"] | LiveReadRisk["kind"];
   environment?: string;
@@ -1679,13 +1704,10 @@ export function decideLiveRead(event: any, grant: LiveReadGrant | null, resolved
   if (sql && sql.kind !== "row-data") return { action: "separate-gate", label, kind, environment };
   if (/export|download/.test(targetName)) return { action: "separate-gate", label, kind, environment };
   if (!resolvedScope || resolvedScope.operationClass !== "sql-read") return { action: "prompt-once", label, kind, environment };
-  // A provably read-only call (one plain SELECT with a literal TOP, the only shape
-  // that resolves a scope) against a target the trusted config says is dev needs
-  // no approval. Test and production, unbounded or ambiguous SQL, and every
-  // mutation keep their gates.
-  if (resolvedScope.environment === "dev") return { action: "allow-dev", label, kind, environment, scope: resolvedScope };
-  if (liveReadGrantMatches(grant, resolvedScope)) return { action: "allow-grant", label, kind, environment, scope: resolvedScope };
-  return { action: "prompt-and-grant", label, kind, environment, scope: resolvedScope };
+  // A provably read-only call (a plain read, the only shape that resolves a scope)
+  // needs no approval on any environment, production included (Aaron,
+  // 2026-10-07). Ambiguous SQL and every mutation keep their gates.
+  return { action: "allow-read", label, kind, environment, scope: resolvedScope };
 }
 
 // --- Session edit approvals (#156) ---------------------------------------------
@@ -2331,8 +2353,8 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         }
         const resolvedScope = resolveLiveReadScope(event, { ...liveReadDeps, contract: () => ensureSessionGovernance(ctx.cwd).sqlContract });
         const decision = decideLiveRead(event, liveReadGrant, resolvedScope);
-        if (decision.action === "allow-dev") {
-          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: "allowed", label: "live read", detail: "dev-read-only" });
+        if (decision.action === "allow-read") {
+          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: "allowed", label: "live read", detail: `${decision.scope?.environment || "unresolved"}-read-only` });
           return;
         }
         if (decision.action !== "none" && decision.action !== "allow-grant") {
@@ -2398,10 +2420,8 @@ export default function coopGuardrails(pi: ExtensionAPI) {
               ? `Warehouse SQL write (one INSERT, UPDATE, CREATE or ALTER):\n  ${decision.label}\nDeletes, drops, merges, EXEC, batches and production always ask. Run it?`
               : `${production ? "PRODUCTION " : ""}Warehouse SQL mutation/DDL call:\n  ${decision.label}\nDDL, DML, destructive SQL, EXEC, and batches require separate explicit approval. Run it?`
             : decision.kind === "ambiguous-sql"
-              ? `Ambiguous Warehouse SQL call:\n  ${decision.label}\nOnly one plain SELECT with a literal TOP bound can use a session grant. Run this call once?`
-              : decision.kind === "production-metadata"
-                ? `Production metadata/code read:\n  ${decision.label}\nDev/test metadata is read-only by default; production always asks.${sessionGrant ? " Approve this exact bounded scope for this session?" : " Read it once?"}`
-                : `${production ? "PRODUCTION " : ""}row-level data read:\n  ${decision.label}\n${scopeSummary ? `${scopeSummary}\n` : ""}${sessionGrant ? "Approve this exact bounded scope for this session?" : "Read these rows once?"}`;
+              ? `Ambiguous Warehouse SQL call:\n  ${decision.label}\nOnly one plain read statement runs without asking. Run this call once?`
+              : `${production ? "PRODUCTION " : ""}row-level data read:\n  ${decision.label}\n${scopeSummary ? `${scopeSummary}\n` : ""}${sessionGrant ? "Approve this exact bounded scope for this session?" : "Read these rows once?"}`;
           const choice = await askEditApproval(ctx, "coop live-data guardrail", prompt, sqlEditKey);
           const ok = choice !== "declined";
           if (choice === "session" && sqlEditKey) editApprovals.add(sqlEditKey);
@@ -2649,7 +2669,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         "  • never commit source — blocks `git commit` (incl. -a/-am, `git -C`, `git commit <path>`, and `cd <dir> && git commit`) of anything outside docs/logs/site",
         "  • destructive commands — confirms rm -rf / git push --force (incl. +refspec) / reset --hard / git clean -f / DROP·TRUNCATE",
         "  • secret files — confirms read/edit/write AND bash access (cat .env etc.) of .env / keys / credentials",
-        `  • live data — allows dev/test metadata and one plain bounded SELECT on the dev target; elsewhere bounded matching reads may reuse one session grant (${liveReadGrant ? "active" : "none"}; /coop-live-read status|revoke)`,
+        "  • live data — metadata and plain SQL reads run on every target, production included; reads coop cannot classify ask once",
         "  • mutating MCP actions — confirms create/update/delete/deploy/publish-looking Fabric/Power BI/MCP tool calls (best-effort)",
         `  • production writes — SQL on a production target, model edits after a production connection, Fabric writes naming prod: blocked and audited; never session-wide${activeProdUnlock(ctx) ? " (unlock active)" : ""}`,
         "  • Power BI Desktop reloads — reads `powerbi-desktop status` before `powerbi-desktop reload` / `powerbi-report-author preview`; asks on unsaved changes, blocks when the instance can't be verified",

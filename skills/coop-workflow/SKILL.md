@@ -176,9 +176,8 @@ tests:
 ```
 
 Live-data tests target a dev or test workspace by default. Never run them against production
-unless the user explicitly says so. Metadata/schema/code inspection in dev/test is
-read-only by default; actual row reads ask first. Any production read asks first, and
-a production row request must state the target, columns, filters, and small limit. If `require_approval` is true (the default), ask
+unless the user explicitly says so. Reads, production included, need no approval (compare
+prod with dev freely); keep production row reads narrow: target, columns, filters, small limit. If `require_approval` is true (the default), ask
 before running the command unless the user already approved that specific validation
 or an explicitly named Dev/test validation pattern as part of the current slice.
 
