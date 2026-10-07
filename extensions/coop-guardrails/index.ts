@@ -801,14 +801,12 @@ const PRODUCTION_WORD = /(^|[^a-z0-9])(prod|production)([^a-z0-9]|$)/i;
 
 // --- Production writes need a human's explicit permit (master plan G1) -----------
 // G1 shipped a production WRITE as a hard block. Aaron, 2026-10-07: production
-// writes may run when he explicitly permits them. So a production write never
-// runs on the model's say-so: each one waits for a person at the desk (the phone
-// never answers a PRODUCTION card) and is audited, allowed or refused. Two forms:
-//   * a human unlock (`coop unlock-prod <client> --minutes <n>` in the person's own
-//     terminal, `<profile dir>/prod-unlock.json`) for this session's client: a
-//     plain yes/no per write, the audit naming the grant;
-//   * without one, the person types the client name (or PRODUCTION when the
-//     contract names none) to run that one write; anything else declines.
+// writes may run when he explicitly permits them, through the human unlock he
+// designed for it. So a production write never runs on the model's say-so: it is
+// blocked unless a human unlock (`coop unlock-prod <client> --minutes <n>` in the
+// person's own terminal, `<profile dir>/prod-unlock.json`) covers this session's
+// client, and then each write is a yes/no at the desk (the phone never answers a
+// PRODUCTION card). Every attempt is audited, allowed or refused, naming the grant.
 // Never a session-wide approval, never headless. The model can neither run
 // `coop unlock-prod` nor write the unlock file. Production READS keep the
 // explicit-scope-plus-approval rule.
@@ -853,20 +851,17 @@ function readProdUnlock(): ProdUnlock | null {
 }
 
 const prodUnlockMinutesLeft = (unlock: ProdUnlock, now = Date.now()) => Math.max(1, Math.ceil((unlock.expiresAt - now) / 60_000));
-const PROD_WRITE_HEADLESS = "coop guardrails: blocked a production write. Production changes run only when a person permits each one at the desk, and this session cannot ask. Work on the dev target instead.";
-const PROD_WRITE_DECLINED = "coop guardrails: blocked the production write (not permitted). Coop changes production only when you permit that write yourself; work on the dev target, or ask again and permit it when coop asks.";
+const PROD_WRITE_HEADLESS = "coop guardrails: blocked a production write. Production changes run only when a person confirms each one at the desk under their unlock, and this session cannot ask. Work on the dev target instead.";
+const PROD_WRITE_LOCKED = "coop guardrails: blocked a production write. Production changes run only while a person has unlocked production with `coop unlock-prod <client>` in their own terminal, and then each write still asks at the desk. Work on the dev target, or ask the person to unlock production.";
+const PROD_WRITE_DECLINED = "coop guardrails: blocked the production write (not permitted). Coop changes production only when you confirm that write yourself; work on the dev target, or ask again and confirm it when coop asks.";
 
-/** The word a person types to permit one production write without an unlock. */
-export function productionPermitWord(client: string): string {
-  return (client || "").trim() || "PRODUCTION";
-}
-
-export type ProductionVerdict = { decision: "allowed" | "declined" | "blocked-headless"; detail: string; reason: string };
+export type ProductionVerdict = { decision: "allowed" | "declined" | "blocked-headless" | "blocked"; detail: string; reason: string };
 
 /** Ask a person to permit one production write (G1). Desk-only: every message
- *  says PRODUCTION, which the phone companion never answers. With an unlock that
- *  covers this session, a yes/no; without one, the client name typed back. */
-export async function askProductionWrite(ctx: any, what: string, unlock: ProdUnlock | null, client: string, now = Date.now()): Promise<ProductionVerdict> {
+ *  says PRODUCTION, which the phone companion never answers. Only under a human
+ *  unlock that covers this session, and then a yes/no for each write; without
+ *  one it is blocked with no prompt. */
+export async function askProductionWrite(ctx: any, what: string, unlock: ProdUnlock | null, now = Date.now()): Promise<ProductionVerdict> {
   const shown = what.length > 300 ? `${what.slice(0, 300)}…` : what;
   if (unlock) {
     if (!ctx?.hasUI || typeof ctx.ui?.confirm !== "function") return { decision: "blocked-headless", detail: `prod-unlock:${unlock.id}`, reason: PROD_WRITE_HEADLESS };
@@ -876,14 +871,7 @@ export async function askProductionWrite(ctx: any, what: string, unlock: ProdUnl
     );
     return ok ? { decision: "allowed", detail: `prod-unlock:${unlock.id}`, reason: "" } : { decision: "declined", detail: `prod-unlock:${unlock.id}`, reason: PROD_WRITE_DECLINED };
   }
-  if (!ctx?.hasUI || typeof ctx.ui?.input !== "function") return { decision: "blocked-headless", detail: "explicit-permit", reason: PROD_WRITE_HEADLESS };
-  const word = productionPermitWord(client);
-  const typed = await ctx.ui.input(
-    `coop guardrails: PRODUCTION write\n  ${shown}\nIt changes production now. Coop runs it only if you permit it: type ${word} to run this one write; anything else declines.`,
-    "",
-  );
-  const ok = typeof typed === "string" && typed.trim().toLocaleLowerCase() === word.toLocaleLowerCase();
-  return ok ? { decision: "allowed", detail: "explicit-permit", reason: "" } : { decision: "declined", detail: "explicit-permit", reason: PROD_WRITE_DECLINED };
+  return { decision: "blocked", detail: "no-unlock", reason: PROD_WRITE_LOCKED };
 }
 
 /** A shell command that grants or edits the production unlock: never from a session. */
@@ -2071,10 +2059,10 @@ export default function coopGuardrails(pi: ExtensionAPI) {
     const unlock = readProdUnlock();
     return prodUnlockApplies(unlock, ensureSessionGovernance(ctx.cwd).sqlContract?.client || "") ? unlock : null;
   };
-  // G1: one production write, permitted by a person (unlock yes/no or the client
-  // name typed back) and audited either way. Null when it may run.
+  // G1: one production write, permitted by a person (a yes/no under their unlock)
+  // and audited either way. Null when it may run.
   const permitProductionWrite = async (ctx: ExtensionContext, kind: string, tool: string, what: string) => {
-    const verdict = await askProductionWrite(ctx, what, activeProdUnlock(ctx), ensureSessionGovernance(ctx.cwd).sqlContract?.client || "");
+    const verdict = await askProductionWrite(ctx, what, activeProdUnlock(ctx));
     // Shell records keep no detail of their own (it could carry command text), so the permit rides the label there.
     audit({ cwd: ctx.cwd, kind, tool, decision: verdict.decision, label: kind === "danger-confirm" ? `production write (${verdict.detail})` : "production write", detail: verdict.detail });
     return verdict.decision === "allowed" ? null : { block: true, reason: verdict.reason };
@@ -2537,14 +2525,14 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         message = [
           "coop edit approvals: active for this session",
           ...[...editApprovals].sort().map((key) => `  • ${sessionApprovalLabel(key)}${key.startsWith("sql:") ? " (single INSERT/UPDATE/CREATE/ALTER statements)" : ""}`),
-          "Deletes and drops still ask every time; production writes ask you to permit each one. Ends at /new or exit; /coop-approvals revoke ends it now.",
+          "Deletes and drops still ask every time; production writes run only under a human unlock and ask each time. Ends at /new or exit; /coop-approvals revoke ends it now.",
         ].join("\n");
       }
       if (action === "status") {
         const unlock = activeProdUnlock(ctx);
         message += unlock
           ? `\nPRODUCTION WRITES UNLOCKED by a human for ${unlock.client} (grant ${unlock.id}, ${prodUnlockMinutesLeft(unlock)} min left): each production write asks yes/no at the desk and is audited.`
-          : "\nProduction writes: each one runs only if you type the client name when coop asks, at the desk; never for the whole session.";
+          : "\nProduction writes: blocked until a person runs `coop unlock-prod <client>` in their own terminal; then each one asks at the desk; never for the whole session.";
       }
       try { if (typeof ctx.ui?.notify === "function") ctx.ui.notify(message, "info"); } catch { /* ignore */ }
     },
@@ -2562,7 +2550,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         "  • secret files — confirms read/edit/write AND bash access (cat .env etc.) of .env / keys / credentials",
         `  • live data — allows dev/test metadata and one plain bounded SELECT on the dev target; elsewhere bounded matching reads may reuse one session grant (${liveReadGrant ? "active" : "none"}; /coop-live-read status|revoke)`,
         "  • mutating MCP actions — confirms create/update/delete/deploy/publish-looking Fabric/Power BI/MCP tool calls (best-effort)",
-        `  • production writes — SQL on a production target, model edits after a production connection, Fabric writes naming prod: each runs only on your permit at the desk (type the client name; a human unlock makes it yes/no) and is audited; never session-wide (${activeProdUnlock(ctx) ? "unlock active" : "no unlock active"})`,
+        `  • production writes — SQL on a production target, model edits after a production connection, Fabric writes naming prod: blocked unless a human unlock is active, then each asks at the desk and is audited; never session-wide (${activeProdUnlock(ctx) ? "unlock active" : "no unlock active"})`,
         "  • Power BI Desktop reloads — reads `powerbi-desktop status` before `powerbi-desktop reload` / `powerbi-report-author preview`; asks on unsaved changes, blocks when the instance can't be verified",
         `  • edit approvals — approving an edit can cover that server for the session; deletes and drops still ask (${editApprovals.size ? `${editApprovals.size} active` : "none"}; /coop-approvals status|revoke)`,
         "Advisory rules live in docs/guardrails.md. Disable with COOP_NO_GUARDRAILS=1.",

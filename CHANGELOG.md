@@ -7,18 +7,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
-- **Production writes run when you permit them** (G1, Aaron, 2026-10-07). They
-  were a hard block. Now each production write (SQL on a production target, a
-  model edit after a production connection, a Fabric write naming production)
-  waits for you at the desk: type the client name to run that one write, or
-  answer yes/no while a `coop unlock-prod` grant holds. Never for the whole
-  session, never headless, never from the phone; every attempt is audited,
-  allowed or refused. A session can no longer run `coop unlock-prod` or touch
+- **Production writes run under your unlock** (G1, Aaron, 2026-10-07). A
+  production write (SQL on a production target, a model edit after a production
+  connection, a Fabric write naming production) stays blocked unless you ran
+  `coop unlock-prod <client>` in your own terminal; under it, each one asks a
+  yes/no at the desk. Never for the whole session, never headless, never from
+  the phone; every attempt is audited, allowed or refused. A session can no longer run `coop unlock-prod` or touch
   `prod-unlock.json` from its shell, nor edit or write the file (it used to ask).
   A Warehouse write on a target coop cannot confirm as dev or test (the
   workspace-wide endpoint, or a contract whose `environment_names` are blank and
-  whose `sql_targets` do not carry the endpoint's ids) now needs the same
-  permit: before, it got the ordinary approval, which is how a production
+  whose `sql_targets` do not carry the endpoint's ids) is now treated the
+  same way: before, it got the ordinary approval, which is how a production
   write could run. The managed endpoint now also reads its environment from the
   `sql_targets` entry with its ids, so a wizard-made contract stays dev.
 - **Pair the phone once** (Aaron, 2026-10-07). Phone access is now one switch

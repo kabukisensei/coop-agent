@@ -45,7 +45,7 @@ try {
   $out = (Invoke-Native { & $psExe -NoProfile -File $coop unlock-prod --revoke 2>&1 } | Out-String)
   if ($LASTEXITCODE -eq 0 -and -not (Test-Path -LiteralPath $file) -and $out -match 'unlock removed') { Ok '--revoke deletes the grant' } else { Ko '--revoke must delete the grant and say so' $out }
   $out = (Invoke-Native { & $psExe -NoProfile -File $coop unlock-prod --status 2>&1 } | Out-String)
-  if ($LASTEXITCODE -eq 0 -and $out -match 'no unlock \(each one needs the client name') { Ok '--status without a grant says each production write needs the typed permit' } else { Ko '--status without a grant' $out }
+  if ($LASTEXITCODE -eq 0 -and $out -match 'no unlock \(they are blocked') { Ok '--status without a grant says production writes are blocked' } else { Ko '--status without a grant' $out }
   $out = (Invoke-Native { & $psExe -NoProfile -File $coop unlock-prod --revoke 2>&1 } | Out-String)
   if ($LASTEXITCODE -eq 0) { Ok '--revoke with no grant is a no-op that exits 0' } else { Ko '--revoke with no grant must exit 0' $out }
 

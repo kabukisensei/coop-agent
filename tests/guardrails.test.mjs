@@ -813,7 +813,7 @@ await t("an edit approval can last for the session; deletes and other servers st
   assert.equal(blocked(await handle({ toolName: "mcp__fabric", input: { tool: "datafactory_create-pipeline", args: {} } }, c)), false);
   assert.equal(asked, 1, "approved server edits run without asking again");
   // Deletes still ask every time, even with the approval; a production write
-  // waits for the typed permit instead (G1), here left empty.
+  // is blocked without a human unlock (G1).
   pick = "decline";
   assert.equal(blocked(await handle(write("onelake_delete-file"), c)), true);
   assert.equal(asked, 2);
@@ -980,7 +980,7 @@ await t("Power BI Modeling edits: one approval covers the task; deletes and prod
     assert.equal(asked, before + 1, `${tool} ${op} asks`);
     assert.deepEqual(offered, [], `${tool} ${op} never offers a session approval`);
   }
-  // An edit whose connection names production is a production write: the typed permit, never the session option (G1).
+  // An edit whose connection names production is a production write: blocked without a human unlock, never the session option (G1).
   {
     const before = asked;
     const r = await handle(modeling("measure_operations", "Update", { connectionName: "finance-production" }), c);
@@ -1206,12 +1206,6 @@ await t("a production Warehouse write is blocked whatever its SQL says; dev and 
   // same permit, no ordinary prompt and no session option.
   const unconfirmed = await run("");
   assert.deepEqual(unconfirmed, { first: true, second: true, selects: 0, confirms: 0 }, "unconfirmed: no ordinary approval path");
-  writeManagedTarget({ environment: "" });
-  await handleSessionStart({ reason: "new" }, liveCtx);
-  let prompt = "";
-  const deskUi = { notify: () => {}, confirm: async () => true, select: async (_t, options) => options[1], input: async (title, message) => { prompt = `${title}\n${message || ""}`; return (/type (\S+) to run this one write/.exec(prompt) || [])[1] || ""; } };
-  assert.equal(blocked(await handle(sqlWrite("INSERT INTO dbo.T (a) VALUES (1)"), { ...liveCtx, ui: deskUi })), false, "the typed client name runs it");
-  assert.ok(/treated as production/.test(prompt), prompt);
   writeManagedTarget();
   await handleSessionStart({ reason: "new" }, liveCtx);
 });
@@ -2265,12 +2259,12 @@ await t("parseProdUnlock: a fresh grant parses; expired, over-long, future-dated
   assert.equal(cg.isSecretPath("C:\\Users\\a\\.coop\\prod-unlock.json"), true, "the unlock file is agent-gated like a secret");
 });
 
-await t("G1: a production write runs only when a person types the permit at the desk; reads still ask; dev writes ask", async () => {
+await t("G1: without a human unlock a production write is blocked with no prompt; reads still ask; dev writes ask", async () => {
   removeUnlock();
   const savedCoopDir = process.env.COOP_DIR;
   process.env.COOP_DIR = UNLOCK_HOME;
   try {
-    // Warehouse SQL on the managed production target, no contract client: the permit word is PRODUCTION.
+    // Warehouse SQL on the managed production target, no unlock.
     writeManagedTarget({ environment: "production" });
     process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
     await handleSessionStart({ reason: "new" }, liveCtx);
@@ -2278,22 +2272,11 @@ await t("G1: a production write runs only when a person types the permit at the 
     confirmAnswer = true; confirmCount = 0; inputCount = 0; inputAnswer = "";
     const sqlWrite = (query) => ({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify({ query }) } });
     let r = await handle(sqlWrite("ALTER VIEW dbo.V AS SELECT 1 AS x"), liveCtx);
-    assert.equal(blocked(r), true, "nothing typed: not permitted");
-    assert.match(r.reason, /not permitted/);
-    assert.equal(inputCount, 1);
+    assert.equal(blocked(r), true, "no unlock: blocked");
+    assert.match(r.reason, /coop unlock-prod/);
+    assert.equal(inputCount, 0, "nothing to type");
     assert.equal(confirmCount, 0, "no yes/no and no session option without an unlock");
-    assert.match(lastInput, /PRODUCTION write/);
-    assert.match(lastInput, /type PRODUCTION to run this one write/);
-    inputAnswer = "yes";
-    assert.equal(blocked(await handle(sqlWrite("ALTER VIEW dbo.V AS SELECT 1 AS x"), liveCtx)), true, "a yes is not the permit word");
-    inputAnswer = " production ";
-    assert.equal(blocked(await handle(sqlWrite("ALTER VIEW dbo.V AS SELECT 1 AS x"), liveCtx)), false, "the typed word permits that one write");
-    assert.equal(confirmCount, 0, "the permit is the call's only prompt");
-    assert.deepEqual(readAudit().map((e) => [e.decision, e.label, e.detail]), [
-      ["declined", "production write", "explicit-permit"],
-      ["declined", "production write", "explicit-permit"],
-      ["allowed", "production write", "explicit-permit"],
-    ]);
+    assert.deepEqual(readAudit().map((e) => [e.decision, e.label, e.detail]), [["blocked", "production write", "no-unlock"]]);
     // A scoped production READ still asks and proceeds (comparisons).
     inputCount = 0;
     assert.equal(blocked(await handle(sqlRead(), liveCtx)), false, "a production read asks and proceeds");
@@ -2303,7 +2286,7 @@ await t("G1: a production write runs only when a person types the permit at the 
     // Headless: blocked, nothing to ask.
     r = await handle(sqlWrite("UPDATE dbo.T SET a = 1"), { cwd: LIVE_ROOT, hasUI: false });
     assert.equal(blocked(r), true);
-    assert.match(r.reason, /cannot ask/);
+    assert.match(r.reason, /coop unlock-prod/);
     // A dev target asks as before.
     writeManagedTarget({ environment: "dev" });
     await handleSessionStart({ reason: "new" }, liveCtx);
@@ -2322,14 +2305,11 @@ await t("G1: a production write runs only when a person types the permit at the 
     assert.equal(blocked(await handle(sqlWrite("UPDATE prod.T SET a = 1"), liveCtx)), true);
     writeManagedTarget();
     await handleSessionStart({ reason: "new" }, liveCtx);
-    // Fabric writes from the shell naming prod: the permit, no yes/no; a dev one asks.
-    inputCount = 0; inputAnswer = "";
+    // Fabric writes from the shell naming prod: blocked, no yes/no; a dev one asks.
+    inputCount = 0;
     assert.equal(blocked(await call('fab deploy -p ./pipeline.yml --workspace "Sales Prod"', { confirm: true })), true);
     assert.equal(confirmCount, 0);
-    assert.equal(inputCount, 1);
-    inputAnswer = "PRODUCTION";
-    assert.equal(blocked(await call('fab deploy -p ./pipeline.yml --workspace "Sales Prod"', { confirm: false })), false, "permitted; no second prompt");
-    assert.equal(confirmCount, 0);
+    assert.equal(inputCount, 0);
     assert.equal(blocked(await call('fab deploy -p ./pipeline.yml --workspace "Sales Dev"', { confirm: true })), false);
     assert.equal(confirmCount, 1);
     // A production read through the shell (GET) is not a write and passes the Fabric gate.
@@ -2357,8 +2337,6 @@ await t("G1: a session can never grant itself the production unlock", async () =
   const ps = await handle({ toolName: "powershell", input: { command: "coop unlock-prod Contoso" } }, { ...ctx, ui: { ...ctx.ui, confirm: async () => true } });
   assert.equal(blocked(ps), true, "the PowerShell tool too");
   assert.equal(cg.touchesProdUnlock("coop unlock-production-report"), false, "only the command and the file");
-  assert.equal(cg.productionPermitWord("  Contoso "), "Contoso");
-  assert.equal(cg.productionPermitWord(""), "PRODUCTION");
 });
 
 await t("G1: under a human unlock a production write is a desk yes/no, audited with the grant id; it is client-bound and expires", async () => {
@@ -2380,6 +2358,14 @@ await t("G1: under a human unlock a production write is a desk yes/no, audited w
     assert.equal(selects, 0);
     assert.match(lastConfirm, /PRODUCTION write under unlock a1b2c3d4 \(\d+ min left\)/);
     assert.deepEqual(readAudit().map((e) => [e.decision, e.label, e.detail]), [["allowed", "production write", "prod-unlock:a1b2c3d4"]]);
+    // A target coop cannot confirm as dev or test is treated as production: under the unlock it asks too.
+    writeManagedTarget({ environment: "" });
+    await handleSessionStart({ reason: "new" }, liveCtx);
+    assert.equal(blocked(await handle(sqlWrite("INSERT INTO dbo.T (a) VALUES (1)"), { ...liveCtx, ui })), false);
+    assert.match(lastConfirm, /treated as production/);
+    writeManagedTarget({ environment: "production" });
+    await handleSessionStart({ reason: "new" }, liveCtx);
+    clearAudit();
     // Declining still blocks.
     assert.equal(blocked(await handle(sqlWrite("ALTER VIEW dbo.V AS SELECT 2 AS x"), { ...liveCtx, ui: { ...ui, confirm: async () => false } })), true);
     // A contract naming another client: the unlock does not apply.
@@ -2387,14 +2373,7 @@ await t("G1: under a human unlock a production write is a desk yes/no, audited w
     await handleSessionStart({ reason: "new" }, liveCtx);
     confirmCount = 0;
     const mcpProd = { toolName: "mcp", input: { server: "fabric", tool: "core_create-item", args: { workspace: "sales-prod" } } };
-    let typed = "";
-    let permitAsked = "";
-    const typing = { ...ui, input: async (title) => { permitAsked = String(title); return typed; } };
-    assert.equal(blocked(await handle(mcpProd, { ...liveCtx, ui: typing })), true, "Fabrikam's unlock does not cover Contoso's session: the typed permit, left empty");
-    assert.equal(confirmCount, 0);
-    assert.match(permitAsked, /type Contoso to run this one write/, "the permit word is the contract's client");
-    typed = "contoso";
-    assert.equal(blocked(await handle(mcpProd, { ...liveCtx, ui: typing })), false, "typing the client permits it (case-insensitive)");
+    assert.equal(blocked(await handle(mcpProd, { ...liveCtx, ui })), true, "Fabrikam's unlock does not cover Contoso's session: blocked");
     assert.equal(confirmCount, 0);
     writeUnlock({ client: "contoso" });
     assert.equal(blocked(await handle(mcpProd, { ...liveCtx, ui })), false, "Contoso's unlock covers it (case-insensitive) and it asks");
@@ -2406,7 +2385,7 @@ await t("G1: under a human unlock a production write is a desk yes/no, audited w
     assert.equal(blocked(await handle(nativeRead("UPDATE dbo.Account SET a = 1"), { ...liveCtx, ui })), false, "a contract dev write asks");
     assert.equal(confirmCount, 1);
     removeContract();
-    // Expired unlock: back to the typed permit (here, nothing typed).
+    // Expired unlock: blocked again.
     writeUnlock({ expires_at: new Date(Date.now() - 1000).toISOString() });
     await handleSessionStart({ reason: "new" }, liveCtx);
     confirmCount = 0;
@@ -2420,13 +2399,13 @@ await t("G1: under a human unlock a production write is a desk yes/no, audited w
     const fab = readAudit().filter((e) => e.kind === "danger-confirm").pop();
     // danger-confirm records never carry command text, so the grant id rides the fixed label.
     assert.deepEqual([fab.decision, fab.label, fab.detail], ["allowed", "production write (prod-unlock:a1b2c3d4)", "production write (prod-unlock:a1b2c3d4)"]);
-    // /coop-approvals status names the unlock; without it, says each write needs the typed permit.
+    // /coop-approvals status names the unlock; without it, says production writes are blocked.
     let shown = "";
     await cmds["coop-approvals"].handler("status", { ...liveCtx, ui: { notify: (m) => { shown = m; } } });
     assert.match(shown, /PRODUCTION WRITES UNLOCKED by a human for Contoso \(grant a1b2c3d4/);
     removeUnlock();
     await cmds["coop-approvals"].handler("status", { ...liveCtx, ui: { notify: (m) => { shown = m; } } });
-    assert.match(shown, /Production writes: each one runs only if you type the client name/);
+    assert.match(shown, /Production writes: blocked until a person runs `coop unlock-prod <client>`/);
   } finally {
     removeUnlock();
     removeContract();

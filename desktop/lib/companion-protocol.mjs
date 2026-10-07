@@ -348,7 +348,7 @@ export const newIncarnation = (random = randomBytes) => random(18).toString("bas
 
 const DIALOGS = new Set(["select", "confirm", "input", "editor"]);
 // coop-guardrails writes production writes in capitals (G1): "PRODUCTION write"
-// (the typed permit, or yes/no under an unlock), "PRODUCTION Warehouse SQL ...".
+// (yes/no under a human unlock), "PRODUCTION Warehouse SQL ...".
 const PRODUCTION = /\bPRODUCTION\b/;
 // Options that grant more than the one action shown, such as coop-guardrails'
 // "Allow <server> edits for this session (...)".

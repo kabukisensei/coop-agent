@@ -255,7 +255,7 @@ function Invoke-CoopUnlockProd {
   $argv = @()
   if ($Rest) { $argv = @($Rest) }
   if ($argv -contains '--status') {
-    if (-not (Test-Path -LiteralPath $file)) { Coop-Say 'Production writes: no unlock (each one needs the client name typed at the desk).'; return }
+    if (-not (Test-Path -LiteralPath $file)) { Coop-Say 'Production writes: no unlock (they are blocked).'; return }
     try {
       $g = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json
       $exp = [DateTime]::Parse([string]$g.expires_at, $null, [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
@@ -268,7 +268,7 @@ function Invoke-CoopUnlockProd {
   }
   if ($argv -contains '--revoke') {
     if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force }
-    Coop-Say 'Production writes: unlock removed (each one needs the client name typed at the desk again).'
+    Coop-Say 'Production writes: unlock removed (they are blocked again).'
     return
   }
   $client = ''
