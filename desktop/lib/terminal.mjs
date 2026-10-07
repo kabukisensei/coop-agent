@@ -45,6 +45,6 @@ export function consoleProcess({ mode = "terminal", coop, cwd, session = "", app
   return {
     command: powershell,
     args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded(outer)],
-    options: { cwd, env: { ...env, COOP_TERMINAL_COOP: coop, COOP_TERMINAL_CWD: cwd, COOP_TERMINAL_SESSION: session, COOP_TERMINAL_APP: app }, windowsHide: true, shell: false, detached: true, stdio: "ignore" },
+    options: { cwd, env: { ...env, COOP_TERMINAL_COOP: coop, COOP_TERMINAL_CWD: cwd, COOP_TERMINAL_SESSION: session, COOP_TERMINAL_APP: app }, windowsHide: true, shell: false, stdio: "ignore" },
   };
 }
