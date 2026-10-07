@@ -5,6 +5,32 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- The coop window installer now carries everything (master plan D1k; Aaron
+  2026-10-06, "an installer that installs everything"): besides Node, Pi and
+  coop, the package holds Git (MinGit 2.56.0), Python 3.13.16 with pipx, a wheel
+  folder of every coop Python tool (coop-data-doc, the Fabric CLI, fabric-cicd,
+  pyodbc), the Azure CLI 2.91.0 and the ODBC Driver 18.6.2.1 with its VC++
+  runtime, each pinned by version and SHA-256 in the release manifest. The
+  first launch installs nothing from the internet and needs no winget; it asks
+  Windows for administrator permission once, for the ODBC driver. coop's pipx
+  installs read the bundled wheels offline only for exact pins, so a pip you run
+  yourself still reaches PyPI (`COOP_PIP_ONLINE=1` keeps the index for coop too).
+- `scripts/bootstrap.ps1`, one command for Windows
+  (`irm https://raw.githubusercontent.com/kabukisensei/coop-agent/main/scripts/bootstrap.ps1 | iex`):
+  downloads the newest release's window installer, checks its SHA-256 against
+  the release's `installer-acceptance.json`, installs it for the user and opens
+  it (`COOP_BOOTSTRAP_NO_LAUNCH=1` installs only, `COOP_BOOTSTRAP_DRY_RUN=1`
+  prints the steps). Only github.com is contacted. `docs/install-windows.md`
+  opens with the one line.
+- For a terminal clone, `coop install` offers to install a missing required
+  prerequisite itself at a console with winget (or brew): the same commands its
+  table prints, run visibly, and the install continues in the same window when
+  every row passes (before, a `--prereqs auto` run always stopped for a new
+  terminal). Enter accepts, `n` keeps the printed commands, a redirected stdin
+  never asks, `--yes` answers without a console.
+
 ### Fixed
 
 - **The phone picks up where it left off** (Aaron, 2026-10-07). Phones
@@ -19,6 +45,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   (Aaron, 2026-10-07): for example "38% context · 5h 62% left · 7d 80% left".
   MCP connections and other status lines move into the panel a tap opens, with
   the todos.
+- The project file no longer says "Not shared yet" right after a share when
+  the team works on a branch other than origin's default (Aaron, 2026-10-07).
+  coop compared the file with origin/HEAD (often `main`) while sharing pushed
+  the team's `dev`. It now reads the team's copy from the branch the file
+  names (this repository's `default_branch`, else the project's) when origin
+  has it, and the status line names that branch.
 - File > Switch project, File > Open folder and Open in terminal open their
   window again on Windows. The hidden PowerShell that starts the console ran
   detached, so it had no console, exited without running its command, and the
@@ -137,6 +169,30 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 - **A new client home repository ignores the project file's backup.** Its
   `.gitignore` lists `.coop/*.bak`, so the `project.yml.bak` that `/setup-project`
   keeps no longer shows as a file to commit.
+- The Windows one-liner (`irm …/bootstrap.ps1 | iex`) no longer opens with a
+  red "not recognized" error: `iex` received the file's UTF-8 BOM as a
+  character, so line 1 stopped being a comment. `scripts/bootstrap.ps1` is now
+  ASCII with no BOM, the one exception the BOM check allows (found in the D1k
+  VM check, 2026-10-07).
+- `coop install` on a Windows machine without winget no longer suggests
+  `--prereqs auto`, which could only fail there: its stop line points at the
+  coop window installer one-liner instead.
+- **Installing the coop window over an older one, or over a terminal coop,
+  works as a fresh install does** (Aaron, 2026-10-07: the one installer must
+  work for people who already have coop). The window re-runs its setup once
+  for each new version, so an upgrade gets the new tool pins and puts back the
+  `coop` command and "coop (terminal)" shortcut an older uninstaller removed;
+  this version's uninstaller keeps them on an upgrade. Over a terminal install,
+  "coop" opens the window and the terminal's own `coop` and "coop (terminal)"
+  stay pointed at the terminal install (the first launch used to repoint "coop
+  (terminal)" at the window's copy). A new CI job installs the latest release
+  and then this build over it, and over a terminal install, to check it.
+- **The "coop" shortcut never fails silently** (Aaron, 2026-10-07). Clicked
+  while coop is already open, it brings that window forward (it used to do
+  nothing); clicked while the first launch is still setting up, it says so. A
+  start that ends with no window shows a message instead of quietly closing. A
+  new CI step double-clicks the installed shortcut and requires the picker, then
+  the full first-launch setup and the coop window, to appear.
 
 ## [0.33.0] — 2026-10-06
 

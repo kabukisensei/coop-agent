@@ -1754,7 +1754,7 @@ export function projectFileNote(cwd: string): { text: string; state: string } | 
   const status = teamFileStatus(repo, { fetchTimeout: 8_000 });
   switch (status.state) {
     case "team-newer": return { state: status.state, text: `The team's ${PROJECT_FILE} on origin/${status.defaultBranch} is newer than your unmodified copy. /project-get gets the team's version; the guardrails keep the file they started with until /new.` };
-    case "not-shared": return { state: status.state, text: `Your ${PROJECT_FILE} differs from the team's copy (not shared yet). /project-share shares it, or keep yours for now.` };
+    case "not-shared": return { state: status.state, text: `Your ${PROJECT_FILE} differs from the team's copy${status.defaultBranch && status.originExists ? ` on origin/${status.defaultBranch}` : ""} (not shared yet). /project-share shares it, or keep yours for now.` };
     case "team-has-it": return { state: status.state, text: `The team already has ${PROJECT_FILE} on origin/${status.defaultBranch}, and this checkout does not. /project-get gets it.` };
     default: return null;
   }
