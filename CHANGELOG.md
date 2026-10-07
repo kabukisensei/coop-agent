@@ -5,8 +5,24 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **The project file is found two levels down** (Aaron, 2026-10-06). Most
+  teammates open coop in their user folder, and the client's repositories sit
+  one folder further down (`devops\fabric`). Opened in a folder that is not a
+  repository, coop now finds the one repository up to two levels down with a
+  `.coop/project.yml`, as it did one level down. Hidden folders, `AppData`,
+  `node_modules` and coop's own checkout are skipped, a repository is never
+  searched inside, and with several it still names them and picks none.
+
 ### Fixed
 
+- **Share with the team works in a repository that ignores `.coop`**
+  (Aaron, 2026-10-06). Git refuses a plain add of an ignored path, so Share
+  failed with a Git hint ("git config advice.addIgnoredFile false") instead of
+  sharing. Share now adds `.coop/project.yml` alone with `--force` when the
+  repository's `.gitignore` covers it, says so, and leaves the rest of `.coop`
+  (backups, catalog) ignored.
 - **The shared project file reads as shared on Windows** (C1, found on the
   client VM, 2026-10-06). Git for Windows checks `.coop/project.yml` out with
   CRLF while the team's copy keeps LF, so `coop project status`, the session

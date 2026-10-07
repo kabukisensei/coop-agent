@@ -109,6 +109,29 @@ try {
   elseif (Find-CoopChildContract $down) { Ko 'several repositories with a contract: one was picked' }
   else { Ok 'several repositories with a contract: none is picked' }
 
+  # Opened in the folder above that (the user folder over devops\fabric): the one
+  # repository two levels down; AppData and repositories themselves are not searched.
+  $user = Join-Path $t 'user'
+  $fabric = Join-Path (Join-Path $user 'devops') 'fabric'
+  New-Item -ItemType Directory -Force -Path (Join-Path $fabric '.git'), (Join-Path $fabric '.coop') | Out-Null
+  $twoDown = Join-Path $fabric '.coop\project.yml'
+  [System.IO.File]::WriteAllText($twoDown, "profile:`n  client: 'Contoso'`n")
+  $appRepo = Join-Path (Join-Path $user 'AppData') 'tool'
+  New-Item -ItemType Directory -Force -Path (Join-Path $appRepo '.git'), (Join-Path $appRepo '.coop') | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $appRepo '.coop\project.yml'), "profile:`n  client: 'Other'`n")
+  $outer = Join-Path $user 'outer'
+  $nested = Join-Path $outer 'nested'
+  New-Item -ItemType Directory -Force -Path (Join-Path $outer '.git'), (Join-Path $nested '.git'), (Join-Path $nested '.coop') | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $nested '.coop\project.yml'), "profile:`n  client: 'Other'`n")
+  $foundTwo = Find-CoopChildContract $user
+  if ($foundTwo -ne $twoDown) { Ko "two levels down returned '$foundTwo'" } else { Ok 'two levels down: the one repository inside a plain folder, AppData and repositories skipped' }
+  $twoName = Get-CoopChildRepositoryName $twoDown $user
+  if ($twoName -ne (Join-Path 'devops' 'fabric')) { Ko "the launch note names '$twoName'" } else { Ok 'the launch note names the repository by its path from the open folder' }
+  Remove-Item Env:COOP_PROJECT_YML -ErrorAction SilentlyContinue
+  $exportedTwo = Set-CoopProjectYmlEnv $user
+  if ($exportedTwo -ne $twoDown) { Ko "Set-CoopProjectYmlEnv from the user folder exported '$exportedTwo'" } else { Ok 'the launcher hands the contract two levels down to Pi' }
+  Remove-Item Env:COOP_PROJECT_YML -ErrorAction SilentlyContinue
+
   # coop's own checkout (installed by default at C:\Users\<you>\coop-agent) is never
   # the team project: opened from the home folder, neither the one-level-down nor
   # the sibling lookup takes its sample contract.

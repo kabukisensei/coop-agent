@@ -567,7 +567,8 @@ committed team file per client, in the repository root or the client home
 repository `<client>-coop` beside several repositories: run **`/setup-project`**
 inside Coop or `coop init` (both edit a contract found above the folder, in the
 home repository beside it, or, opened in the folder that holds the client's
-repositories, in the one repository inside it that has one, instead of creating a
+repositories or the folder above it (your user folder over `devops\fabric`), in
+the one repository up to two levels down that has one, instead of creating a
 second one), then share it with
 `/project-share` or `coop project share`, the one Git write coop performs on its
 own, after your yes and only for that file. Use `coop init --template` only when

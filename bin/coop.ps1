@@ -691,11 +691,11 @@ function Invoke-CoopPiProcess {
   # the Python helpers read the same file.
   $sibling = Set-CoopProjectYmlEnv
   if ($sibling) {
-    if (-not (Find-CoopGitRoot (Get-Location).Path)) { Coop-Info "project file: $sibling (the repository $(Split-Path -Leaf (Split-Path -Parent (Split-Path -Parent $sibling))) inside this folder holds it)" }
+    if (-not (Find-CoopGitRoot (Get-Location).Path)) { Coop-Info "project file: $sibling (the repository $(Get-CoopChildRepositoryName $sibling) inside this folder holds it)" }
     else { Coop-Info "project file: $sibling (the client home repository beside this one lists this repository)" }
   } elseif (-not (Find-CoopContractAbove (Get-Location).Path) -and -not (Find-CoopGitRoot (Get-Location).Path)) {
     $several = @(Get-CoopChildContracts (Get-Location).Path)
-    if ($several.Count -gt 1) { Coop-Warn "no project file for this folder: several repositories inside it have one ($((@($several | ForEach-Object { Split-Path -Leaf (Split-Path -Parent (Split-Path -Parent $_)) })) -join ', ')). Open coop in the repository you mean." }
+    if ($several.Count -gt 1) { Coop-Warn "no project file for this folder: several repositories inside it have one ($((@($several | ForEach-Object { Get-CoopChildRepositoryName $_ })) -join ', ')). Open coop in the repository you mean." }
   }
   $token = Get-CoopFabricMcpToken
   if ($token) { $env:COOP_FABRIC_MCP_TOKEN = $token }

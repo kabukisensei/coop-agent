@@ -1719,6 +1719,8 @@ async function offerShare(ctx: any, contractPath: string): Promise<void> {
   }
 }
 
+const IGNORED_NOTE = ` This repository's .gitignore covers ${PROJECT_FILE}, so coop added that one file anyway; the rest of .coop stays ignored and unshared.`;
+
 async function runShare(ctx: any, repo: string): Promise<void> {
   let result = shareContract(repo);
   if (result.state === "other-branch") {
@@ -1727,7 +1729,7 @@ async function runShare(ctx: any, repo: string): Promise<void> {
     result = shareContract(repo, { force: true });
   }
   if (result.ok) {
-    notify(ctx, result.state === "already-shared" ? "Your project file already matches the team's; nothing to share." : `Shared ${PROJECT_FILE} with the team (commit ${result.commit} pushed to ${result.branch}).`, "info");
+    notify(ctx, result.state === "already-shared" ? "Your project file already matches the team's; nothing to share." : `Shared ${PROJECT_FILE} with the team (commit ${result.commit} pushed to ${result.branch}).${result.ignored ? IGNORED_NOTE : ""}`, "info");
     return;
   }
   notify(ctx, `Could not share the project file: ${result.reason}${result.committed ? " (the commit exists locally; push it when the remote accepts it)" : ""}`, "warning");
