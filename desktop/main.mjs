@@ -294,6 +294,8 @@ function openWindow(rawSpec, token) {
     webPreferences: { ...tabPreferences(), spellcheck: false },
   });
   const frame = { win, id: win.id, tabs: [], active: null, stripReady: false, title: win.getTitle() };
+  // The tab strip page's <title> would replace the project title in the taskbar.
+  win.on("page-title-updated", (event) => event.preventDefault());
   frames.set(frame.id, frame);
   // The picker remembers every folder a window opened (D1m), newest first.
   try { settings = saveSettings(settingsFile, rememberProject({ ...settings, lastFolder: spec.cwd }, spec.cwd)); } catch { /* keep going */ }

@@ -474,6 +474,10 @@ await check("ci.yml: the upgrade acceptance installs the latest release, then th
   assert.match(upgrade, /run: node desktop\/scripts\/verify-upgrade\.mjs --previous /);
   assert.match(upgrade, /run: node desktop\/scripts\/verify-launch\.mjs /, "the shortcut is double-clicked and a window must open");
   assert.match(gate, /needs: \[[^\]]*\binstaller-upgrade\b/, "the gate needs the upgrade job");
+  // verify-launch.mjs finds the picker by its window title; the page's <title> replaces the BrowserWindow one.
+  const launch = readFileSync(join(ROOT, "desktop", "scripts", "verify-launch.mjs"), "utf8");
+  const pickerTitle = /const PICKER_TITLE = "([^"]+)"/.exec(launch)[1];
+  assert.match(readFileSync(join(ROOT, "desktop", "renderer", "picker.html"), "utf8"), new RegExp(`<title>${pickerTitle}</title>`), "picker.html carries the title the launch check waits for");
 });
 
 await check("release.yml: the tag build runs the acceptance on the release bytes and publishes only a verified exe (#277)", () => {

@@ -115,7 +115,8 @@ async function main(argv) {
     const settings = existsSync(settingsFile) ? JSON.parse(readFileSync(settingsFile, "utf8") || "{}") : {};
     writeFileSync(settingsFile, JSON.stringify({ ...settings, openNextTime: work }, null, 2));
     await openShortcut(paths.desktopShortcut, env);
-    const opened = await waitFor("the coop window on the folder (first-launch setup runs first)", SETUP_TIMEOUT_MS, async () => (await coopWindows()).find((w) => w.title && w.title !== PICKER_TITLE));
+    // The window's title names the folder ("coop - coop-launch-work"), so an error box titled "coop" never passes.
+    const opened = await waitFor("the coop window on the folder (first-launch setup runs first)", SETUP_TIMEOUT_MS, async () => (await coopWindows()).find((w) => w.title && w.title.endsWith(win32.basename(work))));
     step("the Desktop shortcut runs the first-launch setup and opens the coop window", `"${opened.value.title}" after ${opened.seconds}s`);
     const done = existsSync(marker) ? readFileSync(marker, "utf8").trim() : "";
     if (done !== version) throw new Error(`setup did not record this version as done (${marker}: "${done}")`);
