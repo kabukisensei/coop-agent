@@ -167,32 +167,53 @@ function Test-CoopForeignLauncherLink {
   $mine = Join-Path $script:CoopRoot 'bin\coop.cmd'
   return ((ConvertTo-CoopComparablePath $target) -ne (ConvertTo-CoopComparablePath $mine))
 }
-# The "coop" shortcut (Start Menu or Desktop) of another install: one that exists
-# and does not start this checkout's bin\coop-desktop.ps1.
+# The "coop" or "coop (terminal)" shortcut (Start Menu or Desktop) of another
+# install: one that exists and does not start this checkout's
+# bin\coop-desktop.ps1. The package's own "coop" (its exe, no arguments) is not
+# foreign. "coop (terminal)" counts too: the package's installer has already
+# replaced a terminal install's "coop" with its exe by the first launch, so
+# that shortcut is how the window tells a terminal install is there (D1k).
 function Test-CoopForeignTerminalShortcut {
   if ($env:OS -ne 'Windows_NT') { return $false }
   $mine = ConvertTo-CoopComparablePath (Join-Path $script:CoopRoot 'bin\coop-desktop.ps1')
   $ws = $null
   foreach ($dir in (Get-CoopShortcutDirs)) {
     if (-not $dir) { continue }
-    $lnk = Join-Path $dir 'coop.lnk'
-    if (-not (Test-Path -LiteralPath $lnk -PathType Leaf)) { continue }
-    try {
-      if (-not $ws) { $ws = New-Object -ComObject WScript.Shell }
-      $args = [string]$ws.CreateShortcut($lnk).Arguments
-    } catch { continue }
-    if ($args -match '-File\s+"([^"]+)"') {
-      if ((ConvertTo-CoopComparablePath $Matches[1]) -ne $mine) { return $true }
-    } elseif ($args) { return $true }
+    foreach ($name in @('coop.lnk', 'coop (terminal).lnk')) {
+      $lnk = Join-Path $dir $name
+      if (-not (Test-Path -LiteralPath $lnk -PathType Leaf)) { continue }
+      try {
+        if (-not $ws) { $ws = New-Object -ComObject WScript.Shell }
+        $lnkArgs = [string]$ws.CreateShortcut($lnk).Arguments
+      } catch { continue }
+      if ($lnkArgs -match '-File\s+"([^"]+)"') {
+        if ((ConvertTo-CoopComparablePath $Matches[1]) -ne $mine) { return $true }
+      } elseif ($lnkArgs) { return $true }
+    }
   }
   return $false
 }
 # The package's first launch on this profile: the agent dir does not carry this
 # release's extension lock yet (a fresh machine, or a profile an older coop set
-# up), so `coop desktop` runs the install first (D1d).
+# up), or this package version has not finished its setup here yet (an upgrade
+# over an older window: its uninstaller removed the `coop` link and "coop
+# (terminal)" shortcut, and new tool pins need installing even when the
+# extension lock is unchanged), so `coop desktop` runs the install first (D1d, D1k).
+function Get-CoopBundledSetupMarker { return (Join-Path (Get-CoopProfileDir) 'desktop\window-setup-version') }
 function Test-CoopBundledSetupPending {
   if (-not $script:CoopBundledRuntime) { return $false }
-  return (Test-CoopExtensionsLockPending -AgentDir (Get-CoopPiAgentDir) -PiVersion (Get-CoopPiVersion))
+  if (Test-CoopExtensionsLockPending -AgentDir (Get-CoopPiAgentDir) -PiVersion (Get-CoopPiVersion)) { return $true }
+  $marker = Get-CoopBundledSetupMarker
+  $done = ''
+  if (Test-Path -LiteralPath $marker -PathType Leaf) { try { $done = ([System.IO.File]::ReadAllText($marker)).Trim() } catch { $done = '' } }
+  return ($done -ne [string]$script:CoopVersion)
+}
+# Record that this package version finished its setup on this profile.
+function Set-CoopBundledSetupDone {
+  if (-not $script:CoopBundledRuntime) { return }
+  $marker = Get-CoopBundledSetupMarker
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $marker) | Out-Null
+  [System.IO.File]::WriteAllText($marker, [string]$script:CoopVersion)
 }
 # npm's global package root inside the bundled prefix (npm's own layout:
 # <prefix>\node_modules on Windows, <prefix>/lib/node_modules elsewhere).

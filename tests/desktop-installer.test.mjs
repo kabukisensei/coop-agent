@@ -175,6 +175,8 @@ await check("electron-builder: NSIS per-user, no elevation, data kept, shortcuts
   const nsh = readFileSync(config.nsis.include, "utf8");
   assert.match(nsh, /!macro customUnInstall/);
   assert.match(nsh, /resources\\coop\\scripts\\window-uninstall\.ps1" "\$INSTDIR"/);
+  // D1k: an upgrade (the new installer runs this uninstaller with --updated) keeps them.
+  assert.match(nsh, /\$\{ifNot\} \$\{isUpdated\}[\s\S]*window-uninstall\.ps1[\s\S]*\$\{endIf\}/);
   assert.ok(existsSync(join(ROOT, "scripts", "window-uninstall.ps1")) && snapshotIncludes("scripts/window-uninstall.ps1"));
   for (const icon of [config.win.icon, config.nsis.installerIcon, config.nsis.uninstallerIcon]) {
     assert.equal(icon, join(ROOT, "themes", "coop.ico"));
@@ -458,6 +460,19 @@ await check("check-installer-report: publishes only the exe whose SHA-256 the pa
   assert.throws(() => verifiedInstaller(null, dir, "9.9.9"), /not an object/);
   writeFileSync(join(dir, "coop-window-9.9.9-other.exe"), "a second build");
   assert.throws(() => verifiedInstaller(report, dir, "9.9.9"), /expected one coop-window-\*\.exe .* found 2/);
+});
+
+await check("ci.yml: the upgrade acceptance installs the latest release, then this build over it (D1k)", () => {
+  const ci = readFileSync(join(ROOT, ".github", "workflows", "ci.yml"), "utf8").replace(/\r\n/g, "\n");
+  const jobs = ci.split(/^  (?=[a-z-]+:\s*$)/m);
+  const upgrade = jobs.find((job) => job.startsWith("installer-upgrade:"));
+  const gate = jobs.find((job) => job.startsWith("gate:"));
+  assert.ok(upgrade, "ci.yml has an installer-upgrade job");
+  assert.match(upgrade, /needs: \[installer\]/);
+  assert.match(upgrade, /COOP_INSTALLER_TEST: '1'/);
+  assert.match(upgrade, /gh release download --repo "\$env:GITHUB_REPOSITORY" --pattern 'coop-window-\*\.exe' --pattern 'installer-acceptance\.json'/);
+  assert.match(upgrade, /run: node desktop\/scripts\/verify-upgrade\.mjs --previous /);
+  assert.match(gate, /needs: \[[^\]]*\binstaller-upgrade\b/, "the gate needs the upgrade job");
 });
 
 await check("release.yml: the tag build runs the acceptance on the release bytes and publishes only a verified exe (#277)", () => {

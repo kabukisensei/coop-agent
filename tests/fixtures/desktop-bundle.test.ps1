@@ -165,7 +165,13 @@ try {
   foreach ($n in $extNames) { if (@($settings.packages) -notcontains ('npm:' + $n + '@' + [string]$manifest.extensions.$n)) { $declared = $false } }
   if ($declared) { Ok 'settings.json declares each extension as pi install would' } else { Ko "settings packages: $(@($settings.packages) -join ', ')" }
   if (-not (Test-CoopExtensionsLockPending -AgentDir $agent -PiVersion $piVer)) { Ok 'the lock is no longer pending' } else { Ko 'lock still pending after the seed' }
-  if (-not (Test-CoopBundledSetupPending)) { Ok 'nothing is pending after the seed' } else { Ko 'setup still pending after the seed' }
+  if (Test-CoopBundledSetupPending) { Ok 'setup stays pending until this version records it finished (D1k)' } else { Ko 'a seeded tree alone must not end setup: the version marker is missing' }
+  Set-CoopBundledSetupDone
+  if (-not (Test-CoopBundledSetupPending)) { Ok 'nothing is pending after the seed and the version marker' } else { Ko 'setup still pending after the seed and marker' }
+  $savedVersion = $script:CoopVersion
+  $script:CoopVersion = '99.0.0'
+  if (Test-CoopBundledSetupPending) { Ok 'a newer package version runs its setup once more (an upgrade, D1k)' } else { Ko 'an upgraded package must re-run its setup' }
+  $script:CoopVersion = $savedVersion
   if ((Restore-CoopBundledExtensions -AgentDir $agent) -eq $false) { Ok 'a converged tree is left alone' } else { Ko 'second seed must be a no-op' }
 
   # A bundle built for another lock never seeds.

@@ -111,6 +111,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 - `coop install` on a Windows machine without winget no longer suggests
   `--prereqs auto`, which could only fail there: its stop line points at the
   coop window installer one-liner instead.
+- **Installing the coop window over an older one, or over a terminal coop,
+  works as a fresh install does** (Aaron, 2026-10-07: the one installer must
+  work for people who already have coop). The window re-runs its setup once
+  for each new version, so an upgrade gets the new tool pins and puts back the
+  `coop` command and "coop (terminal)" shortcut an older uninstaller removed;
+  this version's uninstaller keeps them on an upgrade. Over a terminal install,
+  "coop" opens the window and the terminal's own `coop` and "coop (terminal)"
+  stay pointed at the terminal install (the first launch used to repoint "coop
+  (terminal)" at the window's copy). A new CI job installs the latest release
+  and then this build over it, and over a terminal install, to check it.
 
 ## [0.33.0] — 2026-10-06
 

@@ -904,6 +904,7 @@ function Invoke-CoopDesktop {
     }
     $setupRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\install.ps1') @('--prereqs', 'auto')
     if ($setupRc -ne 0) { Coop-Die 'setup did not finish: do what the lines above say, then start the coop window again' }
+    Set-CoopBundledSetupDone
   }
   if (-not (Test-Have 'pi')) { Coop-Die 'pi is not installed. Run: coop install   (installs the release''s tested Pi)' }
   # The window starts node directly (no shell), so on Windows only node.exe will do.

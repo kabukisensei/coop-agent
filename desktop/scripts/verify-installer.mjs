@@ -81,10 +81,10 @@ export function packagePaths(env = process.env) {
 // The package carries the bundled runtime (D1d: Node, Pi, the extension tree,
 // the repository snapshot), so NSIS unpacks tens of thousands of files; a
 // GitHub-hosted runner needs well over three minutes for that.
-const INSTALL_TIMEOUT_MS = 900000;
-const UNINSTALL_TIMEOUT_MS = 600000;
+export const INSTALL_TIMEOUT_MS = 900000;
+export const UNINSTALL_TIMEOUT_MS = 600000;
 
-function runOwned(command, args, options = {}, timeoutMs = 180000) {
+export function runOwned(command, args, options = {}, timeoutMs = 180000) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, args, { ...options, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
@@ -108,7 +108,7 @@ $items = @(Get-ItemProperty -Path $paths -ErrorAction SilentlyContinue | Where-O
 ConvertTo-Json -InputObject @($items) -Depth 3 -Compress
 `;
 
-async function registryEntries() {
+export async function registryEntries() {
   const powershell = win32.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const out = await runOwned(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", REGISTRY], { windowsHide: true }, 60000);
   const parsed = JSON.parse(out.trim() || "[]");
@@ -116,14 +116,14 @@ async function registryEntries() {
 }
 
 /** Write a "coop (terminal)" shortcut the way scripts/install.ps1 does (powershell.exe -File <launcher>). */
-async function writeTerminalShortcut(file, launcher) {
+export async function writeTerminalShortcut(file, launcher) {
   const powershell = win32.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const script = `$ws = New-Object -ComObject WScript.Shell; $sc = $ws.CreateShortcut($env:COOP_LNK); $sc.TargetPath = '${powershell.replace(/'/g, "''")}'; $sc.Arguments = ('-NoLogo -NoProfile -ExecutionPolicy Bypass -File "' + $env:COOP_LAUNCHER + '"'); $sc.Save()`;
   await runOwned(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { windowsHide: true, env: { ...process.env, COOP_LNK: file, COOP_LAUNCHER: launcher } }, 60000);
   if (!existsSync(file)) throw new Error(`could not write ${file}`);
 }
 
-function sha256(file) {
+export function sha256(file) {
   return createHash("sha256").update(readFileSync(file)).digest("hex");
 }
 
