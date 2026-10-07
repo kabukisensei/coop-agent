@@ -7,6 +7,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- Sharing the project file now stops and reports a rejected commit instead of
+  pushing the previous commit and claiming success (#345). It checks that the
+  committed contract matches the file requested, and retries an already
+  committed file's refused push without creating another commit.
 - Saved sessions are claimed atomically across desktop tabs and phone resumes
   (#344). Pending tab startup and worker shutdown retain ownership; overlapping
   requests raise the existing tab instead of starting a second writer. A session change
