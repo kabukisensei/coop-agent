@@ -40,7 +40,7 @@ readable in one place.
 | `pyodbc` | 5.3.0 | Michael Kleehammer | MIT-style, no notice clause | Installed from PyPI. |
 | `coop-data-doc` | 1.3.4 | Copyright (c) 2026 Aaron Jennings | MIT | Cooptimize's own companion. |
 | `@earendil-works/pi-coding-agent` (Pi) | 0.87.1 | Copyright (c) 2025 Mario Zechner | MIT | Redistributed in the window installer. The 0.87.1 npm tarball carries no LICENSE file, so this line is the notice that accompanies the copy: Permission is hereby granted, free of charge, to any person obtaining a copy of this software, to deal in the Software without restriction, subject to the MIT License conditions; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. |
-| `pi-mcp-adapter` | 3.3.0 | Nico Bailon | MIT | Redistributed; upstream LICENSE kept. |
+| `pi-mcp-adapter` | 5.1.0 | Nico Bailon | MIT | Redistributed; upstream LICENSE kept. |
 | `pi-hermes-memory` | 0.9.9 | chandra447 | MIT | Redistributed; upstream LICENSE kept. |
 | `pi-better-openai` | 0.1.22 | mattleong | MIT | Redistributed; upstream LICENSE kept. |
 | `pi-web-access` | 0.35.0 | Nico Bailon | MIT | Redistributed; upstream LICENSE kept. |

@@ -9,7 +9,7 @@
     "version": "0.87.1"
   },
   "extensions": {
-    "pi-mcp-adapter": "3.3.0",
+    "pi-mcp-adapter": "5.1.0",
     "pi-hermes-memory": "0.9.9",
     "pi-better-openai": "0.1.22",
     "pi-web-access": "0.35.0",

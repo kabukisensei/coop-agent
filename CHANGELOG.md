@@ -5,6 +5,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- `pi-mcp-adapter` moves from **3.3.0** to **5.1.0** on Pi 0.87.1 (master plan
+  U2 step 1). It is the first adapter release that accepts Pi 1.0, and it is
+  qualified on today's Pi first so Pi 1.0 (step 2) changes one thing at a time.
+  coop still launches it in exclusive mode, so only coop's managed
+  `mcp-adapter.json` is read; `mcpScript` stays off and blocked. Its Pi 0.99-only
+  behaviours (taking over Pi's built-in MCP, reading Pi's `mcp.json`) do not
+  apply on 0.87.1. Servers now start lazily after discovery, and a long tool
+  call that reports progress no longer times out.
+
 ## [0.34.0] — 2026-10-07
 
 ### Added

@@ -41,7 +41,7 @@ $realPy = Get-FixturePython
 if (-not $realPy) { throw 'a Python 3.10-3.13 is required for the fleet fixtures' }
 $psDir = Split-Path -Parent $psExe
 
-$extSpecs = @('npm:pi-mcp-adapter@3.3.0', 'npm:pi-hermes-memory@0.9.9', 'npm:pi-better-openai@0.1.22', 'npm:pi-web-access@0.35.0',
+$extSpecs = @('npm:pi-mcp-adapter@5.1.0', 'npm:pi-hermes-memory@0.9.9', 'npm:pi-better-openai@0.1.22', 'npm:pi-web-access@0.35.0',
               'npm:@juicesharp/rpiv-ask-user-question@2.12.0', 'npm:@juicesharp/rpiv-todo@2.12.0', 'npm:@xl0/pi-lovely-rename@0.1.5')
 
 # A Python string literal for a path (backslashes and quotes escaped).
@@ -244,7 +244,7 @@ try {
   if (Test-CallLiteral $m 'PIPX install --force coop-data-doc==1.3.4') { Ok 'install --force reinstalls a pipx tool at its exact pin' } else { Ko 'install --force did not reinstall coop-data-doc at its pin' (Get-Calls $m) }
   # Extensions are the sync child's (one `pi install` path, S2; fleet-manifest
   # asserts install.ps1 carries no `pi install` of its own): the child installed them.
-  if (Test-CallLiteral $m 'PI install npm:pi-mcp-adapter@3.3.0') { Ok 'the sync child of install installs the manifest extensions' } else { Ko 'the sync child of install did not install the extensions' (Get-Calls $m) }
+  if (Test-CallLiteral $m 'PI install npm:pi-mcp-adapter@5.1.0') { Ok 'the sync child of install installs the manifest extensions' } else { Ko 'the sync child of install did not install the extensions' (Get-Calls $m) }
   if ((Test-CallLiteral $m 'PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force') -and (Test-CallLiteral $m 'PIPX inject ms-fabric-cli pyodbc==5.3.0 --force')) { Ok 'install injects the exact fabric-cicd and pyodbc runtime pins' } else { Ko 'install did not inject the exact runtime pins' (Get-Calls $m) }
 
   # Driver auto-provisioning is Windows-only. A supported non-Windows install still
