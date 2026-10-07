@@ -233,6 +233,28 @@ try {
     assert.match(audit[0].detail, /^push main:/);
   });
 
+  await t("team branch: the file's own default branch (dev) wins over origin's default (main) when origin has it", () => {
+    const { repo, origin } = shareFixture("dev-branch");
+    git(repo, "checkout", "--quiet", "-b", "dev");
+    const devContract = "profile:\n  client: 'Contoso'\n  default_branch: 'dev'\n";
+    writeFileSync(join(repo, ps.CONTRACT_FILE), devContract);
+    // origin has no dev yet: the file's branch does not count, origin's default does.
+    const first = ps.teamFileStatus(repo, { fetch: false });
+    assert.deepEqual([first.state, first.defaultBranch], ["not-shared", "main"]);
+    git(repo, "push", "--quiet", "origin", "dev");
+    rmSync(join(repo, ".git", "push-attempt"), { force: true });
+    writeFileSync(join(repo, ps.CONTRACT_FILE), devContract + "  timezone: 'America/Chicago'\n");
+    const before = ps.teamFileStatus(repo, { fetch: false });
+    assert.deepEqual([before.state, before.branch, before.defaultBranch], ["not-shared", "dev", "dev"]);
+    const shared = ps.shareContract(repo, { name: "Aaron" });
+    assert.deepEqual([shared.ok, shared.state, shared.branch], [true, "shared", "dev"], "no other-branch question on the file's own branch");
+    assert.equal(git(origin, "log", "-1", "--format=%s", "dev"), "coop: project file updated by Aaron");
+    const after = ps.teamFileStatus(repo, { fetch: false });
+    assert.deepEqual([after.state, after.defaultBranch], ["shared", "dev"], "shared stays shared although origin/main has the older file");
+    assert.equal(ps.teamBranch(repo, "repositories:\n  fabric:\n    local_path: '.'\n    default_branch: 'dev'\nprofile:\n  default_branch: 'main'\n"), "dev", "this repository's entry wins over the profile");
+    assert.equal(ps.teamBranch(repo, "repositories:\n  other:\n    local_path: '../other'\n    default_branch: 'release'\n"), "main", "a sibling repository's branch never counts");
+  });
+
   await t("fetch throttle: one fetch per ten minutes per repository", () => {
     const now = Date.now();
     const first = ps.fetchOrigin(b, { now: now + ps.FETCH_MAX_AGE_MS + 1 });
