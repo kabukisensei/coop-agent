@@ -1739,7 +1739,7 @@ async function runShare(ctx: any, repo: string): Promise<void> {
     notify(ctx, result.state === "already-shared" ? "Your project file already matches the team's; nothing to share." : `Shared ${PROJECT_FILE} with the team (commit ${result.commit} pushed to ${result.branch}).${result.ignored ? IGNORED_NOTE : ""}`, "info");
     return;
   }
-  notify(ctx, `Could not share the project file: ${result.reason}${result.committed ? " (the commit exists locally; push it when the remote accepts it)" : ""}`, "warning");
+  notify(ctx, `Could not share the project file: ${result.reason}${result.state === "push-refused" && result.committed ? " (the commit exists locally; push it when the remote accepts it)" : ""}`, "warning");
 }
 
 /** The session-start check: one line when the team's copy is newer than an
