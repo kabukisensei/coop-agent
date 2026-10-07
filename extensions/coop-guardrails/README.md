@@ -20,7 +20,7 @@ never intercepted**.
 | **Secret files** | Confirms before the agent reads/edits/writes a secret-looking file — `.env` (not `.env.example`), `*.pem`/`*.key`/`*.p12`, `id_rsa`/`id_ed25519`, `credentials`, `.npmrc`, `secrets.*`. Declining blocks. |
 | **Live environment reads** | Allows read-only dev/test metadata, schema, and artifact-code inspection. Confirms row-level reads and every production read. A confirmed, explicitly bounded read scope may be reused for matching calls in the same session; production is allowed when it is part of that exact grant. |
 | **Mutating MCP actions** | Confirms create/update/delete/deploy/publish-looking Fabric, Power BI, and proxied MCP calls. |
-| **Production writes** | Blocks, with no approval option, SQL DDL/DML on a production target, Power BI Modeling edits after a production connection, and Fabric or shell writes that name production. A human-only `coop unlock-prod` grant in the profile dir (never from a session) turns the block back into a per-call prompt for its client and time window; every write under it is audited with the grant id. |
+| **Production writes** | Runs SQL DDL/DML on a production target, Power BI Modeling edits after a production connection, and Fabric or shell writes that name production only with a person's separate, time-limited go-ahead for that client, and then each one asks a yes/no at the desk; without it they are blocked. Never session-wide, never headless, never from the phone; every attempt is audited. A session can never give itself the go-ahead. |
 
 When a tool call is blocked, the model receives a `reason` explaining why and what to
 do instead (e.g. "unstage source and let a human commit").
@@ -47,45 +47,10 @@ may still contain command text and are not sanitized exports.
 - Disable governance confirms/blocks: `COOP_NO_GUARDRAILS=1`.
 - Show Pi's own update banner for maintainer diagnostics: `COOP_SHOW_UPSTREAM_UPDATE_NOTICES=1` (read by the Coop launcher).
 - `/coop-guardrails` — show what's enforced and whether it's on.
-- `/coop-live-read status` — show the non-secret identity, targets, operation class,
-  row limit, and timeout of the current session grant. `/coop-live-read revoke`
-  clears it immediately.
 
-## Session live-read grants
+## Live reads
 
-The real `pi-mcp-adapter` central `mcp` proxy and dynamic
-`mcp__fabric_sqlendpoint` wrapper to the exact COOP-managed
-`fabric-sqlendpoint` server and its compatible SQL tool names can receive a reusable
-grant. The managed config supplies parsed project client, tenant, uniquely inferred
-environment, and item/database target. The guardrail decodes only the non-secret
-`tid` and `oid`/`sub` claims of the launch `COOP_FABRIC_MCP_TOKEN` in memory and checks
-that the tenant matches. Tool arguments such as `coopLiveReadScope` are ignored.
-Missing, malformed, ambiguous, global, cross-database, unbounded, or unsupported scope
-remains per-call approval.
-
-Both proxy shapes classify the dispatched `input.args`; outer query fields cannot
-hide an inner mutation. Dynamic wrappers take their server identity from the
-registered wrapper name, ignoring `input.server`. The managed tool prefix also
-supports central calls without an explicit server. Supplied workspace/item IDs must
-match trusted configuration. Ambiguous server namespaces, unsupported argument
-controls, multiple SQL fields, and unresolved targets cannot reuse a grant.
-One accepted bounded scope covers subsequent matching calls; an expanded scope
-requires approval, and rejecting it preserves the prior grant. Mutations retain
-their separate approval gate and never spend a read grant.
-
-The grant is memory-only and resets on every session start or shutdown (`/new`,
-`/resume`, or `/fork`), process restart, or explicit revoke. It survives ordinary turns,
-compaction, and reconnects within that session. SQL is classified quote-aware on every
-call. The grant covers the exact managed item/database, SQL-read operation class,
-maximum rows, and timeout—not tables, columns, or filters. Only one plain SELECT with
-a literal TOP bound can reuse it, including bracketed identifiers and escaped `]]`.
-Identifier boundaries remain visible to cross-database detection. CTE, UNION, APPLY,
-double-quoted identifiers, mutations,
-unfamiliar/ambiguous SQL, `EXEC`, batches, exports/downloads, and unbounded reads remain
-separately confirmed. The managed MCP config fixes the request timeout at 60 seconds;
-scope resolution requires that exact value. Raw SQL, tool arguments, results, and
-credentials are never written to grant state or the audit log. Tool/repository/model
-text can describe a scope but cannot approve one; only the confirmation UI can.
+Reads need no approval on any environment, production included; only changes do. A plain SQL read through the COOP-managed `fabric-sqlendpoint` entry or the native `fabric_sql_query` tool resolves its target from coop's own configuration and the launch identity, never from tool arguments, and is audited without SQL, arguments or results. A target or identity that does not resolve, and reads coop cannot classify, ask. Detail: `docs/guardrails-reference.md`, Live environment reads.
 
 ## Implementation
 

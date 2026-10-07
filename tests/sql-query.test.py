@@ -578,6 +578,28 @@ for block in (
     ):
         assert fsq.execute({"query": QUERY}, cwd=bad_project) == {"ok": False, "state": "target_invalid"}
 
+# A read may name another ready entry, prod included, to compare it with dev
+# (Aaron, 2026-10-07). The executor still only runs one bounded SELECT.
+named_pyodbc = FakePyodbc()
+with (
+    mock.patch.dict(os.environ, {fsq.wmcp.FABRIC_TOKEN_ENV: FABRIC_TOKEN}, clear=False),
+    mock.patch.dict(sys.modules, {"pyodbc": named_pyodbc}),
+    mock.patch.object(fsq.wmcp, "az_access_token", side_effect=fake_sql_only_token),
+):
+    named = fsq.execute({"query": QUERY, "maximum_rows": 1, "environment": "prod"}, cwd=az_project)
+    assert named["state"] == "ok", named
+    assert named["target"] == {"environment": "prod", "kind": "azure_sql", "database": "ContosoDW"}
+    assert "SERVER=contoso.database.windows.net,1433" in named_pyodbc.call[0]
+    # An entry that is not ready (test is absent here), an unknown name and a
+    # write through the named entry never connect.
+    assert fsq.execute({"query": QUERY, "environment": "test"}, cwd=az_project) == {"ok": False, "state": "target_invalid"}
+    for environment in ("production", "staging", 1):
+        assert fsq.execute({"query": QUERY, "environment": environment}, cwd=az_project)["state"] == "input_invalid", environment
+    assert fsq.execute({"query": "DELETE FROM dbo.T", "environment": "prod"}, cwd=az_project)["state"] == "query_rejected"
+# Without sql_targets there is one target: naming an entry is target_invalid.
+legacy_named = fsq.execute({"query": QUERY, "environment": "prod"}, cwd=Path(tempfile.mkdtemp()))
+assert legacy_named["state"] in ("project_unavailable", "target_invalid"), legacy_named
+
 # Connection failures on a direct kind still never leak the host or the token.
 leak_temp, leak_project = contract_fixture(AZURE_BLOCK)
 with (

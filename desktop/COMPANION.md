@@ -197,11 +197,10 @@ decides what the phone may do (`classifyQuestion`):
   session", "always", "don't ask again") stays on the desktop; the phone shows
   how many were held back. A phone approval covers exactly one action.
 - **Production writes are desktop-only.** A question that says `PRODUCTION`
-  (G1 writes it on every production write under a human unlock, and only
-  then) is shown read-only on the phone with *Continue on the desktop*. The
-  phone can still decline it. G1's block itself is not a question, so with no
-  unlock the phone, like the desktop, only sees the write refused; the unlock
-  is a terminal command the phone has no route to.
+  (G1 writes it on every production write: the typed client-name permit, or
+  the yes/no under a human unlock) is shown read-only on the phone with
+  *Continue on the desktop*. The phone can still decline it. The unlock is a
+  terminal command the phone has no route to.
 - **The answer must match the exact action.** The phone returns the
   question's `digest`, a SHA-256 over method, title, message and options as Pi
   sent them (`actionDigest`). A different command text is a different digest.

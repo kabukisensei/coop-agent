@@ -4,7 +4,7 @@
 // throttle, the client home repository and the CLI. Real git, local bare origin.
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -30,6 +30,25 @@ const git = (cwd, ...args) => {
 // which would hand the assertions CRLF after a pull.
 const identity = (cwd) => { git(cwd, "config", "user.email", "test@example.com"); git(cwd, "config", "user.name", "Test User"); git(cwd, "config", "core.autocrlf", "false"); };
 const CONTRACT = "profile:\n  client: 'Contoso'\n";
+const hook = (root, name, text) => {
+  const path = join(root, ".git", "hooks", name);
+  writeFileSync(path, `#!/bin/sh\n${text}\n`);
+  chmodSync(path, 0o755);
+};
+const shareFixture = (name) => {
+  const origin = join(tmp, `${name}-origin.git`);
+  git(tmp, "init", "--bare", "--initial-branch=main", origin);
+  const repo = join(tmp, name);
+  git(tmp, "clone", "--quiet", origin, repo);
+  identity(repo);
+  mkdirSync(join(repo, ".coop"));
+  writeFileSync(join(repo, ps.CONTRACT_FILE), CONTRACT);
+  git(repo, "add", ps.CONTRACT_FILE);
+  git(repo, "commit", "--quiet", "-m", "seed");
+  git(repo, "push", "--quiet", "origin", "main");
+  hook(repo, "pre-push", "echo attempted > .git/push-attempt");
+  return { repo, origin, before: git(origin, "rev-parse", "main") };
+};
 
 if (spawnSync("git", ["--version"]).status !== 0) {
   console.log("  – git not available; skipping project-share tests");
@@ -150,6 +169,68 @@ try {
     const next = ps.shareContract(c, { name: "Aaron" });
     assert.deepEqual([next.ok, next.ignored], [true, true], JSON.stringify(next));
     assert.equal(git(c, "ls-files", ".coop"), ".coop/project.yml");
+  });
+
+  await t("share: rejected commits never push or report an allowed share", () => {
+    for (const failure of ["hook", "identity", "signing"]) {
+      const { repo, origin, before } = shareFixture(`refused-${failure}`);
+      writeFileSync(join(repo, ps.CONTRACT_FILE), CONTRACT + "  timezone: 'UTC'\n");
+      const env = { ...process.env, GIT_CONFIG_GLOBAL: join(tmp, "no-global-config"), GIT_CONFIG_NOSYSTEM: "1" };
+      if (failure === "hook") hook(repo, "pre-commit", "echo fixture-policy-rejection >&2\nexit 1");
+      if (failure === "identity") {
+        git(repo, "config", "--unset", "user.name");
+        git(repo, "config", "--unset", "user.email");
+        git(repo, "config", "user.useConfigOnly", "true");
+        for (const key of Object.keys(env)) if (/^GIT_(AUTHOR|COMMITTER)_/.test(key)) delete env[key];
+      }
+      if (failure === "signing") {
+        git(repo, "config", "commit.gpgsign", "true");
+        git(repo, "config", "gpg.program", join(tmp, "no-signing-program"));
+      }
+      const result = ps.shareContract(repo, { name: "Fixture", env });
+      assert.deepEqual([result.ok, result.state, result.committed], [false, "commit-refused", false], failure);
+      assert.ok(result.reason, failure);
+      assert.equal(existsSync(join(repo, ".git", "push-attempt")), false, "push was not attempted");
+      assert.equal(git(origin, "rev-parse", "main"), before);
+      assert.equal(git(origin, "show", `main:${ps.CONTRACT_FILE}`), CONTRACT.trim());
+      assert.equal(ps.teamFileStatus(repo, { fetch: false }).state, "not-shared");
+      const audit = readFileSync(join(tmp, "agent", "guardrails-audit.jsonl"), "utf8").trim().split("\n").map(JSON.parse).at(-1);
+      assert.equal(audit.decision, "blocked");
+      assert.match(audit.detail, /^commit:/);
+    }
+  });
+
+  await t("share: a hook that commits different contract content is blocked before push", () => {
+    const { repo, origin, before } = shareFixture("changed-by-hook");
+    writeFileSync(join(repo, ps.CONTRACT_FILE), CONTRACT + "  timezone: 'UTC'\n");
+    hook(repo, "pre-commit", "printf 'profile:\\n  client: Hook\\n' > .coop/project.yml\ngit add -- .coop/project.yml");
+    const result = ps.shareContract(repo, { name: "Fixture" });
+    assert.deepEqual([result.ok, result.state, result.committed], [false, "commit-refused", true]);
+    assert.match(result.reason, /differs/);
+    assert.equal(existsSync(join(repo, ".git", "push-attempt")), false);
+    assert.equal(git(origin, "rev-parse", "main"), before);
+  });
+
+  await t("share: a refused push can retry the already committed contract without another commit", () => {
+    const { repo, origin, before } = shareFixture("retry-push");
+    const intended = CONTRACT + "  timezone: 'UTC'\n";
+    writeFileSync(join(repo, ps.CONTRACT_FILE), intended);
+    hook(repo, "pre-push", "echo fixture-push-rejection >&2\nexit 1");
+    const refused = ps.shareContract(repo, { name: "Fixture" });
+    assert.deepEqual([refused.ok, refused.state, refused.committed], [false, "push-refused", true]);
+    assert.equal(git(origin, "rev-parse", "main"), before);
+    const committedHead = git(repo, "rev-parse", "HEAD");
+    hook(repo, "pre-push", "exit 0");
+    hook(repo, "pre-commit", "echo attempted > .git/commit-attempt\nexit 1");
+    const result = ps.shareContract(repo, { name: "Fixture" });
+    assert.deepEqual([result.ok, result.state], [true, "shared"]);
+    assert.equal(existsSync(join(repo, ".git", "commit-attempt")), false, "retry skips commit");
+    assert.equal(git(repo, "rev-parse", "HEAD"), committedHead);
+    assert.equal(git(origin, "rev-parse", "main"), committedHead);
+    assert.equal(git(origin, "show", `main:${ps.CONTRACT_FILE}`), intended.trim());
+    const audit = readFileSync(join(tmp, "agent", "guardrails-audit.jsonl"), "utf8").trim().split("\n").map(JSON.parse).slice(-2);
+    assert.deepEqual(audit.map((row) => row.decision), ["blocked", "allowed"]);
+    assert.match(audit[0].detail, /^push main:/);
   });
 
   await t("fetch throttle: one fetch per ten minutes per repository", () => {

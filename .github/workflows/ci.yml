@@ -313,6 +313,19 @@ jobs:
         env:
           COOP_INSTALLER_TEST: '1'
         run: node desktop/scripts/verify-upgrade.mjs --previous "$env:RUNNER_TEMP\previous" --dist "$env:RUNNER_TEMP\current" --output "$env:RUNNER_TEMP\upgrade-acceptance.json"
+      - name: the one-liner (irm | iex form) installs the latest release, then finds it installed
+        shell: pwsh
+        env:
+          COOP_BOOTSTRAP_NO_LAUNCH: '1'
+        run: |
+          $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          $cmd = "Invoke-Expression ([System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes('scripts\bootstrap.ps1')))"
+          $first = (& $ps -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $cmd 2>&1 | Out-String)
+          Write-Output $first
+          if ($first -match 'is not recognized' -or $first -notmatch "SHA-256 matches the release's acceptance report" -or $first -notmatch 'the coop window is installed') { throw 'the one-liner did not download, verify and install the latest release' }
+          $second = (& $ps -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $cmd 2>&1 | Out-String)
+          Write-Output $second
+          if ($second -notmatch 'is already installed') { throw 'a second run of the one-liner did not find the window installed' }
       - uses: actions/upload-artifact@v4
         if: always()
         with:

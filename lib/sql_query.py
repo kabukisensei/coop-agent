@@ -4,7 +4,9 @@
 The target comes from the project contract, never from the caller:
 
 - with a `sql_targets:` section (lib/sql_targets.py, master plan SQ1) the ready
-  default environment (dev or test, never prod) is the target. Azure SQL
+  default environment (dev or test, never prod) is the target, unless the read
+  names another ready entry with `environment` (dev, test or prod: people compare
+  prod with dev, and this executor only ever reads). Azure SQL
   Database, Fabric SQL database and Synapse serverless entries name their host
   in the contract; Fabric Warehouse / Lakehouse entries carry workspace and item
   ids and the host is still discovered through the Fabric REST API;
@@ -171,14 +173,22 @@ class ResolvedTarget:
         return {"environment": self.environment, "kind": self.kind, "database": self.database}
 
 
-def _contract_target(project: dict[str, Any]) -> tuple[ResolvedTarget | None, str]:
-    """The ready default `sql_targets` entry as a ResolvedTarget, or a state."""
+def _contract_target(
+    project: dict[str, Any], environment: str | None = None
+) -> tuple[ResolvedTarget | None, str]:
+    """The ready default `sql_targets` entry (or the named one) as a ResolvedTarget, or a state.
+
+    Only execute() names an entry, and only for its one bounded read; without a
+    name production is never the target."""
     parsed = targets_lib.parse_sql_targets(project)
-    target = parsed.default
-    if target is None:
-        return None, "target_invalid"
-    if target.production:
-        return None, "target_invalid"
+    if environment is None:
+        target = parsed.default
+        if target is None or target.production:
+            return None, "target_invalid"
+    else:
+        target = parsed.targets.get(environment)
+        if target is None or target.state != "ready":
+            return None, "target_invalid"
     if target.discovered:
         item_type = targets_lib.FABRIC_ITEM_KINDS[target.kind]
         endpoint_id = target.sql_endpoint_id if target.kind == "fabric_lakehouse" else target.item_id
@@ -289,7 +299,9 @@ def _discover_server(target: wmcp.SqlEndpointTarget, token: str) -> tuple[str, s
     return server, "ok"
 
 
-def open_connection(*, cwd: Path | None = None) -> tuple[Any, ResolvedTarget | None, str, dict[str, Any] | None]:
+def open_connection(
+    *, cwd: Path | None = None, environment: str | None = None
+) -> tuple[Any, ResolvedTarget | None, str, dict[str, Any] | None]:
     """Resolve the contract target, mint the pinned tokens and connect.
 
     Returns (connection, target, driver, error): `error` is a result dict when
@@ -302,7 +314,10 @@ def open_connection(*, cwd: Path | None = None) -> tuple[Any, ResolvedTarget | N
         return None, None, "", result("project_unavailable")
     project = wmcp.load_project(project_path)
     if targets_lib.parse_sql_targets(project).configured:
-        target, state = _contract_target(project)
+        target, state = _contract_target(project, environment)
+    elif environment is not None:
+        # Without sql_targets there is one target; naming another is not possible.
+        return None, None, "", result("target_invalid")
     else:
         target, state = _legacy_target(project_path)
     if state != "ok" or target is None:
@@ -359,7 +374,10 @@ def open_connection(*, cwd: Path | None = None) -> tuple[Any, ResolvedTarget | N
 
 
 def execute(payload: Any, *, cwd: Path | None = None) -> dict[str, Any]:
-    if not isinstance(payload, dict) or set(payload) - {"query", "maximum_rows"}:
+    if not isinstance(payload, dict) or set(payload) - {"query", "maximum_rows", "environment"}:
+        return result("input_invalid")
+    environment = payload.get("environment")
+    if environment is not None and environment not in ("dev", "test", "prod"):
         return result("input_invalid")
     query = payload.get("query")
     limit = bounded_select_limit(query)
@@ -373,7 +391,7 @@ def execute(payload: Any, *, cwd: Path | None = None) -> dict[str, Any]:
     ):
         return result("query_rejected")
     row_limit = min(limit, maximum_rows)
-    connection, target, driver, error = open_connection(cwd=cwd)
+    connection, target, driver, error = open_connection(cwd=cwd, environment=environment)
     if error is not None or connection is None or target is None:
         return error or result("connection_failed")
     try:

@@ -204,6 +204,7 @@ const CATALOG_SNAPSHOT_PARAMS = Type.Object({
 const FABRIC_SQL_QUERY_PARAMS = Type.Object({
   query: Type.String({ description: "One plain SELECT with a literal TOP bound. Sent to the helper over stdin, never argv." }),
   maximum_rows: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000, description: "Optional result cap at or below the query's TOP bound." })),
+  environment: Type.Optional(Type.Union([Type.Literal("dev"), Type.Literal("test"), Type.Literal("prod")], { description: "Read another sql_targets entry from the project file (for example prod, to compare it with dev). Omit for the default entry. Reads only." })),
 });
 
 interface FabricSqlInvocation { bin: string; args: string[]; env?: Record<string, string> }
@@ -1739,7 +1740,7 @@ async function runShare(ctx: any, repo: string): Promise<void> {
     notify(ctx, result.state === "already-shared" ? "Your project file already matches the team's; nothing to share." : `Shared ${PROJECT_FILE} with the team (commit ${result.commit} pushed to ${result.branch}).${result.ignored ? IGNORED_NOTE : ""}`, "info");
     return;
   }
-  notify(ctx, `Could not share the project file: ${result.reason}${result.committed ? " (the commit exists locally; push it when the remote accepts it)" : ""}`, "warning");
+  notify(ctx, `Could not share the project file: ${result.reason}${result.state === "push-refused" && result.committed ? " (the commit exists locally; push it when the remote accepts it)" : ""}`, "warning");
 }
 
 /** The session-start check: one line when the team's copy is newer than an
@@ -2428,7 +2429,7 @@ export default function coopTools(pi: ExtensionAPI) {
   pi.registerTool({
     name: "fabric_sql_query",
     label: "Fabric SQL Query (pyodbc fallback)",
-    description: "Governed pyodbc read of one bounded SELECT against the contract's default sql_targets entry (Azure SQL, Fabric SQL database, Synapse serverless, Fabric Warehouse/Lakehouse), or the canonical Fabric SQL target without sql_targets. When a managed fabric-sqlendpoint MCP tool exists, attempt it first and call fabric_sql_query only after that actual attempt fails (unavailable/missing, authentication, timeout, connection, transport). Never use it for SQL/business/query rejection. Accepts no target, server, credential, or token fields.",
+    description: "Governed pyodbc read of one bounded SELECT against the contract's default sql_targets entry, or the entry `environment` names (dev, test or prod, to compare them), (Azure SQL, Fabric SQL database, Synapse serverless, Fabric Warehouse/Lakehouse), or the canonical Fabric SQL target without sql_targets. When a managed fabric-sqlendpoint MCP tool exists, attempt it first and call fabric_sql_query only after that actual attempt fails (unavailable/missing, authentication, timeout, connection, transport). Never use it for SQL/business/query rejection. Accepts no target, server, credential, or token fields.",
     promptSnippet: "Post-MCP-failure pyodbc fallback for one approval-gated bounded Fabric SELECT TOP read",
     promptGuidelines: [
       "With a managed fabric-sqlendpoint MCP server, attempt it first; call fabric_sql_query only after an actual unavailable/authentication/timeout/connection/transport/tool-missing failure, never for SQL/business/query rejection, and never cascade automatically. Direct sql_targets kinds (Azure SQL, Fabric SQL database, Synapse) have no MCP server: fabric_sql_query is the live read route.",

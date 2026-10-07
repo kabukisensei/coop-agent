@@ -18,9 +18,23 @@ try {
   $env:NO_COLOR = '1'
   $file = Join-Path (Join-Path $t '.coop') 'prod-unlock.json'
 
-  $out = (Invoke-Native { & $psExe -NoProfile -File $coop unlock-prod Contoso --minutes 15 2>&1 } | Out-String)
-  if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $file)) { Ok 'unlock-prod <client> --minutes 15 writes the grant and exits 0' } else { Ko 'unlock-prod must write the grant and exit 0' $out }
-  if ($out -match 'UNLOCKED for Contoso for 15 min \(grant [0-9a-f]{8}') { Ok 'the message names the client, the minutes and the grant id' } else { Ko 'message must name client, minutes and grant id' $out }
+  # Only a person at their own console: from a coop session, or with piped input
+  # (as every tool a session runs has), it refuses and writes nothing.
+  $savedSession = Save-Env @('PI_CODING_AGENT_DIR', 'COOP_MCP_CONFIG', 'COOP_PROJECT_YML', 'COOP_FABRIC_MCP_TOKEN')
+  try {
+    foreach ($name in @('PI_CODING_AGENT_DIR', 'COOP_MCP_CONFIG', 'COOP_PROJECT_YML', 'COOP_FABRIC_MCP_TOKEN')) { Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue }
+    $env:COOP_MCP_CONFIG = Join-Path $t 'mcp.json'
+    $out = (Invoke-Native { 'Contoso' | & $psExe -NoProfile -File $coop unlock-prod Contoso --minutes 15 2>&1 } | Out-String)
+    if ($LASTEXITCODE -ne 0 -and -not (Test-Path -LiteralPath $file) -and $out -match 'only in your own terminal') { Ok 'from inside a coop session it refuses and writes nothing' } else { Ko 'a session must never write the grant' $out }
+    Remove-Item -LiteralPath Env:COOP_MCP_CONFIG -ErrorAction SilentlyContinue
+    $out = (Invoke-Native { 'Contoso' | & $psExe -NoProfile -File $coop unlock-prod Contoso --minutes 15 2>&1 } | Out-String)
+    if ($LASTEXITCODE -ne 0 -and -not (Test-Path -LiteralPath $file) -and $out -match 'interactive terminal') { Ok 'with piped input it refuses and writes nothing' } else { Ko 'piped input must never write the grant' $out }
+  } finally { Restore-Env $savedSession }
+
+  # The grant itself (what the command writes once a person typed the client back).
+  $common = Join-Path $root 'lib\common.ps1'
+  $out = (Invoke-Native { & $psExe -NoProfile -Command "& { . '$common'; `$g = Write-CoopProdUnlock -File '$file' -Client 'Contoso' -Minutes 15; Write-Output `$g.id }" 2>&1 } | Out-String)
+  if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $file) -and $out -match '[0-9a-f]{8}') { Ok 'Write-CoopProdUnlock writes the grant and returns its id' } else { Ko 'Write-CoopProdUnlock must write the grant' $out }
   $g = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json
   if ($g.schema_version -eq 1 -and $g.client -eq 'Contoso' -and $g.minutes -eq 15 -and ([string]$g.id) -match '^[0-9a-f]{8}$') { Ok 'the file carries schema_version 1, the client, the minutes and an 8-hex id' } else { Ko 'grant fields' (Get-Content -LiteralPath $file -Raw) }
   $created = [DateTime]::Parse([string]$g.created_at, $null, [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
@@ -43,14 +57,14 @@ try {
   }
 
   $out = (Invoke-Native { & $psExe -NoProfile -File $coop unlock-prod --revoke 2>&1 } | Out-String)
-  if ($LASTEXITCODE -eq 0 -and -not (Test-Path -LiteralPath $file) -and $out -match 'blocked again') { Ok '--revoke deletes the grant' } else { Ko '--revoke must delete the grant and say so' $out }
+  if ($LASTEXITCODE -eq 0 -and -not (Test-Path -LiteralPath $file) -and $out -match 'unlock removed') { Ok '--revoke deletes the grant' } else { Ko '--revoke must delete the grant and say so' $out }
   $out = (Invoke-Native { & $psExe -NoProfile -File $coop unlock-prod --status 2>&1 } | Out-String)
-  if ($LASTEXITCODE -eq 0 -and $out -match 'blocked \(no unlock\)') { Ok '--status without a grant says production writes are blocked' } else { Ko '--status without a grant' $out }
+  if ($LASTEXITCODE -eq 0 -and $out -match 'no unlock \(they are blocked') { Ok '--status without a grant says production writes are blocked' } else { Ko '--status without a grant' $out }
   $out = (Invoke-Native { & $psExe -NoProfile -File $coop unlock-prod --revoke 2>&1 } | Out-String)
   if ($LASTEXITCODE -eq 0) { Ok '--revoke with no grant is a no-op that exits 0' } else { Ko '--revoke with no grant must exit 0' $out }
 
   $out = (Invoke-Native { & $psExe -NoProfile -File $coop help 2>&1 } | Out-String)
-  if ($out -notmatch 'unlock-prod') { Ok 'coop help does not list unlock-prod (human-only, documented in guardrails-reference.md)' } else { Ko 'coop help must not list unlock-prod' }
+  if ($out -notmatch 'unlock-prod') { Ok 'coop help does not list unlock-prod (human-only, undocumented)' } else { Ko 'coop help must not list unlock-prod' }
 } finally {
   Restore-Env $saved
   Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue

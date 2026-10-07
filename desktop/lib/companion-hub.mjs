@@ -102,11 +102,11 @@ export class CompanionHub extends EventEmitter {
     const pi = this.pi;
     const incarnation = this.incarnation;
     const accessRevision = this.accessRevision;
-    const check = () => {
+    const check = (expectedIncarnation = incarnation) => {
       const denied = authorize();
       if (denied) throw new ProtocolError(denied);
       if (this.accessRevision !== accessRevision) throw new ProtocolError("access-off");
-      if (this.pi !== pi || this.incarnation !== incarnation) throw new ProtocolError("wrong-session");
+      if (this.pi !== pi || this.incarnation !== expectedIncarnation) throw new ProtocolError("wrong-session");
     };
     return {
       check,
@@ -693,11 +693,27 @@ export class CompanionHub extends EventEmitter {
         default:
           return { ok: false, code: "bad-request" };
       }
-      const result = await ask(command);
+      let result;
+      if (this.host?.sessionCommand) {
+        try {
+          // The arbiter validates this continuation at dispatch, not when it
+          // enters the queue. Its trusted reply names the incarnation created
+          // by THIS transition, so a subsequent transition still invalidates it.
+          const response = await this.host.sessionCommand(command, scope.check);
+          scope.check(response.incarnation);
+          result = { ok: Boolean(response.success && !response.data?.cancelled), data: response.data || {}, error: response.error };
+        } catch (error) {
+          if (error instanceof ProtocolError) throw error;
+          scope.check();
+          result = { ok: false, error: error.message };
+        }
+      } else {
+        result = await ask(command);
+        scope.check();
+      }
       if (!result.ok) return { ok: false, code: "changed", message: String(result.error || "coop could not do that").slice(0, 200) };
-      scope.check();
       // The phone started or opened this session, so it keeps its access.
-      this.renew({ keepAccess: true });
+      if (!this.host?.sessionCommand) this.renew({ keepAccess: true });
       if (this.host) this.host.changed(request.action);
       return { ok: true, ...(request.action === "fork" && typeof result.data.text === "string" ? { text: result.data.text.slice(0, LIMITS.chatChars) } : {}) };
     });

@@ -33,6 +33,33 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- **Production write approvals tightened** (G1, 2026-10-07). A production
+  write still needs a person's separate go-ahead, and now each one also asks a
+  yes/no at the desk. Never for the whole session, never headless, never from
+  the phone; every attempt is audited, allowed or refused, and a session can
+  never give itself the go-ahead.
+  A Warehouse write on a target coop cannot confirm as dev or test (the
+  workspace-wide endpoint, or a contract whose `environment_names` are blank and
+  whose `sql_targets` do not carry the endpoint's ids) is now treated the
+  same way: before, it got the ordinary approval, which is how a production
+  write could run. The managed endpoint now also reads its environment from the
+  `sql_targets` entry with its ids, so a wizard-made contract stays dev. A
+  Fabric, Modeling or shell write naming a workspace, server or id the project
+  file labels prod counts as production even without the word "prod".
+- **Reads never ask, production included** (Aaron, 2026-10-07: people compare
+  prod with dev; only changes to production need a person's go-ahead). A plain
+  SQL read (one `SELECT` or `WITH` statement, bounded or not) runs without asking
+  on dev, test, production and unlabelled targets, as do catalog and impact
+  lookups, Power BI DAX queries, Fabric read commands and metadata that names
+  production. `fabric_sql_query` takes an optional `environment` (`dev`, `test`
+  or `prod`) to read another `sql_targets` entry; it only ever runs one bounded
+  `SELECT`. Reads coop cannot classify still ask, and the per-session read grant
+  (`/coop-live-read`) is no longer needed.
+- **Dev writes ask less** (Aaron, 2026-10-07). Any dev or test Warehouse write
+  can be allowed for the session, batches and `MERGE` included; deletes (`DELETE`, `DROP`, `TRUNCATE`,
+  a dropped column), procedures and permission changes still ask every time.
+  Fabric writes from the shell (`fab deploy`, `az rest POST`) get the same
+  allow-for-session option per command kind; a delete asks every time.
 - **Pair the phone once** (Aaron, 2026-10-07). Phone access is now one switch
   for the whole coop window app, **Session > Phone > Allow phone access**.
   Pairing a phone turns it on and the window remembers it across restarts, so
@@ -51,6 +78,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- Sharing the project file now stops and reports a rejected commit instead of
+  pushing the previous commit and claiming success (#345). It checks that the
+  committed contract matches the file requested, and retries an already
+  committed file's refused push without creating another commit.
+- Saved sessions are claimed atomically across desktop tabs and phone resumes
+  (#344). Pending tab startup and worker shutdown retain ownership; overlapping
+  requests raise the existing tab instead of starting a second writer. A session change
+  that stops on a question holds only its own target, so other tabs keep working
+  while it waits.
 - **Phone requests stay on the session they started on** (#342). Pending snapshots
   and controls are refused after session replacement, tab selection, access-off
   or device revocation. App-wide pairing still follows new same-client sessions
@@ -368,16 +404,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `prod_staging` schema is not blocked. `/coop-approvals status` says so, the
   session-approval option reads "deletes still ask; production is blocked", and
   every block is audited as `production write`.
-- `coop unlock-prod <client> [--minutes <n>]`, the human-only way to allow a
-  production change through coop when one really must happen: run in the
-  person's own terminal, never from a session, it writes a time-bounded grant
-  (default 30 minutes, at most 8 hours) to `~/.coop/prod-unlock.json`, outside
-  every repository. While it holds for the contract's client, the same writes
-  fall back to a per-call production prompt prefixed with the grant id and the
-  minutes left, audited as `prod-unlock:<id>`. `--status` and `--revoke` manage
-  it; the file is a secret path for the agent. The command is absent from
-  `coop help`, the `/` menu and the window, documented only in
-  `docs/guardrails-reference.md` (Production writes).
+- A human-only, time-limited way to allow a production change when one really
+  must happen; under it the same writes fall back to a per-call production
+  prompt, audited with the grant id.
 
 - **The lineage docs live with the project file** (DR1, master plan section
   12.3, demo of 2026-10-05; reshaped onto the approved C1 design). The docs
