@@ -66,6 +66,17 @@ const OUT_OF_AGENT_PATTERNS = [
   /^Run powerbi-report-author\b/i,
   /^Import fabric_cicd\b/i,
 ];
+// Tools coop no longer ships (the review CLIs were retired in ST1): no vibe may
+// send anyone to them.
+const RETIRED_TOOL_PATTERNS = [
+  /\b(SQL|DAX)[ _-]review\b/i,
+  /\bcoop[ -](sql|dax)\b/i,
+  /\breview[ -]core\b/i,
+  /\bcoop review\b/i,
+  /\bcoop web\b/i,
+  /\bcontext[ -_]mode\b/i,
+  /\breview results\b/i,
+];
 
 console.log("→ vibes files existence and syntax");
 for (const pool of POOL_NAMES) {
@@ -80,6 +91,13 @@ for (const pool of POOL_NAMES) {
   } else {
     ko(`${pool} has non-empty lines`);
   }
+}
+
+console.log("→ no retired tools");
+for (const pool of POOL_NAMES) {
+  const stale = readLines(join(VIBES_DIR, pool)).filter((l) => RETIRED_TOOL_PATTERNS.some((p) => p.test(l)));
+  if (stale.length) ko(`${pool} names a retired tool`, stale.join(" | "));
+  else ok(`${pool} names no retired tool`);
 }
 
 console.log("→ plain text & visible length contract");
@@ -295,8 +313,8 @@ const REQUIRED_NEEDLES = [
   "/copy",
   ...WEBSITE_SLASH_COMMANDS,
   "build Markdown docs",
-  "SQL review",
-  "DAX review",
+  "sql_impact",
+  "active standards",
 ];
 
 let allNeedlesFound = true;

@@ -31,6 +31,23 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   terminal). Enter accepts, `n` keeps the printed commands, a redirected stdin
   never asks, `--yes` answers without a console.
 
+### Fixed
+
+- Vibes no longer send people to the retired SQL and DAX review tools (Aaron,
+  2026-10-07). The three tips that did now point at what replaced them: the
+  standards self-check and `sql_impact`. A data-doc tip about review findings
+  became one about `data_doc impact`, and a test keeps retired tool names out
+  of every vibe set.
+- Sharing the project file now stops and reports a rejected commit instead of
+  pushing the previous commit and claiming success (#345). It checks that the
+  committed contract matches the file requested, and retries an already
+  committed file's refused push without creating another commit.
+- Saved sessions are claimed atomically across desktop tabs and phone resumes
+  (#344). Pending tab startup and worker shutdown retain ownership; overlapping
+  requests raise the existing tab instead of starting a second writer. A session change
+  that stops on a question holds only its own target, so other tabs keep working
+  while it waits.
+
 ### Changed
 
 - **Production write approvals tightened** (G1, 2026-10-07). A production
@@ -78,15 +95,6 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
-- Sharing the project file now stops and reports a rejected commit instead of
-  pushing the previous commit and claiming success (#345). It checks that the
-  committed contract matches the file requested, and retries an already
-  committed file's refused push without creating another commit.
-- Saved sessions are claimed atomically across desktop tabs and phone resumes
-  (#344). Pending tab startup and worker shutdown retain ownership; overlapping
-  requests raise the existing tab instead of starting a second writer. A session change
-  that stops on a question holds only its own target, so other tabs keep working
-  while it waits.
 - **Phone requests stay on the session they started on** (#342). Pending snapshots
   and controls are refused after session replacement, tab selection, access-off
   or device revocation. App-wide pairing still follows new same-client sessions
