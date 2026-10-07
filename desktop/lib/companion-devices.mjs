@@ -62,10 +62,13 @@ export class DeviceStore {
   }
 
   /**
-   * Trade a code for a device. Returns `{ device, secret }` or `{ error }`
-   * ("not-paired" for a wrong, used or expired code).
+   * Trade a code for a device. Returns `{ device, secret, replaced }` or
+   * `{ error }` ("not-paired" for a wrong, used or expired code). Pairing a
+   * phone again replaces its old entry (pair once): `replaces` names the
+   * device the phone was already paired as, and an entry with the same name
+   * for the same Windows user goes too. `replaced` lists the ids removed.
    */
-  redeem(code, deviceName) {
+  redeem(code, deviceName, { replaces = "" } = {}) {
     const p = this.pairing;
     if (!p || p.expiresAt <= this.now()) { this.pairing = null; return { error: "not-paired" }; }
     if (!sameText(code, p.code)) {
@@ -77,11 +80,13 @@ export class DeviceStore {
     const { secret, secretHash } = newDeviceSecret(this.random);
     const now = this.now();
     const device = { id: this.random(12).toString("base64url"), name: deviceName, secretHash, windowsUser: p.windowsUser, client: p.client, createdAt: now, lastSeenAt: now, revokedAt: null };
-    // Removed and expired devices are dropped as new ones arrive.
-    this.devices = this.devices.filter((d) => !d.revokedAt && now - d.createdAt <= LIMITS.deviceMaxMs).slice(-(MAX_DEVICES - 1));
+    const name = String(deviceName).toLocaleLowerCase();
+    const replaced = this.devices.filter((d) => !d.revokedAt && (d.id === replaces || (d.windowsUser === p.windowsUser && String(d.name).toLocaleLowerCase() === name))).map((d) => d.id);
+    // Removed, replaced and expired devices are dropped as new ones arrive.
+    this.devices = this.devices.filter((d) => !d.revokedAt && !replaced.includes(d.id) && now - d.createdAt <= LIMITS.deviceMaxMs).slice(-(MAX_DEVICES - 1));
     this.devices.push(device);
     this.#save();
-    return { device, secret };
+    return { device, secret, replaced };
   }
 
   /** Record a use; written at most once a minute per device. */

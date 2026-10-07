@@ -19,7 +19,7 @@ import { PiSession } from "./lib/pi-session.mjs";
 import { IMAGE_LIMITS, buildCommand } from "./lib/rpc-commands.mjs";
 import { listSessions, isSessionPath } from "./lib/sessions.mjs";
 import { ownerOf, markOpenElsewhere } from "./lib/session-owners.mjs";
-import { MAX_TABS, TAB_STRIP_HEIGHT, afterClose, stripRows, tabFor, tabKey } from "./lib/tabs.mjs";
+import { MAX_TABS, TAB_STRIP_HEIGHT, afterClose, stripRows, tabFor, tabKey, tabLabel } from "./lib/tabs.mjs";
 import { consoleProcess } from "./lib/terminal.mjs";
 import { resolveAsset, isAppUrl, CSP, APP_ORIGIN } from "./lib/serve.mjs";
 import { readBranch } from "./lib/git.mjs";
@@ -315,6 +315,8 @@ function addTab(frame, { spec, rawSpec, token, extraArgs = [], noticesShown = fa
   };
   state.hub = newHub(state);
   windows.set(contents.id, state);
+  // Phone access is on for the app (pair once): the companion listens from the first tab.
+  if (settings.phoneAccess) ensureCompanion(state);
   frame.tabs.push(state);
   frame.win.contentView.addChildView(view);
   // A renderer that crashed or reloaded subscribes again; replaying keeps
@@ -517,7 +519,7 @@ function raise(state) {
 // Several sessions at once: another window on this folder with its own coop,
 // from the same launch spec (the same arguments, environment and Warehouse
 // token this window started with, as a restart reuses them). Its Pi starts a
-// new session; approvals, guardrails and phone access are its own.
+// new session; approvals, guardrails and questions are its own.
 handle("coop:new-window", (state) => {
   openWindow(state.rawSpec, state.token);
   return { success: true };
@@ -944,9 +946,12 @@ handle("coop:docs-portal", async (state) => {
 
 
 // --- Phone companion (master plan MC2, desktop/COMPANION.md) ---------------------
-// One loopback server per Windows user, started the first time a window allows
-// the phone; Tailscale's `serve` carries the tailnet name to it. At most one
-// window has phone access on; the phone sees that window's session.
+// One loopback server per Windows user, started when phone access is on;
+// Tailscale's `serve` carries the tailnet name to it. Pair once: the phone is
+// paired with coop, not a session. One app-wide switch (Session > Phone >
+// Allow phone access, kept in the settings) gives every tab on a client
+// phone access, through new sessions and restarts, and the phone picks among
+// the open tabs on its own client.
 
 const companion = { store: null, server: null, origin: "", starting: null };
 const windowsUser = (() => { try { return `${hostname()}\\${userInfo().username}`; } catch { return ""; } })();
@@ -964,9 +969,30 @@ function companionAudit(entry) {
   } catch { /* the audit never stops the window */ }
 }
 
-function activeHub() {
-  for (const state of windows.values()) if (state.hub.accessOn) return state.hub;
-  return null;
+/** The open sessions the phone may pick from: the focused window's tabs first, its front tab first. */
+function phoneTabs() {
+  const front = focusedFrame();
+  const ordered = front ? [front, ...[...frames.values()].filter((frame) => frame !== front)] : [...frames.values()];
+  const rows = [];
+  for (const frame of ordered) {
+    const tabs = frame.active ? [frame.active, ...frame.tabs.filter((tab) => tab !== frame.active)] : frame.tabs;
+    for (const state of tabs) {
+      if (!windows.has(state.contents.id)) continue;
+      rows.push({ id: state.tabId, hub: state.hub, label: tabLabel(state.label), folder: basename(state.spec.cwd || ""), working: state.working, asking: state.asking });
+    }
+  }
+  return rows;
+}
+
+// A companion that could not start says so once in the tab that tried.
+let companionWarned = false;
+function ensureCompanion(state) {
+  startCompanion().catch((error) => {
+    companionAudit({ kind: "start-failed", reason: String(error.message || error).slice(0, 200) });
+    if (companionWarned) return;
+    companionWarned = true;
+    send(state, "pi:notice", { level: "warning", message: `Phone access is on, but the phone companion could not start: ${/EADDRINUSE/.test(error.message) ? `port ${DEFAULT_PORT} on this computer is taken by another program.` : error.message}` });
+  });
 }
 
 function newHub(state) {
@@ -974,6 +1000,8 @@ function newHub(state) {
   const hub = new CompanionHub({
     windowsUser,
     client: describeProject(state.spec.cwd).client,
+    // Each new session in this tab follows the app-wide phone switch (pair once).
+    appAccess: () => settings.phoneAccess,
     // Session actions from the phone (MC9): the same lists and checks as the window's own.
     host: {
       // A session another window holds stays off the phone's list (one window per session).
@@ -1005,7 +1033,7 @@ function newHub(state) {
   hub.on("attention", () => { if (companion.server) companion.server.nudge(hub).catch(() => {}); });
   hub.on("access", ({ on, reason }) => {
     companionAudit({ kind: on ? "access-on" : "access-off", client: hub.client, reason });
-    if (!on && reason && reason !== "switched") send(state, "pi:notice", { level: "info", message: "Phone access is off for this window." });
+    if (!on && reason === "pi-exited") send(state, "pi:notice", { level: "info", message: "Phone access is off for this tab until coop runs again." });
     installMenu();
   });
   return hub;
@@ -1029,7 +1057,7 @@ async function startCompanion() {
       if (!origin) throw new Error("Tailscale is not running or not signed in on this computer, so the phone cannot reach coop. Start Tailscale, sign in, and try again.");
       const server = createCompanionServer({
         store: companionStore(),
-        active: activeHub,
+        tabs: phoneTabs,
         origin,
         webRoot: join(HERE, "companion"),
         shared: {
@@ -1051,36 +1079,50 @@ async function startCompanion() {
   return companion.starting;
 }
 
+/** Turn phone access on or off for the whole app; it stays as set across restarts. */
+function setPhoneAccess(on) {
+  settings = saveSettings(settingsFile, { ...settings, phoneAccess: on });
+  for (const state of windows.values()) state.hub.setAccess(on, on ? "app-on" : "turned-off");
+  installMenu();
+}
+
 async function togglePhone(state) {
-  if (state.hub.accessOn) { state.hub.setAccess(false, "turned-off"); return; }
-  if (!state.hub.client) {
-    dialog.showMessageBox(state.win, { type: "info", title: "Phone", message: "This folder's project file names no client.", detail: "The phone is tied to one client. Open a client's project (File > Switch project), or create its project file with /setup-project, then allow the phone." });
+  if (settings.phoneAccess) {
+    setPhoneAccess(false);
+    send(state, "pi:notice", { level: "info", message: "Phone access is off. Paired phones stay paired; allow it again with Session > Phone > Allow phone access." });
     return;
   }
   try {
     const origin = await startCompanion();
-    for (const other of windows.values()) if (other !== state && other.hub.accessOn) other.hub.setAccess(false, "switched");
-    if (state.hub.setAccess(true)) send(state, "pi:notice", { level: "info", message: `Phone access is on for this session (${state.hub.client}). Open ${origin} on your phone.` });
-    else send(state, "pi:notice", { level: "warning", message: "coop is not running in this window, so the phone cannot be allowed." });
+    setPhoneAccess(true);
+    const clients = [...new Set([...windows.values()].map((tab) => tab.hub.client).filter(Boolean))];
+    send(state, "pi:notice", clients.length
+      ? { level: "info", message: `Phone access is on for every tab (${clients.join(", ")}). Open ${origin} on a paired phone.` }
+      : { level: "info", message: "Phone access is on, but no open tab's project file names a client yet. Open a client's project to use it from the phone." });
   } catch (error) {
     dialog.showMessageBox(state.win, { type: "warning", title: "Phone", message: "The phone companion could not start.", detail: /EADDRINUSE/.test(error.message) ? `Port ${DEFAULT_PORT} on this computer is taken by another program.` : error.message });
   }
 }
 
 async function pairPhone(state) {
-  if (!state.hub.client) { togglePhone(state); return; }
+  if (!state.hub.client) {
+    dialog.showMessageBox(state.win, { type: "info", title: "Pair a phone", message: "This folder's project file names no client.", detail: "A phone is paired for one client. Open a client's project (File > Switch project), or create its project file with /setup-project, then pair the phone." });
+    return;
+  }
   let origin;
   try { origin = await startCompanion(); } catch (error) {
     dialog.showMessageBox(state.win, { type: "warning", title: "Pair a phone", message: "The phone companion could not start.", detail: error.message });
     return;
   }
+  // Pairing is the "yes" to phone access: it turns on for the app, once.
+  if (!settings.phoneAccess) setPhoneAccess(true);
   const { code } = companionStore().startPairing({ windowsUser, client: state.hub.client });
   companionAudit({ kind: "pairing-code-shown", client: state.hub.client });
   await dialog.showMessageBox(state.win, {
     type: "info",
     title: "Pair a phone",
     message: `Pairing code: ${code.slice(0, 4)}-${code.slice(4)}`,
-    detail: `1. On the phone, with Tailscale on, open ${origin}\n2. Enter this code and a name for the phone.\n\nThe code works once and for 5 minutes. The phone is paired for ${state.hub.client} as ${windowsUser}.\nAfter pairing, allow the phone with Session > Phone > Allow phone for this session.`,
+    detail: `1. On the phone, with Tailscale on, open ${origin}\n2. Enter this code and a name for the phone.\n\nThe code works once and for 5 minutes. The phone is paired for ${state.hub.client} as ${windowsUser}, once: it can use any open ${state.hub.client} tab while coop runs, and picks one under Switch session. Turn it off with Session > Phone > Allow phone access.`,
     buttons: ["Done"],
   });
 }
@@ -1129,7 +1171,7 @@ function installMenu() {
     },
     isMac: process.platform === "darwin",
     phone: {
-      accessOn: Boolean(focusedState() && focusedState().hub.accessOn),
+      accessOn: settings.phoneAccess,
       devices: companionStore().list(),
       toggleAccess: () => { const state = focusedState(); if (state) togglePhone(state); },
       pair: () => { const state = focusedState(); if (state) pairPhone(state); },

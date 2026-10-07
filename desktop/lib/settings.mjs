@@ -33,6 +33,9 @@ function normalize(value) {
     openNextTime: folderString(raw.openNextTime),
     // The phone companion's address when it is not this computer's Tailscale
     // name (MC2); "" reads it from Tailscale.
+    // Phone access for the whole app (pair once): every tab on a client, kept
+    // across restarts. Off until a phone is paired or it is turned on.
+    phoneAccess: raw.phoneAccess === true,
     companionOrigin: typeof raw.companionOrigin === "string" && /^https:\/\/[a-z0-9.-]+(:\d{1,5})?$/i.test(raw.companionOrigin) ? raw.companionOrigin.toLowerCase() : "",
   };
 }
