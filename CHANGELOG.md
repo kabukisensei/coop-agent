@@ -7,6 +7,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- Vibes no longer send people to the retired SQL and DAX review tools (Aaron,
+  2026-10-07). The three tips that did now point at what replaced them: the
+  standards self-check and `sql_impact`. A data-doc tip about review findings
+  became one about `data_doc impact`, and a test keeps retired tool names out
+  of every vibe set.
 - Sharing the project file now stops and reports a rejected commit instead of
   pushing the previous commit and claiming success (#345). It checks that the
   committed contract matches the file requested, and retries an already

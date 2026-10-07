@@ -19,9 +19,9 @@ Run /daily-log at session end so the team's roll-up stays accurate.
 Use /impact-analysis before touching a shared table, measure, or schema.
 Ask Coop to validate a Fabric deployment plan without deploying it.
 Ask Coop to prove a measure change across slicers, not just one filter context.
-Ask Coop to compare review results against the baseline so only new findings count.
-Run SQL review on any T-SQL change before it reaches a shared branch.
-Ask Coop to run DAX review before a measure ships to a shared semantic model.
+Ask Coop which standards it applied to a SQL or DAX change, and any it deviated from.
+Ask Coop to run sql_impact before editing a live SQL object, so you see what depends on it.
+Ask Coop to self-check its SQL or DAX diff against the active standards before you accept it.
 Try /semantic-model-review quarterly to keep relationships and grain honest.
 Try /fabric-architecture-review before adding workspaces or deployment stages.
 Use /discovery when onboarding to an unfamiliar client estate.
