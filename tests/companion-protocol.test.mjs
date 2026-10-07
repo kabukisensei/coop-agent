@@ -26,14 +26,20 @@ const OTHER_INC = "BBBBBBBBBBBBBBBBBBBBBBBB";
 const SUB = "0f8fad5b-d9cb-469f-a165-70867728950e";
 
 // ---- the remote surface ------------------------------------------------------
-ok("only eighteen routes exist and every code has a status", () => {
-  assert.deepEqual(Object.values(ROUTES).sort(), ["answer", "chat", "control", "dequeue", "detail", "details", "events", "files", "logout", "pair", "push", "pushState", "sessionAction", "sessions", "snapshot", "stop", "tree", "upload"]);
+ok("only twenty routes exist and every code has a status", () => {
+  assert.deepEqual(Object.values(ROUTES).sort(), ["answer", "chat", "control", "dequeue", "detail", "details", "events", "files", "logout", "pair", "push", "pushState", "selectTab", "sessionAction", "sessions", "snapshot", "stop", "tabs", "tree", "upload"]);
   for (const status of Object.values(CODES)) assert.ok(status >= 400 && status < 600);
 });
 ok("anything else is not found, including Pi's own commands", () => {
   for (const [method, path] of [["POST", "/api/bash"], ["POST", "/api/rpc"], ["GET", "/api/file"], ["POST", "/api/files"], ["GET", "/api/upload"], ["POST", "/api/new_session"], ["POST", "/api/unlock-prod"], ["DELETE", "/api/pair"], ["GET", "/api/chat"]]) {
     refuses("not-found", () => validateRequest(method, path, {}));
   }
+});
+ok("choosing an open session names one tab by its number, nothing else", () => {
+  assert.deepEqual(validateRequest("POST", "/api/tabs", { submissionId: SUB, tabId: 3 }), { op: "selectTab", submissionId: SUB, tabId: 3 });
+  assert.deepEqual(validateRequest("GET", "/api/tabs", null), { op: "tabs" });
+  for (const tabId of [0, -1, 1.5, "3", null, undefined]) refuses("bad-request", () => validateRequest("POST", "/api/tabs", { submissionId: SUB, tabId }));
+  refuses("bad-request", () => validateRequest("POST", "/api/tabs", { submissionId: SUB, tabId: 2, client: "Other Co" }));
 });
 ok("bodies over the limit are refused before parsing matters", () => {
   refuses("too-large", () => validateRequest("POST", "/api/chat", { submissionId: SUB, incarnation: INC, text: "hi" }, LIMITS.bodyBytes + 1));

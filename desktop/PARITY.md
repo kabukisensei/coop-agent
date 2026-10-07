@@ -276,7 +276,8 @@ Notify in the background).
 The window's own addition, matching how the terminal runs one coop per
 console: each tab is one session with its own Pi process
 (`desktop/lib/tabs.mjs`, `addTab` in `desktop/main.mjs`), so its approvals,
-guardrails, questions and phone access are its own. Tabs share the window's
+guardrails and questions are its own (phone access is one switch for the app;
+a paired phone picks among the tabs, see Phone companion). Tabs share the window's
 folder, launch spec and Warehouse target. Ctrl+N (or the strip's +) opens a
 tab on a new session; New session or a click on another saved session while
 coop works opens it in a new tab instead of refusing. Ctrl+W closes a tab,
@@ -323,7 +324,8 @@ terminal capability with its phone status:
 | Thinking and tool detail (Ctrl+T, Ctrl+O) | phone (MC8) | A tool line opens its arguments and output on tap, and an answer's Thinking link opens its thinking; fetched only on tap (`GET /api/detail`). |
 | Status bar, widgets and the todo panel (`setStatus`, `setWidget`, `rpiv-todo`) | phone (MC8) | Above the text box: the status line, the widgets and the todo panel rebuilt from `todo` results as the window does; a tap folds it to the status line. |
 | Search the conversation, jump between prompts (Ctrl+F, Ctrl+Up/Down) and prompt history (Up) | phone (MC8) | The menu's Find: a search over the conversation, and with no search your prompts, newest first, each to jump to or Reuse. |
-| `/new`, `/resume`, `/fork`, `/clone` and the sessions list (`coop -c`, `-r`, `--session`) | phone (MC9) | The menu's Sessions sheet: New session, the folder's saved sessions, Fork from a prompt and Clone. A session the phone itself starts or opens keeps the phone's access; one changed at the desk still ends it. |
+| `/new`, `/resume`, `/fork`, `/clone` and the sessions list (`coop -c`, `-r`, `--session`) | phone (MC9) | The menu's Sessions sheet: New session, the folder's saved sessions, Fork from a prompt and Clone. Phone access is one switch for the app (pair once), so a session started at either screen keeps it. |
+| Tabs (several sessions at once) | phone (pair once) | Switch session in the menu lists every tab open on the phone's client, in every coop window, and moves the phone between them. |
 | `/tree` (view) | phone (MC9) | Tree in the Sessions sheet: the window's default view, one line per prompt and answer, indented where the session branches; a tap on a prompt forks from it. Moving within the session and labels stay in the terminal's `/tree`, as in the window. |
 | `/export` (HTML) | phone (MC9) | Export HTML in the Sessions sheet writes the page beside the session file on the VM (not in the project folder); the file stays on the VM. |
 | `/reload` | phone (MC9) | Restart coop in the Sessions sheet: the window restarts coop on the same session as its own `/reload` does, and the phone keeps its access. |

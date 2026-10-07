@@ -15,6 +15,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   session, never headless, never from the phone; every attempt is audited,
   allowed or refused. A session can no longer run `coop unlock-prod` or touch
   `prod-unlock.json` from its shell, nor edit or write the file (it used to ask).
+- **Pair the phone once** (Aaron, 2026-10-07). Phone access is now one switch
+  for the whole coop window app, **Session > Phone > Allow phone access**.
+  Pairing a phone turns it on and the window remembers it across restarts, so
+  a desk new session, a session switch or a restart no longer turns it off.
+  The phone's new **Switch session** menu item lists every tab open on its own
+  client, in every coop window, and moves between them. Pairing the same phone
+  again replaces its old row under Paired phones. Production approvals,
+  session-wide options and the `!` shell stay at the desk.
 - **The project file is found two levels down** (Aaron, 2026-10-06). Most
   teammates open coop in their user folder, and the client's repositories sit
   one folder further down (`devops\fabric`). Opened in a folder that is not a
