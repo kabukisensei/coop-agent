@@ -5,6 +5,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Sharing the project file now stops and reports a rejected commit instead of
+  pushing the previous commit and claiming success (#345). It checks that the
+  committed contract matches the file requested, and retries an already
+  committed file's refused push without creating another commit.
+
 ### Changed
 
 - **Pair the phone once** (Aaron, 2026-10-07). Phone access is now one switch
