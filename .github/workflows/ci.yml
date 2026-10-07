@@ -293,7 +293,7 @@ jobs:
     name: installer upgrade (Windows)
     needs: [installer]
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -313,6 +313,11 @@ jobs:
         env:
           COOP_INSTALLER_TEST: '1'
         run: node desktop/scripts/verify-upgrade.mjs --previous "$env:RUNNER_TEMP\previous" --dist "$env:RUNNER_TEMP\current" --output "$env:RUNNER_TEMP\upgrade-acceptance.json"
+      - name: double-click the "coop" shortcut; a window must open (picker, then first-launch setup and the window)
+        shell: pwsh
+        env:
+          COOP_INSTALLER_TEST: '1'
+        run: node desktop/scripts/verify-launch.mjs --dist "$env:RUNNER_TEMP\current" --output "$env:RUNNER_TEMP\launch-acceptance.json"
       - name: the one-liner (irm | iex form) installs the latest release, then finds it installed
         shell: pwsh
         env:
@@ -330,7 +335,9 @@ jobs:
         if: always()
         with:
           name: coop-window-upgrade-acceptance
-          path: ${{ runner.temp }}/upgrade-acceptance.json
+          path: |
+            ${{ runner.temp }}/upgrade-acceptance.json
+            ${{ runner.temp }}/launch-acceptance.json
           if-no-files-found: ignore
 
   gate:

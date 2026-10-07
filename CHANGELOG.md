@@ -169,6 +169,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   stay pointed at the terminal install (the first launch used to repoint "coop
   (terminal)" at the window's copy). A new CI job installs the latest release
   and then this build over it, and over a terminal install, to check it.
+- **The "coop" shortcut never fails silently** (Aaron, 2026-10-07). Clicked
+  while coop is already open, it brings that window forward (it used to do
+  nothing); clicked while the first launch is still setting up, it says so. A
+  start that ends with no window shows a message instead of quietly closing. A
+  new CI step double-clicks the installed shortcut and requires the picker, then
+  the full first-launch setup and the coop window, to appear.
 
 ## [0.33.0] — 2026-10-06
 

@@ -472,6 +472,7 @@ await check("ci.yml: the upgrade acceptance installs the latest release, then th
   assert.match(upgrade, /COOP_INSTALLER_TEST: '1'/);
   assert.match(upgrade, /gh release download --repo "\$env:GITHUB_REPOSITORY" --pattern 'coop-window-\*\.exe' --pattern 'installer-acceptance\.json'/);
   assert.match(upgrade, /run: node desktop\/scripts\/verify-upgrade\.mjs --previous /);
+  assert.match(upgrade, /run: node desktop\/scripts\/verify-launch\.mjs /, "the shortcut is double-clicked and a window must open");
   assert.match(gate, /needs: \[[^\]]*\binstaller-upgrade\b/, "the gate needs the upgrade job");
 });
 
