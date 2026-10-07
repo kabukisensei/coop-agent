@@ -1666,6 +1666,39 @@ export function managedSqlEnvironment(deps: LiveReadResolverDeps): string {
   } catch { return ""; }
 }
 
+/** Why coop cannot confirm a Warehouse write's target as dev or test, and what the
+ *  person does about it, for the refusal (2026-10-07: a teammate who opened coop in
+ *  the folder above the project repository saw only "Production writes are
+ *  blocked" while the project file named the right dev Warehouse). It only
+ *  explains: the write stays refused. */
+export function unconfirmedTargetReason(event: any, deps: LiveReadResolverDeps, contract: ContractSqlScope | null): string {
+  const lead = "coop guardrails: blocked a Warehouse write. Coop cannot confirm this target is dev or test, so it is treated as production and blocked.";
+  const target = effectiveMutationTarget(event);
+  const name = target.innerTool || target.outerTool;
+  if (name === FABRIC_SQL_FALLBACK_TOOL && contract?.configured) {
+    return `${lead} The project file's sql_targets default is not a ready dev or test entry: fix it with /setup-project, then start a new session (/new).`;
+  }
+  let entry: any = null;
+  try {
+    const mcp = JSON.parse(deps.readText(managedMcpConfigPath(deps.agentDir)));
+    const managed = Array.isArray(mcp?._coop?.managed_servers) && mcp._coop.managed_servers.includes(MANAGED_SQL_SERVER);
+    entry = managed ? mcp?.mcpServers?.[MANAGED_SQL_SERVER] ?? null : null;
+  } catch { entry = null; }
+  const reopen = "Close coop and open it in the repository that holds the project file (.coop/project.yml), or in the folder directly above it when that folder holds only that one project repository, then try again.";
+  if (!entry) {
+    return `${lead} Coop's Warehouse target for this folder is missing (the managed MCP settings have no fabric-sqlendpoint entry). ${reopen}`;
+  }
+  const scope = typeof entry?._coop_target?.scope === "string" ? entry._coop_target.scope : "";
+  const why = typeof entry?._coop_target?.reason === "string" ? entry._coop_target.reason : "";
+  if (scope !== "item" && why === "no_project_file") {
+    return `${lead} The Warehouse target is blank: coop found no project file for the folder it was opened in, so it has no dev workspace or item to check against. ${reopen}`;
+  }
+  if (scope !== "item") {
+    return `${lead} The Warehouse target is blank: the project file names no default Warehouse (fabric.default_workspace_id and fabric.default_sql_endpoint). Add it with /setup-project, then start a new session (/new).`;
+  }
+  return `${lead} The project file does not label this Warehouse's workspace as dev or test (fabric.environment_names, or a matching sql_targets entry), or the two disagree. Label it with /setup-project, then start a new session (/new).`;
+}
+
 export function createLiveReadGrant(scope: LiveReadScope, now = Date.now()): LiveReadGrant {
   return { scope: { ...scope, targets: [...scope.targets] }, grantedAt: now };
 }
@@ -2393,6 +2426,11 @@ export default function coopGuardrails(pi: ExtensionAPI) {
               ? decision.label || "Warehouse SQL write"
               : `${decision.label || "Warehouse SQL write"} (target not confirmed as dev or test; treated as production)`;
             const refused = await permitProductionWrite(ctx, "mcp-confirm", "governed-live-read", what);
+            // Say why the target is unconfirmed and what to do; the write stays refused.
+            if (refused && refused.reason === PROD_WRITE_LOCKED && writeEnvironment !== "production"
+                && decision.environment !== "production" && decision.scope?.environment !== "production") {
+              return { block: true, reason: unconfirmedTargetReason(event, liveReadDeps, ensureSessionGovernance(ctx.cwd).sqlContract) };
+            }
             return refused || undefined;
           }
           if (sqlEditKey && editApprovals.has(sqlEditKey)) {

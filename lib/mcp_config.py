@@ -260,7 +260,9 @@ def desired_servers(
                 "workspace_id": target.workspace_id,
                 "item_id": target.item_id,
                 "item_type": target.item_type,
-                "reason": target.reason,
+                # No project file at all reads differently from one without a
+                # Warehouse: the guardrails' refusal tells the person which.
+                "reason": target.reason if project else "no_project_file",
                 **metadata,
             }
             out["fabric-sqlendpoint"] = sql_entry

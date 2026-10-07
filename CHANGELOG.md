@@ -16,6 +16,24 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   apply on 0.87.1. Servers now start lazily after discovery, and a long tool
   call that reports progress no longer times out.
 
+## [0.34.1] — 2026-10-07
+
+### Fixed
+
+- Coop opened in the folder above a client repository (the user folder holding
+  `<user>\fabric`) now uses that repository's project file for the managed
+  Warehouse target. Before, `coop`, `coop desktop` and `coop sync` from that
+  folder wrote the global endpoint with blank targets into `mcp-adapter.json`,
+  so the guardrails refused a dev write the project file allowed. The target
+  follows the same lookup as the launch: the nearest `.coop/project.yml` above
+  the folder, the client home repository beside it, or the one repository inside
+  it. With several repositories inside that each hold one, nothing is guessed:
+  the target stays blank and the launch (terminal and window) names them.
+- A Warehouse write refused because coop cannot confirm its target as dev or test
+  now says why (no project file for the folder, no default Warehouse in the
+  project file, or an unlabelled workspace) and what to do. The rule is
+  unchanged: an unconfirmed target is still treated as production.
+
 ## [0.34.0] — 2026-10-07
 
 ### Added

@@ -1562,6 +1562,13 @@ function Update-CoopManagedMcpConfig {
     # terminating error; capture it and decide below.
     $ErrorActionPreference = 'Continue'
     $genArgs = @('--config', (Get-CoopConfigFile), '--output', $OutputPath, '--project-cwd', $ProjectCwd)
+    # The project file the launch itself finds (above the folder, the client home
+    # repository beside it, or the one repository inside it), so coop opened from
+    # the user folder above a client repository gets that repository's Warehouse
+    # target, not a blank one (2026-10-07). None or several found: no --project,
+    # and the generator keeps the blank target, which the guardrails refuse.
+    $contract = Find-CoopLaunchContract $ProjectCwd
+    if ($contract) { $genArgs += @('--project', $contract) }
     if ($ExistingPath) { $genArgs += @('--existing', $ExistingPath) }
     $out = @(& $py $generator @genArgs 2>&1)
     $rc = $LASTEXITCODE
@@ -3311,6 +3318,31 @@ function Find-CoopChildContract {
   $found = @(Get-CoopChildContracts $StartDir)
   if ($found.Count -eq 1) { return $found[0] }
   return ''
+}
+
+# The project file a launch from $StartDir uses: the nearest one at or above it,
+# else the client home repository beside it, else the one repository inside it.
+# '' when none, or when several repositories inside it have one (no guessing).
+function Find-CoopLaunchContract {
+  param([string]$StartDir = (Get-Location).Path)
+  $above = Find-CoopContractAbove $StartDir
+  if ($above) { return $above }
+  $sibling = Find-CoopSiblingContract $StartDir
+  if ($sibling) { return $sibling }
+  return (Find-CoopChildContract $StartDir)
+}
+
+# Warn when $StartDir is in no repository and several repositories inside it have
+# a project file: coop cannot tell which one is meant, so the Warehouse target
+# stays blank and writes are refused until coop is opened in one of them.
+function Write-CoopSeveralContractsWarning {
+  param([string]$StartDir = (Get-Location).Path)
+  if (Find-CoopContractAbove $StartDir) { return }
+  if (Find-CoopGitRoot $StartDir) { return }
+  $several = @(Get-CoopChildContracts $StartDir)
+  if ($several.Count -le 1) { return }
+  $names = (@($several | ForEach-Object { Get-CoopChildRepositoryName $_ $StartDir })) -join ', '
+  Coop-Warn "no project file for this folder: several repositories inside it have one ($names). Open coop in the repository you mean; until then the Warehouse target is blank and writes are refused."
 }
 
 # Hand the resolved contract to Pi and the window (COOP_PROJECT_YML) when it
