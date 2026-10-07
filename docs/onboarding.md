@@ -175,7 +175,8 @@ where the file goes, creates the home repository when there are several
 repositories (`git init` and a README; add its origin on GitHub when you are
 ready) and lists every repository beside it. Saving ends with one question,
 **Share with the team?**: yes, and coop commits only `.coop/project.yml` and
-pushes it. That is the only Git write coop performs on its own, always after
+pushes it, even when the repository's `.gitignore` covers `.coop` (the rest of
+`.coop` stays ignored). That is the only Git write coop performs on its own, always after
 your yes; `/project-share` and the pane's button do the same any time.
 
 **Everyone else** clones the client's repositories (the home repository too) and

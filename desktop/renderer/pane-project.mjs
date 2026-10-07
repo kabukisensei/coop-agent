@@ -347,7 +347,7 @@ export function mountProject(box, options, { coop, newSession }) {
     if (!result.success) { toast(result.error || "Could not share.", "error", { timeout: 0 }); return; }
     const r = result.data;
     if (r.ok) {
-      toast(r.state === "already-shared" ? "Your project file already matches the team's." : `Shared with the team (commit ${r.commit} pushed to ${r.branch}).`, "success");
+      toast(r.state === "already-shared" ? "Your project file already matches the team's." : `Shared with the team (commit ${r.commit} pushed to ${r.branch}).${r.ignored ? " .gitignore covers .coop, so coop added only project.yml; the rest of .coop stays unshared." : ""}`, "success");
       reload(false);
       return;
     }

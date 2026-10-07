@@ -3096,20 +3096,42 @@ function Find-CoopContractAbove {
   return ''
 }
 
-# C1: coop opened in the folder that holds the client's repositories ($StartDir
-# in no repository): the one repository directly inside it with a committed
-# .coop/project.yml. '' when none or several do (with several, the user opens
-# the repository they mean). Mirrors findChildContract in lib/project-contract.mjs.
+# C1: coop opened in the folder that holds the client's repositories, or the
+# folder above that ($StartDir in no repository): the repositories with a
+# committed .coop/project.yml directly inside it, then those one folder further
+# down inside a plain folder (<user>\devops\fabric opened from the user folder).
+# Hidden folders, AppData, node_modules and coop checkouts are skipped, and a
+# repository is never searched inside. Find-CoopChildContract uses the one found
+# ('' when none or several). Mirrors childContracts in lib/project-contract.mjs.
 function Get-CoopChildContracts {
   param([string]$StartDir = (Get-Location).Path)
   $found = @()
   foreach ($child in (Get-ChildItem -LiteralPath $StartDir -Directory -ErrorAction SilentlyContinue | Where-Object { -not $_.Name.StartsWith('.') } | Sort-Object Name)) {
-    if (-not (Test-Path -LiteralPath (Join-Path $child.FullName '.git'))) { continue }
-    if (Test-CoopCheckout $child.FullName) { continue }
-    $contract = Join-Path $child.FullName '.coop\project.yml'
-    if (Test-Path -LiteralPath $contract -PathType Leaf) { $found += $contract }
+    if (Test-Path -LiteralPath (Join-Path $child.FullName '.git')) {
+      if (Test-CoopCheckout $child.FullName) { continue }
+      $contract = Join-Path $child.FullName '.coop\project.yml'
+      if (Test-Path -LiteralPath $contract -PathType Leaf) { $found += $contract }
+      continue
+    }
+    if (@('appdata', 'node_modules') -contains $child.Name.ToLowerInvariant()) { continue }
+    foreach ($inner in (Get-ChildItem -LiteralPath $child.FullName -Directory -ErrorAction SilentlyContinue | Where-Object { -not $_.Name.StartsWith('.') } | Sort-Object Name)) {
+      if (-not (Test-Path -LiteralPath (Join-Path $inner.FullName '.git'))) { continue }
+      if (Test-CoopCheckout $inner.FullName) { continue }
+      $contract = Join-Path $inner.FullName '.coop\project.yml'
+      if (Test-Path -LiteralPath $contract -PathType Leaf) { $found += $contract }
+    }
   }
   return $found
+}
+# The repository holding a contract found below $StartDir, as a path relative to
+# it ('fabric', or 'devops\fabric' two levels down), for the launch notes.
+function Get-CoopChildRepositoryName {
+  param([string]$Contract, [string]$StartDir = (Get-Location).Path)
+  $repo = Split-Path -Parent (Split-Path -Parent $Contract)
+  $base = [System.IO.Path]::GetFullPath($StartDir).TrimEnd('\', '/')
+  $full = [System.IO.Path]::GetFullPath($repo)
+  if ($full.StartsWith($base + [System.IO.Path]::DirectorySeparatorChar)) { return $full.Substring($base.Length + 1) }
+  return (Split-Path -Leaf $repo)
 }
 function Find-CoopChildContract {
   param([string]$StartDir = (Get-Location).Path)
