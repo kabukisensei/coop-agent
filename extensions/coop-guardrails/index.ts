@@ -852,7 +852,7 @@ function readProdUnlock(): ProdUnlock | null {
 
 const prodUnlockMinutesLeft = (unlock: ProdUnlock, now = Date.now()) => Math.max(1, Math.ceil((unlock.expiresAt - now) / 60_000));
 const PROD_WRITE_HEADLESS = "coop guardrails: blocked a production write. Production changes run only when a person confirms each one at the desk under their unlock, and this session cannot ask. Work on the dev target instead.";
-const PROD_WRITE_LOCKED = "coop guardrails: blocked a production write. Production changes run only while a person has unlocked production with `coop unlock-prod <client>` in their own terminal, and then each write still asks at the desk. Work on the dev target, or ask the person to unlock production.";
+const PROD_WRITE_LOCKED = "coop guardrails: blocked a production write. Production changes need a person's separate go-ahead, given outside this session, and then each write still asks at the desk. Work on the dev target, or tell the person this change needs production.";
 const PROD_WRITE_DECLINED = "coop guardrails: blocked the production write (not permitted). Coop changes production only when you confirm that write yourself; work on the dev target, or ask again and confirm it when coop asks.";
 
 export type ProductionVerdict = { decision: "allowed" | "declined" | "blocked-headless" | "blocked"; detail: string; reason: string };
@@ -878,7 +878,7 @@ export async function askProductionWrite(ctx: any, what: string, unlock: ProdUnl
 export function touchesProdUnlock(cmd: string): boolean {
   return /\bunlock-prod\b/i.test(cmd) || /prod-unlock\.json/i.test(cmd);
 }
-const PROD_UNLOCK_SELF_BLOCK = "coop guardrails: blocked. Only a person grants the production unlock, with `coop unlock-prod` in their own terminal; a session never runs it or touches its file.";
+const PROD_UNLOCK_SELF_BLOCK = "coop guardrails: blocked. Only a person gives the production go-ahead, outside this session; a session never grants it.";
 const SQL_ENDPOINT_TOOL = /(^|[_\-.:/])(executeSQL|execute_query|fabric-sqlendpoint-execute_query|fabric_sqlendpoint_execute_query)([_\-.:/]|$)/i;
 const MANAGED_SQL_SERVER = "fabric-sqlendpoint";
 const FABRIC_SQL_FALLBACK_TOOL = "fabric_sql_query";
@@ -2532,7 +2532,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         const unlock = activeProdUnlock(ctx);
         message += unlock
           ? `\nPRODUCTION WRITES UNLOCKED by a human for ${unlock.client} (grant ${unlock.id}, ${prodUnlockMinutesLeft(unlock)} min left): each production write asks yes/no at the desk and is audited.`
-          : "\nProduction writes: blocked until a person runs `coop unlock-prod <client>` in their own terminal; then each one asks at the desk; never for the whole session.";
+          : "\nProduction writes: blocked without a person's go-ahead; then each one asks at the desk; never for the whole session.";
       }
       try { if (typeof ctx.ui?.notify === "function") ctx.ui.notify(message, "info"); } catch { /* ignore */ }
     },

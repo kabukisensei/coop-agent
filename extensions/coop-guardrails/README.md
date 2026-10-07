@@ -20,7 +20,7 @@ never intercepted**.
 | **Secret files** | Confirms before the agent reads/edits/writes a secret-looking file — `.env` (not `.env.example`), `*.pem`/`*.key`/`*.p12`, `id_rsa`/`id_ed25519`, `credentials`, `.npmrc`, `secrets.*`. Declining blocks. |
 | **Live environment reads** | Allows read-only dev/test metadata, schema, and artifact-code inspection. Confirms row-level reads and every production read. A confirmed, explicitly bounded read scope may be reused for matching calls in the same session; production is allowed when it is part of that exact grant. |
 | **Mutating MCP actions** | Confirms create/update/delete/deploy/publish-looking Fabric, Power BI, and proxied MCP calls. |
-| **Production writes** | Runs SQL DDL/DML on a production target, Power BI Modeling edits after a production connection, and Fabric or shell writes that name production only while a human-only `coop unlock-prod` grant holds for that client, and then each one asks a yes/no at the desk; without the grant they are blocked. Never session-wide, never headless, never from the phone; every attempt is audited. A session cannot run `unlock-prod` or write its file. |
+| **Production writes** | Runs SQL DDL/DML on a production target, Power BI Modeling edits after a production connection, and Fabric or shell writes that name production only with a person's separate, time-limited go-ahead for that client, and then each one asks a yes/no at the desk; without it they are blocked. Never session-wide, never headless, never from the phone; every attempt is audited. A session can never give itself the go-ahead. |
 
 When a tool call is blocked, the model receives a `reason` explaining why and what to
 do instead (e.g. "unstage source and let a human commit").

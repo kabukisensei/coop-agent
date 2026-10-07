@@ -422,7 +422,7 @@ private `~/.coop/devops/clients.yml`.
 **Approval boundary.** Dev/test metadata reads proceed by default. Row reads, production
 reads, mutation-looking MCP actions, and **every Warehouse SQL call** require explicit
 approval; approval-required calls fail closed when no UI is available. A production write
-runs only under a human `coop unlock-prod`, and then asks you a yes/no at the desk for each
+runs only with a person's separate go-ahead, and then asks you a yes/no at the desk for each
 write; never session-wide (`docs/guardrails-reference.md`, Production writes). Warehouse SQL is
 classified as `row-data` or `ddl-dml-destructive`: one bounded `SELECT` on the resolved
 **dev** target runs without a prompt, bounded reads on test/production targets still ask,
@@ -517,7 +517,7 @@ launch.
    Python, or notebook source. Make the edit, show the diff, let a human commit.
    Only docs / logs / diagrams / glossary / site may be committed, after approval.
 5. Dev/test metadata/schema/code is read-only by default; actual rows and all production access ask first.
-6. Production changes only under your unlock: each production write then asks you at the desk and is audited.
+6. Production changes only with your go-ahead: each production write then asks you at the desk and is audited.
 7. Managed integrations are read-only first; mutation and Warehouse SQL calls are approval-gated.
 8. Never expose secrets.
 

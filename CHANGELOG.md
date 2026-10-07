@@ -7,13 +7,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
-- **Production writes run under your unlock** (G1, Aaron, 2026-10-07). A
-  production write (SQL on a production target, a model edit after a production
-  connection, a Fabric write naming production) stays blocked unless you ran
-  `coop unlock-prod <client>` in your own terminal; under it, each one asks a
+- **Production write approvals tightened** (G1, 2026-10-07). A production
+  write still needs a person's separate go-ahead, and now each one also asks a
   yes/no at the desk. Never for the whole session, never headless, never from
-  the phone; every attempt is audited, allowed or refused. A session can no longer run `coop unlock-prod` or touch
-  `prod-unlock.json` from its shell, nor edit or write the file (it used to ask).
+  the phone; every attempt is audited, allowed or refused, and a session can
+  never give itself the go-ahead.
   A Warehouse write on a target coop cannot confirm as dev or test (the
   workspace-wide endpoint, or a contract whose `environment_names` are blank and
   whose `sql_targets` do not carry the endpoint's ids) is now treated the
@@ -332,16 +330,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `prod_staging` schema is not blocked. `/coop-approvals status` says so, the
   session-approval option reads "deletes still ask; production is blocked", and
   every block is audited as `production write`.
-- `coop unlock-prod <client> [--minutes <n>]`, the human-only way to allow a
-  production change through coop when one really must happen: run in the
-  person's own terminal, never from a session, it writes a time-bounded grant
-  (default 30 minutes, at most 8 hours) to `~/.coop/prod-unlock.json`, outside
-  every repository. While it holds for the contract's client, the same writes
-  fall back to a per-call production prompt prefixed with the grant id and the
-  minutes left, audited as `prod-unlock:<id>`. `--status` and `--revoke` manage
-  it; the file is a secret path for the agent. The command is absent from
-  `coop help`, the `/` menu and the window, documented only in
-  `docs/guardrails-reference.md` (Production writes).
+- A human-only, time-limited way to allow a production change when one really
+  must happen; under it the same writes fall back to a per-call production
+  prompt, audited with the grant id.
 
 - **The lineage docs live with the project file** (DR1, master plan section
   12.3, demo of 2026-10-05; reshaped onto the approved C1 design). The docs

@@ -2273,7 +2273,7 @@ await t("G1: without a human unlock a production write is blocked with no prompt
     const sqlWrite = (query) => ({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify({ query }) } });
     let r = await handle(sqlWrite("ALTER VIEW dbo.V AS SELECT 1 AS x"), liveCtx);
     assert.equal(blocked(r), true, "no unlock: blocked");
-    assert.match(r.reason, /coop unlock-prod/);
+    assert.match(r.reason, /go-ahead/);
     assert.equal(inputCount, 0, "nothing to type");
     assert.equal(confirmCount, 0, "no yes/no and no session option without an unlock");
     assert.deepEqual(readAudit().map((e) => [e.decision, e.label, e.detail]), [["blocked", "production write", "no-unlock"]]);
@@ -2286,7 +2286,7 @@ await t("G1: without a human unlock a production write is blocked with no prompt
     // Headless: blocked, nothing to ask.
     r = await handle(sqlWrite("UPDATE dbo.T SET a = 1"), { cwd: LIVE_ROOT, hasUI: false });
     assert.equal(blocked(r), true);
-    assert.match(r.reason, /coop unlock-prod/);
+    assert.match(r.reason, /go-ahead/);
     // A dev target asks as before.
     writeManagedTarget({ environment: "dev" });
     await handleSessionStart({ reason: "new" }, liveCtx);
@@ -2326,13 +2326,13 @@ await t("G1: a session can never grant itself the production unlock", async () =
   for (const cmd of ["coop unlock-prod Contoso --minutes 5", "pwsh -File bin/coop.ps1 unlock-prod Contoso", "echo {} > ~/.coop/prod-unlock.json", "cat ~/.coop/prod-unlock.json"]) {
     const r = await call(cmd, { confirm: true });
     assert.equal(blocked(r), true, cmd);
-    assert.match(r.reason, /Only a person grants the production unlock/);
+    assert.match(r.reason, /Only a person gives the production go-ahead/);
     assert.equal(confirmCount, 0, `${cmd}: no approval path`);
   }
   for (const tool of ["write", "edit"]) {
     const r = await callFile(tool, "C:\\Users\\a\\.coop\\prod-unlock.json", { confirm: true });
     assert.equal(blocked(r), true, tool);
-    assert.match(r.reason, /Only a person grants/);
+    assert.match(r.reason, /Only a person gives/);
   }
   const ps = await handle({ toolName: "powershell", input: { command: "coop unlock-prod Contoso" } }, { ...ctx, ui: { ...ctx.ui, confirm: async () => true } });
   assert.equal(blocked(ps), true, "the PowerShell tool too");
@@ -2405,7 +2405,7 @@ await t("G1: under a human unlock a production write is a desk yes/no, audited w
     assert.match(shown, /PRODUCTION WRITES UNLOCKED by a human for Contoso \(grant a1b2c3d4/);
     removeUnlock();
     await cmds["coop-approvals"].handler("status", { ...liveCtx, ui: { notify: (m) => { shown = m; } } });
-    assert.match(shown, /Production writes: blocked until a person runs `coop unlock-prod <client>`/);
+    assert.match(shown, /Production writes: blocked without a person's go-ahead/);
   } finally {
     removeUnlock();
     removeContract();
