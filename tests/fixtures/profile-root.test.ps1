@@ -49,6 +49,7 @@ try {
   New-Item -ItemType Directory -Force -Path (Join-Path $cdir '.coop') | Out-Null
   [System.IO.File]::WriteAllText((Join-Path $cdir '.coop\user.json'), '{"schema_version":1,"name":"T","communication":{"preset":"concise"}}')
   if (-not (Test-CoopUserProfileMissing) -and (Test-CoopOnboardingMissing)) { Ok 'COOP_DIR=X: user.json found, config still missing' } else { Ko 'COOP_DIR=X: user.json under X\.coop must satisfy the profile gate only' }
+  if ((Get-CoopOnboardingMissingMessage) -like '*config missing: client platform*' -and (Get-CoopOnboardingMissingMessage) -notlike '*user.json*') { Ok 'COOP_DIR=X: the launch line names only the missing config' } else { Ko "COOP_DIR=X: launch line with a name present: $(Get-CoopOnboardingMissingMessage)" }
   [System.IO.File]::WriteAllText((Join-Path $cdir '.coop\config'), '{"schema_version":1}')
   if (-not (Test-CoopOnboardingMissing)) { Ok 'COOP_DIR=X: user.json + config satisfy the onboarding gate' } else { Ko 'COOP_DIR=X: config under X\.coop must satisfy the onboarding gate' }
 

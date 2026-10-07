@@ -120,6 +120,19 @@ try {
     assert.deepEqual(lc.snapshotLineage(join(tmp, "nowhere"), "dbo.Orders", NOW), { found: null, state: "absent" });
   });
 
+  await t("a repository the client home repository lists reads the snapshot there", () => {
+    const client = join(tmp, "client");
+    const home = join(client, "contoso-coop");
+    const sql = join(client, "sql");
+    mkdirSync(join(home, ".git"), { recursive: true });
+    mkdirSync(join(sql, ".git"), { recursive: true });
+    contract(home, "repositories:\n  sql:\n    local_path: ../sql");
+    snapshot(join(home, ".coop", "catalog", "dev"));
+    const hit = lc.snapshotLineage(sql, "dbo.Orders", NOW);
+    assert.equal(hit.state, "ok");
+    assert.ok(hit.found, "the home repository's snapshot answers from the listed repository");
+  });
+
   await t("sql_impact and data_doc lineage results normalize to the same shape", () => {
     const live = lc.lineageFromSqlImpact({
       ok: true, state: "ok", object: { schema: "dbo", name: "Orders", type: "USER_TABLE" },

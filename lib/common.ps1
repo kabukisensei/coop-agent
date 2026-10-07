@@ -3201,6 +3201,17 @@ function Get-CoopContractRootProposal {
     }
     return @{ Kind = 'git-root'; Root = $gitRoot; Path = (Join-Path $gitRoot '.coop\project.yml'); Repos = @() }
   }
+  # Opened in the folder that holds the client's repositories (itself in no
+  # repository): the same home repository beside them, never the folder.
+  $inside = @(Get-ChildItem -LiteralPath $start -Directory -ErrorAction SilentlyContinue |
+    Where-Object { -not $_.Name.StartsWith('.') -and (Test-Path -LiteralPath (Join-Path $_.FullName '.git')) -and -not (Test-CoopCheckout $_.FullName) } |
+    Sort-Object Name | ForEach-Object { $_.Name })
+  if ($inside.Count -ge 2 -and @(Get-CoopChildContracts $start).Count -eq 0) {
+    $slug = Get-CoopClientSlug $Client
+    $homeRepo = if ($Client) { Join-Path $start ($slug + '-coop') } else { Join-Path $start '<client>-coop' }
+    $others = @($inside | Where-Object { $_ -ne (Split-Path -Leaf $homeRepo) })
+    return @{ Kind = 'home-repo'; Root = $homeRepo; Path = (Join-Path $homeRepo '.coop\project.yml'); Repos = $others; Parent = $start; Pending = (-not $Client) }
+  }
   return @{ Kind = 'folder'; Root = $start; Path = (Join-Path $start '.coop\project.yml'); Repos = @() }
 }
 
@@ -3256,6 +3267,13 @@ function Test-CoopOnboardingMissing {
   return (Test-CoopUserProfileMissing) -or -not (Test-Path -LiteralPath (Get-CoopConfigFile) -PathType Leaf)
 }
 
+# The launch line for an incomplete profile, naming what is missing: with the
+# machine profile (P1) supplying the name, only this user's settings are.
+function Get-CoopOnboardingMissingMessage {
+  $what = if (Test-CoopUserProfileMissing) { 'user.json or config missing' } else { 'config missing: client platform and settings for this Windows user' }
+  return "COOP onboarding is incomplete ($what). Run: coop onboard"
+}
+
 # The stamp coop writes the first time an interactive launch hands the Start Here
 # menu to coop-tools (master plan FR1): `<profile dir>/first-run`.
 function Get-CoopFirstRunStampFile { return (Join-Path (Get-CoopProfileDir) 'first-run') }
@@ -3279,7 +3297,7 @@ function Set-CoopFirstRunLaunch {
     if ($Interactive -and -not $Window) {
       Coop-Info 'First run: no COOP profile yet. Pick "Start a client project" in the menu to set your name, or run: coop onboard'
     } else {
-      Coop-Warn 'COOP onboarding is incomplete (user.json or config missing). Run: coop onboard'
+      Coop-Warn (Get-CoopOnboardingMissingMessage)
     }
   }
   if (-not $Interactive) { return }
@@ -3304,7 +3322,7 @@ function Invoke-CoopMaybeOnboard {
   $script:CoopOnboardRc = 0
   if (-not (Test-CoopOnboardingMissing)) { return }
   if ([Console]::IsInputRedirected) {
-    Coop-Warn 'COOP onboarding is incomplete (user.json or config missing). Run: coop onboard'
+    Coop-Warn (Get-CoopOnboardingMissingMessage)
     return
   }
   if ($env:COOP_NO_ONBOARD -eq '1') { return }
