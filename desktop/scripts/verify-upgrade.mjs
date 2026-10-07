@@ -125,12 +125,16 @@ async function main(argv) {
     // --- A. window over window ------------------------------------------------
     let seconds = await install(previous, paths.installDir);
     installed = true;
-    if (existsSync(gitDir)) throw new Error("the previous release already carries runtime\\git: this check cannot tell the payloads apart");
+    // runtime\git marks this build's payload. Releases from v0.34.0 carry it
+    // too, so remove the previous install's copy: the upgrade must lay it down.
+    const previousHadGit = existsSync(gitDir);
+    if (previousHadGit) rmSync(gitDir, { recursive: true, force: true });
+    if (existsSync(gitDir)) throw new Error("could not remove the previous release's runtime\\git: this check cannot tell the payloads apart");
     // What the previous package's first launch wrote: its own link and "coop (terminal)".
     mkdirSync(dirname(paths.launcherLink), { recursive: true });
     writeFileSync(paths.launcherLink, ownLink);
     await writeTerminalShortcut(paths.terminalShortcut, ownTerminal);
-    step("A. the previous release installed, with its first-launch link and shortcut", `${report.previous.installer} (${seconds}s)`);
+    step("A. the previous release installed, with its first-launch link and shortcut", `${report.previous.installer} (${seconds}s)${previousHadGit ? "; its runtime\\git removed so the upgrade must restore it" : ""}`);
 
     seconds = await install(current, paths.installDir);
     const entries = await registryEntries();
