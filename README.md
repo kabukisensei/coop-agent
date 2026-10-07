@@ -401,7 +401,7 @@ first**, not read-only-only, and all are optional.
 | --- | --- | --- |
 | `fabric` | Manifest-pinned Microsoft Fabric MCP | follows the active Azure CLI login (az's default account; coop cannot set its tenant); metadata reads by default, mutations approval-gated |
 | `fabric-sqlendpoint` | Microsoft-managed Fabric SQL endpoint over direct Streamable HTTP with a launch-time Azure CLI bearer token | every call approval-gated; valid project IDs select an item-scoped endpoint; with no explicit target, global; malformed explicit targets fail closed |
-| `powerbi-modeling-mcp` | Microsoft Power BI Modeling MCP with `--start --readwrite --accept-eula` | no tenant/workspace required; reads run, edits ask (an approval can cover the session), deletes, imports and deploys always ask, production edits are blocked |
+| `powerbi-modeling-mcp` | Microsoft Power BI Modeling MCP with `--start --readwrite --accept-eula` | no tenant/workspace required; reads run, edits ask (an approval can cover the session), deletes, imports and deploys always ask, production edits need your typed permit |
 | `azure-devops` | Manifest-pinned Azure DevOps MCP for one organization | requires enabled toggle + valid organization; mutations approval-gated |
 | `microsoft-learn` | `learn.microsoft.com/api/mcp` | requires only its enabled toggle; always-current Microsoft docs |
 
@@ -421,9 +421,9 @@ private `~/.coop/devops/clients.yml`.
 
 **Approval boundary.** Dev/test metadata reads proceed by default. Row reads, production
 reads, mutation-looking MCP actions, and **every Warehouse SQL call** require explicit
-approval; approval-required calls fail closed when no UI is available. Production writes
-are blocked outright; only a human can unlock them, outside the session
-(`docs/guardrails-reference.md`, Production writes). Warehouse SQL is
+approval; approval-required calls fail closed when no UI is available. A production write
+runs only when you permit that one write at the desk (type the client name, or yes/no under a
+human unlock); never session-wide (`docs/guardrails-reference.md`, Production writes). Warehouse SQL is
 classified as `row-data` or `ddl-dml-destructive`: one bounded `SELECT` on the resolved
 **dev** target runs without a prompt, bounded reads on test/production targets still ask,
 and DDL/DML, permissions, `SELECT … INTO`, and `COPY INTO` receive mutation-specific
@@ -517,12 +517,12 @@ launch.
    Python, or notebook source. Make the edit, show the diff, let a human commit.
    Only docs / logs / diagrams / glossary / site may be committed, after approval.
 5. Dev/test metadata/schema/code is read-only by default; actual rows and all production access ask first.
-6. Production is never modified from a session; production writes are hard-blocked.
+6. Production changes only on your permit: each production write waits for you at the desk and is audited.
 7. Managed integrations are read-only first; mutation and Warehouse SQL calls are approval-gated.
 8. Never expose secrets.
 
 **Audit trail.** Every guardrail decision the runtime `coop-guardrails` extension makes —
-a blocked source commit or production write, or a confirmed/declined destructive command,
+a blocked source commit, a permitted or refused production write, or a confirmed/declined destructive command,
 secret-file access, live row/production read, or mutating MCP call — is appended as one JSON line to
 `$PI_CODING_AGENT_DIR/guardrails-audit.jsonl` (default `~/.coop/agent/…`). Each line records
 the timestamp, working folder, kind, decision, and the offending path(s) or a fixed

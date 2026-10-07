@@ -242,12 +242,12 @@ function Invoke-CoopProject {
   return $rc
 }
 
-# --- Never modify production: the human-only unlock (master plan G1) ----------
-# Production writes are a hard block in coop-guardrails. The one way back is this
-# command, run by a person in their own terminal (never from a session): it writes a
-# time-bounded grant for ONE client to <profile dir>\prod-unlock.json. While it holds
-# and the session's contract names that client, a production write asks per call and
-# the audit carries the grant id. Deliberately absent from `coop help`, the `/` menu
+# --- Production writes: the human-only unlock (master plan G1) ----------------
+# In coop-guardrails each production write waits for a person's permit: the client
+# name typed back. This command, run by a person in their own terminal (a session
+# can never run it), writes a time-bounded grant for ONE client to <profile
+# dir>\prod-unlock.json. While it holds and the session's contract names that
+# client, each production write is a yes/no instead and the audit carries the grant id. Deliberately absent from `coop help`, the `/` menu
 # and the window; documented in docs/guardrails-reference.md only.
 function Invoke-CoopUnlockProd {
   param([string[]]$Rest)
@@ -255,20 +255,20 @@ function Invoke-CoopUnlockProd {
   $argv = @()
   if ($Rest) { $argv = @($Rest) }
   if ($argv -contains '--status') {
-    if (-not (Test-Path -LiteralPath $file)) { Coop-Say 'Production writes: blocked (no unlock).'; return }
+    if (-not (Test-Path -LiteralPath $file)) { Coop-Say 'Production writes: no unlock (each one needs the client name typed at the desk).'; return }
     try {
       $g = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json
       $exp = [DateTime]::Parse([string]$g.expires_at, $null, [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
       $left = [int][Math]::Ceiling(($exp - (Get-Date).ToUniversalTime()).TotalMinutes)
       $until = $exp.ToString('o')
-      if ($left -le 0) { Coop-Say "Production writes: blocked (the unlock for $($g.client) expired at $until)."; return }
-      Coop-Warn "Production writes UNLOCKED for $($g.client): grant $($g.id), $left min left (until $until). Each production write still asks and is audited."
-    } catch { Coop-Say 'Production writes: blocked (the unlock file is unreadable and is ignored).' }
+      if ($left -le 0) { Coop-Say "Production writes: no unlock (the one for $($g.client) expired at $until)."; return }
+      Coop-Warn "Production writes UNLOCKED for $($g.client): grant $($g.id), $left min left (until $until). Each production write still asks yes/no at the desk and is audited."
+    } catch { Coop-Say 'Production writes: no unlock (the unlock file is unreadable and is ignored).' }
     return
   }
   if ($argv -contains '--revoke') {
     if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force }
-    Coop-Say 'Production writes: blocked again (unlock removed).'
+    Coop-Say 'Production writes: unlock removed (each one needs the client name typed at the desk again).'
     return
   }
   $client = ''
@@ -309,7 +309,7 @@ function Invoke-CoopUnlockProd {
   $json = [pscustomobject]$grant | ConvertTo-Json -Compress
   [System.IO.File]::WriteAllText($file, $json, (New-Object System.Text.UTF8Encoding $false))
   Coop-Warn "Production writes UNLOCKED for $client for $minutes min (grant $id, until $($grant.expires_at))."
-  Coop-Say 'Only a session whose .coop/project.yml names this client is covered. Each production write still asks and is audited; coop unlock-prod --revoke ends it now.'
+  Coop-Say 'Only a session whose .coop/project.yml names this client is covered. Each production write still asks yes/no at the desk and is audited; coop unlock-prod --revoke ends it now.'
 }
 
 function Invoke-CoopContextBudget {

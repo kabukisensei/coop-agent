@@ -7,6 +7,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- **Production writes run when you permit them** (G1, Aaron, 2026-10-07). They
+  were a hard block. Now each production write (SQL on a production target, a
+  model edit after a production connection, a Fabric write naming production)
+  waits for you at the desk: type the client name to run that one write, or
+  answer yes/no while a `coop unlock-prod` grant holds. Never for the whole
+  session, never headless, never from the phone; every attempt is audited,
+  allowed or refused. A session can no longer run `coop unlock-prod` or touch
+  `prod-unlock.json` from its shell, nor edit or write the file (it used to ask).
 - **The project file is found two levels down** (Aaron, 2026-10-06). Most
   teammates open coop in their user folder, and the client's repositories sit
   one folder further down (`devops\fabric`). Opened in a folder that is not a
