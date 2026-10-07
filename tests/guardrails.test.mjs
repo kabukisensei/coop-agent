@@ -1257,6 +1257,37 @@ const writeContract = (text) => { mkdirSync(CONTRACT_DIR, { recursive: true }); 
 const removeContract = () => rmSync(CONTRACT_DIR, { recursive: true, force: true });
 const nativeRead = (query = "SELECT TOP (25) customer_id FROM dbo.Customer", maximum_rows = 10) => ({ toolName: "fabric_sql_query", input: { query, maximum_rows } });
 
+await t("G1: a write naming what the contract labels production is a production write, whatever its words", async () => {
+  const text = [
+    "profile:", "  client: Contoso", "fabric:", `  tenant_id: "${TENANT_ID}"`,
+    "  environment_names:", "    dev: Contoso Sales Dev", "    test: ''", "    prod: Contoso Sales",
+    "power_bi:", "  environment_names:", "    dev: BI Dev", "    prod: Finance Live",
+    "sql_targets:", "  default_environment: dev", "  prod:", "    kind: azure_sql", "    server: contoso.database.windows.net", "    database: ContosoDW", "",
+  ].join("\n");
+  assert.deepEqual(cg.parseProductionNames(text).sort(), ["contoso sales", "contoso.database.windows.net", "finance live"]);
+  assert.equal(cg.namesContractProduction(["Contoso Sales Dev"], ["contoso sales"]), false, "whole values only");
+  writeContract(text);
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  try {
+    confirmCount = 0; inputCount = 0;
+    const create = (workspace) => ({ toolName: "mcp", input: { server: "fabric", tool: "core_create-item", args: { workspace } } });
+    let r = await handle(create("Contoso Sales"), liveCtx);
+    assert.equal(blocked(r), true, "the labelled prod workspace, no prod word: blocked without the go-ahead");
+    assert.match(r.reason, /go-ahead/);
+    assert.equal(confirmCount, 0);
+    confirmAnswer = true;
+    assert.equal(blocked(await handle(create("Contoso Sales Dev"), liveCtx)), false, "the dev workspace asks as before");
+    assert.equal(confirmCount, 1);
+    confirmCount = 0;
+    assert.equal(blocked(await call('fab deploy -p ./pipeline.yml --workspace "Finance Live"', { confirm: true })), true, "a shell Fabric write to the labelled prod workspace");
+    assert.equal(confirmCount, 0);
+    assert.equal(blocked(await call('fab deploy -p ./pipeline.yml --workspace="Contoso Sales"', { confirm: true })), true, "--flag=value too");
+  } finally {
+    removeContract();
+    await handleSessionStart({ reason: "new" }, liveCtx);
+  }
+});
+
 await t("parseContractSqlScope ports lib/sql_targets.py: ready default only, prod never, placeholders and credentials never", () => {
   assert.equal(cg.parseContractSqlScope("profile:\n  client: Contoso\n"), null, "no section: the managed path");
   const scope = cg.parseContractSqlScope(AZURE_CONTRACT);

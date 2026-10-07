@@ -218,17 +218,18 @@ function findParentKey(lines: string[], idx: number, parentIndent: number): stri
 
 /** The contract's dev Fabric workspace (`fabric.default_workspace_id`), named in the
  *  Rayfin (Fabric Apps, FA1) deploy prompt; "" when absent or not a GUID. */
-export type SessionGovernance = { loaded: boolean; entries: RepoPolicyEntry[]; sqlContract: ContractSqlScope | null; devWorkspaceId: string };
+export type SessionGovernance = { loaded: boolean; entries: RepoPolicyEntry[]; sqlContract: ContractSqlScope | null; devWorkspaceId: string; productionNames: string[] };
 
 // The TRUSTED policy snapshot: read once per session, then frozen. Editing
 // .coop/project.yml mid-session can never weaken the active guardrails.
-let sessionGovernance: SessionGovernance = { loaded: false, entries: [], sqlContract: null, devWorkspaceId: "" };
+let sessionGovernance: SessionGovernance = { loaded: false, entries: [], sqlContract: null, devWorkspaceId: "", productionNames: [] };
 
 /** Read the session's project contract once into an immutable governance snapshot. */
 export function buildSessionGovernance(sessionCwd: string): SessionGovernance {
   const entries: RepoPolicyEntry[] = [];
   let sqlContract: ContractSqlScope | null = null;
   let devWorkspaceId = "";
+  let productionNames: string[] = [];
   try {
     const proj = findProjectYml(sessionCwd);
     if (proj) {
@@ -237,16 +238,17 @@ export function buildSessionGovernance(sessionCwd: string): SessionGovernance {
       entries.push(...parseRepoEntries(text, projectRoot));
       sqlContract = parseContractSqlScope(text);
       devWorkspaceId = parseDevWorkspaceId(text);
+      productionNames = parseProductionNames(text);
     }
   } catch {
     /* conservative defaults are fine */
   }
-  return { loaded: true, entries, sqlContract, devWorkspaceId };
+  return { loaded: true, entries, sqlContract, devWorkspaceId, productionNames };
 }
 
 /** Forget the snapshot so the next governed call re-reads the contract (new session / tests). */
 export function resetSessionGovernance(): void {
-  sessionGovernance = { loaded: false, entries: [], sqlContract: null, devWorkspaceId: "" };
+  sessionGovernance = { loaded: false, entries: [], sqlContract: null, devWorkspaceId: "", productionNames: [] };
 }
 
 // --- sql_targets: the contract's SQL scope (SQ3) ------------------------------------
@@ -316,6 +318,55 @@ function yamlSection(text: string, section: string): Record<string, string | Rec
     else { out[key] = yamlScalar(rawValue); current = null; }
   }
   return out;
+}
+
+/** What the contract labels production: the prod workspace names under
+ *  `fabric.environment_names` and `power_bi.environment_names`, and the ids and
+ *  server of `sql_targets.prod`. A write that names one is a production write,
+ *  whatever words it uses (G1). Placeholders and very short names are skipped. */
+export function parseProductionNames(text: string): string[] {
+  const names = new Set<string>();
+  const add = (value: unknown) => {
+    const v = typeof value === "string" ? value.trim() : "";
+    if (v.length >= 3 && !sqlPlaceholder(v)) names.add(v.toLocaleLowerCase());
+  };
+  for (const section of ["fabric", "power_bi"]) {
+    const envs = (yamlSection(text, section) || {}).environment_names;
+    if (envs && typeof envs === "object") add(envs.prod);
+  }
+  const prod = (yamlSection(text, "sql_targets") || {}).prod;
+  if (prod && typeof prod === "object") for (const key of ["server", "workspace_id", "item_id", "sql_endpoint_id"]) add(prod[key]);
+  return [...names];
+}
+
+/** True when one of the values IS something the contract labels production
+ *  (whole value, case-insensitive: a prod workspace "Sales" never matches "Sales Dev"). */
+export function namesContractProduction(values: string[], names: string[]): boolean {
+  if (!names.length) return false;
+  return values.some((value) => names.includes(String(value).trim().toLocaleLowerCase()));
+}
+
+/** Every string value in a call's arguments (nested), for namesContractProduction. */
+export function callStringValues(event: any): string[] {
+  const out: string[] = [];
+  const walk = (v: unknown, depth: number) => {
+    if (depth > 6) return;
+    if (typeof v === "string") {
+      out.push(v);
+      try { const parsed = JSON.parse(v); if (parsed && typeof parsed === "object") walk(parsed, depth + 1); } catch { /* plain text */ }
+    } else if (Array.isArray(v)) v.forEach((x) => walk(x, depth + 1));
+    else if (v && typeof v === "object") Object.values(v).forEach((x) => walk(x, depth + 1));
+  };
+  walk(normalizeMcpCall(event).args, 0);
+  walk(event?.input, 0);
+  return out;
+}
+
+/** The words of a shell command, with `--flag=value` split, for namesContractProduction. */
+export function commandValues(cmd: string): string[] {
+  const values = tokenizeArgs(cmd).flatMap((tok) => (tok.includes("=") ? [tok, tok.slice(tok.indexOf("=") + 1)] : [tok]));
+  for (const m of (cmd || "").matchAll(/=\s*(?:"([^"]*)"|'([^']*)')/g)) values.push(m[1] ?? m[2] ?? "");
+  return values;
 }
 
 function sqlPlaceholder(value: string): boolean { return !value || value.toUpperCase().startsWith("TODO"); }
@@ -1181,6 +1232,12 @@ export function isModelingEdit(event: any): boolean {
 /** True when a Power BI Modeling connection call names prod/production in any
  * argument (workspace, model, connection string). Later edits name only a
  * connection, so the session treats every model edit after it as production. */
+/** True for a Power BI Modeling connection call (it names the workspace and model). */
+export function isModelingConnection(event: any): boolean {
+  const tool = pbiModelingTool(normalizeMcpCall(event).target);
+  return !!tool && /(^|_)connection_operations$/i.test(tool);
+}
+
 export function modelingConnectsProduction(event: any): boolean {
   const call = normalizeMcpCall(event);
   const tool = pbiModelingTool(call.target);
@@ -2202,14 +2259,16 @@ export default function coopGuardrails(pi: ExtensionAPI) {
           return;
         }
         const target = effectiveMutationTarget(event);
-        if (modelingConnectsProduction(event)) modelingProduction = true;
+        const productionNames = ensureSessionGovernance(ctx.cwd).productionNames;
+        if (modelingConnectsProduction(event) || (isModelingConnection(event) && namesContractProduction(callStringValues(event), productionNames))) modelingProduction = true;
         const mcp = mcpEditLabel(event);
         // G1: a production write waits for a person's permit before any other approval path. The signal is
         // the call's own words (server, tool, arguments naming prod) or the session's
         // production Modeling connection; the Warehouse SQL path below uses coop's
         // trusted config for the same decision.
         const mcpProductionWrite = Boolean(mcp) && (
-          (modelingProduction && isModelingEdit(event)) || PRODUCTION_WORD.test(mutationCallText(event, target)));
+          (modelingProduction && isModelingEdit(event)) || PRODUCTION_WORD.test(mutationCallText(event, target)) ||
+          namesContractProduction(callStringValues(event), productionNames));
         // The permit is this call's approval: it is not asked twice below.
         let productionPermitted = false;
         if (mcpProductionWrite) {
@@ -2419,7 +2478,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       if (fabricWrite) {
         // G1: a Fabric write whose command names prod is a production write: it runs
         // only on a person's permit, which is that call's one approval.
-        if (PRODUCTION_WORD.test(cmd)) {
+        if (PRODUCTION_WORD.test(cmd) || namesContractProduction(commandValues(cmd), ensureSessionGovernance(ctx.cwd).productionNames)) {
           const refused = await permitProductionWrite(ctx, "danger-confirm", "bash", `${fabricWrite}: ${cmd.slice(0, 200)}`);
           if (refused) return refused;
         } else {

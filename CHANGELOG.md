@@ -17,7 +17,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   whose `sql_targets` do not carry the endpoint's ids) is now treated the
   same way: before, it got the ordinary approval, which is how a production
   write could run. The managed endpoint now also reads its environment from the
-  `sql_targets` entry with its ids, so a wizard-made contract stays dev.
+  `sql_targets` entry with its ids, so a wizard-made contract stays dev. A
+  Fabric, Modeling or shell write naming a workspace, server or id the project
+  file labels prod counts as production even without the word "prod".
 - **Pair the phone once** (Aaron, 2026-10-07). Phone access is now one switch
   for the whole coop window app, **Session > Phone > Allow phone access**.
   Pairing a phone turns it on and the window remembers it across restarts, so
