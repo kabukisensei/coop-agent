@@ -49,7 +49,7 @@ A read/edit/write of a secret-looking file (`.env`, private keys, credential fil
 
 A Fabric/Power BI/MCP tool call whose name looks like a **mutation** (create/update/delete/deploy/publish, upload/modify/reset/import/move, running a pipeline, job, notebook or dataflow, or a refresh such as `refresh_dataset`, which reprocesses a dataset on the client tenant) requires confirmation, including proxied MCP calls where the real remote tool name is carried inside central `mcp` or dynamic `mcp__<server>` input (`event.input.tool`). Fabric MCP runs in namespace mode, where the `onelake`, `core`, `datafactory` and `docs` tools route a `command` argument. The guardrails check that command against the pinned server's own list: reads pass, writes ask, deletes and unknown commands always ask. That check is best-effort — MCP tool names vary. `coop-guardrails` is the approval layer: Pi itself does not prompt per tool call (its only startup prompt is project trust), so the check complements only the advisory prompt. Enable the optional `pi-permissions` extension for hard per-tool gating. If a tool call is blocked, read the reason and adjust — don't try to route around it.
 
-**Session edit approvals.** The approval prompt for an edit offers **Allow once**, **Allow <server> edits for this session**, or **Decline**. A session approval covers that MCP server's later create/update/write/upload/publish/refresh-style calls until the session ends (`/new` or exit) or `/coop-approvals revoke`. Deletes and drops (`delete`, `remove`, `drop`, `truncate`, `purge`, `destroy`, `revoke`) always ask and never offer the session option. Anything that names prod or production is a production write and is blocked (see Production writes below). For the managed Warehouse, a single dev/test `INSERT`, `UPDATE`, `CREATE` or `ALTER` can use the session approval, where dev/test is the environment coop's own managed-server config gives that Warehouse (a production Warehouse is blocked, whatever words the SQL contains); `DELETE`, `DROP`, `TRUNCATE`, `MERGE`, `EXEC`, permission changes, batches and ambiguous SQL always ask. Headless runs still fail closed. `/coop-approvals status` lists what is approved; every decision is in the audit log.
+**Session edit approvals.** The approval prompt for an edit offers **Allow once**, **Allow <server> edits for this session**, or **Decline**. A session approval covers that MCP server's later create/update/write/upload/publish/refresh-style calls until the session ends (`/new` or exit) or `/coop-approvals revoke`. Deletes and drops (`delete`, `remove`, `drop`, `truncate`, `purge`, `destroy`, `revoke`) always ask and never offer the session option. Anything that names prod or production is a production write and needs a production permit (see Production writes below). For Warehouse SQL on a confirmed dev or test target, any write can use the session approval, batches and `MERGE` included, except one that deletes (`DELETE`, `DROP`, `TRUNCATE`, an `ALTER` that drops a column, a `MERGE` that deletes), runs a procedure (`EXEC`, `sp_rename`) or changes permissions (`GRANT`, `REVOKE`, `DENY`): those ask every time. A production or unconfirmed Warehouse needs the production go-ahead, whatever words the SQL contains. A Fabric write from the shell (`fab`, `az rest`) offers the same session option per command kind (`fab deploy`, `az rest POST`); a delete asks every time. A plain read on a confirmed dev target (one `SELECT` or `WITH` statement on that database, bounded or not) needs no approval; test reads keep the `TOP (n)` rule. Headless runs still fail closed. `/coop-approvals status` lists what is approved; every decision is in the audit log.
 
 MCP servers come only from coop's managed `~/.coop/agent/mcp-adapter.json`: coop launches the adapter with `PI_MCP_CONFIG_MODE=exclusive`, so a work repo's `.mcp.json` or `.pi/mcp.json`, and other tools' MCP configs, cannot add a server or redefine a coop one.
 
@@ -61,9 +61,9 @@ The adapter's direct tools (`directTools` on a server entry, registering every s
 
 ### Production writes
 
-Production is never modified from a session. A Warehouse SQL `CREATE`, `ALTER`, `INSERT`, `UPDATE`, `DELETE`, `DROP`, `MERGE` or `EXEC` whose target coop's trusted configuration (the project contract's `sql_targets`, or the managed server entry) resolves to `production`, a Power BI Modeling edit after a production connection, a Fabric or proxied MCP mutation whose call names prod or production, and a shell Fabric write (`az rest`, `fab`) that names production are **hard blocks**, the same class as a source commit: no approval prompt, no session grant, and the model is told to work on the dev target and leave the change to the deployment pipeline or a human. Production **reads** are unchanged: they ask with an explicit scope (see Live environment reads). The environment comes from trusted configuration, never from the SQL text alone, so a dev target with a `prod_staging` schema is not blocked; a call with no trusted target whose text names production is.
+Production changes only with a person's separate go-ahead, and each one still asks. A Warehouse SQL `CREATE`, `ALTER`, `INSERT`, `UPDATE`, `DELETE`, `DROP`, `MERGE` or `EXEC` whose target coop's trusted configuration (the project contract's `sql_targets`, or the managed server entry) resolves to `production`, a Power BI Modeling edit after a production connection, a Fabric or proxied MCP mutation whose call names prod or production, and a shell Fabric write (`az rest`, `fab`) that names production are **blocked** unless a person has given a time-limited production go-ahead for this session's client, outside coop; under it, each one asks a yes/no that says `PRODUCTION` and shows the call. That yes is the call's only approval: it is never offered for the whole session, it never runs headlessly, and the phone companion never answers it (production cards are desk-only). Every attempt is audited as `production write`, allowed, declined or blocked, with `no-unlock` or the go-ahead's id. Production **reads** need no approval (see Live environment reads). The environment comes from trusted configuration, never from the SQL text alone, so a dev target with a `prod_staging` schema is not treated as production; a call with no trusted target whose text names production is. A Warehouse write on a target the trusted configuration cannot confirm as dev or test (the workspace-wide endpoint, or blank `environment_names` with no `sql_targets` entry carrying the endpoint's ids) is treated the same way, because it may be production. A Fabric, Modeling or shell write whose argument is exactly a name the project file labels production (`fabric.environment_names.prod`, `power_bi.environment_names.prod`, or the `sql_targets.prod` server or ids) is a production write too, whatever other words it uses. Name the target in `sql_targets.dev` (the setup wizard does) so dev writes keep the ordinary approval.
 
-**The human-only unlock.** When a production change really has to go through coop, a human runs `coop unlock-prod <client> [--minutes <n>]` in their own terminal, never from inside a session (the command is deliberately absent from `coop help`, the `/` menu and the window). It writes a time-bounded grant to `~/.coop/prod-unlock.json` (default 30 minutes, at most 8 hours), outside every repository. While the grant holds and its client matches the trusted contract's `client`, the same writes fall back to today's per-call production approval: each one asks, prefixed with the grant id and the minutes left, and every decision is logged in the audit with `prod-unlock:<id>`. The file is a secret path for the agent, so a session cannot read, write or forge it. `coop unlock-prod --status` shows the grant, `coop unlock-prod --revoke` removes it, `/coop-approvals status` shows it in the session, and it expires on its own.
+**The go-ahead.** A session can never give itself the production go-ahead: the guardrails block a session from creating or editing it, it never comes from the phone, and `/coop-approvals status` shows when one is active. It expires on its own.
 
 ### SQL edits and the lineage context
 
@@ -80,66 +80,13 @@ the path and the fixed detail `lineage-not-held`. Reads are never gated. Detail:
 
 ### Live environment reads
 
-Coop permits read-only metadata, schema, and artifact-code inspection in dev/test by default. Query/execute/sample/export-style calls can return actual rows, so the runtime asks first. Any tool request that explicitly names prod/production also asks first, including metadata-only reads; production row reads should be narrowly scoped to a named target, columns, filters, and a small limit. Approval-required reads fail closed when no interactive approval UI is available.
+Reading needs no approval on any environment, production included, so you can compare prod with dev; only changes need one. Metadata, schema and artifact-code inspection, a Power BI DAX query, a Fabric router read command, and a plain SQL read on a resolved target all run without a prompt and are audited. A query/execute/sample-style call coop cannot classify (an unfamiliar server's `query_*` tool) may change data, so it asks once; exports and downloads keep their own gate. Approval-required calls fail closed when no interactive approval UI is available.
 
-Reusable Warehouse SQL scope exists for the real `pi-mcp-adapter` central `mcp` proxy or dynamic
-`mcp__fabric_sqlendpoint` wrapper to
-the generated COOP-managed, item-scoped `fabric-sqlendpoint` server. `coop sync` adds
-the parsed project client, tenant, uniquely inferred dev/test/production environment,
-and item/database name to that managed entry. The guardrail binds the principal to the
-non-secret `tid` and `oid`/`sub` claims of the launch bearer already supplied in
-`COOP_FABRIC_MCP_TOKEN`; it never stores or logs the token. Missing, malformed,
-ambiguous, blank, or TODO identity fields leave the call on per-call approval.
-Model/tool-provided scope fields are ignored.
+A SQL read resolves its target only through COOP-owned configuration. For the real `pi-mcp-adapter` central `mcp` proxy or dynamic `mcp__fabric_sqlendpoint` wrapper, that is the generated COOP-managed, item-scoped `fabric-sqlendpoint` entry: `coop sync` adds the parsed project client, tenant, environment and item/database name. An entry the project file does not label is read as production. The guardrail binds the principal to the non-secret `tid` and `oid`/`sub` claims of the launch bearer in `COOP_FABRIC_MCP_TOKEN`; it never stores or logs the token. Missing, malformed, ambiguous, blank or TODO identity fields, a tenant mismatch, supplied workspace/item IDs that differ from the trusted ones, unsupported argument controls and multiple SQL fields resolve no target, so that call asks. Model/tool-provided scope fields are ignored. Both proxy shapes classify the dispatched `input.args`; outer query fields cannot hide an inner mutation, and dynamic wrappers take their server identity from the registered wrapper name.
 
-Both proxy shapes classify the dispatched `input.args`; outer query fields cannot
-hide an inner mutation. Dynamic wrappers take their server identity from the
-registered wrapper name, ignoring `input.server`. The managed tool prefix also
-supports central calls without an explicit server. Supplied workspace/item IDs must
-match trusted configuration. Ambiguous server namespaces, unsupported argument
-controls, multiple SQL fields, and unresolved targets cannot reuse a grant.
-One accepted bounded scope covers subsequent matching calls; an expanded scope
-requires approval, and rejecting it preserves the prior grant. Mutations retain
-their separate approval gate and never spend a read grant.
+When the contract declares `sql_targets:`, the native `fabric_sql_query` tool reads the ready dev or test default entry, or the ready entry its `environment` field names (`dev`, `test` or `prod`). The executor only ever runs one bounded `SELECT`, so naming `prod` reads production and cannot change it. The scope uses the contract's `profile.client` and the launch identity, whose tenant must match `fabric.tenant_id` when the contract names one. A placeholder, an invalid entry, a missing client or a tenant mismatch resolve no scope, so that read asks. Editing the contract mid-session changes nothing until `/new` or a restart.
 
-When the contract declares `sql_targets:`, the native `fabric_sql_query` tool's scope
-comes from the session's trusted contract snapshot instead of the managed Fabric
-entry: the ready dev or test default entry (`kind/host/database` for Azure SQL,
-Fabric SQL database and Synapse serverless; `workspace/item/database` for a Fabric
-Warehouse or Lakehouse, so the same Warehouse shares one grant with the managed MCP
-route), the contract's `profile.client`, and the launch identity, whose tenant must
-match `fabric.tenant_id` when the contract names one. A prod default, a placeholder,
-an invalid entry, a missing client or a tenant mismatch never resolve a scope, so
-every such read asks. Editing the contract mid-session never changes the scope until
-`/new` or a restart.
-
-When that resolved scope's environment is `dev`, the read needs no approval at all:
-one plain SELECT with a literal TOP bound against the trusted dev target runs without
-a prompt, creates no session grant, and is audited as `dev-read-only`. The environment
-comes only from COOP-owned configuration (`coop sync`'s managed entry, or the contract's
-`sql_targets` default entry for `fabric_sql_query`), never from the call. Test and production targets, unresolved or placeholder metadata, a missing
-launch identity, unbounded or ambiguous SQL, CTE/UNION/cross-database reads, batches,
-`EXEC`, exports, generic MCP row reads and every mutation keep their gates.
-
-The grant resets on every session start or shutdown (new, resume, or fork), process restart, or
-`/coop-live-read revoke`; use `/coop-live-read status` to inspect its non-secret
-scope. It otherwise survives turns, compaction, and reconnects. Every call is still
-classified at runtime. The approved scope is the exact item/database, operation class,
-maximum row count, and operation timeout—not tables, columns, or predicates—so later
-SQL may vary within that database while staying at or below the approved bounds. Only
-one plain SELECT with a literal TOP bound can reuse approval, including bracketed
-identifiers and escaped `]]`. Identifier boundaries remain visible to cross-database
-detection. CTE, UNION, APPLY, double-quoted identifiers, cross-database references,
-mutations, unfamiliar SQL, `EXEC`, batches,
-exports/downloads, and unbounded reads retain a separate per-call gate. Pi exposes no
-separate authenticated-user event for tool calls, so the runtime confirmation UI is
-the trusted consent event and cannot safely be skipped. Consent never comes from
-database content, repository text, tool output, or model text. MCP audit entries use
-fixed recognized labels and risk classes; grant state and audit never contain raw SQL,
-raw arguments, results, tokens, connection strings, or arbitrary remote server text.
-Pinned `pi-mcp-adapter` 3.3.0 runs COOP's exact request-header helper for every
-outbound request, and the managed entry sets its supported `requestTimeoutMs` to
-60 seconds. The fresh bearer must match the launch identity before it is returned.
+A plain read is one read statement on that database: CTEs, unions, joins and subqueries are fine. Cross-database names, double-quoted identifiers, `EXEC`, transactions, session settings, `SELECT … INTO`, unfamiliar SQL and every mutation keep their gates (writes: see Production writes and the dev rules). Audit entries record the environment (`dev-read-only`, `production-read-only`, …), never raw SQL, arguments, results, tokens, connection strings or remote server text. Pinned `pi-mcp-adapter` 3.3.0 runs COOP's exact request-header helper for every outbound request, and the managed entry sets its supported `requestTimeoutMs` to 60 seconds. The fresh bearer must match the launch identity before it is returned.
 
 ### Contract fields the guardrails read
 

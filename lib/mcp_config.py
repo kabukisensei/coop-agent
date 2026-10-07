@@ -29,6 +29,7 @@ from warehouse_mcp import (  # noqa: E402
     project_sqlendpoint_enabled,
     project_target,
 )
+from sql_targets import parse_sql_targets  # noqa: E402
 
 # Servers COOP generates. The npm-backed ones run through `npx <package>@<pin>`;
 # the two direct HTTP servers (value None) are spoken to by pi-mcp-adapter itself
@@ -142,6 +143,42 @@ def grant_target_metadata(project: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def sql_targets_environment(project: dict[str, Any], target: Any) -> str:
+    """The sql_targets environment whose Fabric ids are this endpoint's, or "".
+
+    The wizard writes `environment_names` blank but fills `sql_targets.dev` with
+    the default endpoint's ids, so the ids are what tell dev from production.
+    Two environments naming the same item resolve to neither."""
+    if getattr(target, "scope", "") != "item":
+        return ""
+    ids = {
+        i.lower()
+        for i in (getattr(target, "item_id", ""), getattr(target, "validation_item_id", ""))
+        if i
+    }
+    workspace = (getattr(target, "workspace_id", "") or "").lower()
+    matches = [
+        env
+        for env, entry in parse_sql_targets(project).targets.items()
+        if entry.state == "ready"
+        and entry.workspace_id == workspace
+        and ids & {entry.item_id, entry.sql_endpoint_id} - {""}
+    ]
+    if len(matches) != 1:
+        return ""
+    return "production" if matches[0] == "prod" else matches[0]
+
+
+def target_environment(project: dict[str, Any], target: Any, by_workspace_name: str) -> str:
+    """The managed endpoint's environment: the workspace-name match and the
+    sql_targets id match must agree when both give one; a disagreement is
+    unresolved, which the guardrails treat as production for a write."""
+    by_ids = sql_targets_environment(project, target)
+    if by_workspace_name and by_ids and by_workspace_name != by_ids:
+        return ""
+    return by_workspace_name or by_ids
+
+
 def desired_servers(
     manifest: dict[str, Any],
     config: dict[str, Any],
@@ -214,13 +251,17 @@ def desired_servers(
         # from the project contract without exposing an unintended broad scope.
         if target.scope != "invalid":
             sql_entry = fabric_sqlendpoint_server(target.url)
+            metadata = grant_target_metadata(project or {})
+            metadata["environment"] = target_environment(
+                project or {}, target, metadata["environment"]
+            )
             sql_entry["_coop_target"] = {
                 "scope": target.scope,
                 "workspace_id": target.workspace_id,
                 "item_id": target.item_id,
                 "item_type": target.item_type,
                 "reason": target.reason,
-                **grant_target_metadata(project or {}),
+                **metadata,
             }
             out["fabric-sqlendpoint"] = sql_entry
     if enabled("power_bi_modeling"):

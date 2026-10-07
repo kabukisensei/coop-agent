@@ -78,7 +78,7 @@ try {
 
   # Exercise actual AgentSession/ExtensionRunner enforcement using this runtime.
   & node (Join-Path $RepoRoot 'tests\guardrails-pi-runner.test.mjs') $PiPackageDir
-  if ($LASTEXITCODE -eq 0) { Ok 'real Pi guardrail hooks enforce bounded grants and mutation gates' }
+  if ($LASTEXITCODE -eq 0) { Ok 'real Pi guardrail hooks pass reads and enforce mutation gates' }
   else { Ko 'real Pi guardrail hook regression' }
 
   # --- 2. Exact manifest extension fleet ---------------------------------------

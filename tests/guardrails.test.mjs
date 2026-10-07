@@ -30,6 +30,9 @@ let untracked = ""; // `git ls-files --others --exclude-standard` (what `git add
 let confirmAnswer = false;
 let confirmCount = 0;
 let lastConfirm = "";
+let inputAnswer;      // what a person types at a production permit (G1); undefined = dismissed
+let inputCount = 0;
+let lastInput = "";
 let lastRepoDir = ""; // the `-C <dir>` the commit gate ran git against (which repo it checked)
 let desktopStatus = null; // canned `powerbi-desktop status` result ({stdout, code}) or a thrower — the stubbed bridge
 const execLog = [];       // every pi.exec call: { bin, args }
@@ -63,7 +66,7 @@ assert.ok(typeof handleSessionShutdown === "function", "registers a session_shut
 assert.ok(cmds["coop-guardrails"], "registers the /coop-guardrails command");
 assert.ok(cmds["coop-live-read"], "registers the /coop-live-read command");
 
-const ctx = { cwd: "/tmp/no-such-repo-xyz", hasUI: true, ui: { confirm: async (_title, message) => { confirmCount++; lastConfirm = String(message); return confirmAnswer; }, notify: () => {} } };
+const ctx = { cwd: "/tmp/no-such-repo-xyz", hasUI: true, ui: { confirm: async (_title, message) => { confirmCount++; lastConfirm = String(message); return confirmAnswer; }, input: async (title) => { inputCount++; lastInput = String(title); return inputAnswer; }, notify: () => {} } };
 const call = async (command, { stagedFiles = "", modifiedFiles = "", untrackedFiles = "", confirm = false, toolName = "bash" } = {}) => {
   staged = stagedFiles;
   modified = modifiedFiles;
@@ -484,6 +487,25 @@ await t("Fabric / Azure REST writes from the shell ask; reads pass", async () =>
   assert.equal(blocked(await handle({ toolName: "bash", input: { command: "fab deploy -p ./pipeline.yml" } }, headless)), true);
   assert.equal(blocked(await handle({ toolName: "bash", input: { command: "fab ls ws.Workspace" } }, headless)), false);
 });
+await t("a shell Fabric write can ride a session approval per command kind; a delete asks every time (Aaron, 2026-10-07)", async () => {
+  await handleSessionStart({ reason: "new" }, ctx);
+  let asked = 0; let offered = [];
+  const ui = { notify: () => {}, confirm: async () => { asked++; return true; }, select: async (_t, options) => { asked++; offered = options; return options[1]; } };
+  const c = { ...ctx, ui };
+  const bash = (command) => ({ toolName: "bash", input: { command } });
+  assert.equal(blocked(await handle(bash("fab deploy -p ./pipeline.yml"), c)), false);
+  assert.equal(blocked(await handle(bash("fab deploy -p ./other.yml"), c)), false);
+  assert.equal(asked, 1, "the second deploy rides the session approval");
+  assert.equal(blocked(await handle(bash('az rest --method post --url "https://api.fabric.microsoft.com/v1/workspaces/w/items"'), c)), false);
+  assert.equal(asked, 2, "another command kind asks for itself");
+  offered = [];
+  assert.equal(blocked(await handle(bash('az rest --method delete --url "https://api.fabric.microsoft.com/v1/workspaces/w/items/i"'), c)), false);
+  assert.equal(blocked(await handle(bash('az rest --method delete --url "https://api.fabric.microsoft.com/v1/workspaces/w/items/j"'), c)), false);
+  assert.equal(asked, 4, "a delete asks every time");
+  assert.deepEqual(offered, [], "and never offers the session option");
+  assert.equal(cg.fabricShellSessionKey("fab rm"), null);
+  await handleSessionStart({ reason: "new" }, ctx);
+});
 await t("blocks declined git push --force", async () => {
   assert.equal(blocked(await call("git push --force origin main", { confirm: false })), true);
 });
@@ -699,8 +721,8 @@ await t("every Fabric MCP 1.3.0 write asks through its namespace router; deletes
       assert.equal(cg.mcpEditLabel(fabricRouter(command, {}, shape)), null, `${command} (${shape}) is a read`);
     }
   }
-  // The live-read rules see the real command: row reads and downloads still ask.
-  assert.equal(mcpLiveReadRisk(fabricRouter("datafactory_execute-query"))?.kind, "row-data");
+  // The live-read rules see the real command: classified reads run, downloads still ask.
+  assert.equal(mcpLiveReadRisk(fabricRouter("datafactory_execute-query")), null, "a classified read runs on any environment");
   assert.equal(cg.decideLiveRead(fabricRouter("onelake_download_file"), null).action, "separate-gate");
   assert.equal(mcpLiveReadRisk(fabricRouter("onelake_list_workspaces")), null);
   assert.equal(sqlMcpRisk(fabricRouter("datafactory_execute-query")), null, "an M query is not Warehouse SQL");
@@ -792,7 +814,7 @@ await t("mcpScript is blocked: its MCP calls bypass the tool_call hook", async (
   assert.equal(asked, 0, "no approval can cover calls the hook never sees");
   assert.equal(blocked(await handle(script, { cwd: ctx.cwd, hasUI: false })), true);
 });
-await t("an edit approval can last for the session; deletes and other servers still ask, production is blocked (#156, G1)", async () => {
+await t("an edit approval can last for the session; deletes and other servers still ask, production needs the permit (#156, G1)", async () => {
   await handleSessionStart({}, ctx);
   let asked = 0; let pick = "session";
   // Edits a session approval could cover get a three-way select; the rest (deletes,
@@ -809,16 +831,16 @@ await t("an edit approval can last for the session; deletes and other servers st
   assert.equal(blocked(await handle(write("dataset_update_settings"), c)), false);
   assert.equal(blocked(await handle({ toolName: "mcp__fabric", input: { tool: "datafactory_create-pipeline", args: {} } }, c)), false);
   assert.equal(asked, 1, "approved server edits run without asking again");
-  // Deletes still ask every time, even with the approval; a production write is
-  // blocked without asking (G1).
+  // Deletes still ask every time, even with the approval; a production write
+  // is blocked without a human unlock (G1).
   pick = "decline";
   assert.equal(blocked(await handle(write("onelake_delete-file"), c)), true);
   assert.equal(asked, 2);
   assert.deepEqual(offered, [], "a delete never offers a session approval");
   const prodWrite = await handle(write("core_create-item", "fabric", { workspace: "sales-prod" }), c);
   assert.equal(blocked(prodWrite), true);
-  assert.match(prodWrite.reason, /production is never modified/);
-  assert.equal(asked, 2, "a production write is blocked, not asked");
+  assert.match(prodWrite.reason, /production write/);
+  assert.equal(asked, 2, "a production write never gets the yes/no or the session option");
   // Another server needs its own approval.
   assert.equal(blocked(await handle(write("wit_work_item_write", "azure-devops", { title: "x" }), c)), true);
   assert.equal(asked, 3);
@@ -874,10 +896,13 @@ await t("a Warehouse SQL write approval lasts for the session; DELETE still asks
 });
 await t("session approval keys: SQL writes vs destructive SQL, deletes and production (#156)", () => {
   const sql = (query) => ({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify({ query }) } });
-  for (const q of ["INSERT INTO dbo.T (a) VALUES (1)", "UPDATE dbo.T SET a = 2 WHERE id = 1", "CREATE OR ALTER VIEW dbo.V AS SELECT 1 AS a", "ALTER TABLE dbo.T ADD b int", "UPDATE dbo.T SET note = 'DELETE me' WHERE id = 1"]) {
+  // Aaron, 2026-10-07: dev writes ride the session approval, batches and MERGE included.
+  for (const q of ["INSERT INTO dbo.T (a) VALUES (1)", "UPDATE dbo.T SET a = 2 WHERE id = 1", "CREATE OR ALTER VIEW dbo.V AS SELECT 1 AS a", "ALTER TABLE dbo.T ADD b int", "UPDATE dbo.T SET note = 'DELETE me' WHERE id = 1",
+    "SELECT * INTO dbo.T2 FROM dbo.T", "MERGE dbo.T AS t USING s ON t.id = s.id WHEN MATCHED THEN UPDATE SET a = s.a;", "INSERT INTO dbo.T VALUES (1); UPDATE dbo.T SET a = 2", "CREATE TABLE dbo.X (a int)\nGO\nINSERT INTO dbo.X VALUES (1)"]) {
     assert.equal(cg.sessionApprovalKey(sql(q)), "sql:fabric-sqlendpoint", q);
   }
-  for (const q of ["DELETE FROM dbo.T", "DROP TABLE dbo.T", "TRUNCATE TABLE dbo.T", "MERGE dbo.T AS t USING s ON 1=1 WHEN MATCHED THEN DELETE;", "EXEC dbo.p", "INSERT INTO dbo.T VALUES (1); DELETE FROM dbo.T", "SELECT * INTO dbo.T2 FROM dbo.T", "GRANT SELECT ON dbo.T TO u", "SELECT TOP 5 * FROM dbo.T"]) {
+  // Deletes (DELETE, DROP, TRUNCATE, a dropped column, a MERGE that deletes), procedures and permissions ask every time.
+  for (const q of ["DELETE FROM dbo.T", "DROP TABLE dbo.T", "TRUNCATE TABLE dbo.T", "ALTER TABLE dbo.T DROP COLUMN b", "MERGE dbo.T AS t USING s ON 1=1 WHEN MATCHED THEN DELETE;", "EXEC dbo.p", "EXEC sp_rename 'dbo.T', 'T2'", "INSERT INTO dbo.T VALUES (1); DELETE FROM dbo.T", "GRANT SELECT ON dbo.T TO u", "REVOKE SELECT ON dbo.T FROM u", "SELECT TOP 5 * FROM dbo.T"]) {
     assert.equal(cg.sessionApprovalKey(sql(q)), null, q);
   }
   assert.equal(cg.sessionApprovalKey(sql("INSERT INTO dbo.T VALUES (1)"), "production"), null, "a production target always asks");
@@ -977,13 +1002,13 @@ await t("Power BI Modeling edits: one approval covers the task; deletes and prod
     assert.equal(asked, before + 1, `${tool} ${op} asks`);
     assert.deepEqual(offered, [], `${tool} ${op} never offers a session approval`);
   }
-  // An edit whose connection names production is a production write: blocked, not asked (G1).
+  // An edit whose connection names production is a production write: blocked without a human unlock, never the session option (G1).
   {
     const before = asked;
     const r = await handle(modeling("measure_operations", "Update", { connectionName: "finance-production" }), c);
     assert.equal(blocked(r), true);
-    assert.match(r.reason, /production is never modified/);
-    assert.equal(asked, before, "a production model edit is blocked without a prompt");
+    assert.match(r.reason, /production write/);
+    assert.equal(asked, before, "a production model edit never gets the yes/no or the session option");
   }
   // Edits name only a connection, so once the session connects to anything naming
   // production, every model edit is a production write and is blocked (G1), even
@@ -992,10 +1017,10 @@ await t("Power BI Modeling edits: one approval covers the task; deletes and prod
   assert.equal(blocked(await handle(modeling("measure_operations", "Update", { connectionName: "c1" }), c)), false);
   const approved = asked;
   assert.equal(blocked(await handle(modeling("connection_operations", "ConnectFabric", { workspaceName: "Finance Production", semanticModelName: "Sales" }), c)), false);
-  assert.equal(asked, approved + 1, "connecting to production is a production read, which asks");
+  assert.equal(asked, approved, "connecting to production is a read, which runs without asking");
   pick = "decline";
   assert.equal(blocked(await handle(modeling("measure_operations", "Update", { connectionName: "c1" }), c)), true);
-  assert.equal(asked, approved + 1, "an edit after a production connection is blocked without asking");
+  assert.equal(asked, approved, "an edit after a production connection is blocked without asking");
   // A new session starts with no approval, and headless never gains one.
   await handleSessionStart({}, ctx);
   assert.equal(blocked(await handle(modeling("measure_operations", "Update"), { cwd: ctx.cwd, hasUI: false })), true);
@@ -1037,27 +1062,39 @@ await t("allows an approved mutating MCP tool call; never touches read MCP calls
   assert.equal(blocked(await handle({ toolName: "fabric_list_workspaces", input: {} }, ctx)), false);
 });
 
-await t("live-read policy allows dev/test metadata and classifies rows/production", () => {
+await t("live-read policy allows metadata on every environment and classifies rows", () => {
   assert.equal(mcpLiveReadRisk({ toolName: "fabric_list_tables", input: { workspace: "Client Dev" } }), null);
   assert.equal(mcpLiveReadRisk({ toolName: "powerbi_get_schema", input: { workspace: "test" } }), null);
   assert.deepEqual(
     mcpLiveReadRisk({ toolName: "fabric_execute_query", input: { workspace: "dev", sql: "select top 10 *" } }),
     { label: "Fabric governed read", kind: "row-data", environment: "dev/test/unspecified" },
   );
-  assert.deepEqual(
-    mcpLiveReadRisk({ toolName: "powerbi_get_schema", input: { workspace: "Client Production" } }),
-    { label: "Power BI governed read", kind: "production-metadata", environment: "production" },
-  );
+  // Reading production needs no permission (Aaron, 2026-10-07); only changes do.
+  assert.equal(mcpLiveReadRisk({ toolName: "powerbi_get_schema", input: { workspace: "Client Production" } }), null);
   assert.deepEqual(
     mcpLiveReadRisk({ toolName: "mcp", input: { server: "fabric", tool: "execute_dax_query", args: '{"workspace":"prod"}' } }),
     { label: "Fabric governed read", kind: "row-data", environment: "production" },
   );
 });
 
-await t("row reads and production metadata require approval and fail closed headlessly", async () => {
+await t("Power BI DAX queries and Fabric read commands run on production without a prompt (Aaron, 2026-10-07)", async () => {
+  await handleSessionStart({}, ctx);
+  let asked = 0;
+  const c = { ...ctx, ui: { notify: () => {}, confirm: async () => { asked++; return false; }, select: async () => { asked++; return undefined; } } };
+  assert.equal(blocked(await handle(modeling("connection_operations", "ConnectFabric", { workspaceName: "Finance Production", semanticModelName: "Sales" }), c)), false);
+  assert.equal(blocked(await handle(modeling("dax_query_operations", "Execute", { query: "EVALUATE TOPN(10, Sales)" }), c)), false, "a DAX query reads");
+  assert.equal(blocked(await handle({ toolName: "mcp", input: { server: "fabric", tool: "datafactory", args: { command: "datafactory_execute-query", parameters: { workspace: "Sales Prod" } } } }, c)), false, "a Fabric read command");
+  assert.equal(asked, 0);
+  // A model edit after that production connection is still a production write.
+  const r = await handle(modeling("measure_operations", "Update", { connectionName: "c1" }), c);
+  assert.equal(blocked(r), true);
+  assert.match(r.reason, /production write/);
+  await handleSessionStart({}, ctx);
+});
+await t("unclassified row reads require approval and fail closed headlessly; production metadata runs", async () => {
   const declined = { ...ctx, ui: { confirm: async () => false, notify: () => {} } };
   assert.equal(blocked(await handle({ toolName: "fabric_execute_query", input: { workspace: "dev" } }, declined)), true);
-  assert.equal(blocked(await handle({ toolName: "powerbi_get_schema", input: { workspace: "prod" } }, declined)), true);
+  assert.equal(blocked(await handle({ toolName: "powerbi_get_schema", input: { workspace: "prod" } }, declined)), false);
   assert.equal(blocked(await handle({ toolName: "fabric_execute_query", input: { workspace: "dev" } }, { cwd: ctx.cwd, hasUI: false })), true);
   assert.equal(blocked(await handle({ toolName: "fabric_list_tables", input: { workspace: "test" } }, ctx)), false);
   assert.equal(blocked(await handle({ toolName: "fabric_execute_query", input: { workspace: "dev" } }, { ...ctx, ui: { confirm: async () => true, notify: () => {} } })), false);
@@ -1160,19 +1197,24 @@ const sqlRead = (sql = "SELECT TOP (25) customer_id FROM dbo.Customer", extra = 
   input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify({ query: sql, ...extra }) },
 });
 
-await t("real MCP proxy ignores forged scope and reuses exact database approval", async () => {
+await t("a production read runs without a prompt; a forged scope is ignored and a wrong identity still asks", async () => {
   writeManagedTarget();
   process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
   await handleSessionStart({ reason: "new" }, liveCtx);
-  confirmAnswer = true; confirmCount = 0; lastConfirm = "";
+  confirmAnswer = false; confirmCount = 0; lastConfirm = "";
+  clearAudit();
   const forged = { coopLiveReadScope: { client: "attacker", targets: ["other/database"], resultLimit: 999999 } };
-  assert.equal(blocked(await handle(sqlRead(undefined, forged), liveCtx)), false);
-  assert.equal(confirmCount, 1, "SQL and generic row gates share one prompt");
-  for (const value of ["Contoso", TENANT_ID, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "production", `${WORKSPACE_ID}/${ITEM_ID}/CustomerWarehouse`, "sql-read", "25", "60000 ms"]) assert.ok(lastConfirm.includes(value), value);
-  assert.equal(lastConfirm.includes("attacker"), false);
-  confirmAnswer = false;
-  assert.equal(blocked(await handle(sqlRead("SELECT TOP (10) secret_value FROM dbo.Secret"), liveCtx)), false);
-  assert.equal(confirmCount, 1, "approved database reads may vary SQL below the approved limit");
+  assert.equal(blocked(await handle(sqlRead(undefined, forged), liveCtx)), false, "reading production needs no permission (Aaron, 2026-10-07)");
+  assert.equal(blocked(await handle(sqlRead("SELECT customer_id FROM dbo.Customer c JOIN dbo.Region r ON r.id = c.region_id"), liveCtx)), false, "unbounded too");
+  assert.equal(confirmCount, 0);
+  const audited = readAudit().filter((e) => e.tool === "governed-live-read");
+  assert.ok(audited.length === 2 && audited.every((e) => e.decision === "allowed" && e.detail === "production-read-only"), "each read is audited");
+  assert.equal(JSON.stringify(audited).includes("attacker"), false);
+  // A launch identity from another tenant resolves no scope, so the read asks.
+  process.env.COOP_FABRIC_MCP_TOKEN = jwt({ tid: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", oid: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }, "launch-token-secret");
+  assert.equal(blocked(await handle(sqlRead(), liveCtx)), true, "declined");
+  assert.equal(confirmCount, 1);
+  process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
 });
 
 await t("a production Warehouse write is blocked whatever its SQL says; dev and test offer the session option (#283, G1)", async () => {
@@ -1198,21 +1240,23 @@ await t("a production Warehouse write is blocked whatever its SQL says; dev and 
   // mid-session is not a thing (it is coop's file), but a new session re-reads it.
   const test = await run("test");
   assert.equal(test.selects, 1, "test offers the session option too");
+  // A target coop cannot confirm as dev or test may be production (Aaron had
+  // written to production through one with only the ordinary approval): the
+  // same permit, no ordinary prompt and no session option.
+  const unconfirmed = await run("");
+  assert.deepEqual(unconfirmed, { first: true, second: true, selects: 0, confirms: 0 }, "unconfirmed: no ordinary approval path");
   writeManagedTarget();
   await handleSessionStart({ reason: "new" }, liveCtx);
 });
 
-await t("the exact pyodbc fallback shares the MCP grant; forged fallback shapes do not", async () => {
+await t("the exact pyodbc fallback reads like the MCP; forged fallback shapes ask", async () => {
   writeManagedTarget();
   process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
   await handleSessionStart({ reason: "new" }, liveCtx);
-  confirmAnswer = true; confirmCount = 0;
-  await handle(sqlRead(), liveCtx);
-  assert.equal(confirmCount, 1);
-  confirmAnswer = false;
+  confirmAnswer = false; confirmCount = 0;
   const fallback = { toolName: "fabric_sql_query", input: { query: "SELECT TOP (25) customer_id FROM dbo.Customer", maximum_rows: 10 } };
   assert.equal(blocked(await handle(fallback, liveCtx)), false);
-  assert.equal(confirmCount, 1, "exact fallback reuses the accepted MCP scope");
+  assert.equal(confirmCount, 0, "the exact fallback resolves the same read scope");
   for (const event of [
     { toolName: "fabric_sql_query", input: { ...fallback.input, target: OTHER_ITEM_ID } },
     { toolName: "fabric_sql_query", input: { ...fallback.input, server: "forged.example" } },
@@ -1249,10 +1293,46 @@ const writeContract = (text) => { mkdirSync(CONTRACT_DIR, { recursive: true }); 
 const removeContract = () => rmSync(CONTRACT_DIR, { recursive: true, force: true });
 const nativeRead = (query = "SELECT TOP (25) customer_id FROM dbo.Customer", maximum_rows = 10) => ({ toolName: "fabric_sql_query", input: { query, maximum_rows } });
 
+await t("G1: a write naming what the contract labels production is a production write, whatever its words", async () => {
+  const text = [
+    "profile:", "  client: Contoso", "fabric:", `  tenant_id: "${TENANT_ID}"`,
+    "  environment_names:", "    dev: Contoso Sales Dev", "    test: ''", "    prod: Contoso Sales",
+    "power_bi:", "  environment_names:", "    dev: BI Dev", "    prod: Finance Live",
+    "sql_targets:", "  default_environment: dev", "  prod:", "    kind: azure_sql", "    server: contoso.database.windows.net", "    database: ContosoDW", "",
+  ].join("\n");
+  assert.deepEqual(cg.parseProductionNames(text).sort(), ["contoso sales", "contoso.database.windows.net", "finance live"]);
+  assert.equal(cg.namesContractProduction(["Contoso Sales Dev"], ["contoso sales"]), false, "whole values only");
+  writeContract(text);
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  try {
+    confirmCount = 0; inputCount = 0;
+    const create = (workspace) => ({ toolName: "mcp", input: { server: "fabric", tool: "core_create-item", args: { workspace } } });
+    let r = await handle(create("Contoso Sales"), liveCtx);
+    assert.equal(blocked(r), true, "the labelled prod workspace, no prod word: blocked without the go-ahead");
+    assert.match(r.reason, /Production writes are blocked/);
+    assert.equal(confirmCount, 0);
+    confirmAnswer = true;
+    assert.equal(blocked(await handle(create("Contoso Sales Dev"), liveCtx)), false, "the dev workspace asks as before");
+    assert.equal(confirmCount, 1);
+    confirmCount = 0;
+    assert.equal(blocked(await call('fab deploy -p ./pipeline.yml --workspace "Finance Live"', { confirm: true })), true, "a shell Fabric write to the labelled prod workspace");
+    assert.equal(confirmCount, 0);
+    assert.equal(blocked(await call('fab deploy -p ./pipeline.yml --workspace="Contoso Sales"', { confirm: true })), true, "--flag=value too");
+  } finally {
+    removeContract();
+    await handleSessionStart({ reason: "new" }, liveCtx);
+  }
+});
+
 await t("parseContractSqlScope ports lib/sql_targets.py: ready default only, prod never, placeholders and credentials never", () => {
   assert.equal(cg.parseContractSqlScope("profile:\n  client: Contoso\n"), null, "no section: the managed path");
   const scope = cg.parseContractSqlScope(AZURE_CONTRACT);
-  assert.deepEqual(scope, { configured: true, client: "Contoso", tenant: TENANT_ID, target: { environment: "dev", kind: "azure_sql", database: "ContosoDW", server: AZ_HOST, workspaceId: "", itemId: "", sqlEndpointId: "" } });
+  const devEntry = { environment: "dev", kind: "azure_sql", database: "ContosoDW", server: AZ_HOST, workspaceId: "", itemId: "", sqlEndpointId: "" };
+  assert.deepEqual(scope, {
+    configured: true, client: "Contoso", tenant: TENANT_ID, target: devEntry,
+    // Every ready entry, so a read may name prod; the default never is.
+    entries: { dev: devEntry, prod: { ...devEntry, environment: "production", server: "contoso.database.windows.net" } },
+  });
   const warehouse = cg.parseContractSqlScope(contractText(["  default_environment: test", "  test:", "    kind: fabric_warehouse", `    workspace_id: ${WORKSPACE_ID.toUpperCase()}`, `    item_id: ${ITEM_ID}`, "    database: CustomerWarehouse"]));
   assert.deepEqual(warehouse.target, { environment: "test", kind: "fabric_warehouse", database: "CustomerWarehouse", server: "", workspaceId: WORKSPACE_ID, itemId: ITEM_ID, sqlEndpointId: "" });
   for (const [why, lines] of Object.entries({
@@ -1300,33 +1380,42 @@ await t("contract sql_targets scope: a dev default target runs read-only SQL wit
   assert.equal(blocked(await handle(nativeRead("SELECT TOP (500) name FROM dbo.Account", 500), liveCtx)), false, "any bound, no grant needed");
   assert.equal(confirmCount, 0, "no approval prompt on the dev contract target");
   assert.ok(readAudit().every((e) => e.detail === "dev-read-only" && e.decision === "allowed"));
-  // The managed MCP proxy still resolves against the managed (production) entry and asks.
-  assert.equal(blocked(await handle(sqlRead(), liveCtx)), true, "managed production Warehouse still asks");
+  // The managed MCP proxy resolves against the managed (production) entry: a read there runs too.
+  assert.equal(blocked(await handle(sqlRead(), liveCtx)), false, "managed production Warehouse read runs");
   assert.equal(blocked(await handle(nativeRead("INSERT INTO dbo.Account (id) VALUES (1)"), liveCtx)), true, "a write on dev still asks");
-  assert.equal(blocked(await handle(nativeRead("SELECT name FROM dbo.Account"), liveCtx)), true, "an unbounded read still asks");
-  assert.equal(confirmCount, 3);
+  assert.equal(blocked(await handle(nativeRead("SELECT name FROM dbo.Account"), liveCtx)), false, "an unbounded read on dev runs too (Aaron, 2026-10-07)");
+  assert.equal(confirmCount, 1);
   removeContract();
 });
 
-await t("contract sql_targets scope: the native read asks once per contract target and the prompt names it", async () => {
+await t("contract sql_targets scope: test and a named prod entry read without a prompt; writes there do not", async () => {
   writeManagedTarget();
   writeContract(TEST_AZURE_CONTRACT);
   process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
   await handleSessionStart({ reason: "new" }, liveCtx);
-  confirmAnswer = true; confirmCount = 0; lastConfirm = "";
-  assert.equal(blocked(await handle(nativeRead(), liveCtx)), false);
-  assert.equal(confirmCount, 1);
-  for (const value of ["COOP contract SQL target (azure_sql, test)", "Contoso", TENANT_ID, "environment: test", `azure_sql/${AZ_TEST_HOST}/ContosoDW`, "sql-read", "row limit: 10"]) assert.ok(lastConfirm.includes(value), value);
-  assert.equal(lastConfirm.includes("contoso.database.windows.net/"), false, "prod never appears");
-  assert.equal(lastConfirm.includes("Warehouse"), false, "a contract target is not described as the managed Warehouse");
-  confirmAnswer = false;
-  assert.equal(blocked(await handle(nativeRead("SELECT TOP (5) name FROM dbo.Account", 5), liveCtx)), false, "same contract target reuses the grant");
-  assert.equal(blocked(await handle(nativeRead("SELECT TOP (50) name FROM dbo.Account", 50), liveCtx)), true, "a larger row bound asks again");
-  // The managed MCP proxy is a different target: the contract grant does not cover it.
-  assert.equal(blocked(await handle(sqlRead(), liveCtx)), true, "managed Warehouse scope differs from the contract target");
+  clearAudit();
+  confirmAnswer = false; confirmCount = 0;
+  assert.equal(blocked(await handle(nativeRead(), liveCtx)), false, "the test default reads");
+  // People compare prod with dev: a read may name the prod entry (Aaron, 2026-10-07).
+  const prodRead = (query = "SELECT TOP (25) customer_id FROM dbo.Customer") => ({ toolName: "fabric_sql_query", input: { query, environment: "prod" } });
+  assert.equal(blocked(await handle(prodRead(), liveCtx)), false, "the prod entry reads");
+  assert.equal(confirmCount, 0);
+  assert.deepEqual(readAudit().filter((e) => e.tool === "governed-live-read").map((e) => e.detail), ["test-read-only", "production-read-only"]);
+  // An entry the contract does not have ready, or an unknown name, resolves no scope and asks.
+  for (const environment of ["dev", "staging", 1]) {
+    assert.equal(blocked(await handle({ toolName: "fabric_sql_query", input: { query: "SELECT TOP (5) name FROM dbo.Account", environment } }, liveCtx)), true, String(environment));
+  }
+  assert.equal(confirmCount, 3, "each asks (and is declined here)");
+  // A write naming prod is a production write: blocked without a person's go-ahead, never a prompt.
+  confirmCount = 0;
+  const r = await handle(prodRead("UPDATE dbo.Account SET name = 'x' WHERE id = 1"), liveCtx);
+  assert.equal(blocked(r), true);
+  assert.match(r.reason, /production write/);
+  assert.equal(confirmCount, 0);
   // Mid-session edits to the contract never change the trusted snapshot.
   writeContract(contractText(["  default_environment: test", "  test:", "    kind: azure_sql", "    server: other.database.windows.net", "    database: ContosoDW"]));
   assert.equal(blocked(await handle(nativeRead("SELECT TOP (5) name FROM dbo.Account", 5), liveCtx)), false, "snapshot still the approved target");
+  assert.equal(blocked(await handle(prodRead(), liveCtx)), false, "the snapshot's prod entry still reads");
   removeContract();
 });
 
@@ -1346,15 +1435,14 @@ await t("contract sql_targets scope: prod, placeholder, tenant mismatch or a mis
     await handle(nativeRead(), liveCtx);
     assert.equal(confirmCount, 2, why);
   }
-  // A Warehouse named by ids in the contract shares the managed MCP grant for the same item.
+  // A Warehouse named by ids in the contract reads through both routes.
   writeContract(contractText(["  default_environment: test", "  test:", "    kind: fabric_warehouse", `    workspace_id: ${WORKSPACE_ID}`, `    item_id: ${ITEM_ID}`, "    database: CustomerWarehouse"]));
   writeManagedTarget({ environment: "test" });
   await handleSessionStart({ reason: "new" }, liveCtx);
-  confirmAnswer = true; confirmCount = 0;
-  await handle(sqlRead(), liveCtx);
-  confirmAnswer = false;
-  assert.equal(blocked(await handle(nativeRead(), liveCtx)), false, "same Warehouse, same grant");
-  assert.equal(confirmCount, 1);
+  confirmAnswer = false; confirmCount = 0;
+  assert.equal(blocked(await handle(sqlRead(), liveCtx)), false, "the MCP route");
+  assert.equal(blocked(await handle(nativeRead(), liveCtx)), false, "the native route");
+  assert.equal(confirmCount, 0);
   removeContract();
   writeManagedTarget();
   await handleSessionStart({ reason: "new" }, liveCtx);
@@ -1380,22 +1468,21 @@ await t("catalog_snapshot (SQ9): status never asks; snapshot follows the sql_imp
     assert.equal(blocked(await handle(call(input), liveCtx)), true, JSON.stringify(input));
   }
   assert.equal(confirmCount, 0, "forged shapes are blocked, never prompted");
+  // Catalog metadata is a read: a contract whose default is not a ready dev or
+  // test entry runs too (the executor then refuses the target itself).
   writeContract(contractText(["  default_environment: prod", "  prod:", "    kind: azure_sql", "    server: contoso.database.windows.net", "    database: ContosoDW"]));
   await handleSessionStart({ reason: "new" }, liveCtx);
-  confirmAnswer = true; confirmCount = 0; lastConfirm = "";
+  confirmAnswer = false; confirmCount = 0;
   assert.equal(blocked(await handle(call({ command: "snapshot" }), liveCtx)), false);
-  assert.equal(confirmCount, 1);
-  assert.match(lastConfirm, /catalog_snapshot/);
-  confirmAnswer = false;
-  assert.equal(blocked(await handle(call({ command: "snapshot" }), liveCtx)), true, "declined");
-  assert.equal(blocked(await handle(call({ command: "snapshot" }), { ...liveCtx, hasUI: false, ui: {} })), true, "headless");
+  assert.equal(blocked(await handle(call({ command: "snapshot" }), { ...liveCtx, hasUI: false, ui: {} })), false, "headless too");
+  assert.equal(confirmCount, 0);
   assert.equal(blocked(await handle(call({ command: "status" }), { ...liveCtx, hasUI: false, ui: {} })), false, "status still runs headless");
   removeContract();
   writeManagedTarget();
   await handleSessionStart({ reason: "new" }, liveCtx);
 });
 
-await t("sql_impact (SQ4): dev/test metadata runs without a prompt; prod, unresolved and forged inputs do not", async () => {
+await t("sql_impact (SQ4): metadata runs without a prompt on every target; forged inputs are blocked", async () => {
   clearAudit();
   writeManagedTarget();
   writeContract(AZURE_CONTRACT);
@@ -1413,17 +1500,15 @@ await t("sql_impact (SQ4): dev/test metadata runs without a prompt; prod, unreso
     assert.equal(blocked(await handle({ toolName: "sql_impact", input }, liveCtx)), true, JSON.stringify(input));
   }
   assert.equal(confirmCount, 0, "forged shapes are blocked, never prompted");
-  // A contract whose default is prod or a placeholder: asks once per call; headless blocks.
+  // A contract whose default is prod or a placeholder: still a read, audited as unresolved.
   writeContract(contractText(["  default_environment: prod", "  prod:", "    kind: azure_sql", "    server: contoso.database.windows.net", "    database: ContosoDW"]));
   await handleSessionStart({ reason: "new" }, liveCtx);
-  confirmAnswer = true; confirmCount = 0; lastConfirm = "";
+  clearAudit();
+  confirmAnswer = false; confirmCount = 0;
   assert.equal(blocked(await handle(impact(), liveCtx)), false);
-  assert.equal(confirmCount, 1);
-  assert.match(lastConfirm, /sql_impact/);
-  assert.match(lastConfirm, /unresolved/);
-  confirmAnswer = false;
-  assert.equal(blocked(await handle(impact(), liveCtx)), true, "declined");
-  assert.equal(blocked(await handle(impact(), { ...liveCtx, hasUI: false, ui: {} })), true, "headless");
+  assert.equal(blocked(await handle(impact(), { ...liveCtx, hasUI: false, ui: {} })), false, "headless too");
+  assert.equal(confirmCount, 0);
+  assert.deepEqual(readAudit().filter((x) => x.tool === "governed-sql-impact").map((x) => x.detail), ["unresolved", "unresolved"]);
   // No sql_targets: the managed Fabric entry's environment decides.
   removeContract();
   writeManagedTarget({ environment: "test" });
@@ -1433,10 +1518,9 @@ await t("sql_impact (SQ4): dev/test metadata runs without a prompt; prod, unreso
   assert.equal(confirmCount, 0);
   writeManagedTarget();  // production
   await handleSessionStart({ reason: "new" }, liveCtx);
-  confirmAnswer = true; confirmCount = 0;
+  confirmAnswer = false; confirmCount = 0;
   assert.equal(blocked(await handle(impact(), liveCtx)), false);
-  assert.equal(confirmCount, 1, "production managed target asks");
-  assert.match(lastConfirm, /production/);
+  assert.equal(confirmCount, 0, "a production managed target reads without a prompt (Aaron, 2026-10-07)");
   await handleSessionStart({ reason: "new" }, liveCtx);
 });
 
@@ -1484,20 +1568,19 @@ await t("SQL edit gate (SQ8): an edit of a .sql object waits for the lookup when
   await handleSessionStart({ reason: "new" }, liveCtx);
 });
 
-await t("changed managed target, launch identity, or environment reprompts", async () => {
+await t("a read needs a resolved identity and target: unusable bearers and unresolved metadata ask", async () => {
   writeManagedTarget();
   process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
   await handleSessionStart({ reason: "new" }, liveCtx);
-  confirmAnswer = true; confirmCount = 0;
-  await handle(sqlRead(), liveCtx);
-  confirmAnswer = false;
+  confirmAnswer = false; confirmCount = 0;
 
+  // Reads need no grant, so another resolved item, principal or environment reads too.
   writeManagedTarget({ item_id: OTHER_ITEM_ID, item_name: "OtherWarehouse" });
-  assert.equal(blocked(await handle(sqlRead(), liveCtx)), true, "changed managed item");
+  assert.equal(blocked(await handle(sqlRead(), liveCtx)), false, "changed managed item");
   writeManagedTarget();
-
   process.env.COOP_FABRIC_MCP_TOKEN = launchToken("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
-  assert.equal(blocked(await handle(sqlRead(), liveCtx)), true, "changed launch principal");
+  assert.equal(blocked(await handle(sqlRead(), liveCtx)), false, "changed launch principal");
+  assert.equal(confirmCount, 0);
   const canonical = launchToken();
   const invalidUtf8 = `${Buffer.from('{"alg":"none"}').toString("base64url")}.${Buffer.from([0xc3, 0x28]).toString("base64url")}.${Buffer.from("sig").toString("base64url")}`;
   for (const token of [undefined, "opaque", "x.not-json.y", invalidUtf8, canonical.replace(/^./, "*"), canonical.replace(".", ".="), `${canonical}=`]) {
@@ -1508,7 +1591,7 @@ await t("changed managed target, launch identity, or environment reprompts", asy
   process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
 
   writeManagedTarget({ environment: "test" });
-  assert.equal(blocked(await handle(sqlRead(), liveCtx)), true, "changed environment");
+  assert.equal(blocked(await handle(sqlRead(), liveCtx)), false, "changed environment");
   writeManagedTarget({ client: "TODO client" });
   assert.equal(blocked(await handle(sqlRead(), liveCtx)), true, "unresolved managed metadata");
   writeManagedTarget();
@@ -1538,7 +1621,7 @@ await t("one plain bounded SELECT on the resolved dev target runs without a prom
   assert.ok(shown.includes("none active"), "dev reads create no session grant");
 });
 
-await t("dev auto-allow covers only provably read-only SQL on the trusted dev target", async () => {
+await t("auto-allow covers only provably read-only SQL on a trusted target", async () => {
   writeManagedTarget({ environment: "dev" });
   process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
   await handleSessionStart({ reason: "new" }, liveCtx);
@@ -1550,9 +1633,6 @@ await t("dev auto-allow covers only provably read-only SQL on the trusted dev ta
     "select into": sqlRead("SELECT TOP (10) * INTO dbo.Copy FROM dbo.Customer"),
     "exec": sqlRead("EXEC dbo.Report"),
     "batch": sqlRead("SELECT TOP (1) 1; SELECT TOP (1) 2"),
-    "unbounded": sqlRead("SELECT customer_id FROM dbo.Customer"),
-    "cte": sqlRead("WITH c AS (SELECT TOP (5) id FROM dbo.Customer) SELECT * FROM c"),
-    "union": sqlRead("SELECT TOP (5) id FROM dbo.A UNION SELECT id FROM dbo.B"),
     "cross-database": sqlRead("SELECT TOP (5) id FROM Other.dbo.Customer"),
     "unclosed quote": sqlRead("SELECT TOP (5) 'x FROM dbo.Customer"),
     "unknown execution control": sqlRead(undefined, { timeout: 1 }),
@@ -1565,11 +1645,22 @@ await t("dev auto-allow covers only provably read-only SQL on the trusted dev ta
     assert.equal(blocked(await handle(event, liveCtx)), true, why);
     assert.equal(confirmCount, 1, `${why} asks`);
   }
-  // The same read asks on test and production, and when the target or identity
-  // cannot be trusted.
+  // Aaron, 2026-10-07: a plain read on dev needs no permission, bounded or not.
+  confirmCount = 0;
+  for (const q of ["SELECT customer_id FROM dbo.Customer", "WITH c AS (SELECT TOP (5) id FROM dbo.Customer) SELECT * FROM c", "SELECT TOP (5) id FROM dbo.A UNION SELECT id FROM dbo.B"]) {
+    assert.equal(blocked(await handle(sqlRead(q), liveCtx)), false, `a plain read on dev runs: ${q}`);
+  }
+  assert.equal(confirmCount, 0);
+  // The same read runs on test, production and an unlabelled target (Aaron,
+  // 2026-10-07: people compare prod with dev; only changes need the go-ahead).
+  for (const environment of ["test", "production", ""]) {
+    writeManagedTarget({ environment });
+    confirmCount = 0;
+    assert.equal(blocked(await handle(sqlRead("SELECT customer_id FROM dbo.Customer"), liveCtx)), false, `${environment || "unlabelled"} target`);
+    assert.equal(confirmCount, 0);
+  }
+  // It asks when the target or identity cannot be trusted.
   for (const [why, setup] of Object.entries({
-    "test target": () => writeManagedTarget({ environment: "test" }),
-    "production target": () => writeManagedTarget({ environment: "production" }),
     "unresolved client": () => writeManagedTarget({ environment: "dev", client: "TODO client" }),
     "no launch identity": () => { writeManagedTarget({ environment: "dev" }); delete process.env.COOP_FABRIC_MCP_TOKEN; },
   })) {
@@ -1586,11 +1677,9 @@ await t("dev auto-allow covers only provably read-only SQL on the trusted dev ta
   await handleSessionStart({ reason: "new" }, liveCtx);
 });
 
-await t("decideLiveRead: allow-dev only for a resolved sql-read scope on dev", () => {
+await t("decideLiveRead: allow-read for a resolved sql-read scope on any environment", () => {
   const scope = (environment) => ({ client: "Contoso", tenant: TENANT_ID, principal: "p", environment, targets: ["w/i/d"], operationClass: "sql-read", resultLimit: 25, timeoutMs: 60000 });
-  assert.equal(cg.decideLiveRead(sqlRead(), null, scope("dev")).action, "allow-dev");
-  assert.equal(cg.decideLiveRead(sqlRead(), null, scope("test")).action, "prompt-and-grant");
-  assert.equal(cg.decideLiveRead(sqlRead(), null, scope("production")).action, "prompt-and-grant");
+  for (const environment of ["dev", "test", "production"]) assert.equal(cg.decideLiveRead(sqlRead(), null, scope(environment)).action, "allow-read", environment);
   assert.equal(cg.decideLiveRead(sqlRead(), null, null).action, "prompt-once");
   assert.equal(cg.decideLiveRead(sqlRead(), null, { ...scope("dev"), operationClass: "sql-write" }).action, "prompt-once");
   assert.equal(cg.decideLiveRead(sqlRead("DROP TABLE dbo.Customer"), null, scope("dev")).action, "separate-gate");
@@ -1624,7 +1713,7 @@ await t("forged header command, URL, timeout, and auth cannot reuse a grant", as
   writeManagedTarget();
 });
 
-await t("mutation, semicolonless, unbounded, cross-db, and unsupported SQL stay per-call", async () => {
+await t("mutation, transaction, cross-db, and unsupported SQL stay per-call (plain reads run)", async () => {
   writeManagedTarget();
   process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
   await handleSessionStart({ reason: "new" }, liveCtx);
@@ -1632,19 +1721,13 @@ await t("mutation, semicolonless, unbounded, cross-db, and unsupported SQL stay 
   await handle(sqlRead(), liveCtx);
   for (const sql of [
     "DELETE FROM dbo.Customer",
-    "SELECT TOP (5) * FROM dbo.Customer SELECT TOP (5) * FROM dbo.Secret",
     "SELECT TOP (5) * FROM dbo.Customer BEGIN TRANSACTION",
     "SELECT TOP (5) * FROM dbo.Customer COMMIT TRANSACTION",
     "SELECT TOP (5) * FROM dbo.Customer ROLLBACK TRANSACTION",
-    "SELECT * FROM dbo.Customer",
-    "SELECT TOP (50) * FROM dbo.Customer",
-    "SELECT TOP (5) PERCENT * FROM dbo.Customer",
     "SELECT TOP (5) * FROM OtherDatabase.dbo.Secret",
     "SELECT TOP (5) * FROM OtherDatabase..Secret",
     "SELECT TOP (5) * FROM dbo.Customer, OtherDatabase.dbo.Secret",
-    "SELECT TOP (5) * FROM dbo.Customer UNION SELECT TOP (5) * FROM dbo.Secret",
     "SELECT TOP (1) 1 WAITFOR DELAY '00:00:01'",
-    "WITH x AS (SELECT TOP (5) * FROM dbo.Customer) SELECT TOP (5) * FROM x",
     "SELECT TOP (5) * FROM [OtherDatabase].[dbo].[Secret]",
     'SELECT TOP (5) * FROM "dbo"."Customer"',
   ]) {
@@ -1689,26 +1772,25 @@ await t("brackets cannot conceal cross-database targets, mutations, batches or u
     assert.equal(cg.classifySqlOperation(sql), "mutation", sql);
 });
 
-await t("session shutdown and revoke clear the in-memory grant", async () => {
+await t("reads need no grant: shutdown and revoke change nothing", async () => {
   writeManagedTarget();
   process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
   await handleSessionStart({ reason: "new" }, liveCtx);
-  confirmAnswer = true;
-  await handle(sqlRead(), liveCtx);
+  confirmAnswer = false; confirmCount = 0;
+  assert.equal(blocked(await handle(sqlRead(), liveCtx)), false);
   await handleSessionShutdown({ reason: "switch" }, liveCtx);
-  confirmAnswer = false;
-  assert.equal(blocked(await handle(sqlRead(), liveCtx)), true, "shutdown clears grant");
-  confirmAnswer = true;
-  await handle(sqlRead(), liveCtx);
+  assert.equal(blocked(await handle(sqlRead(), liveCtx)), false, "after shutdown");
   let shown = "";
   const commandCtx = { ...liveCtx, ui: { ...liveCtx.ui, notify: (message) => { shown = String(message); } } };
   await cmds["coop-live-read"].handler("revoke", commandCtx);
   assert.match(shown, /revoked/i);
-  confirmAnswer = false;
-  assert.equal(blocked(await handle(sqlRead(), liveCtx)), true);
+  assert.equal(blocked(await handle(sqlRead(), liveCtx)), false, "after revoke");
+  await cmds["coop-live-read"].handler("status", commandCtx);
+  assert.match(shown, /none active/);
+  assert.equal(confirmCount, 0);
 });
 
-await t("grant status and fixed audit labels contain no token, forged scope, or SQL", async () => {
+await t("status and fixed audit labels contain no token, forged scope, or SQL", async () => {
   clearAudit();
   writeManagedTarget();
   process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
@@ -1719,7 +1801,8 @@ await t("grant status and fixed audit labels contain no token, forged scope, or 
   await cmds["coop-live-read"].handler("status", { ...liveCtx, ui: { notify: (message) => { shown = String(message); } } });
   const blob = `${shown}\n${JSON.stringify(readAudit())}`;
   for (const forbidden of ["launch-token-secret", "scope-secret", "model-secret", "SELECT TOP", "dbo.Customer"]) assert.equal(blob.includes(forbidden), false, forbidden);
-  assert.match(shown, /CustomerWarehouse/);
+  assert.match(shown, /none active/, "reads create no grant");
+  assert.ok(readAudit().some((x) => x.kind === "mcp-confirm"), "the read is audited");
   for (const rec of readAudit().filter((x) => x.kind === "mcp-confirm")) {
     assert.equal(rec.label, "live read");
     assert.equal(rec.tool, "governed-live-read");
@@ -1886,7 +1969,7 @@ await t("approval exceptions block every confirmation path without exposing exce
     { toolName: "bash", input: { command: "cd /tmp/fixture && git commit -m docs" } },
     { toolName: "mcp", input: { server: "fabric", tool: "fabric_delete_workspace", args: "{}" } },
     { toolName: "executeSQL", input: { sql: "SELECT 1" } },
-    sqlRead(),
+    { toolName: "mcp", input: { server: "fabric", tool: "query_lakehouse_rows", args: "{}" } },
   ];
   staged = ""; modified = "";
   for (const event of events) {
@@ -1911,8 +1994,8 @@ await t("approval exceptions block every confirmation path without exposing exce
     }
   }
   confirmAnswer = false; confirmCount = 0;
-  assert.equal(blocked(await handle(sqlRead(), liveCtx)), true);
-  assert.equal(confirmCount, 1, "failed grant confirmation did not create a grant");
+  assert.equal(blocked(await handle({ toolName: "mcp", input: { server: "fabric", tool: "query_lakehouse_rows", args: "{}" } }, liveCtx)), true);
+  assert.equal(confirmCount, 1, "a failed confirmation approved nothing");
 });
 
 await t("unexpected enforcement faults block, while harmless calls and optional UI faults remain usable", async () => {
@@ -1956,30 +2039,28 @@ await t("dynamic MCP wrappers normalize the bound server and effective arguments
   for (const [sql, kind] of [["SELECT TOP (1) 1", "row-data"], ["DELETE FROM dbo.Customer", "ddl-dml-destructive"]]) {
     assert.equal(sqlMcpRisk({ toolName: "mcp__fabric__executeSQL", input: { sql } })?.kind, kind);
   }
-  assert.equal(mcpLiveReadRisk({ toolName: "mcp__fabric__get_schema", input: { environment: "production" } })?.kind, "production-metadata");
+  assert.equal(mcpLiveReadRisk({ toolName: "mcp__fabric__get_schema", input: { environment: "production" } }), null, "production metadata is a read");
 });
 
-await t("dynamic reads establish one bounded grant shared across adapter dispatch shapes", async () => {
+await t("dynamic reads resolve the same read scope across adapter dispatch shapes", async () => {
   writeManagedTarget(); process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
   await handleSessionStart({ reason: "new" }, liveCtx);
-  confirmAnswer = true; confirmCount = 0;
+  confirmAnswer = false; confirmCount = 0;
   assert.equal(blocked(await handle(dynamicRead(), liveCtx)), false);
-  assert.equal(confirmCount, 1);
-  confirmAnswer = false;
+  assert.equal(confirmCount, 0);
   for (const event of [dynamicRead("SELECT TOP (10) * FROM dbo.Other"), sqlRead(),
     { toolName: "mcp", input: { tool: "fabric-sqlendpoint_execute_query", args: dynamicRead().input.args } },
     { toolName: "fabric_sql_query", input: { query: "SELECT TOP (10) * FROM dbo.Other", maximum_rows: 10 } }]) {
     assert.equal(blocked(await handle(event, liveCtx)), false);
-    assert.equal(confirmCount, 1, "matching scope must not prompt again");
+    assert.equal(confirmCount, 0, "a resolved read never prompts");
   }
 });
 
-await t("dynamic scope expansions and mutations cannot spend an existing read grant", async () => {
+await t("dynamic scope expansions and mutations do not resolve a read scope", async () => {
   writeManagedTarget(); process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
   await handleSessionStart({ reason: "new" }, liveCtx);
-  confirmAnswer = true; await handle(dynamicRead(), liveCtx);
   confirmAnswer = false; confirmCount = 0;
-  const cases = [dynamicRead("SELECT TOP (50) * FROM dbo.Customer"),
+  const cases = [
     dynamicRead(undefined, { itemId: OTHER_ITEM_ID }), dynamicRead(undefined, { workspaceId: OTHER_ITEM_ID }),
     dynamicRead(undefined, { timeoutMs: 120000 }), dynamicRead(undefined, { database: "Other" }),
     dynamicRead("DELETE FROM dbo.Customer"), dynamicRead("SELECT TOP (1) * INTO dbo.Copy FROM dbo.Customer"),
@@ -1989,41 +2070,20 @@ await t("dynamic scope expansions and mutations cannot spend an existing read gr
   ];
   // The managed target is production, so the two Warehouse mutations (DELETE,
   // SELECT INTO) are blocked without a prompt (G1); everything else asks.
-  const silent = new Set([5, 6]);
+  const silent = new Set([4, 5]);
   let expected = 0;
   for (const [i, event] of cases.entries()) {
     assert.equal(blocked(await handle(event, liveCtx)), true);
     if (!silent.has(i)) expected++;
     assert.equal(confirmCount, expected, `case ${i}`);
   }
-  assert.equal(blocked(await handle(dynamicRead(), liveCtx)), false, "rejected expansion preserves the prior grant");
+  assert.equal(blocked(await handle(dynamicRead(), liveCtx)), false, "the plain read still runs");
   assert.equal(confirmCount, cases.length - silent.size);
   const ambiguousConfig = targetConfig();
   ambiguousConfig.mcpServers.fabric_sqlendpoint = { url: "https://invalid.example" };
   writeFileSync(join(AUDIT_DIR, "mcp-adapter.json"), JSON.stringify(ambiguousConfig));
   assert.equal(blocked(await handle(dynamicRead(), liveCtx)), true);
   writeManagedTarget();
-});
-
-await t("dynamic grant rejection, approval expansion, revocation and new sessions", async () => {
-  writeManagedTarget(); process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
-  await handleSessionStart({ reason: "new" }, liveCtx);
-  confirmAnswer = false; confirmCount = 0;
-  for (let i = 0; i < 2; i++) assert.equal(blocked(await handle(dynamicRead(), liveCtx)), true);
-  assert.equal(confirmCount, 2, "rejection does not create a grant");
-  confirmAnswer = true;
-  await handle(dynamicRead(), liveCtx);
-  await handle(dynamicRead("SELECT TOP (50) * FROM dbo.Customer"), liveCtx);
-  assert.equal(confirmCount, 4);
-  confirmAnswer = false;
-  assert.equal(blocked(await handle(dynamicRead("SELECT TOP (40) * FROM dbo.Other"), liveCtx)), false);
-  assert.equal(confirmCount, 4);
-  await cmds["coop-live-read"].handler("revoke", liveCtx);
-  assert.equal(blocked(await handle(dynamicRead(), liveCtx)), true);
-  confirmAnswer = true; await handle(dynamicRead(), liveCtx);
-  await handleSessionStart({ reason: "new" }, liveCtx);
-  confirmAnswer = false;
-  assert.equal(blocked(await handle(dynamicRead(), liveCtx)), true);
 });
 
 // --- Power BI Desktop reload guard (S31) -----------------------------------------
@@ -2251,61 +2311,86 @@ await t("parseProdUnlock: a fresh grant parses; expired, over-long, future-dated
   assert.equal(cg.isSecretPath("C:\\Users\\a\\.coop\\prod-unlock.json"), true, "the unlock file is agent-gated like a secret");
 });
 
-await t("G1: production writes are blocked with no prompt; production reads still ask and proceed; dev writes ask", async () => {
+await t("G1: without a human unlock a production write is blocked with no prompt; reads run; dev writes ask", async () => {
   removeUnlock();
   const savedCoopDir = process.env.COOP_DIR;
   process.env.COOP_DIR = UNLOCK_HOME;
   try {
-    // Warehouse SQL on the managed production target: blocked, audited, never prompted.
+    // Warehouse SQL on the managed production target, no unlock.
     writeManagedTarget({ environment: "production" });
     process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
     await handleSessionStart({ reason: "new" }, liveCtx);
     clearAudit();
-    confirmAnswer = true; confirmCount = 0;
+    confirmAnswer = true; confirmCount = 0; inputCount = 0; inputAnswer = "";
     const sqlWrite = (query) => ({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify({ query }) } });
-    const r = await handle(sqlWrite("ALTER VIEW dbo.V AS SELECT 1 AS x"), liveCtx);
+    let r = await handle(sqlWrite("ALTER VIEW dbo.V AS SELECT 1 AS x"), liveCtx);
+    assert.equal(blocked(r), true, "no unlock: blocked");
+    assert.match(r.reason, /Production writes are blocked/);
+    assert.equal(inputCount, 0, "nothing to type");
+    assert.equal(confirmCount, 0, "no yes/no and no session option without an unlock");
+    assert.deepEqual(readAudit().map((e) => [e.decision, e.label, e.detail]), [["blocked", "production write", "no-unlock"]]);
+    // A production READ runs with no prompt and no unlock (comparisons).
+    inputCount = 0;
+    assert.equal(blocked(await handle(sqlRead(), liveCtx)), false, "a production read runs");
+    assert.equal(confirmCount, 0);
+    assert.equal(inputCount, 0, "a read is not a write: no permit");
+    // Headless: blocked, nothing to ask.
+    r = await handle(sqlWrite("UPDATE dbo.T SET a = 1"), { cwd: LIVE_ROOT, hasUI: false });
     assert.equal(blocked(r), true);
-    assert.match(r.reason, /production is never modified/);
-    assert.equal(confirmCount, 0, "no approval path");
-    assert.deepEqual(readAudit().map((e) => [e.decision, e.label, e.detail]), [["blocked", "production write", "production-write"]]);
-    // A scoped production READ still asks and proceeds (comparisons).
-    assert.equal(blocked(await handle(sqlRead(), liveCtx)), false, "a production read asks and proceeds");
-    assert.equal(confirmCount, 1);
-    assert.match(lastConfirm, /production/);
-    // Headless: still blocked, still no "headless" wording (there is nothing to approve).
-    assert.equal(blocked(await handle(sqlWrite("UPDATE dbo.T SET a = 1"), { cwd: LIVE_ROOT, hasUI: false })), true);
+    assert.match(r.reason, /Production writes are blocked/);
     // A dev target asks as before.
     writeManagedTarget({ environment: "dev" });
     await handleSessionStart({ reason: "new" }, liveCtx);
-    confirmCount = 0;
+    confirmCount = 0; inputCount = 0;
     assert.equal(blocked(await handle(sqlWrite("UPDATE dbo.T SET a = 1"), liveCtx)), false);
     assert.equal(confirmCount, 1, "a dev write asks once");
-    // A dev target whose SQL names a prod_staging schema is still a dev write: it asks, it is not blocked.
+    // A dev target whose SQL names a prod_staging schema is still a dev write: it asks, no permit.
     confirmCount = 0;
     assert.equal(blocked(await handle(sqlWrite("UPDATE prod_staging.T SET a = 1"), liveCtx)), false);
     assert.equal(confirmCount, 1, "the trusted config decides, not the words");
-    // No trusted target at all and the words name prod: fail closed, blocked.
+    assert.equal(inputCount, 0);
+    // No trusted target at all and the words name prod: a production write, permit needed.
     writeFileSync(join(AUDIT_DIR, "mcp-adapter.json"), JSON.stringify({ mcpServers: {} }));
     await handleSessionStart({ reason: "new" }, liveCtx);
+    inputAnswer = "";
     assert.equal(blocked(await handle(sqlWrite("UPDATE prod.T SET a = 1"), liveCtx)), true);
     writeManagedTarget();
     await handleSessionStart({ reason: "new" }, liveCtx);
-    // Fabric writes from the shell naming prod: blocked without a prompt; a dev one asks.
-    confirmCount = 0; confirmAnswer = true;
+    // Fabric writes from the shell naming prod: blocked, no yes/no; a dev one asks.
+    inputCount = 0;
     assert.equal(blocked(await call('fab deploy -p ./pipeline.yml --workspace "Sales Prod"', { confirm: true })), true);
     assert.equal(confirmCount, 0);
+    assert.equal(inputCount, 0);
     assert.equal(blocked(await call('fab deploy -p ./pipeline.yml --workspace "Sales Dev"', { confirm: true })), false);
     assert.equal(confirmCount, 1);
     // A production read through the shell (GET) is not a write and passes the Fabric gate.
     assert.equal(blocked(await call('az rest --method get --url "https://api.fabric.microsoft.com/v1/workspaces/prod"', { confirm: false })), false);
   } finally {
+    inputAnswer = undefined;
     if (savedCoopDir === undefined) delete process.env.COOP_DIR; else process.env.COOP_DIR = savedCoopDir;
     writeManagedTarget();
     await handleSessionStart({ reason: "new" }, liveCtx);
   }
 });
 
-await t("G1: a human unlock lets a production write ask as before, audited with the grant id; it is client-bound and expires", async () => {
+await t("G1: a session can never grant itself the production unlock", async () => {
+  for (const cmd of ["coop unlock-prod Contoso --minutes 5", "pwsh -File bin/coop.ps1 unlock-prod Contoso", "echo {} > ~/.coop/prod-unlock.json", "cat ~/.coop/prod-unlock.json"]) {
+    const r = await call(cmd, { confirm: true });
+    assert.equal(blocked(r), true, cmd);
+    assert.match(r.reason, /A session never changes production access/);
+    assert.equal(confirmCount, 0, `${cmd}: no approval path`);
+  }
+  for (const tool of ["write", "edit"]) {
+    const r = await callFile(tool, "C:\\Users\\a\\.coop\\prod-unlock.json", { confirm: true });
+    assert.equal(blocked(r), true, tool);
+    assert.match(r.reason, /never changes production access/);
+  }
+  const ps = await handle({ toolName: "powershell", input: { command: "coop unlock-prod Contoso" } }, { ...ctx, ui: { ...ctx.ui, confirm: async () => true } });
+  assert.equal(blocked(ps), true, "the PowerShell tool too");
+  assert.equal(cg.touchesProdUnlock("coop unlock-production-report"), false, "only the command and the file");
+});
+
+await t("G1: under a human unlock a production write is a desk yes/no, audited with the grant id; it is client-bound and expires", async () => {
   const savedCoopDir = process.env.COOP_DIR;
   process.env.COOP_DIR = UNLOCK_HOME;
   try {
@@ -2322,9 +2407,16 @@ await t("G1: a human unlock lets a production write ask as before, audited with 
     assert.equal(blocked(await handle(sqlWrite("ALTER VIEW dbo.V AS SELECT 1 AS x"), { ...liveCtx, ui })), false, "under the unlock the write asks and proceeds");
     assert.equal(confirmCount, 1);
     assert.equal(selects, 0);
-    assert.match(lastConfirm, /PRODUCTION Warehouse SQL mutation/);
-    assert.match(lastConfirm, /unlock a1b2c3d4 \(\d+ min left\)/);
+    assert.match(lastConfirm, /PRODUCTION write under unlock a1b2c3d4 \(\d+ min left\)/);
     assert.deepEqual(readAudit().map((e) => [e.decision, e.label, e.detail]), [["allowed", "production write", "prod-unlock:a1b2c3d4"]]);
+    // A target coop cannot confirm as dev or test is treated as production: under the unlock it asks too.
+    writeManagedTarget({ environment: "" });
+    await handleSessionStart({ reason: "new" }, liveCtx);
+    assert.equal(blocked(await handle(sqlWrite("INSERT INTO dbo.T (a) VALUES (1)"), { ...liveCtx, ui })), false);
+    assert.match(lastConfirm, /treated as production/);
+    writeManagedTarget({ environment: "production" });
+    await handleSessionStart({ reason: "new" }, liveCtx);
+    clearAudit();
     // Declining still blocks.
     assert.equal(blocked(await handle(sqlWrite("ALTER VIEW dbo.V AS SELECT 2 AS x"), { ...liveCtx, ui: { ...ui, confirm: async () => false } })), true);
     // A contract naming another client: the unlock does not apply.
@@ -2332,7 +2424,7 @@ await t("G1: a human unlock lets a production write ask as before, audited with 
     await handleSessionStart({ reason: "new" }, liveCtx);
     confirmCount = 0;
     const mcpProd = { toolName: "mcp", input: { server: "fabric", tool: "core_create-item", args: { workspace: "sales-prod" } } };
-    assert.equal(blocked(await handle(mcpProd, { ...liveCtx, ui })), true, "Fabrikam's unlock does not cover Contoso's session");
+    assert.equal(blocked(await handle(mcpProd, { ...liveCtx, ui })), true, "Fabrikam's unlock does not cover Contoso's session: blocked");
     assert.equal(confirmCount, 0);
     writeUnlock({ client: "contoso" });
     assert.equal(blocked(await handle(mcpProd, { ...liveCtx, ui })), false, "Contoso's unlock covers it (case-insensitive) and it asks");
@@ -2348,7 +2440,7 @@ await t("G1: a human unlock lets a production write ask as before, audited with 
     writeUnlock({ expires_at: new Date(Date.now() - 1000).toISOString() });
     await handleSessionStart({ reason: "new" }, liveCtx);
     confirmCount = 0;
-    assert.equal(blocked(await handle(sqlWrite("ALTER VIEW dbo.V AS SELECT 3 AS x"), { ...liveCtx, ui })), true);
+    assert.equal(blocked(await handle(sqlWrite("ALTER VIEW dbo.V AS SELECT 3 AS x"), { ...liveCtx, ui: { ...ui, input: async () => undefined } })), true);
     assert.equal(confirmCount, 0);
     // Fabric shell write under a valid unlock asks with the grant named.
     writeUnlock();
@@ -2357,14 +2449,14 @@ await t("G1: a human unlock lets a production write ask as before, audited with 
     assert.match(lastConfirm, /PRODUCTION write under unlock a1b2c3d4/);
     const fab = readAudit().filter((e) => e.kind === "danger-confirm").pop();
     // danger-confirm records never carry command text, so the grant id rides the fixed label.
-    assert.deepEqual([fab.label, fab.detail], ["production write (prod-unlock:a1b2c3d4)", "production write (prod-unlock:a1b2c3d4)"]);
-    // /coop-approvals status names the unlock; without it, says production is blocked.
+    assert.deepEqual([fab.decision, fab.label, fab.detail], ["allowed", "production write (prod-unlock:a1b2c3d4)", "production write (prod-unlock:a1b2c3d4)"]);
+    // /coop-approvals status names the unlock; without it, says production writes are blocked.
     let shown = "";
     await cmds["coop-approvals"].handler("status", { ...liveCtx, ui: { notify: (m) => { shown = m; } } });
     assert.match(shown, /PRODUCTION WRITES UNLOCKED by a human for Contoso \(grant a1b2c3d4/);
     removeUnlock();
     await cmds["coop-approvals"].handler("status", { ...liveCtx, ui: { notify: (m) => { shown = m; } } });
-    assert.match(shown, /Production writes: blocked/);
+    assert.match(shown, /Production writes: blocked\./);
   } finally {
     removeUnlock();
     removeContract();

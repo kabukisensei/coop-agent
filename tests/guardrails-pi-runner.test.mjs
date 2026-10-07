@@ -77,30 +77,21 @@ const dispatch = async (event, expectedBlock) => {
   return result;
 };
 const fresh = async () => { await runner.emit({ type: "session_start", reason: "new" }); prompts = 0; };
-await fresh(); answer = true;
+// Reading needs no approval on any environment, production included (Aaron,
+// 2026-10-07): the managed target here is production and no read prompts.
+await fresh(); answer = false;
 await dispatch(read(), false);
-assert.equal(prompts, 1, "initial approval establishes the bounded grant");
-for (const value of ["Contoso", tenant, workspace, item, "production", "25", "60000 ms"]) assert.ok(messages.at(-1).includes(value));
-answer = false;
 await dispatch(read(10), false);
 await dispatch({ ...read(), input: { ...read().input, args: JSON.stringify(read().input.args) } }, false);
 await dispatch({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify(read().input.args) } }, false);
 await dispatch({ toolName: "mcp", input: { tool: "fabric-sqlendpoint_execute_query", args: read().input.args } }, false);
 await dispatch({ toolName: "fabric_sql_query", input: { query: read(10).input.args.query, maximum_rows: 10 } }, false);
-assert.equal(prompts, 1, "matching calls across dispatch surfaces do not prompt again");
-// Real Pi hooks must share the same bounded grant for bracketed SQL on both paths.
+await dispatch(read(500, { query: "SELECT customer_id FROM dbo.Customer" }), false);
 const bracketed = "SELECT TOP (12) [Calendar Month Date], SUM([Accounting Amount]) AS [Revenue] FROM [finance].[Ledger Transactions] GROUP BY [Calendar Month Date]";
-await fresh(); answer = true;
-await dispatch(read(12, { query: bracketed }), false);
-assert.equal(prompts, 1);
-assert.ok(messages.at(-1).includes("Approve this exact bounded scope for this session?"));
-answer = false;
 await dispatch(read(12, { query: bracketed }), false);
 await dispatch({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: read(12, { query: bracketed }).input.args } }, false);
-assert.equal(prompts, 1, "bracketed dynamic and central reads reuse initial approval");
-await dispatch(read(13, { query: bracketed.replace("(12)", "(13)") }), true);
-await dispatch(read(12, { query: bracketed }), false);
-assert.equal(prompts, 2, "rejected bracketed expansion retains the prior grant");
+assert.equal(prompts, 0, "reads across dispatch surfaces never prompt");
+// Cross-database, mutating and malformed SQL still ask (declined here).
 for (const query of [
   "SELECT TOP (5) * FROM [OtherDatabase].[dbo].[Secret]",
   "SELECT TOP (5) * FROM [OtherDatabase]..[Secret]",
@@ -108,24 +99,20 @@ for (const query of [
   "SELECT TOP (5) [Name]; DELETE FROM [dbo].[Customer]",
   "SELECT TOP (5) [unterminated",
 ]) await dispatch(read(5, { query }), true);
-await commands.get("coop-live-read").handler("revoke", runner.createContext());
-await dispatch(read(12, { query: bracketed }), true);
-answer = true; await dispatch(read(12, { query: bracketed }), false);
-await fresh(); answer = false; await dispatch(read(12, { query: bracketed }), true);
-// Restore the original grant fixture for the remaining lifecycle cases.
-await fresh(); answer = true; await dispatch(read(), false); answer = false;
-await dispatch(read(50), true);
-await dispatch(read(), false);
-assert.equal(prompts, 2, "rejected expansion preserves the original grant");
-answer = true; await dispatch(read(50), false);
-answer = false; await dispatch(read(40), false);
-assert.equal(prompts, 3, "approved expansion is reusable");
+// A target or identity coop cannot resolve asks.
 for (const extra of [{ itemId: other }, { workspaceId: other }, { timeoutMs: 120000 }, { database: "Other" }]) await dispatch(read(10, extra), true);
-for (const change of [{ item_id: other }, { client: "OtherClient" }, { environment: "test" }]) {
-  config(change); await dispatch(read(), true);
-}
-config(); process.env.COOP_FABRIC_MCP_TOKEN = token("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+config({ client: "TODO client" }); await dispatch(read(), true);
+config({ item_id: other }); await dispatch(read(), true); config(); // the call names the old item
+const foreignTenant = [JSON.stringify({ alg: "none" }), JSON.stringify({ tid: other, oid: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }), "synthetic-only"]
+  .map((s) => Buffer.from(s).toString("base64url")).join(".");
+process.env.COOP_FABRIC_MCP_TOKEN = foreignTenant;
 await dispatch(read(), true); process.env.COOP_FABRIC_MCP_TOKEN = token();
+// Another resolved environment or principal reads too: there is no grant to match.
+for (const change of [{ environment: "test" }, { environment: "" }]) { config(change); await dispatch(read(), false); }
+config(); process.env.COOP_FABRIC_MCP_TOKEN = token("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+await dispatch(read(), false); process.env.COOP_FABRIC_MCP_TOKEN = token();
+// A row read coop cannot classify asks.
+const askRead = { toolName: "mcp", input: { server: "fabric", tool: "query_lakehouse_rows", args: {} } };
 const mutations = [read(1, { query: "DELETE FROM dbo.Customer" }),
   { toolName: "mcp__fabric", input: { tool: "fabric_create_item", args: {} } },
   { toolName: "mcp__azure_devops", input: { tool: "create_work_item", args: {} } },
@@ -136,27 +123,23 @@ const mutations = [read(1, { query: "DELETE FROM dbo.Customer" }),
 const beforeMutations = executions;
 for (const event of mutations) await dispatch(event, true);
 assert.equal(executions, beforeMutations, "no mutation reaches even the inert executor");
-await dispatch({ toolName: "mcp__fabric__get_schema", input: { environment: "production" } }, true);
+await dispatch({ toolName: "mcp__fabric__get_schema", input: { environment: "production" } }, false);
 await dispatch({ toolName: "mcp__fabric__executeSQL", input: { sql: "DELETE FROM dbo.Customer" } }, true);
 await commands.get("coop-live-read").handler("revoke", runner.createContext());
-await dispatch(read(), true);
-await dispatch(read(), true); // rejected initial requests never make a grant
-answer = true; await dispatch(read(), false);
-await fresh(); answer = false; await dispatch(read(), true);
-assert.equal(prompts, 1, "new session requires initial approval");
-answer = true; await dispatch(read(), false);
+await dispatch(read(), false);
 await runner.emit({ type: "session_shutdown", reason: "switch" });
-answer = false; await dispatch(read(), true);
+await dispatch(read(), false);
 for (const fail of [() => { throw new Error("SYNTHETIC_APPROVAL_SECRET"); }, () => Promise.reject(new Error("SYNTHETIC_APPROVAL_SECRET"))]) {
   await fresh(); answer = fail;
-  for (const event of [read(), ...mutations, { toolName: "bash", input: { command: "rm -rf SYNTHETIC_COMMAND_SECRET" } }]) {
+  for (const event of [askRead, ...mutations, { toolName: "bash", input: { command: "rm -rf SYNTHETIC_COMMAND_SECRET" } }]) {
     const result = await dispatch(event, true);
     assert.ok(!JSON.stringify(result).includes("SYNTHETIC_"));
   }
-  answer = false; await dispatch(read(), true);
+  answer = false; await dispatch(askRead, true);
 }
 runner.setUIContext(undefined);
-for (const event of [read(), ...mutations]) await dispatch(event, true);
+for (const event of [askRead, ...mutations]) await dispatch(event, true);
+await dispatch(read(), false); // a read needs no UI
 runner.setUIContext(ui); answer = true;
 await dispatch({ toolName: "bash", input: { command: "rm -rf SYNTHETIC_COMMAND_SECRET" } }, false);
 await dispatch({ toolName: "read", input: { path: "README.md" } }, false);
