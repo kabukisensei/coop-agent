@@ -165,8 +165,11 @@ body.finding .toasts { top: 112px; }
 .tagline.dim { color: var(--text-faint); font-size: 13px; }
 .vibe { display: inline-flex; align-items: center; gap: 8px; margin: 14px auto 16px; max-width: 560px; color: var(--text-muted); font-size: 13.5px; text-align: left; }
 .vibe-mark { color: var(--brand-olive); flex: none; }
-.status-item.vibe { display: inline-flex; align-items: center; gap: 6px; max-width: 420px; overflow: hidden; }
-.status-item.vibe span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The working line above the composer: spinner and vibe for the whole turn, like the terminal's. */
+.working-line { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; color: var(--text-muted); font-size: 13px; min-width: 0; }
+.working-line[hidden] { display: none; }
+.working-line .spinner { width: 12px; height: 12px; }
+.working-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .msg.user { display: flex; flex-direction: column; align-items: flex-end; }
 .msg.user .bubble {
@@ -485,6 +488,7 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; }
 .pane-empty { color: var(--text-muted); font-size: 13px; margin: 8px 0; }
 .pane-toolbar { display: flex; align-items: center; gap: 6px; flex: none; }
 .pane-toolbar .field { flex: 1; min-width: 0; }
+.change-repo-label { flex: none; font-size: 13px; color: var(--text-muted); }
 .pane-links { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; }
 details.standards .pane-links { margin-top: 8px; }
 .notice .pane-links { margin-left: auto; padding-left: 8px; }

@@ -222,9 +222,34 @@ await check("panel (MC8): status line, widgets and the todo panel above the prom
   assert.deepEqual(last.widgets, [{ key: "ctx", lines: ["line 1", "line 2"] }]);
   assert.equal(last.todo[0], "● Todos (0/2)");
   assert.match(last.todo[1], /Read the view \(Reading\)/);
-  assert.deepEqual((await hub.snapshot()).panel, last);
+  // The snapshot also carries context and usage, read from Pi when the phone connects.
+  const snap = (await hub.snapshot()).panel;
+  assert.deepEqual({ ...snap, usage: null }, last);
+  assert.deepEqual(snap.usage, { contextPercent: 3.85, contextTokens: 15400, contextWindow: 400000, tokensIn: 12000, tokensOut: 3400, cost: 0.12 });
   pi.emit("event", { type: "extension_ui_request", id: "s2", method: "setStatus", statusKey: "std" });
   assert.deepEqual(panels.at(-1).status, []);
+});
+
+await check("panel: a compaction shows on the phone, and context and usage refresh after it and after each turn", async () => {
+  const { pi, hub } = newHub();
+  const events = [];
+  hub.on("event", (e) => events.push(e));
+  pi.emit("event", { type: "compaction_start", reason: "threshold" });
+  assert.equal(events.at(-2).type, "notice");
+  assert.match(events.at(-2).data.text, /context is nearly full; compacting/);
+  assert.equal(events.at(-1).data.compacting, true);
+  pi.emit("event", { type: "compaction_end", result: { tokensBefore: 180000, estimatedTokensAfter: 21000 } });
+  assert.equal(events.find((e) => e.type === "notice" && /Compacted/.test(e.data.text)).data.text, "Compacted the conversation: about 180k tokens down to 21k.");
+  await new Promise((r) => setTimeout(r, 10));
+  const panel = events.filter((e) => e.type === "panel").at(-1).data;
+  assert.equal(panel.compacting, false);
+  assert.equal(panel.usage.contextPercent, 3.85);
+  pi.emit("event", { type: "compaction_end", errorMessage: "model refused" });
+  assert.equal(events.filter((e) => e.type === "notice").at(-1).data.level, "error");
+  const before = events.length;
+  pi.emit("event", { type: "agent_end" });
+  await new Promise((r) => setTimeout(r, 10));
+  assert.ok(!events.slice(before).some((e) => e.type === "panel"), "unchanged usage sends no panel");
 });
 
 await check("session controls (MC7): a listed model, a thinking level, compact when idle, a name; details carry no paths", async () => {
@@ -367,7 +392,7 @@ await check("reconnect: replay a gap-free tail of the same session, else the sna
   pi.messages = [{ role: "user", content: "hi" }, { role: "toolResult", content: [{ type: "text", text: "rows" }] }, { role: "assistant", content: [{ type: "text", text: "hello" }] }];
   const snap = await hub.snapshot();
   assert.deepEqual(snap.messages.map((m) => [m.role, m.text]), [["user", "hi"], ["assistant", "hello"]], "tool results stay on the VM");
-  assert.equal(snap.lastEventId, third.id);
+  assert.equal(snap.lastEventId, hub.buffer.at(-1).id, "the usage read after the turn is the last event");
   assert.equal(snap.client, "Example Co");
 });
 
@@ -730,6 +755,12 @@ await check("page: four themes from the menu, Retro in the coop site's look (MC5
     assert.ok(existsSync(join(pageDir, ref)), `ships: ${ref}`);
   }
   assert.match(readFileSync(join(pageDir, "fonts", "OFL.txt"), "utf8"), /SIL OPEN FONT LICENSE Version 1\.1/);
+  // Aaron's MC4 feedback: Attach is a paperclip, button labels sit centred on one line,
+  // and context and usage lead the status line with MCP lines last.
+  assert.match(html, /<button id="attach"[^>]*aria-label="Attach a photo or file"[^>]*><svg[^>]*aria-hidden="true"/);
+  assert.match(css, /\.btn \{[^}]*justify-content: center;[^}]*white-space: nowrap;/);
+  const app = readFileSync(join(pageDir, "app.js"), "utf8");
+  assert.match(app, /panel\.compacting \? "Compacting…" : "", usageLine\(panel\.usage\), \.\.\.lines/);
   // Fields stay at 16px or more in every look, or iPhone Safari zooms the page past the screen (MC4).
   assert.match(css, /input, textarea, select \{ font-size: max\(16px, 1em\); \}/);
   for (const m of css.matchAll(/(?:^|\n)([^{}\n]*\b(?:input|textarea)\b[^{}]*)\{([^}]*)\}/g)) {

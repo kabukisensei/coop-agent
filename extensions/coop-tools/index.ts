@@ -32,6 +32,7 @@
 import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -656,6 +657,18 @@ function isBuilt(outAbs: string): boolean {
   return existsSync(join(outAbs, "manifest.json")) || existsSync(join(outAbs, "index.md"));
 }
 
+/** Where coop-data-doc runs for `cwd`: the folder of the config it would use,
+ *  which for a repository the client home repository lists is that home
+ *  repository (DR1), else `cwd` itself. */
+export function dataDocCwd(cwd: string, env: Record<string, string | undefined> = process.env): string {
+  try {
+    const ymlPath = findDataDocConfig(cwd, env);
+    return ymlPath ? dirname(ymlPath) : cwd;
+  } catch {
+    return cwd;
+  }
+}
+
 /** The output dir holding the built lineage graph (graph.json, what `data_doc
  *  lineage` reads) for the companion's config (environment, then this folder or
  *  a parent; output.dir resolves against the config's folder), or null. One
@@ -1157,6 +1170,11 @@ async function offerDataDocsCi(ctx: any): Promise<void> {
   const outputDir = resolveRel(dirname(configPath), parseExisting(safeRead(configPath)).outputDir || DEFAULT_OUTPUT_DIR);
   const rel = relative(root, outputDir).replace(/\\/g, "/");
   if (rel.startsWith("..") || isAbsolute(rel)) return; // built elsewhere: not this repository's docs
+  // The workflow runs a bare `coop-data-doc check` at the repository root, so it
+  // needs the config there too; a config saved in a source repository beside it
+  // (setup run from there) would only give CI "No coop-data-doc.yml found".
+  const configRel = relative(root, dirname(configPath)).replace(/\\/g, "/");
+  if (configRel !== "") return;
   const workflow = join(root, ".github", "workflows", "data-docs-check.yml");
   if (existsSync(workflow)) return;
   const template = join(HOME_TEMPLATE_DIR, "github-workflow-data-docs-check.yml");
@@ -1701,6 +1719,8 @@ async function offerShare(ctx: any, contractPath: string): Promise<void> {
   }
 }
 
+const IGNORED_NOTE = ` This repository's .gitignore covers ${PROJECT_FILE}, so coop added that one file anyway; the rest of .coop stays ignored and unshared.`;
+
 async function runShare(ctx: any, repo: string): Promise<void> {
   let result = shareContract(repo);
   if (result.state === "other-branch") {
@@ -1709,7 +1729,7 @@ async function runShare(ctx: any, repo: string): Promise<void> {
     result = shareContract(repo, { force: true });
   }
   if (result.ok) {
-    notify(ctx, result.state === "already-shared" ? "Your project file already matches the team's; nothing to share." : `Shared ${PROJECT_FILE} with the team (commit ${result.commit} pushed to ${result.branch}).`, "info");
+    notify(ctx, result.state === "already-shared" ? "Your project file already matches the team's; nothing to share." : `Shared ${PROJECT_FILE} with the team (commit ${result.commit} pushed to ${result.branch}).${result.ignored ? IGNORED_NOTE : ""}`, "info");
     return;
   }
   notify(ctx, `Could not share the project file: ${result.reason}${result.committed ? " (the commit exists locally; push it when the remote accepts it)" : ""}`, "warning");
@@ -2235,6 +2255,103 @@ export function createCompactionTransportHandler(deps: CompactionTransportDeps =
   };
 }
 
+// ---------------------------------------------------------------------------
+// Codex sign-in refresh on a long session
+//
+// Pi 0.87.1 (and still 1.0.4) caches the OpenAI Codex WebSocket per session and
+// account for up to 55 minutes and keeps reusing it after Pi refreshes the
+// ChatGPT sign-in token, so a long conversation keeps talking over a connection
+// opened with the previous token. The official Codex client keys its cached
+// connection on the auth revision and drops it on every refresh. After a refresh
+// the Codex backend can reject the next turn with "native turn auth context
+// mismatch: scopes"; Pi treats that as final, so the session stayed stuck until
+// coop was restarted.
+//
+// coop mirrors the official client and recovers in place:
+// - before each Codex request, when the stored sign-in token differs from the one
+//   the session last used, close the session's cached Codex connections
+//   (pi-ai's `cleanupSessionResources`) so the request opens a fresh one;
+// - when a turn still fails with an auth context mismatch, close them too and mark
+//   the error as a lost connection, so Pi's own auto-retry (`retry` settings,
+//   backoff, failed attempt kept out of the model's view) sends it again.
+// Only a token fingerprint is kept in memory, never the token. Other providers,
+// other errors and every failure on the way in leave Pi's behaviour unchanged.
+
+/** The Codex backend's rejection of a turn sent with a stale sign-in context. */
+export const CODEX_AUTH_CONTEXT_MISMATCH = /auth context mismatch/i;
+/** Appended to the error so Pi's retry pattern ("connection lost") picks it up. */
+export const CODEX_AUTH_RETRY_NOTE = "coop reset the Codex connection after a sign-in refresh: connection lost, retrying";
+
+/** Seams for tests; production loads pi-ai's `cleanupSessionResources` lazily. */
+export interface CodexAuthRecoveryDeps {
+  loadCleanup: () => Promise<(sessionId?: string) => void>;
+}
+
+const defaultCodexAuthRecoveryDeps: CodexAuthRecoveryDeps = {
+  loadCleanup: async () => (await import("@earendil-works/pi-ai")).cleanupSessionResources,
+};
+
+function isCodexModel(model: any): boolean {
+  return Boolean(model) && TRANSPORT_AWARE_APIS.has(String(model.api));
+}
+
+function sessionIdOf(ctx: any): string | undefined {
+  try {
+    const id = ctx?.sessionManager?.getSessionId?.();
+    return typeof id === "string" && id ? id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `before_provider_request` + `message_end` handlers for the Codex sign-in refresh. */
+export function createCodexAuthRecovery(deps: CodexAuthRecoveryDeps = defaultCodexAuthRecoveryDeps) {
+  const lastTokenBySession = new Map<string, string>();
+  const resetConnections = async (sessionId: string): Promise<boolean> => {
+    try {
+      const cleanup = await deps.loadCleanup();
+      if (typeof cleanup !== "function") return false;
+      cleanup(sessionId);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  return {
+    /** Never changes the payload; closes stale connections when the token changed. */
+    beforeProviderRequest: async (_event: any, ctx: any): Promise<undefined> => {
+      try {
+        const model = ctx?.model;
+        const sessionId = sessionIdOf(ctx);
+        if (!sessionId || !isCodexModel(model)) return undefined;
+        const auth = await ctx.modelRegistry?.getApiKeyAndHeaders?.(model);
+        if (!auth || auth.ok === false || typeof auth.apiKey !== "string" || !auth.apiKey) return undefined;
+        const fingerprint = createHash("sha256").update(auth.apiKey).digest("hex").slice(0, 16);
+        const previous = lastTokenBySession.get(sessionId);
+        lastTokenBySession.set(sessionId, fingerprint);
+        if (previous !== undefined && previous !== fingerprint) await resetConnections(sessionId);
+      } catch {
+        // Best effort: the request goes out exactly as Pi built it.
+      }
+      return undefined;
+    },
+    /** Turns the stale-sign-in rejection into a retryable error after a reset. */
+    messageEnd: async (event: any, ctx: any): Promise<{ message: any } | undefined> => {
+      const message = event?.message;
+      if (!message || message.role !== "assistant" || message.stopReason !== "error") return undefined;
+      const text = typeof message.errorMessage === "string" ? message.errorMessage : "";
+      if (!CODEX_AUTH_CONTEXT_MISMATCH.test(text) || text.includes(CODEX_AUTH_RETRY_NOTE)) return undefined;
+      if (message.api !== undefined && !TRANSPORT_AWARE_APIS.has(String(message.api))) return undefined;
+      const sessionId = sessionIdOf(ctx);
+      if (!sessionId || !(await resetConnections(sessionId))) return undefined;
+      lastTokenBySession.delete(sessionId);
+      return { message: { ...message, errorMessage: `${text} (${CODEX_AUTH_RETRY_NOTE})` } };
+    },
+    /** Forget fingerprints when the process's sessions end. */
+    clear: () => lastTokenBySession.clear(),
+  };
+}
+
 export default function coopTools(pi: ExtensionAPI) {
   pi.registerTool({
     name: "sql_impact",
@@ -2455,7 +2572,7 @@ export default function coopTools(pi: ExtensionAPI) {
         args.push("--", p.object.trim());
         let res;
         try {
-          res = await pi.exec("coop-data-doc", args, { cwd: ctx.cwd, signal });
+          res = await pi.exec("coop-data-doc", args, { cwd: dataDocCwd(ctx.cwd), signal });
         } catch (e: any) {
           return {
             content: [{ type: "text" as const, text: `coop-data-doc could not run: ${errMsg(e)}. Is it installed? (coop install)` }],
@@ -2544,7 +2661,7 @@ export default function coopTools(pi: ExtensionAPI) {
       // --- scan / build / check ---
       let res;
       try {
-        res = await pi.exec("coop-data-doc", [command], { cwd: ctx.cwd, signal });
+        res = await pi.exec("coop-data-doc", [command], { cwd: dataDocCwd(ctx.cwd), signal });
       } catch (e: any) {
         return {
           content: [{ type: "text" as const, text: `coop-data-doc could not run: ${errMsg(e)}. Is it installed? (coop install)` }],
@@ -2581,6 +2698,11 @@ export default function coopTools(pi: ExtensionAPI) {
     "session_before_compact",
     createCompactionTransportHandler({ ...defaultCompactionTransportDeps, getThinkingLevel: () => pi.getThinkingLevel() }),
   );
+
+  // A long Codex session survives a sign-in refresh (see createCodexAuthRecovery).
+  const codexAuthRecovery = createCodexAuthRecovery();
+  pi.on("before_provider_request", codexAuthRecovery.beforeProviderRequest);
+  pi.on("message_end", codexAuthRecovery.messageEnd);
 
   pi.on("session_start", async (_event: SessionStartEvent, ctx: ExtensionContext) => {
     // The contract native SQL runs against is the one this session starts with
@@ -2798,7 +2920,7 @@ export default function coopTools(pi: ExtensionAPI) {
       let found: any = null;
       let asked = false;
       try {
-        const res = await pi.exec("coop-data-doc", ["lineage", "--", prepared.object], { cwd: ctx.cwd });
+        const res = await pi.exec("coop-data-doc", ["lineage", "--", prepared.object], { cwd: dataDocCwd(ctx.cwd) });
         asked = true;
         let parsed: any = null;
         try { parsed = JSON.parse(res.stdout); } catch { parsed = null; }
@@ -2840,6 +2962,7 @@ export default function coopTools(pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", async () => {
+    codexAuthRecovery.clear();
     clearLineageContext();
     pendingSqlEdits.clear();
   });

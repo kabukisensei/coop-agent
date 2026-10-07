@@ -529,6 +529,11 @@ await t("C1: proposeContractRoot names the client home repository beside several
   assert.deepEqual([proposeContractRoot(join(single, "sub")).kind, proposeContractRoot(join(single, "sub")).root], ["git-root", single]);
   const plain = proposeContractRoot(join(client, "notes"));
   assert.deepEqual([plain.kind, plain.root], ["folder", join(client, "notes")]);
+  // Opened in the folder that holds the repositories: the same home repository, never the folder.
+  const fromParent = proposeContractRoot(client, { existing: null });
+  assert.deepEqual([fromParent.kind, fromParent.root, fromParent.repos, fromParent.parent, fromParent.pending], ["home-repo", join(client, "<client>-coop"), ["analytics", "reports"], client, true]);
+  assert.match(contractLocationNote(fromParent), /This folder holds 2 side by side \(analytics, reports\)/);
+  assert.equal(proposeContractRoot(client, { existing: null, client: "Contoso Retail" }).root, join(client, "contoso-retail-coop"));
   // A home repository beside the repositories whose contract lists this one: found from inside it.
   mkdirSync(join(client, "contoso-coop", ".coop"), { recursive: true });
   mkdirSync(join(client, "contoso-coop", ".git"));
@@ -579,6 +584,51 @@ await t("C1: opened in the folder that holds the repositories, the one repositor
   const several = proposeContractRoot(client);
   assert.deepEqual([several.kind, several.children], ["folder", ["analytics", "reports"]]);
   assert.match(contractLocationNote(several), /Several repositories inside this folder have a project file \(analytics, reports\)\. Open coop in the repository you mean/);
+});
+
+await t("C1: opened in the folder above that (the user folder over devops/fabric), the one repository two levels down is used", () => {
+  const user = trackFixture(mkdtempSync(join(tmpdir(), "coop-c1-two-")));
+  skipIfContaminated(user);
+  const fabric = join(user, "devops", "fabric");
+  mkdirSync(join(fabric, ".git"), { recursive: true });
+  mkdirSync(join(fabric, ".coop"));
+  const contract = join(fabric, ".coop", "project.yml");
+  writeFileSync(contract, "profile:\n  client: 'Contoso'\n");
+  // AppData is never searched, and neither is the inside of a repository.
+  for (const repo of [join(user, "AppData", "tool"), join(user, "outer", "nested")]) {
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    mkdirSync(join(repo, ".coop"));
+    writeFileSync(join(repo, ".coop", "project.yml"), "profile:\n  client: 'Other'\n");
+  }
+  mkdirSync(join(user, "outer", ".git"));
+  assert.equal(lib.findChildContract(user), contract);
+  assert.equal(findProjectContract(user, {}), contract, "the standards finder (the window's) looks two levels down too");
+  const where = proposeContractRoot(user);
+  assert.deepEqual([where.kind, where.path, where.child, where.childPath], ["existing", contract, true, join("devops", "fabric")]);
+  assert.match(contractLocationNote(where), /in the repository devops.fabric inside it\./);
+  // A second client repository two levels down: none is picked, and the note names both by path.
+  const other = join(user, "clients", "reports");
+  mkdirSync(join(other, ".git"), { recursive: true });
+  mkdirSync(join(other, ".coop"));
+  writeFileSync(join(other, ".coop", "project.yml"), "profile:\n  client: 'Contoso'\n");
+  assert.equal(lib.findChildContract(user), null);
+  assert.deepEqual(proposeContractRoot(user).children, [join("clients", "reports"), join("devops", "fabric")]);
+});
+
+await t("C1: coop's own checkout is never the team project (home folder, sibling, proposal)", () => {
+  const home = trackFixture(mkdtempSync(join(tmpdir(), "coop-c1-home-")));
+  skipIfContaminated(home);
+  const coop = join(home, "coop-agent");
+  for (const sub of [".git", ".coop", "bin", "lib"]) mkdirSync(join(coop, sub), { recursive: true });
+  writeFileSync(join(coop, "bin", "coop.ps1"), "");
+  writeFileSync(join(coop, "lib", "common.ps1"), "");
+  writeFileSync(join(coop, ".coop", "project.yml"), "repositories:\n  fabric:\n    local_path: \"../fabric\"\n");
+  mkdirSync(join(home, "fabric", ".git"), { recursive: true });
+  assert.equal(lib.isCoopCheckout(coop), true);
+  assert.equal(lib.findChildContract(home), null, "opened from the home folder, coop's checkout is not the project");
+  assert.deepEqual(lib.childRepositories(home), ["fabric"]);
+  assert.equal(findSiblingContract(join(home, "fabric")), null, "a repository beside coop's checkout never takes its sample");
+  assert.equal(proposeContractRoot(join(home, "fabric")).kind, "git-root");
 });
 
 await t("C1: /setup-project below a committed root contract edits that contract and writes no copy", async () => {

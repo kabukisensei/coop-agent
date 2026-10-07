@@ -284,4 +284,15 @@ grep -q '"mine"' "$m/mcp.json" || { echo "a legacy mcp.json coop does not own wa
 mkdir -p "$m/bad"; printf 'not json' > "$m/bad/mcp.json"
 "$PY" "$ROOT/lib/mcp_config.py" --config "$m/config" --project-cwd "$d/no-project" --output "$m/bad/mcp-adapter.json"
 [ -f "$m/bad/mcp-adapter.json" ] && [ "$(cat "$m/bad/mcp.json")" = "not json" ] || { echo "an unreadable legacy mcp.json blocked generation or was removed"; exit 1; }
+# A launch's per-folder copy (--existing): starts from the shared file, writes only
+# its own output, and leaves the shared file as it was.
+before="$(cat "$m/mcp-adapter.json")"
+"$PY" "$ROOT/lib/mcp_config.py" --config "$m/config" --project-cwd "$d/no-project" --existing "$m/mcp-adapter.json" --output "$m/mcp/0123456789ab.json"
+[ "$(cat "$m/mcp-adapter.json")" = "$before" ] || { echo "--existing changed the shared file"; exit 1; }
+"$PY" - "$m/mcp/0123456789ab.json" <<'PY'
+import json,sys
+m=json.load(open(sys.argv[1]))
+assert m['mcpServers']['custom']=={'command':'custom'}, 'the per-folder copy lost the user server'
+assert 'fabric' in m['_coop']['managed_servers'], 'the per-folder copy lost coop ownership'
+PY
 printf '  ✓ MCP config is pinned, safe, ownership-aware, and placeholder-free\n'

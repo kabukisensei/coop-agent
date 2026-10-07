@@ -36,6 +36,14 @@ const TREE_ROLES = new Set(["user", "assistant", "compactionSummary", "branchSum
 const PHONE_IMAGE_LIMITS = Object.freeze({ images: IMAGE_LIMITS.maxImages, imageBytes: IMAGE_LIMITS.maxImageBytes, imageTotalBytes: IMAGE_LIMITS.maxTotalBytes });
 const thinkingText = (content) => (Array.isArray(content) ? content.filter((p) => p && p.type === "thinking" && typeof p.thinking === "string").map((p) => p.thinking).join("\n\n").trim() : "");
 const resultText = (result) => messageText(result && result.content);
+/** 12k, 1.2M: the window's token format (renderer/timeline.mjs formatTokens). */
+function tokenCount(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "?";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (n >= 1000) return `${Math.round(n / 1000)}k`;
+  return String(Math.round(n));
+}
 const panelText = (text) => String(text === undefined || text === null ? "" : text).replace(ANSI, "").slice(0, PANEL_CHARS);
 
 /** The text parts of a Pi message's content, joined; thinking and tool calls are left out. */
@@ -95,6 +103,10 @@ export class CompanionHub extends EventEmitter {
     this.statuses = new Map();
     this.widgets = new Map();
     this.todos = createTodos();
+    // Context and usage, from get_session_stats after each turn (the window's
+    // status bar), and whether a compaction is running: the phone's status line.
+    this.usage = null;
+    this.compacting = false;
     this.kept = new Map();
     this.partial = null;
     if (this.flushTimer) this.clearTimer(this.flushTimer);
@@ -187,7 +199,25 @@ export class CompanionHub extends EventEmitter {
       case "agent_end":
       case "agent_settled":
         this.#status("idle");
+        this.refreshUsage().catch(() => {});
         break;
+      // A compaction can run for a while: the phone says so, as the window does.
+      case "compaction_start":
+        this.compacting = true;
+        this.#push("notice", { level: "info", text: message.reason === "manual" ? "Compacting the conversation..." : "The context is nearly full; compacting the conversation..." });
+        this.#pushPanel();
+        break;
+      case "compaction_end": {
+        this.compacting = false;
+        const result = message.result;
+        const text = result
+          ? `Compacted the conversation: about ${tokenCount(result.tokensBefore)} tokens down to ${tokenCount(result.estimatedTokensAfter)}.`
+          : message.aborted ? "Compaction stopped." : `Compaction failed: ${String(message.errorMessage || "unknown error").slice(0, 300)}`;
+        this.#push("notice", { level: result || message.aborted ? "info" : "error", text });
+        this.#pushPanel();
+        this.refreshUsage().catch(() => {});
+        break;
+      }
       case "message_start":
         if (message.message && message.message.role === "user") {
           const text = messageText(message.message.content);
@@ -268,6 +298,8 @@ export class CompanionHub extends EventEmitter {
   panel() {
     return {
       status: [...this.statuses.values()].filter(Boolean),
+      usage: this.usage,
+      compacting: this.compacting,
       widgets: [...this.widgets].map(([key, lines]) => ({ key: key.slice(0, 80), lines })),
       todo: todoLines(this.todos),
     };
@@ -293,6 +325,22 @@ export class CompanionHub extends EventEmitter {
 
   #pushPanel() {
     this.#push("panel", this.panel());
+  }
+
+  /** Context and usage as the window's status bar shows them; `push` sends the panel when it changed. */
+  async refreshUsage(push = true) {
+    const pi = this.pi;
+    if (!pi || pi.exited) return;
+    let stats = null;
+    try { const r = await pi.request({ type: "get_session_stats" }); stats = r && r.success && r.data ? r.data : null; } catch { stats = null; }
+    if (!stats || this.pi !== pi) return;
+    const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+    const context = stats.contextUsage || {};
+    const tokens = stats.tokens || {};
+    const usage = { contextPercent: num(context.percent), contextTokens: num(context.tokens), contextWindow: num(context.contextWindow), tokensIn: num(tokens.input), tokensOut: num(tokens.output), cost: num(stats.cost) };
+    const changed = JSON.stringify(usage) !== JSON.stringify(this.usage);
+    this.usage = usage;
+    if (push && changed) this.#pushPanel();
   }
 
   onPiExit() {
@@ -690,6 +738,7 @@ export class CompanionHub extends EventEmitter {
 
   /** The authoritative state for a phone that is starting or resyncing. */
   async snapshot() {
+    if (!this.usage) await this.refreshUsage(false);
     let messages = [];
     if (this.pi && !this.pi.exited) {
       try {

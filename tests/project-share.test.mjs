@@ -83,12 +83,15 @@ try {
     assert.equal(readFileSync(join(b, ".coop", "project.yml"), "utf8"), CONTRACT);
     assert.equal(ps.teamFileStatus(b).state, "shared");
     assert.equal(ps.getTeamContract(b).method, "none");
+    // Git for Windows (core.autocrlf=true) checks the file out with CRLF; the blob keeps LF.
+    writeFileSync(join(b, ".coop", "project.yml"), CONTRACT.replace(/\n/g, "\r\n"));
+    assert.equal(ps.teamFileStatus(b).state, "shared", "line endings alone are not a difference");
   });
 
   await t("get: a modified checkout gets only the file (with a backup); team-newer when the local copy is unmodified", () => {
     writeFileSync(join(a, ".coop", "project.yml"), CONTRACT + "  timezone: 'Europe/Amsterdam'\n");
     assert.equal(ps.shareContract(a, { name: "Aaron" }).ok, true);
-    // b: unmodified local file, origin moved.
+    // b: unmodified local file (still the CRLF checkout), origin moved.
     assert.equal(ps.teamFileStatus(b, { fetch: true, now: Date.now() + ps.FETCH_MAX_AGE_MS + 1 }).state, "team-newer");
     // b with local edits: not-shared; get keeps a backup and touches nothing else.
     writeFileSync(join(b, ".coop", "project.yml"), CONTRACT + "  timezone: 'America/Chicago'\n");
@@ -121,6 +124,32 @@ try {
     git(a, "remote", "set-url", "origin", origin);
     const audit = readFileSync(join(tmp, "agent", "guardrails-audit.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
     assert.deepEqual(audit.map((x) => x.decision), ["allowed", "allowed", "allowed", "blocked"]);
+  });
+
+  await t("share: a .gitignore that covers .coop/ still shares project.yml alone; backups beside it stay ignored", () => {
+    git(tmp, "init", "--bare", "--initial-branch=main", "ignored-origin.git");
+    const c = join(tmp, "c");
+    git(tmp, "clone", "-c", "core.autocrlf=false", "--quiet", join(tmp, "ignored-origin.git"), "c");
+    identity(c);
+    writeFileSync(join(c, ".gitignore"), ".coop/\n");
+    git(c, "add", ".gitignore");
+    git(c, "commit", "--quiet", "-m", "init");
+    git(c, "push", "--quiet", "origin", "main");
+    mkdirSync(join(c, ".coop", "backups"), { recursive: true });
+    writeFileSync(join(c, ".coop", "project.yml"), CONTRACT);
+    writeFileSync(join(c, ".coop", "project.yml.bak"), "old\n");
+    writeFileSync(join(c, ".coop", "backups", "x.yml"), "backup\n");
+    assert.equal(ps.teamFileStatus(c).state, "not-shared");
+    const shared = ps.shareContract(c, { name: "Aaron" });
+    assert.deepEqual([shared.ok, shared.state, shared.ignored], [true, "shared", true], JSON.stringify(shared));
+    assert.deepEqual(git(c, "show", "--name-only", "--format=", "HEAD").split("\n"), [".coop/project.yml"]);
+    assert.equal(git(c, "ls-files", ".coop"), ".coop/project.yml", "the rest of .coop is not tracked");
+    assert.equal(ps.teamFileStatus(c).state, "shared");
+    // Tracked now, yet git still refuses a plain add under an ignored folder: every share forces that one path.
+    writeFileSync(join(c, ".coop", "project.yml"), CONTRACT + "  timezone: 'America/Chicago'\n");
+    const next = ps.shareContract(c, { name: "Aaron" });
+    assert.deepEqual([next.ok, next.ignored], [true, true], JSON.stringify(next));
+    assert.equal(git(c, "ls-files", ".coop"), ".coop/project.yml");
   });
 
   await t("fetch throttle: one fetch per ten minutes per repository", () => {

@@ -5,6 +5,52 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **The project file is found two levels down** (Aaron, 2026-10-06). Most
+  teammates open coop in their user folder, and the client's repositories sit
+  one folder further down (`devops\fabric`). Opened in a folder that is not a
+  repository, coop now finds the one repository up to two levels down with a
+  `.coop/project.yml`, as it did one level down. Hidden folders, `AppData`,
+  `node_modules` and coop's own checkout are skipped, a repository is never
+  searched inside, and with several it still names them and picks none.
+
+### Fixed
+
+- **Share with the team works in a repository that ignores `.coop`**
+  (Aaron, 2026-10-06). Git refuses a plain add of an ignored path, so Share
+  failed with a Git hint ("git config advice.addIgnoredFile false") instead of
+  sharing. Share now adds `.coop/project.yml` alone with `--force` when the
+  repository's `.gitignore` covers it, says so, and leaves the rest of `.coop`
+  (backups, catalog) ignored.
+- **The shared project file reads as shared on Windows** (C1, found on the
+  client VM, 2026-10-06). Git for Windows checks `.coop/project.yml` out with
+  CRLF while the team's copy keeps LF, so `coop project status`, the session
+  start note and the window always said "differs from the team's copy (not
+  shared yet)", even right after a share, and never offered "Get the team's
+  version". The comparison now ignores line endings.
+- **`coop init` and `/setup-project` opened in the folder that holds the
+  client's repositories propose the client home repository** (C1, found on the
+  client VM). They wrote the contract into that folder, which is in no
+  repository; they now propose `<client>-coop` beside the repositories, as
+  they do from inside one of them.
+- **The launch line on a VM set up with the machine profile names what is
+  missing** (P1, found on the client VM). With `coop onboard --machine`
+  supplying the name, every launch still said "user.json or config missing";
+  it now says only this Windows user's client settings are missing.
+- **`/setup-docs` offers the docs check workflow only where it can run**
+  (DR1, found on the client VM). Run from a source repository, the wizard
+  saves `coop-data-doc.yml` there and builds into the home repository, so the
+  offered `data-docs-check.yml` in the home repository failed with "No
+  coop-data-doc.yml found". The offer now needs the config in that repository.
+- **Lineage works from a repository the client home repository lists** (SQ8
+  and DR1, found on the client VM). Opened in `sql\` beside `<client>-coop`,
+  the edit gate, `data_doc lineage` and the session note missed the catalog
+  snapshot, the built docs and `coop-data-doc.yml` in the home repository;
+  they now find them there and run `coop-data-doc` in that folder.
+
+## [0.33.0] — 2026-10-06
+
 ### Added
 
 - The coop window installer now carries everything (master plan D1k; Aaron
@@ -41,8 +87,23 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   saved session is open in one tab at most: picking one another tab or window
   holds brings that tab forward. File > New window opens a second window on the
   same folder.
+- **The window's Changes pane picks the repository** (Aaron, 2026-10-06). When
+  the open folder holds several repositories (a `devops\fabric` style folder),
+  a Repository picker lists the folder's own and each one directly inside it,
+  the same one level down lookup as the project file, plus the other
+  repositories the project file lists (`repositories.<name>.local_path`, for
+  example `../fabric-dw` beside the open folder). Each tab keeps its
+  choice; it starts on the folder's own repository, else the first one with
+  changes, and "View in Changes" on a tool card opens the repository that
+  holds that file. The terminal coop is unchanged.
 
 ### Changed
+
+- Phone companion feedback (Aaron, 2026-10-06). Attach is a paperclip; button
+  labels sit centred on one line ("Send now" no longer wraps). The phone shows a
+  compaction as the window does: "compacting the conversation", then how far it
+  shrank. The status line leads with context and usage (`38% context · 152k in,
+  21k out · $1.84`), read after each turn, with MCP connection lines last.
 
 - **The project file is found one folder down** (C1 follow-up; Aaron,
   2026-10-06). Opened in the folder that holds a client's repositories (a folder
@@ -58,12 +119,49 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **The guardrails audit tells window tabs apart.** Each row now carries the
+  coop process id, so two tabs (or terminals) on one folder no longer write
+  decisions that look the same. Found in the tabs check on the client VM.
+- Opened from the home folder, coop no longer takes its own install
+  (`C:\Users\<you>\coop-agent`, which carries a sample `.coop/project.yml`) for
+  the team project: the one-level-down and sibling lookups, and the project
+  wizard's list of repositories, skip any coop-agent checkout.
+- "Azure token check failed ... (not an auth error)" now names az's own
+  reason (its `ERROR:` line, or that az could not start), at launch and in
+  `coop doctor`. A tenant id that does not exist (AADSTS90002) is said in
+  plain words, with `coop onboard --config-only` as the fix.
+- **A long conversation no longer stops on "native turn auth context
+  mismatch: scopes"** (Aaron, 2026-10-06). Pi keeps reusing its cached OpenAI
+  Codex connection after it refreshes your ChatGPT sign-in, and the Codex server
+  can then reject the next turn; Pi treated that as final, so the session needed
+  a restart. coop now drops the session's Codex connections when the sign-in
+  token changes, as the official Codex client does, and if a turn still hits the
+  error it resets them and lets Pi's auto-retry send it again. Window and
+  terminal alike; other providers and errors are unchanged.
+
+- **The coop window shows the vibe for the whole working turn** (Aaron,
+  2026-10-06). The vibe sat in the conversation only until coop's first thought
+  or step appeared, so during real work it vanished after a moment. It now sits
+  on a working line just above the message box, with a spinner, from the start
+  of the turn to the end, the same place the terminal keeps its working line,
+  and a fresh one comes with each turn as the terminal's does. Each tab shows its
+  own.
+
 - The window's session list shows a session's name. It read only the first
   256 KB of each session file, so a name set after a few turns (auto-naming,
   `/name`, `/rename`) was missed in any session with large tool output, and the
   prompt count stopped early. It now reads the whole file, picking up from where
   it stopped when the file grows, and refreshes the list the moment a session is
   named.
+- **Several coops at once keep their own Warehouse target.** The managed MCP
+  config was one shared file that every launch retargeted to its folder, so a
+  coop already running on another project read the newer target at its next
+  `/new`, and its guardrails read the wrong Warehouse environment (a production
+  target could look like dev). Each launch now also writes its folder's own copy
+  (`<agent dir>\mcp\<key>.json`) and runs on it: Pi gets `--mcp-config`, and
+  the guardrails, `fabric_sql_query` and the launch token read
+  `COOP_MCP_CONFIG`. The shared `mcp-adapter.json` still follows the last launch
+  for `coop doctor` and `coop sync`.
 
 ## [0.32.0] — 2026-10-06
 

@@ -44,6 +44,11 @@ try {
   if ($alone.Kind -ne 'git-root' -or $alone.Root -ne (Join-Path $single 'work')) { Ko "the only repository in its folder: Kind=$($alone.Kind) Root=$($alone.Root)" }
   else { Ok 'the only repository in its folder: its root is proposed' }
 
+  $fromParent = Get-CoopContractRootProposal $client 'Contoso Retail'
+  if ($fromParent.Kind -ne 'home-repo' -or $fromParent.Root -ne (Join-Path $client 'contoso-retail-coop') -or $fromParent.Parent -ne $client) { Ko "opened in the folder holding the repositories: Kind=$($fromParent.Kind) Root=$($fromParent.Root)" }
+  elseif (($fromParent.Repos -join ',') -ne 'analytics,reports') { Ko "from the parent folder the home lists $($fromParent.Repos -join ',')" }
+  else { Ok 'opened in the folder holding the repositories: the same home repository beside them, never the folder' }
+
   $plain = Get-CoopContractRootProposal (Join-Path $client 'notes')
   if ($plain.Kind -ne 'folder' -or $plain.Root -ne (Join-Path $client 'notes')) { Ko "a folder outside Git: Kind=$($plain.Kind) Root=$($plain.Root)" }
   else { Ok 'a folder outside Git: the folder itself' }
@@ -103,6 +108,47 @@ try {
   if ($both.Count -ne 2) { Ko "Get-CoopChildContracts listed $($both.Count), expected 2" }
   elseif (Find-CoopChildContract $down) { Ko 'several repositories with a contract: one was picked' }
   else { Ok 'several repositories with a contract: none is picked' }
+
+  # Opened in the folder above that (the user folder over devops\fabric): the one
+  # repository two levels down; AppData and repositories themselves are not searched.
+  $user = Join-Path $t 'user'
+  $fabric = Join-Path (Join-Path $user 'devops') 'fabric'
+  New-Item -ItemType Directory -Force -Path (Join-Path $fabric '.git'), (Join-Path $fabric '.coop') | Out-Null
+  $twoDown = Join-Path $fabric '.coop\project.yml'
+  [System.IO.File]::WriteAllText($twoDown, "profile:`n  client: 'Contoso'`n")
+  $appRepo = Join-Path (Join-Path $user 'AppData') 'tool'
+  New-Item -ItemType Directory -Force -Path (Join-Path $appRepo '.git'), (Join-Path $appRepo '.coop') | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $appRepo '.coop\project.yml'), "profile:`n  client: 'Other'`n")
+  $outer = Join-Path $user 'outer'
+  $nested = Join-Path $outer 'nested'
+  New-Item -ItemType Directory -Force -Path (Join-Path $outer '.git'), (Join-Path $nested '.git'), (Join-Path $nested '.coop') | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $nested '.coop\project.yml'), "profile:`n  client: 'Other'`n")
+  $foundTwo = Find-CoopChildContract $user
+  if ($foundTwo -ne $twoDown) { Ko "two levels down returned '$foundTwo'" } else { Ok 'two levels down: the one repository inside a plain folder, AppData and repositories skipped' }
+  $twoName = Get-CoopChildRepositoryName $twoDown $user
+  if ($twoName -ne (Join-Path 'devops' 'fabric')) { Ko "the launch note names '$twoName'" } else { Ok 'the launch note names the repository by its path from the open folder' }
+  Remove-Item Env:COOP_PROJECT_YML -ErrorAction SilentlyContinue
+  $exportedTwo = Set-CoopProjectYmlEnv $user
+  if ($exportedTwo -ne $twoDown) { Ko "Set-CoopProjectYmlEnv from the user folder exported '$exportedTwo'" } else { Ok 'the launcher hands the contract two levels down to Pi' }
+  Remove-Item Env:COOP_PROJECT_YML -ErrorAction SilentlyContinue
+
+  # coop's own checkout (installed by default at C:\Users\<you>\coop-agent) is never
+  # the team project: opened from the home folder, neither the one-level-down nor
+  # the sibling lookup takes its sample contract.
+  $homeDir = Join-Path $t 'home'
+  $coopCheckout = Join-Path $homeDir 'coop-agent'
+  foreach ($sub in @('.git', '.coop', 'bin', 'lib')) { New-Item -ItemType Directory -Force -Path (Join-Path $coopCheckout $sub) | Out-Null }
+  [System.IO.File]::WriteAllText((Join-Path $coopCheckout 'bin\coop.ps1'), '')
+  [System.IO.File]::WriteAllText((Join-Path $coopCheckout 'lib\common.ps1'), '')
+  [System.IO.File]::WriteAllText((Join-Path $coopCheckout '.coop\project.yml'), "repositories:`n  fabric:`n    local_path: `"../fabric`"`n")
+  New-Item -ItemType Directory -Force -Path (Join-Path (Join-Path $homeDir 'fabric') '.git') | Out-Null
+  if (Find-CoopChildContract $homeDir) { Ko "the home folder took coop's own checkout as the project" } else { Ok "one level down skips coop's own checkout" }
+  $fromHome = Set-CoopProjectYmlEnv $homeDir
+  if ($fromHome -or $env:COOP_PROJECT_YML) { Ko "the launcher exported coop's own contract: '$fromHome'" } else { Ok "the launcher exports no contract from the home folder" }
+  Remove-Item Env:COOP_PROJECT_YML -ErrorAction SilentlyContinue
+  if (Find-CoopSiblingContract (Join-Path $homeDir 'fabric')) { Ko "a repository beside coop's checkout took its sample contract" } else { Ok "the sibling lookup skips coop's own checkout" }
+  $homeProposal = Get-CoopContractRootProposal (Join-Path $homeDir 'fabric')
+  if ($homeProposal.Kind -ne 'git-root') { Ko "coop's checkout counted as a client repository: Kind=$($homeProposal.Kind)" } else { Ok "coop's checkout never counts as a client repository" }
 
   # The bundled coop-agent contract is not a client's: the proposal never falls back to it.
   $bare = Join-Path $t 'bare'

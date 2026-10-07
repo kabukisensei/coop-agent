@@ -33,8 +33,49 @@ export function normalizePath(path, cwd) {
   return p.replace(/^(\.\/)+/, "");
 }
 
+/**
+ * Like normalizePath, but a path outside the working folder stays as a
+ * "../" path (a project file repository beside it), and "" only when it is
+ * on another drive.
+ */
+export function relativePath(path, cwd) {
+  const inside = normalizePath(path, cwd);
+  if (inside) return inside;
+  const p = String(path || "").trim().replace(/\\/g, "/").replace(/^@/, "");
+  const root = String(cwd || "").replace(/\\/g, "/").replace(/\/+$/, "");
+  if (!root || !/^([A-Za-z]:)?\//.test(p)) return "";
+  const windows = /^[A-Za-z]:\//.test(root);
+  const same = (a, b) => (windows ? a.toLowerCase() === b.toLowerCase() : a === b);
+  const from = root.split("/");
+  const to = p.split("/");
+  if (!same(from[0], to[0])) return "";
+  let common = 0;
+  while (common < from.length && common < to.length && same(from[common], to[common])) common++;
+  return [...from.slice(common).filter(Boolean).map(() => ".."), ...to.slice(common)].join("/");
+}
+
+/**
+ * The repository a changed path belongs to, from the panel's list (`rel` is
+ * each repository's folder relative to the open folder: "" for the folder's
+ * own, a name one level down, or a "../" path from the project file):
+ * { id, path } with the path made relative to that repository, or null when
+ * no listed repository holds it. The deepest match wins.
+ */
+export function repoForPath(repos, path) {
+  const p = String(path || "");
+  if (!p) return null;
+  const relOf = (r) => (typeof r.rel === "string" ? r.rel : r.id);
+  const inside = (repos || []).filter((r) => relOf(r) && p.startsWith(`${relOf(r)}/`));
+  inside.sort((a, b) => relOf(b).length - relOf(a).length);
+  if (inside.length) return { id: inside[0].id, path: p.slice(relOf(inside[0]).length + 1) };
+  return !p.startsWith("../") && (repos || []).some((r) => r.id === "") ? { id: "", path: p } : null;
+}
+
 export function mountChanges(box, options, { coop, cwd }) {
-  const state = { files: [], selected: "", mode: "unified", query: "", active: 0, matches: [], diff: null, loading: false };
+  const state = { files: [], selected: "", mode: "unified", query: "", active: 0, matches: [], diff: null, loading: false, repos: [], repo: null };
+  // Shown only when the open folder holds more than one repository.
+  const repoPicker = el("select", { class: "field", "aria-label": "Repository to compare", title: "Which repository's changes to show", onchange: (event) => load("", event.target.value) });
+  const repoRow = el("label", { class: "pane-toolbar change-repo", hidden: true }, el("span", { class: "change-repo-label", text: "Repository" }), repoPicker);
   const summary = el("div", { class: "pane-summary" });
   const list = el("ul", { class: "change-list", role: "listbox", "aria-label": "Changed files" });
   const search = el("input", { class: "field", type: "search", placeholder: "Find in this diff", "aria-label": "Find in this diff" });
@@ -47,7 +88,7 @@ export function mountChanges(box, options, { coop, cwd }) {
     el("button", { type: "button", class: "btn icon", title: "Later match", "aria-label": "Later match", onclick: () => step(1) }, icon("down")),
     modeButton);
   const split = el("div", { class: "split-resize", role: "separator", "aria-orientation": "horizontal", "aria-label": "Resize the changed files list", tabindex: "0" });
-  box.append(summary, list, split, fileHead, toolbar, diffBox);
+  box.append(repoRow, summary, list, split, fileHead, toolbar, diffBox);
   // The list and the diff share the pane; the diff keeps room for a few lines.
   const resizer = makeResizer({
     handle: split,
@@ -116,14 +157,37 @@ export function mountChanges(box, options, { coop, cwd }) {
     renderDiffView(true);
   }
 
-  async function load(want) {
+  function renderRepos() {
+    repoRow.hidden = state.repos.length < 2;
+    fill(repoPicker, ...state.repos.map((r) => el("option", { value: r.id, text: r.id ? r.label : `${r.label} (this folder)`, selected: r.id === state.repo })));
+  }
+
+  // `want` is a path from a tool card (relative to the open folder, "../" for
+  // a project file repository beside it); it picks
+  // the repository that holds it. `repo` is a choice from the picker.
+  async function load(want, repo) {
     if (state.loading) return;
     state.loading = true;
     fill(summary, el("span", { class: "spinner" }), el("span", { text: " Reading changes" }));
-    const result = await coop.changes();
+    const asked = want;
+    let pick = typeof repo === "string" ? repo : null;
+    let hit = want ? repoForPath(state.repos, want) : null;
+    if (hit) pick = hit.id;
+    let result = await coop.changes(pick);
+    // The first time, the list of repositories comes with the first answer.
+    if (result.success && want && !hit) {
+      hit = repoForPath(result.data.repos, want);
+      if (hit && hit.id !== result.data.current) result = await coop.changes(hit.id);
+    }
+    if (hit) want = hit.path;
+    else if (want.startsWith("../")) want = "";
     state.loading = false;
     if (!result.success) { summary.textContent = result.error || "Could not read the changes."; return; }
     const data = result.data;
+    state.repos = data.repos || [];
+    if (state.repo !== data.current) state.selected = "";
+    state.repo = data.current;
+    renderRepos();
     if (!data.repo) {
       state.files = [];
       summary.textContent = "This folder is not in a git repository, so there is nothing to compare. The tool cards in the conversation still show each edit.";
@@ -141,7 +205,7 @@ export function mountChanges(box, options, { coop, cwd }) {
     renderList();
     if (target) await select(target);
     else { state.diff = null; renderDiffView(); fill(fileHead); }
-    if (want && target !== want) toast(`${want} has no changes since the last commit.`, "info");
+    if (want && target !== want) toast(`${asked} has no changes since the last commit.`, "info");
   }
 
   function step(direction) {
@@ -154,10 +218,10 @@ export function mountChanges(box, options, { coop, cwd }) {
   search.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); step(event.shiftKey ? -1 : 1); } });
   modeButton.addEventListener("click", () => { state.mode = state.mode === "split" ? "unified" : "split"; renderModeButton(); renderDiffView(); });
   renderModeButton();
-  load(options && options.path ? normalizePath(options.path, cwd()) : "");
+  load(options && options.path ? relativePath(options.path, cwd()) : "");
 
   return {
-    show: (opts) => load(opts && opts.path ? normalizePath(opts.path, cwd()) : ""),
+    show: (opts) => load(opts && opts.path ? relativePath(opts.path, cwd()) : ""),
     refresh: () => load(""),
   };
 }

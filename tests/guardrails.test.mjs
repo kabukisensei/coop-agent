@@ -1116,6 +1116,7 @@ await t("Warehouse SQL MCP audit never logs raw SQL or args", async () => {
   const e = readAudit().filter((x) => x.kind === "mcp-confirm");
   assert.ok(e.length > 0);
   assert.equal(JSON.stringify(e).includes("SecretTable"), false);
+  assert.ok(e.every((x) => x.pid === process.pid), "each row names the coop process, so two window tabs stay apart");
   clearAudit();
   await handle(
     { toolName: "executeSQL", input: { sql: "SELECT secret_value INTO dbo.LeakedName FROM dbo.Source", arguments: { password: "never-log-me" } } },
@@ -2370,6 +2371,33 @@ await t("G1: a human unlock lets a production write ask as before, audited with 
     if (savedCoopDir === undefined) delete process.env.COOP_DIR; else process.env.COOP_DIR = savedCoopDir;
     writeManagedTarget();
     await handleSessionStart({ reason: "new" }, liveCtx);
+  }
+});
+
+await t("several coops at once: the guardrails read this launch's own MCP config copy (COOP_MCP_CONFIG), never another folder's", async () => {
+  const { managedMcpConfigPath, managedSqlEnvironment } = cg;
+  const own = join(AUDIT_DIR, "mcp", "0123456789ab.json");
+  assert.equal(managedMcpConfigPath(AUDIT_DIR, {}), join(AUDIT_DIR, "mcp-adapter.json"), "no variable: the shared file");
+  assert.equal(managedMcpConfigPath(AUDIT_DIR, { COOP_MCP_CONFIG: own }), own);
+  assert.equal(managedMcpConfigPath(AUDIT_DIR, { COOP_MCP_CONFIG: join(AUDIT_DIR, "elsewhere", "0123456789ab.json") }), join(AUDIT_DIR, "mcp-adapter.json"), "only coop's own mcp folder");
+  assert.equal(managedMcpConfigPath(AUDIT_DIR, { COOP_MCP_CONFIG: join(AUDIT_DIR, "mcp", "evil.json") }), join(AUDIT_DIR, "mcp-adapter.json"), "only coop's own file names");
+  assert.equal(managedMcpConfigPath(AUDIT_DIR, { COOP_MCP_CONFIG: own.toUpperCase().replace("0123456789AB.JSON", "0123456789ab.json") }, "win32"), own.toUpperCase().replace("0123456789AB.JSON", "0123456789ab.json"), "Windows paths compare without case");
+  // A later launch elsewhere retargeted the shared file to a dev endpoint; this
+  // launch's own copy still names production, and production is what counts.
+  const saved = process.env.COOP_MCP_CONFIG;
+  try {
+    mkdirSync(join(AUDIT_DIR, "mcp"), { recursive: true });
+    writeFileSync(own, JSON.stringify(targetConfig({ environment: "production" })));
+    writeManagedTarget({ environment: "dev" });
+    const deps = { readText: (path) => readFileSync(path, "utf8"), agentDir: AUDIT_DIR, token: () => undefined };
+    delete process.env.COOP_MCP_CONFIG;
+    assert.equal(managedSqlEnvironment(deps), "dev");
+    process.env.COOP_MCP_CONFIG = own;
+    assert.equal(managedSqlEnvironment(deps), "production");
+  } finally {
+    if (saved === undefined) delete process.env.COOP_MCP_CONFIG; else process.env.COOP_MCP_CONFIG = saved;
+    rmSync(join(AUDIT_DIR, "mcp"), { recursive: true, force: true });
+    writeManagedTarget();
   }
 });
 
