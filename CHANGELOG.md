@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.34.1] — 2026-10-07
+
 ### Fixed
 
 - Coop opened in the folder above a client repository (the user folder holding
