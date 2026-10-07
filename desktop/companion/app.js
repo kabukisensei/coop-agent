@@ -538,27 +538,36 @@ async function attachFiles(files) {
 // tap on the line folds the panel to that line, as Alt+T does in the terminal.
 function renderPanel(p) {
   const panel = p || { status: [], widgets: [], todo: [] };
+  // The line shows only what Aaron watches on the phone (2026-10-07): context
+  // used and the plan usage left. Every other status line (MCP connections,
+  // the daily log) moves into the panel a tap opens, with the todos.
+  const statuses = panel.status || [];
+  const plan = planLeft(statuses);
+  const rest = statuses.filter((line) => line !== plan.line);
   const blocks = [];
   if (panel.todo && panel.todo.length) blocks.push(["todos", panel.todo]);
   for (const w of panel.widgets || []) if (w.lines && w.lines.length) blocks.push([w.key, w.lines]);
-  // Context and usage lead, as Aaron asked (MC4 feedback); MCP connection lines go last.
-  const lines = [...(panel.status || [])].sort((a, b) => Number(/^\W*MCP\b/i.test(a)) - Number(/^\W*MCP\b/i.test(b)));
-  const status = [panel.compacting ? "Compacting…" : "", usageLine(panel.usage), ...lines].filter(Boolean).join(" · ");
+  if (rest.length) blocks.push(["status", rest]);
+  const status = [panel.compacting ? "Compacting…" : "", contextLine(panel.usage), plan.text].filter(Boolean).join(" · ");
   $("panel").hidden = !status && !blocks.length;
   $("panel-status").textContent = status || (panel.todo && panel.todo[0]) || "Panel";
   $("panel-body").replaceChildren(...blocks.map(([key, lines]) => el("pre", { class: `widget${key === "todos" ? " todos" : ""}` }, el("code", { text: lines.join("\n") }))));
   $("panel-toggle").disabled = !blocks.length;
 }
 
-// "4% context · 12k in, 3k out · $0.12", the window's status bar in one line.
-function usageLine(u) {
-  if (!u) return "";
-  const k = (n) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(Math.round(n)));
-  const parts = [];
-  if (Number.isFinite(u.contextPercent) && u.contextWindow) parts.push(`${Math.round(u.contextPercent)}% context`);
-  if (Number.isFinite(u.tokensIn) && Number.isFinite(u.tokensOut)) parts.push(`${k(u.tokensIn)} in, ${k(u.tokensOut)} out`);
-  if (Number(u.cost) > 0) parts.push(`$${Number(u.cost).toFixed(2)}`);
-  return parts.join(" · ");
+// "38% context", as the window's status bar shows it.
+function contextLine(u) {
+  return u && Number.isFinite(u.contextPercent) && u.contextWindow ? `${Math.round(u.contextPercent)}% context` : "";
+}
+
+// The ChatGPT plan's usage left, from pi-better-openai's status
+// ("Usage: 5h: 62% | 7d: 80% | ..."): "5h 62% left · 7d 80% left".
+function planLeft(lines) {
+  for (const line of lines) {
+    const m = /Usage:\s*5h:\s*([^|]+?)\s*\|\s*7d:\s*([^|]+?)\s*(?:\||$)/.exec(line);
+    if (m) return { line, text: `5h ${m[1]} left · 7d ${m[2]} left` };
+  }
+  return { line: null, text: "" };
 }
 
 function setIdentity(s) {
@@ -710,6 +719,8 @@ function renderQuestions() {
 
 async function load() {
   clearTimeout(app.retry);
+  app.paused = false;
+  app.failures = 0;
   let res;
   try { res = await api("GET", "/api/snapshot"); } catch { showGate("offline"); return; }
   if (!res.json.ok) { showGate(res.json.code); return; }
@@ -754,6 +765,7 @@ function openStream() {
   // Start right after the snapshot's last event, so nothing between the two is lost.
   const source = new EventSource(`/api/events?after=${encodeURIComponent(app.lastEventId || "")}`);
   app.source = source;
+  source.onopen = () => { app.failures = 0; };
   const on = (type, fn) => source.addEventListener(type, (e) => {
     let ev;
     try { ev = JSON.parse(e.data); } catch { return; }
@@ -779,13 +791,44 @@ function openStream() {
     else if (d.outcome !== "answered") toast(d.outcome === "expired" ? "The question timed out." : "The question was cancelled.");
   });
   source.onerror = () => {
-    // The stream ends when access goes off, the session changes or the VM is
-    // out of reach; buttons wait for the reloaded snapshot, never guess.
     closeStream();
+    // In the background the phone stops the stream on purpose; it picks up
+    // again where it left off when the page is back (resume).
+    if (document.visibilityState === "hidden") { app.paused = true; return; }
+    // A dropped connection gets one quiet retry from the last event first, so
+    // a blip never flashes "offline" or redraws the page.
+    app.failures = (app.failures || 0) + 1;
+    if (app.failures === 1 && app.ready) { app.retry = setTimeout(openStream, 500); return; }
+    // Then the stream ends for a reason (access off, the session changed, the
+    // VM out of reach): buttons wait for the reloaded snapshot, never guess.
     app.ready = false;
     setStatus("disconnected");
     app.retry = setTimeout(load, 3000);
   };
+}
+
+// Phones suspend a page in the background, so the live stream cannot stay
+// open. Going away closes it on purpose: the window then knows this phone is
+// not watching and sends a notice when coop asks or finishes (MC11). Coming
+// back reopens it from the last event seen, and the window replays what
+// happened meanwhile: nothing is lost and the page is not redrawn. Only a gap
+// longer than the window keeps (15 minutes or 2,000 events) reloads it.
+function pause() {
+  if (!app.ready || !app.source) return;
+  clearTimeout(app.retry);
+  closeStream();
+  app.paused = true;
+}
+
+function resume() {
+  if (document.visibilityState === "hidden") return;
+  if (app.paused && app.ready) {
+    app.paused = false;
+    clearTimeout(app.retry);
+    openStream();
+    return;
+  }
+  if (!app.source) load();
 }
 
 // ---- wiring --------------------------------------------------------------------
@@ -855,6 +898,9 @@ function keepClear() {
   root.scrollPaddingBottom = `${$("composer").hidden ? 0 : $("composer").offsetHeight + 8}px`;
 }
 if ("ResizeObserver" in window) { const watch = new ResizeObserver(keepClear); watch.observe(document.querySelector(".bar")); watch.observe($("composer")); }
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && !app.source) load(); });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") pause(); else resume(); });
+window.addEventListener("pagehide", pause);
+window.addEventListener("pageshow", resume);
+window.addEventListener("online", resume);
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 load();

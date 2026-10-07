@@ -33,6 +33,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **The phone picks up where it left off** (Aaron, 2026-10-07). Phones
+  suspend a web page in the background, so the phone's live connection cannot
+  stay open while you use another app. Now the phone closes it on purpose when
+  you switch away and reopens it from the last update when you come back: what
+  coop did meanwhile appears at once, with no "offline" flash and no reload.
+  While you are away, a phone with **Notices** on gets "coop is waiting for
+  you" when coop asks something or finishes; before, the window could think
+  the suspended phone was still watching and send nothing.
+- **The phone's status line shows only context and plan usage left**
+  (Aaron, 2026-10-07): for example "38% context · 5h 62% left · 7d 80% left".
+  MCP connections and other status lines move into the panel a tap opens, with
+  the todos.
 - The project file no longer says "Not shared yet" right after a share when
   the team works on a branch other than origin's default (Aaron, 2026-10-07).
   coop compared the file with origin/HEAD (often `main`) while sharing pushed

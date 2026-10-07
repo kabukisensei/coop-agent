@@ -2,7 +2,7 @@
 // own files so the home-screen app opens quickly. It never stores anything
 // from /api: no message, question or credential is cached on the phone.
 // Notices (MC11) arrive empty and show one fixed line.
-const CACHE = "coop-companion-v5";
+const CACHE = "coop-companion-v6";
 const SHELL = ["./", "index.html", "style.css", "app.js", "shared/themes.css", "shared/dialogs.mjs", "shared/markdown.mjs", "shared/attach-note.mjs", "icon.svg", "manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
