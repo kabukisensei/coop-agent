@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.34.0] — 2026-10-07
+
 ### Added
 
 - The coop window installer now carries everything (master plan D1k; Aaron
