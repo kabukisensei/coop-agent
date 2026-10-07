@@ -309,7 +309,7 @@ export function mountProject(box, options, { coop, newSession }) {
   function teamText(team) {
     switch (team && team.state) {
       case "shared": return `Shared with the team (same as origin/${team.defaultBranch}).`;
-      case "not-shared": return "Not shared yet: your copy differs from the team's.";
+      case "not-shared": return team.defaultBranch && team.originExists ? `Not shared yet: your copy differs from the team's on origin/${team.defaultBranch}.` : "Not shared yet: your copy differs from the team's.";
       case "team-newer": return `The team's copy on origin/${team.defaultBranch} is newer than your unmodified file.`;
       case "team-has-it": return `The team already has a project file on origin/${team.defaultBranch}; this checkout does not.`;
       case "none": return "Not shared yet: neither this checkout nor origin has a project file.";
