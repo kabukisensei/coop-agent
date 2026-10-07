@@ -1030,7 +1030,7 @@ await check("actual initial launch waits behind a pending switch and never start
     PiSession: Worker, piArgv, piEnv: () => ({}), desktopSessionPath, runningPis: new Set() };
   runInNewContext(source.slice(source.indexOf("async function currentSessionFile("), source.indexOf("function isDialog(")), context);
   runInNewContext(source.slice(source.indexOf("async function sessionOwner("), source.indexOf("/** Bring a tab")), context);
-  runInNewContext(source.slice(source.indexOf("async function sessionCommand("), source.indexOf('handle("coop:switch-session"')), context);
+  runInNewContext(source.slice(source.indexOf("// A session change claims its target"), source.indexOf('handle("coop:switch-session"')), context);
   runInNewContext(source.slice(source.indexOf("function startPi("), source.indexOf("// A finished turn")), context);
   const transition = context.sessionCommand(a, { type: "switch_session", sessionPath: target }); await switching;
   const launch = context.startPi(b); assert.equal(starts, 0);
@@ -1075,7 +1075,7 @@ await check("actual desktop handlers reject overlapping resumes, including pendi
   runInNewContext(section("async function currentSessionFile", "function isDialog") +
     section("async function sessionOwner", "/** Bring a tab") +
     section('handle("coop:new-tab"', 'handle("coop:close-tab"') +
-    section("async function sessionCommand", 'handle("coop:export"'), context);
+    section("// A session change claims its target", 'handle("coop:export"'), context);
   const first = handlers.get("coop:switch-session")(a, "/saved");
   // The phone host calls exactly this same sessionCommand entry point.
   const phone = context.sessionCommand(b, { type: "switch_session", sessionPath: "/saved" });
@@ -1107,6 +1107,44 @@ await check("actual desktop handlers reject overlapping resumes, including pendi
   // Close while a lookup waits: queued transition must not touch the closed worker.
   windows.delete(b.contents.id);
   assert.equal((await handlers.get("coop:switch-session")(b, "/closed")).success, false);
+});
+
+await check("a session change waiting on a question never blocks another tab", async () => {
+  const source = readFileSync(join(ROOT, "desktop/main.mjs"), "utf8");
+  const arbiter = new SessionArbiter();
+  const handlers = new Map();
+  const windows = new Map();
+  let answer;
+  const question = new Promise((resolve) => { answer = resolve; });
+  const make = (id, file, onChange) => {
+    const state = { contents: { id }, spec: { env: {} }, sessionFile: file, hub: { renew() {}, incarnation: `i${id}` } };
+    state.pi = { exited: false, request: async (command) => command.type === "get_state" ? { success: true, data: { sessionFile: state.sessionFile } } : onChange(command) };
+    windows.set(id, state); arbiter.add(state);
+    return state;
+  };
+  // Tab A's switch stops on an extension's question nobody has answered yet.
+  const a = make(1, "/old-a", async () => { await question; return { success: true, data: {} }; });
+  const b = make(2, "/old-b", async () => ({ success: true, data: {} }));
+  const context = { process, Promise, windows, sessionArbiter: arbiter, ownerOf, isSessionPath: () => true, raise() {},
+    piResult: (r) => r, handle: (name, fn) => handlers.set(name, fn), buildCommand: (input) => input,
+    SESSION_CHANGES: new Set(["new_session", "switch_session", "fork", "clone"]), WAITS_ON_WORK: new Set() };
+  const section = (from, to) => source.slice(source.indexOf(from), source.indexOf(to, source.indexOf(from)));
+  runInNewContext(section("async function currentSessionFile", "function isDialog") +
+    section("async function sessionOwner", "/** Bring a tab") +
+    section('handle("coop:command"', 'handle("coop:answer"') +
+    section("// A session change claims its target", 'handle("coop:export"'), context);
+  const waiting = handlers.get("coop:switch-session")(a, "/target");
+  await new Promise(setImmediate);
+  const settled = (p) => Promise.race([p.then(() => true), new Promise((r) => setTimeout(() => r(false), 200))]);
+  assert.ok(await settled(handlers.get("coop:command")(b, { type: "get_state" })), "another tab's status read answers at once");
+  const other = handlers.get("coop:switch-session")(b, "/elsewhere");
+  assert.ok(await settled(other), "another tab's switch to a free session goes ahead");
+  assert.equal((await other).success, true);
+  const clash = await handlers.get("coop:switch-session")(b, "/target");
+  assert.equal(clash.openElsewhere, true, "the waiting switch still owns its target");
+  answer();
+  assert.equal((await waiting).success, true);
+  assert.equal(a.sessionFile, "/target"); assert.equal(a.claimFile, "");
 });
 
 await check("session transitions serialize before lookup and retain pending startup ownership", async () => {

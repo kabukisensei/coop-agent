@@ -21,13 +21,14 @@ export function sameSessionPath(a, b, platform = process.platform) {
 
 /**
  * The other window state whose session is `path`, or null. Each state carries
- * the session file it last reported (`sessionFile`); a window whose Pi has
+ * the session file it last reported (`sessionFile`) and, while a switch waits
+ * on Pi, the file it is switching to (`claimFile`); a window whose Pi has
  * exited holds nothing.
  */
 export function ownerOf(states, self, path, platform = process.platform) {
   for (const state of states) {
     if (state === self || !state.sessionPending && (!state.pi || state.pi.exited)) continue;
-    if (sameSessionPath(state.sessionFile, path, platform)) return state;
+    if (sameSessionPath(state.sessionFile, path, platform) || sameSessionPath(state.claimFile, path, platform)) return state;
   }
   return null;
 }

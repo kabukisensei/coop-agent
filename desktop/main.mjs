@@ -476,14 +476,18 @@ async function currentSessionFile(state) {
     try {
       const pi = state.pi;
       const before = state.sessionFile;
-      const response = await pi.request({ type: "get_state" });
-      if (state.pi === pi && state.sessionFile === before && response.success && typeof response.data?.sessionFile === "string" && (!state.sessionPending || response.data.sessionFile === state.sessionFile)) {
-        state.sessionFile = response.data.sessionFile;
-        state.sessionPending = false;
-      }
+      adoptSessionFile(state, pi, before, await pi.request({ type: "get_state" }));
     } catch { /* fall back to the last known file */ }
   }
   return state.sessionFile;
+}
+
+/** Take Pi's reported session file unless a transition or a newer report got there first. */
+function adoptSessionFile(state, pi, before, response) {
+  if (state.pi === pi && state.sessionFile === before && response && response.success && typeof response.data?.sessionFile === "string" && (!state.sessionPending || response.data.sessionFile === state.sessionFile)) {
+    state.sessionFile = response.data.sessionFile;
+    state.sessionPending = false;
+  }
 }
 
 function isDialog(channel, payload) {
@@ -509,11 +513,12 @@ handle("coop:command", async (state, input) => {
   const command = buildCommand(input);
   if (!state.pi || state.pi.exited) return { success: false, error: "coop is not running in this window; restart it" };
   const timeoutMs = WAITS_ON_WORK.has(command.type) ? 0 : undefined;
-  const response = SESSION_CHANGES.has(command.type) ? await sessionCommand(state, command) : command.type === "get_state" ? await sessionArbiter.run(async () => {
-    const response = await state.pi.request(command, { timeoutMs });
-    if (response.success && typeof response.data?.sessionFile === "string" && (!state.sessionPending || response.data.sessionFile === state.sessionFile)) { state.sessionFile = response.data.sessionFile; state.sessionPending = false; }
-    return response;
-  }) : await state.pi.request(command, { timeoutMs });
+  if (SESSION_CHANGES.has(command.type)) return piResult(await sessionCommand(state, command));
+  // Not queued: a status read must never wait behind another tab's session change.
+  const pi = state.pi;
+  const before = state.sessionFile;
+  const response = await pi.request(command, { timeoutMs });
+  if (command.type === "get_state") adoptSessionFile(state, pi, before, response);
   return piResult(response);
 });
 
@@ -608,25 +613,45 @@ async function folderFiles(state, query) {
 
 handle("coop:files", async (state, query) => ({ success: true, data: await folderFiles(state, query) }));
 
-async function sessionCommand(state, command, validate = () => {}, renewOptions = {}) {
-  return sessionArbiter.run(async () => {
-    if (!windows.has(state.contents.id) || !state.pi || state.pi.exited) return { success: false, error: "coop is not running in this tab" };
-    if (command.type === "switch_session") {
-      if (!isSessionPath({ ...process.env, ...state.spec.env }, command.sessionPath)) return { success: false, error: "that is not one of coop's saved sessions" };
-      const owner = await sessionOwner(state, command.sessionPath);
-      if (owner) { raise(owner); return { success: false, openElsewhere: true, error: "That session is open in another tab, so that tab is now in front." }; }
+// A session change claims its target inside the app-wide arbiter, then waits
+// on Pi outside it: Pi can stop on an extension's question for as long as the
+// person takes, and other tabs must not wait behind that. The claim keeps the
+// target owned meanwhile; one tab's own changes still run one at a time.
+function sessionCommand(state, command, validate = () => {}, renewOptions = {}) {
+  return inTabOrder(state, async () => {
+    const claimed = await sessionArbiter.run(async () => {
+      if (!windows.has(state.contents.id) || !state.pi || state.pi.exited) return { success: false, error: "coop is not running in this tab" };
+      if (command.type === "switch_session") {
+        if (!isSessionPath({ ...process.env, ...state.spec.env }, command.sessionPath)) return { success: false, error: "that is not one of coop's saved sessions" };
+        const owner = await sessionOwner(state, command.sessionPath);
+        if (owner) { raise(owner); return { success: false, openElsewhere: true, error: "That session is open in another tab, so that tab is now in front." }; }
+      }
+      if (!windows.has(state.contents.id) || state.pi.exited) return { success: false, error: "the tab closed" };
+      validate();
+      if (command.type === "switch_session") state.claimFile = command.sessionPath;
+      return null;
+    });
+    if (claimed) return claimed;
+    try {
+      const response = await state.pi.request(command, { timeoutMs: 0 });
+      if (response.success && !response.data?.cancelled) {
+        if (command.type === "switch_session") { state.sessionFile = command.sessionPath; state.sessionPending = true; }
+        else await currentSessionFile(state);
+        state.hub.renew(renewOptions);
+        return { ...response, incarnation: state.hub.incarnation };
+      }
+      return response;
+    } finally {
+      state.claimFile = "";
     }
-    if (!windows.has(state.contents.id) || state.pi.exited) return { success: false, error: "the tab closed" };
-    validate();
-    const response = await state.pi.request(command, { timeoutMs: 0 });
-    if (response.success && !response.data?.cancelled) {
-      if (command.type === "switch_session") { state.sessionFile = command.sessionPath; state.sessionPending = true; }
-      else await currentSessionFile(state);
-      state.hub.renew(renewOptions);
-      return { ...response, incarnation: state.hub.incarnation };
-    }
-    return response;
   });
+}
+
+/** One tab's session changes in the order they were asked for. */
+function inTabOrder(state, action) {
+  const pending = (state.transitions || Promise.resolve()).then(action);
+  state.transitions = pending.catch(() => {});
+  return pending;
 }
 
 handle("coop:switch-session", async (state, path) => {

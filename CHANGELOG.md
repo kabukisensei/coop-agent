@@ -9,7 +9,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 - Saved sessions are claimed atomically across desktop tabs and phone resumes
   (#344). Pending tab startup and worker shutdown retain ownership; overlapping
-  requests raise the existing tab instead of starting a second writer.
+  requests raise the existing tab instead of starting a second writer. A session change
+  that stops on a question holds only its own target, so other tabs keep working
+  while it waits.
 
 ### Changed
 
