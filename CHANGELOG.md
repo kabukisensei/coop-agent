@@ -15,6 +15,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   While you are away, a phone with **Notices** on gets "coop is waiting for
   you" when coop asks something or finishes; before, the window could think
   the suspended phone was still watching and send nothing.
+- **The phone's status line shows only context and plan usage left**
+  (Aaron, 2026-10-07): for example "38% context · 5h 62% left · 7d 80% left".
+  MCP connections and other status lines move into the panel a tap opens, with
+  the todos.
 - File > Switch project, File > Open folder and Open in terminal open their
   window again on Windows. The hidden PowerShell that starts the console ran
   detached, so it had no console, exited without running its command, and the
