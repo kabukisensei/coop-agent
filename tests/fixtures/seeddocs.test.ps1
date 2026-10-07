@@ -1,8 +1,9 @@
 ﻿#!/usr/bin/env pwsh
 # End-to-end `coop init --seed-docs` (#25, #102) through bin/coop.ps1 against a
-# stub coop-data-doc that records its arguments and stdin (the repos patch) and
+# stub coop-data-doc that records its arguments and the repos patch file and
 # prints config-set's status line (coop-data-doc 1.2.0 wording). Checks: the patch
-# is piped into `config-set --config <dir>/coop-data-doc.yml --from-json -`, the
+# reaches `config-set --config <dir>/coop-data-doc.yml --from-json <file>` as
+# UTF-8 without a byte order mark (Windows PowerShell 5.1 pipes add one), the
 # status is shown, "saved, not runnable yet" is a warning (never discarded), a
 # non-interactive run without --yes declines and changes nothing, and a TODO-only
 # contract exits non-zero without calling the tool. tests/seeddocs.test.sh runs
@@ -46,12 +47,13 @@ try {
   ) -join "`n") + "`n", $utf8)
 
   if ($isWindowsHost) {
-    # config-set --config <cfg> --from-json - : the config path is %~3. The stub
-    # appends its arguments to SEED_ARGS_LOG and copies stdin to SEED_STDIN.
+    # config-set --config <cfg> --from-json <file> : the config path is %~3 and
+    # the patch file %~5. The stub appends its arguments to SEED_ARGS_LOG and
+    # copies the patch file to SEED_STDIN.
     [System.IO.File]::WriteAllText((Join-Path $bin 'coop-data-doc.cmd'), (@(
       '@echo off',
       'echo %* >> "%SEED_ARGS_LOG%"',
-      'findstr . > "%SEED_STDIN%"',
+      'copy /y "%~5" "%SEED_STDIN%" >nul',
       'if "%SEED_STATUS%"=="not-runnable" goto notrunnable',
       'echo Wrote %~3 (validated).',
       'exit /b 0',
@@ -64,9 +66,9 @@ try {
     [System.IO.File]::WriteAllText((Join-Path $bin 'coop-data-doc'), (@(
       '#!/bin/sh',
       'echo "$*" >> "$SEED_ARGS_LOG"',
-      'cat > "$SEED_STDIN"',
-      'cfg=""; prev=""',
-      'for a in "$@"; do [ "$prev" = "--config" ] && cfg="$a"; prev="$a"; done',
+      'cfg=""; src=""; prev=""',
+      'for a in "$@"; do [ "$prev" = "--config" ] && cfg="$a"; [ "$prev" = "--from-json" ] && src="$a"; prev="$a"; done',
+      'cp "$src" "$SEED_STDIN"',
       'if [ "${SEED_STATUS:-validated}" = "not-runnable" ]; then',
       '  echo "Wrote $cfg (saved, not runnable yet (Repo ''powerbi'' path does not exist: /nowhere/pbi-repo (configured in $cfg)))."',
       'else',
@@ -111,15 +113,18 @@ try {
     return @{ Out = $raw; Flat = ($raw -replace '\s', ''); Rc = $rc }
   }
 
-  # 1. The repos patch is piped into config-set against the project's coop-data-doc.yml.
+  # 1. The repos patch reaches config-set, as a file, against the project's coop-data-doc.yml.
   $r = Invoke-Seed 'validated'
   if ($r.Rc -ne 0) { Ko "coop init --seed-docs should succeed (exit $($r.Rc))" $r.Out }
   $argText = if (Test-Path -LiteralPath $argsLog) { [System.IO.File]::ReadAllText($argsLog) } else { '' }
   $cfgPath = Join-Path $proj 'coop-data-doc.yml'
   $argFlat = $argText -replace '\s', ''
   $cfgFlat = ('--config ' + $cfgPath) -replace '\s', ''
-  if ($argFlat.Contains('--from-json-')) { Ok 'config-set --from-json - is invoked' }
-  else { Ko 'config-set --from-json - not invoked' $argText }
+  if ($argFlat.Contains('--from-json') -and -not $argFlat.Contains('--from-json-')) { Ok 'config-set --from-json <file> is invoked' }
+  else { Ko 'config-set --from-json <file> not invoked' $argText }
+  $head = if (Test-Path -LiteralPath $stdinFile) { [System.IO.File]::ReadAllBytes($stdinFile) } else { @() }
+  if ($head.Count -ge 1 -and $head[0] -ne 0xEF) { Ok 'the patch file has no byte order mark' }
+  else { Ko 'the patch file is missing or starts with a byte order mark' }
   if ($argFlat.Contains($cfgFlat)) { Ok "config-set targets the project dir's coop-data-doc.yml" }
   else { Ko "config-set should target $cfgPath" $argText }
   $patchOk = $false
@@ -127,8 +132,8 @@ try {
     $patch = [System.IO.File]::ReadAllText($stdinFile) | ConvertFrom-Json
     $patchOk = [bool]($patch.repos -and $patch.repos.sql -and $patch.repos.powerbi)
   } catch { $patchOk = $false }
-  if ($patchOk) { Ok 'the repos patch (sql + powerbi) is piped into config-set' }
-  else { Ko 'the patch piped to config-set is wrong' (Get-Content -LiteralPath $stdinFile -Raw -ErrorAction SilentlyContinue) }
+  if ($patchOk) { Ok 'the repos patch (sql + powerbi) reaches config-set' }
+  else { Ko 'the patch given to config-set is wrong' (Get-Content -LiteralPath $stdinFile -Raw -ErrorAction SilentlyContinue) }
   if ($r.Flat.Contains('(validated).')) { Ok 'config-set status is shown' }
   else { Ko "seed-docs should show config-set's validated status (exit $($r.Rc))" $r.Out }
 

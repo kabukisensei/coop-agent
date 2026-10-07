@@ -128,8 +128,14 @@ function Invoke-CoopTeamai {
 # tenant pinning holds outside a session too. Prints the helper's summary.
 function Invoke-CoopCatalog {
   param([string[]]$Rest)
-  $py = Get-CoopPython
+  # The snapshot reads the warehouse through pyodbc, which lives in the Fabric
+  # Python (the session's SQL tools use the same one); status needs none.
+  $py = Get-CoopFabricPython
+  if (-not $py) { $py = Get-CoopPython }
   if (-not $py) { Coop-Die 'python3 is required for coop catalog' }
+  # Run from a repository the client home repository lists (C1), the helper
+  # reads that home repository's project file, as a session does.
+  $null = Set-CoopProjectYmlEnv
   $cmd = if ($Rest -and $Rest.Count -ge 1) { $Rest[0] } else { '' }
   if ($cmd -notin @('snapshot', 'status')) { Coop-Die 'usage: coop catalog <snapshot|status>   (snapshot: read the dev/test catalog into the committed snapshot folder; status: is it there and how old)' }
   $helper = Join-Path $script:CoopRoot 'lib\catalog_snapshot.py'
@@ -1194,8 +1200,18 @@ function Invoke-CoopInitSeedDocs {
   # config-set prints one status line: "Wrote <path> (validated)." or, when a slot
   # can't validate yet (a placeholder repo path), "... (saved, not runnable yet (...))."
   # Show it; the second is a warning, never silence (#102).
-  $status = ($patch | & coop-data-doc config-set --config $cfg --from-json - | Out-String).Trim()
-  if ($LASTEXITCODE -eq 0) {
+  # Through a file, not a pipe: Windows PowerShell 5.1 pipes text to a native
+  # program in $OutputEncoding, which can lead with a byte order mark the JSON
+  # reader rejects. The file is UTF-8 without one.
+  $patchFile = [System.IO.Path]::GetTempFileName()
+  try {
+    [System.IO.File]::WriteAllText($patchFile, $patch, (New-Object System.Text.UTF8Encoding($false)))
+    $status = (& coop-data-doc config-set --config $cfg --from-json $patchFile | Out-String).Trim()
+    $setRc = $LASTEXITCODE
+  } finally {
+    Remove-Item -LiteralPath $patchFile -Force -ErrorAction SilentlyContinue
+  }
+  if ($setRc -eq 0) {
     Coop-Ok "seeded $cfg from project.yml (repos)"
     if ($status -like '*not runnable yet*') {
       Coop-Warn $status 'fix the repo path it names (or run: coop data-doc setup), then build: coop data-doc'

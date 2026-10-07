@@ -158,6 +158,7 @@ if (Test-Have 'node') {
 }
 
 # --- 5d. Official Microsoft skills catalog (fail-soft; launch uses LKG only) --
+$mcpPy = Get-CoopPython
 if ($mcpPy) {
   & $mcpPy (Join-Path $script:CoopRoot 'lib\microsoft_skills.py') refresh *> $null
   if ($LASTEXITCODE -eq 0) { Coop-Ok 'Microsoft skills catalog refreshed' }

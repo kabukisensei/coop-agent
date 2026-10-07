@@ -176,9 +176,11 @@ try {
     assert.match(readme, /^# contoso-retail-coop\n/);
     assert.match(readme, /home repository for \*\*Contoso Retail\*\*/);
     assert.equal(readme.includes("<client>"), false);
+    assert.equal(made.gitignore, true);
+    assert.match(readFileSync(join(home, ".gitignore"), "utf8"), /^\.coop\/\*\.bak$/m, "the project file's backup stays out of commits");
     writeFileSync(join(home, "README.md"), "mine\n");
     const again = ps.createHomeRepository(home, "Contoso Retail");
-    assert.deepEqual([again.created, again.initialized, again.readme], [false, false, false]);
+    assert.deepEqual([again.created, again.initialized, again.readme, again.gitignore], [false, false, false, false]);
     assert.equal(readFileSync(join(home, "README.md"), "utf8"), "mine\n");
   });
 
