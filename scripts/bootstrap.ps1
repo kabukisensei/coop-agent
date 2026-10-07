@@ -1,9 +1,13 @@
-﻿#!/usr/bin/env pwsh
+#!/usr/bin/env pwsh
 #
-# coop bootstrap — ONE command sets up coop on a Windows machine (master plan
+# coop bootstrap - ONE command sets up coop on a Windows machine (master plan
 # D1k). Paste this into Windows PowerShell:
 #
 #   irm https://raw.githubusercontent.com/kabukisensei/coop-agent/main/scripts/bootstrap.ps1 | iex
+#
+# This file is ASCII with NO UTF-8 BOM, the one .ps1 exempt from the BOM rule
+# (scripts/check-bom.ps1): `irm | iex` hands a BOM to iex as a character, so
+# the first line stops being a comment and prints a red error first.
 #
 # It downloads and runs the same coop window installer the install page links,
 # which carries everything (Aaron 2026-10-06, "an installer that installs

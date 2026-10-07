@@ -103,6 +103,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 - **A new client home repository ignores the project file's backup.** Its
   `.gitignore` lists `.coop/*.bak`, so the `project.yml.bak` that `/setup-project`
   keeps no longer shows as a file to commit.
+- The Windows one-liner (`irm …/bootstrap.ps1 | iex`) no longer opens with a
+  red "not recognized" error: `iex` received the file's UTF-8 BOM as a
+  character, so line 1 stopped being a comment. `scripts/bootstrap.ps1` is now
+  ASCII with no BOM, the one exception the BOM check allows (found in the D1k
+  VM check, 2026-10-07).
+- `coop install` on a Windows machine without winget no longer suggests
+  `--prereqs auto`, which could only fail there: its stop line points at the
+  coop window installer one-liner instead.
 
 ## [0.33.0] — 2026-10-06
 

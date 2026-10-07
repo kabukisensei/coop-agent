@@ -54,6 +54,10 @@ Keep the one implementation and the contract:
   printf '\357\273\277' | cat - file.ps1 > file.ps1.bom && mv file.ps1.bom file.ps1
   ```
 
+  The one exception is `scripts/bootstrap.ps1`, which runs as `irm <url> | iex`:
+  `iex` receives a BOM as a character and fails on line 1, so that file is pure
+  ASCII with no BOM, and the BOM check enforces both.
+
 - **Target Windows PowerShell 5.1 — no PowerShell-7-only syntax.** Every real
   Windows entry point runs the built-in Windows PowerShell 5.1
   (`System32\WindowsPowerShell\v1.0\powershell.exe`): `bin/coop.cmd`, the Install

@@ -122,6 +122,18 @@ try {
   if ($installRc -eq 0) { Ko 'install.ps1 --yes exited 0 with the rows still missing' $yout }
   if ($fail -eq 0) { Ok '--yes accepts the prerequisite offer without a console; a re-check that still fails stops as before (D1k)' }
 
+  # D1k: on Windows without winget (the client VM case) the stop points at the
+  # coop window installer, not at winget or --prereqs auto, which cannot work.
+  if ($isWindowsHost) {
+    Remove-Item -LiteralPath (Join-Path $bin 'winget'), (Join-Path $bin 'winget.cmd') -Force
+    $nwout = Invoke-Install
+    if (-not $nwout.Contains('no winget on this machine: the coop window installer carries every prerequisite; run: irm https://raw.githubusercontent.com/kabukisensei/coop-agent/main/scripts/bootstrap.ps1 | iex')) { Ko 'install.ps1 without winget does not point at the window installer' $nwout }
+    if ($nwout.Contains('--prereqs auto)')) { Ko 'install.ps1 without winget still suggests --prereqs auto' $nwout }
+    if ($installRc -eq 0) { Ko 'install.ps1 without winget exited 0 with rows missing' $nwout }
+    Write-Shim 'winget' 'exit 0' 'exit /b 0'
+    if ($fail -eq 0) { Ok 'without winget the stop points at the coop window installer one-liner (D1k)' }
+  }
+
   # D1k: when the installer commands DO supply the missing rows, the run goes on
   # in the same window instead of stopping for a new terminal. The brew shim
   # drops a Node 22.19.0 and a Python 3.12 shim onto the stub PATH; the install

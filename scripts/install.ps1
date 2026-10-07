@@ -253,7 +253,14 @@ if ($prereqMissing -gt 0) {
     Coop-Warn "$prereqMissing required prerequisite(s) missing (--no-prereqs: continuing anyway)"
   } else {
     Coop-Err "$prereqMissing required prerequisite(s) missing. Install the $($script:G_CROSS) rows above in that order, open a NEW terminal, then $rerunHint"
-    Coop-Say "      (or let coop run those commands for you: $installCmd --prereqs auto)"
+    if ($env:OS -eq 'Windows_NT' -and -not (Test-Have 'winget')) {
+      # No winget (a locked-down or client machine): the printed winget lines and
+      # --prereqs auto cannot work here, and the coop window installer carries
+      # every prerequisite (master plan D1k), so point there instead.
+      Coop-Say "      (no winget on this machine: the coop window installer carries every prerequisite; run: irm https://raw.githubusercontent.com/kabukisensei/coop-agent/main/scripts/bootstrap.ps1 | iex)"
+    } else {
+      Coop-Say "      (or let coop run those commands for you: $installCmd --prereqs auto)"
+    }
     exit 1
   }
 } else {

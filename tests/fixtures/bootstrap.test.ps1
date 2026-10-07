@@ -27,6 +27,18 @@ try {
   if ($bootRc -ne 0) { Ko "bootstrap dry run exited $bootRc" $out }
   if ($fail -eq 0) { Ok 'bootstrap dry run lists the four steps and changes nothing' }
 
+  # The documented form is `irm <url> | iex`: the raw bytes decoded as UTF-8
+  # without BOM stripping, then Invoke-Expression. A BOM (or any non-ASCII lead)
+  # became a command name on line 1 and printed a red error first (VM check
+  # 2026-10-07), so run the dry run exactly that way.
+  $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+  $iexCmd = "Invoke-Expression ([System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes('" + ($script -replace "'", "''") + "')))"
+  $iexOut = (@('' | & $psExe -NoProfile -ExecutionPolicy Bypass -Command $iexCmd 2>&1 | ForEach-Object { "$_" }) -join "`n")
+  $ErrorActionPreference = $eap
+  if ($iexOut -match 'is not recognized|CommandNotFound') { Ko 'irm | iex form prints an error before the bootstrap runs' $iexOut }
+  elseif (-not $iexOut.Contains('dry run (COOP_BOOTSTRAP_DRY_RUN=1): nothing was changed')) { Ko 'irm | iex form did not reach the dry-run line' $iexOut }
+  else { Ok 'the irm | iex form runs cleanly (no BOM error on line 1)' }
+
   $env:COOP_BOOTSTRAP_NO_LAUNCH = '1'
   $out = Invoke-Bootstrap
   if (-not $out.Contains('4. first launch: skipped (COOP_BOOTSTRAP_NO_LAUNCH=1)')) { Ko 'COOP_BOOTSTRAP_NO_LAUNCH=1 does not skip opening the window' $out }

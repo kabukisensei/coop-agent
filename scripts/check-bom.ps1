@@ -9,6 +9,9 @@
 #      duplicate BOM makes it parse the shebang line as a command;
 #   2. the launch-critical .ps1 files have a `#!` comment right after the BOM;
 #   3. no .ps1 ends a line with a bash-style backslash continuation (#90).
+# The one exception is scripts/bootstrap.ps1, run as `irm <url> | iex`: iex gets
+# a BOM as a character and fails on line 1, so that file must be pure ASCII with
+# NO BOM (ASCII reads the same in 5.1 without one).
 # Windows PowerShell 5.1 and pwsh 7 both run it; no module, no bash.
 $ErrorActionPreference = 'Stop'
 
@@ -39,8 +42,17 @@ function Test-Bom([byte[]]$B, [int]$At) {
 }
 
 Write-Output "$G_ARROW UTF-8 BOM on every .ps1 (exactly one — a duplicate BOM breaks the launcher)"
+$iexOnly = 'scripts/bootstrap.ps1'
 foreach ($f in $files) {
   $b = Get-LeadBytes (Join-Path $root $f) 6
+  if ($f -eq $iexOnly) {
+    $all = [System.IO.File]::ReadAllBytes((Join-Path $root $f))
+    $nonAscii = @($all | Where-Object { $_ -gt 0x7F }).Count
+    if (Test-Bom $b 0) { Ko "$f must NOT start with a UTF-8 BOM: it runs as irm | iex, where a BOM breaks line 1. Fix: strip the first three bytes" }
+    elseif ($nonAscii -gt 0) { Ko "$f must be pure ASCII (no BOM allowed, so Windows PowerShell 5.1 would misread other characters): $nonAscii non-ASCII byte(s)" }
+    else { Ok "$f (ASCII, no BOM: runs as irm | iex)" }
+    continue
+  }
   if ((Test-Bom $b 0) -and (Test-Bom $b 3)) {
     Ko "$f starts with TWO UTF-8 BOMs — the extra BOM makes PowerShell parse the shebang as a command. Fix: strip all leading BOMs, then prepend exactly one"
   } elseif (Test-Bom $b 0) {
