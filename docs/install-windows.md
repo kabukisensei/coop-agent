@@ -12,6 +12,25 @@ first release whose `coop update` follows release tags. Before that tag exists t
 line leaves the clone on main; never point teammates at an older tag.
 -->
 
+## The short way: one command
+
+Paste this into Windows PowerShell. It downloads the coop window installer from
+the newest release, checks its SHA-256 against the release's acceptance report,
+installs it for your user and opens it.
+
+```powershell
+irm https://raw.githubusercontent.com/kabukisensei/coop-agent/main/scripts/bootstrap.ps1 | iex
+```
+
+The installer carries everything coop needs, so nothing else is downloaded and
+winget is not used: see step 6. The first launch asks Windows for administrator
+permission once, for the SQL driver. Paste the same line again to repair a
+half-finished setup. Set `COOP_BOOTSTRAP_NO_LAUNCH=1` first to install without
+opening the window.
+
+Steps 1 to 5 are the terminal-only setup from a Git clone, for maintainers or
+when you want to see each step.
+
 ## 1. Install the prerequisites
 
 The installer checks these seven items in this order and prints the command below
@@ -87,7 +106,10 @@ that row's command under it, for example:
       winget install --id OpenJS.NodeJS.LTS -e
 ```
 
-Close the install window, run that command in a new PowerShell window, then
+Below the table it then asks **Install the missing prerequisites now?** Press
+Enter: it runs those same commands for you (Windows may ask for permission), checks
+the rows again and carries on in the same window. Answer `n` to do it yourself:
+close the install window, run the printed commands in a new PowerShell window, then
 double-click **Install coop.cmd** again.
 
 Partway through, it asks:
@@ -148,11 +170,16 @@ PowerShell or double-click the **coop** icon: either opens the same screen.
 ## 6. The coop window: one download
 
 coop also runs in its own window: the same agent and rules, drawn as a modern
-app with four themes. The window installer brings Node, Pi and coop with it.
+app with four themes. The window installer carries everything: Node, Pi, coop,
+Git, Python with pipx and every coop tool, the Azure CLI, and the ODBC Driver 18
+with the VC++ runtime it needs. It is a large download and works offline.
 
 - **New to coop:** download and run the window installer below; that is the
-  whole install. Git, Python, pipx, the Azure CLI and the ODBC driver from
-  step 1 are still needed, and the first launch tells you which are missing.
+  whole install. Nothing from step 1 is needed and nothing is fetched from the
+  internet. The first launch asks Windows for administrator permission once, to
+  install the ODBC driver for live SQL; choosing **Yes** accepts Microsoft's
+  license for the driver. Choose **No** and everything else still works; the next
+  launch asks again.
 - **Already have coop:** run `coop update` in PowerShell, then run the same
   installer. Your sessions, memory, settings and sign-ins stay where they are,
   and `coop` in the terminal keeps working as before. The update comes first
@@ -172,8 +199,9 @@ app with four themes. The window installer brings Node, Pi and coop with it.
    home repository beside them) so the team's `.coop/project.yml` is found.
    Tick **Open this one next time** and the icon opens straight on it from then
    on (File > Switch project changes it). The first time, a console runs the same
-   checklist as `coop install` (prerequisites, tools, the Azure and OpenAI
-   sign-ins): follow what it prints, then start the window again if it stopped.
+   checklist as `coop install` (prerequisites from the package, the coop tools
+   from the package, the ODBC driver, then the Azure and OpenAI sign-ins): follow
+   what it prints, then start the window again if it stopped.
    After that the console only shows coop's launch checks and closes on its own.
 
 With the terminal coop from steps 1 to 5 as well, the window shares your

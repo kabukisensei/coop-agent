@@ -24,7 +24,7 @@ import { fileURLToPath } from "node:url";
 import { bootstrapProcess, bundledCoop, doctorReport, findCoop, folderArgument, launcherPath, packagedPaths, packagedRuntime } from "../desktop/lib/bootstrap.mjs";
 import { consoleProcess } from "../desktop/lib/terminal.mjs";
 import { loadSettings, saveSettings } from "../desktop/lib/settings.mjs";
-import { NODE_SHIMS_DROPPED, longestPath, nodeDownload, prefixPackages, prunable, pruneTree, readVersion, runtimeMarker, shippedPackage, snapshotIncludes, stage, stageEntries, stagePackage } from "../desktop/scripts/build-installer.mjs";
+import { DOWNLOAD_HOSTS, NODE_SHIMS_DROPPED, PIPX_SHIM, bundledDownloads, hasWheel, longestPath, nodeDownload, prefixPackages, pythonToolSpecs, prunable, pruneTree, readVersion, runtimeMarker, shippedPackage, snapshotIncludes, stage, stageEntries, stagePackage } from "../desktop/scripts/build-installer.mjs";
 import { assertDisposableInstallerHost, nsisInvocation, packagePaths } from "../desktop/scripts/verify-installer.mjs";
 import { verifiedInstaller } from "../desktop/scripts/check-installer-report.mjs";
 
@@ -175,6 +175,8 @@ await check("electron-builder: NSIS per-user, no elevation, data kept, shortcuts
   const nsh = readFileSync(config.nsis.include, "utf8");
   assert.match(nsh, /!macro customUnInstall/);
   assert.match(nsh, /resources\\coop\\scripts\\window-uninstall\.ps1" "\$INSTDIR"/);
+  // D1k: an upgrade (the new installer runs this uninstaller with --updated) keeps them.
+  assert.match(nsh, /\$\{ifNot\} \$\{isUpdated\}[\s\S]*window-uninstall\.ps1[\s\S]*\$\{endIf\}/);
   assert.ok(existsSync(join(ROOT, "scripts", "window-uninstall.ps1")) && snapshotIncludes("scripts/window-uninstall.ps1"));
   for (const icon of [config.win.icon, config.nsis.installerIcon, config.nsis.uninstallerIcon]) {
     assert.equal(icon, join(ROOT, "themes", "coop.ico"));
@@ -260,7 +262,48 @@ await check("runtime: the marker lib/common.ps1 reads names the folders, the pin
     npm: { prefix: "npm" },
     pi: MANIFEST.pi.version,
     extensions: { dir: "extensions", lockSha256: "ab".repeat(32) },
+    git: { version: MANIFEST.desktop.git.version, dir: "git" },
+    python: { version: MANIFEST.desktop.python.version, dir: "python", wheels: "python-wheels" },
+    azureCli: { version: MANIFEST.desktop.azure_cli.version, dir: "az" },
+    odbc: { version: MANIFEST.desktop.odbc.version, dir: "installers", msi: "msodbcsql.msi", vcRedist: "VC_redist.x64.exe", vcRedistVersion: MANIFEST.desktop.vc_redist.version },
   });
+});
+
+// --- everything else a teammate needs (D1k) ---------------------------------------
+await check("runtime: Git, Python, the Azure CLI, ODBC 18 and its VC++ runtime come from their publishers, pinned by SHA-256", () => {
+  const items = bundledDownloads(MANIFEST);
+  assert.deepEqual(items.map((i) => i.key), ["git", "python", "azure_cli", "odbc", "vc_redist"]);
+  for (const item of items) {
+    assert.match(item.sha256, /^[0-9a-f]{64}$/, `${item.key} sha256`);
+    assert.ok(DOWNLOAD_HOSTS.includes(new URL(item.url).hostname), `${item.key} from ${item.url}`);
+    assert.ok(item.url.startsWith("https://"), item.url);
+  }
+  const by = Object.fromEntries(items.map((i) => [i.key, i]));
+  assert.equal(by.git.url, `https://github.com/git-for-windows/git/releases/download/v${MANIFEST.desktop.git.version}.windows.1/MinGit-${MANIFEST.desktop.git.version}-64-bit.zip`);
+  assert.equal(by.python.url, `https://api.nuget.org/v3-flatcontainer/python/${MANIFEST.desktop.python.version}/python.${MANIFEST.desktop.python.version}.nupkg`);
+  assert.equal(by.python.from, "tools");
+  // The Fabric CLI needs 3.10-3.13.
+  assert.match(MANIFEST.desktop.python.version, /^3\.(10|11|12|13)\./);
+  // The Azure CLI zip's Scripts\ carries Python Fabric's fab.exe: dropped.
+  assert.deepEqual(by.azure_cli.drop, ["Scripts"]);
+  assert.equal(by.odbc.name, "msodbcsql.msi");
+  assert.equal(by.vc_redist.name, "VC_redist.x64.exe");
+  assert.throws(() => bundledDownloads({ desktop: { ...MANIFEST.desktop, git: undefined } }), /desktop\.git/);
+  assert.throws(() => bundledDownloads({ desktop: { ...MANIFEST.desktop, python: { version: "3.14.0", sha256: "ab".repeat(32) } } }), /desktop\.python/);
+  assert.throws(() => bundledDownloads({ desktop: { ...MANIFEST.desktop, odbc: { ...MANIFEST.desktop.odbc, url: "https://example.com/msodbcsql.msi" } } }), /desktop\.odbc\.url/);
+  assert.throws(() => bundledDownloads({ desktop: { ...MANIFEST.desktop, vc_redist: { ...MANIFEST.desktop.vc_redist, url: "http://download.microsoft.com/x.exe" } } }), /desktop\.vc_redist\.url/);
+});
+
+await check("runtime: the wheel folder must hold every manifest Python tool at its pin; pipx runs through a .cmd", () => {
+  const specs = pythonToolSpecs(MANIFEST);
+  for (const [name, pin] of Object.entries(MANIFEST.python_tools)) assert.ok(specs.includes(`${name}==${pin}`), `${name}==${pin}`);
+  const files = ["coop_data_doc-1.3.4-py3-none-any.whl", "ms_fabric_cli-1.7.0-py3-none-any.whl", "pyodbc-5.3.0-cp313-cp313-win_amd64.whl", "fabric_cicd-1.3.0-py3-none-any.whl"];
+  assert.ok(hasWheel(files, "coop-data-doc", "1.3.4"));
+  assert.ok(hasWheel(files, "ms-fabric-cli", "1.7.0"));
+  assert.ok(hasWheel(files, "pyodbc", "5.3.0"));
+  assert.ok(!hasWheel(files, "pyodbc", "5.2.0"));
+  assert.ok(!hasWheel(["coop-data-doc-1.3.4.tar.gz"], "coop-data-doc", "1.3.4"));
+  assert.equal(PIPX_SHIM, '@"%~dp0..\\python.exe" -m pipx %*\r\n');
 });
 
 await check("snapshot: coop's own files ship, the development-only ones do not", () => {
@@ -417,6 +460,24 @@ await check("check-installer-report: publishes only the exe whose SHA-256 the pa
   assert.throws(() => verifiedInstaller(null, dir, "9.9.9"), /not an object/);
   writeFileSync(join(dir, "coop-window-9.9.9-other.exe"), "a second build");
   assert.throws(() => verifiedInstaller(report, dir, "9.9.9"), /expected one coop-window-\*\.exe .* found 2/);
+});
+
+await check("ci.yml: the upgrade acceptance installs the latest release, then this build over it (D1k)", () => {
+  const ci = readFileSync(join(ROOT, ".github", "workflows", "ci.yml"), "utf8").replace(/\r\n/g, "\n");
+  const jobs = ci.split(/^  (?=[a-z-]+:\s*$)/m);
+  const upgrade = jobs.find((job) => job.startsWith("installer-upgrade:"));
+  const gate = jobs.find((job) => job.startsWith("gate:"));
+  assert.ok(upgrade, "ci.yml has an installer-upgrade job");
+  assert.match(upgrade, /needs: \[installer\]/);
+  assert.match(upgrade, /COOP_INSTALLER_TEST: '1'/);
+  assert.match(upgrade, /gh release download --repo "\$env:GITHUB_REPOSITORY" --pattern 'coop-window-\*\.exe' --pattern 'installer-acceptance\.json'/);
+  assert.match(upgrade, /run: node desktop\/scripts\/verify-upgrade\.mjs --previous /);
+  assert.match(upgrade, /run: node desktop\/scripts\/verify-launch\.mjs /, "the shortcut is double-clicked and a window must open");
+  assert.match(gate, /needs: \[[^\]]*\binstaller-upgrade\b/, "the gate needs the upgrade job");
+  // verify-launch.mjs finds the picker by its window title; the page's <title> replaces the BrowserWindow one.
+  const launch = readFileSync(join(ROOT, "desktop", "scripts", "verify-launch.mjs"), "utf8");
+  const pickerTitle = /const PICKER_TITLE = "([^"]+)"/.exec(launch)[1];
+  assert.match(readFileSync(join(ROOT, "desktop", "renderer", "picker.html"), "utf8"), new RegExp(`<title>${pickerTitle}</title>`), "picker.html carries the title the launch check waits for");
 });
 
 await check("release.yml: the tag build runs the acceptance on the release bytes and publishes only a verified exe (#277)", () => {

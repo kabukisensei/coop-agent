@@ -37,10 +37,17 @@ $env:COOP_RELEASE_MANIFEST = $script:CoopReleaseManifest
 # runs from such a snapshot, that Node and that prefix come first on PATH and
 # npm's global prefix is the bundled one, so `node`, `npm`, `pi` and every helper
 # below resolve to the package's own copies and nothing is downloaded for them.
+# D1k adds the rest of a teammate's tools: MinGit (runtime\git\cmd), the NuGet
+# Python with pipx (runtime\python, runtime\python\Scripts\pipx.cmd), the Azure
+# CLI zip (runtime\az\bin) also first on PATH, the wheel folder every pipx install
+# reads offline (COOP_BUNDLED_WHEELS, Use-CoopBundledWheels), and the ODBC Driver
+# 18 MSI with the VC++ runtime (Install-CoopBundledOdbc). Each is optional in the
+# marker, so a D1d package without them still loads.
 # Detected by location (the runtime folder beside the checkout);
 # COOP_BUNDLED_RUNTIME names another folder for the tests.
 $script:CoopBundledRuntime = ''
 $script:CoopBundledRuntimeInfo = $null
+$script:CoopBundledOdbc = $null
 $script:CoopWindowExe = ''
 function Initialize-CoopBundledRuntime {
   $dir = if ($env:COOP_BUNDLED_RUNTIME) { $env:COOP_BUNDLED_RUNTIME } else { Join-Path (Split-Path -Parent $script:CoopRoot) 'runtime' }
@@ -55,7 +62,28 @@ function Initialize-CoopBundledRuntime {
   $script:CoopBundledRuntime = $dir
   $script:CoopBundledRuntimeInfo = $info
   $sep = [System.IO.Path]::PathSeparator
-  foreach ($d in @($nodeDir, $prefix)) {
+  $first = @()
+  if ($info.git -and $info.git.dir) { $first += (Join-Path (Join-Path $dir ([string]$info.git.dir)) 'cmd') }
+  if ($info.python -and $info.python.dir) {
+    $pyDir = Join-Path $dir ([string]$info.python.dir)
+    $first += @($pyDir, (Join-Path $pyDir 'Scripts'))
+    if ($info.python.wheels) {
+      $wheels = Join-Path $dir ([string]$info.python.wheels)
+      if (Test-Path -LiteralPath $wheels -PathType Container) { $env:COOP_BUNDLED_WHEELS = $wheels }
+    }
+  }
+  if ($info.azureCli -and $info.azureCli.dir) { $first += (Join-Path (Join-Path $dir ([string]$info.azureCli.dir)) 'bin') }
+  if ($info.odbc -and $info.odbc.dir) {
+    $msi = Join-Path (Join-Path $dir ([string]$info.odbc.dir)) ([string]$info.odbc.msi)
+    $vc = Join-Path (Join-Path $dir ([string]$info.odbc.dir)) ([string]$info.odbc.vcRedist)
+    if ((Test-Path -LiteralPath $msi -PathType Leaf) -and (Test-Path -LiteralPath $vc -PathType Leaf)) {
+      $script:CoopBundledOdbc = [pscustomobject]@{ Version = [string]$info.odbc.version; Msi = $msi; VcRedist = $vc }
+    }
+  }
+  # Prepended in reverse, so PATH reads prefix, node, git, python, az, then the rest.
+  $all = @($prefix, $nodeDir) + @($first | Where-Object { Test-Path -LiteralPath $_ -PathType Container })
+  [array]::Reverse($all)
+  foreach ($d in $all) {
     if (($env:PATH -split $sep) -notcontains $d) { $env:PATH = "$d$sep$env:PATH" }
   }
   $env:npm_config_prefix = $prefix
@@ -66,6 +94,53 @@ function Initialize-CoopBundledRuntime {
 }
 Initialize-CoopBundledRuntime
 function Test-CoopBundledRuntime { return [bool]$script:CoopBundledRuntime }
+# Is <Path> inside the bundled runtime? (A prerequisite row says "bundled with the
+# coop window" only for the package's own copy, not a machine install on PATH.)
+function Test-CoopBundledPath([string]$Path) {
+  if (-not $script:CoopBundledRuntime -or -not $Path) { return $false }
+  return (Test-CoopPathInside -Path $Path -Root $script:CoopBundledRuntime)
+}
+# The bundled Python (D1k), or '' outside the package.
+function Get-CoopBundledPython {
+  $info = $script:CoopBundledRuntimeInfo
+  if (-not $script:CoopBundledRuntime -or -not $info -or -not $info.python -or -not $info.python.dir) { return '' }
+  $exe = Join-Path (Join-Path $script:CoopBundledRuntime ([string]$info.python.dir)) 'python.exe'
+  if (Test-Path -LiteralPath $exe -PathType Leaf) { return $exe }
+  return ''
+}
+# pipx and pip read the package's wheel folder instead of the internet (D1k):
+# PIP_NO_INDEX and PIP_FIND_LINKS for one pipx call that installs or injects
+# exact pins (`name==version`), so the first launch works offline. Anything else
+# (an --edge install of the latest, `pipx upgrade`, COOP_PIP_ONLINE=1) keeps the
+# index. Returns the previous values for Restore-CoopBundledWheels, or $null when
+# nothing changed. The variables are set only around coop's own pipx calls, never
+# for the session, so a pip the user runs inside coop still reaches PyPI.
+function Use-CoopBundledWheels([string[]]$PipxArgs) {
+  $wheels = [string]$env:COOP_BUNDLED_WHEELS
+  if (-not $wheels -or $env:COOP_PIP_ONLINE -eq '1' -or -not (Test-Path -LiteralPath $wheels -PathType Container)) { return $null }
+  $a = @($PipxArgs)
+  if ($a.Count -lt 2 -or @('install', 'inject') -notcontains $a[0]) { return $null }
+  $positional = @()
+  for ($i = 1; $i -lt $a.Count; $i++) {
+    if ($a[$i] -eq '--python') { $i++; continue }
+    if ([string]$a[$i] -like '-*') { continue }
+    $positional += [string]$a[$i]
+  }
+  $specs = if ($a[0] -eq 'inject') { @($positional | Select-Object -Skip 1) } else { $positional }
+  if ($specs.Count -eq 0) { return $null }
+  foreach ($spec in $specs) { if ($spec -notmatch '^[A-Za-z0-9._-]+==[^=]+$') { return $null } }
+  $saved = @{ PIP_NO_INDEX = $env:PIP_NO_INDEX; PIP_FIND_LINKS = $env:PIP_FIND_LINKS }
+  $env:PIP_NO_INDEX = '1'
+  $env:PIP_FIND_LINKS = $wheels
+  return $saved
+}
+function Restore-CoopBundledWheels($Saved) {
+  if ($null -eq $Saved) { return }
+  foreach ($k in @('PIP_NO_INDEX', 'PIP_FIND_LINKS')) {
+    if ($null -eq $Saved[$k]) { Remove-Item -LiteralPath "Env:$k" -ErrorAction SilentlyContinue }
+    else { Set-Item -LiteralPath "Env:$k" -Value $Saved[$k] }
+  }
+}
 # A terminal install that already owns the `coop` command and the "coop"
 # double-click launcher keeps them when the coop window package (D1d) runs its
 # first-launch install from the snapshot: the package never retargets either at
@@ -92,32 +167,53 @@ function Test-CoopForeignLauncherLink {
   $mine = Join-Path $script:CoopRoot 'bin\coop.cmd'
   return ((ConvertTo-CoopComparablePath $target) -ne (ConvertTo-CoopComparablePath $mine))
 }
-# The "coop" shortcut (Start Menu or Desktop) of another install: one that exists
-# and does not start this checkout's bin\coop-desktop.ps1.
+# The "coop" or "coop (terminal)" shortcut (Start Menu or Desktop) of another
+# install: one that exists and does not start this checkout's
+# bin\coop-desktop.ps1. The package's own "coop" (its exe, no arguments) is not
+# foreign. "coop (terminal)" counts too: the package's installer has already
+# replaced a terminal install's "coop" with its exe by the first launch, so
+# that shortcut is how the window tells a terminal install is there (D1k).
 function Test-CoopForeignTerminalShortcut {
   if ($env:OS -ne 'Windows_NT') { return $false }
   $mine = ConvertTo-CoopComparablePath (Join-Path $script:CoopRoot 'bin\coop-desktop.ps1')
   $ws = $null
   foreach ($dir in (Get-CoopShortcutDirs)) {
     if (-not $dir) { continue }
-    $lnk = Join-Path $dir 'coop.lnk'
-    if (-not (Test-Path -LiteralPath $lnk -PathType Leaf)) { continue }
-    try {
-      if (-not $ws) { $ws = New-Object -ComObject WScript.Shell }
-      $args = [string]$ws.CreateShortcut($lnk).Arguments
-    } catch { continue }
-    if ($args -match '-File\s+"([^"]+)"') {
-      if ((ConvertTo-CoopComparablePath $Matches[1]) -ne $mine) { return $true }
-    } elseif ($args) { return $true }
+    foreach ($name in @('coop.lnk', 'coop (terminal).lnk')) {
+      $lnk = Join-Path $dir $name
+      if (-not (Test-Path -LiteralPath $lnk -PathType Leaf)) { continue }
+      try {
+        if (-not $ws) { $ws = New-Object -ComObject WScript.Shell }
+        $lnkArgs = [string]$ws.CreateShortcut($lnk).Arguments
+      } catch { continue }
+      if ($lnkArgs -match '-File\s+"([^"]+)"') {
+        if ((ConvertTo-CoopComparablePath $Matches[1]) -ne $mine) { return $true }
+      } elseif ($lnkArgs) { return $true }
+    }
   }
   return $false
 }
 # The package's first launch on this profile: the agent dir does not carry this
 # release's extension lock yet (a fresh machine, or a profile an older coop set
-# up), so `coop desktop` runs the install first (D1d).
+# up), or this package version has not finished its setup here yet (an upgrade
+# over an older window: its uninstaller removed the `coop` link and "coop
+# (terminal)" shortcut, and new tool pins need installing even when the
+# extension lock is unchanged), so `coop desktop` runs the install first (D1d, D1k).
+function Get-CoopBundledSetupMarker { return (Join-Path (Get-CoopProfileDir) 'desktop\window-setup-version') }
 function Test-CoopBundledSetupPending {
   if (-not $script:CoopBundledRuntime) { return $false }
-  return (Test-CoopExtensionsLockPending -AgentDir (Get-CoopPiAgentDir) -PiVersion (Get-CoopPiVersion))
+  if (Test-CoopExtensionsLockPending -AgentDir (Get-CoopPiAgentDir) -PiVersion (Get-CoopPiVersion)) { return $true }
+  $marker = Get-CoopBundledSetupMarker
+  $done = ''
+  if (Test-Path -LiteralPath $marker -PathType Leaf) { try { $done = ([System.IO.File]::ReadAllText($marker)).Trim() } catch { $done = '' } }
+  return ($done -ne [string]$script:CoopVersion)
+}
+# Record that this package version finished its setup on this profile.
+function Set-CoopBundledSetupDone {
+  if (-not $script:CoopBundledRuntime) { return }
+  $marker = Get-CoopBundledSetupMarker
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $marker) | Out-Null
+  [System.IO.File]::WriteAllText($marker, [string]$script:CoopVersion)
 }
 # npm's global package root inside the bundled prefix (npm's own layout:
 # <prefix>\node_modules on Windows, <prefix>/lib/node_modules elsewhere).
@@ -359,6 +455,10 @@ function Get-CoopPythonMinorVersion([string]$Exe) {
 }
 
 function Get-CoopFabricBootstrapPython {
+  # The coop window package's own Python (D1k) wins: its wheel folder holds the
+  # Fabric CLI for exactly this interpreter.
+  $bundled = Get-CoopBundledPython
+  if ($bundled -and ((Get-CoopPythonMinorVersion $bundled) -match '^3\.(10|11|12|13)$')) { return $bundled }
   foreach ($name in @('python3.13', 'python3.12')) {
     $cmd = Get-Command $name -ErrorAction SilentlyContinue
     if (-not $cmd -or -not $cmd.Source -or $cmd.Source -match '\\WindowsApps\\') { continue }
@@ -513,11 +613,12 @@ function Sync-CoopFabricPythonPackages([bool]$Edge = $false) {
       # pip's errors arrive on stderr; keep them as text rather than letting a
       # caller's $ErrorActionPreference = 'Stop' turn the first line terminating.
       $previousEap = $ErrorActionPreference
+      $wheelEnv = Use-CoopBundledWheels @('inject', 'ms-fabric-cli', $spec, '--force')
       try {
         $ErrorActionPreference = 'Continue'
         $out = (& $pipx inject ms-fabric-cli $spec --force 2>&1 | Out-String)
         $rc = $LASTEXITCODE
-      } finally { $ErrorActionPreference = $previousEap }
+      } finally { $ErrorActionPreference = $previousEap; Restore-CoopBundledWheels $wheelEnv }
       if ($rc -ne 0) { Coop-Warn "failed to install $spec in the ms-fabric-cli environment" (Coop-PipErrorTail $out); return $false }
     }
   }
@@ -525,7 +626,27 @@ function Sync-CoopFabricPythonPackages([bool]$Edge = $false) {
   return ($status.state -eq 'ready' -or $status.state -eq 'driver_missing')
 }
 
-function Ensure-CoopFabricOdbcDriver([bool]$AllowPrereqs = $true) {
+# The coop window package's ODBC Driver 18 (D1k, Aaron 2026-10-06 "ask"): its
+# VC++ runtime, then the MSI with the license accepted, in ONE elevated cmd.exe so
+# Windows asks for administrator permission once. Returns 'ok', 'declined' (the
+# permission prompt was refused) or 'failed'. msiexec 0 and 3010 (restart later)
+# are success; the VC++ runtime's own code is ignored (1638 = a newer one is
+# already installed), the driver check afterwards is the verdict.
+function Install-CoopBundledOdbc {
+  $b = $script:CoopBundledOdbc
+  if (-not $b) { return 'failed' }
+  $inner = '"' + $b.VcRedist + '" /install /quiet /norestart & msiexec.exe /i "' + $b.Msi + '" /quiet /norestart IACCEPTMSODBCSQLLICENSETERMS=YES'
+  $p = $null
+  try {
+    $p = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/d', '/s', '/c', ('"' + $inner + '"')) -Verb RunAs -WindowStyle Hidden -Wait -PassThru -ErrorAction Stop
+  } catch {
+    return 'declined'
+  }
+  if ($p -and @(0, 3010) -notcontains $p.ExitCode) { return 'failed' }
+  return 'ok'
+}
+
+function Ensure-CoopFabricOdbcDriver([bool]$AllowPrereqs = $true, [bool]$Auto = $false) {
   $status = Get-CoopFabricSqlRuntimeStatus
   if ($status.state -eq 'ready') { return $true }
   if ($status.state -ne 'driver_missing') { return $false }
@@ -534,6 +655,22 @@ function Ensure-CoopFabricOdbcDriver([bool]$AllowPrereqs = $true) {
     return $true
   }
   if (-not $AllowPrereqs) { Coop-Warn 'ODBC Driver 18+ is missing (--no-prereqs)' 'install Microsoft.msodbcsql.18, then run: coop doctor'; return $false }
+  if ($script:CoopBundledOdbc) {
+    # The window's first launch (--prereqs auto) needs no keyboard question: the
+    # Windows administrator prompt is the ask, and the docs name the license.
+    if (-not $Auto -and -not (Coop-Confirm 'Install Microsoft ODBC Driver 18 for SQL Server from the coop window package and accept its license?')) {
+      Coop-Warn 'ODBC Driver 18+ is required for live SQL; license was not accepted' 're-run with --yes, or start the coop window again'
+      return $false
+    }
+    Coop-Info "installing ODBC Driver $($script:CoopBundledOdbc.Version) for SQL Server from the coop window package: Windows asks for administrator permission once, and installing it accepts Microsoft's license for the driver"
+    $result = Install-CoopBundledOdbc
+    if ($result -eq 'declined') { Coop-Warn 'ODBC Driver 18 was not installed: the administrator prompt was declined' 'live SQL needs it; start the coop window again and choose Yes, or ask whoever manages this machine'; return $false }
+    if ($result -ne 'ok') { Coop-Warn 'ODBC Driver 18 installation failed' 'start the coop window again, or install Microsoft ODBC Driver 18 for SQL Server yourself, then run: coop doctor'; return $false }
+    $after = Get-CoopFabricSqlRuntimeStatus
+    if ($after.state -ne 'ready') { Coop-Warn 'ODBC Driver 18 installation completed but the selected Fabric runtime cannot see it' 'open a new terminal, then run: coop doctor'; return $false }
+    Coop-Ok 'ODBC Driver 18 for SQL Server installed'
+    return $true
+  }
   if (-not (Coop-Confirm 'Install Microsoft ODBC Driver 18 for SQL Server and accept its license?')) {
     Coop-Warn 'ODBC Driver 18+ is required; license was not accepted' 're-run with --yes or install Microsoft.msodbcsql.18 manually'
     return $false
@@ -1225,8 +1362,16 @@ function Get-CoopPrereqs([bool]$NoFabric = $false) {
   $rows = @()
   $row = { param($o, $n, $req, $ok, $det, $f) [pscustomobject]@{ Order = $o; Name = $n; Required = $req; Ok = [bool]$ok; Detail = $det; Fix = $f } }
 
+  # The window package carries Git, Python with pipx, and the Azure CLI (D1k): a
+  # row met by the package's own copy says so.
+  $bundledNote = {
+    param([string]$Name, [string]$Detail)
+    $c = Get-Command $Name -ErrorAction SilentlyContinue
+    if ($c -and $c.Source -and (Test-CoopBundledPath $c.Source)) { if ($Detail) { return "$Detail, bundled with the coop window" } else { return 'bundled with the coop window' } }
+    return $Detail
+  }
   $gitOk = Test-Have 'git'
-  $rows += & $row 1 'Git' $true $gitOk $(if ($gitOk) { & $ver 'git' } else { 'not found' }) $fix.git
+  $rows += & $row 1 'Git' $true $gitOk $(if ($gitOk) { & $bundledNote 'git' (& $ver 'git') } else { 'not found' }) $fix.git
 
   $nodeMin = Coop-ManifestGet -Key 'node.min' -Default '22.19.0'
   $nodeOk = $false; $nodeDet = 'not found'
@@ -1275,17 +1420,22 @@ function Get-CoopPrereqs([bool]$NoFabric = $false) {
     if ($pipxVia.Count -gt 0 -and $fix.pipxUpgrade) { $pyFix = "$genPy -m pip install --user --upgrade pipx then $genPy -m pipx ensurepath" }
   }
   elseif ($genVer) { $pyDet = "$genVer is older than 3.10" }
+  if ($pyOk -and $fabPy -and (Test-CoopBundledPath $fabPy)) { $pyDet = "$pyDet, bundled with the coop window" }
   $rows += & $row 3 'Python 3.10-3.13 (3.12 recommended)' $true $pyOk $pyDet $pyFix
 
+  if ($pipxVia.Count -gt 0 -and $pipxVia[0] -eq 'pipx') { $pipxDet = & $bundledNote 'pipx' $pipxDet }
   $rows += & $row 4 'pipx' $true ($pipxVia.Count -gt 0) $pipxDet $fix.pipx
 
   $azOk = Test-Have 'az'
-  $rows += & $row 5 'Azure CLI' $true $azOk $(if ($azOk) { '' } else { 'not found' }) $fix.az
+  $rows += & $row 5 'Azure CLI' $true $azOk $(if ($azOk) { & $bundledNote 'az' '' } else { 'not found' }) $fix.az
 
   # Not blocking here: install offers ODBC with its license prompt after the
-  # Fabric CLI, and doctor checks that the Fabric runtime can load it.
+  # Fabric CLI, and doctor checks that the Fabric runtime can load it. The window
+  # package installs its own copy there with one administrator prompt (D1k).
   $odbcOk = Test-CoopOdbcDriver18
-  $rows += & $row 6 'ODBC Driver 18 for SQL Server' $false $odbcOk $(if ($odbcOk) { '' } else { 'not found; needed for live SQL' }) $fix.odbc
+  $odbcFix = $fix.odbc
+  if ($script:CoopBundledOdbc) { $odbcFix = 'see below: this setup installs it from the coop window package (Windows asks for administrator permission once)' }
+  $rows += & $row 6 'ODBC Driver 18 for SQL Server' $false $odbcOk $(if ($odbcOk) { '' } else { 'not found; needed for live SQL' }) $odbcFix
 
   $teOk = Test-Have 'te'
   $rows += & $row 7 'Tabular Editor CLI (optional, BPA reviews)' $false $teOk $(if ($teOk) { '' } else { 'not found' }) 'download te from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli, put it on PATH, then: te auth login'
@@ -2645,8 +2795,10 @@ function Invoke-CoopPipx([string[]]$PipxArgs) {
   if ($inv.Count -eq 0) { return 1 }
   $exe = $inv[0]
   $rest = @($inv | Select-Object -Skip 1) + @($PipxArgs)
-  & $exe @rest *> $null
-  return $LASTEXITCODE
+  $wheelEnv = Use-CoopBundledWheels $PipxArgs
+  try { & $exe @rest *> $null; $rc = $LASTEXITCODE }
+  finally { Restore-CoopBundledWheels $wheelEnv }
+  return $rc
 }
 # pipx's stdout as one string ('' when no pipx answers).
 function Get-CoopPipxOutput([string[]]$PipxArgs) {

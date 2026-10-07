@@ -283,13 +283,70 @@ jobs:
           path: ${{ runner.temp }}/installer-acceptance.json
           if-no-files-found: ignore
 
+  installer-upgrade:
+    # Upgrade acceptance (master plan D1k; Aaron 2026-10-07: the one installer
+    # must work for people who already have coop, and its "coop" shortcut must
+    # open the window): the latest release's installer, then this build over it;
+    # then this build over a terminal install (this checkout). Shortcuts, the
+    # `coop` link, the profile and the next launch's setup are checked
+    # (desktop/scripts/verify-upgrade.mjs refuses to run anywhere else).
+    name: installer upgrade (Windows)
+    needs: [installer]
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.19.0'
+      - uses: actions/download-artifact@v4
+        with:
+          name: coop-window-installer
+          path: ${{ runner.temp }}/current
+      - name: download the latest release's installer and acceptance report
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download --repo "$env:GITHUB_REPOSITORY" --pattern 'coop-window-*.exe' --pattern 'installer-acceptance.json' --dir "$env:RUNNER_TEMP\previous"
+      - name: previous release, then this build over it; this build over a terminal install
+        shell: pwsh
+        env:
+          COOP_INSTALLER_TEST: '1'
+        run: node desktop/scripts/verify-upgrade.mjs --previous "$env:RUNNER_TEMP\previous" --dist "$env:RUNNER_TEMP\current" --output "$env:RUNNER_TEMP\upgrade-acceptance.json"
+      - name: double-click the "coop" shortcut; a window must open (picker, then first-launch setup and the window)
+        shell: pwsh
+        env:
+          COOP_INSTALLER_TEST: '1'
+        run: node desktop/scripts/verify-launch.mjs --dist "$env:RUNNER_TEMP\current" --output "$env:RUNNER_TEMP\launch-acceptance.json"
+      - name: the one-liner (irm | iex form) installs the latest release, then finds it installed
+        shell: pwsh
+        env:
+          COOP_BOOTSTRAP_NO_LAUNCH: '1'
+        run: |
+          $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          $cmd = "Invoke-Expression ([System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes('scripts\bootstrap.ps1')))"
+          $first = (& $ps -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $cmd 2>&1 | Out-String)
+          Write-Output $first
+          if ($first -match 'is not recognized' -or $first -notmatch "SHA-256 matches the release's acceptance report" -or $first -notmatch 'the coop window is installed') { throw 'the one-liner did not download, verify and install the latest release' }
+          $second = (& $ps -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $cmd 2>&1 | Out-String)
+          Write-Output $second
+          if ($second -notmatch 'is already installed') { throw 'a second run of the one-liner did not find the window installed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coop-window-upgrade-acceptance
+          path: |
+            ${{ runner.temp }}/upgrade-acceptance.json
+            ${{ runner.temp }}/launch-acceptance.json
+          if-no-files-found: ignore
+
   gate:
     # The one stable check name for this workflow. It needs every job above and
     # fails unless each one finished with `success`, so a failed, cancelled or
     # skipped job fails it too. Add any new ci.yml job to `needs` here.
     name: gate
     if: always()
-    needs: [shell, extensions, tests, tests-windows, windows, installer]
+    needs: [shell, extensions, tests, tests-windows, windows, installer, installer-upgrade]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
