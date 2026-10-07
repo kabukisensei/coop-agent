@@ -11,7 +11,7 @@ import { attachmentNote } from "../renderer/attach-note.mjs";
 import { imageBudgetProblem } from "../renderer/draft.mjs";
 import { TODO_TOOL, applyTodoResult, createTodos, startTurn, todoLines, todosFromMessages } from "../renderer/todos.mjs";
 import {
-  LIMITS, classifyQuestion, decideAnswer, eventEnvelope, newIncarnation, phoneCommand, phoneCommandList, resumePoint,
+  LIMITS, ProtocolError, classifyQuestion, decideAnswer, eventEnvelope, newIncarnation, phoneCommand, phoneCommandList, resumePoint,
 } from "./companion-protocol.mjs";
 
 const SNAPSHOT_MESSAGES = 200;
@@ -86,12 +86,38 @@ export class CompanionHub extends EventEmitter {
     this.pi = null;
     this.incarnation = "";
     this.accessOn = false;
+    this.accessRevision = 0;
     this.sessionName = "";
     this.commands = [];
     this.uploads = new Map();
     // A reload the phone asked for (MC9) keeps its access through the restart.
     this.carryUntil = 0;
     this.reset();
+  }
+
+  // One continuation belongs to one worker/session and one uninterrupted grant.
+  // App-wide pairing lets a NEW request follow a same-client session, but cannot
+  // retarget an old control or mix two sessions into one snapshot.
+  #scope(authorize = () => null) {
+    const pi = this.pi;
+    const incarnation = this.incarnation;
+    const accessRevision = this.accessRevision;
+    const check = () => {
+      const denied = authorize();
+      if (denied) throw new ProtocolError(denied);
+      if (this.accessRevision !== accessRevision) throw new ProtocolError("access-off");
+      if (this.pi !== pi || this.incarnation !== incarnation) throw new ProtocolError("wrong-session");
+    };
+    return {
+      check,
+      request: async (command, options) => {
+        check();
+        let response;
+        try { response = await pi.request(command, options); }
+        finally { check(); }
+        return response;
+      },
+    };
   }
 
   reset() {
@@ -165,6 +191,7 @@ export class CompanionHub extends EventEmitter {
     const next = on === true && Boolean(this.pi) && !this.pi.exited && Boolean(this.client);
     if (next === this.accessOn) return this.accessOn;
     this.accessOn = next;
+    this.accessRevision += 1;
     this.emit("access", { on: next, reason });
     return next;
   }
@@ -339,11 +366,12 @@ export class CompanionHub extends EventEmitter {
   }
 
   /** Context and usage as the window's status bar shows them; `push` sends the panel when it changed. */
-  async refreshUsage(push = true) {
+  async refreshUsage(push = true, scope = this.#scope()) {
     const pi = this.pi;
     if (!pi || pi.exited) return;
     let stats = null;
-    try { const r = await pi.request({ type: "get_session_stats" }); stats = r && r.success && r.data ? r.data : null; } catch { stats = null; }
+    try { const r = await scope.request({ type: "get_session_stats" }); stats = r && r.success && r.data ? r.data : null; } catch (error) { if (error instanceof ProtocolError) throw error; stats = null; }
+    scope.check();
     if (!stats || this.pi !== pi) return;
     const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
     const context = stats.contextUsage || {};
@@ -469,8 +497,10 @@ export class CompanionHub extends EventEmitter {
    * folder and read the way the window attaches a file. Resolves to
    * `{ ok, file: { id, name, kind, label, detail, size } }`; the id goes in a chat.
    */
-  upload(deviceId, request) {
+  upload(deviceId, request, authorize) {
+    const scope = this.#scope(authorize);
     return this.#remember(deviceId, request.submissionId, async () => {
+      scope.check();
       if (request.incarnation !== this.incarnation) return { ok: false, code: "wrong-session" };
       if (!this.pi || this.pi.exited) return { ok: false, code: "pi-not-running" };
       if (!this.host || typeof this.host.attach !== "function") return { ok: false, code: "desktop-only", message: "this window cannot take files from the phone" };
@@ -479,10 +509,13 @@ export class CompanionHub extends EventEmitter {
       if (waiting >= UPLOAD_KEEP) return { ok: false, code: "too-large", message: `${UPLOAD_KEEP} files at most can wait to be sent; send or remove some first` };
       let file;
       try {
-        file = await this.host.attach(request.name, Buffer.from(request.data, "base64"));
+        try { file = await this.host.attach(request.name, Buffer.from(request.data, "base64")); }
+        finally { scope.check(); }
       } catch (error) {
+        if (error instanceof ProtocolError) throw error;
         return { ok: false, code: "not-an-option", message: String((error && error.message) || "that file could not be read").slice(0, 300) };
       }
+      scope.check();
       const id = `u${randomBytes(12).toString("hex")}`;
       this.uploads.set(id, { deviceId, at: this.now(), file });
       return { ok: true, file: { id, name: file.name, kind: file.kind, label: file.label || file.kind, detail: file.detail || "", size: file.size || 0 } };
@@ -490,40 +523,48 @@ export class CompanionHub extends EventEmitter {
   }
 
   /** The working folder's files for an @ mention (MC10), as the window's composer lists them. */
-  async files(query) {
+  async files(query, authorize) {
+    const scope = this.#scope(authorize);
+    scope.check();
     if (!this.host || typeof this.host.files !== "function") return { ok: true, files: [] };
     try {
       const files = await this.host.files(String(query || ""));
+      scope.check();
       return { ok: true, files: Array.isArray(files) ? files.filter((f) => typeof f === "string").slice(0, 30) : [] };
-    } catch {
+    } catch (error) {
+      if (error instanceof ProtocolError) throw error;
       return { ok: true, files: [] };
     }
   }
 
   /** Queued messages back to the phone's text box (the terminal's Alt+Up). */
-  dequeue(deviceId, request) {
+  dequeue(deviceId, request, authorize) {
+    const scope = this.#scope(authorize);
     return this.#remember(deviceId, request.submissionId, async () => {
+      scope.check();
       if (request.incarnation !== this.incarnation) return { ok: false, code: "wrong-session" };
       if (!this.pi || this.pi.exited) return { ok: false, code: "pi-not-running" };
       try {
-        const response = await this.pi.request({ type: "clear_queue" });
+        const response = await scope.request({ type: "clear_queue" });
         const data = response && response.success && response.data ? response.data : {};
         const texts = [...(data.steering || []), ...(data.followUp || [])].map(String).filter(Boolean);
         return { ok: true, texts };
-      } catch {
+      } catch (error) {
+        if (error instanceof ProtocolError) throw error;
         return { ok: false, code: "pi-not-running" };
       }
     });
   }
 
   /** Pi's command list (extensions, prompt templates, skills), kept for MC6's check. */
-  async refreshCommands() {
+  async refreshCommands(scope = this.#scope()) {
     if (!this.pi || this.pi.exited) return this.commands;
     try {
-      const response = await this.pi.request({ type: "get_commands" });
+      const response = await scope.request({ type: "get_commands" });
+      scope.check();
       const list = response && response.success && response.data && Array.isArray(response.data.commands) ? response.data.commands : null;
       if (list) this.commands = list.filter((c) => c && typeof c.name === "string").map((c) => ({ name: c.name, description: String(c.description || ""), source: String(c.source || "") }));
-    } catch { /* keep the last list */ }
+    } catch (error) { if (error instanceof ProtocolError) throw error; /* keep the last list */ }
     return this.commands;
   }
 
@@ -541,15 +582,18 @@ export class CompanionHub extends EventEmitter {
    * compact and the session's name, as the window's menus send them. A model
    * must be one Pi lists. Resolves to `{ ok, code?, message? }`.
    */
-  control(deviceId, request) {
+  control(deviceId, request, authorize) {
+    const scope = this.#scope(authorize);
     return this.#remember(deviceId, request.submissionId, async () => {
+      scope.check();
       if (request.incarnation !== this.incarnation) return { ok: false, code: "wrong-session" };
       if (!this.pi || this.pi.exited) return { ok: false, code: "pi-not-running" };
       const ask = async (command, options) => {
         try {
-          const response = await this.pi.request(command, options);
+          const response = await scope.request(command, options);
           return response && response.success ? { ok: true, data: response.data || {} } : { ok: false, error: response && response.error };
         } catch (error) {
+          if (error instanceof ProtocolError) throw error;
           return { ok: false, error: error && error.message };
         }
       };
@@ -557,6 +601,7 @@ export class CompanionHub extends EventEmitter {
       switch (request.action) {
         case "model": {
           const list = await ask({ type: "get_available_models" });
+          scope.check();
           const models = list.ok && Array.isArray(list.data.models) ? list.data.models : [];
           if (!models.some((m) => m && m.provider === request.provider && m.id === request.modelId)) {
             return { ok: false, code: "not-an-option", message: `coop has no model ${request.provider}/${request.modelId}` };
@@ -576,11 +621,13 @@ export class CompanionHub extends EventEmitter {
         }
         case "name":
           result = await ask({ type: "set_session_name", name: request.name });
+          scope.check();
           if (result.ok) this.setSessionName(request.name);
           break;
         default:
           return { ok: false, code: "bad-request" };
       }
+      scope.check();
       return result.ok ? { ok: true } : { ok: false, code: "changed", message: String(result.error || "coop could not do that").slice(0, 200) };
     });
   }
@@ -590,18 +637,21 @@ export class CompanionHub extends EventEmitter {
    * from an earlier prompt, clone, and export HTML beside the session file.
    * Ids resolve against the window's own lists; the phone never names a path.
    */
-  sessionAction(deviceId, request) {
+  sessionAction(deviceId, request, authorize) {
+    const scope = this.#scope(authorize);
     return this.#remember(deviceId, request.submissionId, async () => {
+      scope.check();
       if (request.incarnation !== this.incarnation) return { ok: false, code: "wrong-session" };
       if (!this.pi || this.pi.exited) return { ok: false, code: "pi-not-running" };
       if (this.status === "running") return { ok: false, code: "busy", message: "coop is working: stop it or wait, then try again" };
       const ask = async (command) => {
         try {
-          const response = await this.pi.request(command, { timeoutMs: 0 });
+          const response = await scope.request(command, { timeoutMs: 0 });
           if (!response || !response.success) return { ok: false, error: response && response.error };
           if (response.data && response.data.cancelled) return { ok: false, error: "an extension cancelled it" };
           return { ok: true, data: response.data || {} };
         } catch (error) {
+          if (error instanceof ProtocolError) throw error;
           return { ok: false, error: error && error.message };
         }
       };
@@ -617,6 +667,7 @@ export class CompanionHub extends EventEmitter {
         }
         case "fork": {
           const list = await ask({ type: "get_fork_messages" });
+          scope.check();
           const prompts = list.ok && Array.isArray(list.data.messages) ? list.data.messages : [];
           if (!prompts.some((m) => m && m.entryId === request.entryId)) return { ok: false, code: "not-an-option", message: "That prompt is not in this session" };
           command = { type: "fork", entryId: request.entryId };
@@ -631,7 +682,10 @@ export class CompanionHub extends EventEmitter {
           return { ok: true };
         }
         case "export": {
-          const outputPath = this.host ? await this.host.exportPath() : "";
+          let outputPath = "";
+          try { outputPath = this.host ? await this.host.exportPath() : ""; }
+          finally { scope.check(); }
+          scope.check();
           if (!outputPath) return { ok: false, code: "changed", message: "This session is not saved yet, so there is nowhere to export it" };
           const result = await ask({ type: "export_html", outputPath });
           return result.ok ? { ok: true, file: basename(outputPath.replace(/\\/g, "/")) } : { ok: false, code: "changed", message: String(result.error || "coop could not export").slice(0, 200) };
@@ -641,6 +695,7 @@ export class CompanionHub extends EventEmitter {
       }
       const result = await ask(command);
       if (!result.ok) return { ok: false, code: "changed", message: String(result.error || "coop could not do that").slice(0, 200) };
+      scope.check();
       // The phone started or opened this session, so it keeps its access.
       this.renew({ keepAccess: true });
       if (this.host) this.host.changed(request.action);
@@ -656,13 +711,16 @@ export class CompanionHub extends EventEmitter {
    * Tool output stays on the VM. Rows: `{ depth, role, text, label, entryId, current }`;
    * a prompt's entryId is what Fork takes.
    */
-  async tree() {
+  async tree(authorize) {
+    const scope = this.#scope(authorize);
+    scope.check();
     if (!this.pi || this.pi.exited) return { ok: false, code: "pi-not-running" };
     let data = {};
     try {
-      const response = await this.pi.request({ type: "get_tree" });
+      const response = await scope.request({ type: "get_tree" });
       data = response && response.success && response.data ? response.data : {};
-    } catch { /* an empty tree */ }
+    } catch (error) { if (error instanceof ProtocolError) throw error; /* an empty tree */ }
+    scope.check();
     const rows = [];
     const leaf = data.leafId;
     const lineOf = (entry) => {
@@ -695,10 +753,13 @@ export class CompanionHub extends EventEmitter {
   }
 
   /** The folder's saved sessions and this session's prompts to fork from (MC9); no paths. */
-  async sessions() {
+  async sessions(authorize) {
+    const scope = this.#scope(authorize);
+    scope.check();
     if (!this.pi || this.pi.exited) return { ok: false, code: "pi-not-running" };
-    const ask = (type) => this.pi.request({ type }).then((r) => (r && r.success && r.data ? r.data : {}), () => ({}));
+    const ask = (type) => scope.request({ type }).then((r) => (r && r.success && r.data ? r.data : {}), (error) => { if (error instanceof ProtocolError) throw error; return {}; });
     const [state, fork] = await Promise.all([ask("get_state"), ask("get_fork_messages")]);
+    scope.check();
     const list = this.host ? this.host.list() : [];
     return {
       ok: true,
@@ -714,10 +775,13 @@ export class CompanionHub extends EventEmitter {
 
 
   /** What the phone's session sheets show (MC7): no file paths leave the VM. */
-  async details() {
+  async details(authorize) {
+    const scope = this.#scope(authorize);
+    scope.check();
     if (!this.pi || this.pi.exited) return { ok: false, code: "pi-not-running" };
-    const ask = (type) => this.pi.request({ type }).then((r) => (r && r.success && r.data ? r.data : {}), () => ({}));
+    const ask = (type) => scope.request({ type }).then((r) => (r && r.success && r.data ? r.data : {}), (error) => { if (error instanceof ProtocolError) throw error; return {}; });
     const [state, stats, available, thinking] = await Promise.all([ask("get_state"), ask("get_session_stats"), ask("get_available_models"), ask("get_available_thinking_levels")]);
+    scope.check();
     const model = (m) => (m && typeof m.id === "string" ? { provider: String(m.provider || ""), id: m.id, name: String(m.name || m.id), contextWindow: Number(m.contextWindow) || 0 } : null);
     const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
     const tokens = stats.tokens || {};
@@ -748,12 +812,16 @@ export class CompanionHub extends EventEmitter {
 
 
   /** The authoritative state for a phone that is starting or resyncing. */
-  async snapshot() {
-    if (!this.usage) await this.refreshUsage(false);
+  async snapshot(authorize) {
+    const scope = this.#scope(authorize);
+    scope.check();
+    if (!this.usage) await this.refreshUsage(false, scope);
+    scope.check();
     let messages = [];
     if (this.pi && !this.pi.exited) {
       try {
-        const response = await this.pi.request({ type: "get_messages" });
+        const response = await scope.request({ type: "get_messages" });
+        scope.check();
         const list = response.success && response.data && Array.isArray(response.data.messages) ? response.data.messages : [];
         // A resumed session's list is in its history; after that the events keep it.
         if (!this.todos.found) { const todos = todosFromMessages(list); if (todos.found) this.todos = todos; }
@@ -763,9 +831,10 @@ export class CompanionHub extends EventEmitter {
           .filter((m) => m.text || m.images)
           .slice(-SNAPSHOT_MESSAGES)
           .map(({ content, ...m }) => (m.role === "assistant" && this.#keepThinking(`m:${m.id}`, content) ? { ...m, thinking: true } : m));
-      } catch { /* the stream will catch up */ }
-      await this.refreshCommands();
+      } catch (error) { if (error instanceof ProtocolError) throw error; /* the stream will catch up */ }
+      await this.refreshCommands(scope);
     }
+    scope.check();
     const last = this.buffer[this.buffer.length - 1];
     return {
       v: 1,

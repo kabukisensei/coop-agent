@@ -343,6 +343,7 @@ echo "→ phone companion contract (MC1): requests, device grants, questions, an
 node "$ROOT/tests/companion-protocol.test.mjs"
 echo "→ phone companion server and page (MC2, MC3): hub, arbiter, loopback server, the page"
 node "$ROOT/tests/companion-server.test.mjs"
+node "$ROOT/tests/companion-async.test.mjs"
 
 # ============================================================================
 # EXTENDED LANE (only with COOP_TEST_EXTENDED=1)

@@ -25,6 +25,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **Phone requests stay on the session they started on** (#342). Pending snapshots
+  and controls are refused after session replacement, tab selection, access-off
+  or device revocation. App-wide pairing still follows new same-client sessions
+  on the next request.
+
 - **Share with the team works in a repository that ignores `.coop`**
   (Aaron, 2026-10-06). Git refuses a plain add of an ignored path, so Share
   failed with a Git hint ("git config advice.addIgnoredFile false") instead of
