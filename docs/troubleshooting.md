@@ -202,6 +202,12 @@ now rewrites the entry for its own folder, and runs on its own copy of it
 does not change it. On a build without the fix, run `coop sync` from the
 project folder first.
 
+After 0.34.0, coop opened in the folder above the project repository (the user
+folder holding `fabric`) uses that repository's project file too. When several
+repositories there each have one, coop names them at launch and leaves the
+target blank; open coop in the one you mean. A Warehouse write refused with
+"Coop cannot confirm this target is dev or test" says which of these applies.
+
 **Verify.** `coop doctor` shows `fabric-sqlendpoint registered` and a
 `SELECT TOP 1 1` runs.
 
