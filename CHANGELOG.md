@@ -33,6 +33,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- The project file no longer says "Not shared yet" right after a share when
+  the team works on a branch other than origin's default (Aaron, 2026-10-07).
+  coop compared the file with origin/HEAD (often `main`) while sharing pushed
+  the team's `dev`. It now reads the team's copy from the branch the file
+  names (this repository's `default_branch`, else the project's) when origin
+  has it, and the status line names that branch.
 - File > Switch project, File > Open folder and Open in terminal open their
   window again on Windows. The hidden PowerShell that starts the console ran
   detached, so it had no console, exited without running its command, and the
