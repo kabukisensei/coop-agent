@@ -713,6 +713,8 @@ await check("terminal: Open in terminal passes paths only through the environmen
   assert.match(inner, /--session \$env:COOP_TERMINAL_SESSION/);
   assert.equal(proc.options.env.COOP_TERMINAL_CWD, "C:\\work\\a b");
   assert.equal(proc.options.shell, false);
+  // A detached Windows PowerShell gets no console and exits 0 without running its command.
+  assert.ok(!proc.options.detached);
   assert.throws(() => consoleProcess({ coop: "coop.ps1", cwd: "C:\\w", env: {}, systemRoot: "C:\\Windows" }));
   assert.throws(() => consoleProcess({ mode: "cmd", coop: "C:\\c.ps1", cwd: "C:\\w", env: {}, systemRoot: "C:\\Windows" }));
 });

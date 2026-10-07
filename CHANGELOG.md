@@ -33,6 +33,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- File > Switch project, File > Open folder and Open in terminal open their
+  window again on Windows. The hidden PowerShell that starts the console ran
+  detached, so it had no console, exited without running its command, and the
+  desk still said it had worked. A test keeps that spawn attached.
 - Vibes no longer send people to the retired SQL and DAX review tools (Aaron,
   2026-10-07). The three tips that did now point at what replaced them: the
   standards self-check and `sql_impact`. A data-doc tip about review findings
