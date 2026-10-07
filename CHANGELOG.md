@@ -11,6 +11,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   pushing the previous commit and claiming success (#345). It checks that the
   committed contract matches the file requested, and retries an already
   committed file's refused push without creating another commit.
+- Saved sessions are claimed atomically across desktop tabs and phone resumes
+  (#344). Pending tab startup and worker shutdown retain ownership; overlapping
+  requests raise the existing tab instead of starting a second writer. A session change
+  that stops on a question holds only its own target, so other tabs keep working
+  while it waits.
 
 ### Changed
 
@@ -31,6 +36,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   searched inside, and with several it still names them and picks none.
 
 ### Fixed
+
+- **Phone requests stay on the session they started on** (#342). Pending snapshots
+  and controls are refused after session replacement, tab selection, access-off
+  or device revocation. App-wide pairing still follows new same-client sessions
+  on the next request.
 
 - **Share with the team works in a repository that ignores `.coop`**
   (Aaron, 2026-10-06). Git refuses a plain add of an ignored path, so Share

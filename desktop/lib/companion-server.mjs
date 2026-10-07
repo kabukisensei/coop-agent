@@ -224,9 +224,24 @@ export function createCompanionServer({ store, tabs = null, active = null, origi
     if (!requests.take(device.id)) return refuse(res, "rate-limited", undefined, device.id);
     store.touch(device.id);
 
+    // Re-read the grant and routing after every await, including before a
+    // follow-on mutation. Closing/replacing a tab or selecting another one
+    // never reroutes a request that already began on this tab.
+    const authorize = () => {
+      const current = store.get(device.id);
+      const denied = checkGrant({ device: current, secret: cookie.secret, binding: hub ? hub.binding : binding, now: now() });
+      if (denied) return denied;
+      const routed = tabFor(current);
+      return routed && routed.id === tab.id && routed.hub === hub ? null : "wrong-session";
+    };
+    const reply = (status, body, headers) => {
+      const denied = authorize();
+      return denied ? refuse(res, denied, undefined, device.id) : sendJson(res, status, body, headers);
+    };
+
     switch (request.op) {
       case "tabs":
-        return sendJson(res, 200, { ok: true, tabs: openTo(device).map((t) => ({ id: t.id, label: String(t.label || ""), folder: String(t.folder || ""), sessionName: t.hub.sessionName || "", working: Boolean(t.working), asking: Boolean(t.asking), current: t === tab })) });
+        return reply(200, { ok: true, tabs: openTo(device).map((t) => ({ id: t.id, label: String(t.label || ""), folder: String(t.folder || ""), sessionName: t.hub.sessionName || "", working: Boolean(t.working), asking: Boolean(t.asking), current: t === tab })) });
       case "selectTab": {
         const next = openTo(device).find((t) => t.id === request.tabId);
         if (!next) return refuse(res, "not-found", "That session is no longer open in the coop window", device.id);
@@ -237,77 +252,77 @@ export function createCompanionServer({ store, tabs = null, active = null, origi
         return sendJson(res, 200, { ok: true });
       }
       case "snapshot":
-        return sendJson(res, 200, { ok: true, snapshot: await hub.snapshot(), device: { id: device.id, name: device.name } });
+        return reply(200, { ok: true, snapshot: await hub.snapshot(authorize), device: { id: device.id, name: device.name } });
       case "events":
         return openStream(req, res, hub, device.id, String(query.get("after") || "").slice(0, 100));
       case "chat": {
         const result = hub.chat(device.id, request);
         audit({ kind: "chat", device: device.id, outcome: result.ok ? "sent" : result.code });
-        return result.ok ? sendJson(res, 200, { ok: true }) : refuse(res, result.code, result.message, device.id);
+        return result.ok ? reply(200, { ok: true }) : refuse(res, result.code, result.message, device.id);
       }
       case "upload": {
-        const result = await hub.upload(device.id, request);
+        const result = await hub.upload(device.id, request, authorize);
         audit({ kind: "upload", device: device.id, outcome: result.ok ? "saved" : result.code });
-        return result.ok ? sendJson(res, 200, { ok: true, file: result.file }) : refuse(res, result.code, result.message, device.id);
+        return result.ok ? reply(200, { ok: true, file: result.file }) : refuse(res, result.code, result.message, device.id);
       }
       case "files": {
-        const result = await hub.files(String(query.get("q") || "").slice(0, 200));
-        return result.ok ? sendJson(res, 200, { ok: true, files: result.files }) : refuse(res, result.code, undefined, device.id);
+        const result = await hub.files(String(query.get("q") || "").slice(0, 200), authorize);
+        return result.ok ? reply(200, { ok: true, files: result.files }) : refuse(res, result.code, undefined, device.id);
       }
       case "dequeue": {
-        const result = await hub.dequeue(device.id, request);
+        const result = await hub.dequeue(device.id, request, authorize);
         audit({ kind: "dequeue", device: device.id, outcome: result.ok ? "returned" : result.code });
-        return result.ok ? sendJson(res, 200, { ok: true, texts: result.texts }) : refuse(res, result.code, undefined, device.id);
+        return result.ok ? reply(200, { ok: true, texts: result.texts }) : refuse(res, result.code, undefined, device.id);
       }
       case "detail": {
         const id = String(query.get("id") || "");
         if (!DETAIL_ID.test(id)) return refuse(res, "bad-request", "id is malformed", device.id);
         const result = hub.detail(id);
-        return result.ok ? sendJson(res, 200, { ok: true, detail: result.detail }) : refuse(res, result.code, result.message, device.id);
+        return result.ok ? reply(200, { ok: true, detail: result.detail }) : refuse(res, result.code, result.message, device.id);
       }
       case "sessions": {
-        const result = await hub.sessions();
-        return result.ok ? sendJson(res, 200, { ok: true, sessions: result.sessions, prompts: result.prompts }) : refuse(res, result.code, undefined, device.id);
+        const result = await hub.sessions(authorize);
+        return result.ok ? reply(200, { ok: true, sessions: result.sessions, prompts: result.prompts }) : refuse(res, result.code, undefined, device.id);
       }
       case "pushState":
-        return sendJson(res, 200, { ok: true, available: Boolean(push), publicKey: push ? push.publicKey : "", on: Boolean(device.push) });
+        return reply(200, { ok: true, available: Boolean(push), publicKey: push ? push.publicKey : "", on: Boolean(device.push) });
       case "push": {
         if (!push) return refuse(res, "desktop-only", "notices are not set up in this window", device.id);
         if (request.action === "on" && !pushEndpointOk(request.endpoint)) return refuse(res, "not-an-option", "that is not Apple's, Google's or Mozilla's push service", device.id);
         store.setPush(device.id, request.action === "on" ? request.endpoint : null);
         audit({ kind: "notices", device: device.id, outcome: request.action });
-        return sendJson(res, 200, { ok: true, on: request.action === "on" });
+        return reply(200, { ok: true, on: request.action === "on" });
       }
       case "tree": {
-        const result = await hub.tree();
-        return result.ok ? sendJson(res, 200, { ok: true, rows: result.rows, truncated: result.truncated }) : refuse(res, result.code, undefined, device.id);
+        const result = await hub.tree(authorize);
+        return result.ok ? reply(200, { ok: true, rows: result.rows, truncated: result.truncated }) : refuse(res, result.code, undefined, device.id);
       }
       case "sessionAction": {
-        const result = await hub.sessionAction(device.id, request);
+        const result = await hub.sessionAction(device.id, request, authorize);
         audit({ kind: "session", device: device.id, action: request.action, outcome: result.ok ? "done" : result.code });
         if (!result.ok) return refuse(res, result.code, result.message, device.id);
         const { ok, ...rest } = result;
-        return sendJson(res, 200, { ok: true, ...rest });
+        return reply(200, { ok: true, ...rest });
       }
       case "details": {
-        const result = await hub.details();
-        return result.ok ? sendJson(res, 200, { ok: true, details: result.details }) : refuse(res, result.code, undefined, device.id);
+        const result = await hub.details(authorize);
+        return result.ok ? reply(200, { ok: true, details: result.details }) : refuse(res, result.code, undefined, device.id);
       }
       case "control": {
-        const result = await hub.control(device.id, request);
+        const result = await hub.control(device.id, request, authorize);
         audit({ kind: "control", device: device.id, action: request.action, outcome: result.ok ? "sent" : result.code });
-        return result.ok ? sendJson(res, 200, { ok: true }) : refuse(res, result.code, result.message, device.id);
+        return result.ok ? reply(200, { ok: true }) : refuse(res, result.code, result.message, device.id);
       }
       case "stop": {
         const result = hub.stop(device.id, request);
         audit({ kind: "stop", device: device.id, outcome: result.ok ? "sent" : result.code });
-        return result.ok ? sendJson(res, 200, { ok: true }) : refuse(res, result.code, undefined, device.id);
+        return result.ok ? reply(200, { ok: true }) : refuse(res, result.code, undefined, device.id);
       }
       case "answer": {
         if (!answers.take(device.id)) return refuse(res, "rate-limited", undefined, device.id);
         const result = hub.answerFromPhone(device.id, request);
         audit({ kind: "answer", device: device.id, question: request.questionId, outcome: result.ok ? "answered" : result.code });
-        return result.ok ? sendJson(res, 200, { ok: true }) : refuse(res, result.code, undefined, device.id);
+        return result.ok ? reply(200, { ok: true }) : refuse(res, result.code, undefined, device.id);
       }
       default:
         return refuse(res, "not-found");
@@ -322,8 +337,9 @@ export function createCompanionServer({ store, tabs = null, active = null, origi
       if (!allowedHosts.has(String(req.headers.host || ""))) { res.writeHead(421, SECURITY_HEADERS); res.end(); return; }
       if (url.pathname.startsWith("/api/")) await handleApi(req, res, url.pathname, url.searchParams);
       else await servePage(req, res, url.pathname);
-    } catch {
-      if (!res.headersSent) sendJson(res, 500, { ok: false, code: "error" });
+    } catch (error) {
+      if (!res.headersSent && error instanceof ProtocolError) refuse(res, error.code, error.message);
+      else if (!res.headersSent) sendJson(res, 500, { ok: false, code: "error" });
       else res.end();
     }
   });
