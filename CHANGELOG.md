@@ -5,8 +5,6 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
-## [0.34.3] — 2026-10-08
-
 ### Changed
 
 - **Pi moves from 0.87.1 to 1.1.0** (master plan U2 step 2), with codemode and
@@ -38,6 +36,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   - `tests/guardrails-pi-runner.test.mjs` also runs on Pi 1.x. There it starts a
     real session with Pi's built-in MCP and a local test MCP server
     (`tests/fixtures/fake-mcp-server.mjs`).
+
+## [0.34.3] — 2026-10-08
+
+### Changed
+
 - `pi-mcp-adapter` moves from **3.3.0** to **5.1.0** on Pi 0.87.1 (master plan
   U2 step 1). It is the first adapter release that accepts Pi 1.0, and it is
   qualified on today's Pi first so Pi 1.0 (step 2) changes one thing at a time.
