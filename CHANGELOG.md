@@ -7,6 +7,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- A Fabric MCP call that names a router by its listed name (`fabric_core`,
+  `fabric_onelake`, …) through `mcp` or `mcp__fabric` is now gated like the bare
+  name (`core`, `onelake`): a write asks first, a delete always asks, and a write
+  to a production workspace is blocked. Before, the adapter ran those calls while
+  the guardrail did not recognise the router, so they went through unasked.
+  Found in the VM check for the adapter 5.1 upgrade; adapter 3.3.0 behaves the same.
 - The coop window shows coop's icon on the Windows taskbar however it starts.
   Started from the terminal install (`coop desktop`, or the "coop" shortcut that
   runs PowerShell) it ran as Electron's own `electron.exe`, so the taskbar showed

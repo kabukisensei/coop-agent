@@ -1035,8 +1035,13 @@ type FabricRouted = { router: string; command: string; learn: boolean };
  * operation; an unknown one keeps the router's name and is classified below. */
 function fabricRouted(call: { target: MutationTarget; args: any; proxy: boolean }):
   { target: MutationTarget; args: any; proxy: boolean; fabric?: FabricRouted } {
-  const { server, innerTool } = call.target;
+  const { server } = call.target;
+  // The adapter lists the routers as `fabric_core`, `fabric_onelake`, … and
+  // dispatches that spelling through `mcp` as well as the bare name.
+  const listed = call.proxy ? /^fabric_(.+)$/.exec(call.target.innerTool ?? "")?.[1] : undefined;
+  const innerTool = listed && FABRIC_ROUTERS.has(listed) ? listed : call.target.innerTool;
   if (!innerTool || !FABRIC_ROUTERS.has(innerTool) || (server !== undefined && server !== "fabric")) return call;
+  if (innerTool !== call.target.innerTool) call = { ...call, target: { ...call.target, innerTool, server: "fabric" } };
   const raw = call.args?.command;
   const command = typeof raw === "string" ? raw : "";
   const learn = call.args?.learn === true;
