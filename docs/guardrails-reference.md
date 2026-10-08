@@ -57,7 +57,7 @@ Pi's built-in `/bug` cannot upload from a coop session: coop sets `PI_RADIUS_GAT
 
 The adapter's `mcpScript` tool is off and blocked. It runs JavaScript that calls MCP tools inside the adapter, where no guardrail can see or gate those calls. Coop's generated MCP config sets `settings.scriptMode: false`, and the guardrail blocks `mcpScript` if a project or user config turns it back on. Call MCP tools one at a time through `mcp`.
 
-The adapter's direct tools (`directTools` on a server entry, registering every server tool as `<server>_<tool>`) are off on coop's managed servers, and `coop sync` switches a user-enabled flag back off. If one is on anyway, the guardrail maps a direct `fabric_onelake`, `fabric_core`, `azure-devops_…` or `powerbi-modeling-mcp_…` call to its server and remote tool and gates it exactly like the proxied call.
+The adapter's direct tools (`directTools` on a server entry, registering every server tool as `<server>_<tool>`) are off on coop's managed servers, and `coop sync` switches a user-enabled flag back off. If one is on anyway, the guardrail maps a direct `fabric_onelake`, `fabric_core`, `azure-devops_…` or `powerbi-modeling-mcp_…` call to its server and remote tool and gates it exactly like the proxied call. The adapter also accepts that listed name through `mcp` (`{server: "fabric", tool: "fabric_core"}`), and the guardrail treats it as the bare router name.
 
 ### Production writes
 
