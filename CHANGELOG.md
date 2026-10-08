@@ -37,6 +37,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
     real session with Pi's built-in MCP and a local test MCP server
     (`tests/fixtures/fake-mcp-server.mjs`).
 
+### Fixed
+
+- On a fresh profile the first launch from the "coop" or "coop (terminal)"
+  shortcut now opens the client's home repository too. It used to stay in the
+  user folder and only record the project file, so the move into the repository
+  (and its saved sessions) waited for the second launch. The shortcut launch now
+  records the one project file the user folder finds before it moves; with
+  several repositories and nothing remembered it still guesses nothing.
+
 ### Security
 
 - A production workspace, item or endpoint id inside a REST URL

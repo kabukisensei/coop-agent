@@ -75,8 +75,13 @@ if (-not (Test-CoopNoIsolate)) {
 # Started from a shortcut (bin\coop-desktop.ps1): open the client's home
 # repository rather than the user folder the shortcut starts in, so the window
 # and Pi list the project's saved sessions. Read once; Pi never inherits it.
+# A fresh profile has nothing remembered yet: record the one project file the
+# user folder finds first (Initialize-CoopLaunch would, but only after the move),
+# so the very first shortcut launch opens the repository too.
 if ($env:COOP_SHORTCUT) {
   Remove-Item Env:COOP_SHORTCUT -ErrorAction SilentlyContinue
+  $recorded = Register-CoopHomeProjectFile (Get-Location).Path
+  if ($recorded) { Coop-Info "coop will use this project file wherever it opens: $recorded   (change it with: coop project home <folder>)" }
   $null = Enter-CoopShortcutFolder
 }
 
