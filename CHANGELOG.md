@@ -5,6 +5,30 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Codemode is on** (master plan U2 step 3). On Pi 1.x the model can write a
+  short script that calls coop's tools and returns only what matters, which
+  keeps large results out of the conversation.
+  - Every call a script makes gets the same guardrail checks as a direct call:
+    production writes are blocked, secret-looking reads and destructive commands
+    ask, edits ask once and a session approval covers the rest, and the
+    production unlock is out of reach. Approvals still open one at a time.
+  - coop loads its own codemode (`extensions/coop-codemode`): Pi's, with script
+    calls to outside classifier and image models off, since those use your
+    sign-ins and pass no guardrail. Its mode is fixed to `on`, so the usual
+    tools stay visible. The guardrail blocks any other codemode, including Pi's
+    built-in one switched back on by a repo.
+  - Scripts have no default time limit, so one waiting on your approval waits.
+    Esc stops it.
+  - Each script leaves one audit row (`codemode-script`) naming its tool calls
+    and their outcomes, never their arguments.
+  - The window shows a script's code and the list of tool calls it made.
+  - `coop sync` keeps `-builtin:codemode` beside `-builtin:mcp` in Pi's
+    settings, so Pi does not warn about the swap at every start.
+  - `tests/guardrails-pi-runner.test.mjs` runs a real session with a scripted
+    model that sends codemode scripts on Pi 1.x.
+
 ## [0.34.4] — 2026-10-08
 
 ### Changed

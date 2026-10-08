@@ -12,7 +12,7 @@ At launch, `bin/coop.ps1` loads, from this repo:
 | Prompt templates | `prompts/<name>.md` | whole folder via `--prompt-template`; the client's `.coop/prompts/` and your `~/.coop/prompts/` follow it (section 8) |
 | Theme | `themes/cooptimize.json` | registered via `--theme`; a user picks it in `/settings` |
 | Guardrails prompt | `docs/guardrails.md` | via `--append-system-prompt` (advisory; the `coop-guardrails` extension enforces it) |
-| Companion extensions | `extensions/coop-*/` (`coop-powerline`, `coop-tools`, `coop-guardrails`, `coop-profile`) | via `pi -e` |
+| Companion extensions | `extensions/coop-*/` (`coop-powerline`, `coop-tools`, `coop-guardrails`, `coop-profile`, and on Pi 1.x `coop-codemode`) | via `pi -e` |
 | Vibes | `vibes/*.txt` | read by `coop-powerline` |
 
 So adding a capability is usually just **adding a file and committing it**.
@@ -122,9 +122,10 @@ has already selected it.
 ## 4. Add a native tool or UI feature (a Pi extension)
 
 For real logic (new LLM-callable tools, footer/splash tweaks, event hooks), write a
-Pi extension in TypeScript. Use the four in `extensions/` as templates
-(`coop-profile`, the fourth, is a small `before_agent_start` hook that injects the
-local user profile; the other three are below):
+Pi extension in TypeScript. Use the ones in `extensions/` as templates
+(`coop-profile` is a small `before_agent_start` hook that injects the local user
+profile, and `coop-codemode` only configures Pi's codemode; the other three are
+below):
 
 - `extensions/coop-tools/index.ts` — registers `data_doc` / `bpa_review` /
   `fabric_sql_query` with `pi.registerTool(...)`. Copy the pattern to wrap another CLI. The

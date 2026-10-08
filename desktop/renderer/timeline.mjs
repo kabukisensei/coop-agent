@@ -94,6 +94,7 @@ function setToolResult(tl, toolCallId, toolName, result, isError) {
   tool.isError = Boolean(isError);
   tool.result = { text: textOf(result && result.content), details: result && result.details ? result.details : {} };
   tool.partial = undefined;
+  tool.partialDetails = undefined;
   tl.tools.set(toolCallId, tool);
   return tl.toolOwner.get(toolCallId);
 }
@@ -255,7 +256,12 @@ export function applyEvent(tl, event) {
     case "tool_execution_update": {
       const id = String(event.toolCallId || "");
       const tool = tl.tools.get(id);
-      if (tool) { tool.partial = textOf(event.partialResult && event.partialResult.content); mark(tl.toolOwner.get(id)); }
+      if (tool) {
+        tool.partial = textOf(event.partialResult && event.partialResult.content);
+        // A codemode script reports its nested calls in details while it runs.
+        tool.partialDetails = event.partialResult && event.partialResult.details ? event.partialResult.details : undefined;
+        mark(tl.toolOwner.get(id));
+      }
       break;
     }
     case "tool_execution_end":
@@ -438,6 +444,12 @@ export function turns(items) {
   return out;
 }
 
+/** The calls a codemode script made, from its details: `{ name, status }` each. */
+export function codemodeCalls(details) {
+  const calls = details && Array.isArray(details.calls) ? details.calls : [];
+  return calls.map((call) => ({ name: String((call && call.name) || "tool"), status: String((call && call.status) || "running") }));
+}
+
 /** One line that says what a tool call does, for its collapsed header. */
 export function toolSummary(name, args) {
   const a = args && typeof args === "object" ? args : {};
@@ -449,6 +461,8 @@ export function toolSummary(name, args) {
     case "write": return path;
     case "grep": return `${a.pattern || ""}${path ? ` in ${path}` : ""}`;
     case "find": case "ls": return String(a.pattern || path || ".");
+    // A codemode script: its first line of code, past the `// @options:` line.
+    case "codemode": return String(a.code || "").split("\n").map((line) => line.trim()).find((line) => line && !line.startsWith("// @options:")) || "";
     default: {
       const first = Object.entries(a).find(([, value]) => typeof value === "string" && value.length);
       return first ? `${first[0]}: ${first[1]}`.split("\n")[0] : "";

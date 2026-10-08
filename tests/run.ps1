@@ -303,11 +303,15 @@ try {
     if ($spec -notlike "*$needle*") { Ko "launch-spec missing: $needle"; $miss = $true }
   }
   if (-not $miss) { Ok 'launch-spec resolves guardrails, prompts, theme, and all 4 extensions' }
-  # Pi 1.x: its built-in MCP, codemode/tool_search and fullscreen TUI stay off
-  # by launch flag (master plan U2 step 2); an older Pi gets none of them.
-  if (($spec -like '*--no-mcp*') -and ($spec -like '*--exclude-tools codemode,tool_search*') -and ($spec -like '*--tui-mode regular*')) {
-    Ok 'launch-spec keeps Pi 1.x built-in MCP, codemode and fullscreen off'
+  # Pi 1.x: its built-in MCP, tool_search and fullscreen TUI stay off by launch
+  # flag (master plan U2 step 2), and coop's own codemode is on (step 3); an
+  # older Pi gets none of them.
+  if (($spec -like '*--no-mcp*') -and ($spec -like '*--exclude-tools tool_search*') -and ($spec -like '*--tui-mode regular*')) {
+    Ok 'launch-spec keeps Pi 1.x built-in MCP, tool_search and fullscreen off'
   } else { Ko "launch-spec missing the Pi 1.x lock flags: $spec" }
+  if (($spec -like '*extensions/coop-codemode*') -and ($spec -like '*--tools +codemode*') -and ($spec -notlike '*--exclude-tools codemode*')) {
+    Ok "launch-spec turns on coop's own codemode on Pi 1.x"
+  } else { Ko "launch-spec missing coop's codemode: $spec" }
   $oldPi = Join-Path $stub 'old-pi'
   New-Item -ItemType Directory -Path $oldPi -Force | Out-Null
   [System.IO.File]::WriteAllText((Join-Path $oldPi 'pi'), "#!/bin/sh`n[ `"`$1`" = `"--version`" ] && { echo `"pi 0.87.1`"; exit 0; }`nexit 0`n")
@@ -318,7 +322,7 @@ try {
     $env:PATH = "$oldPi$([System.IO.Path]::PathSeparator)$pathBefore"
     $oldSpec = (& $coop launch-spec 2>&1 | Out-String)
   } finally { $env:PATH = $pathBefore }
-  if (($oldSpec -like '*coop-guardrails*') -and ($oldSpec -notlike '*--no-mcp*') -and ($oldSpec -notlike '*--tui-mode*')) {
+  if (($oldSpec -like '*coop-guardrails*') -and ($oldSpec -notlike '*--no-mcp*') -and ($oldSpec -notlike '*--tui-mode*') -and ($oldSpec -notlike '*coop-codemode*')) {
     Ok 'launch-spec leaves the Pi 1.x flags off for an older Pi, which would reject them'
   } else { Ko "launch-spec passed Pi 1.x flags to Pi 0.87.1: $oldSpec" }
 

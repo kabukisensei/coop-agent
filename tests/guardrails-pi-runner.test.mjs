@@ -21,7 +21,7 @@ process.env.JITI_FS_CACHE = join(scratch, "jiti");
 const require = createRequire(join(piRoot, "package.json"));
 const { createJiti } = require("jiti");
 const jiti = createJiti(import.meta.url, { fsCache: join(scratch, "jiti") });
-const { default: guardrails } = await jiti.import(join(root, "extensions/coop-guardrails/index.ts"));
+const { default: guardrails, PROD_UNLOCK_FILE } = await jiti.import(join(root, "extensions/coop-guardrails/index.ts"));
 const { ExtensionRunner } = await import(pathToFileURL(join(piRoot, "dist/core/extensions/runner.js")).href);
 const { AgentSession } = await import(pathToFileURL(join(piRoot, "dist/core/agent-session.js")).href);
 const version = JSON.parse(readFileSync(join(piRoot, "package.json"), "utf8")).version;
@@ -224,4 +224,93 @@ if (existsSync(builtinIndex)) {
     session.dispose();
   }
 }
-console.log(`Pi ${version}: real AgentSession beforeToolCall + ExtensionRunner integration passed${builtinMcp ? ", with its built-in MCP" : ""} (offline, synthetic fixtures).`);
+
+// Pi 1.x codemode (master plan U2 step 3): a real session with Pi's built-in
+// extensions (MCP left out), coop's codemode and coop's guardrails, and a faux
+// model that sends one codemode script. Every call the script makes must reach
+// the guardrails like a direct call, and coop's codemode must replace Pi's even
+// when a work repo turns the built-in one back on.
+let codemode = false;
+const piIndex = join(piRoot, "dist/index.js");
+const fauxIndex = [join(piRoot, "node_modules/@earendil-works/pi-ai/dist/index.js"), join(piRoot, "../pi-ai/dist/index.js")].find((p) => existsSync(p));
+if (existsSync(builtinIndex) && fauxIndex) {
+  const pi = await import(pathToFileURL(piIndex).href);
+  const ai = await import(pathToFileURL(fauxIndex).href);
+  codemode = typeof pi.createCodemodeExtension === "function" && typeof ai.createFauxCore === "function";
+  if (codemode) {
+    const { builtInExtensions } = await import(pathToFileURL(builtinIndex).href);
+    const cwd = mkdtempSync(join(scratch, "codemode-"));
+    mkdirSync(join(cwd, ".pi"));
+    // A work repo that turns Pi's codemode on and asks for scripts only.
+    writeFileSync(join(cwd, ".pi", "settings.json"), JSON.stringify({ extensions: ["+builtin:codemode"], codemode: { mode: "only" } }));
+    config(); process.env.COOP_FABRIC_MCP_TOKEN = token();
+    const settingsManager = pi.SettingsManager.create(cwd, agentDir);
+    const resourceLoader = new pi.DefaultResourceLoader({ cwd, agentDir, settingsManager,
+      additionalExtensionPaths: [join(root, "extensions/coop-codemode"), join(root, "extensions/coop-guardrails/index.ts")],
+      extensionFactories: builtInExtensions.filter((ext) => ext.name !== "mcp"),
+      noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true });
+    await resourceLoader.reload();
+    const core = ai.createFauxCore({ provider: "faux", api: "faux-api", models: [{ id: "faux-1" }] });
+    const runtime = await pi.ModelRuntime.create({ authPath: join(scratch, "faux-auth.json"), modelsPath: null, refreshOnCreate: false });
+    runtime.registerProvider("faux", { api: "faux-api", apiKey: "faux", baseUrl: "http://127.0.0.1:9", streamSimple: core.streamSimple,
+      models: [{ id: "faux-1", name: "faux", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100000, maxTokens: 1000 }] });
+    // pi-mcp-adapter's proxy tool, inert: it records what reached it.
+    const ran = [];
+    const mcpTool = { name: "mcp", label: "mcp", description: "MCP proxy (test)",
+      parameters: { type: "object", properties: { server: { type: "string" }, tool: { type: "string" }, args: { type: "object" } }, required: ["tool"] },
+      execute: async (_id, params) => { ran.push(`${params.server ?? ""}/${params.tool}`); return { content: [{ type: "text", text: "executed" }], details: {} }; } };
+    const { session } = await pi.createAgentSession({ cwd, agentDir, settingsManager, resourceLoader, modelRuntime: runtime,
+      model: runtime.getModel("faux", "faux-1"), sessionManager: pi.SessionManager.inMemory(), customTools: [mcpTool],
+      tools: ["+codemode"], excludeTools: ["tool_search"] });
+    let open = 0, maxOpen = 0;
+    const asked = [];
+    const slow = (value) => { open++; maxOpen = Math.max(maxOpen, open); return new Promise((done) => setTimeout(() => { open--; done(value); }, 300)); };
+    const uiContext = new Proxy({
+      confirm: async (_title, message) => { asked.push(String(message)); return slow(false); },
+      // An edit's session approval: "Allow ... edits for this session".
+      select: async (title, options) => { asked.push(String(title)); return slow(options[1]); },
+    }, { get: (target, key) => (key in target ? target[key] : () => undefined) });
+    await session.bindExtensions({ uiContext });
+    const codemodeTools = session.getAllTools().filter((info) => info.name === "codemode");
+    assert.equal(codemodeTools.length, 1);
+    assert.match(String(codemodeTools[0].sourceInfo?.path).replace(/\\/g, "/"), /extensions\/coop-codemode$/, "coop's codemode replaces Pi's");
+    assert.ok(session.getActiveToolNames().includes("read"), "mode stays on: tools stay declared");
+    const run = async (code) => {
+      core.setResponses([ai.fauxAssistantMessage(ai.fauxToolCall("codemode", { code })), ai.fauxAssistantMessage("done")]);
+      await session.prompt("run the script");
+      const results = session.messages.filter((m) => m.role === "toolResult" && m.toolName === "codemode");
+      return results.at(-1).content.map((c) => c.text ?? "").join("");
+    };
+    assert.match(await run("return typeof models;"), /undefined/, "a script cannot reach outside models");
+    const q = (query) => JSON.stringify({ server: "fabric-sqlendpoint", tool: "execute_query", args: { workspaceId: workspace, itemId: item, query } });
+    const unlockPath = join(agentDir, "..", PROD_UNLOCK_FILE);
+    const out = await run(`const r = await Promise.allSettled([
+      tools.mcp(${q("SELECT TOP (5) customer_id FROM dbo.Customer")}),
+      tools.mcp(${q("DELETE FROM dbo.Customer")}),
+      tools.bash({ command: "rm -rf ./build" }),
+      tools.read({ path: ".env" }),
+      tools.write({ path: ${JSON.stringify(unlockPath)}, content: "{}" }),
+    ]);
+    return r.map((x) => x.status).join(",");`);
+    assert.match(out, /fulfilled,rejected,rejected,rejected,rejected/, out);
+    assert.deepEqual(ran, ["fabric-sqlendpoint/execute_query"], "only the production read ran; the production write never reached the tool");
+    assert.equal(asked.length, 2, "the rm -rf and the .env read asked; the production write and the unlock were blocked outright");
+    assert.equal(maxOpen, 1, "never two dialogs at once");
+    // Dev edits: the first asks, its session approval covers the ones that waited.
+    asked.length = 0; ran.length = 0;
+    const m = (op) => JSON.stringify({ server: "powerbi-modeling-mcp", tool: "measure_operations", args: { request: { operation: op } } });
+    const edits = await run(`const r = await Promise.allSettled([tools.mcp(${m("Create")}), tools.mcp(${m("Update")}), tools.mcp(${m("Create")})]);
+    return r.map((x) => x.status).join(",");`);
+    assert.match(edits, /fulfilled,fulfilled,fulfilled/, edits);
+    assert.equal(asked.length, 1, "one approval, held for the session, covers the edits that waited (each waited 300 ms on the desk)");
+    assert.equal(ran.length, 3);
+    const rows = readFileSync(join(agentDir, "guardrails-audit.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l))
+      .filter((r) => r.kind === "codemode-script" && r.decision === "ran");
+    assert.equal(rows.at(-2).detail, "mcp:ok, mcp:error, bash:error, read:error, write:error", "each nested call is audited by name");
+    assert.ok(!rows.some((r) => /DELETE|dbo\.Customer|rm -rf/.test(r.detail)), "never the arguments");
+    await session._extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+    session.dispose();
+  }
+}
+if (Number(version.split(".")[0]) >= 1) assert.ok(codemode, "Pi 1.x: the codemode script check must run (faux provider or createCodemodeExtension not found)");
+console.log(`Pi ${version}: real AgentSession beforeToolCall + ExtensionRunner integration passed${builtinMcp ? ", with its built-in MCP" : ""}${codemode ? ", and codemode scripts" : ""} (offline, synthetic fixtures).`);

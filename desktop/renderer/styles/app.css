@@ -264,6 +264,8 @@ details.thinking[open] summary::before { transform: rotate(90deg); }
 .tool-stats .add { color: var(--success); } .tool-stats .del { color: var(--danger); }
 .tool-body { display: flex; flex-direction: column; gap: 8px; padding: 8px; border-top: 1px solid var(--border); }
 .tool-label { font-size: 12px; color: var(--text-faint); margin-bottom: 4px; }
+.codemode-calls { list-style: none; margin: 0 0 8px; padding: 0; }
+.codemode-calls li { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 0; }
 .output-wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 
 .diff { font-family: var(--font-mono); font-size: 12.5px; line-height: 1.5; background: var(--code-bg); border-radius: var(--radius); overflow: auto; max-height: 520px; padding: 4px 0; }

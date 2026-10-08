@@ -2,7 +2,7 @@
 import { el, icon } from "./ui.mjs";
 import { renderMarkdown } from "./markdown.mjs";
 import { parseEditDiff, diffStats } from "./diff.mjs";
-import { toolSummary, activitySummary, formatTokens } from "./timeline.mjs";
+import { toolSummary, activitySummary, formatTokens, codemodeCalls } from "./timeline.mjs";
 import { splitAttachmentNote } from "./attach-note.mjs";
 
 const MAX_LINES = 80;
@@ -106,6 +106,7 @@ function statusIcon(status) {
 
 function argsView(name, args, argsText) {
   if (name === "bash" && args && typeof args.command === "string") return el("pre", { class: "output command" }, el("code", { text: `$ ${args.command}` }));
+  if (name === "codemode" && args && typeof args.code === "string") return el("pre", { class: "output command" }, el("code", { text: args.code }));
   if (name === "write" && args && typeof args.content === "string") {
     return el("div", {}, el("div", { class: "tool-label", text: `New content for ${args.path || "the file"}` }), outputBlock(args.content, "", { all: false, redraw: () => {} }));
   }
@@ -141,6 +142,15 @@ function toolCard(block, tl, prefs) {
       if (view) body.append(view);
     }
     const state = prefs.outputState(key);
+    // A codemode script lists the tool calls it made, each checked by coop on its own.
+    const calls = name === "codemode" ? codemodeCalls(status === "running" ? tool.partialDetails : tool.result && tool.result.details) : [];
+    if (calls.length) {
+      body.append(el("div", { class: "tool-label", text: `Tool calls in this script (${calls.length})` }),
+        el("ul", { class: "codemode-calls" }, calls.map((call) => el("li", { class: call.status },
+          el("span", { class: "tool-status" }, statusIcon(call.status === "ok" ? "done" : call.status === "running" ? "running" : "error")),
+          el("code", { text: call.name }),
+          call.status === "ok" || call.status === "running" ? null : el("span", { class: "chip bad", text: call.status })))));
+    }
     if (tool.partial && status === "running") body.append(outputBlock(tool.partial, "partial", state));
     if (tool.result && tool.result.text && !(rows.length && !tool.isError)) body.append(outputBlock(tool.result.text, tool.isError ? "error" : "", state));
     if (status !== "running" && status !== "pending") {

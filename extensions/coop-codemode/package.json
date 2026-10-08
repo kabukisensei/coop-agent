@@ -1,0 +1,14 @@
+{
+  "name": "coop-codemode",
+  "version": "0.34.4",
+  "private": true,
+  "description": "Pi's codemode with script model calls off and the mode fixed to on, replacing the built-in one.",
+  "type": "module",
+  "main": "index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}

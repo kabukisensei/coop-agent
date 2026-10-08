@@ -95,12 +95,15 @@ def ensure_coop_footer(path: Path) -> bool:
 # with --no-mcp, so it never runs in a coop session; the settings entry keeps it
 # off for anything else that reads this agent dir, and it is the entry
 # pi-mcp-adapter would otherwise add itself on first start, with a notice.
-BUILTIN_MCP = "builtin:mcp"
+BUILTINS_OFF = ("builtin:mcp", "builtin:codemode")
 
 
-def ensure_builtin_mcp_off(path: Path) -> bool:
-    """Keep `-builtin:mcp` in Pi's `extensions` list, and no other builtin:mcp entry.
+def ensure_builtins_off(path: Path) -> bool:
+    """Keep `-builtin:mcp` and `-builtin:codemode` in Pi's `extensions` list, and
+    no other entry for either.
 
+    coop's own codemode (extensions/coop-codemode) replaces Pi's built-in one at
+    launch; the entry keeps Pi from warning about the swap on every start.
     Every other entry and setting is preserved. Returns True when the file changed.
     """
 
@@ -108,8 +111,8 @@ def ensure_builtin_mcp_off(path: Path) -> bool:
     extensions = settings.get("extensions")
     if not isinstance(extensions, list):
         extensions = []
-    kept = [e for e in extensions if not (isinstance(e, str) and e.lstrip("+!-") == BUILTIN_MCP)]
-    wanted = kept + [f"-{BUILTIN_MCP}"]
+    kept = [e for e in extensions if not (isinstance(e, str) and e.lstrip("+!-") in BUILTINS_OFF)]
+    wanted = kept + [f"-{name}" for name in BUILTINS_OFF]
     if extensions == wanted:
         return False
     settings["extensions"] = wanted
@@ -168,7 +171,7 @@ def _npm_package_name(source: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Converge Coop-owned Pi settings")
-    parser.add_argument("command", choices=("ensure-quiet-startup", "ensure-coop-footer", "ensure-packages", "ensure-builtin-mcp-off"))
+    parser.add_argument("command", choices=("ensure-quiet-startup", "ensure-coop-footer", "ensure-packages", "ensure-builtins-off"))
     parser.add_argument("settings", type=Path)
     parser.add_argument("sources", nargs="*", help="ensure-packages: npm:<name>@<pin> entries")
     args = parser.parse_args(argv)
@@ -176,8 +179,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "ensure-coop-footer":
             ensure_coop_footer(args.settings)
-        elif args.command == "ensure-builtin-mcp-off":
-            ensure_builtin_mcp_off(args.settings)
+        elif args.command == "ensure-builtins-off":
+            ensure_builtins_off(args.settings)
         elif args.command == "ensure-packages":
             ensure_packages(args.settings, list(args.sources))
         else:
