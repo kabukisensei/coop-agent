@@ -1,7 +1,7 @@
 // Tests for extensions/coop-guardrails — drives the REAL tool_call handler with a
 // mock pi/ctx (COOP_TEST_DIST set by tests/run.sh).
 import { strict as assert } from "node:assert";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -595,6 +595,47 @@ await t("blocks bash writes to secrets via fd or combined redirects", async () =
   assert.equal(blocked(await call("somecmd 2>.env", { confirm: false })), true);
   assert.equal(blocked(await call("somecmd &>.env", { confirm: false })), true);
   assert.equal(blocked(await call("somecmd 1>output.log", { confirm: false })), false);
+});
+
+await t("#365: provider and Azure sign-in stores are secrets; a project's models.json is not", () => {
+  for (const p of [join(AUDIT_DIR, "auth.json"), "C:\\Users\\a\\.coop\\agent\\auth.json", "~/.pi/agent/auth.json", "~/.codex/auth.json", "~/.azure/msal_token_cache.json", "~/.azure/msal_token_cache.bin", "~/.azure/accessTokens.json", join(AUDIT_DIR, "models.json"), "~/.pi/agent/models.json"]) {
+    assert.equal(isSecretPath(p), true, `${p} should be secret`);
+  }
+  for (const p of ["src/models.json", "docs/auth.md", "lib/auth.js"]) assert.equal(isSecretPath(p), false, `${p} should NOT be secret`);
+  assert.equal(bashSecretCmdPath(`cat ${join(AUDIT_DIR, "auth.json")}`), join(AUDIT_DIR, "auth.json"));
+});
+await t("#365: reading the agent's auth.json asks, and is blocked headless", async () => {
+  const auth = join(AUDIT_DIR, "auth.json");
+  confirmCount = 0;
+  assert.equal(blocked(await callFile("read", auth, { confirm: false })), true);
+  assert.equal(confirmCount, 1);
+  assert.equal(blocked(await handle({ toolName: "read", input: { path: auth } }, { cwd: ctx.cwd, hasUI: false })), true, "headless");
+  assert.equal(blocked(await call(`cat ${auth}`, { confirm: false })), true, "bash too");
+});
+await t("#367: an innocent-looking link to a secret is the secret (native and bash); plain links still work", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "coop-link-"));
+  try {
+    writeFileSync(join(dir, ".env"), "SYNTHETIC=1\n");
+    writeFileSync(join(dir, "plain.txt"), "x\n");
+    symlinkSync(join(dir, ".env"), join(dir, "notes.txt"));
+    symlinkSync(join(dir, "notes.txt"), join(dir, "chained.txt"));
+    symlinkSync(join(dir, "plain.txt"), join(dir, "readme-link.txt"));
+    assert.ok(cg.secretLinkTarget("notes.txt", dir), "relative link");
+    assert.ok(cg.secretLinkTarget(join(dir, "chained.txt"), "/"), "chained link");
+    assert.equal(cg.secretLinkTarget("readme-link.txt", dir), null);
+    assert.equal(cg.secretLinkTarget("missing.txt", dir), null);
+    const linkCtx = { ...ctx, cwd: dir };
+    confirmAnswer = false; confirmCount = 0;
+    assert.equal(blocked(await handle({ toolName: "read", input: { path: "notes.txt" } }, linkCtx)), true, "declined");
+    assert.equal(confirmCount, 1);
+    assert.match(lastConfirm, /notes\.txt -> .*\.env/);
+    assert.equal(blocked(await handle({ toolName: "read", input: { path: join(dir, "chained.txt") } }, { cwd: dir, hasUI: false })), true, "headless");
+    assert.equal(blocked(await handle({ toolName: "bash", input: { command: "cat notes.txt" } }, linkCtx)), true, "bash");
+    confirmCount = 0;
+    assert.equal(blocked(await handle({ toolName: "read", input: { path: "readme-link.txt" } }, linkCtx)), false);
+    assert.equal(blocked(await handle({ toolName: "bash", input: { command: "cat readme-link.txt" } }, linkCtx)), false);
+    assert.equal(confirmCount, 0, "a plain link asks nothing");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 // --- allow-list parsing (block + flow YAML forms) --------------------------------
@@ -1338,6 +1379,41 @@ await t("G1: a write naming what the contract labels production is a production 
     assert.equal(blocked(await call('fab deploy -p ./pipeline.yml --workspace "Finance Live"', { confirm: true })), true, "a shell Fabric write to the labelled prod workspace");
     assert.equal(confirmCount, 0);
     assert.equal(blocked(await call('fab deploy -p ./pipeline.yml --workspace="Contoso Sales"', { confirm: true })), true, "--flag=value too");
+  } finally {
+    removeContract();
+    await handleSessionStart({ reason: "new" }, liveCtx);
+  }
+});
+
+await t("#364: a prod workspace id inside a REST URL is a production write; other ids ask as before", async () => {
+  const text = [
+    "profile:", "  client: Contoso", "fabric:", `  tenant_id: "${TENANT_ID}"`,
+    "sql_targets:", "  default_environment: dev", "  prod:", "    kind: fabric_warehouse", `    workspace_id: ${WORKSPACE_ID}`, `    item_id: ${ITEM_ID}`, "    database: W", "",
+  ].join("\n");
+  const names = cg.parseProductionNames(text);
+  assert.equal(cg.namesContractProduction([`https://api.fabric.microsoft.com/v1/workspaces/${WORKSPACE_ID.toUpperCase()}/items/x`], names), true);
+  assert.equal(cg.namesContractProduction([`/workspaces/${WORKSPACE_ID}0/items`], names), false, "a longer id is another id");
+  assert.equal(cg.namesContractProduction(["Server=tcp:contoso.database.windows.net,1433"], ["contoso.database.windows.net"]), true, "a prod host in a connection string");
+  assert.equal(cg.namesContractProduction(["dev-contoso.database.windows.net"], ["contoso.database.windows.net"]), false, "another host");
+  assert.equal(cg.namesContractProduction(["Contoso Sales Dev"], ["contoso sales"]), false, "names stay whole values");
+  writeContract(text);
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  try {
+    for (const url of [
+      `--url https://api.fabric.microsoft.com/v1/workspaces/${WORKSPACE_ID}/items/x`,
+      `--url "https://api.fabric.microsoft.com/v1/workspaces/${WORKSPACE_ID}/items/x"`,
+      `--url=https://api.fabric.microsoft.com/v1/workspaces/${WORKSPACE_ID}/items/${ITEM_ID}`,
+    ]) {
+      confirmAnswer = true; confirmCount = 0;
+      const r = await handle({ toolName: "bash", input: { command: `az rest --method patch ${url}` } }, liveCtx);
+      assert.equal(blocked(r), true, url);
+      assert.match(r.reason, /Production writes are blocked/);
+      assert.equal(confirmCount, 0, "no ordinary approval is offered");
+    }
+    const other = "44444444-4444-4444-8444-444444444444";
+    confirmCount = 0;
+    assert.equal(blocked(await handle({ toolName: "bash", input: { command: `az rest --method patch --url https://api.fabric.microsoft.com/v1/workspaces/${other}/items/x` } }, liveCtx)), false, "another workspace asks as before");
+    assert.equal(confirmCount, 1);
   } finally {
     removeContract();
     await handleSessionStart({ reason: "new" }, liveCtx);

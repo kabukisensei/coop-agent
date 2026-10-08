@@ -133,11 +133,27 @@ export function createCompanionServer({ store, tabs = null, active = null, origi
     }
   }
 
-  function openStream(req, res, hub, deviceId, after) {
+  // A stream outlives the request that opened it, so its grant is read again
+  // before every event and heartbeat: expiry, eviction or revocation ends it (#366).
+  function streamGranted(hub, deviceId, secret) {
+    return checkGrant({ device: store.get(deviceId), secret, binding: hub.binding, now: now() }) === null;
+  }
+
+  /** End the streams of every device the store no longer holds (pruned on pairing). */
+  function closeDroppedStreams() {
+    for (const id of [...streams.keys()]) if (!store.get(id)) closeStreams(id);
+  }
+
+  function openStream(req, res, hub, deviceId, after, secret) {
     res.writeHead(200, { ...SECURITY_HEADERS, "Content-Type": "text/event-stream", Connection: "keep-alive", "X-Accel-Buffering": "no" });
     // A stream that has ended (access went off, the phone went away) takes no
     // more writes: the hub can push in the same step that ends it.
-    const send = (text) => { if (!res.writableEnded && !res.destroyed) res.write(text); };
+    const send = (text) => {
+      if (res.writableEnded || res.destroyed) return;
+      // Ending the response fires "close", which detaches the listeners.
+      if (!streamGranted(hub, deviceId, secret)) { res.end(); return; }
+      res.write(text);
+    };
     const write = (event) => send(`id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
     // EventSource repeats the last id on its own; the page passes the snapshot's as `after`.
     const start = hub.resume(req.headers["last-event-id"] || after);
@@ -197,6 +213,7 @@ export function createCompanionServer({ store, tabs = null, active = null, origi
       // Pairing a code does not count against the failures.
       pairs.hits.delete(ip);
       for (const id of result.replaced || []) { closeStreams(id); chosen.delete(id); }
+      closeDroppedStreams();
       audit({ kind: "paired", device: result.device.id, client: result.device.client, replaced: (result.replaced || []).length });
       return sendJson(res, 200, { ok: true, device: { id: result.device.id, name: result.device.name, client: result.device.client } }, { "Set-Cookie": deviceCookie(result.device.id, result.secret) });
     }
@@ -254,7 +271,7 @@ export function createCompanionServer({ store, tabs = null, active = null, origi
       case "snapshot":
         return reply(200, { ok: true, snapshot: await hub.snapshot(authorize), device: { id: device.id, name: device.name } });
       case "events":
-        return openStream(req, res, hub, device.id, String(query.get("after") || "").slice(0, 100));
+        return openStream(req, res, hub, device.id, String(query.get("after") || "").slice(0, 100), cookie.secret);
       case "chat": {
         const result = hub.chat(device.id, request);
         audit({ kind: "chat", device: device.id, outcome: result.ok ? "sent" : result.code });
