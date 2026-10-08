@@ -5,6 +5,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- The "coop" and "coop (terminal)" shortcuts open the client's home repository
+  (the one holding the remembered project file) instead of the user folder they
+  start in. Pi keeps saved sessions per folder, so a shortcut launch listed the
+  user folder's old sessions, not the project's recent ones. `coop` typed in a
+  folder still opens that folder; with no project file remembered the shortcut
+  stays in the user folder as before.
+
 ## [0.34.2] — 2026-10-08
 
 ### Added

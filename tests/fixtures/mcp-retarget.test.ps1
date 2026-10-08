@@ -19,6 +19,8 @@
 #      first launch that finds one records it in <profile>\home-project.json; later
 #      launches from any folder without one above use it, so several repositories
 #      no longer need a guess; `coop project home [<folder>]` shows or sets it.
+#   F. A shortcut launch (COOP_SHORTCUT) from the user folder opens the remembered
+#      project file's repository, so Pi lists that folder's saved sessions.
 #   C. Several coops at once (2026-10-06): each launch also writes its folder's
 #      own copy (<agent dir>\mcp\<key>.json) and hands Pi that path
 #      (--mcp-config, COOP_MCP_CONFIG); a later launch from another folder
@@ -80,6 +82,8 @@ given = args[args.index('--mcp-config') + 1] if '--mcp-config' in args else ''
 with open(os.path.join(r'''$marker''', 'mcp-config-arg.txt'), 'a') as f:
     f.write(given + '|' + os.environ.get('COOP_MCP_CONFIG', '') + '\n')
 open(os.path.join(r'''$marker''', 'pi-ran'), 'w').close()
+with open(os.path.join(r'''$marker''', 'pi-cwd.txt'), 'w') as f:
+    f.write(os.getcwd())
 sys.exit(0)
 "@
   $null = New-PyStub $bin 'npm' "import sys`nif sys.argv[1:2] == ['--version']:`n    print('10.0.0')`nsys.exit(0)`n"
@@ -236,6 +240,24 @@ sys.exit(0)
   else { Ko "coop project home elsewhere: rc=$($r.Rc)" ($r.Out + $r.Err) }
   $r = Invoke-Redirected (Join-Path $root 'bin\coop.ps1') $userDir
   if ((Read-Entry $configPath).url -eq $itemUrl) { Ok 'after coop project home, the user folder launch uses it' } else { Ko 'not used after coop project home' ($r.Out + $r.Err) }
+  # F. A shortcut launch (COOP_SHORTCUT, set by bin\coop-desktop.ps1) starts in the
+  # user folder; it opens the remembered file's repository there, so Pi lists that
+  # folder's saved sessions (2026-10-08: the window showed the user folder's old ones).
+  $piCwd = Join-Path $marker 'pi-cwd.txt'
+  $env:COOP_SHORTCUT = '1'
+  try { $r = Invoke-Redirected (Join-Path $root 'bin\coop.ps1') $sandboxHome } finally { Remove-Item Env:COOP_SHORTCUT -ErrorAction SilentlyContinue }
+  $seenCwd = if (Test-Path -LiteralPath $piCwd) { (Get-Content -LiteralPath $piCwd -Raw).Trim() } else { '' }
+  if ($r.Rc -eq 0 -and $seenCwd -and ([System.IO.Path]::GetFullPath($seenCwd) -eq [System.IO.Path]::GetFullPath($clientRepo))) { Ok 'a shortcut launch from the user folder opens the remembered project''s repository' }
+  else { Ko "shortcut launch: rc=$($r.Rc) pi cwd=$seenCwd" ($r.Out + $r.Err) }
+  $r = Invoke-Redirected (Join-Path $root 'bin\coop.ps1') $sandboxHome
+  $seenCwd = if (Test-Path -LiteralPath $piCwd) { (Get-Content -LiteralPath $piCwd -Raw).Trim() } else { '' }
+  if ($r.Rc -eq 0 -and $seenCwd -and ([System.IO.Path]::GetFullPath($seenCwd) -eq [System.IO.Path]::GetFullPath($sandboxHome))) { Ok 'coop typed in the user folder stays there' }
+  else { Ko "typed launch in the user folder: rc=$($r.Rc) pi cwd=$seenCwd" ($r.Out + $r.Err) }
+  $env:COOP_SHORTCUT = '1'
+  try { $r = Invoke-Redirected (Join-Path $root 'bin\coop.ps1') $elsewhere } finally { Remove-Item Env:COOP_SHORTCUT -ErrorAction SilentlyContinue }
+  $seenCwd = if (Test-Path -LiteralPath $piCwd) { (Get-Content -LiteralPath $piCwd -Raw).Trim() } else { '' }
+  if ($r.Rc -eq 0 -and $seenCwd -and ([System.IO.Path]::GetFullPath($seenCwd) -eq [System.IO.Path]::GetFullPath($elsewhere))) { Ok 'a shortcut launch from another folder stays in that folder' }
+  else { Ko "shortcut launch elsewhere: rc=$($r.Rc) pi cwd=$seenCwd" ($r.Out + $r.Err) }
   # The remembered file is gone and nothing else is found: blank target, a clear warning.
   Remove-Item -LiteralPath (Join-Path $clientRepo '.coop\project.yml') -Force
   Remove-Item -LiteralPath (Join-Path $otherRepo '.coop\project.yml') -Force
