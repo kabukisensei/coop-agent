@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.34.4] — 2026-10-08
+
 ### Changed
 
 - **Pi moves from 0.87.1 to 1.1.0** (master plan U2 step 2), with codemode and

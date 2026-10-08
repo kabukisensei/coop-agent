@@ -1,6 +1,6 @@
 {
   "name": "coop-tools",
-  "version": "0.34.3",
+  "version": "0.34.4",
   "private": true,
   "description": "Native, LLM-callable Cooptimize tools for Pi: data_doc, bpa_review (advisory, read-only) and the setup wizards.",
   "keywords": ["pi-package", "pi", "coding-agent", "cooptimize", "sql", "dax", "fabric", "tools"],
