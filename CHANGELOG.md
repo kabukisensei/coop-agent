@@ -19,6 +19,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   to a production workspace is blocked. Before, the adapter ran those calls while
   the guardrail did not recognise the router, so they went through unasked.
   Found in the VM check for the adapter 5.1 upgrade; adapter 3.3.0 behaves the same.
+- The coop window shows coop's icon on the Windows taskbar however it starts.
+  Started from the terminal install (`coop desktop`, or the "coop" shortcut that
+  runs PowerShell) it ran as Electron's own `electron.exe`, so the taskbar showed
+  Electron's icon and a pinned button opened bare Electron. Every window now
+  carries coop's app id, its icon and a relaunch command that starts coop; the
+  installed package uses the same id as its Start Menu shortcut.
 
 ## [0.34.2] — 2026-10-08
 

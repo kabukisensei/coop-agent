@@ -36,6 +36,7 @@ import { bootstrapProcess, doctorReport, findCoop, folderArgument, packagedPaths
 import { describeProject, forgetProject, projectEntries, rememberProject, startFolder, windowTitle } from "./lib/projects.mjs";
 import { menuTemplate, notificationFor } from "./lib/menu.mjs";
 import { restartOnce } from "./lib/restart.mjs";
+import { APP_ID, taskbarDetails } from "./lib/app-identity.mjs";
 import { CompanionHub } from "./lib/companion-hub.mjs";
 import { DeviceStore } from "./lib/companion-devices.mjs";
 import { createCompanionServer, DEFAULT_PORT } from "./lib/companion-server.mjs";
@@ -52,6 +53,15 @@ const RENDERER = join(HERE, "renderer");
 // pdf.js and the PDF script unpacked beside the asar (packagedPaths).
 const REPO = join(HERE, "..");
 const PACKAGED = app.isPackaged;
+// The package's app id (its installer writes it on the Start Menu shortcut), so
+// Windows ties the package's windows and notifications to that shortcut and its
+// icon. Each window also carries the id and a shell-readable icon (lib/app-identity.mjs).
+if (process.platform === "win32" && PACKAGED) app.setAppUserModelId(APP_ID);
+/** Give a window coop's taskbar identity: its icon and relaunch command (Windows). */
+function setTaskbarIdentity(win) {
+  if (process.platform !== "win32") return;
+  try { win.setAppDetails(taskbarDetails({ packaged: PACKAGED, execPath: process.execPath, repo: REPO, systemRoot: process.env.SystemRoot })); } catch { /* the window still opens */ }
+}
 // Chromium's own log lines (the GPU process's "GetGpuDriverOverlayInfo: Failed
 // to retrieve video device" on some Windows drivers) otherwise land in the
 // terminal that ran `coop desktop`. They are not coop's and change nothing;
@@ -293,6 +303,7 @@ function openWindow(rawSpec, token) {
     icon: existsSync(join(HERE, "..", "themes", "coop.ico")) ? join(HERE, "..", "themes", "coop.ico") : undefined,
     webPreferences: { ...tabPreferences(), spellcheck: false },
   });
+  setTaskbarIdentity(win);
   const frame = { win, id: win.id, tabs: [], active: null, stripReady: false, title: win.getTitle() };
   // The tab strip page's <title> would replace the project title in the taskbar.
   win.on("page-title-updated", (event) => event.preventDefault());
@@ -744,6 +755,7 @@ function pickProject(parent) {
       icon: existsSync(join(HERE, "..", "themes", "coop.ico")) ? join(HERE, "..", "themes", "coop.ico") : undefined,
       webPreferences: { preload: join(HERE, "preload.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, devTools: process.env.COOP_DESKTOP_DEVTOOLS === "1" },
     });
+    setTaskbarIdentity(picker.win);
     picker.win.once("ready-to-show", () => picker.win.show());
     picker.win.on("closed", () => { picker.win = null; const done = picker.resolve; picker.resolve = null; if (done) done(""); });
     picker.win.loadURL(`${APP_ORIGIN}/picker.html`);
