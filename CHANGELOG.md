@@ -13,6 +13,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   user folder's old sessions, not the project's recent ones. `coop` typed in a
   folder still opens that folder; with no project file remembered the shortcut
   stays in the user folder as before.
+- A Fabric MCP call that names a router by its listed name (`fabric_core`,
+  `fabric_onelake`, …) through `mcp` or `mcp__fabric` is now gated like the bare
+  name (`core`, `onelake`): a write asks first, a delete always asks, and a write
+  to a production workspace is blocked. Before, the adapter ran those calls while
+  the guardrail did not recognise the router, so they went through unasked.
+  Found in the VM check for the adapter 5.1 upgrade; adapter 3.3.0 behaves the same.
 
 ## [0.34.2] — 2026-10-08
 
