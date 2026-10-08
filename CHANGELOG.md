@@ -5,6 +5,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- The coop window shows coop's icon on the Windows taskbar however it starts.
+  Started from the terminal install (`coop desktop`, or the "coop" shortcut that
+  runs PowerShell) it ran as Electron's own `electron.exe`, so the taskbar showed
+  Electron's icon and a pinned button opened bare Electron. Every window now
+  carries coop's app id, its icon and a relaunch command that starts coop; the
+  installed package uses the same id as its Start Menu shortcut.
+
 ## [0.34.2] — 2026-10-08
 
 ### Added
