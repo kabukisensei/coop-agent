@@ -72,6 +72,14 @@ if (-not (Test-CoopNoIsolate)) {
   New-Item -ItemType Directory -Force -Path $coopAgentDir -ErrorAction SilentlyContinue | Out-Null
 }
 
+# Started from a shortcut (bin\coop-desktop.ps1): open the client's home
+# repository rather than the user folder the shortcut starts in, so the window
+# and Pi list the project's saved sessions. Read once; Pi never inherits it.
+if ($env:COOP_SHORTCUT) {
+  Remove-Item Env:COOP_SHORTCUT -ErrorAction SilentlyContinue
+  $null = Enter-CoopShortcutFolder
+}
+
 # Make tools in the npm global bin (`pi`) or the pipx bin (`fab`, coop-*) resolvable
 # even when the current shell's persistent PATH predates their install — otherwise
 # `coop` / `coop doctor` falsely report them "not installed" right after a fresh
