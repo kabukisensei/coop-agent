@@ -89,7 +89,7 @@ def forward(exe):
 '@
   $null = New-PyStub $bin 'pi' ($stubPrelude + @'
 if args[:1] == ['--version']:
-    print('pi 0.87.1'); sys.exit(0)
+    print('pi 1.1.0'); sys.exit(0)
 if args[:1] == ['install'] and len(args) > 1:
     spec = args[1]
     write_pkg(os.path.join(os.environ['PI_CODING_AGENT_DIR'], 'npm', 'node_modules'), spec[4:] if spec.startswith('npm:') else spec)
@@ -100,7 +100,7 @@ sys.exit(0)
 if args[:2] == ['prefix', '-g']:
     print(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))); sys.exit(0)
 if args[:1] == ['view']:
-    print('0.87.1'); sys.exit(0)
+    print('1.1.0'); sys.exit(0)
 if args[:1] == ['--version']:
     print('10.9.0'); sys.exit(0)
 if args[:1] == ['install']:

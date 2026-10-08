@@ -2129,7 +2129,7 @@ async function showStartMenu(pi: ExtensionAPI, ctx: any): Promise<void> {
 // ---------------------------------------------------------------------------
 // Compaction over the chosen transport (issue #236)
 //
-// Pi 0.87.1 (and still 1.0.0) builds its compaction request without the session's
+// Pi 0.87.1 (and still 1.1.0) builds its compaction request without the session's
 // `transport` setting: `AgentSession._runDefaultCompaction()` calls `compact()` with
 // no transport, so the OpenAI Codex provider falls back to "auto" and opens a
 // WebSocket for the summary request even when `/settings` says `sse`. On a large
@@ -2155,7 +2155,7 @@ export interface PiTransportSettings {
 
 const PI_DEFAULT_HTTP_IDLE_TIMEOUT_MS = 300000;
 const PI_DEFAULT_MAX_AGENT_RETRY_DELAY_MS = 60000;
-/** Provider APIs whose stream options honour `transport` (Pi 0.87.1: only Codex). */
+/** Provider APIs whose stream options honour `transport` (Pi 1.1.0: only Codex). */
 export const TRANSPORT_AWARE_APIS = new Set(["openai-codex-responses"]);
 
 function timeoutSetting(value: unknown): number | undefined {
@@ -2266,7 +2266,7 @@ export function createCompactionTransportHandler(deps: CompactionTransportDeps =
 // ---------------------------------------------------------------------------
 // Codex sign-in refresh on a long session
 //
-// Pi 0.87.1 (and still 1.0.4) caches the OpenAI Codex WebSocket per session and
+// Pi 0.87.1 (and still 1.1.0) caches the OpenAI Codex WebSocket per session and
 // account for up to 55 minutes and keeps reusing it after Pi refreshes the
 // ChatGPT sign-in token, so a long conversation keeps talking over a connection
 // opened with the previous token. The official Codex client keys its cached

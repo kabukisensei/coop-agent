@@ -41,7 +41,7 @@ $realPy = Get-FixturePython
 if (-not $realPy) { throw 'a Python 3.10-3.13 is required for the fleet fixtures' }
 $psDir = Split-Path -Parent $psExe
 
-$extSpecs = @('npm:pi-mcp-adapter@5.1.0', 'npm:pi-hermes-memory@0.9.9', 'npm:pi-better-openai@0.1.22', 'npm:pi-web-access@0.35.0',
+$extSpecs = @('npm:pi-mcp-adapter@5.1.0', 'npm:pi-hermes-memory@0.9.10', 'npm:pi-better-openai@0.1.22', 'npm:pi-web-access@0.35.0',
               'npm:@juicesharp/rpiv-ask-user-question@2.12.0', 'npm:@juicesharp/rpiv-todo@2.12.0', 'npm:@xl0/pi-lovely-rename@0.1.5')
 
 # A Python string literal for a path (backslashes and quotes escaped).
@@ -91,7 +91,7 @@ $npmStub = $stubPrelude + @'
 if args[:2] == ['prefix', '-g']:
     print(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))); sys.exit(0)
 if args[:1] == ['view']:
-    print('0.87.1'); sys.exit(0)
+    print('1.1.0'); sys.exit(0)
 if args[:1] == ['--version']:
     print('10.9.0'); sys.exit(0)
 log('NPM ' + ' '.join(args))
@@ -136,7 +136,7 @@ sys.exit(0)
 # One fully isolated "machine": every location the fleet scripts can touch lives
 # under it, plus the stub bin that models the tools present on it.
 function New-Machine {
-  param([string]$Name, [string]$PiVersion = '0.87.1', [bool]$HonestPi = $true, [string[]]$PipxList = @(), [string]$FabVersion = '1.6.1', [bool]$LogPi = $true)
+  param([string]$Name, [string]$PiVersion = '1.1.0', [bool]$HonestPi = $true, [string[]]$PipxList = @(), [string]$FabVersion = '1.6.1', [bool]$LogPi = $true)
   $d = Join-Path $t "m-$Name"
   $mHome = Join-Path $d 'home'
   $bin = Join-Path $mHome '.local\bin'
@@ -328,11 +328,11 @@ try {
   if ($frRc -eq 0) { $frOut | ForEach-Object { Write-Host $_ } } else { Ko 'fabric-runtime-convergence fixture failed' ($frOut -join "`n") }
 
   # --- 4. NORMAL-mode drift convergence (no --force): round-2 review item #1 -------
-  # Deliberate drift: installed Pi 0.81.0 (manifest 0.87.1) and coop-data-doc 1.1.0
+  # Deliberate drift: installed Pi 0.81.0 (manifest 1.1.0) and coop-data-doc 1.1.0
   # (manifest 1.3.1); ms-fabric-cli matches its pin.
   $m2 = New-Machine 'drift' -PiVersion '0.81.0' -HonestPi $false -PipxList @('package coop-data-doc 1.1.0', 'package ms-fabric-cli 1.7.0')
   $out = Invoke-Fleet 'install.ps1'
-  if (-not (Test-CallLiteral $m2 'NPM install -g @earendil-works/pi-coding-agent@0.87.1')) { Ko 'drifted Pi NOT converged to manifest' (Get-Calls $m2) }
+  if (-not (Test-CallLiteral $m2 'NPM install -g @earendil-works/pi-coding-agent@1.1.0')) { Ko 'drifted Pi NOT converged to manifest' (Get-Calls $m2) }
   else { Ok 'normal install converges a drifted Pi to the manifest without --force' }
   if (-not (Test-CallLiteral $m2 'PIPX install --force coop-data-doc')) { Ko 'drifted coop-data-doc NOT force-installed' (Get-Calls $m2) }
   elseif (-not (Test-CallLiteral $m2 'PIPX install --force coop-data-doc==1.3.4')) { Ko 'drifted coop-data-doc NOT force-installed to its manifest pin' (Get-Calls $m2) }

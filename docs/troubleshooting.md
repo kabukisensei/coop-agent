@@ -107,7 +107,7 @@ with `Error: WebSocket idle timeout after 300000ms` on an OpenAI Codex
 subscription model, and setting Transport to `sse` in `/settings` changes
 nothing (coop-agent #236).
 
-**Diagnose.** Pi 0.87.1 builds its compaction request without the session's
+**Diagnose.** Pi builds its compaction request without the session's
 transport setting, so the Codex provider opens a WebSocket for the summary
 regardless. Check the effective setting and the coop version:
 

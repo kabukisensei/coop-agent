@@ -130,4 +130,21 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     assert result.returncode == 2 and "not an npm package pin" in result.stderr
     print("  PASS ensure-packages refuses an entry without npm: and a pin")
 
-print("  11 Pi settings tests passed")
+    # ensure-builtin-mcp-off (master plan U2): Pi 1.x's built-in MCP stays off
+    # beside pi-mcp-adapter; a deliberate +builtin:mcp is replaced, the rest kept.
+    builtin = tmp / "builtin.json"
+    builtin.write_text(json.dumps({"extensions": ["+builtin:mcp", "~/ext/a.ts", "-builtin:codemode"], "quietStartup": True}))
+    result = subprocess.run([sys.executable, str(HELPER), "ensure-builtin-mcp-off", str(builtin)], text=True, capture_output=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(builtin.read_text()) == {"extensions": ["~/ext/a.ts", "-builtin:codemode", "-builtin:mcp"], "quietStartup": True}
+    print("  PASS ensure-builtin-mcp-off replaces any builtin:mcp entry with -builtin:mcp, keeps the rest")
+    before = builtin.stat().st_mtime_ns
+    result = subprocess.run([sys.executable, str(HELPER), "ensure-builtin-mcp-off", str(builtin)], text=True, capture_output=True, check=False)
+    assert result.returncode == 0 and builtin.stat().st_mtime_ns == before
+    print("  PASS ensure-builtin-mcp-off leaves a converged file untouched")
+    fresh_mcp = tmp / "fresh-mcp" / "settings.json"
+    result = subprocess.run([sys.executable, str(HELPER), "ensure-builtin-mcp-off", str(fresh_mcp)], text=True, capture_output=True, check=False)
+    assert result.returncode == 0 and json.loads(fresh_mcp.read_text()) == {"extensions": ["-builtin:mcp"]}
+    print("  PASS ensure-builtin-mcp-off creates the entry in a new settings file")
+
+print("  14 Pi settings tests passed")

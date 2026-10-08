@@ -2624,6 +2624,14 @@ function Get-CoopPiVersion {
   if ($m.Success) { return $m.Value } else { return '' }
 }
 
+# Get-CoopPiVersion, asked once per coop process: the launch arguments depend
+# on it, and Pi does not change under a launch (sync, which moves Pi, asks
+# Get-CoopPiVersion afresh).
+function Get-CoopLaunchPiVersion {
+  if ($null -eq $script:CoopLaunchPiVersion) { $script:CoopLaunchPiVersion = Get-CoopPiVersion }
+  return $script:CoopLaunchPiVersion
+}
+
 # --- Fleet convergence (install / update share these; master plan S2, #222) ----
 # One probe and one install branch per component. Each Invoke-Coop*Converge
 # returns the Coop-Unit result contract, @{ ok = <bool>; msg = <string> }, and

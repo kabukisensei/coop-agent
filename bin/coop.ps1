@@ -460,10 +460,8 @@ function Invoke-CoopLaunchPreflight {
   if (-not (Test-Have 'pi')) { return }
   $py = Get-CoopPython; if (-not $py) { return }
   if (-not (Test-Path -LiteralPath (Join-Path $agentDir 'npm\package.json') -PathType Leaf)) { return }
-  $verRaw = (& pi --version 2>$null | Select-Object -First 1)
-  if (-not $verRaw) { return }
-  $m = [regex]::Match([string]$verRaw, '\d+\.\d+\.\d+'); if (-not $m.Success) { return }
-  $ver = $m.Value
+  $ver = Get-CoopLaunchPiVersion
+  if (-not $ver) { return }
   $extScript = Join-Path $script:CoopRoot 'lib/_extdeps.py'
   # Capture output BEFORE reading $LASTEXITCODE (piping a native command can leave it unset).
   $out = (& $py $extScript align $agentDir $ver --check 2>$null)
@@ -608,6 +606,17 @@ function Build-CoopPiArgs {
   if (Test-Path -LiteralPath $extGuardrails) { $piArgs += @('-e', $extGuardrails) }
   $extProfile = Join-Path $script:CoopRoot 'extensions\coop-profile'
   if (Test-Path -LiteralPath $extProfile) { $piArgs += @('-e', $extProfile) }
+  # Pi 1.x adds a built-in MCP client, codemode and tool_search, and opens in a
+  # fullscreen TUI. coop keeps all four off (master plan U2 step 2): MCP stays
+  # with the managed adapter, codemode waits until the guardrails are proven on
+  # its nested calls (step 3), and coop-powerline is built for scrollback. Launch
+  # flags, not settings, so a work repo's .pi/settings.json cannot turn them back
+  # on (--exclude-tools applies after every other tool selection). Pi 0.x rejects
+  # these flags, so they follow the installed Pi until `coop update` moves it.
+  $piVer = Get-CoopLaunchPiVersion
+  if ($piVer -and ([int]($piVer.Split('.')[0]) -ge 1)) {
+    $piArgs += @('--no-mcp', '--exclude-tools', 'codemode,tool_search', '--tui-mode', 'regular')
+  }
   # Coop owns fleet updates. Hide Pi's upstream self-update banner so users do not
   # drift Pi away from the release-manifest pins; Invoke-CoopUpdateNudge still
   # reports when THIS checkout is behind and directs the user to `coop update`.

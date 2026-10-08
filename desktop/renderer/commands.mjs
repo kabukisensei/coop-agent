@@ -4,7 +4,7 @@
 // prompt templates, skills) goes to Pi as a prompt, exactly as typed.
 // desktop/PARITY.md maps every entry here; tests/desktop.test.mjs checks it.
 
-/** Pi 0.87.1 built-in slash commands (docs/slash-commands.md). */
+/** Pi 1.1.0 built-in slash commands (docs/slash-commands.md). */
 export const BUILTINS = Object.freeze([
   { name: "settings", description: "Window and session settings", action: "settings" },
   { name: "model", args: "[provider/model]", description: "Pick a model", action: "model" },
