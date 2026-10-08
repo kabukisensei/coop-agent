@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 
 import { bootstrapProcess, bundledCoop, doctorReport, findCoop, folderArgument, launcherPath, packagedPaths, packagedRuntime } from "../desktop/lib/bootstrap.mjs";
 import { consoleProcess } from "../desktop/lib/terminal.mjs";
+import { APP_ID, taskbarDetails } from "../desktop/lib/app-identity.mjs";
 import { loadSettings, saveSettings } from "../desktop/lib/settings.mjs";
 import { DOWNLOAD_HOSTS, NODE_SHIMS_DROPPED, PIPX_SHIM, bundledDownloads, hasWheel, longestPath, nodeDownload, prefixPackages, pythonToolSpecs, prunable, pruneTree, readVersion, runtimeMarker, shippedPackage, snapshotIncludes, stage, stageEntries, stagePackage } from "../desktop/scripts/build-installer.mjs";
 import { assertDisposableInstallerHost, nsisInvocation, packagePaths } from "../desktop/scripts/verify-installer.mjs";
@@ -504,6 +505,20 @@ await check("release.yml: the tag build runs the acceptance on the release bytes
   // The ancestry and VERSION guard is still the first step of the release job.
   assert.match(publish, /Refuse a tag that isn't VERSION or isn't on origin\/main/, "the tag guard stays");
   assert.ok(publish.indexOf("Refuse a tag that isn't VERSION") < publish.indexOf("Refuse an installer the acceptance did not pass on"), "tag guard runs before the installer check");
+});
+
+// --- taskbar identity ---------------------------------------------------------
+await check("taskbar identity: the package's appId, an icon and a relaunch the shell can read", () => {
+  assert.equal(APP_ID, config.appId, "windows and the installer's Start Menu shortcut share one id");
+  const exe = "C:\\Users\\a\\AppData\\Local\\Programs\\coop\\coop.exe";
+  assert.deepEqual(taskbarDetails({ packaged: true, execPath: exe, repo: "C:\\x\\resources\\app.asar", systemRoot: "C:\\Windows" }), {
+    appId: APP_ID, appIconPath: exe, appIconIndex: 0, relaunchCommand: `"${exe}"`, relaunchDisplayName: "coop",
+  }, "the package is its own icon and relaunch, never a path inside the asar");
+  const terminal = taskbarDetails({ packaged: false, execPath: "C:\\r\\electron.exe", repo: "C:\\Users\\a\\coop-agent", systemRoot: "C:\\WINDOWS" });
+  assert.equal(terminal.appId, APP_ID);
+  assert.equal(terminal.appIconPath, "C:\\Users\\a\\coop-agent\\themes\\coop.ico", "the checkout's coop icon, not electron.exe's");
+  assert.equal(terminal.relaunchCommand, '"C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "C:\\Users\\a\\coop-agent\\bin\\coop-desktop.ps1" desktop', "a pinned button starts the same launcher as the coop shortcut");
+  assert.ok(!JSON.stringify(terminal).includes("electron.exe"), "nothing points at bare Electron");
 });
 
 rmSync(temp, { recursive: true, force: true });
