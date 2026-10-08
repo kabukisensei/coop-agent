@@ -1684,7 +1684,7 @@ export function unconfirmedTargetReason(event: any, deps: LiveReadResolverDeps, 
     const managed = Array.isArray(mcp?._coop?.managed_servers) && mcp._coop.managed_servers.includes(MANAGED_SQL_SERVER);
     entry = managed ? mcp?.mcpServers?.[MANAGED_SQL_SERVER] ?? null : null;
   } catch { entry = null; }
-  const reopen = "Close coop and open it in the repository that holds the project file (.coop/project.yml), or in the folder directly above it when that folder holds only that one project repository, then try again.";
+  const reopen = "Close coop and open it in the repository that holds the project file (.coop/project.yml), or in the folder directly above it when that folder holds only that one project repository (coop then remembers it for every launch; `coop project home <folder>` sets it), then try again.";
   if (!entry) {
     return `${lead} Coop's Warehouse target for this folder is missing (the managed MCP settings have no fabric-sqlendpoint entry). ${reopen}`;
   }

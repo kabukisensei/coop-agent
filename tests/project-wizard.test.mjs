@@ -556,6 +556,29 @@ await t("C1: proposeContractRoot names the client home repository beside several
   assert.match(contractCreatedNote(client), /Share \.coop\/project\.yml with the team .*Open coop at or below /);
 });
 
+await t("the remembered project file (home-project.json) is used from any folder without one above; a contract above still wins", async () => {
+  const client = trackFixture(mkdtempSync(join(tmpdir(), "coop-home-project-")));
+  skipIfContaminated(client);
+  const profile = join(client, "profile");
+  mkdirSync(join(profile, ".coop"), { recursive: true });
+  mkdirSync(join(client, "fabric", ".coop"), { recursive: true });
+  mkdirSync(join(client, "elsewhere"), { recursive: true });
+  const contract = join(client, "fabric", ".coop", "project.yml");
+  writeFileSync(contract, "profile:\n  client: 'Contoso'\n");
+  const env = { COOP_DIR: profile };
+  assert.equal(findProjectContract(join(client, "elsewhere"), env), null, "nothing remembered, nothing found");
+  writeFileSync(join(profile, ".coop", "home-project.json"), JSON.stringify({ schema_version: 1, project_file: contract }));
+  assert.equal(findProjectContract(join(client, "elsewhere"), env), contract);
+  mkdirSync(join(client, "elsewhere", ".coop"));
+  writeFileSync(join(client, "elsewhere", ".coop", "project.yml"), "profile:\n  client: 'Own'\n");
+  assert.equal(findProjectContract(join(client, "elsewhere"), env), join(client, "elsewhere", ".coop", "project.yml"), "a contract above wins");
+  writeFileSync(join(profile, ".coop", "home-project.json"), JSON.stringify({ schema_version: 1, project_file: join(client, "fabric", "notes.yml") }));
+  assert.equal(findProjectContract(client, env) === join(client, "fabric", "notes.yml"), false, "only a .coop/project.yml counts");
+  rmSync(contract);
+  writeFileSync(join(profile, ".coop", "home-project.json"), JSON.stringify({ schema_version: 1, project_file: contract }));
+  assert.equal(findProjectContract(join(client, "profile"), env), null, "a remembered file that is gone counts for nothing");
+});
+
 await t("C1: opened in the folder that holds the repositories, the one repository inside it with a contract is used", async () => {
   const client = trackFixture(mkdtempSync(join(tmpdir(), "coop-c1-child-")));
   skipIfContaminated(client);
