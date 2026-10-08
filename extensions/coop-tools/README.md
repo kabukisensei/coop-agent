@@ -224,7 +224,7 @@ is what makes the agent perform the log step, while the warning exposes a miss.
 
 ## Compaction over the configured transport (`session_before_compact`)
 
-Pi 0.87.1 (and 1.0.0) builds its compaction request without the session's
+Pi 0.87.1 (and still 1.1.0) builds its compaction request without the session's
 `transport` setting, so the OpenAI Codex provider falls back to `auto` and opens
 a WebSocket for the summary even when `/settings` says `sse`; a large context
 then fails with `WebSocket idle timeout after 300000ms` (coop-agent #236). When

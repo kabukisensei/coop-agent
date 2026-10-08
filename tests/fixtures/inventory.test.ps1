@@ -316,7 +316,7 @@ sys.exit(1)
 import json, os, sys
 args = sys.argv[1:]
 if args[:1] == ['--version']:
-    print(os.environ.get('COOP_TEST_FAKE_PI_VERSION', '0.87.1')); sys.exit(0)
+    print(os.environ.get('COOP_TEST_FAKE_PI_VERSION', '1.1.0')); sys.exit(0)
 if args[:1] == ['install'] and len(args) >= 2:
     spec = args[1]
     rest = spec[4:] if spec.startswith('npm:') else spec
@@ -404,7 +404,7 @@ sys.exit(1)
   foreach ($lib in @('pi-ai', 'pi-tui', 'pi-coding-agent')) {
     $libDir = Join-Path $syncNpm "node_modules\@earendil-works\$lib"
     New-Item -ItemType Directory -Force -Path $libDir | Out-Null
-    [System.IO.File]::WriteAllText((Join-Path $libDir 'package.json'), ('{"name":"@earendil-works/' + $lib + '","version":"0.87.1"}'), $utf8)
+    [System.IO.File]::WriteAllText((Join-Path $libDir 'package.json'), ('{"name":"@earendil-works/' + $lib + '","version":"1.1.0"}'), $utf8)
   }
   # A retired extension left by an earlier release: in the tree and in settings.json.
   $retiredDir = Join-Path $syncNpm 'node_modules\context-mode'

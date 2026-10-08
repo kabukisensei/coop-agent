@@ -91,6 +91,32 @@ def ensure_coop_footer(path: Path) -> bool:
     return True
 
 
+# Pi 1.x ships a built-in MCP client next to pi-mcp-adapter. coop launches Pi
+# with --no-mcp, so it never runs in a coop session; the settings entry keeps it
+# off for anything else that reads this agent dir, and it is the entry
+# pi-mcp-adapter would otherwise add itself on first start, with a notice.
+BUILTIN_MCP = "builtin:mcp"
+
+
+def ensure_builtin_mcp_off(path: Path) -> bool:
+    """Keep `-builtin:mcp` in Pi's `extensions` list, and no other builtin:mcp entry.
+
+    Every other entry and setting is preserved. Returns True when the file changed.
+    """
+
+    settings, existing_mode = _read_json_object(path)
+    extensions = settings.get("extensions")
+    if not isinstance(extensions, list):
+        extensions = []
+    kept = [e for e in extensions if not (isinstance(e, str) and e.lstrip("+!-") == BUILTIN_MCP)]
+    wanted = kept + [f"-{BUILTIN_MCP}"]
+    if extensions == wanted:
+        return False
+    settings["extensions"] = wanted
+    _write_json_object(path, settings, existing_mode)
+    return True
+
+
 def ensure_packages(path: Path, sources: list[str]) -> bool:
     """Declare npm packages in `packages` the way `pi install` records them.
 
@@ -142,7 +168,7 @@ def _npm_package_name(source: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Converge Coop-owned Pi settings")
-    parser.add_argument("command", choices=("ensure-quiet-startup", "ensure-coop-footer", "ensure-packages"))
+    parser.add_argument("command", choices=("ensure-quiet-startup", "ensure-coop-footer", "ensure-packages", "ensure-builtin-mcp-off"))
     parser.add_argument("settings", type=Path)
     parser.add_argument("sources", nargs="*", help="ensure-packages: npm:<name>@<pin> entries")
     args = parser.parse_args(argv)
@@ -150,6 +176,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "ensure-coop-footer":
             ensure_coop_footer(args.settings)
+        elif args.command == "ensure-builtin-mcp-off":
+            ensure_builtin_mcp_off(args.settings)
         elif args.command == "ensure-packages":
             ensure_packages(args.settings, list(args.sources))
         else:
