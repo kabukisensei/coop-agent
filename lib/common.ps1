@@ -3132,6 +3132,9 @@ function Find-CoopProjectYml {
   # C1: the contract this launch resolved, else the client home repository
   # beside this one (its contract lists this repository).
   if ($env:COOP_PROJECT_YML -and (Test-Path -LiteralPath $env:COOP_PROJECT_YML -PathType Leaf)) { return $env:COOP_PROJECT_YML }
+  # This Windows user's remembered project file (the client's one file).
+  $remembered = Get-CoopHomeProjectFile
+  if ($remembered) { return $remembered }
   $sibling = Find-CoopSiblingContract $StartDir
   if ($sibling) { return $sibling }
   $child = Find-CoopChildContract $StartDir
@@ -3320,16 +3323,92 @@ function Find-CoopChildContract {
   return ''
 }
 
-# The project file a launch from $StartDir uses: the nearest one at or above it,
-# else the client home repository beside it, else the one repository inside it.
-# '' when none, or when several repositories inside it have one (no guessing).
-function Find-CoopLaunchContract {
+# The client's one project file, remembered per Windows user (one Windows user
+# per client): <profile dir>\home-project.json names the .coop\project.yml in the
+# client home repository. A launch that finds a project file records it when none
+# is recorded yet (Save-CoopHomeProjectFile); `coop project home <folder>` sets it.
+# From then on a launch from any folder without a project file above it uses it,
+# so the shortcut finds the file wherever it opens (Aaron, 2026-10-08).
+function Get-CoopHomeProjectRecordPath { return (Join-Path (Get-CoopProfileDir) 'home-project.json') }
+
+# True when $Path is a client project file coop may remember: an existing
+# <repo>\.coop\project.yml outside any coop-agent checkout (whose file is coop's
+# own sample contract).
+function Test-CoopHomeProjectCandidate {
+  param([string]$Path)
+  if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+  $full = [System.IO.Path]::GetFullPath($Path)
+  if ((Split-Path -Leaf $full) -ne 'project.yml') { return $false }
+  $coopDir = Split-Path -Parent $full
+  if ((Split-Path -Leaf $coopDir) -ne '.coop') { return $false }
+  if (Test-CoopCheckout (Split-Path -Parent $coopDir)) { return $false }
+  return $true
+}
+
+# The remembered project file, or '' when none is recorded or it is gone.
+function Get-CoopHomeProjectFile {
+  $record = Get-CoopHomeProjectRecordPath
+  if (-not (Test-Path -LiteralPath $record -PathType Leaf)) { return '' }
+  try {
+    $value = [string]((Get-Content -LiteralPath $record -Raw | ConvertFrom-Json).project_file)
+  } catch { return '' }
+  if (Test-CoopHomeProjectCandidate $value) { return [System.IO.Path]::GetFullPath($value) }
+  return ''
+}
+
+# The recorded path even when its file is gone (for the notes), or ''.
+function Get-CoopHomeProjectRecorded {
+  $record = Get-CoopHomeProjectRecordPath
+  if (-not (Test-Path -LiteralPath $record -PathType Leaf)) { return '' }
+  try { return [string]((Get-Content -LiteralPath $record -Raw | ConvertFrom-Json).project_file) } catch { return '' }
+}
+
+# Remember $Path as this Windows user's project file. Returns $true when written.
+function Save-CoopHomeProjectFile {
+  param([string]$Path)
+  if (-not (Test-CoopHomeProjectCandidate $Path)) { return $false }
+  $record = Get-CoopHomeProjectRecordPath
+  try {
+    $dir = Split-Path -Parent $record
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    $json = ([ordered]@{ schema_version = 1; project_file = [System.IO.Path]::GetFullPath($Path) } | ConvertTo-Json -Compress)
+    [System.IO.File]::WriteAllText($record, $json + "`n", (New-Object System.Text.UTF8Encoding $false))
+    return $true
+  } catch { return $false }
+}
+
+# The project file a search from $StartDir finds, without the remembered one: the
+# nearest one at or above it, else the client home repository beside it, else
+# the one repository inside it. '' when none, or several inside it (no guessing).
+function Find-CoopSearchedContract {
   param([string]$StartDir = (Get-Location).Path)
   $above = Find-CoopContractAbove $StartDir
   if ($above) { return $above }
   $sibling = Find-CoopSiblingContract $StartDir
   if ($sibling) { return $sibling }
   return (Find-CoopChildContract $StartDir)
+}
+
+# The project file a launch from $StartDir uses: the one at or above it (a
+# repository opened directly keeps its own file), else this Windows user's
+# remembered one, else the home repository beside it or the one repository inside it.
+function Find-CoopLaunchContract {
+  param([string]$StartDir = (Get-Location).Path)
+  $above = Find-CoopContractAbove $StartDir
+  if ($above) { return $above }
+  $remembered = Get-CoopHomeProjectFile
+  if ($remembered) { return $remembered }
+  return (Find-CoopSearchedContract $StartDir)
+}
+
+# Record the project file this launch found when none is recorded yet, so later
+# launches from anywhere use it. Returns the path recorded, or ''.
+function Register-CoopHomeProjectFile {
+  param([string]$StartDir = (Get-Location).Path)
+  if (Get-CoopHomeProjectFile) { return '' }
+  $found = Find-CoopSearchedContract $StartDir
+  if ($found -and (Save-CoopHomeProjectFile $found)) { return [System.IO.Path]::GetFullPath($found) }
+  return ''
 }
 
 # Warn when $StartDir is in no repository and several repositories inside it have
@@ -3339,10 +3418,11 @@ function Write-CoopSeveralContractsWarning {
   param([string]$StartDir = (Get-Location).Path)
   if (Find-CoopContractAbove $StartDir) { return }
   if (Find-CoopGitRoot $StartDir) { return }
+  if (Get-CoopHomeProjectFile) { return }
   $several = @(Get-CoopChildContracts $StartDir)
   if ($several.Count -le 1) { return }
   $names = (@($several | ForEach-Object { Get-CoopChildRepositoryName $_ $StartDir })) -join ', '
-  Coop-Warn "no project file for this folder: several repositories inside it have one ($names). Open coop in the repository you mean; until then the Warehouse target is blank and writes are refused."
+  Coop-Warn "no project file for this folder: several repositories inside it have one ($names). Open coop once in the client's home repository (coop remembers it), or run: coop project home <folder>. Until then the Warehouse target is blank and writes are refused."
 }
 
 # Hand the resolved contract to Pi and the window (COOP_PROJECT_YML) when it
@@ -3353,8 +3433,7 @@ function Set-CoopProjectYmlEnv {
   param([string]$StartDir = (Get-Location).Path)
   Remove-Item Env:COOP_PROJECT_YML -ErrorAction SilentlyContinue
   if (Find-CoopContractAbove $StartDir) { return '' }
-  $sibling = Find-CoopSiblingContract $StartDir
-  if (-not $sibling) { $sibling = Find-CoopChildContract $StartDir }
+  $sibling = Find-CoopLaunchContract $StartDir
   if ($sibling) { $env:COOP_PROJECT_YML = $sibling }
   return $sibling
 }
