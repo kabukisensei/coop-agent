@@ -588,6 +588,12 @@ second one), then share it with
 own, after your yes and only for that file. Use `coop init --template` only when
 you intentionally want the full legacy template.
 
+Each Windows user has one client, so coop remembers that client's project file:
+the first launch that finds it (from the repository or the folder above it)
+records it in `~/.coop/home-project.json`, and every later launch from any folder
+uses it, unless a repository opened directly has its own. `coop project home`
+shows it and `coop project home <folder>` sets it.
+
 Fabric projects may use two workspaces per environment. Record Warehouse/Lakehouse
 DEV/TEST/PROD workspaces in `fabric.environment_names` and semantic-model
 DEV/TEST/PROD workspaces in `power_bi.environment_names`; keep both default workspace

@@ -5,6 +5,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- One remembered project file per Windows user (one Windows user per client;
+  Aaron, 2026-10-08). The first launch that finds a client's `.coop/project.yml`
+  (from the repository or the folder above it) records it in
+  `~/.coop/home-project.json`. Every later launch from any folder (the window
+  shortcut, the picker, the terminal) uses it unless a repository opened
+  directly has its own. A folder holding several repositories with project files
+  no longer needs a guess once one is remembered. `coop project home` shows it;
+  `coop project home <folder>` sets it. A remembered file that is gone leaves the
+  Warehouse target blank, writes refused, with a warning saying what to run.
+
 ## [0.34.1] — 2026-10-07
 
 ### Fixed

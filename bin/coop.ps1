@@ -186,10 +186,37 @@ function Invoke-CoopCatalog {
 # (master plan C1). `share` is the one Git write coop performs on its own: it
 # stages and commits .coop/project.yml alone and pushes the current branch, after
 # the yes `coop init` or the user gave; everything runs in lib/project-share.mjs.
+# `coop project home [<folder>]`: show, or set, this Windows user's project file
+# (the client's one .coop\project.yml, which every launch from any folder uses
+# when none is above the folder). <folder> is the client home repository, or any
+# folder inside it.
+function Invoke-CoopProjectHome {
+  param([string[]]$Rest = @())
+  if ($Rest.Count -gt 1) { Coop-Die 'usage: coop project home [<folder>]' }
+  if ($Rest.Count -eq 0) {
+    $current = Get-CoopHomeProjectFile
+    if ($current) { Coop-Ok "project file for every launch: $current"; return 0 }
+    $recorded = Get-CoopHomeProjectRecorded
+    if ($recorded) { Coop-Warn "the remembered project file is gone: $recorded. Set it: coop project home <folder>"; return 1 }
+    Coop-Info 'no project file remembered yet: the next launch that finds one remembers it, or run: coop project home <folder>'
+    return 0
+  }
+  $folder = $Rest[0]
+  if (-not (Test-Path -LiteralPath $folder -PathType Container)) { Coop-Die "folder not found: $folder" }
+  $folder = (Resolve-Path -LiteralPath $folder).ProviderPath
+  $found = Find-CoopContractAbove $folder
+  if (-not $found) { $found = Find-CoopChildContract $folder }
+  if (-not $found -or -not (Save-CoopHomeProjectFile $found)) { Coop-Die "no client project file (.coop\project.yml) in or above $folder. Open the client's home repository folder." }
+  Coop-Ok "coop will use this project file wherever it opens: $([System.IO.Path]::GetFullPath($found))"
+  Coop-Info 'Restart coop (or open a new window) to use it.'
+  return 0
+}
+
 function Invoke-CoopProject {
   param([string[]]$Rest = @())
   $sub = if ($Rest.Count) { $Rest[0] } else { 'status' }
-  if (@('status', 'get', 'share') -notcontains $sub) { Coop-Die "usage: coop project <status|get|share> [--root <dir>] [--force]" }
+  if ($sub -eq 'home') { return (Invoke-CoopProjectHome @($Rest | Select-Object -Skip 1)) }
+  if (@('status', 'get', 'share') -notcontains $sub) { Coop-Die "usage: coop project <status|get|share|home> [--root <dir>] [--force]" }
   if (-not (Test-Have 'node')) { Coop-Die 'Node.js is required for: coop project. Run: coop install' }
   $root = (Get-Location).Path
   $extra = @()
@@ -388,6 +415,8 @@ $(Coop-Bold)Authoring$(Coop-Rst)
   coop project status|get|share
                             The team's .coop/project.yml: compare with origin, get it, or share it
                             (share commits that one file and pushes; --force on a non-default branch)
+  coop project home [folder]
+                            Show or set this Windows user's project file, used wherever coop opens
   coop new-skill <name>     Scaffold skills/<name>/SKILL.md (shipped tier)
                             (--client: .coop/skills beside the contract; --personal: ~/.coop/skills)
   coop new-prompt <name>    Scaffold prompts/<name>.md (shipped tier; --client / --personal as above)
@@ -697,7 +726,9 @@ function Invoke-CoopPiProcess {
   # the Python helpers read the same file.
   $sibling = Set-CoopProjectYmlEnv
   if ($sibling) {
-    if (-not (Find-CoopGitRoot (Get-Location).Path)) { Coop-Info "project file: $sibling (the repository $(Get-CoopChildRepositoryName $sibling) inside this folder holds it)" }
+    $searched = Find-CoopSearchedContract (Get-Location).Path
+    if (-not $searched -or ([System.IO.Path]::GetFullPath($searched) -ne [System.IO.Path]::GetFullPath($sibling))) { Coop-Info "project file: $sibling (this Windows user's project file, remembered by coop; change it with: coop project home <folder>)" }
+    elseif (-not (Find-CoopGitRoot (Get-Location).Path)) { Coop-Info "project file: $sibling (the repository $(Get-CoopChildRepositoryName $sibling) inside this folder holds it)" }
     else { Coop-Info "project file: $sibling (the client home repository beside this one lists this repository)" }
   } else {
     Write-CoopSeveralContractsWarning (Get-Location).Path
@@ -754,6 +785,14 @@ function Initialize-CoopLaunch {
   # (`coop update`, the window's first launch). Fail-soft: the token helper
   # below reports whatever the config still says.
   $script:CoopMcpConfig = ''
+  # The client's one project file (one Windows user per client): the first launch
+  # that finds it remembers it, so later launches from any folder use it.
+  $recorded = Register-CoopHomeProjectFile (Get-Location).Path
+  if ($recorded) { Coop-Info "coop will use this project file wherever it opens: $recorded   (change it with: coop project home <folder>)" }
+  $remembered = Get-CoopHomeProjectRecorded
+  if ($remembered -and -not (Get-CoopHomeProjectFile) -and -not (Find-CoopSearchedContract (Get-Location).Path)) {
+    Coop-Warn "the remembered project file is gone: $remembered. Open coop in the client's home repository, or run: coop project home <folder>. Until then the Warehouse target is blank and writes are refused."
+  }
   # The window shows this as a notice (its console closes); the terminal prints it
   # just before Pi starts (Invoke-CoopPiProcess).
   if ($Window) { Write-CoopSeveralContractsWarning (Get-Location).Path }
