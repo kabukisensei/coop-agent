@@ -806,6 +806,26 @@ await t("direct adapter tools (directTools) are gated like proxied calls", async
   // coop's own native fallback tool is not an adapter direct tool.
   assert.equal(effectiveMutationTarget({ toolName: "fabric_sql_query", input: { sql: "select 1" } }).server, undefined);
 });
+await t("Fabric routers called by their listed names (fabric_core, fabric_onelake) are gated like the bare names", async () => {
+  await handleSessionStart({}, ctx);
+  let asked = 0;
+  const ui = { notify: () => {}, confirm: async () => { asked++; return false; }, select: async (_t, options) => { asked++; return options[options.length - 1]; } };
+  const c = { ...ctx, ui };
+  // pi-mcp-adapter lists the Fabric routers as fabric_core, fabric_onelake, ... and dispatches that spelling too.
+  const call = (toolName, input) => ({ toolName, input });
+  assert.equal(effectiveMutationTarget(call("mcp", { server: "fabric", tool: "fabric_core", args: { command: "core_create-item" } })).innerTool, "core_create-item");
+  assert.equal(effectiveMutationTarget(call("mcp", { tool: "fabric_onelake", args: { command: "onelake_delete-file" } })).server, "fabric");
+  assert.equal(blocked(await handle(call("mcp", { server: "fabric", tool: "fabric_core", args: { command: "core_create-item", workspace: "dev" } }), c)), true);
+  assert.equal(asked, 1);
+  assert.equal(blocked(await handle(call("mcp__fabric", { tool: "fabric_onelake", args: { command: "onelake_delete-file", workspace: "dev" } }), c)), true);
+  assert.equal(asked, 2);
+  assert.equal(blocked(await handle(call("mcp", { tool: "fabric_onelake", args: { command: "onelake_upload-file", workspace: "dev" } }), c)), true);
+  assert.equal(asked, 3);
+  assert.equal(blocked(await handle(call("mcp", { server: "fabric", tool: "fabric_core", args: { command: "core_search-catalog" } }), c)), false);
+  assert.equal(asked, 3, "a prefixed read still passes");
+  assert.equal(blocked(await handle(call("mcp", { server: "fabric", tool: "fabric_core", args: { command: "core_create-item" } }), { cwd: ctx.cwd, hasUI: false })), true);
+  await handleSessionStart({}, ctx);
+});
 await t("mcpScript is blocked: its MCP calls bypass the tool_call hook", async () => {
   let asked = 0;
   const ui = { confirm: async () => { asked++; return true; }, notify: () => {} };
@@ -2367,6 +2387,50 @@ await t("G1: without a human unlock a production write is blocked with no prompt
     assert.equal(blocked(await call('az rest --method get --url "https://api.fabric.microsoft.com/v1/workspaces/prod"', { confirm: false })), false);
   } finally {
     inputAnswer = undefined;
+    if (savedCoopDir === undefined) delete process.env.COOP_DIR; else process.env.COOP_DIR = savedCoopDir;
+    writeManagedTarget();
+    await handleSessionStart({ reason: "new" }, liveCtx);
+  }
+});
+
+await t("an unconfirmed Warehouse target is still refused, and the refusal says why and what to do (2026-10-07)", async () => {
+  removeUnlock();
+  const savedCoopDir = process.env.COOP_DIR;
+  process.env.COOP_DIR = UNLOCK_HOME;
+  try {
+    const sqlWrite = (query) => ({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify({ query }) } });
+    process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+    confirmAnswer = true;
+    // coop opened in a folder with no project file it could use: the target is blank.
+    writeManagedTarget({ scope: "global", workspace_id: "", item_id: "", item_type: "", environment: "", client: "", tenant_id: "", item_name: "", reason: "no_project_file" });
+    await handleSessionStart({ reason: "new" }, liveCtx);
+    confirmCount = 0;
+    let r = await handle(sqlWrite("ALTER VIEW dbo.V AS SELECT 1 AS x"), liveCtx);
+    assert.equal(blocked(r), true, "a blank target never writes");
+    assert.equal(confirmCount, 0, "no prompt");
+    assert.match(r.reason, /treated as production and blocked/);
+    assert.match(r.reason, /found no project file for the folder it was opened in/);
+    assert.match(r.reason, /open it in the repository that holds the project file/);
+    // A project file without a default Warehouse.
+    writeManagedTarget({ scope: "global", workspace_id: "", item_id: "", item_type: "", environment: "", reason: "missing_unambiguous_project_ids" });
+    await handleSessionStart({ reason: "new" }, liveCtx);
+    r = await handle(sqlWrite("UPDATE dbo.T SET a = 1"), liveCtx);
+    assert.equal(blocked(r), true);
+    assert.match(r.reason, /names no default Warehouse/);
+    // An item whose workspace the project file does not label dev or test.
+    writeManagedTarget({ environment: "" });
+    await handleSessionStart({ reason: "new" }, liveCtx);
+    r = await handle(sqlWrite("UPDATE dbo.T SET a = 1"), liveCtx);
+    assert.equal(blocked(r), true);
+    assert.match(r.reason, /does not label this Warehouse's workspace as dev or test/);
+    // A labelled production target keeps the plain production refusal.
+    writeManagedTarget({ environment: "production" });
+    await handleSessionStart({ reason: "new" }, liveCtx);
+    r = await handle(sqlWrite("UPDATE dbo.T SET a = 1"), liveCtx);
+    assert.equal(blocked(r), true);
+    assert.match(r.reason, /Production writes are blocked/);
+    assert.equal(confirmCount, 0, "none of these asks");
+  } finally {
     if (savedCoopDir === undefined) delete process.env.COOP_DIR; else process.env.COOP_DIR = savedCoopDir;
     writeManagedTarget();
     await handleSessionStart({ reason: "new" }, liveCtx);

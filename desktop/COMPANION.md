@@ -178,6 +178,15 @@ snapshot or replay has arrived, and it never re-sends an answer it is unsure
 about: an unacknowledged answer is retried with the same `submissionId`, which
 returns the first outcome, or shown as resolved by the snapshot.
 
+**In the background.** iOS and Android suspend a page in the background, so the
+stream cannot stay open there. The phone closes it on purpose when it goes to
+the background (`visibilitychange`, `pagehide`), so the window knows it is not
+watching and sends a notice when coop asks or finishes (MC11). Back in front
+(`visibilitychange`, `pageshow`, `online`), it reopens the stream from the last
+event it saw: the window replays what happened meanwhile, without redrawing
+the page or showing "offline". A dropped stream in front gets one quiet retry
+from the last event before the page shows "offline".
+
 **Honest status.** The phone shows *running*, *idle*, *exited* (Pi ended; the
 desktop must restart it) or *disconnected* (no stream). A lost connection is
 never read as an answer or as approval.

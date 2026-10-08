@@ -36,6 +36,7 @@ import { bootstrapProcess, doctorReport, findCoop, folderArgument, packagedPaths
 import { describeProject, forgetProject, projectEntries, rememberProject, startFolder, windowTitle } from "./lib/projects.mjs";
 import { menuTemplate, notificationFor } from "./lib/menu.mjs";
 import { restartOnce } from "./lib/restart.mjs";
+import { APP_ID, taskbarDetails } from "./lib/app-identity.mjs";
 import { CompanionHub } from "./lib/companion-hub.mjs";
 import { DeviceStore } from "./lib/companion-devices.mjs";
 import { createCompanionServer, DEFAULT_PORT } from "./lib/companion-server.mjs";
@@ -52,6 +53,15 @@ const RENDERER = join(HERE, "renderer");
 // pdf.js and the PDF script unpacked beside the asar (packagedPaths).
 const REPO = join(HERE, "..");
 const PACKAGED = app.isPackaged;
+// The package's app id (its installer writes it on the Start Menu shortcut), so
+// Windows ties the package's windows and notifications to that shortcut and its
+// icon. Each window also carries the id and a shell-readable icon (lib/app-identity.mjs).
+if (process.platform === "win32" && PACKAGED) app.setAppUserModelId(APP_ID);
+/** Give a window coop's taskbar identity: its icon and relaunch command (Windows). */
+function setTaskbarIdentity(win) {
+  if (process.platform !== "win32") return;
+  try { win.setAppDetails(taskbarDetails({ packaged: PACKAGED, execPath: process.execPath, repo: REPO, systemRoot: process.env.SystemRoot })); } catch { /* the window still opens */ }
+}
 // Chromium's own log lines (the GPU process's "GetGpuDriverOverlayInfo: Failed
 // to retrieve video device" on some Windows drivers) otherwise land in the
 // terminal that ran `coop desktop`. They are not coop's and change nothing;
@@ -293,7 +303,10 @@ function openWindow(rawSpec, token) {
     icon: existsSync(join(HERE, "..", "themes", "coop.ico")) ? join(HERE, "..", "themes", "coop.ico") : undefined,
     webPreferences: { ...tabPreferences(), spellcheck: false },
   });
+  setTaskbarIdentity(win);
   const frame = { win, id: win.id, tabs: [], active: null, stripReady: false, title: win.getTitle() };
+  // The tab strip page's <title> would replace the project title in the taskbar.
+  win.on("page-title-updated", (event) => event.preventDefault());
   frames.set(frame.id, frame);
   // The picker remembers every folder a window opened (D1m), newest first.
   try { settings = saveSettings(settingsFile, rememberProject({ ...settings, lastFolder: spec.cwd }, spec.cwd)); } catch { /* keep going */ }
@@ -742,6 +755,7 @@ function pickProject(parent) {
       icon: existsSync(join(HERE, "..", "themes", "coop.ico")) ? join(HERE, "..", "themes", "coop.ico") : undefined,
       webPreferences: { preload: join(HERE, "preload.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, devTools: process.env.COOP_DESKTOP_DEVTOOLS === "1" },
     });
+    setTaskbarIdentity(picker.win);
     picker.win.once("ready-to-show", () => picker.win.show());
     picker.win.on("closed", () => { picker.win = null; const done = picker.resolve; picker.resolve = null; if (done) done(""); });
     picker.win.loadURL(`${APP_ORIGIN}/picker.html`);
@@ -1302,6 +1316,7 @@ if (process.argv.includes("--doctor")) {
 // <folder>`): ask the terminal coop for one. coop.ps1 starts this exe again
 // with the spec; that process hands it over through the single-instance lock
 // (second-instance below) and this one opens the window.
+let booting = false;
 async function bootstrap() {
   // The package's own coop snapshot (D1d) answers first; a terminal coop only
   // for a package that carries none.
@@ -1328,15 +1343,42 @@ async function bootstrap() {
     return;
   }
   const child = spawn(proc.command, proc.args, proc.options);
+  booting = true;
   child.on("error", (error) => {
+    booting = false;
     dialog.showErrorBox("coop", `coop could not start its window: ${error.message}`);
     app.quit();
   });
-  child.on("exit", () => {
-    // The console showed coop's own message on a failure; on success the
-    // window is open by now, or another window process took the spec.
-    setTimeout(() => { if (!windows.size) app.quit(); }, 5000);
+  child.on("exit", (code) => {
+    booting = false;
+    // The console showed coop's own message on a failure (and waited for
+    // Enter); on success the window is open by now. A clean exit with no
+    // window is never silent (D1k: a shortcut that "never opens").
+    setTimeout(() => {
+      if (frames.size || (picker.win && !picker.win.isDestroyed())) return;
+      if (code === 0) dialog.showErrorBox("coop", "coop finished starting but no window opened.\n\nStart coop again from its shortcut. If it happens again, run coop doctor in a terminal and send its output to your coop admin.");
+      app.quit();
+    }, 5000);
   });
+}
+
+// The shortcut clicked while coop is already running: never a silent no-op
+// (D1k). Bring the open window (or the project picker) forward, say so while
+// the first launch's console is still setting up, else start again.
+function onShortcutAgain() {
+  if (picker.win && !picker.win.isDestroyed()) { picker.win.show(); picker.win.focus(); return; }
+  const frame = [...frames.values()].pop();
+  if (frame && frame.win && !frame.win.isDestroyed()) {
+    if (frame.win.isMinimized()) frame.win.restore();
+    frame.win.show();
+    frame.win.focus();
+    return;
+  }
+  if (booting) {
+    dialog.showMessageBox({ type: "info", title: "coop", message: "coop is still starting.", detail: "Its console window is setting things up; the coop window opens when it finishes." }).catch(() => {});
+    return;
+  }
+  bootstrap();
 }
 
 if (!app.requestSingleInstanceLock({ spec: initial.spec, token: initial.token })) {
@@ -1344,8 +1386,12 @@ if (!app.requestSingleInstanceLock({ spec: initial.spec, token: initial.token })
   app.quit();
 } else {
   app.on("second-instance", (_event, _argv, _cwd, data) => {
-    picker.awaitingSpec = false;
-    if (data && typeof data.spec === "string" && data.spec) openWindow(data.spec, typeof data.token === "string" ? data.token : "");
+    if (data && typeof data.spec === "string" && data.spec) {
+      picker.awaitingSpec = false;
+      openWindow(data.spec, typeof data.token === "string" ? data.token : "");
+    } else if (PACKAGED) {
+      onShortcutAgain();
+    }
   });
   app.whenReady().then(() => {
     installMenu();

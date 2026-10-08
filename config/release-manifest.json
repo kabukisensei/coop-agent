@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "coop_version": "0.33.0",
+  "coop_version": "0.34.2",
   "node": {
     "min": "22.19.0"
   },
@@ -9,7 +9,7 @@
     "version": "0.87.1"
   },
   "extensions": {
-    "pi-mcp-adapter": "3.3.0",
+    "pi-mcp-adapter": "5.1.0",
     "pi-hermes-memory": "0.9.9",
     "pi-better-openai": "0.1.22",
     "pi-web-access": "0.35.0",
@@ -38,6 +38,28 @@
     "node": {
       "version": "22.19.0",
       "sha256": "ea3fad0e67a991d8477d8c01344b56e69c676ccb733f065b22436994b1253f86"
+    },
+    "git": {
+      "version": "2.56.0",
+      "sha256": "064b440ff870ed5198527e8f3a92cdf5bd2fd0fedf5e718af95e3fdaddeff718"
+    },
+    "python": {
+      "version": "3.13.16",
+      "sha256": "95fad176338f1d6a799e45946488063f4aa61764e6cff2f132ddeffbf7a04c34"
+    },
+    "azure_cli": {
+      "version": "2.91.0",
+      "sha256": "c0c49639a96d8c0dfb9973cfe08c97c5eeb69be050102138ede806285e6fcf1f"
+    },
+    "odbc": {
+      "version": "18.6.2.1",
+      "url": "https://download.microsoft.com/download/7bf9fad4-0f21-486d-a750-fc990ded5624/amd64/1033/msodbcsql.msi",
+      "sha256": "20314529110da3365a252164a657bdc837a18be5839105aa5f5acf0a8d2f4b82"
+    },
+    "vc_redist": {
+      "version": "14.50.35719.0",
+      "url": "https://download.visualstudio.microsoft.com/download/pr/6f02464a-5e9b-486d-a506-c99a17db9a83/8995548DFFFCDE7C49987029C764355612BA6850EE09A7B6F0FDDC85BDC5C280/VC_redist.x64.exe",
+      "sha256": "8995548dfffcde7c49987029c764355612ba6850ee09a7b6f0fddc85bdc5c280"
     }
   },
   "mcp_servers": {

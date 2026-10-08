@@ -144,7 +144,13 @@ function Show-CoopPrereqs([object[]]$Rows) {
 
 # --prereqs auto: run each missing REQUIRED row's printed command, in table order,
 # with its output and exit code visible. Optional rows are never auto-installed.
+# A winget step runs unattended: the table's command plus winget's agreement
+# flags (the same ones Ensure-CoopFabricOdbcDriver passes), because the console
+# that runs this may have no keyboard (the window's first launch) and winget
+# would otherwise wait on its source-agreement question. The user's yes is the
+# --prereqs auto flag, the answer to the offer, or the window installer itself.
 function Invoke-CoopPrereqInstall([object[]]$Rows) {
+  $wingetSaid = $false
   foreach ($r in $Rows) {
     if ($r.Ok -or -not $r.Required -or $r.Fix -like 'see *') { continue }
     foreach ($step in ($r.Fix -split ' then ')) {
@@ -152,6 +158,10 @@ function Invoke-CoopPrereqInstall([object[]]$Rows) {
       if ($env:OS -eq 'Windows_NT') {
         $parts = @($step -split ' ')
         if (-not (Test-Have $parts[0])) { Coop-Warn "$($parts[0]) is not available" "run it yourself: $step"; break }
+        if ($parts[0] -eq 'winget' -and $parts[1] -eq 'install') {
+          if (-not $wingetSaid) { Coop-Info 'winget runs unattended: its source and package agreements are accepted for you (https://aka.ms/winget-agreements)'; $wingetSaid = $true }
+          $parts += @('--source', 'winget', '--accept-source-agreements', '--accept-package-agreements')
+        }
         & $parts[0] @($parts | Select-Object -Skip 1)
       } else {
         & sh -c $step
@@ -170,6 +180,26 @@ function Invoke-CoopPrereqInstall([object[]]$Rows) {
     $pyManager = Join-Path $env:LOCALAPPDATA 'Python\bin'
     if ((Test-Path -LiteralPath $pyManager) -and (($env:PATH -split ';') -notcontains $pyManager)) { $env:PATH = "$pyManager;$env:PATH" }
   }
+}
+
+# The offer is made only where Invoke-CoopPrereqInstall can act: the platform's
+# installer on PATH (winget on Windows, brew on macOS; the apt rows need sudo and
+# stay printed commands) and a console whose stdin is a keyboard, or --yes,
+# which answers the question without one.
+function Test-CoopPrereqInstallOffered {
+  if ([Console]::IsInputRedirected -and $env:COOP_ASSUME_YES -ne '1') { return $false }
+  if ($env:OS -eq 'Windows_NT') { return [bool](Test-Have 'winget') }
+  if ([string](& uname -s 2>$null) -eq 'Darwin') { return [bool](Test-Have 'brew') }
+  return $false
+}
+# A yes-by-default question: Enter or y/yes is yes, anything else is no.
+# (Coop-Confirm is no-by-default and guards destructive actions; this one
+# guards an install the user asked for by starting coop.)
+function Read-CoopYesDefault([string]$Prompt) {
+  [Console]::Error.Write("$($script:C_OLIVE)$Prompt$($script:C_RST) [Y/n] ")
+  $ans = [Console]::In.ReadLine()
+  if ($null -eq $ans) { return $false }
+  return ($ans.Trim() -eq '' -or $ans.Trim() -match '^(y|yes)$')
 }
 
 Coop-Head "Cooptimize agent bootstrap (v$($script:CoopVersion))  [$OS]"
@@ -193,20 +223,44 @@ if (Test-CoopBundledRuntime) {
   $installCmd = "& `"$(Join-Path $script:CoopRoot 'bin\coop.cmd')`" install"
   $rerunHint = "double-click Install coop.cmd again (or run: $installCmd)"
 }
+# One install (master plan D1k): at an interactive console with an installer
+# available, a missing required row is offered for installation right here
+# (the same commands the table prints, run visibly), so the window's first
+# launch, Install coop.cmd and the terminal bootstrap each get a teammate
+# fully set up without a second visit. Enter accepts; `n` keeps the old stop.
+# A redirected stdin (CI, scripts) never prompts and behaves as before.
+if ($prereqMissing -gt 0 -and -not $PREREQS_AUTO -and -not $NO_PREREQS -and (Test-CoopPrereqInstallOffered)) {
+  if ($env:COOP_ASSUME_YES -eq '1' -or (Read-CoopYesDefault 'Install the missing prerequisites now? (the system may ask for permission)')) { $PREREQS_AUTO = $true }
+  else { Coop-Info 'not installing them here' }
+}
 if ($prereqMissing -gt 0 -and $PREREQS_AUTO -and -not $NO_PREREQS) {
   Invoke-CoopPrereqInstall $prereqRows
   Coop-Head 'Prerequisites (re-checked)'
   $prereqMissing = Show-CoopPrereqs (Get-CoopPrereqs $NO_FABRIC)
-  if ($prereqMissing -gt 0) { Coop-Err "$prereqMissing required prerequisite(s) still missing — install the $($script:G_CROSS) rows above in that order." }
-  Coop-Warn "Open a NEW terminal so the new tools are on PATH, then $rerunHint"
-  exit 1
+  if ($prereqMissing -gt 0) {
+    Coop-Err "$prereqMissing required prerequisite(s) still missing — install the $($script:G_CROSS) rows above in that order."
+    Coop-Warn "Open a NEW terminal so the new tools are on PATH, then $rerunHint"
+    exit 1
+  }
+  # Every row passed on the PATH re-read from the registry, so this run goes on
+  # (new terminals see the same PATH). A later step that still cannot find a
+  # just-installed tool says so, and the rerun hint below applies.
+  Coop-Ok 'all prerequisites present, continuing in this window'
+  Coop-Info "if a later step cannot find a tool installed just now, open a NEW terminal, then $rerunHint"
 }
 if ($prereqMissing -gt 0) {
   if ($NO_PREREQS) {
     Coop-Warn "$prereqMissing required prerequisite(s) missing (--no-prereqs: continuing anyway)"
   } else {
     Coop-Err "$prereqMissing required prerequisite(s) missing. Install the $($script:G_CROSS) rows above in that order, open a NEW terminal, then $rerunHint"
-    Coop-Say "      (or let coop run those commands for you: $installCmd --prereqs auto)"
+    if ($env:OS -eq 'Windows_NT' -and -not (Test-Have 'winget')) {
+      # No winget (a locked-down or client machine): the printed winget lines and
+      # --prereqs auto cannot work here, and the coop window installer carries
+      # every prerequisite (master plan D1k), so point there instead.
+      Coop-Say "      (no winget on this machine: the coop window installer carries every prerequisite; run: irm https://raw.githubusercontent.com/kabukisensei/coop-agent/main/scripts/bootstrap.ps1 | iex)"
+    } else {
+      Coop-Say "      (or let coop run those commands for you: $installCmd --prereqs auto)"
+    }
     exit 1
   }
 } else {
@@ -255,7 +309,7 @@ try {
     # injection and the driver check; the unit already counted the failure (#213).
     if (-not $script:CoopUnitLastOk) { Coop-Warn 'skipping the Fabric Python runtime (Fabric CLI did not converge)' }
     elseif (-not (Sync-CoopFabricPythonPackages $EDGE)) { Coop-Warn 'failed to converge the Fabric Python runtime'; $script:InstallFailures++ }
-    elseif (-not (Ensure-CoopFabricOdbcDriver (-not $NO_PREREQS))) { Coop-Warn 'Fabric SQL fallback is not ready'; $script:InstallFailures++ }
+    elseif (-not (Ensure-CoopFabricOdbcDriver (-not $NO_PREREQS) $PREREQS_AUTO)) { Coop-Warn 'Fabric SQL fallback is not ready'; $script:InstallFailures++ }
   }
 
   # --- 4. Python tools (pipx) -----------------------------------------------

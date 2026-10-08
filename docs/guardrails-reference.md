@@ -61,7 +61,7 @@ The adapter's `mcpScript` tool is off and blocked. It runs JavaScript that calls
 
 **One approval at a time.** coop checks tool calls one at a time, so only one approval dialog is open at once, and a call that waited behind a session approval doesn't ask again. Pi 0.99's codemode scripts can issue several calls at once.
 
-The adapter's direct tools (`directTools` on a server entry, registering every server tool as `<server>_<tool>`) are off on coop's managed servers, and `coop sync` switches a user-enabled flag back off. If one is on anyway, the guardrail maps a direct `fabric_onelake`, `fabric_core`, `azure-devops_…` or `powerbi-modeling-mcp_…` call to its server and remote tool and gates it exactly like the proxied call.
+The adapter's direct tools (`directTools` on a server entry, registering every server tool as `<server>_<tool>`) are off on coop's managed servers, and `coop sync` switches a user-enabled flag back off. If one is on anyway, the guardrail maps a direct `fabric_onelake`, `fabric_core`, `azure-devops_…` or `powerbi-modeling-mcp_…` call to its server and remote tool and gates it exactly like the proxied call. The adapter also accepts that listed name through `mcp` (`{server: "fabric", tool: "fabric_core"}`), and the guardrail treats it as the bare router name.
 
 ### Production writes
 

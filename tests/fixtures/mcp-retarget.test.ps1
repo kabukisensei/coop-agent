@@ -9,6 +9,16 @@
 #      global again. A user-added server survives every rewrite.
 #   B. End-to-end `coop` (stub pi) from the project folder after a home-folder
 #      sync: the stub reads the config while it runs and sees the item target.
+#   D. Opened from the folder above the client repository (2026-10-07: a teammate
+#      launched from the user folder holding <user>\fabric; the managed entry was
+#      the global endpoint with blank targets and the guardrails refused a dev
+#      write): `coop sync` and a launch from that folder use the repository's
+#      project file. With two repositories that each have one, nothing is
+#      guessed: the entry stays global (no_project_file) and the launch warns.
+#   E. The remembered project file (one per Windows user, Aaron 2026-10-08): the
+#      first launch that finds one records it in <profile>\home-project.json; later
+#      launches from any folder without one above use it, so several repositories
+#      no longer need a guess; `coop project home [<folder>]` shows or sets it.
 #   C. Several coops at once (2026-10-06): each launch also writes its folder's
 #      own copy (<agent dir>\mcp\<key>.json) and hands Pi that path
 #      (--mcp-config, COOP_MCP_CONFIG); a later launch from another folder
@@ -146,11 +156,94 @@ sys.exit(0)
   $doc = Get-Content -LiteralPath $projectCopy -Raw | ConvertFrom-Json
   if ($doc.mcpServers.'my-own') { Ok 'the copy keeps the user-added server from the shared file' } else { Ko 'the copy dropped the user-added server' }
   # A second coop from the home folder: the shared file goes global, the project's copy stays.
+  # (The project launch above remembered its file for every launch; forget it so
+  # the home folder has no project file, as on a fresh profile.)
+  $homeRecord = Join-Path $sandboxHome '.coop\home-project.json'
+  if ((Test-Path -LiteralPath $homeRecord) -and ((Get-Content -LiteralPath $homeRecord -Raw | ConvertFrom-Json).project_file -eq [System.IO.Path]::GetFullPath((Join-Path $project '.coop\project.yml')))) { Ok 'the first launch that found a project file remembered it (home-project.json)' }
+  else { Ko "home-project.json after the project launch: $(if (Test-Path -LiteralPath $homeRecord) { Get-Content -LiteralPath $homeRecord -Raw } else { 'missing' })" }
+  Remove-Item -LiteralPath $homeRecord -Force -ErrorAction SilentlyContinue
   $r = Invoke-Redirected (Join-Path $root 'bin\coop.ps1') $sandboxHome
   $all = $r.Out + $r.Err
   if ($r.Rc -eq 0 -and (Read-Entry $configPath).url -eq $globalUrl) { Ok 'a launch from the home folder retargets the shared file' } else { Ko "home launch: rc=$($r.Rc) shared url=$((Read-Entry $configPath).url)" $all }
   if ((Read-Entry $projectCopy).url -eq $itemUrl) { Ok 'the project launch''s own copy still names the item (the running coop is not retargeted)' } else { Ko "project copy after the home launch: $((Read-Entry $projectCopy).url)" }
   if ((Test-Path -LiteralPath $homeCopy) -and (Read-Entry $homeCopy).url -eq $globalUrl) { Ok 'the home launch got its own copy' } else { Ko 'no home copy' $all }
+
+  # --- D. opened from the folder above the client repository ----------------------
+  $userDir = Join-Path $t 'users\josh'
+  $clientRepo = Join-Path $userDir 'fabric'
+  New-Item -ItemType Directory -Force -Path (Join-Path $clientRepo '.git'), (Join-Path $clientRepo '.coop') | Out-Null
+  Copy-Item -LiteralPath (Join-Path $project '.coop\project.yml') -Destination (Join-Path $clientRepo '.coop\project.yml')
+  $env:PI_CODING_AGENT_DIR = $agent
+  Push-Location -LiteralPath $userDir
+  $state = Update-CoopManagedMcpConfig -Quiet
+  Pop-Location
+  Remove-Item -LiteralPath Env:PI_CODING_AGENT_DIR -ErrorAction SilentlyContinue
+  $entry = Read-Entry $configPath
+  if ($state -eq 'ok' -and $entry.url -eq $itemUrl -and $entry._coop_target.scope -eq 'item' -and $entry._coop_target.workspace_id -eq $workspace -and $entry._coop_target.item_id -eq $item) { Ok 'sync from the folder above the client repository: the entry is that repository''s item target' }
+  else { Ko "folder above the repository: state=$state url=$($entry.url) scope=$($entry._coop_target.scope) workspace=$($entry._coop_target.workspace_id)" }
+  Remove-Item -LiteralPath (Join-Path $marker 'config-at-launch.json') -Force -ErrorAction SilentlyContinue
+  $r = Invoke-Redirected (Join-Path $root 'bin\coop.ps1') $userDir
+  $all = $r.Out + $r.Err
+  $seen = Join-Path $marker 'config-at-launch.json'
+  $entry = if (Test-Path -LiteralPath $seen) { Read-Entry $seen } else { $null }
+  $env:PI_CODING_AGENT_DIR = $agent
+  $userCopy = Get-CoopFolderMcpConfigPath -ProjectCwd $userDir
+  Remove-Item -LiteralPath Env:PI_CODING_AGENT_DIR -ErrorAction SilentlyContinue
+  $copyEntry = if (Test-Path -LiteralPath $userCopy) { Read-Entry $userCopy } else { $null }
+  if ($r.Rc -eq 0 -and $entry -and $entry.url -eq $itemUrl -and $entry._coop_target.item_name -eq 'CustomerWarehouse' -and $copyEntry -and $copyEntry.url -eq $itemUrl) { Ok 'launch from the folder above the client repository: Pi sees the item target, in the shared file and the folder''s own copy' }
+  else { Ko "launch from the user folder: rc=$($r.Rc) shared=$($entry.url) copy=$($copyEntry.url)" $all }
+  # Remembered: a launch from a folder with no project file anywhere near it uses it.
+  $elsewhere = Join-Path $t 'elsewhere'
+  New-Item -ItemType Directory -Force -Path $elsewhere | Out-Null
+  $r = Invoke-Redirected (Join-Path $root 'bin\coop.ps1') $elsewhere
+  $all = $r.Out + $r.Err
+  $entry = Read-Entry $configPath
+  if ($r.Rc -eq 0 -and $entry.url -eq $itemUrl -and $all -match 'remembered by coop') { Ok 'a launch from an unrelated folder uses the remembered project file' }
+  else { Ko "unrelated folder: rc=$($r.Rc) url=$($entry.url)" $all }
+  # A second client repository with its own project file: the remembered one decides.
+  $otherRepo = Join-Path $userDir 'reports'
+  New-Item -ItemType Directory -Force -Path (Join-Path $otherRepo '.git'), (Join-Path $otherRepo '.coop') | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $otherRepo '.coop\project.yml'), "profile:`n  client: `"Other`"`n", $utf8)
+  $r = Invoke-Redirected (Join-Path $root 'bin\coop.ps1') $userDir
+  $all = $r.Out + $r.Err
+  $entry = Read-Entry $configPath
+  if ($r.Rc -eq 0 -and $entry.url -eq $itemUrl -and -not ($all -match 'several repositories')) { Ok 'two repositories with project files: the remembered one is used, no guess and no warning' }
+  else { Ko "two repositories, remembered: rc=$($r.Rc) url=$($entry.url)" $all }
+  # A repository opened directly keeps its own file (and the record is unchanged).
+  $r = Invoke-Redirected (Join-Path $root 'bin\coop.ps1') $otherRepo
+  $entry = Read-Entry $configPath
+  if ($r.Rc -eq 0 -and $entry.url -eq $globalUrl -and $entry._coop_target.reason -eq 'missing_unambiguous_project_ids' -and (Get-Content -LiteralPath $homeRecord -Raw) -match 'fabric') { Ok 'a repository with its own project file uses its own; the remembered file stays' }
+  else { Ko "own repository: rc=$($r.Rc) url=$($entry.url) reason=$($entry._coop_target.reason)" ($r.Out + $r.Err) }
+  # Nothing remembered (a fresh profile): which one is meant is unknown.
+  Remove-Item -LiteralPath $homeRecord -Force
+  $r = Invoke-Redirected (Join-Path $root 'bin\coop.ps1') $userDir
+  $all = $r.Out + $r.Err
+  $entry = Read-Entry $configPath
+  if ($r.Rc -eq 0 -and $entry.url -eq $globalUrl -and $entry._coop_target.workspace_id -eq '' -and $entry._coop_target.reason -eq 'no_project_file') { Ok 'two repositories with project files: nothing is guessed, the target stays blank (no_project_file)' }
+  else { Ko "two repositories: rc=$($r.Rc) url=$($entry.url) reason=$($entry._coop_target.reason)" $all }
+  if ($all -match 'several repositories inside it have one \(fabric, reports\)' -and $all -match 'writes are refused') { Ok 'the launch says which repositories hold one and to open coop in the one meant' }
+  else { Ko 'no several-project-files warning' $all }
+  if (-not (Test-Path -LiteralPath $homeRecord)) { Ok 'with several and nothing remembered, nothing is recorded either' } else { Ko "recorded a guess: $(Get-Content -LiteralPath $homeRecord -Raw)" }
+  # `coop project home <folder>` sets it; `coop project home` shows it.
+  $homeScript = Join-Path $t 'project-home.ps1'
+  [System.IO.File]::WriteAllText($homeScript, "& '$((Join-Path $root 'bin\coop.ps1'))' project home '$clientRepo'`nexit `$LASTEXITCODE`n", $utf8)
+  $r = Invoke-Redirected $homeScript $userDir
+  if ($r.Rc -eq 0 -and (Test-Path -LiteralPath $homeRecord) -and (Get-Content -LiteralPath $homeRecord -Raw) -match 'fabric') { Ok 'coop project home <folder> records that folder''s project file' }
+  else { Ko "coop project home: rc=$($r.Rc)" ($r.Out + $r.Err) }
+  [System.IO.File]::WriteAllText($homeScript, "& '$((Join-Path $root 'bin\coop.ps1'))' project home '$elsewhere'`nexit `$LASTEXITCODE`n", $utf8)
+  $r = Invoke-Redirected $homeScript $userDir
+  if ($r.Rc -ne 0 -and ($r.Out + $r.Err) -match 'no client project file' -and (Get-Content -LiteralPath $homeRecord -Raw) -match 'fabric') { Ok 'coop project home on a folder without one refuses and keeps the record' }
+  else { Ko "coop project home elsewhere: rc=$($r.Rc)" ($r.Out + $r.Err) }
+  $r = Invoke-Redirected (Join-Path $root 'bin\coop.ps1') $userDir
+  if ((Read-Entry $configPath).url -eq $itemUrl) { Ok 'after coop project home, the user folder launch uses it' } else { Ko 'not used after coop project home' ($r.Out + $r.Err) }
+  # The remembered file is gone and nothing else is found: blank target, a clear warning.
+  Remove-Item -LiteralPath (Join-Path $clientRepo '.coop\project.yml') -Force
+  Remove-Item -LiteralPath (Join-Path $otherRepo '.coop\project.yml') -Force
+  $r = Invoke-Redirected (Join-Path $root 'bin\coop.ps1') $userDir
+  $all = $r.Out + $r.Err
+  $entry = Read-Entry $configPath
+  if ($r.Rc -eq 0 -and $entry.url -eq $globalUrl -and $all -match 'the remembered project file is gone') { Ok 'a remembered file that is gone: blank target and a warning saying what to do' }
+  else { Ko "gone: rc=$($r.Rc) url=$($entry.url)" $all }
 } catch {
   Ko "fixture error: $($_.Exception.Message)" ($_.ScriptStackTrace)
 } finally {

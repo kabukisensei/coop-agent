@@ -5,8 +5,112 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- `pi-mcp-adapter` moves from **3.3.0** to **5.1.0** on Pi 0.87.1 (master plan
+  U2 step 1). It is the first adapter release that accepts Pi 1.0, and it is
+  qualified on today's Pi first so Pi 1.0 (step 2) changes one thing at a time.
+  coop still launches it in exclusive mode, so only coop's managed
+  `mcp-adapter.json` is read; `mcpScript` stays off and blocked. Its Pi 0.99-only
+  behaviours (taking over Pi's built-in MCP, reading Pi's `mcp.json`) do not
+  apply on 0.87.1. Servers now start lazily after discovery, and a long tool
+  call that reports progress no longer times out.
+
 ### Fixed
 
+- A Fabric MCP call that names a router by its listed name (`fabric_core`,
+  `fabric_onelake`, …) through `mcp` or `mcp__fabric` is now gated like the bare
+  name (`core`, `onelake`): a write asks first, a delete always asks, and a write
+  to a production workspace is blocked. Before, the adapter ran those calls while
+  the guardrail did not recognise the router, so they went through unasked.
+  Found in the VM check for the adapter 5.1 upgrade; adapter 3.3.0 behaves the same.
+- The coop window shows coop's icon on the Windows taskbar however it starts.
+  Started from the terminal install (`coop desktop`, or the "coop" shortcut that
+  runs PowerShell) it ran as Electron's own `electron.exe`, so the taskbar showed
+  Electron's icon and a pinned button opened bare Electron. Every window now
+  carries coop's app id, its icon and a relaunch command that starts coop; the
+  installed package uses the same id as its Start Menu shortcut.
+
+## [0.34.2] — 2026-10-08
+
+### Added
+
+- One remembered project file per Windows user (one Windows user per client;
+  Aaron, 2026-10-08). The first launch that finds a client's `.coop/project.yml`
+  (from the repository or the folder above it) records it in
+  `~/.coop/home-project.json`. Every later launch from any folder (the window
+  shortcut, the picker, the terminal) uses it unless a repository opened
+  directly has its own. A folder holding several repositories with project files
+  no longer needs a guess once one is remembered. `coop project home` shows it;
+  `coop project home <folder>` sets it. A remembered file that is gone leaves the
+  Warehouse target blank, writes refused, with a warning saying what to run.
+
+## [0.34.1] — 2026-10-07
+
+### Fixed
+
+- Coop opened in the folder above a client repository (the user folder holding
+  `<user>\fabric`) now uses that repository's project file for the managed
+  Warehouse target. Before, `coop`, `coop desktop` and `coop sync` from that
+  folder wrote the global endpoint with blank targets into `mcp-adapter.json`,
+  so the guardrails refused a dev write the project file allowed. The target
+  follows the same lookup as the launch: the nearest `.coop/project.yml` above
+  the folder, the client home repository beside it, or the one repository inside
+  it. With several repositories inside that each hold one, nothing is guessed:
+  the target stays blank and the launch (terminal and window) names them.
+- A Warehouse write refused because coop cannot confirm its target as dev or test
+  now says why (no project file for the folder, no default Warehouse in the
+  project file, or an unlabelled workspace) and what to do. The rule is
+  unchanged: an unconfirmed target is still treated as production.
+
+## [0.34.0] — 2026-10-07
+
+### Added
+
+- The coop window installer now carries everything (master plan D1k; Aaron
+  2026-10-06, "an installer that installs everything"): besides Node, Pi and
+  coop, the package holds Git (MinGit 2.56.0), Python 3.13.16 with pipx, a wheel
+  folder of every coop Python tool (coop-data-doc, the Fabric CLI, fabric-cicd,
+  pyodbc), the Azure CLI 2.91.0 and the ODBC Driver 18.6.2.1 with its VC++
+  runtime, each pinned by version and SHA-256 in the release manifest. The
+  first launch installs nothing from the internet and needs no winget; it asks
+  Windows for administrator permission once, for the ODBC driver. coop's pipx
+  installs read the bundled wheels offline only for exact pins, so a pip you run
+  yourself still reaches PyPI (`COOP_PIP_ONLINE=1` keeps the index for coop too).
+- `scripts/bootstrap.ps1`, one command for Windows
+  (`irm https://raw.githubusercontent.com/kabukisensei/coop-agent/main/scripts/bootstrap.ps1 | iex`):
+  downloads the newest release's window installer, checks its SHA-256 against
+  the release's `installer-acceptance.json`, installs it for the user and opens
+  it (`COOP_BOOTSTRAP_NO_LAUNCH=1` installs only, `COOP_BOOTSTRAP_DRY_RUN=1`
+  prints the steps). Only github.com is contacted. `docs/install-windows.md`
+  opens with the one line.
+- For a terminal clone, `coop install` offers to install a missing required
+  prerequisite itself at a console with winget (or brew): the same commands its
+  table prints, run visibly, and the install continues in the same window when
+  every row passes (before, a `--prereqs auto` run always stopped for a new
+  terminal). Enter accepts, `n` keeps the printed commands, a redirected stdin
+  never asks, `--yes` answers without a console.
+
+### Fixed
+
+- **The phone picks up where it left off** (Aaron, 2026-10-07). Phones
+  suspend a web page in the background, so the phone's live connection cannot
+  stay open while you use another app. Now the phone closes it on purpose when
+  you switch away and reopens it from the last update when you come back: what
+  coop did meanwhile appears at once, with no "offline" flash and no reload.
+  While you are away, a phone with **Notices** on gets "coop is waiting for
+  you" when coop asks something or finishes; before, the window could think
+  the suspended phone was still watching and send nothing.
+- **The phone's status line shows only context and plan usage left**
+  (Aaron, 2026-10-07): for example "38% context · 5h 62% left · 7d 80% left".
+  MCP connections and other status lines move into the panel a tap opens, with
+  the todos.
+- The project file no longer says "Not shared yet" right after a share when
+  the team works on a branch other than origin's default (Aaron, 2026-10-07).
+  coop compared the file with origin/HEAD (often `main`) while sharing pushed
+  the team's `dev`. It now reads the team's copy from the branch the file
+  names (this repository's `default_branch`, else the project's) when origin
+  has it, and the status line names that branch.
 - File > Switch project, File > Open folder and Open in terminal open their
   window again on Windows. The hidden PowerShell that starts the console ran
   detached, so it had no console, exited without running its command, and the
@@ -138,6 +242,30 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 - **A new client home repository ignores the project file's backup.** Its
   `.gitignore` lists `.coop/*.bak`, so the `project.yml.bak` that `/setup-project`
   keeps no longer shows as a file to commit.
+- The Windows one-liner (`irm …/bootstrap.ps1 | iex`) no longer opens with a
+  red "not recognized" error: `iex` received the file's UTF-8 BOM as a
+  character, so line 1 stopped being a comment. `scripts/bootstrap.ps1` is now
+  ASCII with no BOM, the one exception the BOM check allows (found in the D1k
+  VM check, 2026-10-07).
+- `coop install` on a Windows machine without winget no longer suggests
+  `--prereqs auto`, which could only fail there: its stop line points at the
+  coop window installer one-liner instead.
+- **Installing the coop window over an older one, or over a terminal coop,
+  works as a fresh install does** (Aaron, 2026-10-07: the one installer must
+  work for people who already have coop). The window re-runs its setup once
+  for each new version, so an upgrade gets the new tool pins and puts back the
+  `coop` command and "coop (terminal)" shortcut an older uninstaller removed;
+  this version's uninstaller keeps them on an upgrade. Over a terminal install,
+  "coop" opens the window and the terminal's own `coop` and "coop (terminal)"
+  stay pointed at the terminal install (the first launch used to repoint "coop
+  (terminal)" at the window's copy). A new CI job installs the latest release
+  and then this build over it, and over a terminal install, to check it.
+- **The "coop" shortcut never fails silently** (Aaron, 2026-10-07). Clicked
+  while coop is already open, it brings that window forward (it used to do
+  nothing); clicked while the first launch is still setting up, it says so. A
+  start that ends with no window shows a message instead of quietly closing. A
+  new CI step double-clicks the installed shortcut and requires the picker, then
+  the full first-launch setup and the coop window, to appear.
 
 ## [0.33.0] — 2026-10-06
 
