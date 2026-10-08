@@ -1042,6 +1042,31 @@ function coopMcpServerName(server: string): string {
   return COOP_MCP_SERVERS.find((s) => s === server || s.replace(/[^A-Za-z0-9_]/g, "_") === flat) ?? server;
 }
 
+/** True when the `codemode` tool is coop's own (extensions/coop-codemode under
+ * COOP_ROOT): Pi's codemode with script model calls off. Pi's built-in one, or
+ * any other extension's, can reach outside models with no tool hook, so its
+ * scripts are refused. No COOP_ROOT or no source path fails closed. */
+export function isCoopCodemode(info: any, coopRoot: string | undefined, platform: string = process.platform): boolean {
+  const path = String(info?.sourceInfo?.path ?? "");
+  if (!path || !coopRoot) return false;
+  const norm = (p: string) => {
+    let r = resolve(p);
+    try { r = realpathSync(r); } catch { /* a path that does not exist compares as written */ }
+    r = r.replace(/\\/g, "/").replace(/\/index\.ts$/, "").replace(/\/+$/, "");
+    return platform === "win32" ? r.toLowerCase() : r;
+  };
+  return norm(path) === norm(join(coopRoot, "extensions", "coop-codemode"));
+}
+
+/** The audit detail for one codemode script: each nested call's tool name and
+ * outcome, never its arguments. */
+export function codemodeCallsDetail(details: any): string {
+  const calls = Array.isArray(details?.calls) ? details.calls : [];
+  if (calls.length === 0) return "no tool calls";
+  const shown = calls.slice(0, 20).map((c: any) => `${String(c?.name ?? "?")}:${String(c?.status ?? "?")}`);
+  return shown.join(", ") + (calls.length > 20 ? `, +${calls.length - 20} more` : "");
+}
+
 /** A registered tool's origin, from its `pi.getAllTools()` entry. Only Pi itself
  * registers tools under the `builtin:mcp` source path. */
 export function toolOriginFromInfo(info: any): ToolOrigin | undefined {
@@ -2279,9 +2304,10 @@ type AuditEntry = {
   ts?: string;     // set by audit() on write; present on every read
   cwd: string;
   // project-share rows are written by lib/project-share.mjs ("Share with the team", C1).
-  kind: "commit-block" | "danger-confirm" | "secret-confirm" | "mcp-confirm" | "project-share" | "lineage-gate";
+  // codemode-script rows list one script's nested calls by name (U2 step 3).
+  kind: "commit-block" | "danger-confirm" | "secret-confirm" | "mcp-confirm" | "project-share" | "lineage-gate" | "codemode-script";
   tool: string;
-  decision: "blocked" | "blocked-headless" | "allowed" | "declined";
+  decision: "blocked" | "blocked-headless" | "allowed" | "declined" | "ran";
   label: string;   // the short subject (offending path, danger label, tool name)
   detail: string;  // offending paths (commit, first 8) or a fixed classification; never command text
   pid?: number;    // the coop process that decided: each window tab runs its own, so this tells tabs apart
@@ -2376,6 +2402,12 @@ export default function coopGuardrails(pi: ExtensionAPI) {
     editApprovals.clear();
     modelingProduction = false;
   });
+  // One audit row per codemode script, naming each nested call and its outcome.
+  // The asks and blocks inside it were audited one by one as they happened.
+  pi.on("tool_result", async (event: any, ctx: ExtensionContext) => {
+    if (!enabled() || event?.toolName !== "codemode") return;
+    audit({ cwd: ctx?.cwd ?? process.cwd(), kind: "codemode-script", tool: "codemode", decision: "ran", label: "codemode script", detail: codemodeCallsDetail(event.details) });
+  });
 
   /** The SQ8 edit gate: a live target is one sql_impact would answer on without
    *  a prompt (the contract's sql_targets, or a managed dev/test Fabric entry). */
@@ -2410,6 +2442,18 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       const event = withToolOrigin(rawEvent);
       if (!enabled()) return;
       const tool = event?.toolName;
+
+      // 0. codemode (Pi 1.x): only coop's own copy runs, with script model calls
+      // off. The calls a script makes come back through this hook one by one.
+      if (tool === "codemode") {
+        let info: any;
+        try { info = ((pi as any).getAllTools?.() ?? []).find((t: any) => t?.name === "codemode"); } catch { info = undefined; }
+        if (!isCoopCodemode(info, process.env.COOP_ROOT)) {
+          audit({ cwd: ctx.cwd, kind: "codemode-script", tool, decision: "blocked", label: "codemode script", detail: "not-coop-codemode" });
+          return { block: true, reason: "coop guardrails: blocked a codemode script. This codemode is not coop's own, and its scripts can call outside models that coop's checks cannot see. Call the tools directly instead." };
+        }
+        return;
+      }
 
       // 0a. pi-mcp-adapter's mcpScript runs JavaScript that calls MCP tools inside
       // the adapter, where this hook never sees them, so no MCP mutation or

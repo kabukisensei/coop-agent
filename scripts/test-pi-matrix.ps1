@@ -150,7 +150,7 @@ try {
   # --- 6. First-party extensions through the REAL Pi loader ---------------------
   $loader = Join-Path $PiPackageDir 'dist\core\extensions\loader.js'
   $probe = Join-Path $T 'load-probe.mjs'
-  $srcs = @('coop-powerline','coop-tools','coop-guardrails','coop-profile' | ForEach-Object { Join-Path $RepoRoot "extensions\$_\index.ts" })
+  $srcs = @('coop-powerline','coop-tools','coop-guardrails','coop-profile','coop-codemode' | ForEach-Object { Join-Path $RepoRoot "extensions\$_\index.ts" })
   $loaderJson = ConvertTo-Json (($loader -replace '\\', '/')) -Compress
   @"
 import { pathToFileURL } from "node:url";

@@ -35,7 +35,7 @@ import { restartOnce } from "../desktop/lib/restart.mjs";
 import { markOpenElsewhere, ownerOf, sameSessionPath, SessionArbiter } from "../desktop/lib/session-owners.mjs";
 import { MAX_TABS, TAB_STRIP_HEIGHT, afterClose, stripRows, tabFor, tabKey, tabLabel } from "../desktop/lib/tabs.mjs";
 import { imageBudgetProblem, imageBytes, restoreDraft } from "../desktop/renderer/draft.mjs";
-import { activitySummary, applyEvent, createTimeline, finishBash, loadMessages, startBash, toolSummary, turnOf, turns } from "../desktop/renderer/timeline.mjs";
+import { activitySummary, applyEvent, codemodeCalls, createTimeline, finishBash, loadMessages, startBash, toolSummary, turnOf, turns } from "../desktop/renderer/timeline.mjs";
 import { isSafeLink, parseMarkdown } from "../desktop/renderer/markdown.mjs";
 import { diffStats, parseEditDiff } from "../desktop/renderer/diff.mjs";
 import { matchOffsets } from "../desktop/renderer/find.mjs";
@@ -241,6 +241,21 @@ await check("replay: the live events build the conversation the terminal shows",
   assert.equal(tl.busy, false);
   assert.equal(tl.sessionName, "Desktop fixture");
   assert.equal(tl.current, null);
+});
+
+await check("codemode: the card names the script's first line and lists its nested calls", () => {
+  const code = '// @options: {"max_output_tokens": 2000}\nconst rows = await tools.bash({ command: "echo hi" });\nreturn rows.output;';
+  assert.equal(toolSummary("codemode", { code }), "const rows = await tools.bash({ command: \"echo hi\" });");
+  const tl = createTimeline();
+  applyEvent(tl, { type: "tool_execution_start", toolCallId: "cm1", toolName: "codemode", args: { code } });
+  applyEvent(tl, { type: "tool_execution_update", toolCallId: "cm1", partialResult: { content: [], details: { calls: [{ id: "a", name: "bash", status: "running" }] } } });
+  assert.deepEqual(codemodeCalls(tl.tools.get("cm1").partialDetails), [{ name: "bash", status: "running" }]);
+  applyEvent(tl, { type: "tool_execution_end", toolCallId: "cm1", toolName: "codemode", isError: false,
+    result: { content: [{ type: "text", text: "Script completed" }], details: { calls: [{ id: "a", name: "bash", status: "ok" }, { id: "b", name: "write", status: "error" }] } } });
+  const tool = tl.tools.get("cm1");
+  assert.equal(tool.partialDetails, undefined);
+  assert.deepEqual(codemodeCalls(tool.result.details), [{ name: "bash", status: "ok" }, { name: "write", status: "error" }]);
+  assert.deepEqual(codemodeCalls(undefined), []);
 });
 
 await check("replay: the edit's diff, the shell command and the compaction notice", () => {

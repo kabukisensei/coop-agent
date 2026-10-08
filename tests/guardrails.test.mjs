@@ -2777,6 +2777,38 @@ await t("Pi's registry decides a tool's server and whether `tool` dispatches", a
   await h.session_start({}, ctx);
 });
 
+await t("codemode (U2 step 3): only coop's own copy runs, and each script is audited by its calls", async () => {
+  const own = join(ROOT, "extensions", "coop-codemode");
+  assert.equal(cg.isCoopCodemode({ sourceInfo: { path: own } }, ROOT), true);
+  assert.equal(cg.isCoopCodemode({ sourceInfo: { path: join(own, "index.ts") } }, ROOT), true, "the entry file counts too");
+  assert.equal(cg.isCoopCodemode({ sourceInfo: { path: "builtin:codemode" } }, ROOT), false, "Pi's built-in codemode can call outside models");
+  assert.equal(cg.isCoopCodemode({ sourceInfo: { path: "/work/repo/.pi/extensions/coop-codemode" } }, ROOT), false, "a repo's look-alike is not coop's");
+  assert.equal(cg.isCoopCodemode({ sourceInfo: { path: own } }, undefined), false, "no COOP_ROOT fails closed");
+  assert.equal(cg.isCoopCodemode(undefined, ROOT), false);
+  assert.equal(cg.isCoopCodemode({ sourceInfo: { path: own.toUpperCase() } }, ROOT, "win32"), true, "Windows paths compare without case");
+  assert.equal(cg.codemodeCallsDetail({ calls: [{ name: "bash", status: "ok", args: "rm -rf x" }, { name: "write", status: "error" }] }), "bash:ok, write:error");
+  assert.equal(cg.codemodeCallsDetail({}), "no tool calls");
+  assert.match(cg.codemodeCallsDetail({ calls: Array.from({ length: 23 }, () => ({ name: "read", status: "ok" })) }), /, \+3 more$/);
+
+  for (const [path, expectBlock] of [[own, false], ["builtin:codemode", true]]) {
+    const h = {};
+    coopGuardrails({ on: (ev, fn) => (h[ev] = fn), registerCommand: () => {}, exec: pi.exec,
+      getAllTools: () => [{ name: "codemode", sourceInfo: { path }, parameters: { properties: { code: {} } } }] });
+    await h.session_start({}, ctx);
+    const before = readAudit().length;
+    const result = await h.tool_call({ toolName: "codemode", input: { code: "return 1" } }, ctx);
+    assert.equal(blocked(result), expectBlock, path);
+    if (expectBlock) {
+      assert.match(result.reason, /not coop's own/);
+      const row = readAudit().slice(before).find((r) => r.kind === "codemode-script" && r.decision === "blocked");
+      assert.equal(row.detail, "not-coop-codemode");
+    }
+    await h.tool_result({ toolName: "codemode", toolCallId: "cm", details: { calls: [{ name: "bash", status: "ok" }, { name: "read", status: "error" }] } }, ctx);
+    const row = readAudit().slice(before).find((r) => r.kind === "codemode-script" && r.decision === "ran");
+    assert.equal(row.detail, "bash:ok, read:error", "names and outcomes only, never arguments");
+  }
+});
+
 await t("approval dialogs open one at a time, and a session approval covers calls that waited", async () => {
   await handleSessionStart({}, ctx);
   let open = 0, maxOpen = 0, asked = 0;

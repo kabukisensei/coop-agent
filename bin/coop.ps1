@@ -620,15 +620,23 @@ function Build-CoopPiArgs {
   $extProfile = Join-Path $script:CoopRoot 'extensions\coop-profile'
   if (Test-Path -LiteralPath $extProfile) { $piArgs += @('-e', $extProfile) }
   # Pi 1.x adds a built-in MCP client, codemode and tool_search, and opens in a
-  # fullscreen TUI. coop keeps all four off (master plan U2 step 2): MCP stays
-  # with the managed adapter, codemode waits until the guardrails are proven on
-  # its nested calls (step 3), and coop-powerline is built for scrollback. Launch
-  # flags, not settings, so a work repo's .pi/settings.json cannot turn them back
-  # on (--exclude-tools applies after every other tool selection). Pi 0.x rejects
+  # fullscreen TUI. MCP stays with the managed adapter, tool_search stays off and
+  # coop-powerline is built for scrollback (master plan U2 step 2). codemode is
+  # on (step 3), as coop's own copy: extensions\coop-codemode replaces Pi's
+  # built-in one with script model calls off, and coop-guardrails checks every
+  # call a script makes and refuses any other codemode. Launch flags, not
+  # settings, so a work repo's .pi/settings.json cannot turn them back on
+  # (--exclude-tools applies after every other tool selection). Pi 0.x rejects
   # these flags, so they follow the installed Pi until `coop update` moves it.
   $piVer = Get-CoopLaunchPiVersion
   if ($piVer -and ([int]($piVer.Split('.')[0]) -ge 1)) {
-    $piArgs += @('--no-mcp', '--exclude-tools', 'codemode,tool_search', '--tui-mode', 'regular')
+    $extCodemode = Join-Path $script:CoopRoot 'extensions\coop-codemode'
+    $excluded = 'codemode,tool_search'
+    if (Test-Path -LiteralPath $extCodemode) {
+      $piArgs += @('-e', $extCodemode, '--tools', '+codemode')
+      $excluded = 'tool_search'
+    }
+    $piArgs += @('--no-mcp', '--exclude-tools', $excluded, '--tui-mode', 'regular')
   }
   # Coop owns fleet updates. Hide Pi's upstream self-update banner so users do not
   # drift Pi away from the release-manifest pins; Invoke-CoopUpdateNudge still
@@ -884,6 +892,8 @@ function Get-CoopLaunchEnvMap {
   if ($env:COOP_VIBES_DIR)      { $envMap['COOP_VIBES_DIR']      = $env:COOP_VIBES_DIR }
   if ($env:COOP_SPLASH_FILE)    { $envMap['COOP_SPLASH_FILE']    = $env:COOP_SPLASH_FILE }
   if ($env:COOP_PROJECT_YML)    { $envMap['COOP_PROJECT_YML']    = $env:COOP_PROJECT_YML }
+  # coop-guardrails finds coop's own codemode (and the Fabric header helper) under it.
+  if ($env:COOP_ROOT)           { $envMap['COOP_ROOT']           = $env:COOP_ROOT }
   return $envMap
 }
 
