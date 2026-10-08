@@ -3426,6 +3426,24 @@ function Register-CoopHomeProjectFile {
   return ''
 }
 
+# The "coop" and "coop (terminal)" shortcuts start in the user folder (their
+# WorkingDirectory is $HOME; bin\coop-desktop.ps1 sets COOP_SHORTCUT). Pi keeps
+# saved sessions per folder, so a shortcut launch that stayed there listed the
+# user folder's old sessions, not the project's (2026-10-08). When coop remembers
+# this Windows user's project file, a shortcut launch opens its repository
+# instead. Returns the folder entered, or ''.
+function Enter-CoopShortcutFolder {
+  $here = [System.IO.Path]::GetFullPath((Get-Location).ProviderPath).TrimEnd('\', '/')
+  $userHome = [System.IO.Path]::GetFullPath($HOME).TrimEnd('\', '/')
+  if (-not [string]::Equals($here, $userHome, [System.StringComparison]::OrdinalIgnoreCase)) { return '' }
+  $file = Get-CoopHomeProjectFile
+  if (-not $file) { return '' }
+  $repo = Split-Path -Parent (Split-Path -Parent $file)
+  if (-not (Test-Path -LiteralPath $repo -PathType Container)) { return '' }
+  Set-Location -LiteralPath $repo
+  return $repo
+}
+
 # Warn when $StartDir is in no repository and several repositories inside it have
 # a project file: coop cannot tell which one is meant, so the Warehouse target
 # stays blank and writes are refused until coop is opened in one of them.

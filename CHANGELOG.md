@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.34.3] — 2026-10-08
+
 ### Changed
 
 - **Pi moves from 0.87.1 to 1.1.0** (master plan U2 step 2), with codemode and
@@ -47,6 +49,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- The "coop" and "coop (terminal)" shortcuts open the client's home repository
+  (the one holding the remembered project file) instead of the user folder they
+  start in. Pi keeps saved sessions per folder, so a shortcut launch listed the
+  user folder's old sessions, not the project's recent ones. `coop` typed in a
+  folder still opens that folder; with no project file remembered the shortcut
+  stays in the user folder as before.
 - A Fabric MCP call that names a router by its listed name (`fabric_core`,
   `fabric_onelake`, …) through `mcp` or `mcp__fabric` is now gated like the bare
   name (`core`, `onelake`): a write asks first, a delete always asks, and a write

@@ -49,6 +49,10 @@ if (-not $coop) {
   exit 1
 }
 
+# Tell coop it came from a shortcut: it opens the client's home repository
+# instead of the user folder the shortcut starts in (Enter-CoopShortcutFolder).
+$env:COOP_SHORTCUT = '1'
+
 # Run coop in THIS window, forwarding any extra args. On a clean exit the window
 # closes; on an error we pause so the message stays on screen for a non-technical user.
 $code = 0
