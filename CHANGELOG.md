@@ -5,6 +5,38 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Pi moves from 0.87.1 to 1.1.0** (master plan U2 step 2), with codemode and
+  Pi's own MCP client off. Sessions look and behave as before.
+  - coop launches Pi with `--no-mcp`, `--exclude-tools codemode,tool_search` and
+    `--tui-mode regular`. coop's MCP servers still run only through
+    pi-mcp-adapter, codemode waits for step 3, and the terminal keeps the
+    scrollback view coop's footer is built for. These are launch flags, so a work
+    repo's `.pi/settings.json` cannot turn any of them back on. An older Pi
+    rejects them, so coop adds them only once Pi 1.x is installed.
+  - `coop sync` also keeps `-builtin:mcp` in Pi's settings, so the adapter does
+    not have to switch Pi's MCP off itself on first start.
+  - `pi-hermes-memory` 0.9.9 → 0.9.10. Pi 1.1 warns at every start about 0.9.9,
+    which bundled its own `pi-tui`; 0.9.10 takes Pi's. Its memory database gains
+    two usage columns on first start.
+  - The window's RPC fixture is re-recorded on 1.1.0. Pi adds fields
+    (`durationMs` on tool results, `aborted` on `agent_settled`, `disposition` on
+    prompt responses) and keeps every slash command and keybinding.
+- Guardrails handle Pi 1.x's built-in MCP tools, named `mcp__<server>__<tool>`,
+  and codemode, ahead of turning codemode on.
+  - coop reads Pi's tool registry for each call and takes the server from it. A
+    built-in MCP tool gets the same prompts and per-server session approvals as
+    an adapter call. A tool its server marks destructive always asks.
+  - Only the adapter's `{tool, args}` dispatch tools have their `tool` field read
+    as the operation. Before this, a built-in tool such as `mcp__fabric__delete_item`
+    called with `tool: "list_items"` would have been checked as a list, with no prompt.
+  - Tool calls are checked one at a time. Codemode scripts can issue calls at
+    once, which opened two approval dialogs together.
+  - `tests/guardrails-pi-runner.test.mjs` also runs on Pi 1.x. There it starts a
+    real session with Pi's built-in MCP and a local test MCP server
+    (`tests/fixtures/fake-mcp-server.mjs`).
+
 ### Security
 
 - A production workspace, item or endpoint id inside a REST URL

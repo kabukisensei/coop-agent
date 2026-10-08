@@ -55,6 +55,11 @@ if ($settingsPy) {
   & $settingsPy (Join-Path $script:CoopRoot 'lib\pi_settings.py') ensure-quiet-startup (Join-Path $PI_AGENT 'settings.json')
   if ($LASTEXITCODE -eq 0) { Coop-Ok 'quiet startup enabled (guardrails, skills, prompts, extensions, and theme still load)' }
   else { Coop-Warn "could not enable quiet startup in $PI_AGENT\settings.json" 'run: coop sync'; $script:SyncFailures++ }
+  # Pi 1.x's built-in MCP stays off beside pi-mcp-adapter (master plan U2); the
+  # launch passes --no-mcp too, this keeps it off for anything else using the dir.
+  & $settingsPy (Join-Path $script:CoopRoot 'lib\pi_settings.py') ensure-builtin-mcp-off (Join-Path $PI_AGENT 'settings.json')
+  if ($LASTEXITCODE -eq 0) { Coop-Ok "Pi's built-in MCP kept off (coop's MCP servers run through pi-mcp-adapter)" }
+  else { Coop-Warn "could not turn off Pi's built-in MCP in $PI_AGENT\settings.json" 'run: coop sync'; $script:SyncFailures++ }
   # pi-better-openai defaults to replacing the footer, which wipes coop's own footer
   # (issue #203); status mode feeds its usage text into coop's bar instead.
   & $settingsPy (Join-Path $script:CoopRoot 'lib\pi_settings.py') ensure-coop-footer (Join-Path $PI_AGENT 'extensions\pi-better-openai.json')

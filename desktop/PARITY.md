@@ -30,7 +30,7 @@ standards and skills behave as in the terminal.
 
 ## Pi built-in commands
 
-Pi 0.87.1, `docs/slash-commands.md`. Pi implements these in its terminal UI
+Pi 1.1.0, `docs/slash-commands.md`. Pi implements these in its terminal UI
 only, so the window runs each one itself.
 
 | Command | Maps to | In the window |
@@ -45,13 +45,13 @@ only, so the window runs each one itself.
 | `/resume` | rpc | Sessions list (sidebar and picker), then `switch_session` with a session file coop saved. Ctrl+Shift+R. |
 | `/name` | rpc | `set_session_name`; without a name it asks for one. The header's session name opens it too. |
 | `/session` | rpc | Session details from `get_state` and `get_session_stats`: file, id, messages, tokens, cost, context. |
-| `/tree` | rpc | Tree view from `get_tree`: Pi's five filters, folding branches, labels, and Fork here (`fork`). Ctrl+Shift+T. Moving to another point in the same session and editing labels have no RPC command in Pi 0.87.1, so the view's Open in terminal button runs `/tree` there. |
+| `/tree` | rpc | Tree view from `get_tree`: Pi's five filters, folding branches, labels, and Fork here (`fork`). Ctrl+Shift+T. Moving to another point in the same session and editing labels have no RPC command in Pi 1.1.0, so the view's Open in terminal button runs `/tree` there. |
 | `/fork` | rpc | Pick an earlier prompt from `get_fork_messages`, then `fork`; the prompt comes back to the composer. Ctrl+Shift+F. |
 | `/clone` | rpc | `clone`. |
 | `/compact` | rpc | `compact` with the optional instructions after the command. |
 | `/import` | terminal | Importing a session file is a terminal command. |
 | `/copy` | window | Copies the last answer; every answer and code block also has a copy button. |
-| `/export` | rpc | Save dialog, then `export_html` to the chosen file. Pi 0.87.1 has no RPC command for its JSONL export of the current branch (`/export <file>.jsonl`), so that form runs in Open in terminal. |
+| `/export` | rpc | Save dialog, then `export_html` to the chosen file. Pi 1.1.0 has no RPC command for its JSONL export of the current branch (`/export <file>.jsonl`), so that form runs in Open in terminal. |
 | `/share` | terminal | Uploading a session is a terminal command. |
 | `/bug` | terminal | Pi's bug report flow is a terminal command. |
 | `/trust` | terminal | Saving a project trust decision is a terminal screen; without one, the window loads no project-local Pi files, as `--mode rpc` does. |
@@ -88,7 +88,7 @@ window, which `coop desktop` opens on a folder.
 
 ## Keybinding actions
 
-Pi 0.87.1, `docs/keybindings.md`: every action id, with the window's key.
+Pi 1.1.0, `docs/keybindings.md`: every action id, with the window's key.
 "native" means the text box, list or scroll area already does it.
 
 | Action | Maps to | In the window |
@@ -196,7 +196,10 @@ dialogs as cards and lists.
 | --- | --- | --- | --- |
 | `/start` | coop-tools | Pi | The Start Here menu, as a list. The empty window offers it too, and the first launch on a profile (`COOP_FIRST_RUN`, as the terminal) opens it once. |
 | `/setup-project` | coop-tools | Pi | The project wizard's questions, one dialog each. |
+| `/project-share` | coop-tools | Pi | A yes/no naming the file and branch, then a notice with the result. |
+| `/project-get` | coop-tools | Pi | A notice with the result, or a yes/no first when this folder's file was never shared. |
 | `/setup-docs` | coop-tools | Pi | The docs wizard's questions, or a notice when coop-data-doc lacks the native wizard. |
+| `/impact` | coop-tools | Pi | The session's lineage context (`/impact <schema.name>` for one object), shown in the conversation. |
 | `/standards-status` | coop-tools | Pi | A notice and the JSON status in the conversation. The Standards pane (Ctrl+Shift+S) shows the same status's domains and its team knowledge sources (`cooptimize/incremental-bi`, `cooptimize/coop-team-knowledge`), the notes of each clone readable one at a time; the terminal reads those clones through the team-knowledge skill's search. |
 | `/coop-live-read` | coop-tools | Pi | The live-read grant, or its revocation (`/coop-live-read revoke`). |
 | `/coop-approvals` | coop-tools | Pi | Edit approvals (`status`, `revoke`). |

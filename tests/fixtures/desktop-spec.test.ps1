@@ -42,7 +42,7 @@ try {
   # Pi: a package under the fake npm global root, and `pi` on PATH.
   $piPkg = Join-Path $npmRoot '@earendil-works\pi-coding-agent'
   New-Item -ItemType Directory -Force -Path (Join-Path $piPkg 'dist\bundle') | Out-Null
-  [System.IO.File]::WriteAllText((Join-Path $piPkg 'package.json'), '{"name":"@earendil-works/pi-coding-agent","version":"0.87.1","bin":{"pi":"dist/bundle/cli.js"}}', $utf8)
+  [System.IO.File]::WriteAllText((Join-Path $piPkg 'package.json'), '{"name":"@earendil-works/pi-coding-agent","version":"1.1.0","bin":{"pi":"dist/bundle/cli.js"}}', $utf8)
   [System.IO.File]::WriteAllText((Join-Path $piPkg 'dist\bundle\cli.js'), "console.log('pi stub')`n", $utf8)
   Write-Shim 'pi' 'echo pi-stub' '@echo pi-stub'
   Write-Shim 'npm' "if [ `"`$1 `$2`" = 'root -g' ]; then echo '$npmRoot'; fi" "@if `"%1 %2`"==`"root -g`" echo $npmRoot"

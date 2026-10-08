@@ -2633,4 +2633,176 @@ await t("several coops at once: the guardrails read this launch's own MCP config
   }
 });
 
+// --- Pi 0.99 built-in MCP (mcp__<server>__<tool>) ------------------------------
+// Pi 0.99 registers each MCP tool directly as `mcp__<server>__<tool>` in the
+// namespace `mcp__<server>`. Its arguments go straight to the server.
+const builtinModeling = (tool, operation, extra = {}) =>
+  ({ toolName: `mcp__powerbi-modeling-mcp__${tool}`, input: { request: { operation, ...extra } } });
+
+await t("Pi 0.99 built-in MCP names resolve to coop's servers without a registry", () => {
+  assert.deepEqual(effectiveMutationTarget(builtinModeling("measure_operations", "Create")),
+    { outerTool: "mcp__powerbi-modeling-mcp__measure_operations", innerTool: "measure_operations", server: "powerbi-modeling-mcp" });
+  assert.deepEqual(effectiveMutationTarget({ toolName: "mcp__fabric-sqlendpoint__execute_query", input: {} }),
+    { outerTool: "mcp__fabric-sqlendpoint__execute_query", innerTool: "execute_query", server: "fabric-sqlendpoint" });
+  // Pi 0.99.2+ spells `-` as `_` in built-in MCP names; coop's server name still wins.
+  assert.deepEqual(effectiveMutationTarget({ toolName: "mcp__powerbi_modeling_mcp__measure_operations", input: { request: { operation: "Create" } } }),
+    { outerTool: "mcp__powerbi_modeling_mcp__measure_operations", innerTool: "measure_operations", server: "powerbi-modeling-mcp" });
+  assert.deepEqual(effectiveMutationTarget({ toolName: "mcp__fabric_sqlendpoint__execute_query", input: {} }),
+    { outerTool: "mcp__fabric_sqlendpoint__execute_query", innerTool: "execute_query", server: "fabric-sqlendpoint" });
+  assert.equal(cg.sessionApprovalKey({ toolName: "mcp__powerbi_modeling_mcp__measure_operations", input: { request: { operation: "Create" } } }),
+    "mcp:powerbi-modeling-mcp", "same key in both spellings");
+  assert.equal(sqlMcpRisk({ toolName: "mcp__fabric_sqlendpoint__execute_query", input: { query: "DELETE FROM dbo.T" } })?.kind, "ddl-dml-destructive");
+  // Power BI Modeling operations classify exactly as through the adapter.
+  for (const [tool, op, want] of [["measure_operations", "List", null], ["measure_operations", "Create", "mcp:powerbi-modeling-mcp"],
+    ["measure_operations", "Delete", null], ["database_operations", "DeployToFabric", null], ["dax_query_operations", "Execute", null]]) {
+    const edit = cg.mcpEditLabel(builtinModeling(tool, op));
+    if (["List", "Execute"].includes(op)) assert.equal(edit, null, `${tool} ${op} is a read`);
+    else assert.match(edit, new RegExp(`powerbi-modeling-mcp/${tool} ${op}`));
+    assert.equal(cg.sessionApprovalKey(builtinModeling(tool, op)), want, `${tool} ${op}`);
+    assert.equal(cg.sessionApprovalKey(builtinModeling(tool, op)), cg.sessionApprovalKey(modeling(tool, op)), "same key as the adapter shape");
+  }
+  // Fabric and Azure DevOps edits share the adapter's per-server session key.
+  assert.equal(cg.sessionApprovalKey({ toolName: "mcp__fabric__core_create-item", input: {} }), "mcp:fabric");
+  assert.equal(cg.sessionApprovalKey({ toolName: "mcp__azure-devops__wit_create_work_item", input: {} }), "mcp:azure-devops");
+  assert.equal(cg.sessionApprovalKey({ toolName: "mcp__fabric__onelake_delete-file", input: {} }), null, "deletes always ask");
+  assert.equal(cg.mcpEditLabel({ toolName: "mcp__fabric__onelake_list-files", input: {} }), null, "reads never ask");
+  // Warehouse SQL through the built-in shape: arguments are direct.
+  const sqlCall = (input) => ({ toolName: "mcp__fabric-sqlendpoint__execute_query", input });
+  assert.equal(sqlMcpRisk(sqlCall({ query: "SELECT TOP (5) a FROM dbo.T" }))?.kind, "row-data");
+  assert.equal(sqlMcpRisk(sqlCall({ query: "DELETE FROM dbo.T" }))?.kind, "ddl-dml-destructive");
+  assert.equal(sqlMcpRisk(sqlCall({ sql: "SELECT TOP (1) 1", query: "DELETE FROM dbo.T" }))?.kind, "ddl-dml-destructive",
+    "a benign alias cannot hide a mutation");
+  assert.equal(cg.sessionApprovalKey(sqlCall({ query: "INSERT INTO dbo.T (a) VALUES (1)" })), "sql:fabric-sqlendpoint");
+  assert.equal(cg.sessionApprovalKey(sqlCall({ query: "DROP TABLE dbo.T" })), null);
+  // A bounded read grant is reused only through the adapter's pinned shape for now;
+  // the built-in shape asks each time until coop's Warehouse SQL moves to it.
+  writeManagedTarget();
+  const deps = { readText: (path) => readFileSync(path, "utf8"), agentDir: AUDIT_DIR, token: () => launchToken() };
+  const bounded = "SELECT TOP (5) a FROM dbo.T";
+  assert.ok(cg.resolveLiveReadScope(dynamicRead(bounded), deps), "the adapter shape resolves a scope");
+  assert.equal(cg.resolveLiveReadScope(sqlCall({ query: bounded, workspaceId: WORKSPACE_ID, itemId: ITEM_ID }), deps), null);
+});
+
+await t("Fabric routers in Pi 0.99's built-in shape: the command decides (#171)", () => {
+  const builtinRouter = (command, extra = {}) =>
+    ({ toolName: `mcp__fabric__${command.split("_")[0]}`, input: { intent: "x", command, parameters: {}, ...extra } });
+  for (const command of FABRIC_1_3_WRITES) {
+    assert.ok(cg.mcpEditLabel(builtinRouter(command)), `${command} should ask`);
+    assert.equal(cg.sessionApprovalKey(builtinRouter(command)), /_delete/.test(command) ? null : "mcp:fabric", command);
+    assert.equal(cg.sessionApprovalKey(builtinRouter(command)), cg.sessionApprovalKey(fabricRouter(command)), "same key as the adapter shape");
+  }
+  for (const command of FABRIC_1_3_READS) assert.equal(cg.mcpEditLabel(builtinRouter(command)), null, `${command} is a read`);
+  assert.equal(cg.mcpEditLabel(builtinRouter("onelake_delete_file", { learn: true })), null);
+  assert.ok(cg.mcpEditLabel(builtinRouter("onelake_purge_everything")));
+  // From Pi's registry, too.
+  const origin = cg.toolOriginFromInfo({ name: "mcp__fabric__onelake", sourceInfo: { path: "builtin:mcp" }, namespace: { name: "mcp__fabric" } });
+  assert.ok(cg.mcpEditLabel({ ...builtinRouter("onelake_delete_file"), coopToolOrigin: origin }));
+});
+
+await t("a built-in MCP tool's `tool` argument never replaces the tool that runs", () => {
+  // Before Pi 0.99 support, `mcp__fabric__delete_item` matched the adapter's
+  // namespace pattern, so a model-written `tool` field decided the classification.
+  const event = { toolName: "mcp__fabric__delete_item", input: { tool: "list_items", args: {} } };
+  assert.deepEqual(effectiveMutationTarget(event), { outerTool: "mcp__fabric__delete_item", innerTool: "delete_item", server: "fabric" });
+  assert.match(cg.mcpEditLabel(event), /fabric\/delete_item/);
+  assert.equal(cg.sessionApprovalKey(event), null);
+  const modelingEvent = { toolName: "mcp__powerbi-modeling-mcp__measure_operations", input: { tool: "help", request: { operation: "Delete" } } };
+  assert.match(cg.mcpEditLabel(modelingEvent), /measure_operations Delete/);
+  // A server coop doesn't know, with no registry entry: the name's own verb decides.
+  const unknown = { toolName: "mcp__github__delete_repo", input: { tool: "list_repos", args: {} } };
+  assert.match(cg.mcpEditLabel(unknown), /mcp__github__delete_repo/);
+  assert.equal(cg.sessionApprovalKey(unknown), null);
+  // The adapter's own namespace proxies still dispatch.
+  assert.deepEqual(effectiveMutationTarget({ toolName: "mcp__azure_devops", input: { tool: "wit_list_work_items", args: {} } }),
+    { outerTool: "mcp__azure_devops", innerTool: "wit_list_work_items", server: "azure_devops" });
+});
+
+await t("Pi's registry decides a tool's server and whether `tool` dispatches", async () => {
+  const ADAPTER = "/home/u/.coop/agent/npm/node_modules/pi-mcp-adapter/index.ts";
+  const registry = [
+    { name: "mcp", sourceInfo: { path: ADAPTER }, parameters: { properties: { tool: {}, args: {}, server: {} } } },
+    { name: "mcp__fabric", sourceInfo: { path: ADAPTER }, parameters: { properties: { tool: {}, args: {} } } },
+    { name: "mcp__github__create_issue", sourceInfo: { path: "builtin:mcp" }, namespace: { name: "mcp__github" }, parameters: { properties: { tool: {}, title: {} } } },
+    { name: "mcp__github__update_issue", sourceInfo: { path: "builtin:mcp" }, namespace: { name: "mcp__github" }, parameters: { properties: {} } },
+    { name: "mcp__github__delete_issue", sourceInfo: { path: "builtin:mcp" }, namespace: { name: "mcp__github" }, parameters: { properties: {} } },
+    { name: "mcp__my_server__update_note", sourceInfo: { path: "builtin:mcp" }, namespace: { name: "mcp__my.server" }, parameters: { properties: {} } },
+    { name: "mcp__docs__lookup", sourceInfo: { path: "builtin:mcp" }, namespace: { name: "mcp__docs" }, annotations: { destructiveHint: true }, parameters: { properties: {} } },
+    { name: "mcp__docs__search", sourceInfo: { path: "builtin:mcp" }, namespace: { name: "mcp__docs" }, annotations: { readOnlyHint: true }, parameters: { properties: {} } },
+    { name: "mcp__custom", sourceInfo: { path: "/x/other-extension/index.ts" }, parameters: { properties: { tool: {} } } },
+    // Another extension claiming to be the built-in MCP without Pi's source path.
+    { name: "mcp__fabric__create_item", sourceInfo: { path: "/x/impostor/index.ts" }, namespace: { name: "mcp__powerbi-modeling-mcp" }, parameters: { properties: {} } },
+  ];
+  const origin = (name) => cg.toolOriginFromInfo(registry.find((info) => info.name === name));
+  assert.deepEqual(origin("mcp__github__create_issue"), { builtinMcpServer: "github", envelope: false, destructiveHint: false });
+  assert.deepEqual(origin("mcp"), { envelope: true, destructiveHint: false });
+  assert.deepEqual(origin("mcp__custom"), { envelope: false, destructiveHint: false });
+  assert.equal(cg.toolOriginFromInfo(undefined), undefined);
+  const withOrigin = (event) => ({ ...event, coopToolOrigin: origin(event.toolName) });
+  assert.deepEqual(effectiveMutationTarget(withOrigin({ toolName: "mcp__my_server__update_note", input: {} })),
+    { outerTool: "mcp__my_server__update_note", innerTool: "update_note", server: "my.server" }, "server comes from the namespace, unsanitized");
+  assert.deepEqual(effectiveMutationTarget(withOrigin({ toolName: "mcp__custom", input: { tool: "write", args: {} } })), { outerTool: "mcp__custom" },
+    "a non-envelope tool's `tool` field is only an argument");
+  assert.deepEqual(effectiveMutationTarget(withOrigin({ toolName: "mcp__fabric", input: { tool: "core_create-item", args: {} } })),
+    { outerTool: "mcp__fabric", innerTool: "core_create-item", server: "fabric" }, "the adapter's namespace proxy still dispatches");
+  assert.deepEqual(effectiveMutationTarget(withOrigin({ toolName: "mcp__fabric__create_item", input: {} })), { outerTool: "mcp__fabric__create_item" },
+    "only Pi's builtin:mcp source binds a server from the namespace");
+
+  // Through the real handler, with a registry-backed pi.
+  const h = {};
+  coopGuardrails({ on: (ev, fn) => (h[ev] = fn), registerCommand: () => {}, exec: pi.exec, getAllTools: () => registry });
+  await h.session_start({}, ctx);
+  let asked = 0; let offered = []; let pick = "session";
+  const ui = { notify: () => {}, confirm: async () => { asked++; offered = []; return pick !== "decline"; },
+    select: async (_t, options) => { asked++; offered = options; return pick === "session" ? options[1] : options[2]; } };
+  const c = { ...ctx, ui };
+  assert.equal(blocked(await h.tool_call({ toolName: "mcp__github__create_issue", input: { tool: "list_issues", title: "x" } }, c)), false);
+  assert.equal(asked, 1, "the create asks despite a read-looking `tool` field");
+  assert.match(offered[1], /Allow github edits for this session/);
+  assert.equal(blocked(await h.tool_call({ toolName: "mcp__github__update_issue", input: {} }, c)), false);
+  assert.equal(asked, 1, "the session approval covers the server's next edit");
+  pick = "decline";
+  assert.equal(blocked(await h.tool_call({ toolName: "mcp__github__delete_issue", input: {} }, c)), true);
+  assert.equal(asked, 2, "a delete still asks");
+  assert.equal(offered.length, 0, "with no session option");
+  assert.equal(blocked(await h.tool_call({ toolName: "mcp__docs__lookup", input: {} }, c)), true);
+  assert.equal(asked, 3, "a tool its server marks destructive asks");
+  assert.equal(blocked(await h.tool_call({ toolName: "mcp__docs__search", input: {} }, c)), false);
+  assert.equal(asked, 3, "a read-only hint changes nothing");
+  // A registry that throws falls back to name matching, and still asks.
+  const h2 = {};
+  coopGuardrails({ on: (ev, fn) => (h2[ev] = fn), registerCommand: () => {}, exec: pi.exec, getAllTools: () => { throw new Error("registry unavailable"); } });
+  await h2.session_start({}, ctx);
+  assert.equal(blocked(await h2.tool_call({ toolName: "mcp__fabric__delete_item", input: { tool: "list_items" } }, c)), true);
+  assert.equal(asked, 4);
+  await h.session_start({}, ctx);
+});
+
+await t("approval dialogs open one at a time, and a session approval covers calls that waited", async () => {
+  await handleSessionStart({}, ctx);
+  let open = 0, maxOpen = 0, asked = 0;
+  const ui = { notify: () => {}, confirm: async () => true,
+    select: async (_t, options) => {
+      asked++; open++; maxOpen = Math.max(maxOpen, open);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      open--; return options[1];
+    } };
+  const c = { ...ctx, ui };
+  // A codemode script can issue several calls at once.
+  const results = await Promise.all([
+    handle(builtinModeling("measure_operations", "Create"), c),
+    handle(builtinModeling("measure_operations", "Update"), c),
+    handle(modeling("column_operations", "Rename"), c),
+  ]);
+  assert.deepEqual(results.map(blocked), [false, false, false]);
+  assert.equal(maxOpen, 1, "never two dialogs at once");
+  assert.equal(asked, 1, "the calls that waited ride the session approval");
+  // A failed check does not stop the next one.
+  const order = [];
+  const serial = cg.oneAtATime(async (i) => { order.push(i); if (i === 1) throw new Error("boom"); return i; });
+  const settled = await Promise.allSettled([serial(0), serial(1), serial(2)]);
+  assert.deepEqual(order, [0, 1, 2]);
+  assert.deepEqual(settled.map((r) => r.status), ["fulfilled", "rejected", "fulfilled"]);
+  await handleSessionStart({}, ctx);
+});
+
 console.log(`  ${n} guardrails tests passed`);
