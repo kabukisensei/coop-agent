@@ -96,6 +96,9 @@ exit 0
     ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $seed -Recurse -Force }
   [System.IO.File]::WriteAllText((Join-Path $seed 'VERSION'), "0.23.5`n", $utf8)
   $null = Invoke-FixtureGit @('init', '-q', $seed)
+  # No auto gc: a detached `gc --auto` after a commit can prune loose objects
+  # while New-Machine clones the seed (CI saw "nonexistent object" on the tag).
+  $null = Invoke-FixtureGit @('-C', $seed, 'config', 'gc.auto', '0')
   $null = Invoke-FixtureGit @('-C', $seed, 'add', '-A')
   $null = Invoke-FixtureGit @('-C', $seed, 'commit', '-q', '-m', 'c1')
   $null = Invoke-FixtureGit @('-C', $seed, 'tag', '-a', 'v0.23.5', '-m', 'v0.23.5')

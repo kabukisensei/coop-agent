@@ -1,6 +1,6 @@
 // Renderer input is untrusted. Every Pi RPC command is rebuilt here field by
 // field from an allowlist; nothing from the renderer is spread into a command.
-// Field names follow Pi 0.87.1 docs/rpc-commands.md and docs/rpc-extension-ui.md.
+// Field names follow Pi 1.1.0 docs/rpc-commands.md and docs/rpc-extension-ui.md.
 
 export const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 const QUEUE_MODES = new Set(["all", "one-at-a-time"]);

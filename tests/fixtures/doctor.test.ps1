@@ -203,7 +203,7 @@ try {
 import json, os, sys
 args = sys.argv[1:]
 if args[:1] == ['--version']:
-    print('pi 0.87.1'); sys.exit(0)
+    print('pi 1.1.0'); sys.exit(0)
 if args[:1] == ['list']:
     mode = os.environ.get('COOP_TEST_PI_LIST_MODE', 'none')
     if mode == 'none':
