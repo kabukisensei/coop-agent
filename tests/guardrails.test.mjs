@@ -806,6 +806,26 @@ await t("direct adapter tools (directTools) are gated like proxied calls", async
   // coop's own native fallback tool is not an adapter direct tool.
   assert.equal(effectiveMutationTarget({ toolName: "fabric_sql_query", input: { sql: "select 1" } }).server, undefined);
 });
+await t("Fabric routers called by their listed names (fabric_core, fabric_onelake) are gated like the bare names", async () => {
+  await handleSessionStart({}, ctx);
+  let asked = 0;
+  const ui = { notify: () => {}, confirm: async () => { asked++; return false; }, select: async (_t, options) => { asked++; return options[options.length - 1]; } };
+  const c = { ...ctx, ui };
+  // pi-mcp-adapter lists the Fabric routers as fabric_core, fabric_onelake, ... and dispatches that spelling too.
+  const call = (toolName, input) => ({ toolName, input });
+  assert.equal(effectiveMutationTarget(call("mcp", { server: "fabric", tool: "fabric_core", args: { command: "core_create-item" } })).innerTool, "core_create-item");
+  assert.equal(effectiveMutationTarget(call("mcp", { tool: "fabric_onelake", args: { command: "onelake_delete-file" } })).server, "fabric");
+  assert.equal(blocked(await handle(call("mcp", { server: "fabric", tool: "fabric_core", args: { command: "core_create-item", workspace: "dev" } }), c)), true);
+  assert.equal(asked, 1);
+  assert.equal(blocked(await handle(call("mcp__fabric", { tool: "fabric_onelake", args: { command: "onelake_delete-file", workspace: "dev" } }), c)), true);
+  assert.equal(asked, 2);
+  assert.equal(blocked(await handle(call("mcp", { tool: "fabric_onelake", args: { command: "onelake_upload-file", workspace: "dev" } }), c)), true);
+  assert.equal(asked, 3);
+  assert.equal(blocked(await handle(call("mcp", { server: "fabric", tool: "fabric_core", args: { command: "core_search-catalog" } }), c)), false);
+  assert.equal(asked, 3, "a prefixed read still passes");
+  assert.equal(blocked(await handle(call("mcp", { server: "fabric", tool: "fabric_core", args: { command: "core_create-item" } }), { cwd: ctx.cwd, hasUI: false })), true);
+  await handleSessionStart({}, ctx);
+});
 await t("mcpScript is blocked: its MCP calls bypass the tool_call hook", async () => {
   let asked = 0;
   const ui = { confirm: async () => { asked++; return true; }, notify: () => {} };
