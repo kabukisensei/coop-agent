@@ -5,6 +5,21 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Security
+
+- A production workspace, item or endpoint id inside a REST URL
+  (`/workspaces/<id>/items`), or a production server inside a connection
+  string, now makes a shell or MCP write a production write, as a separate
+  argument always did (#364). Display names still match whole values only.
+- The secret-file gate covers model and Azure sign-in stores: `auth.json`
+  (coop's and Pi's provider logins), a Pi agent dir's `models.json`, and the
+  Azure CLI's MSAL token cache (#365).
+- A symlink or junction with an innocent name to a secret file now asks like
+  the secret itself, for native file tools and bash (#367).
+- A phone's open event stream re-checks its grant before every event and
+  heartbeat, so idle or maximum-age expiry, and eviction by the twenty-device
+  cap, end it (#366).
+
 ## [0.34.3] — 2026-10-08
 
 ### Changed

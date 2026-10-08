@@ -43,7 +43,7 @@ Pi's optional `powershell` tool is off by default. When it is on, **every** Powe
 
 ### Secret files
 
-A read/edit/write of a secret-looking file (`.env`, private keys, credential files) — **or a bash command that touches one** (`cat .env`, `curl -F f=@.env`) — requires confirmation.
+A read/edit/write of a secret-looking file (`.env`, private keys, credential files, model sign-in stores such as `auth.json` and a Pi agent dir's `models.json`, the Azure CLI's MSAL token cache) — **or a bash command that touches one** (`cat .env`, `curl -F f=@.env`) — requires confirmation. A path that is a symlink or junction to such a file counts as that file, checked against the target before the call (it is not a sandbox: a link swapped after approval is not caught).
 
 ### Mutating MCP calls
 

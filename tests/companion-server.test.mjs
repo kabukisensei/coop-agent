@@ -688,6 +688,26 @@ try {
     assert.equal((await call(port, "GET", "/api/snapshot", { cookie })).json.code, "revoked");
   });
 
+  await check("server: a phone whose grant expires while its stream is open gets no more events (#366)", async () => {
+    const { code } = store.startPairing({ windowsUser: "VM\\aaron", client: "Example Co" });
+    const res = await call(port, "POST", "/api/pair", { body: { code, deviceName: "Idle phone" } });
+    const idle = String(res.headers["set-cookie"]).split(";")[0];
+    const s = await stream(port, idle);
+    await new Promise((r) => setTimeout(r, 20));
+    const before = s.read();
+    const saved = clock;
+    clock = Date.now() + LIMITS.deviceIdleMs + 60_000;
+    try {
+      pi.ask({ ...confirmQ, id: "c-expired" });
+      await s.ended;
+      assert.equal(s.read(), before, "nothing is written after the grant expired");
+      assert.equal((await call(port, "GET", "/api/tabs", { cookie: idle })).json.code, "device-expired");
+    } finally {
+      clock = saved;
+      hub.answerFromDesktop("c-expired", { confirmed: false });
+    }
+  });
+
   await check("server: a phone paired on another client is refused here", async () => {
     const { code } = store.startPairing({ windowsUser: "VM\\aaron", client: "Other Client" });
     const res = await call(port, "POST", "/api/pair", { body: { code, deviceName: "phone" } });
@@ -802,6 +822,15 @@ await check("hub: with the app switch on, a desk new session, a switch and a new
       assert.equal((await call(tport, "GET", "/api/tabs", { cookie: again })).json.code, "not-paired");
       await pair("Work iPad");
       assert.equal(tabStore.list().length, 2, "a phone with another name is a second device");
+    });
+    await check("a device pushed out by the twenty-device cap loses its open stream (#366)", async () => {
+      rows = [{ id: 1, hub: one.hub, label: "New session", folder: "fabric", working: false, asking: false }];
+      const oldest = await pair("Oldest phone");
+      const live = await stream(tport, oldest);
+      await new Promise((r) => setTimeout(r, 20));
+      for (let i = 0; i < 20; i++) await pair(`Spare ${i}`);
+      await live.ended;
+      assert.equal((await call(tport, "GET", "/api/tabs", { cookie: oldest })).json.code, "not-paired");
     });
   } finally {
     await server.close();

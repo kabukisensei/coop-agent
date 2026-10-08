@@ -37,9 +37,9 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { appendFileSync, existsSync, readFileSync, renameSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, realpathSync, renameSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { agentDir as coopAgentDir, profileDir as coopProfileDir } from "../../lib/paths.mjs";
+import { agentDir as coopAgentDir, coopAgentDir as coopIsolatedAgentDir, homeDir as coopHomeDir, personalPiAgentDir, profileDir as coopProfileDir } from "../../lib/paths.mjs";
 import { editGateDecision } from "../../lib/lineage-context.mjs";
 
 declare const Buffer: { from(value: string, encoding: "base64url"): { length: number; toString(encoding: "utf8" | "base64url"): string } };
@@ -344,10 +344,26 @@ export function parseProductionNames(text: string): string[] {
 }
 
 /** True when one of the values IS something the contract labels production
- *  (whole value, case-insensitive: a prod workspace "Sales" never matches "Sales Dev"). */
+ *  (whole value, case-insensitive: a prod workspace "Sales" never matches "Sales Dev").
+ *  A GUID or host name also counts inside a value, between non-identifier
+ *  characters, so a prod workspace id in a REST path (`/workspaces/<id>/items`)
+ *  or a prod server in a connection string is caught (#364). Display names stay
+ *  whole-value only. */
 export function namesContractProduction(values: string[], names: string[]): boolean {
   if (!names.length) return false;
-  return values.some((value) => names.includes(String(value).trim().toLocaleLowerCase()));
+  const embedded = names.filter((name) => SQL_UUID.test(name) || /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(name));
+  return values.some((value) => {
+    const v = String(value).trim().toLocaleLowerCase();
+    if (names.includes(v)) return true;
+    return embedded.some((name) => {
+      for (let at = v.indexOf(name); at >= 0; at = v.indexOf(name, at + 1)) {
+        const before = at > 0 ? v[at - 1] : "";
+        const after = v[at + name.length] || "";
+        if (!/[a-z0-9.-]/.test(before) && !/[a-z0-9-]/.test(after)) return true;
+      }
+      return false;
+    });
+  });
 }
 
 /** Every string value in a call's arguments (nested), for namesContractProduction. */
@@ -2107,19 +2123,57 @@ export function isSecretPath(p: string): boolean {
   if (/^(\.npmrc|\.pypirc|\.netrc|\.pgpass|credentials)$/.test(base)) return true;
   if (base === PROD_UNLOCK_FILE) return true; // the human-only production unlock (G1)
   if (/(^|[._-])secrets?([._-]|$)/.test(base) && /\.(ya?ml|json|env|txt|conf|ini)$/.test(base)) return true;
+  // Provider and Azure sign-in stores (#365): Pi/coop keep model logins in
+  // `<agent dir>/auth.json` (Codex and Composer use the same name), the Azure CLI
+  // keeps tokens in its MSAL cache. Pi's models.json can carry API keys too.
+  if (base === "auth.json" || base === "accesstokens.json" || /^msal_token_cache\./.test(base)) return true;
+  if (base === "models.json" && isAgentDirFile(p)) return true;
   return false;
+}
+
+/** True when the file sits directly in a Pi agent dir: the one this session
+ *  loads, coop's isolated one, your personal `~/.pi/agent`, or any folder named
+ *  `agent` (the shape of all three). */
+function isAgentDirFile(p: string): boolean {
+  const parent = dirname(p.replace(/\\/g, "/"));
+  if (basename(parent).toLowerCase() === "agent") return true;
+  try {
+    const dir = resolve(parent).toLowerCase();
+    return [coopAgentDir(), coopIsolatedAgentDir(), personalPiAgentDir()].some((d) => resolve(d).toLowerCase() === dir);
+  } catch { return false; }
+}
+
+/** The real file behind a path that is (or runs through) a symlink or junction
+ *  and looks like a secret there, or null (#367). Relative paths resolve
+ *  against the session's folder and `~` against home, as the file tools do.
+ *  A check before the call, not a sandbox: it catches an innocent-looking link,
+ *  not a link swapped after approval. */
+export function secretLinkTarget(p: string, cwd: string): string | null {
+  if (!p) return null;
+  try {
+    const expanded = p === "~" || /^~[/\\]/.test(p) ? join(coopHomeDir(), p.slice(1)) : p;
+    const full = resolve(cwd || ".", expanded);
+    if (!existsSync(full)) return null;
+    const real = realpathSync.native(full);
+    if (resolve(real) === full) return null;
+    return isSecretPath(real) ? real : null;
+  } catch { return null; }
 }
 
 /** First secret-looking path token in a bash command, or null. Mirrors the
  *  read/edit/write secret gate so bash isn't an unguarded exfil path
  *  (`cat .env`, `cp .env /tmp`, `curl -F f=@.env`, `base64 .env`, `>.env`). */
-export function bashSecretCmdPath(cmd: string): string | null {
+export function bashSecretCmdPath(cmd: string, cwd = ""): string | null {
+  const cands: string[] = [];
   for (let t of tokenizeArgs(cmd)) {
     t = t.replace(/^\d*[<>&]+/, "");         // strip redirection operators (>.env, <.env, 2>.env, &>.env)
     const at = t.lastIndexOf("@");       // curl -F field=@.env / scp x@host — take the tail
     const cand = at >= 0 ? t.slice(at + 1) : t;
     if (cand && isSecretPath(cand)) return cand;
+    if (cand) cands.push(cand);
   }
+  // A link with an innocent name to a secret file (#367).
+  if (cwd) for (const cand of cands) { const real = secretLinkTarget(cand, cwd); if (real) return `${cand} -> ${real}`; }
   return null;
 }
 
@@ -2290,7 +2344,9 @@ export default function coopGuardrails(pi: ExtensionAPI) {
           audit({ cwd: ctx.cwd, kind: "secret-confirm", tool, decision: "blocked", label: "production unlock", detail: "prod-unlock-self" });
           return { block: true, reason: PROD_UNLOCK_SELF_BLOCK };
         }
-        if (path && isSecretPath(path)) {
+        // #367: an innocent-looking link to a secret is the secret.
+        const linked = path && !isSecretPath(path) ? secretLinkTarget(path, ctx.cwd) : null;
+        if (path && (linked || isSecretPath(path))) {
           if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
             audit({ cwd: ctx.cwd, kind: "secret-confirm", tool, decision: "blocked-headless", label: path, detail: path });
             return { block: true, reason: `coop guardrails: blocked ${tool} of secret-looking file ${path}; approval is unavailable in headless mode.` };
@@ -2298,7 +2354,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
           const verb = tool === "read" ? "read" : "write to";
           const ok = await ctx.ui.confirm(
             "coop guardrails",
-            `Secret-looking file (${verb}):\n  ${path}\ncoop never exposes secrets (tokens, keys, .env). Proceed?`,
+            `Secret-looking file (${verb}):\n  ${path}${linked ? ` -> ${linked}` : ""}\ncoop never exposes secrets (tokens, keys, .env). Proceed?`,
           );
           audit({ cwd: ctx.cwd, kind: "secret-confirm", tool, decision: ok ? "allowed" : "declined", label: path, detail: path });
           if (!ok) return { block: true, reason: `coop guardrails: blocked ${tool} of the secret-looking file ${path} (you declined). Reference an env var / vault instead.` };
@@ -2491,7 +2547,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
 
       // 1a. Secret-file access via bash mirrors the read/edit/write gate and fails
       // closed when approval UI is unavailable.
-      const secretPath = bashSecretCmdPath(cmd);
+      const secretPath = bashSecretCmdPath(cmd, ctx.cwd);
       if (secretPath) {
         if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
           audit({ cwd: ctx.cwd, kind: "secret-confirm", tool: "bash", decision: "blocked-headless", label: secretPath, detail: secretPath });
