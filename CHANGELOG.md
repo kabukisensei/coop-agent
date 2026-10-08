@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.34.2] — 2026-10-08
+
 ### Added
 
 - One remembered project file per Windows user (one Windows user per client;
