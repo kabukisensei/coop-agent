@@ -2627,8 +2627,15 @@ function Get-CoopPiVersion {
 # Get-CoopPiVersion, asked once per coop process: the launch arguments depend
 # on it, and Pi does not change under a launch (sync, which moves Pi, asks
 # Get-CoopPiVersion afresh).
+# The probe must not leak its exit code: launch-spec and --no-launch end on
+# $LASTEXITCODE, and Select-Object -First 1 in Get-CoopPiVersion stops `pi`
+# early, which Windows PowerShell 5.1 reports as -1.
 function Get-CoopLaunchPiVersion {
-  if ($null -eq $script:CoopLaunchPiVersion) { $script:CoopLaunchPiVersion = Get-CoopPiVersion }
+  if ($null -eq $script:CoopLaunchPiVersion) {
+    $rcBefore = $global:LASTEXITCODE
+    $script:CoopLaunchPiVersion = Get-CoopPiVersion
+    $global:LASTEXITCODE = $rcBefore
+  }
   return $script:CoopLaunchPiVersion
 }
 
