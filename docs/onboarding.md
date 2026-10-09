@@ -55,7 +55,9 @@ or both (skipped when `coop install --platform <value>` already answered it). Th
 answer is saved as `client.platform` in `~/.coop/config` and is only a machine
 default: an Azure SQL client gets the Fabric MCP servers off and the Fabric skills
 off unless a repo's `.coop/project.yml` turns them on, and `coop doctor` treats a
-missing Fabric CLI as optional. Change it with `coop onboard --platform <value>`.
+missing Fabric CLI, `fabric-cicd`, Warehouse MCP and Power BI authoring tools as
+optional (the managed Python runtime the native SQL tools read Azure SQL through
+stays a warning when absent). Change it with `coop onboard --platform <value>`.
 Recommended integrations are then enabled automatically; run
 `coop onboard --config-only` later for detailed choices.
 As the final interactive step, Coop opens its model sign-in screen with

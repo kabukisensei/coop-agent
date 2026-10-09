@@ -159,12 +159,14 @@ It is idempotent; re-run it any time.
 Useful flags:
 
 - `--force` — reinstall pi tools / pipx packages even if already present
-- `--no-fabric` — skip installing the Microsoft Fabric CLI (partial/diagnostic setup; a fresh machine will not pass full Doctor readiness until `fab` is installed)
+- `--no-fabric` — skip installing the Microsoft Fabric CLI (partial/diagnostic setup; a fresh Fabric or `both` machine will not pass full Doctor readiness until `fab` is installed; an `azure_sql` machine passes with a warning, because the native SQL tools read Azure SQL through the managed Python runtime that the Fabric CLI install carries)
 - `--platform fabric|azure_sql|both` — answer the client platform question up front (the
   onboarding step asks it otherwise). The answer is saved as `client.platform` in
   `~/.coop/config`: an `azure_sql` machine defaults the Fabric MCP servers off, keeps the
   Fabric skills off unless a contract sets `fabric_skills: policy: baseline`, has `coop doctor`
-  report a missing `fab` as optional rather than red, and checks the SQL token audience at
+  report a missing `fab`, `fabric-cicd`, Warehouse MCP and Power BI authoring tools as optional
+  rather than red (the managed Python runtime with pyodbc stays a warning: `sql_query` and
+  `sql_impact` read Azure SQL through it), and checks the SQL token audience at
   launch instead of the Fabric one. `coop onboard --platform <value>` changes it later, and
   `coop doctor --fix` asks once on a machine that predates the setting. A repo's
   `.coop/project.yml` still wins (one teammate can serve two clients).

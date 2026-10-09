@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Regressions from the v0.35.0 code review: the dependency-free YAML reader,
-the contract's `enabled: false` without PyYAML, the catalog snapshot's manifest
-containment, and the fleet digest's JSON config."""
+"""Regressions from the v0.35.0 code review: the dependency-free YAML reader
+(coop's one parser: core-schema scalar coercion, never PyYAML), the contract's
+`enabled: false`, the catalog snapshot's manifest containment, and the fleet
+digest's JSON config."""
 import json
 import os
 import subprocess
@@ -34,8 +35,49 @@ assert doc["k"] == "it's" and doc["q k"] == "v", doc
 doc = fallback('path: "C:\\\\work\\\\x"\nnote: "a\\"b"\n')
 assert doc["path"] == "C:\\work\\x" and doc["note"] == 'a"b', doc
 
-# 3. `mcp.fabric_sqlendpoint.enabled: false` disables the managed server even
-#    when the reader keeps `false` as text.
+# 2b. One parser everywhere: load() never imports PyYAML, and plain scalars are
+#     coerced like the YAML 1.2 core schema (bool / None / int / float), quoted
+#     ones stay text, and the `get` CLI prints a bool as true / false.
+assert "yaml" not in sys.modules, "importing _yaml must not import PyYAML"
+with tempfile.TemporaryDirectory() as td:
+    f = Path(td) / "t.yml"
+    f.write_text(
+        "a: true\nb: False\nc: TRUE\nd: null\ne: ~\nf:\ng: 12\nh: -3\ni: 0o17\nj: 0x1F\n"
+        "k: 1.5\nl: .5\nm: 1e3\nq: '12'\nr: \"true\"\ns: yes\nt: 0.79.0\nu: main\n"
+        "v: [1, true, null, x]\nw: {k: 2.0, q: 'null'}\nx: 1_000\ny: 0ab1c2d3-0000-4000-8000-000000000000\n"
+        "tools:\n  fabric_cli:\n    enabled: false\n",
+        encoding="utf-8",
+    )
+    doc = _yaml.load(str(f))
+    assert "yaml" not in sys.modules, "_yaml.load() must not import PyYAML"
+    assert doc["a"] is True and doc["b"] is False and doc["c"] is True, doc
+    assert doc["d"] is None and doc["e"] is None and doc["f"] is None, doc
+    assert doc["g"] == 12 and doc["h"] == -3 and doc["i"] == 15 and doc["j"] == 31, doc
+    assert all(isinstance(doc[k], int) and not isinstance(doc[k], bool) for k in "ghij"), doc
+    assert doc["k"] == 1.5 and doc["l"] == 0.5 and doc["m"] == 1000.0, doc
+    assert all(isinstance(doc[k], float) for k in "klm"), doc
+    assert doc["q"] == "12" and doc["r"] == "true", doc
+    assert doc["s"] == "yes" and doc["t"] == "0.79.0" and doc["u"] == "main" and doc["x"] == "1_000", doc
+    assert doc["y"] == "0ab1c2d3-0000-4000-8000-000000000000", doc
+    assert doc["v"] == [1, True, None, "x"] and doc["v"][1] is True and doc["v"][2] is None, doc
+    assert doc["w"] == {"k": 2.0, "q": "null"} and isinstance(doc["w"]["k"], float), doc
+    assert _yaml.loads(f.read_text(encoding="utf-8")) == doc
+    assert _yaml.loads("") == {}
+    # The CLI (Get-CoopYamlValue / Test-CoopToolEnabled in lib/common.ps1 compare
+    # against these strings), run with -S -I so PyYAML cannot be on the path.
+    cli = [sys.executable, "-S", "-I", str(ROOT / "lib" / "_yaml.py")]
+    def get(key, default="MISS"):
+        return subprocess.run(cli + ["get", str(f), key, default], capture_output=True, text=True, check=True).stdout
+    assert get("a") == "true" and get("b") == "false", (get("a"), get("b"))
+    assert get("tools.fabric_cli.enabled") == "false"
+    assert get("g") == "12" and get("k") == "1.5" and get("t") == "0.79.0" and get("y") == doc["y"]
+    assert get("d") == "MISS" and get("f") == "MISS" and get("v") == "MISS" and get("nope.key") == "MISS"
+    assert get("r") == "true" and get("q") == "12"
+    listed = subprocess.run(cli + ["list", str(f), "v"], capture_output=True, text=True, check=True).stdout.split("\n")
+    assert listed[:3] == ["1", "True", "x"], listed
+
+# 3. `mcp.fabric_sqlendpoint.enabled: false` disables the managed server: a plain
+#    `false` arrives as a bool; a quoted one is text and still counts.
 assert warehouse_mcp.project_sqlendpoint_enabled({"mcp": {"fabric_sqlendpoint": {"enabled": "false"}}}) is False
 assert warehouse_mcp.project_sqlendpoint_enabled({"mcp": {"fabric_sqlendpoint": {"enabled": False}}}) is False
 assert warehouse_mcp.project_sqlendpoint_enabled({"mcp": {"fabric_sqlendpoint": {"enabled": "true"}}}) is True

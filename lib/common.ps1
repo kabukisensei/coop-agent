@@ -3011,8 +3011,8 @@ function Test-CoopMinorNewer {
   return ([version]("{0}.{1}" -f $ma.Groups[1].Value, $ma.Groups[2].Value) -gt [version]("{0}.{1}" -f $mb.Groups[1].Value, $mb.Groups[2].Value))
 }
 
-# Read a dotted scalar key from a YAML file via lib/_yaml.py (PyYAML when present,
-# else a dependency-free fallback parser).
+# Read a dotted scalar key from a YAML file via lib/_yaml.py (coop's own
+# dependency-free parser on every machine; a bool prints as true / false).
 function Get-CoopYamlValue {
   param([string]$File, [string]$Key, [string]$Default = '')
   if (-not $File -or -not (Test-Path -LiteralPath $File -PathType Leaf)) { return $Default }

@@ -138,8 +138,7 @@ def load_project(path: Path | None) -> dict[str, Any]:
     try:
         data = load_yaml(str(path))
     except Exception:
-        # A contract with a YAML syntax error reads as no contract (PyYAML raises
-        # where the fallback reader does not); callers never see a traceback.
+        # An unreadable contract reads as no contract; callers never see a traceback.
         return {}
     return data if isinstance(data, dict) else {}
 
@@ -262,7 +261,7 @@ def project_sqlendpoint_enabled(project: dict[str, Any]) -> bool:
         return True
     entry = mcp.get("fabric_sqlendpoint", mcp.get("fabric-sqlendpoint", {}))
     if isinstance(entry, dict):
-        # The dependency-free reader (no PyYAML) keeps `false` as text.
+        # lib/_yaml.py hands a plain `false` over as a bool; a quoted one is text.
         enabled = entry.get("enabled")
         if isinstance(enabled, str):
             enabled = {"true": True, "false": False}.get(enabled.strip().lower(), enabled)

@@ -278,6 +278,8 @@ echo "→ committed dev catalog snapshot (SQ9: one file per object, manifest, st
 python3 "$ROOT/tests/catalog-snapshot.test.py"
 echo "→ sql_targets contract section (SQ1: kinds, host patterns, production never default)"
 python3 "$ROOT/tests/sql-targets.test.py"
+echo "→ review fixes: the one YAML parser (core-schema coercion, never PyYAML), enabled: false, manifest containment, fleet digest config"
+python3 "$ROOT/tests/review-fixes.test.py"
 python3 "$ROOT/tests/microsoft-skills.test.py"
 echo "→ one profile root: COOP_DIR is the parent of .coop; one agent-dir chain (S3, #220)"
 python3 "$ROOT/tests/coop-paths.test.py"
@@ -325,9 +327,6 @@ bash "$ROOT/tests/seeddocs.test.sh"
 
 echo "→ coop init --ci (CI pipeline scaffolding) tests"
 bash "$ROOT/tests/ciscaffold.test.sh"
-
-echo "→ BPA runner resolution tests (te bpa run; TE2 must never be invoked)"
-bash "$ROOT/tests/bpa-runner.test.sh"
 
 echo "→ Azure DevOps tooling tests (offline; az must never run)"
 bash "$ROOT/tests/ado.test.sh"

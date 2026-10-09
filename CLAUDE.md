@@ -21,8 +21,10 @@ first; this section adds architecture detail for working ON this repo.
   between the Pi agent and coop's isolated extension tree. **Drift means Pi
   won't start** — the launch preflight (`Invoke-CoopLaunchPreflight` in
   `bin/coop.ps1`) guards this; never bypass it casually.
-- `lib/_yaml.py` is a **dependency-free** YAML reader. Never assume PyYAML is
-  installed (fresh machines lack it); never add a hard PyYAML dependency.
+- `lib/_yaml.py` is coop's **one, dependency-free** YAML parser: it never imports
+  PyYAML, so a file reads the same on every machine (plain `true`/`false`, `null`,
+  integers and floats are coerced like the YAML 1.2 core schema). Never assume
+  PyYAML is installed (fresh machines lack it); never add a hard PyYAML dependency.
 
 ## Test
 

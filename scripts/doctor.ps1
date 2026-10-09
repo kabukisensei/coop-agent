@@ -90,6 +90,12 @@ Check 'npm'     'optional' 'ships with Node.js' @('npm','--version')
 # Get-CoopPython skips a Windows Store App-Execution-Alias stub; later checks
 # (project health, --fix) run through this interpreter.
 $pyBin = Get-CoopPython
+# An Azure SQL-only client (client.platform in ~/.coop/config, master plan section
+# 8 item 7): the Fabric-only rows below (Fabric CLI, fabric-cicd, the Warehouse
+# MCP, the Power BI authoring tools) are informational there, never red; the
+# managed Python runtime with pyodbc stays a warning because the native SQL tools
+# read Azure SQL through it too. A fabric / both machine is checked as before.
+$azureSqlOnly = Test-CoopAzureSqlOnly
 
 # Minimum Pi version — the extension API used by coop-powerline / coop-tools.
 if (Test-Have 'pi') {
@@ -150,7 +156,8 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
   $pyver = (Get-CoopVenvPythonVersion $Dist)
 
   if (-not $meta -and -not $cli) {
-    D-Warn "$Dist not installed (manifest: $expected)" "pipx install $Dist==$expected"
+    if ($Dist -eq 'ms-fabric-cli' -and $azureSqlOnly) { D-Ok "$Dist not installed (Azure SQL client; the Fabric CLI is optional here; manifest: $expected)" }
+    else { D-Warn "$Dist not installed (manifest: $expected)" "pipx install $Dist==$expected" }
     return
   }
   # Executable ownership FIRST: a foreign $Exe earlier on PATH (a `pip install`
@@ -376,7 +383,11 @@ D-Head 'Fabric / semantic-model tooling'
 # stay optional. powerbi-desktop-bridge is only useful on Windows with Desktop.
 # Hints name the manifest pin (Coop-ManifestNpmToolSpec), never npm's latest.
 function Get-NpmToolHint([string]$Package) { $s = Coop-ManifestNpmToolSpec $Package; if (-not $s) { $s = $Package }; return "npm install -g $s" }
-Check 'powerbi-report-author' 'required' (Get-NpmToolHint '@microsoft/powerbi-report-authoring-cli') @('powerbi-report-author', '--version')
+if ($azureSqlOnly) {
+  Check 'powerbi-report-author' 'optional' "$(Get-NpmToolHint '@microsoft/powerbi-report-authoring-cli')   (Azure SQL client; the Power BI authoring tools are optional here)" @('powerbi-report-author', '--version')
+} else {
+  Check 'powerbi-report-author' 'required' (Get-NpmToolHint '@microsoft/powerbi-report-authoring-cli') @('powerbi-report-author', '--version')
+}
 if ($env:OS -eq 'Windows_NT') {
   Check 'powerbi-desktop' 'optional' "$(Get-NpmToolHint '@microsoft/powerbi-desktop-bridge-cli') (Windows + Power BI Desktop only)" @('powerbi-desktop', '--version')
 } else {
@@ -428,11 +439,21 @@ if (Test-Have 'fab') {
     $pinSuffix = if ($cicdExpected) { "==$cicdExpected" } else { '' }
     D-Warn 'fabric-cicd not installed' "pipx inject ms-fabric-cli fabric-cicd$pinSuffix"
   }
+} elseif ($azureSqlOnly) {
+  D-Ok 'fabric-cicd not installed (Azure SQL client; the Fabric CI/CD library is optional here)'
 } else {
   D-Warn 'fabric-cicd: install the Microsoft Fabric CLI first' 'coop install'
 }
 
+# The managed Python runtime (pyodbc + ODBC Driver 18) inside the Fabric CLI
+# environment is also what sql_query / sql_impact read Azure SQL through, so a
+# runtime that is present but broken is red on every platform. Only its absence
+# is a warning on an Azure SQL client, where the Fabric CLI install that brings
+# it is optional.
 $sqlRuntime = Get-CoopFabricSqlRuntimeStatus
+if ($azureSqlOnly -and $sqlRuntime.state -eq 'runtime_missing') {
+  D-Warn 'SQL runtime: the managed Python with pyodbc is not installed (Azure SQL client; the Fabric CLI is optional here, but sql_query and sql_impact read Azure SQL through this runtime)' 'coop install   (installs the Fabric CLI environment that carries the runtime)'
+} else {
 switch ($sqlRuntime.state) {
   'ready'            { D-Ok "Fabric SQL fallback ready (pyodbc $($sqlRuntime.version), ODBC Driver $($sqlRuntime.driver))" }
   'pyodbc_missing'   { D-Bad 'Fabric SQL fallback: pyodbc missing from selected runtime' 'coop sync' }
@@ -440,6 +461,7 @@ switch ($sqlRuntime.state) {
   'pyodbc_unloadable'{ D-Bad 'Fabric SQL fallback: pyodbc is installed but unloadable' 'coop sync; repair the ms-fabric-cli environment if it persists' }
   'driver_missing'   { D-Bad 'Fabric SQL fallback: ODBC Driver 18+ for SQL Server is missing' 'coop install --yes, or install Microsoft.msodbcsql.18 manually' }
   default            { D-Bad 'Fabric SQL fallback: selected Fabric Python runtime is unavailable' 'coop install' }
+}
 }
 
 # Tabular Editor CLI is path-configured and mostly Windows; check the project's path if set.
@@ -604,10 +626,12 @@ if ($mcpFound) {
     $sqlTenant = ''
     $sqlProbe = 'not_probed'
     $sqlUsable = $false
+    $sqlRegistered = $false
     if ($sqlJson) {
       try {
         $sqlDoc = $sqlJson | ConvertFrom-Json
         if ($sqlDoc.state) { $sqlState = [string]$sqlDoc.state }
+        if ($sqlDoc.registered -eq $true) { $sqlRegistered = $true }
         if ($sqlDoc.target -and $sqlDoc.target.scope) { $sqlScope = [string]$sqlDoc.target.scope }
         # The tenant the probe minted for (H2b); empty means az's default account.
         # Named only when it is the tenant the one chain resolves (Get-CoopTenant,
@@ -624,7 +648,12 @@ if ($mcpFound) {
     # config alone is 'configured (not probed)'; otherwise the probe's own state.
     $sqlHow = if ($sqlUsable) { 'usable' } elseif ($sqlProbe -ne 'not_probed') { "probed: $sqlProbe" } elseif ($sqlState -eq 'registered') { 'configured (not probed)' } else { 'not probed' }
     $sqlTail = if ($sqlProbe -eq $sqlState) { '' } else { "; $sqlHow" }
+    # An Azure SQL client reads its databases through the native SQL tools; the
+    # managed Warehouse MCP (Fabric SQL endpoints) is optional there when it is
+    # not registered. A registered entry is probed and reported as on any machine.
+    if ($azureSqlOnly -and -not $sqlRegistered) { $sqlState = 'optional_azure_sql' }
     switch ($sqlState) {
+      'optional_azure_sql'    { D-Ok '  • fabric-sqlendpoint not configured (Azure SQL client; the Warehouse MCP is optional here)' }
       'registered'            { D-Ok "  • fabric-sqlendpoint registered ($sqlFor; direct HTTP, Azure CLI bearer token; $sqlHow)" }
       'auth_required'         { D-Warn "  • fabric-sqlendpoint auth_required ($sqlFor)" 'sign in with Azure CLI/tenant access; doctor never triggers login' }
       'azure_cli_unavailable' { D-Warn "  • fabric-sqlendpoint azure_cli_unavailable ($sqlFor)" 'install/repair Azure CLI and ensure az is on PATH; this is not an authentication diagnosis' }
