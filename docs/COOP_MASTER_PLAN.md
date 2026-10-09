@@ -751,9 +751,15 @@ Tiers resolve to the first signed-in Codex model of a list (`plan`: `gpt-5.6-sol
 of at most 400 characters is answered by the build model; anything else plans on
 the standard model. The first successful `edit` or `write` of a planning turn hands
 the rest of the work to the build model, and the session stays there for ordinary
-follow-ups (one model switch per phase, one prompt-cache miss). Retries stay on
-the model that failed; compaction summaries and extension calls go to the build
-model at `low`. The phase is router state on the session branch. The footer shows
+follow-ups (one model switch per phase, one prompt-cache miss). **Escalation
+(Aaron, 2026-10-09 19:12, "Go"):** a retry after a provider error, or two failed
+edits in a turn on one tier, steps the turn up one tier (build to standard,
+standard to plan) and the next prompt starts afresh, because Aaron does not want
+to lose quality of work; the VM measurement therefore scores quality (task
+completed correctly, failed or retried edits, escalations fired) beside cost, and
+`coop/auto` stays opt-in with the fixed model as the default until he decides on
+that table. Compaction summaries and extension calls go to the build model at
+`low`. The phase is router state on the session branch. The footer shows
 `auto → <routed model>` and `/router` lists the tiers and the phase. With no Codex
 sign-in the route fails naming `/login openai-codex`; it never falls back to
 another provider. The VM measurement against a fixed model is the row's remaining

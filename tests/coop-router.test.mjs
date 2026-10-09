@@ -85,10 +85,10 @@ assert.equal(r.model.id, "gpt-5.6-luna");
 assert.equal(r.thinkingLevel, "low");
 assert.equal(r.state, undefined);
 
-// A retry stays on the model that failed, so caches and thinking signatures stay valid.
-r = routeRequest({ reason: "retry", thinkingLevel: "medium", state: planning, failed: { model: codex("gpt-5.6-terra"), thinkingLevel: "medium", message: {} }, messages: [user("add a column")] }, full, env);
+// A retry with no router state yet (coop/auto picked mid-session) stays on the model that failed.
+r = routeRequest({ reason: "retry", thinkingLevel: "medium", failed: { model: codex("gpt-5.6-terra"), thinkingLevel: "medium", message: {} }, messages: [user("add a column")] }, full, env);
 assert.equal(r.model.id, "gpt-5.6-terra");
-assert.equal(r.state, planning);
+assert.equal(r.state, undefined);
 
 // A stored model that left the catalog is re-resolved by tier, never left to fail.
 r = routeRequest({ reason: "continuation", thinkingLevel: "medium", state: { phase: "planning", model: "gpt-5.6-terra", tier: "standard" }, messages: [user("x"), toolResult("read")] }, full && catalog(["gpt-6-sol", "gpt-6-luna"]), env);
@@ -104,7 +104,44 @@ for (const reason of ["user", "continuation", "retry", "direct"]) {
   const out = routeRequest({ reason, thinkingLevel: "medium", messages: [user("x")] }, full, env);
   assert.equal(out.model.provider, "openai-codex", `${reason} stays on openai-codex`);
 }
-console.log("  ✓ plans on the standard or plan model, builds after the first edit, summaries and quick answers on the build model, retries stay put");
+console.log("  ✓ plans on the standard or plan model, builds after the first edit, summaries and quick answers on the build model");
+
+// --- escalation (Aaron, 2026-10-09: quality over the prompt cache) -------------------
+const { failedEditsThisTurn, tierAbove, FAILED_EDITS_TO_ESCALATE } = mod;
+assert.equal(FAILED_EDITS_TO_ESCALATE, 2);
+assert.deepEqual([tierAbove("build"), tierAbove("standard"), tierAbove("plan")], ["standard", "plan", undefined]);
+// A provider error on the build model: the retry steps up to the standard model, phase kept.
+r = routeRequest({ reason: "retry", thinkingLevel: "medium", state: implementing, failed: { model: codex("gpt-5.6-luna"), thinkingLevel: "medium", message: { stopReason: "error", errorMessage: "overloaded" } }, messages: [user("x"), toolResult("edit")] }, full, env);
+assert.equal(r.model.id, "gpt-5.6-terra");
+assert.deepEqual(r.state, { phase: "implementation", model: "gpt-5.6-terra", tier: "standard" });
+// ...and again from standard to plan; on the plan model the retry stays put.
+r = routeRequest({ reason: "retry", thinkingLevel: "medium", state: r.state, failed: { model: codex("gpt-5.6-terra"), message: { stopReason: "error" } }, messages: [user("x")] }, full, env);
+assert.equal(r.model.id, "gpt-5.6-sol");
+const onPlan = r.state;
+r = routeRequest({ reason: "retry", thinkingLevel: "medium", state: onPlan, failed: { model: codex("gpt-5.6-sol"), message: { stopReason: "error" } }, messages: [user("x")] }, full, env);
+assert.equal(r.model.id, "gpt-5.6-sol");
+assert.equal(r.state, onPlan);
+// Two failed edits in a turn on the build model step up to the standard model; one does not.
+const turn = (...results) => [user("add a column"), toolResult("edit"), user("now the tests"), ...results];
+r = routeRequest({ reason: "continuation", thinkingLevel: "medium", state: implementing, messages: turn(toolResult("edit", true)) }, full, env);
+assert.equal(r.model.id, "gpt-5.6-luna");
+r = routeRequest({ reason: "continuation", thinkingLevel: "medium", state: implementing, messages: turn(toolResult("edit", true), toolResult("read"), toolResult("write", true)) }, full, env);
+assert.equal(r.model.id, "gpt-5.6-terra");
+assert.deepEqual(r.state, { phase: "implementation", model: "gpt-5.6-terra", tier: "standard", failedEdits: 2 });
+const escalated = r.state;
+// The escalated tier needs two NEW failed edits before the next step; a successful edit on it does not drop it back to build.
+r = routeRequest({ reason: "continuation", thinkingLevel: "medium", state: escalated, messages: turn(toolResult("edit", true), toolResult("write", true), toolResult("edit")) }, full, env);
+assert.equal(r.model.id, "gpt-5.6-terra");
+assert.equal(r.state, escalated);
+r = routeRequest({ reason: "continuation", thinkingLevel: "medium", state: escalated, messages: turn(toolResult("edit", true), toolResult("write", true), toolResult("edit", true), toolResult("edit", true)) }, full, env);
+assert.equal(r.model.id, "gpt-5.6-sol");
+assert.equal(r.state.failedEdits, 4);
+// The escalation lasts the turn: the next ordinary prompt is back on the build model with a fresh baseline.
+r = routeRequest({ reason: "user", thinkingLevel: "medium", state: escalated, messages: turn(toolResult("edit", true), toolResult("write", true), user("next thing")) }, full, env);
+assert.equal(r.model.id, "gpt-5.6-luna");
+assert.deepEqual(r.state, { phase: "implementation", model: "gpt-5.6-luna", tier: "build" });
+assert.equal(failedEditsThisTurn(turn(toolResult("edit", true), toolResult("write", true), toolResult("read", true))), 2);
+console.log("  ✓ a provider error or two failed edits step the turn up one tier; the next prompt starts afresh");
 
 // --- helpers --------------------------------------------------------------------
 assert.equal(lastUserText([user("a"), { role: "assistant", content: [] }, user([{ type: "text", text: "b" }, { type: "image" }])]), "b");
