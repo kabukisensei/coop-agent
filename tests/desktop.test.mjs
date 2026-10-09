@@ -771,7 +771,8 @@ await check("pi-session: killTree ends the whole tree (taskkill /T on Windows)",
   killTree(0, "win32", { execFileImpl: (file, args) => calls.push([file, args]), systemRoot: "C:\\Windows" });
   const killed = [];
   killTree(5, "win32", { execFileImpl: (file, args) => calls.push([file, args]), systemRoot: "Windows", killImpl: (pid) => killed.push(pid) });
-  killTree(6, "win32", { execFileImpl: (file, args) => calls.push([file, args]), systemRoot: undefined, killImpl: () => { throw new Error("gone"); } });
+  // "" stands for an unset SystemRoot: `undefined` would take the default, the host's own.
+  killTree(6, "win32", { execFileImpl: (file, args) => calls.push([file, args]), systemRoot: "", killImpl: () => { throw new Error("gone"); } });
   assert.equal(calls.length, 1, "no SystemRoot, no taskkill");
   assert.deepEqual(killed, [5], "the process itself is still ended (child.kill())");
 });
