@@ -35,6 +35,9 @@ let inputCount = 0;
 let lastInput = "";
 let lastRepoDir = ""; // the `-C <dir>` the commit gate ran git against (which repo it checked)
 let desktopStatus = null; // canned `powerbi-desktop status` result ({stdout, code}) or a thrower — the stubbed bridge
+let gitAliases = {};      // `git config --get alias.<name>` answers (#3); missing → exit 1 like git
+let gitFails = false;     // every git call fails (not a repository): the commit check cannot determine (#2)
+let gitTopLevel = "";     // `git rev-parse --show-toplevel` output (#6); "" keeps the -C dir
 const execLog = [];       // every pi.exec call: { bin, args }
 const handlers = {};
 const cmds = {};
@@ -49,6 +52,13 @@ const pi = {
     }
     const a = args.join(" ");
     if (bin === "git") { const i = args.indexOf("-C"); if (i >= 0) lastRepoDir = args[i + 1]; }
+    if (bin === "git" && a.includes("config --get alias.")) {
+      const name = args[args.length - 1].slice("alias.".length);
+      if (typeof gitAliases[name] === "function") return gitAliases[name]();
+      return name in gitAliases ? { stdout: `${gitAliases[name]}\n`, code: 0, stderr: "" } : { stdout: "", code: 1, stderr: "" };
+    }
+    if (bin === "git" && gitFails) return { stdout: "", code: 128, stderr: "fatal: not a git repository" };
+    if (bin === "git" && a.includes("rev-parse --show-toplevel")) return { stdout: gitTopLevel ? `${gitTopLevel}\n` : "", code: 0, stderr: "" };
     // NB: cached diff args ("diff --cached --name-only") contain BOTH substrings, so
     // check --cached first.
     if (bin === "git" && a.includes("diff --cached")) return { stdout: staged, code: 0, stderr: "" };
@@ -2947,6 +2957,305 @@ await t("approval dialogs open one at a time, and a session approval covers call
   assert.deepEqual(order, [0, 1, 2]);
   assert.deepEqual(settled.map((r) => r.status), ["fulfilled", "rejected", "fulfilled"]);
   await handleSessionStart({}, ctx);
+});
+
+// --- Review fixes: gaps verified against real git scratch repos ------------------
+const headless = { cwd: ctx.cwd, hasUI: false };
+
+await t("#1: abbreviated long options are the gated options (git accepts any unambiguous prefix)", async () => {
+  // commit --amen / --pathspec-fi=list are hard blocks like the full spellings.
+  for (const cmd of ["git commit --amen -m x", "git commit --ame", "git commit --pathspec-fi=list", "git commit --pathspec-from-fi list", "git commit --pathspec-file-n"]) {
+    const r = await call(cmd, { stagedFiles: "docs/a.md" });
+    assert.equal(blocked(r), true, cmd);
+    assert.match(r.reason, /never permitted/, cmd);
+  }
+  assert.equal(cg.commitHardBlockReason(parseGitCommand("git commit --amen"))?.includes("--amend"), true);
+  assert.equal(cg.usesCommitPathspecFile(parseGitCommand("git commit --pathspec-fr=list")), true);
+  // `--al` auto-stages like `--all`.
+  assert.equal(commitStagesAll("git commit --al -m x"), true);
+  assert.equal(blocked(await call("git commit --al -m wip", { modifiedFiles: "sql/gold/v.sql" })), true);
+  // Destructive forms: reset --har, clean --forc, push --force-w / --forc.
+  for (const cmd of ["git reset --har HEAD", "git clean --forc -d", "git push --force-w origin main", "git push --forc origin main", "git push --force-with-l origin main"]) {
+    assert.equal(blocked(await call(cmd, { confirm: false })), true, cmd);
+    assert.match(lastConfirm, /Destructive command/, cmd);
+  }
+  // Unrelated options and negations are untouched; too-short prefixes are not matched.
+  assert.equal(blocked(await call("git push --no-force origin main", { confirm: false })), false);
+  assert.equal(blocked(await call("git reset --soft HEAD~1", { confirm: false })), false);
+  assert.equal(cg.normalizeGitLongOption("--am", ["amend", "all"]), "--amend", "git takes --am as --amend");
+  assert.equal(cg.normalizeGitLongOption("--a", ["amend", "all"]), "--a", "one character never matches");
+  assert.equal(cg.normalizeGitLongOption("--amen", ["amend", "all"]), "--amend");
+  assert.equal(cg.normalizeGitLongOption("--pathspec-from-fi=x", ["pathspec-from-file"]), "--pathspec-from-file=x");
+  assert.equal(cg.normalizeGitLongOption("--verbose", ["amend"]), "--verbose");
+  assert.equal(cg.normalizeGitLongOption("-am", ["amend"]), "-am");
+});
+
+await t("#2: a commit on a repository the text cannot name asks (fails closed headless) instead of passing", async () => {
+  const unverifiable = [
+    "(cd ../other && git commit -am wip)",
+    "{ cd ../other && git commit -am wip; }",
+    "cd -- ../other && git commit -am wip",
+    "cd && git commit -am wip",
+    "cd - && git commit -am wip",
+    'cd "$REPO" && git commit -am wip',
+    "cd ~/other && git commit -am wip",
+    'git -C "$REPO" commit -am wip',
+    "git -C ~/other commit -am wip",
+    "git --work-tree=../other --git-dir=../other/.git commit -am wip",
+    "git --git-dir ../other/.git commit -am wip",
+    "git --work-t=../other commit -am wip",
+    "GIT_DIR=../other/.git GIT_WORK_TREE=../other git commit -am wip",
+    "export GIT_DIR=../other/.git; git commit -am wip",
+    'cd "$ROOT" && git -C sub commit -am wip',
+  ];
+  for (const cmd of unverifiable) {
+    const r = await call(cmd, { stagedFiles: "", modifiedFiles: "", confirm: false });
+    assert.equal(blocked(r), true, `declined: ${cmd}`);
+    assert.match(lastConfirm, /Can't verify what this commit would include/, cmd);
+    assert.equal(blocked(await call(cmd, { stagedFiles: "", modifiedFiles: "", confirm: true })), false, `approved: ${cmd}`);
+    const h = await handle({ toolName: "bash", input: { command: cmd } }, headless);
+    assert.equal(blocked(h), true, `headless: ${cmd}`);
+    assert.match(h.reason, /unverifiable commit/, cmd);
+  }
+  // Source that git CAN see through a plain cd or -C is still blocked outright, not asked.
+  assert.equal(blocked(await call("(cd /other && git commit -am wip)", { modifiedFiles: "src/app.py", confirm: true })), true);
+  assert.equal(lastRepoDir, "/other");
+  assert.equal(leadingCdDir("(cd /a &&"), "/a");
+  assert.deepEqual(cg.leadingCd('cd "$X" &&').dir, null);
+  assert.equal(cg.commitTargetUnverifiable("git commit -m x", parseGitCommand("git commit -m x")), null);
+  // git itself cannot read the target (not a repository): ask, never pass.
+  gitFails = true;
+  try {
+    const r = await call("git commit -am wip", { confirm: false });
+    assert.equal(blocked(r), true, "git failure asks and a no blocks");
+    assert.match(lastConfirm, /git could not read/);
+    assert.equal(blocked(await call("git commit -am wip", { confirm: true })), false);
+    assert.equal(blocked(await handle({ toolName: "bash", input: { command: "git commit -am wip" } }, headless)), true, "headless");
+  } finally { gitFails = false; }
+  // Unchanged: nothing to commit in the session's own repository still passes silently.
+  confirmCount = 0;
+  assert.equal(blocked(await call("git commit -m x", { stagedFiles: "" })), false);
+  assert.equal(confirmCount, 0);
+});
+
+await t("#3: git by path, .exe, backslash and through nice/nohup/timeout/sudo/stdbuf is git", async () => {
+  for (const prefix of ["/usr/bin/git", "git.exe", "\\git", '"C:/Program Files/Git/bin/git.exe"', "nice git", "nice -n 10 git", "nohup git", "timeout 30 git", "timeout -k 5 30s git", "sudo git", "sudo -u aaron git", "stdbuf -o0 git", "chronic git", "caffeinate -i git", "sudo nice -n 5 git"]) {
+    const cmd = `${prefix} commit -am wip`;
+    assert.equal(hasAmbiguousGitInvocation(cmd), false, cmd);
+    assert.deepEqual(parseGitCommands(cmd).map((g) => g.subcommand), ["commit"], cmd);
+    assert.equal(blocked(await call(cmd, { modifiedFiles: "src/app.py" })), true, cmd);
+  }
+  assert.equal(blocked(await call("sudo git reset --hard", { confirm: false })), true);
+  assert.equal(cg.programName("\\git"), "git");
+  assert.equal(cg.programName('"C:\\Git\\bin\\git.exe"'), "git");
+  assert.equal(cg.programName("/bin/rm"), "rm");
+});
+
+await t("#3: a shell, eval, xargs, source or `-c alias.*` around git is ambiguous and fails closed", async () => {
+  for (const cmd of ['bash -c "git commit -am wip"', "sh -c 'git commit -am wip'", "zsh -c 'git push --force'", 'pwsh -Command "git commit -am wip"', 'powershell -c "git commit -am wip"', "cmd /c git commit -am wip", 'eval "git commit -am wip"', "echo commit -am wip | xargs git", "xargs git < args.txt", "source ./git-commit.sh", ". ./git-commit.sh", "git -c alias.ci=commit ci -am wip", "git -calias.ci=commit ci -am wip", "git --config-env=alias.ci=CI ci -am wip", "GIT_CONFIG_PARAMETERS=\"'alias.ci=commit'\" git ci -am wip", 'sudo bash -c "git commit -am wip"']) {
+    assert.equal(hasAmbiguousGitInvocation(cmd), true, cmd);
+    const r = await call(cmd, { modifiedFiles: "src/app.py" });
+    assert.equal(blocked(r), true, cmd);
+    assert.match(r.reason, /ambiguous Git wrapper/, cmd);
+  }
+  // A shell that does not mention git is not this guard's business.
+  assert.equal(hasAmbiguousGitInvocation('bash -c "ls -la"'), false);
+  assert.equal(blocked(await call('bash -c "ls -la"')), false);
+  assert.equal(hasAmbiguousGitInvocation("git -c core.autocrlf=false status"), false, "other -c keys are fine");
+});
+
+await t("#3: a git alias in the subcommand position is resolved with `git config` and gated as what it runs", async () => {
+  gitAliases = { ci: "commit -a", pf: "push --force", hard: "reset --hard", chain: "ci", shell: "!sh -c 'git commit -am wip'" };
+  try {
+    // alias.ci=commit -a: the commit gate sees the auto-staged source.
+    assert.equal(blocked(await call("git ci -m wip", { modifiedFiles: "src/app.py" })), true);
+    assert.equal(blocked(await call("git ci -m docs", { modifiedFiles: "docs/a.md" })), false);
+    assert.equal(execLog.some((e) => e.bin === "git" && e.args.join(" ").includes("config --get alias.ci")), true, "asked git for the alias");
+    // Chained alias, destructive aliases, and a shell alias.
+    assert.equal(blocked(await call("git chain -m wip", { modifiedFiles: "src/app.py" })), true);
+    assert.equal(blocked(await call("git pf origin main", { confirm: false })), true);
+    assert.match(lastConfirm, /git push --force/);
+    assert.equal(blocked(await call("git hard HEAD", { confirm: false })), true);
+    assert.match(lastConfirm, /git reset --hard/);
+    const shell = await call("git shell", { modifiedFiles: "src/app.py" });
+    assert.equal(blocked(shell), true);
+    assert.match(shell.reason, /ambiguous Git wrapper/);
+    // Unknown subcommands that are not aliases are not gated; builtins are never looked up.
+    execLog.length = 0;
+    assert.equal(blocked(await call("git lfs pull && git flow init")), false);
+    assert.equal(blocked(await call("git status")), false);
+    assert.equal(execLog.some((e) => e.args.join(" ").includes("alias.status")), false);
+    // A lookup that errors fails closed.
+    gitAliases.broken = () => { throw new Error("boom"); };
+    const broken = await call("git broken");
+    assert.equal(blocked(broken), true);
+    assert.match(broken.reason, /ambiguous Git wrapper/);
+    gitAliases.weird = () => ({ stdout: "", code: 128, stderr: "fatal" });
+    assert.equal(blocked(await call("git weird")), true);
+    const expanded = await cg.expandGitAliases(pi.exec, "git status && git ci -m x", "/cwd");
+    assert.deepEqual(expanded, { cmd: "git status && git commit -a -m x" });
+  } finally { gitAliases = {}; }
+});
+
+await t("#4: printing the environment asks (the Fabric bearer lives there) and fails closed headless", async () => {
+  for (const cmd of ["env", "printenv", "set", "export -p", "declare -p", "env | grep FABRIC", "( env )", "Get-ChildItem Env:", "gci env:", "ls env:", "dir Env:\\", "echo $COOP_FABRIC_MCP_TOKEN", "printenv COOP_FABRIC_MCP_TOKEN", "ls -la && env"]) {
+    const r = await call(cmd, { confirm: false });
+    assert.equal(blocked(r), true, cmd);
+    assert.match(lastConfirm, /prints the environment/, cmd);
+    assert.equal(blocked(await call(cmd, { confirm: true })), false, `approved: ${cmd}`);
+    assert.equal(blocked(await handle({ toolName: "bash", input: { command: cmd } }, headless)), true, `headless: ${cmd}`);
+  }
+  for (const cmd of ["printenv PATH", "set -e", "set -euo pipefail", "env FOO=1 node x.js", "export FOO=1", "declare -a arr", "ls env", "echo $PATH", "git status"]) {
+    assert.equal(cg.envDumpLabel(cmd), null, cmd);
+    confirmCount = 0;
+    assert.equal(blocked(await call(cmd, { confirm: false })), false, cmd);
+    assert.equal(confirmCount, 0, cmd);
+  }
+  assert.equal(cg.envDumpLabel("env"), "env");
+  assert.equal(cg.envDumpLabel("gci env:"), "gci env:");
+  const audited = readAudit().filter((e) => e.label === "environment dump");
+  assert.ok(audited.length > 0 && audited.every((e) => e.kind === "secret-confirm" && !String(e.detail).includes("$")), "audited without the command text");
+});
+
+await t("#5: ambiguous SQL on a production or unconfirmed Warehouse takes the production permit path; dev keeps the one confirm", async () => {
+  const sqlCall = (query) => ({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify({ query }) } });
+  const ambiguous = ["SELECT 1;\nGO\nSELECT 2", "SELECT 'unterminated FROM t", "SHOW TABLES"];
+  const run = async (environment, query) => {
+    writeManagedTarget({ environment });
+    process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+    await handleSessionStart({ reason: "new" }, liveCtx);
+    let confirms = 0, selects = 0;
+    const ui = { notify: () => {}, confirm: async (_t, m) => { confirms++; lastConfirm = String(m); return true; }, select: async (_t, options) => { selects++; return options[0]; } };
+    const r = await handle(sqlCall(query), { ...liveCtx, ui });
+    return { blocked: blocked(r), reason: r?.reason || "", confirms, selects };
+  };
+  for (const query of ambiguous) {
+    assert.equal(cg.classifySqlOperation(query), "ambiguous", query);
+    const prod = await run("production", query);
+    assert.deepEqual([prod.blocked, prod.confirms, prod.selects], [true, 0, 0], `production: ${query}`);
+    assert.match(prod.reason, /production|Production/, query);
+    const unconfirmed = await run("", query);
+    assert.deepEqual([unconfirmed.blocked, unconfirmed.confirms, unconfirmed.selects], [true, 0, 0], `unconfirmed: ${query}`);
+    assert.match(unconfirmed.reason, /cannot confirm this target is dev or test/, query);
+    const dev = await run("dev", query);
+    assert.deepEqual([dev.blocked, dev.confirms], [false, 1], `dev: ${query}`);
+    assert.match(lastConfirm, /Ambiguous Warehouse SQL/);
+  }
+  // The server-state statements are writes now, so they are labelled and gated as writes
+  // and never ride a session approval.
+  assert.equal(cg.classifySqlOperation("SET IDENTITY_INSERT dbo.T ON"), "mutation", "an identity-insert switch is a write (a dev batch may still ride the session approval)");
+  for (const query of ["DISABLE TRIGGER trg ON dbo.T", "ENABLE TRIGGER ALL ON dbo.T", "DBCC CHECKIDENT ('dbo.T', RESEED, 0)", "KILL 53", "RECONFIGURE", "SETUSER 'x'"]) {
+    assert.equal(cg.classifySqlOperation(query), "mutation", query);
+    assert.equal(cg.sqlWriteIsSessionApprovable(query), false, query);
+    const prod = await run("production", query);
+    assert.deepEqual([prod.blocked, prod.confirms, prod.selects], [true, 0, 0], `production: ${query}`);
+  }
+  writeManagedTarget();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+});
+
+await t("#6: untracked paths are listed repository-relative and the policy is keyed on the repository root", async () => {
+  execLog.length = 0;
+  // `cd src && git add . && git commit`: the mock answers `--full-name` output (root-relative).
+  assert.equal(blocked(await call("cd /repo/src && git add . && git commit -m docs", { untrackedFiles: "src/docs/foo.sql" })), true, "src/docs/foo.sql is source at the root");
+  const lsFiles = execLog.filter((e) => e.bin === "git" && e.args.includes("ls-files"));
+  assert.ok(lsFiles.length > 0 && lsFiles.every((e) => e.args.includes("--full-name")), "every ls-files call asks for root-relative names");
+  assert.ok(execLog.some((e) => e.bin === "git" && e.args.join(" ").includes("rev-parse --show-toplevel")), "the policy root comes from git");
+  // The policy for the top level git names applies, not the subfolder's.
+  const policyRoot = mkdtempSync(join(tmpdir(), "coop-toplevel-"));
+  try {
+    mkdirSync(join(policyRoot, ".coop"), { recursive: true });
+    writeFileSync(join(policyRoot, ".coop", "project.yml"), `repositories:\n  main:\n    local_path: .\n    agent_allowed_to_commit: ["logs/**"]\n`);
+    resetSessionGovernance();
+    gitTopLevel = policyRoot;
+    const c = { ...ctx, cwd: policyRoot };
+    const inLogs = `cd ${join(policyRoot, "logs")} && git add . && git commit -m log`;
+    staged = ""; modified = ""; untracked = "logs/today.log"; confirmAnswer = false;
+    assert.equal(blocked(await handle({ toolName: "bash", input: { command: inLogs } }, c)), false, "logs/** allowed by the root's contract");
+    untracked = "src/x.sql";
+    assert.equal(blocked(await handle({ toolName: "bash", input: { command: inLogs } }, c)), true, "source at the root is still source");
+    // Without git's answer the subfolder would be the policy key and logs/** would not apply.
+    gitTopLevel = "";
+    untracked = "logs/today.log";
+    assert.equal(blocked(await handle({ toolName: "bash", input: { command: inLogs } }, c)), true, "keyed on the cd folder, the root's allow list does not apply");
+  } finally { gitTopLevel = ""; untracked = ""; resetSessionGovernance(); rmSync(policyRoot, { recursive: true, force: true }); }
+});
+
+await t("#7: `git add -f` stages ignored files the listing never shows, so the named paths count literally", async () => {
+  // The untracked listing (exclude-standard) is empty: the ignored file is invisible to it.
+  assert.equal(blocked(await call("git add -f build/out.sql && git commit -m wip", { untrackedFiles: "" })), true);
+  assert.equal(blocked(await call("git add --force build/out.sql && git commit -m wip", { untrackedFiles: "" })), true);
+  assert.equal(blocked(await call("git add -fv build/out.sql && git commit -m wip", { untrackedFiles: "" })), true);
+  assert.equal(blocked(await call("git add --forc build/out.sql && git commit -m wip", { untrackedFiles: "" })), true, "abbreviated");
+  assert.equal(blocked(await call("git add -f docs/generated.md && git commit -m docs", { untrackedFiles: "" })), false, "a forced docs path is still docs");
+  const plan = cg.precedingStagingPlan("git add -f build/out.sql && git commit -m x", "/cwd", parseGitCommands("git add -f build/out.sql && git commit -m x")[1]);
+  assert.deepEqual(plan.literal, ["build/out.sql"]);
+});
+
+await t("#8: Azure DevOps write tools with short verbs (add/link/reply/resolve/set/put/post/save/apply/submit/queue/run_build) ask", async () => {
+  for (const tool of ["wit_add_work_item_comment", "repo_resolve_comment", "build_run_build", "core_set_project", "wit_link_work_item_to_pull_request", "repo_reply_to_comment", "build_queue_build", "pipelines_queue", "wiki_put_page", "repo_post_comment", "work_save_iteration", "wit_apply_template", "repo_submit_review"]) {
+    assert.ok(mcpMutationLabel({ outerTool: "mcp", innerTool: tool, server: "azure-devops" }), `${tool} is a write`);
+    const r = await handle({ toolName: "mcp", input: { server: "azure-devops", tool, args: "{}" } }, headless);
+    assert.equal(blocked(r), true, `${tool} headless`);
+  }
+  for (const tool of ["onelake_get-settings", "wit_get_work_item", "repo_list_linked_items", "core_get_address", "build_get_builds", "repo_get_settings", "wit_list_saved_queries"]) {
+    assert.equal(mcpMutationLabel({ outerTool: "mcp", innerTool: tool, server: "azure-devops" }), null, `${tool} is a read`);
+  }
+});
+
+await t("#9: secret-file spellings (glued quotes, backslashes, globs, rev:path) and more credential stores", async () => {
+  for (const cmd of ["cat .en''v", 'cat .e"n"v', "cat .\\env", "cat \\.env", "cat .env*", "cat .env?", "git show HEAD:.env", "git show origin/main:config/.env", "cat ~/.git-credentials", "cat ~/.config/gh/hosts.yml", "cat ~/.docker/config.json", "cat ~/.kube/config", "cat /tmp/kubeconfig", "cat C:\\Users\\a\\.kube\\config", "cat ${HOME}/.git-credentials"]) {
+    assert.ok(bashSecretCmdPath(cmd), `${cmd} should name a secret`);
+    assert.equal(blocked(await call(cmd, { confirm: false })), true, cmd);
+    assert.match(lastConfirm, /secret-looking file/, cmd);
+  }
+  for (const p of [".git-credentials", "~/.config/gh/hosts.yml", "C:\\Users\\a\\.docker\\config.json", "/home/a/.kube/config", "kubeconfig", "kubeconfig.yaml"]) assert.equal(isSecretPath(p), true, p);
+  for (const p of ["docs/hosts.yml", "src/config.json", "config", "docs/gh.md"]) assert.equal(isSecretPath(p), false, p);
+  for (const cmd of ["cat .envelope", "cat README.md*", "git show HEAD:docs/a.md", "echo 'a:b'", "cat config/hosts.yml"]) {
+    assert.equal(bashSecretCmdPath(cmd), null, cmd);
+  }
+});
+
+await t("#10: `\\rm -rf`, `/bin/rm -rf` and `rm.exe -rf` are rm -rf", async () => {
+  for (const cmd of ["\\rm -rf /tmp/x", "/bin/rm -rf /tmp/x", "rm.exe -rf C:\\tmp\\x", "sudo \\rm -rf /tmp/x"]) {
+    assert.equal(blocked(await call(cmd, { confirm: false })), true, cmd);
+    assert.match(lastConfirm, /rm -rf/, cmd);
+  }
+  assert.equal(blocked(await call("\\rm -f /tmp/x", { confirm: false })), false, "no recursion");
+});
+
+await t("#11: `az rest` with an abbreviated --method is read by that method; a body without a method asks", async () => {
+  assert.equal(cg.fabricWriteLabel("az rest --meth post --url https://api.fabric.microsoft.com/v1/workspaces"), "az rest POST");
+  assert.equal(cg.fabricWriteLabel("az rest --m delete --url x"), "az rest DELETE");
+  assert.equal(cg.fabricWriteLabel("az rest --metho=patch --url x"), "az rest PATCH");
+  assert.equal(cg.fabricWriteLabel("az rest --meth get --url x"), null);
+  assert.equal(cg.fabricWriteLabel("az rest --url x --body @item.json"), "az rest (body without --method)");
+  assert.equal(cg.fabricWriteLabel("az rest --url x -b '{}'"), "az rest (body without --method)");
+  assert.equal(cg.fabricWriteLabel("az rest --url x --method"), "az rest (method unreadable)");
+  assert.equal(cg.fabricWriteLabel("az rest --url x"), null, "a bare GET still passes");
+  assert.equal(blocked(await call("az rest --meth post --url https://api.fabric.microsoft.com/v1/workspaces", { confirm: false })), true);
+  assert.equal(blocked(await call("az rest --url https://api.fabric.microsoft.com/v1/workspaces --body @x.json", { confirm: false })), true);
+  assert.equal(blocked(await call("az rest --url https://api.fabric.microsoft.com/v1/workspaces --body @x.json", { confirm: true })), false);
+});
+
+await t("#12: role, user, login, member and partition SWITCH changes never ride a session approval", async () => {
+  for (const sql of ["ALTER ROLE db_owner ADD MEMBER [app]", "CREATE USER [app] FROM EXTERNAL PROVIDER", "CREATE LOGIN app WITH PASSWORD = 'x'", "ALTER TABLE dbo.T SWITCH PARTITION 1 TO dbo.Archive", "ALTER USER app WITH DEFAULT_SCHEMA = dbo", "DROP USER app"]) {
+    assert.equal(cg.classifySqlOperation(sql), "mutation", sql);
+    assert.equal(cg.sqlWriteIsSessionApprovable(sql), false, sql);
+  }
+  for (const sql of ["INSERT INTO dbo.T (a) VALUES (1)", "ALTER TABLE dbo.T ADD b INT NULL", "CREATE VIEW dbo.V AS SELECT 1 AS x", "UPDATE dbo.Users SET name = 'x' WHERE id = 1"]) {
+    assert.equal(cg.sqlWriteIsSessionApprovable(sql), true, sql);
+  }
+  // Through the handler on a dev target: no session option is offered.
+  writeManagedTarget({ environment: "dev" });
+  process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  let selects = 0, confirms = 0;
+  const ui = { notify: () => {}, confirm: async () => { confirms++; return true; }, select: async (_t, options) => { selects++; return options[1]; } };
+  await handle({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify({ query: "ALTER ROLE db_owner ADD MEMBER [app]" }) } }, { ...liveCtx, ui });
+  assert.deepEqual([selects, confirms], [0, 1], "a plain yes/no, no session option");
+  writeManagedTarget();
+  await handleSessionStart({ reason: "new" }, liveCtx);
 });
 
 console.log(`  ${n} guardrails tests passed`);
