@@ -123,10 +123,14 @@ export class PiSession extends EventEmitter {
 }
 
 /** taskkill /T on Windows (the whole tree); the process group elsewhere. */
-export function killTree(pid, platform = process.platform, { execFileImpl = execFile, systemRoot = process.env.SystemRoot } = {}) {
+export function killTree(pid, platform = process.platform, { execFileImpl = execFile, systemRoot = process.env.SystemRoot, killImpl = (id) => process.kill(id) } = {}) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return Promise.resolve();
   if (platform === "win32") {
-    if (typeof systemRoot !== "string" || !win32.isAbsolute(systemRoot)) return Promise.resolve();
+    // No SystemRoot, no taskkill: end the process itself at least (child.kill()).
+    if (typeof systemRoot !== "string" || !win32.isAbsolute(systemRoot)) {
+      try { killImpl(pid); } catch { /* already gone */ }
+      return Promise.resolve();
+    }
     return new Promise((resolve) => {
       execFileImpl(win32.join(systemRoot, "System32", "taskkill.exe"), ["/PID", String(pid), "/T", "/F"], { windowsHide: true, timeout: 5000 }, () => resolve());
     });

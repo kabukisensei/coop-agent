@@ -369,6 +369,12 @@ await check("standards: the team knowledge repositories from status, one note at
   await assert.rejects(readNote(clone, "../outside.md"), /not in the knowledge repository/);
   await assert.rejects(readNote(clone, ""), /not in the knowledge repository/);
   await assert.rejects(readNote(clone, join(temp, "canonical", "x.md")), /not in the knowledge repository/);
+  // A symlink inside the clone that points outside it reads nothing (both ends resolved, as the docs pages are).
+  writeFileSync(join(temp, "outside-note.md"), "secret\n");
+  let linked = false;
+  try { symlinkSync(join(temp, "outside-note.md"), join(clone, "Gold", "link.md")); linked = true; } catch { /* no symlinks here */ }
+  if (linked) await assert.rejects(readNote(clone, "Gold/link.md"), /not in the knowledge repository/);
+  await assert.rejects(readNote(clone, "Gold/missing.md"), /not in the knowledge repository/);
   assert.equal(knowledgeView({ id: "cooptimize/other-kb", authority_class: "team_knowledge", state: "available", path: clone }, listing).label, "other-kb");
   assert.ok(isKnowledgeId("knowledge:cooptimize/incremental-bi") && !isKnowledgeId("sql"));
   for (const id of Object.keys(KNOWLEDGE_LABELS)) assert.ok(KNOWLEDGE_LABELS[id], id);
@@ -949,6 +955,13 @@ await check("resize: every pane drags, within limits that keep the conversation 
   for (const id of ["sidebarResize", "paneResize"]) assert.match(html, new RegExp(`id="${id}"[^>]*role="separator"[^>]*aria-label="[^"]+"[^>]*tabindex="0"`), id);
   const changes = readFileSync(join(ROOT, "desktop", "renderer", "pane-changes.mjs"), "utf8");
   assert.match(changes, /class: "split-resize", role: "separator", "aria-orientation": "horizontal"/);
+  // A "View in Changes" click during a load is kept and run after it, not dropped.
+  assert.match(changes, /if \(state\.loading\) \{ state\.queued = /);
+  assert.match(changes, /if \(state\.queued\) \{ const next = state\.queued; state\.queued = null; await load\(next\.want, next\.repo\); \}/);
+  // The team line arriving after the form updates its own slot, so typing keeps its focus.
+  const project = readFileSync(join(ROOT, "desktop", "renderer", "pane-project.mjs"), "utf8");
+  assert.match(project, /el\("div", \{ class: "team-slot" \}, teamLine\(\)\)/);
+  assert.match(project, /const slot = body\.querySelector\("\.team-slot"\);\s*if \(state\.view === "form"\) \{ if \(slot\) fill\(slot, teamLine\(\)\); else renderForm\(\); \}/);
   const css = readFileSync(join(ROOT, "desktop", "renderer", "styles", "app.css"), "utf8");
   for (const variable of ["--sidebar-width", "--pane-width", "--change-list-height"]) assert.ok(css.includes(`var(${variable}`), `app.css sizes with ${variable}`);
   assert.equal(/grid-template-columns: 264px/.test(css), false, "the sidebar column follows --sidebar-width");

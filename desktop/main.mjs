@@ -525,6 +525,7 @@ handle("coop:info", (state) => windowInfo(state));
 handle("coop:command", async (state, input) => {
   const command = buildCommand(input);
   if (!state.pi || state.pi.exited) return { success: false, error: "coop is not running in this window; restart it" };
+  if (command.type === "prompt" && state.pickedPaths) state.pickedPaths.clear();
   const timeoutMs = WAITS_ON_WORK.has(command.type) ? 0 : undefined;
   if (SESSION_CHANGES.has(command.type)) return piResult(await sessionCommand(state, command));
   // Not queued: a status read must never wait behind another tab's session change.
@@ -673,6 +674,7 @@ handle("coop:switch-session", async (state, path) => {
 });
 
 handle("coop:export", async (state) => {
+  if (!state.pi || state.pi.exited) return { success: false, error: "coop is not running in this window; restart it" };
   const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
   const result = await dialog.showSaveDialog(state.win, {
     title: "Export this session",
@@ -1005,12 +1007,26 @@ handle("coop:pick-files", async (state) => {
     ],
   });
   if (result.canceled) return { success: true, data: [] };
-  return { success: true, data: result.filePaths.slice(0, ATTACH_LIMITS.perMessage) };
+  const picked = result.filePaths.slice(0, ATTACH_LIMITS.perMessage);
+  // The renderer may attach only what this picker returned (cleared when the
+  // prompt is sent); dropped and pasted files come by their File object through
+  // the preload (coop:attach-dropped), never as a free path.
+  if (!state.pickedPaths) state.pickedPaths = new Set();
+  for (const path of picked) state.pickedPaths.add(path);
+  return { success: true, data: picked };
 });
 
 const attachOptions = (state) => ({ cwd: state.spec.cwd, store: attachmentStore, node: state.spec.node, pdfjsDir, script: UNPACKED.pdfScript || undefined, env: { ...process.env, ...state.spec.env } });
 
-handle("coop:attach-file", async (state, path) => ({ success: true, data: await attach(String(path || ""), attachOptions(state)) }));
+handle("coop:attach-file", async (state, path) => {
+  const file = String(path || "");
+  if (!state.pickedPaths || !state.pickedPaths.has(file)) return { success: false, error: "that file was not chosen with Attach files" };
+  return { success: true, data: await attach(file, attachOptions(state)) };
+});
+
+// A dropped or pasted file: the preload resolved its path from the File object
+// itself (webUtils.getPathForFile), so the renderer never names a path.
+handle("coop:attach-dropped", async (state, path) => ({ success: true, data: await attach(String(path || ""), attachOptions(state)) }));
 
 handle("coop:attachment-forget", (state, id) => ({ success: forget(attachmentStore, String(id || "")) }));
 
@@ -1174,6 +1190,14 @@ function setPhoneAccess(on) {
 }
 
 async function togglePhone(state) {
+  try {
+    await togglePhoneNow(state);
+  } catch (error) {
+    dialog.showMessageBox(state.win, { type: "warning", title: "Phone", message: "Phone access could not be changed.", detail: error && error.message ? error.message : String(error) });
+  }
+}
+
+async function togglePhoneNow(state) {
   if (settings.phoneAccess) {
     setPhoneAccess(false);
     send(state, "pi:notice", { level: "info", message: "Phone access is off. Paired phones stay paired; allow it again with Session > Phone > Allow phone access." });
@@ -1192,6 +1216,14 @@ async function togglePhone(state) {
 }
 
 async function pairPhone(state) {
+  try {
+    await pairPhoneNow(state);
+  } catch (error) {
+    dialog.showMessageBox(state.win, { type: "warning", title: "Pair a phone", message: "The phone could not be paired.", detail: error && error.message ? error.message : String(error) });
+  }
+}
+
+async function pairPhoneNow(state) {
   if (!state.hub.client) {
     dialog.showMessageBox(state.win, { type: "info", title: "Pair a phone", message: "This folder's project file names no client.", detail: "A phone is paired for one client. Open a client's project (File > Switch project), or create its project file with /setup-project, then pair the phone." });
     return;

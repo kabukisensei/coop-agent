@@ -12,6 +12,11 @@
       "expect": { "phone": "answer", "options": [], "hidden": 0 }
     },
     {
+      "name": "guardrails bounded live-read confirm that grants the session: desktop only, the phone may decline",
+      "request": { "type": "extension_ui_request", "id": "ui-2b", "method": "confirm", "title": "coop live-data guardrail", "message": "row-level data read:\n  warehouse.query_rows\nResolved bounded session scope:\n  client: Example Co\n  tenant: example\n  principal: dev@example\n  environment: dev\n  target(s): dbo.Example\n  operation: read\n  row limit: 200\n  time limit: 30000 ms\nApprove this exact bounded scope for this session?" },
+      "expect": { "phone": "desktop", "reason": "session-wide", "options": [], "hidden": 0 }
+    },
+    {
       "name": "production write under a G1 unlock: desktop only",
       "request": { "type": "extension_ui_request", "id": "ui-3", "method": "confirm", "title": "coop guardrails", "message": "PRODUCTION Warehouse SQL mutation/DDL call:\n  UPDATE dbo.Example SET Flag = 1\nProduction write under unlock u-1 (12 min left); it asks every time. Run it?" },
       "expect": { "phone": "desktop", "reason": "production", "options": [], "hidden": 0 }

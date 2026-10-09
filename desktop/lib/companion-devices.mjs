@@ -29,7 +29,9 @@ export class DeviceStore {
     try {
       if (!existsSync(this.file)) return [];
       const data = JSON.parse(readFileSync(this.file, "utf8"));
-      return Array.isArray(data.devices) ? data.devices.filter((d) => d && typeof d.id === "string" && typeof d.secretHash === "string") : [];
+      return Array.isArray(data.devices)
+        ? data.devices.filter((d) => d && typeof d.id === "string" && typeof d.secretHash === "string" && Number.isFinite(d.createdAt) && Number.isFinite(d.lastSeenAt))
+        : [];
     } catch {
       return [];
     }

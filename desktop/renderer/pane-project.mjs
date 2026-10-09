@@ -173,7 +173,7 @@ export function mountProject(box, options, { coop, newSession }) {
         el("span", { text: data.exists ? "Editing " : "No contract yet: saving creates " }),
         el("code", { text: data.path })),
       data.exists ? null : el("p", { class: "hint", text: data.locationNote || "" }),
-      teamLine(),
+      el("div", { class: "team-slot" }, teamLine()),
       el("p", { class: "hint", text: "The same questions as /setup-project. Review shows the change before anything is written; the old file is backed up." }),
       data.profileMissing ? section("You",
         row({ field: "profileName", label: "What should coop call you?", hint: "Your local profile, not the project. Leave blank to skip.", control: text(values, "profileName") })) : null,
@@ -386,7 +386,12 @@ export function mountProject(box, options, { coop, newSession }) {
     // The comparison with the team's copy may fetch: it lands after the form.
     try {
       const team = await coop.projectTeam();
-      if (team.success && team.data && state.data === result.data) { state.team = team.data; if (state.view === "form") renderForm(); }
+      if (team.success && team.data && state.data === result.data) {
+        state.team = team.data;
+        // Only the team line changes: redrawing the form would drop the focus mid-typing.
+        const slot = body.querySelector(".team-slot");
+        if (state.view === "form") { if (slot) fill(slot, teamLine()); else renderForm(); }
+      }
     } catch { /* no team line */ }
   }
 
