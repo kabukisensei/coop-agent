@@ -64,6 +64,16 @@ def _days_since(iso, now):
     except ValueError:
         return None
 
+def _load_json_config(path):
+    """~/.coop/config as onboard.py writes it (JSON); a YAML file still reads."""
+    try:
+        with open(path, encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        data = _yaml.load(path)
+    return data if isinstance(data, dict) else {}
+
+
 def main(argv):
     ap = argparse.ArgumentParser(prog="fleet-digest", description="Fleet health digest.")
     ap.add_argument("--config", help="config path (default: ~/.coop/config)")
@@ -78,7 +88,9 @@ def main(argv):
     defs = _yaml.load(def_path) if os.path.isfile(def_path) else {}
 
     cfg_path = args.config or str(coop_paths.config_path())
-    cfg = _yaml.load(cfg_path) if os.path.isfile(cfg_path) else {}
+    # ~/.coop/config is JSON (written by onboard.py); the dependency-free YAML
+    # fallback reads a multi-line JSON object as {}, so parse it as JSON.
+    cfg = _load_json_config(cfg_path) if os.path.isfile(cfg_path) else {}
 
     pub_dir = _yaml.dig(cfg, "fleet.publish_dir") or _yaml.dig(defs, "fleet.publish_dir")
     if not pub_dir:

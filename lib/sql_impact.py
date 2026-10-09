@@ -299,8 +299,24 @@ def execute(payload: Any, *, cwd: Path | None = None) -> dict[str, Any]:
             pass
 
 
+def _write_utf8(text: str) -> None:
+    """Write the JSON frame as UTF-8 whatever the console code page is: on Windows a
+    piped stdout defaults to the ANSI code page, and ensure_ascii=False output
+    with a character outside it would raise instead of answering."""
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+    sys.stdout.write(text)
+    sys.stdout.flush()
+
+
 def main() -> int:
     try:
+        try:
+            sys.stdin.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
         payload = json.load(sys.stdin)
     except (UnicodeDecodeError, json.JSONDecodeError):
         payload = None
@@ -308,7 +324,7 @@ def main() -> int:
         output = execute(payload)
     except Exception:
         output = sql_query.result("internal_error")
-    sys.stdout.write(json.dumps(output, ensure_ascii=False, separators=(",", ":"), sort_keys=True))
+    _write_utf8(json.dumps(output, ensure_ascii=False, separators=(",", ":"), sort_keys=True))
     return 0 if output["ok"] else 1
 
 

@@ -194,7 +194,7 @@ def _yv(v):
     if s == "":
         return '""'
     if any(ch in s for ch in ":#[]{},&*!|>'\"%@`") or s.strip() != s:
-        return '"%s"' % s.replace('"', '\\"')
+        return '"%s"' % s.replace("\\", "\\\\").replace('"', '\\"')
     return s
 
 
