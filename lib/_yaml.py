@@ -1,22 +1,32 @@
 #!/usr/bin/env python3
 """Dependency-free YAML reader for coop.
 
-coop must work on a fresh machine where the system python has no PyYAML. This
-reader uses PyYAML when importable (full fidelity) and otherwise falls back to a
-focused parser that handles the subset coop's .coop/project.yml uses: nested
-block maps, block lists (dash at the same OR deeper indent than the key),
-multi-key block-list items, inline flow lists [a, b], inline flow maps {k: v},
-scalars (quoted/unquoted, with null coercion), and # comments. Block scalars
-(| / >) are captured as text (not parsed as keys) but not folded; anchors,
-aliases, and tags are out of scope.
+coop must work on a fresh machine where the system python has no PyYAML, so this
+module is the ONE YAML parser coop uses: it never imports PyYAML, and a file reads
+the same on every machine whether or not PyYAML happens to be installed. It
+handles the subset coop's .coop/project.yml and ~/.coop files use: nested block
+maps, block lists (dash at the same OR deeper indent than the key), multi-key
+block-list items, inline flow lists [a, b], inline flow maps {k: v}, quoted and
+plain scalars, and # comments. Block scalars (| / >) are captured as text (not
+parsed as keys) but not folded; anchors, aliases, and tags are out of scope.
+
+Plain (unquoted) scalars are coerced like the YAML 1.2 core schema:
+`true`/`True`/`TRUE` and `false`/`False`/`FALSE` -> bool, `null`/`Null`/`NULL`/`~`
+and an empty value -> None, decimal/0o/0x integers -> int, floats (including
+`.inf`/`.nan`) -> float, everything else -> str. `yes`/`no`/`on`/`off` stay text.
+A quoted scalar is always a str.
 
 Usage:
     python3 _yaml.py get  FILE dotted.key [default]   -> prints scalar (or default)
     python3 _yaml.py list FILE dotted.key             -> prints list items, one per line
 
+`get` prints a bool as `true` / `false` (what the PowerShell callers compare
+against), an int or float with str(), and the default for a null, list or map.
+
 In `list` mode a `*` segment fans out over every value of a dict, so e.g.
 `list FILE repositories.*.local_path` prints each repo's local_path, one per line.
 """
+import re
 import sys
 
 
@@ -121,15 +131,49 @@ def _split_first_colon(s):
     return None
 
 
+# YAML 1.2 core schema (section 10.3.2): the plain-scalar forms that are not strings.
+_CORE_NULL = frozenset(('', 'null', 'Null', 'NULL', '~'))
+_CORE_TRUE = frozenset(('true', 'True', 'TRUE'))
+_CORE_FALSE = frozenset(('false', 'False', 'FALSE'))
+_CORE_INT_DEC = re.compile(r'[-+]?[0-9]+\Z')
+_CORE_INT_OCT = re.compile(r'0o[0-7]+\Z')
+_CORE_INT_HEX = re.compile(r'0x[0-9a-fA-F]+\Z')
+_CORE_FLOAT = re.compile(r'[-+]?(\.[0-9]+|[0-9]+(\.[0-9]*)?)([eE][-+]?[0-9]+)?\Z')
+_CORE_INF = re.compile(r'[-+]?\.(inf|Inf|INF)\Z')
+_CORE_NAN = re.compile(r'\.(nan|NaN|NAN)\Z')
+
+
+def _coerce_plain(s):
+    """A plain (unquoted) scalar's value under the core schema; str when no
+    non-string form matches, so `0.79.0`, `main`, `yes` and GUIDs stay text."""
+    if s in _CORE_NULL:
+        return None
+    if s in _CORE_TRUE:
+        return True
+    if s in _CORE_FALSE:
+        return False
+    if _CORE_INT_DEC.match(s):
+        return int(s, 10)
+    if _CORE_INT_OCT.match(s):
+        return int(s[2:], 8)
+    if _CORE_INT_HEX.match(s):
+        return int(s[2:], 16)
+    if _CORE_FLOAT.match(s):
+        return float(s)
+    if _CORE_INF.match(s):
+        return float('-inf') if s.startswith('-') else float('inf')
+    if _CORE_NAN.match(s):
+        return float('nan')
+    return s
+
+
 def _parse_scalar(s):
     s = s.strip()
     if len(s) >= 2 and s[0] == s[-1] == "'":
         return s[1:-1].replace("''", "'")  # YAML single-quote escaping
     if len(s) >= 2 and s[0] == s[-1] == '"':
         return _decode_double_quoted(s[1:-1])  # quoted → always a literal string
-    if s.lower() in ('null', '~'):
-        return None                          # match PyYAML: bare null/~ → None
-    return s
+    return _coerce_plain(s)
 
 
 def _parse_value(s):
@@ -160,6 +204,8 @@ def _is_block_scalar(v):
 
 
 def _load_fallback(text):
+    # The parser itself; `loads` / `load` are the public names (the old name stays
+    # for the tests and callers that reach it directly).
     lines = []
     for ln in text.split('\n'):
         s = _strip_comment(ln)
@@ -267,18 +313,18 @@ def _load_fallback(text):
     return result if result is not None else {}
 
 
+def loads(text):
+    """Parse YAML text with coop's own parser (never PyYAML). Returns {} for an
+    empty document."""
+    return _load_fallback(text)
+
+
 def load(path):
     # utf-8-sig strips a leading BOM (Windows editors / PowerShell add one), so the
     # first key never glues to a BOM. Universal newlines handle CRLF.
     with open(path, encoding='utf-8-sig') as f:
         text = f.read()
-    try:
-        import yaml
-    except ImportError:
-        return _load_fallback(text)
-    # A genuine YAML *syntax* error propagates (main() maps it to the default) rather
-    # than silently falling through to the naive parser's best-effort guess.
-    return yaml.safe_load(text) or {}
+    return loads(text)
 
 
 def dig(data, dotted):

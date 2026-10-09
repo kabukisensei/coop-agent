@@ -38,7 +38,8 @@ Keep the one implementation and the contract:
 - **Governance:** preserve read-only-first, plan-and-approve, never-commit-source,
   read-only MCP, and never expose secrets.
 - **No new hard deps:** the YAML reader (`lib/_yaml.py`) is dependency-free on purpose
-  (system python may lack PyYAML). Don't reintroduce a hard PyYAML dependency.
+  (system python may lack PyYAML) and is the one parser coop uses on every machine:
+  it never imports PyYAML, even when installed. Don't reintroduce a PyYAML path.
 
 ### PowerShell requirements
 

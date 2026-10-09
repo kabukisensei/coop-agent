@@ -38,6 +38,7 @@ let desktopStatus = null; // canned `powerbi-desktop status` result ({stdout, co
 let gitAliases = {};      // `git config --get alias.<name>` answers (#3); missing → exit 1 like git
 let gitFails = false;     // every git call fails (not a repository): the commit check cannot determine (#2)
 let gitTopLevel = "";     // `git rev-parse --show-toplevel` output (#6); "" keeps the -C dir
+let refFiles = null;      // `git diff --name-only --no-renames <ref>^ <ref>` / `HEAD...<ref>` (what merge/cherry-pick/revert bring in); null → git fails
 const execLog = [];       // every pi.exec call: { bin, args }
 const handlers = {};
 const cmds = {};
@@ -62,6 +63,7 @@ const pi = {
     // NB: cached diff args ("diff --cached --name-only") contain BOTH substrings, so
     // check --cached first.
     if (bin === "git" && a.includes("diff --cached")) return { stdout: staged, code: 0, stderr: "" };
+    if (bin === "git" && a.includes("--no-renames")) return refFiles === null ? { stdout: "", code: 128, stderr: "fatal: bad revision" } : { stdout: refFiles, code: 0, stderr: "" };
     if (bin === "git" && a.includes("diff --name-only")) return { stdout: modified, code: 0, stderr: "" };
     if (bin === "git" && a.includes("ls-files --others")) return { stdout: untracked, code: 0, stderr: "" };
     return { stdout: "", code: 0, stderr: "" };
@@ -3268,6 +3270,143 @@ await t("#12: role, user, login, member and partition SWITCH changes never ride 
   assert.deepEqual([selects, confirms], [0, 1], "a plain yes/no, no session option");
   writeManagedTarget();
   await handleSessionStart({ reason: "new" }, liveCtx);
+});
+
+await t("more destructive git forms ask first: branch -D, stash drop/clear, checkout --, restore, push --delete", async () => {
+  const headless = { cwd: ctx.cwd, hasUI: false };
+  const asks = async (cmd, label) => {
+    const r = await call(cmd, { confirm: false });
+    assert.equal(blocked(r), true, `declined: ${cmd}`);
+    assert.match(lastConfirm, /Destructive command/, cmd);
+    assert.ok(lastConfirm.includes(label), `${cmd} labelled ${label}, got: ${lastConfirm}`);
+    assert.equal(blocked(await call(cmd, { confirm: true })), false, `approved: ${cmd}`);
+    const h = await handle({ toolName: "bash", input: { command: cmd } }, headless);
+    assert.equal(blocked(h), true, `headless: ${cmd}`);
+    assert.match(h.reason, /approval is unavailable in headless mode/, cmd);
+  };
+  const passes = async (cmd) => {
+    const r = await call(cmd, { confirm: false });
+    assert.equal(blocked(r), false, `should pass: ${cmd}`);
+    assert.equal(confirmCount, 0, `no prompt for ${cmd}`);
+  };
+  // Forced branch deletes (every spelling, abbreviations included); a plain -d / --delete is safe.
+  for (const cmd of ["git branch -D feat", "git branch --delete --force feat", "git branch -d -f feat", "git branch -df feat", "git branch --delet -f feat", "git branch -f --delete feat", "git -C /r branch -D feat"]) await asks(cmd, "git branch -D");
+  for (const cmd of ["git branch -d feat", "git branch --delete feat", "git branch feat", "git branch -a"]) await passes(cmd);
+  // Stash drop / clear; list, push, pop and apply pass.
+  await asks("git stash drop", "git stash drop");
+  await asks("git stash drop stash@{1}", "git stash drop");
+  await asks("git stash clear", "git stash clear");
+  for (const cmd of ["git stash", "git stash list", "git stash push -m wip", "git stash pop", "git stash apply stash@{0}"]) await passes(cmd);
+  // checkout -- <paths> / . overwrites the working tree; a branch switch does not.
+  for (const cmd of ["git checkout -- src/app.py", "git checkout -- .", "git checkout .", "git checkout main -- src/app.py"]) await asks(cmd, "git checkout -- <paths>");
+  for (const cmd of ["git checkout main", "git checkout -b feat", "git checkout -t origin/feat"]) await passes(cmd);
+  // restore discards working-tree changes unless it is --staged only.
+  for (const cmd of ["git restore src/app.py", "git restore .", "git restore --staged --worktree src/app.py", "git restore -SW src/app.py", "git restore --source=HEAD~1 src/app.py", "git restore -s HEAD~1 src/app.py", "git restore --stag --workt src/app.py", "git restore -p src/app.py"]) await asks(cmd, "git restore <paths>");
+  for (const cmd of ["git restore --staged src/app.py", "git restore -S src/app.py", "git restore --stag .", "git restore --staged -s HEAD src/app.py"]) await passes(cmd);
+  // Deleting a remote branch.
+  for (const cmd of ["git push --delete origin feat", "git push -d origin feat", "git push origin --delete feat", "git push origin :feat", "git push --delet origin feat"]) await asks(cmd, "git push --delete");
+  for (const cmd of ["git push origin feat", "git push -u origin feat", "git push origin feat:feat", "git push --dry-run origin feat"]) await passes(cmd);
+  // Prose and sibling segments never classify.
+  for (const cmd of ["echo git branch -D feat", "grep 'stash drop' notes.md", 'echo "git checkout -- ."', "git log --oneline -D"]) await passes(cmd);
+});
+
+await t("find -delete / -exec rm and az … delete|purge ask first; reads, prose and option values do not", async () => {
+  const headless = { cwd: ctx.cwd, hasUI: false };
+  const asks = async (cmd, label) => {
+    const r = await call(cmd, { confirm: false });
+    assert.equal(blocked(r), true, `declined: ${cmd}`);
+    assert.match(lastConfirm, /Destructive command/, cmd);
+    assert.ok(lastConfirm.includes(label), `${cmd} labelled ${label}, got: ${lastConfirm}`);
+    assert.equal(blocked(await call(cmd, { confirm: true })), false, `approved: ${cmd}`);
+    const h = await handle({ toolName: "bash", input: { command: cmd } }, headless);
+    assert.equal(blocked(h), true, `headless: ${cmd}`);
+  };
+  const passes = async (cmd) => {
+    assert.equal(blocked(await call(cmd, { confirm: false })), false, `should pass: ${cmd}`);
+    assert.equal(confirmCount, 0, `no prompt for ${cmd}`);
+  };
+  for (const cmd of ["find . -name '*.tmp' -delete", "find /tmp/x -type f -delete -print", "find . -name '*.bak' -exec rm {} \\;", "find . -name '*.bak' -exec rm -f {} +", "find . -execdir rm {} \\;", "find . -ok rm {} \\;", "find . -exec /bin/rm {} +", "sudo find /var/tmp -mtime +7 -delete", "ls && find . -delete"]) await asks(cmd, "find -");
+  for (const cmd of ["find . -name '*.sql'", "find . -type f -exec grep -l x {} +", "find . -exec cat {} \\;", "echo find . -delete", 'echo "find . -exec rm {} ;"', "grep -r delete src/"]) await passes(cmd);
+  for (const cmd of ["az sql db delete --name db --server s --resource-group g --yes", "az group delete -n g --yes", "az storage blob delete --container c --name b", "az storage blob delete-batch --source c", "az keyvault purge --name kv", "az webapp deployment slot delete --slot s", "AZ group delete -n g", "az login && az group delete -n g"]) await asks(cmd, "az ");
+  for (const cmd of ["az sql db list --server s", "az group show -n g", "az storage blob list --container c", "az sql db show --name delete", `az group list --query "[?name=='purge']"`, "echo az group delete"]) await passes(cmd);
+  // `az rest --method delete` keeps its own (Fabric REST write) prompt, not the destructive label.
+  assert.equal(blocked(await call("az rest --method delete --url https://api.fabric.microsoft.com/v1/workspaces/w", { confirm: false })), true);
+  assert.doesNotMatch(lastConfirm, /Destructive command/);
+});
+
+await t("merge, cherry-pick, revert, am and commit-tree take the never-commit-source gate", async () => {
+  const headless = { cwd: ctx.cwd, hasUI: false };
+  const pick = async (cmd, opts = {}) => {
+    refFiles = "refFiles" in opts ? opts.refFiles : "";
+    try { return await call(cmd, opts); } finally { refFiles = null; }
+  };
+  // Source brought in by the named commit(s): blocked outright, no prompt, same reason as a commit.
+  for (const cmd of ["git cherry-pick abc123", "git cherry-pick -x abc123", "git cherry-pick --no-commit abc123", "git revert abc123", "git revert -n abc123", "git merge feat", "git merge --no-ff -m 'merge feat' feat", "git merge --squash feat", "git merge --no-commit feat", "git -C /r merge feat", "git cherry-pick main..feat", "git cherry-pick a1 b2"]) {
+    const r = await pick(cmd, { refFiles: "docs/a.md\nsql/gold/v.sql", confirm: true });
+    assert.equal(blocked(r), true, cmd);
+    assert.match(r.reason, /never commit source/, cmd);
+    assert.match(r.reason, /sql\/gold\/v\.sql/, cmd);
+    assert.equal(confirmCount, 0, `no prompt for ${cmd}`);
+  }
+  // Docs-only commits pass, UI or not; so does an empty change.
+  for (const cmd of ["git cherry-pick abc123", "git revert abc123", "git merge feat", "git merge --no-ff feat"]) {
+    assert.equal(blocked(await pick(cmd, { refFiles: "docs/a.md\nsite/i.html" })), false, cmd);
+    assert.equal(confirmCount, 0, cmd);
+    refFiles = "docs/a.md";
+    try { assert.equal(blocked(await handle({ toolName: "bash", input: { command: cmd } }, headless)), false, `headless docs-only: ${cmd}`); } finally { refFiles = null; }
+    assert.equal(blocked(await pick(cmd, { refFiles: "" })), false, `empty: ${cmd}`);
+  }
+  // Staged source and a preceding `git add` ride a merge/pick commit too.
+  assert.equal(blocked(await pick("git merge feat", { refFiles: "docs/a.md", stagedFiles: "src/app.py" })), true);
+  assert.equal(blocked(await pick("git add src/app.py && git cherry-pick abc123", { refFiles: "docs/a.md", modifiedFiles: "src/app.py" })), true);
+  // The diff ranges git is asked for: merge-base..ref for a merge, the commit's own change for a pick/revert.
+  execLog.length = 0;
+  await pick("git merge feat", { refFiles: "docs/a.md" });
+  assert.ok(execLog.some((e) => e.bin === "git" && e.args.join(" ").endsWith("diff --name-only --no-renames HEAD...feat")), JSON.stringify(execLog));
+  execLog.length = 0;
+  await pick("git cherry-pick abc123", { refFiles: "docs/a.md" });
+  assert.ok(execLog.some((e) => e.bin === "git" && e.args.join(" ").endsWith("diff --name-only --no-renames abc123^ abc123")), JSON.stringify(execLog));
+  execLog.length = 0;
+  await pick("git revert main..feat", { refFiles: "docs/a.md" });
+  assert.ok(execLog.some((e) => e.bin === "git" && e.args.join(" ").endsWith("diff --name-only --no-renames main..feat")), JSON.stringify(execLog));
+  // Unlistable forms ask with the unverifiable-commit prompt and are blocked headlessly:
+  // am, commit-tree, --continue/--skip, a mainline pick, no named commit, a shell-expanded ref,
+  // and a ref git cannot diff (refFiles stays null → git fails).
+  const unlistable = ["git am patch.mbox", "git am --3way < patch", "git am --abort", "git commit-tree HEAD^{tree} -m x", "git cherry-pick --continue", "git cherry-pick --skip", "git revert --continue", "git merge --continue", "git cherry-pick -m 1 abc123", "git cherry-pick --mainline 1 abc123", "git cherry-pick -m1 abc123", "git merge", 'git merge "$BRANCH"', "git cherry-pick nosuchref", "git merge --strat ours feat", "git revert --no-edit abc123"];
+  for (const cmd of unlistable) {
+    const r = await call(cmd, { confirm: false });
+    assert.equal(blocked(r), true, `declined: ${cmd}`);
+    assert.match(lastConfirm, /Can't verify what this commit would include/, cmd);
+    assert.match(r.reason, /unverifiable commit \(you declined\)/, cmd);
+    assert.equal(blocked(await call(cmd, { confirm: true })), false, `approved: ${cmd}`);
+    const h = await handle({ toolName: "bash", input: { command: cmd } }, headless);
+    assert.equal(blocked(h), true, `headless: ${cmd}`);
+    assert.match(h.reason, /unverifiable commit/, cmd);
+  }
+  // --abort / --quit create no commit and pass; an unrelated verb is untouched.
+  for (const cmd of ["git cherry-pick --abort", "git revert --quit", "git merge --abort", "git merge-base main feat", "git log --merges"]) {
+    assert.equal(blocked(await call(cmd, { confirm: false })), false, cmd);
+    assert.equal(confirmCount, 0, cmd);
+  }
+  // Value options are consumed, not read as refs: the message/strategy words never become a diff target.
+  execLog.length = 0;
+  await pick("git merge -m 'take feat' -s recursive -X theirs feat", { refFiles: "docs/a.md" });
+  const diffs = execLog.filter((e) => e.bin === "git" && e.args.includes("--no-renames")).map((e) => e.args.slice(-1)[0]);
+  assert.deepEqual(diffs, ["HEAD...feat"]);
+  // The unit helper.
+  assert.deepEqual(cg.commitLikePlan(parseGitCommand("git cherry-pick -x a1 b2")), { kind: "refs", refs: ["a1", "b2"] });
+  assert.deepEqual(cg.commitLikePlan(parseGitCommand("git merge --abort")), { kind: "none" });
+  assert.equal(cg.commitLikePlan(parseGitCommand("git am x.patch")).kind, "unverifiable");
+  assert.equal(cg.commitLikePlan(parseGitCommand("git commit-tree HEAD^{tree}")).kind, "unverifiable");
+  // An alias that expands to one of these verbs is gated the same way (#3).
+  gitAliases = { cp: "cherry-pick" };
+  try {
+    const r = await pick("git cp abc123", { refFiles: "src/app.py", confirm: true });
+    assert.equal(blocked(r), true);
+    assert.match(r.reason, /never commit source/);
+  } finally { gitAliases = {}; }
+  const entries = readAudit().filter((e) => e.kind === "commit-block");
+  assert.ok(entries.some((e) => e.label === "git merge") && entries.some((e) => e.label === "git cherry-pick"), "audit names the verb");
 });
 
 console.log(`  ${n} guardrails tests passed`);

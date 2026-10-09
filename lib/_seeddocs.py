@@ -24,15 +24,15 @@ Usage:  python3 _seeddocs.py <path-to-project.yml>
 Exit:   0 = patch printed; 3 = nothing to seed (no repositories / all TODO);
         2 = usage or unreadable file.
 
-Dependency-free: reuses lib/_yaml.py (PyYAML when available, else its fallback).
+Dependency-free: reuses lib/_yaml.py, coop's one YAML parser (never PyYAML).
 """
 import json
 import os
 import re
 import sys
 
-# Our lib dir must precede everything else: PyYAML ships a C module also named
-# `_yaml`, which would otherwise win the import.
+# Our lib dir must precede everything else: PyYAML, when a machine happens to have
+# it, ships a C module also named `_yaml`, which would otherwise win the import.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _yaml  # noqa: E402
 
