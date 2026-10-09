@@ -37,8 +37,8 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { appendFileSync, existsSync, readFileSync, realpathSync, renameSync, statSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { appendFileSync, existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { agentDir as coopAgentDir, coopAgentDir as coopIsolatedAgentDir, homeDir as coopHomeDir, personalPiAgentDir, profileDir as coopProfileDir } from "../../lib/paths.mjs";
 import { editGateDecision } from "../../lib/lineage-context.mjs";
 
@@ -1059,13 +1059,24 @@ export function isCoopCodemode(info: any, coopRoot: string | undefined, platform
 }
 
 /** The audit detail for one codemode script: each nested call's tool name and
- * outcome, never its arguments. */
-export function codemodeCallsDetail(details: any): string {
+ * outcome in call order, never its arguments (#373: every call, none dropped).
+ * A script with more than CODEMODE_AUDIT_CHUNK calls is split over several
+ * rows, each naming its range, so one audit line stays bounded. */
+export const CODEMODE_AUDIT_CHUNK = 200;
+export function codemodeCallsDetails(details: any, failed = false): string[] {
   const calls = Array.isArray(details?.calls) ? details.calls : [];
-  if (calls.length === 0) return "no tool calls";
-  const shown = calls.slice(0, 20).map((c: any) => `${String(c?.name ?? "?")}:${String(c?.status ?? "?")}`);
-  return shown.join(", ") + (calls.length > 20 ? `, +${calls.length - 20} more` : "");
+  const tail = failed ? " (script failed)" : "";
+  if (calls.length === 0) return [`no tool calls${tail}`];
+  const names = calls.map((c: any) => `${String(c?.name ?? "?").slice(0, 80)}:${String(c?.status ?? "?").slice(0, 20)}`);
+  if (names.length <= CODEMODE_AUDIT_CHUNK) return [names.join(", ") + tail];
+  const rows: string[] = [];
+  for (let i = 0; i < names.length; i += CODEMODE_AUDIT_CHUNK) {
+    const part = names.slice(i, i + CODEMODE_AUDIT_CHUNK);
+    rows.push(`calls ${i + 1}-${i + part.length} of ${names.length}: ${part.join(", ")}${tail}`);
+  }
+  return rows;
 }
+export const codemodeCallsDetail = (details: any): string => codemodeCallsDetails(details).join("; ");
 
 /** A registered tool's origin, from its `pi.getAllTools()` entry. Only Pi itself
  * registers tools under the `builtin:mcp` source path. */
@@ -2257,15 +2268,66 @@ function isAgentDirFile(p: string): boolean {
  *  A check before the call, not a sandbox: it catches an innocent-looking link,
  *  not a link swapped after approval. */
 export function secretLinkTarget(p: string, cwd: string): string | null {
-  if (!p) return null;
+  const chain = linkChain(p, cwd);
+  // The first entry is the path as written; the gate already checked its name.
+  for (const hop of chain.slice(1)) if (isSecretPath(hop)) return hop;
+  return null;
+}
+
+/** Every path a file tool's write could land on, following symlinks and
+ *  junctions one component at a time (#371): the path as written, each link on
+ *  the way, the final destination even when it does not exist yet (a dangling
+ *  link), and that file's real name when it exists (a Windows short name). A
+ *  check before the call, not a sandbox. */
+export function linkChain(p: string, cwd: string): string[] {
+  if (!p) return [];
+  const out: string[] = [];
   try {
     const expanded = p === "~" || /^~[/\\]/.test(p) ? join(coopHomeDir(), p.slice(1)) : p;
     const full = resolve(cwd || ".", expanded);
-    if (!existsSync(full)) return null;
-    const real = realpathSync.native(full);
-    if (resolve(real) === full) return null;
-    return isSecretPath(real) ? real : null;
-  } catch { return null; }
+    out.push(full);
+    const split = (abs: string) => { const root = parse(abs).root; return { root, parts: abs.slice(root.length).split(/[/\\]+/).filter(Boolean) }; };
+    let { root: cur, parts } = split(full);
+    let hops = 0;
+    while (parts.length > 0) {
+      const name = parts.shift() as string;
+      if (name === ".") continue;
+      if (name === "..") { cur = dirname(cur); continue; }
+      const next = join(cur, name);
+      let link = false;
+      try { link = lstatSync(next).isSymbolicLink(); } catch { /* missing: kept as written */ }
+      if (link && hops++ < 40) {
+        out.push(next);
+        // Windows reports junction targets as \\?\C:\...
+        const target = readlinkSync(next).replace(/^\\\\\?\\/, "");
+        const resolved = split(resolve(cur, target));
+        cur = resolved.root;
+        parts = [...resolved.parts, ...parts];
+        continue;
+      }
+      cur = next;
+    }
+    if (cur !== full) out.push(cur);
+    if (existsSync(cur)) {
+      const real = realpathSync.native(cur);
+      if (!out.includes(real)) out.push(real);
+    }
+  } catch { /* best effort: the name as written is still checked */ }
+  return out;
+}
+
+/** True when a write to `p` would land on the production unlock (#371): its name
+ *  anywhere along the link chain, or the very file the unlock lives in (a hard link). */
+export function writesProdUnlock(p: string, cwd: string): boolean {
+  if ((p.split(/[/\\]/).pop() || "").toLowerCase() === PROD_UNLOCK_FILE) return true;
+  const chain = linkChain(p, cwd);
+  if (chain.some((hop) => basename(hop).toLowerCase() === PROD_UNLOCK_FILE)) return true;
+  try {
+    const grant = statSync(join(coopProfileDir(), PROD_UNLOCK_FILE), { bigint: true });
+    const last = chain.at(-1);
+    if (last && existsSync(last)) { const st = statSync(last, { bigint: true }); if (st.ino === grant.ino && st.dev === grant.dev) return true; }
+  } catch { /* no grant file: nothing to alias */ }
+  return false;
 }
 
 /** First secret-looking path token in a bash command, or null. Mirrors the
@@ -2355,6 +2417,37 @@ export function oneAtATime<A extends any[], R>(fn: (...args: A) => Promise<R>): 
   };
 }
 
+/** The context a queued check runs with (#372): its dialogs close when the turn
+ *  that made the call is stopped (Esc), as a "no", so a stopped script never
+ *  leaves the queue waiting on a dialog nobody needs. Pi's own dialogs take the
+ *  signal too; the race covers a UI that ignores it. A late answer resolves
+ *  nothing, so it cannot grant anything. */
+export function withDialogSignal<C extends { ui?: any }>(ctx: C, signal: AbortSignal | undefined): C {
+  if (!signal || !ctx || !ctx.ui) return ctx;
+  const declined: Record<string, unknown> = { confirm: false, select: undefined, input: undefined, editor: undefined };
+  const ui = new Proxy(ctx.ui, {
+    get(target, key) {
+      const value = Reflect.get(target, key);
+      if (typeof key !== "string" || !(key in declined) || typeof value !== "function") return value;
+      return (...args: any[]) => {
+        if (signal.aborted) return Promise.resolve(declined[key]);
+        if (key !== "editor") args[2] = { ...(args[2] || {}), signal: args[2]?.signal ?? signal };
+        return new Promise((done, fail) => {
+          const onAbort = () => done(declined[key]);
+          signal.addEventListener("abort", onAbort, { once: true });
+          Promise.resolve(value.apply(target, args)).then(
+            (v) => { signal.removeEventListener("abort", onAbort); done(signal.aborted ? declined[key] : v); },
+            (e) => { signal.removeEventListener("abort", onAbort); fail(e); },
+          );
+        });
+      };
+    },
+  });
+  return new Proxy(ctx, { get: (target, key) => (key === "ui" ? ui : Reflect.get(target, key)) });
+}
+
+const CALL_CANCELLED = "coop guardrails: blocked. The turn was stopped before this call was checked.";
+
 export default function coopGuardrails(pi: ExtensionAPI) {
   const enabled = () => process.env.COOP_NO_GUARDRAILS !== "1";
   const showUpstreamUpdates = () => process.env.COOP_SHOW_UPSTREAM_UPDATE_NOTICES === "1";
@@ -2406,7 +2499,9 @@ export default function coopGuardrails(pi: ExtensionAPI) {
   // The asks and blocks inside it were audited one by one as they happened.
   pi.on("tool_result", async (event: any, ctx: ExtensionContext) => {
     if (!enabled() || event?.toolName !== "codemode") return;
-    audit({ cwd: ctx?.cwd ?? process.cwd(), kind: "codemode-script", tool: "codemode", decision: "ran", label: "codemode script", detail: codemodeCallsDetail(event.details) });
+    for (const detail of codemodeCallsDetails(event.details, event.isError === true)) {
+      audit({ cwd: ctx?.cwd ?? process.cwd(), kind: "codemode-script", tool: "codemode", decision: "ran", label: "codemode script", detail });
+    }
   });
 
   /** The SQ8 edit gate: a live target is one sql_impact would answer on without
@@ -2437,10 +2532,15 @@ export default function coopGuardrails(pi: ExtensionAPI) {
   // Checked one call at a time: a codemode script (Pi 0.99) can issue calls at
   // once, and two approval dialogs together leave one unanswerable. In order, a
   // session approval given for the first call also covers the next.
-  pi.on("tool_call", oneAtATime(async (rawEvent: any, ctx: ExtensionContext) => {
+  // The turn's stop signal is taken when the call arrives, not when its turn in
+  // the queue comes (#372): a call from a stopped script is blocked unchecked,
+  // and an open dialog closes as a "no" when its turn is stopped.
+  const checkInOrder = oneAtATime(async (rawEvent: any, arrivedCtx: ExtensionContext, signal: AbortSignal | undefined) => {
     try {
-      const event = withToolOrigin(rawEvent);
       if (!enabled()) return;
+      if (signal?.aborted) return { block: true, reason: CALL_CANCELLED };
+      const ctx = withDialogSignal(arrivedCtx, signal);
+      const event = withToolOrigin(rawEvent);
       const tool = event?.toolName;
 
       // 0. codemode (Pi 1.x): only coop's own copy runs, with script model calls
@@ -2493,7 +2593,8 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       if (tool === "read" || tool === "edit" || tool === "write") {
         const path = String(event?.input?.path ?? "");
         // G1: the production unlock is a person's grant; a session never writes it.
-        if ((tool === "edit" || tool === "write") && (path.split(/[/\\]/).pop() || "").toLowerCase() === PROD_UNLOCK_FILE) {
+        // #371: through any link, junction or hard link too, and no confirmation overrides it.
+        if ((tool === "edit" || tool === "write") && path && writesProdUnlock(path, ctx.cwd)) {
           audit({ cwd: ctx.cwd, kind: "secret-confirm", tool, decision: "blocked", label: "production unlock", detail: "prod-unlock-self" });
           return { block: true, reason: PROD_UNLOCK_SELF_BLOCK };
         }
@@ -2852,7 +2953,12 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       // it can contain command arguments, credentials, or private tool payloads.
       return { block: true, reason: "coop guardrails: unable to verify this tool call because an enforcement check failed; the action was blocked. Retry after resolving the guardrail or approval UI failure." };
     }
-  }));
+  });
+  pi.on("tool_call", (rawEvent: any, ctx: ExtensionContext) => {
+    let signal: AbortSignal | undefined;
+    try { signal = ctx?.signal; } catch { signal = undefined; }
+    return checkInOrder(rawEvent, ctx, signal);
+  });
 
   pi.registerCommand("coop-live-read", {
     description: "Show or revoke this session's bounded live-read grant",

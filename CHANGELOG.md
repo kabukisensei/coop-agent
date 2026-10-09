@@ -20,9 +20,20 @@ All notable changes to coop-agent are recorded here. The format loosely follows
     tools stay visible. The guardrail blocks any other codemode, including Pi's
     built-in one switched back on by a repo.
   - Scripts have no default time limit, so one waiting on your approval waits.
-    Esc stops it.
-  - Each script leaves one audit row (`codemode-script`) naming its tool calls
-    and their outcomes, never their arguments.
+    Esc stops it and closes its open approval as a "no"; the script's calls
+    still waiting are refused unasked, so the next request never waits behind
+    the old question (#372).
+  - Each script's audit (`codemode-script`) names every tool call and its
+    outcome in order, never their arguments; a script with more than 200 calls
+    spans several rows that name their range (#373).
+  - A file write or edit that would land on the production unlock is refused
+    with no prompt through any link too: a symbolic link (even one whose target
+    does not exist yet), a chain of links, a linked folder or a hard link
+    (#371). A link with an innocent name to a secret file that does not exist
+    yet now asks like the secret itself.
+  - A script's call asks with the same dialog as the same direct call, so the
+    phone answers its ordinary one-action approvals and never its production
+    or session-wide ones (#374).
   - The window shows a script's code and the list of tool calls it made.
   - `coop sync` keeps `-builtin:codemode` beside `-builtin:mcp` in Pi's
     settings, so Pi does not warn about the swap at every start.
