@@ -1,6 +1,6 @@
 {
   "name": "coop-codemode",
-  "version": "0.34.4",
+  "version": "0.35.0",
   "private": true,
   "description": "Pi's codemode with script model calls off and the mode fixed to on, replacing the built-in one.",
   "type": "module",

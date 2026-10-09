@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.35.0] — 2026-10-09
+
 ### Changed
 
 - **Codemode is on** (master plan U2 step 3). On Pi 1.x the model can write a
