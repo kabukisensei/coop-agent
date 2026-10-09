@@ -210,6 +210,10 @@ decides what the phone may do (`classifyQuestion`):
   the yes/no under a human unlock) is shown read-only on the phone with
   *Continue on the desktop*. The phone can still decline it. The unlock is a
   terminal command the phone has no route to.
+- **A code mode script's calls follow the same rules.** A call a script
+  makes asks with the same dialog as the same direct call, so the phone
+  answers its ordinary one-action approvals and never its production or
+  session-wide ones (Aaron, 2026-10-09, #374).
 - **The answer must match the exact action.** The phone returns the
   question's `digest`, a SHA-256 over method, title, message and options as Pi
   sent them (`actionDigest`). A different command text is a different digest.

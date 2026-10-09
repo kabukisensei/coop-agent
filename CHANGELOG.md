@@ -31,6 +31,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
     does not exist yet), a chain of links, a linked folder or a hard link
     (#371). A link with an innocent name to a secret file that does not exist
     yet now asks like the secret itself.
+  - A script's call asks with the same dialog as the same direct call, so the
+    phone answers its ordinary one-action approvals and never its production
+    or session-wide ones (#374).
   - The window shows a script's code and the list of tool calls it made.
   - `coop sync` keeps `-builtin:codemode` beside `-builtin:mcp` in Pi's
     settings, so Pi does not warn about the swap at every start.

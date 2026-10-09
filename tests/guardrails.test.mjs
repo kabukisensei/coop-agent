@@ -2861,6 +2861,26 @@ await t("#372: a stopped turn closes its open dialog as a no and frees the queue
   await handleSessionStart({}, ctx);
 });
 
+await t("#374: a script's call asks with the same dialog as the direct call, so the phone applies the same rules", async () => {
+  await handleSessionStart({}, ctx);
+  const seen = (parent) => {
+    const shown = [];
+    const ui = { notify: () => {}, confirm: async (title, message) => { shown.push(["confirm", title, message]); return false; },
+      select: async (title, options) => { shown.push(["select", title, options]); return undefined; } };
+    const c = { ...ctx, ui };
+    const extra = parent ? { toolCallId: "cm1/1", parentToolCallId: "cm1" } : { toolCallId: "d1" };
+    return Promise.all([
+      handle({ toolName: "read", input: { path: ".env" }, ...extra }, c),
+      handle({ toolName: "bash", input: { command: "rm -rf ./build" }, ...extra }, c),
+      handle({ ...builtinModeling("measure_operations", "Create"), ...extra }, c),
+    ]).then(() => shown);
+  };
+  const direct = await seen(false);
+  assert.equal(direct.length, 3);
+  assert.deepEqual(await seen(true), direct);
+  await handleSessionStart({}, ctx);
+});
+
 await t("codemode (U2 step 3): only coop's own copy runs, and each script is audited by its calls", async () => {
   const own = join(ROOT, "extensions", "coop-codemode");
   assert.equal(cg.isCoopCodemode({ sourceInfo: { path: own } }, ROOT), true);
