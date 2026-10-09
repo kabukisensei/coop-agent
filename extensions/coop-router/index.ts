@@ -8,10 +8,13 @@
 // Rules, in order:
 // - `direct` requests (compaction summaries, an extension's own call) go to the
 //   build model at low thinking.
-// - `retry` stays on the model that failed, so prompt caches and thinking
-//   signatures stay valid; `continuation` stays on the turn's model, except that
-//   the first successful edit or write of a planning turn hands the rest of the
-//   work to the build model, and the session stays there.
+// - `retry` after a provider error steps up one tier for the rest of the turn
+//   (build to standard, standard to plan; Aaron, 2026-10-09: quality over the
+//   prompt cache); a retry already on the plan model stays there.
+// - `continuation` stays on the turn's model, except that the first successful
+//   edit or write of a planning turn hands the rest of the work to the build
+//   model, and the session stays there; and two failed edits or writes in a
+//   turn on a tier below plan step up one tier for the rest of the turn.
 // - `user` requests are classified by the thinking level picked and the prompt:
 //   high or xhigh, or a long prompt, is planning on the plan model; low (or off)
 //   with a short prompt is a quick answer on the build model; anything else is
@@ -46,12 +49,16 @@ export const SHORT_PROMPT_CHARS = 400;
 
 /** Tools whose successful result means implementation has started. */
 const EDIT_TOOLS = new Set(["edit", "write"]);
+/** Failed edits or writes in one turn, on one tier, that step the turn up a tier. */
+export const FAILED_EDITS_TO_ESCALATE = 2;
 
 export interface RouterState {
   phase: "planning" | "implementation";
   /** openai-codex model id for this phase. */
   model: string;
   tier: Tier;
+  /** Failed edits of the turn already counted by an escalation, so each step needs new ones. */
+  failedEdits?: number;
 }
 
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -123,6 +130,17 @@ export function editedThisTurn(messages: readonly any[]): boolean {
   return messages.slice(lastUser + 1).some((m) => m?.role === "toolResult" && EDIT_TOOLS.has(m.toolName) && !m.isError);
 }
 
+/** Failed edit or write tool calls since the last user message. */
+export function failedEditsThisTurn(messages: readonly any[]): number {
+  const lastUser = messages.findLastIndex((m) => m?.role === "user");
+  return messages.slice(lastUser + 1).filter((m) => m?.role === "toolResult" && EDIT_TOOLS.has(m.toolName) && m.isError).length;
+}
+
+/** The next tier up, or undefined on the plan model. */
+export function tierAbove(tier: Tier): Tier | undefined {
+  return tier === "build" ? "standard" : tier === "standard" ? "plan" : undefined;
+}
+
 /** The tier a new user request starts on. */
 export function classifyRequest(prompt: string, level: ThinkingLevel): Tier {
   const length = prompt.trim().length;
@@ -152,6 +170,13 @@ export function routeRequest(request: RouteInput, registry: Registry, env: NodeJ
   if (request.reason === "direct") return route(resolveTier("build", registry, env), "low");
   const state = request.state;
   if (request.reason === "retry") {
+    // A provider error: step up one tier for the rest of the turn. The next user
+    // prompt is classified afresh, so the escalation lasts the turn.
+    const up = state ? tierAbove(state.tier) : undefined;
+    if (state && up && request.failed) {
+      const model = resolveTier(up, registry, env);
+      return route(model, level, { ...state, model: model.id, tier: up });
+    }
     const sticky = request.failed ?? request.previous;
     if (sticky && usable(registry, sticky.model)) return route(sticky.model, sticky.thinkingLevel ?? level, state);
   }
@@ -160,13 +185,23 @@ export function routeRequest(request: RouteInput, registry: Registry, env: NodeJ
       const build = resolveTier("build", registry, env);
       return route(build, level, phaseState("build", build));
     }
+    // Two failed edits on this tier since the last escalation: step up one tier.
+    const failed = state ? failedEditsThisTurn(request.messages) : 0;
+    const up = state ? tierAbove(state.tier) : undefined;
+    if (state && up && failed - (state.failedEdits ?? 0) >= FAILED_EDITS_TO_ESCALATE) {
+      const model = resolveTier(up, registry, env);
+      return route(model, level, { ...state, model: model.id, tier: up, failedEdits: failed });
+    }
     if (state) return route(stateModel(state, registry, env), level, state);
     if (request.previous && usable(registry, request.previous.model)) return route(request.previous.model, level, state);
   }
   // A user request (or the first request of a session with no state yet).
   let tier = classifyRequest(lastUserText(request.messages), level);
   if (state?.phase === "implementation" && tier !== "plan") tier = "build";
-  if (state && state.tier === tier) return route(stateModel(state, registry, env), level, state);
+  if (state && state.tier === tier) {
+    // Same tier as the stored state: keep it, dropping a previous turn's escalation baseline.
+    return route(stateModel(state, registry, env), level, state.failedEdits ? { ...state, failedEdits: undefined } : state);
+  }
   const model = resolveTier(tier, registry, env);
   return route(model, level, phaseState(tier, model));
 }

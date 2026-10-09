@@ -13,8 +13,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   model plans (the plan model at `high`/`xhigh` thinking or for a long prompt,
   the standard model otherwise), the first successful edit hands the rest of the
   work to the small build model, which also answers short `low` prompts and
-  writes compaction summaries; retries stay on the model that failed. The phase
-  is router state on the session branch, so it follows forks and survives
+  writes compaction summaries. A retry after a provider error, or two failed
+  edits in a turn on one tier, steps the turn up one tier (build to standard,
+  standard to plan), so a struggling small model hands back rather than keeps
+  trying. The phase is router state on the session branch, so it follows forks and survives
   compaction. The footer shows the routed model beside the selection
   (`auto → gpt-5.6-luna`) and `/router` lists the model per tier.
   `COOP_ROUTER_MODELS` overrides a tier for a measurement run. No new vendor:
