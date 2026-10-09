@@ -509,8 +509,8 @@ with (
 assert ro_output["state"] == "ok", ro_output
 assert "ApplicationIntent=ReadOnly;" in ro_pyodbc.call[0]
 
-# Without PyYAML (fresh Windows machines, the Windows CI leg) lib/_yaml.py keeps
-# `true` as text; the entry still resolves and still carries the read-only intent.
+# lib/_yaml.py never imports PyYAML (`yaml` is masked here to prove it), so the
+# entry reads the same on a fresh Windows machine and still carries the read-only intent.
 ro_text_pyodbc = FakePyodbc()
 with (
     mock.patch.dict(os.environ, {fsq.wmcp.FABRIC_TOKEN_ENV: FABRIC_TOKEN}, clear=False),

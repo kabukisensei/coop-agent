@@ -188,7 +188,8 @@ def parse_target(environment: str, raw: Any) -> SqlTarget:
     target.workspace_id = _text(raw.get("workspace_id")).lower()
     target.item_id = _text(raw.get("item_id")).lower()
     target.sql_endpoint_id = _text(raw.get("sql_endpoint_id")).lower()
-    # The dependency-free reader (no PyYAML) keeps `true` / `false` as text.
+    # lib/_yaml.py hands a plain `true` / `false` over as a bool; a quoted one
+    # ("true") is text and is accepted the same way.
     replicas = raw.get("read_scale_replicas", False)
     if isinstance(replicas, str):
         replicas = {"true": True, "false": False}.get(replicas.strip().lower(), replicas)

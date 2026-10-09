@@ -79,6 +79,38 @@ Findings of the v0.35.0 code review:
   instead of an error; the Project pane keeps the cursor when the team
   status arrives.
 
+### Changed
+
+Follow-ups of the v0.35.0 code review, approved by Aaron on 2026-10-09:
+
+- **More commands ask first.** `git branch -D` (and `-d --force`), `git stash
+  drop` / `clear`, `git checkout -- <paths>` / `git checkout .`, `git restore`
+  of working-tree files, `git push --delete` (and `:<branch>`), `find … -delete`
+  / `-exec rm`, and `az … delete` / `purge` take the destructive-command
+  approval and are blocked headlessly. Read only at the command position of a
+  shell segment, so prose, quoted text and sibling commands never prompt.
+- **"Never commit source" covers every commit-creating command.** `git merge`,
+  `cherry-pick` and `revert` are checked against the paths the named commits
+  carry (plus anything staged or added in the same command) under the same
+  trusted-snapshot policy; `git am`, `commit-tree`, `--continue` / `--skip` and
+  a ref the guardrail cannot list ask like an unverifiable commit, blocked
+  headlessly; `--abort` / `--quit` pass.
+- **`coop doctor` passes on an Azure SQL-only machine.** With
+  `client.platform: azure_sql`, a missing Fabric CLI, `fabric-cicd`, Warehouse
+  MCP registration and Power BI authoring tools are informational, never red;
+  the managed Python runtime with pyodbc, which `sql_query` and `sql_impact`
+  read Azure SQL through, is a warning with the install command when absent and
+  stays red when present but broken. Fabric and `both` machines are unchanged.
+- **One YAML parser.** `lib/_yaml.py` never imports PyYAML now, so a project
+  file reads the same on every machine: plain `true` / `false`, `null`, integers
+  and floats come back typed (YAML 1.2 core schema), quoted scalars stay text.
+  `get` still prints booleans as `true` / `false` for the PowerShell callers.
+
+### Removed
+
+- `lib/_bpa_runner.py` and its test: no caller, and its command line had
+  drifted from the live `bpa_review` tool.
+
 ## [0.35.0] — 2026-10-09
 
 ### Changed

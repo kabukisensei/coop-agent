@@ -657,9 +657,15 @@ export function normalizeGitLongOption(arg: string, gated: string[]): string {
 // abbreviated `--mess x` consumes its value instead of leaving a stray pathspec).
 const COMMIT_GATED_LONG = ["amend", "all", "pathspec-from-file", "pathspec-file-nul", "message", "file", "reuse-message", "reedit-message", "fixup", "squash", "template", "author", "date", "cleanup", "gpg-sign", "trailer"];
 const ADD_GATED_LONG = ["all", "no-ignore-removal", "interactive", "patch", "edit", "pathspec-from-file", "pathspec-file-nul", "update", "force", "dry-run"];
-const PUSH_GATED_LONG = ["force", "force-with-lease", "force-if-includes"];
+const PUSH_GATED_LONG = ["force", "force-with-lease", "force-if-includes", "delete"];
 const RESET_GATED_LONG = ["hard"];
 const CLEAN_GATED_LONG = ["force"];
+const BRANCH_GATED_LONG = ["delete", "force"];
+const RESTORE_GATED_LONG = ["staged", "worktree", "source", "patch"];
+// Commit-creating verbs the source-commit gate reads: the value
+// options are listed so an abbreviated `--strat x` still consumes its value.
+const CHERRY_PICK_GATED_LONG = ["mainline", "strategy", "strategy-option", "gpg-sign", "continue", "skip", "abort", "quit", "no-commit"];
+const MERGE_GATED_LONG = ["message", "file", "strategy", "strategy-option", "into-name", "gpg-sign", "log", "cleanup", "continue", "abort", "quit", "no-commit", "squash"];
 
 /** Parse one Git invocation whose command word resolves to git. Shapes the walker
  *  cannot safely attribute are classified as ambiguous by hasAmbiguousGitInvocation()
@@ -734,6 +740,10 @@ function parseGitSegment(segment: string, segmentStart: number): ParsedGitComman
     : subcommand === "push" ? PUSH_GATED_LONG
     : subcommand === "reset" ? RESET_GATED_LONG
     : subcommand === "clean" ? CLEAN_GATED_LONG
+    : subcommand === "branch" ? BRANCH_GATED_LONG
+    : subcommand === "restore" ? RESTORE_GATED_LONG
+    : subcommand === "cherry-pick" || subcommand === "revert" ? CHERRY_PICK_GATED_LONG
+    : subcommand === "merge" ? MERGE_GATED_LONG
     : [];
   const args: string[] = [];
   const pathspecs: string[] = [];
@@ -1060,6 +1070,45 @@ export function commitStagesAll(cmd: string, parsed: ParsedGitCommand | null = p
  *  the repository's top level, so `cd src && git add .` is judged against the
  *  same root as the staged diff (#6). */
 export type CommitCheck = { offending: string[]; unverifiable: string | null; nothing: boolean };
+
+/** Git verbs that create a commit on the current branch (or, with `--no-commit`
+ *  / `--squash`, stage its content), so the source-commit gate reads them all. */
+export const COMMIT_LIKE_SUBCOMMANDS = new Set(["commit", "am", "cherry-pick", "merge", "revert", "commit-tree"]);
+
+export type CommitLikePlan = { kind: "none" } | { kind: "unverifiable"; why: string } | { kind: "refs"; refs: string[] };
+
+/** What a commit-creating verb other than `git commit` brings in: the commits
+ *  (refs) it applies, when the text names them and git can diff them; otherwise
+ *  why it cannot be listed (the runtime then asks). `git am` reads a mailbox and
+ *  `git commit-tree` an arbitrary tree, so neither is listable; `--continue` /
+ *  `--skip` commit whatever an interrupted operation left in the index; a
+ *  mainline (`-m`) pick takes one side of a merge commit. `--abort` / `--quit`
+ *  create no commit. */
+export function commitLikePlan(git: ParsedGitCommand): CommitLikePlan {
+  const sub = git.subcommand || "";
+  if (sub === "am" || sub === "commit-tree") return { kind: "unverifiable", why: `git ${sub} brings in paths the guardrail cannot list` };
+  const merge = sub === "merge";
+  const valueShort = merge ? ["m", "F", "s", "X"] : ["m", "X"];
+  const valueLong = merge ? ["--message", "--file", "--strategy", "--strategy-option", "--into-name"] : ["--mainline", "--strategy", "--strategy-option"];
+  const refs: string[] = [];
+  const args = git.args;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a.startsWith("-")) {
+      if (a === "--abort" || a === "--quit") return { kind: "none" };
+      if (a === "--continue" || a === "--skip") return { kind: "unverifiable", why: `git ${sub} ${a} commits what the interrupted operation left in the index` };
+      if (!merge && (a === "--mainline" || a.startsWith("--mainline=") || /^-m/.test(a))) return { kind: "unverifiable", why: `git ${sub} -m picks one side of a merge commit` };
+      if (valueLong.includes(a) || (/^-[A-Za-z]+$/.test(a) && valueShort.includes(a[a.length - 1]))) { i++; continue; }
+      continue;
+    }
+    refs.push(a);
+  }
+  refs.push(...git.pathspecs);
+  if (!refs.length) return { kind: "unverifiable", why: `git ${sub} names no commit the guardrail can inspect` };
+  if (refs.some((r) => SHELL_EXPANDS_OPERAND.test(r))) return { kind: "unverifiable", why: `git ${sub} names a commit the shell expands` };
+  return { kind: "refs", refs };
+}
+
 async function offendingCommitPaths(pi: ExtensionAPI, cwd: string, cmd: string, parsed: ParsedGitCommand, governance: SessionGovernance): Promise<CommitCheck> {
   const unverifiable = commitTargetUnverifiable(cmd, parsed);
   if (unverifiable) return { offending: [], unverifiable, nothing: true };
@@ -1074,9 +1123,29 @@ async function offendingCommitPaths(pi: ExtensionAPI, cwd: string, cmd: string, 
     if (!res || res.code !== 0) return null;
     return String(res.stdout || "").split("\n").map((s) => s.trim()).filter(Boolean);
   };
+  // A commit-creating verb other than `git commit` (merge, cherry-pick, revert,
+  // am, commit-tree) carries paths from other commits: list them from the named
+  // refs when git can, otherwise report why so the runtime asks. Staged paths
+  // and a preceding `git add` still count (a merge commits them too).
+  let refPlan: CommitLikePlan | null = null;
+  if (parsed.subcommand !== "commit") {
+    refPlan = commitLikePlan(parsed);
+    if (refPlan.kind === "none") return { offending: [], unverifiable: null, nothing: true };
+    if (refPlan.kind === "unverifiable") return { offending: [], unverifiable: refPlan.why, nothing: true };
+  }
   const staged = await diff(["diff", "--cached", "--name-only"]);
   if (staged === null) return { offending: [], unverifiable: "git could not read the repository this commit targets", nothing: true };
   const files = [...staged];
+  if (refPlan && refPlan.kind === "refs") {
+    for (const ref of refPlan.refs) {
+      // merge: everything since the merge base; a pick/revert: that commit's own
+      // change (a range as git reads it). --no-renames lists both sides of a rename.
+      const range = parsed.subcommand === "merge" ? [`HEAD...${ref}`] : ref.includes("..") ? [ref] : [`${ref}^`, ref];
+      const listed = await diff(["diff", "--name-only", "--no-renames", ...range]);
+      if (listed === null) return { offending: [], unverifiable: `git could not list what git ${parsed.subcommand} ${ref} would bring in`, nothing: true };
+      for (const f of listed) if (!files.includes(f)) files.push(f);
+    }
+  }
   if (commitStagesAll(cmd, parsed)) {
     const modified = await diff(["diff", "--name-only"]); // -a will stage these
     if (modified) for (const f of modified) if (!files.includes(f)) files.push(f);
@@ -2256,13 +2325,53 @@ export function commitHardBlockReason(git: ParsedGitCommand): string | null {
   return null;
 }
 
+/** A short-option cluster (`-Df`, `-fd`) that carries `letter`; long options never match. */
+const shortFlag = (args: string[], letter: string) => args.some((a) => /^-[A-Za-z]+$/.test(a) && a.includes(letter));
+
+/** True when a `git restore` discards working-tree changes; false when it only
+ *  touches the index (`--staged` / `-S` without `--worktree` / `-W`). In a short
+ *  cluster everything after a lowercase `s` is that option's value (`-sHEAD`). */
+function restoreDiscardsWorktree(args: string[]): boolean {
+  const letters = args.filter((a) => /^-[A-Za-z0-9]+$/.test(a)).map((a) => a.slice(1).split("s")[0]).join("");
+  const staged = args.includes("--staged") || letters.includes("S");
+  const worktree = args.includes("--worktree") || letters.includes("W");
+  return !staged || worktree;
+}
+
 /** Label a destructive bash command, or null. Conservative — only clearly risky ops. */
 function dangerLabel(cmd: string): string | null {
   for (const git of parseGitCommands(cmd)) {
     const args = git.args;
-    if (git.subcommand === "push" && args.some((a) => a === "--force" || a === "--force-with-lease" || /^-[A-Za-z]*f[A-Za-z]*$/.test(a) || a.startsWith("+"))) return "git push --force";
+    const operands = args.filter((a) => !a.startsWith("-"));
+    if (git.subcommand === "push" && args.some((a) => a === "--force" || a === "--force-with-lease" || shortFlag([a], "f") || a.startsWith("+"))) return "git push --force";
+    // Deleting a remote branch: `--delete` / `-d` (any abbreviation) or a `:<branch>` refspec.
+    if (git.subcommand === "push" && (args.includes("--delete") || shortFlag(args, "d") || operands.some((a) => a.startsWith(":")))) return "git push --delete";
     if (git.subcommand === "reset" && args.includes("--hard")) return "git reset --hard";
-    if (git.subcommand === "clean" && args.some((a) => a === "--force" || /^-[A-Za-z]*f[A-Za-z]*$/.test(a))) return "git clean -f";
+    if (git.subcommand === "clean" && args.some((a) => a === "--force" || shortFlag([a], "f"))) return "git clean -f";
+    // Forced branch delete only: `-D`, `-d`/`--delete` with `-f`/`--force`. A plain -d is safe.
+    if (git.subcommand === "branch" && (shortFlag(args, "D") || ((args.includes("--delete") || shortFlag(args, "d")) && (args.includes("--force") || shortFlag(args, "f"))))) return "git branch -D";
+    if (git.subcommand === "stash" && (operands[0] === "drop" || operands[0] === "clear")) return `git stash ${operands[0]}`;
+    // `git checkout -- <paths>`, `git checkout <ref> -- <paths>` and `git checkout .` overwrite the working tree.
+    if (git.subcommand === "checkout" && (git.pathspecs.length || operands.includes(".") || operands.includes("./") || operands.includes(":/"))) return "git checkout -- <paths>";
+    // `git restore <paths>` discards working-tree changes unless it is --staged only.
+    if (git.subcommand === "restore" && (operands.length || git.pathspecs.length) && restoreDiscardsWorktree(args)) return "git restore <paths>";
+  }
+  // `find … -delete`, `find … -exec rm …` and `az <group> delete|purge`, SEGMENT-SCOPED
+  // and read at the command position only (`echo find -delete` is prose).
+  for (const { segment } of splitShellSegments(cmd)) {
+    const word = resolveCommandWord(segment);
+    if (!word) continue;
+    const toks = tokenizeArgs(segment.slice(word.charOffset)).map((t) => t.replace(/^['"]|['"]$/g, ""));
+    if (word.name === "find") {
+      if (toks.includes("-delete")) return "find -delete";
+      if (toks.some((t, i) => /^-(exec|execdir|ok|okdir)$/.test(t) && programName(toks[i + 1] || "") === "rm")) return "find -exec rm";
+    }
+    if (word.name === "az") {
+      // The verb is positional (`az sql db delete --name x`): read the words before the first option.
+      const verbs: string[] = [];
+      for (const t of toks.slice(1)) { if (t.startsWith("-")) break; verbs.push(t.toLowerCase()); }
+      if (verbs.some((v) => v === "delete" || v === "purge" || v.startsWith("delete-") || v.startsWith("purge-"))) return `az ${verbs.slice(0, 4).join(" ")}`;
+    }
   }
   // rm with BOTH recursive and force flags (single-file rm is fine), SEGMENT-SCOPED:
   // flags from sibling commands (`rm x && grep -rf y .`) must never classify as rm.
@@ -3185,7 +3294,10 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       //    Hard-blocked first: --amend (rewrites history) and pathspec-file forms
       //    (commits paths the guardrail deliberately does not read) — no approval path.
       const governance = ensureSessionGovernance(ctx.cwd);
-      for (const git of parseGitCommands(cmd).filter((g) => g.subcommand === "commit")) {
+      //    Other commit-creating verbs (merge, cherry-pick, revert, am, commit-tree)
+      //    take the same gate: their paths come from the named commits when git
+      //    can list them, otherwise the verb asks like an unverifiable commit.
+      for (const git of parseGitCommands(cmd).filter((g) => COMMIT_LIKE_SUBCOMMANDS.has(g.subcommand || ""))) {
         const hard = commitHardBlockReason(git);
         if (hard) {
           // Inside this loop every entry is a commit; explain WHICH hard block fired.
@@ -3199,7 +3311,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         if (offending.length) {
           const shown = offending.slice(0, 8).join(", ");
           const more = offending.length > 8 ? ` (+${offending.length - 8} more)` : "";
-          audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: "blocked", label: "git commit", detail: shown });
+          audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: "blocked", label: `git ${git.subcommand}`, detail: shown });
           return { block: true, reason: `coop guardrails: never commit source. These paths aren't docs/logs/site: ${shown}${more}. Unstage them and let a human commit source.` };
         }
         // Ask when the target repository cannot be resolved or read (#2), and,
@@ -3385,8 +3497,8 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         `coop-guardrails: ${enabled() ? "ON" : "OFF (COOP_NO_GUARDRAILS=1)"}`,
         `coop update policy: ${showUpstreamUpdates() ? "UPSTREAM NOTICES ENABLED (maintainer mode)" : "ON — Pi self-update prompts suppressed; use coop update"}`,
         "Enforced on the agent's tool calls (your own shell is never intercepted):",
-        "  • never commit source — blocks `git commit` (incl. -a/-am, `git -C`, `git commit <path>`, and `cd <dir> && git commit`) of anything outside docs/logs/site",
-        "  • destructive commands — confirms rm -rf / git push --force (incl. +refspec) / reset --hard / git clean -f / DROP·TRUNCATE",
+        "  • never commit source — blocks `git commit` (incl. -a/-am, `git -C`, `git commit <path>`, and `cd <dir> && git commit`) of anything outside docs/logs/site; merge / cherry-pick / revert / am / commit-tree take the same gate",
+        "  • destructive commands — confirms rm -rf / git push --force (incl. +refspec) or --delete / reset --hard / git clean -f / branch -D / stash drop·clear / checkout -- / restore / find -delete / az … delete / DROP·TRUNCATE",
         "  • secret files — confirms read/edit/write AND bash access (cat .env etc.) of .env / keys / credentials",
         "  • live data — metadata and plain SQL reads run on every target, production included; reads coop cannot classify ask once",
         "  • mutating MCP actions — confirms create/update/delete/deploy/publish-looking Fabric/Power BI/MCP tool calls (best-effort)",

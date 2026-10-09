@@ -38,7 +38,10 @@ jobs:
       - name: python yaml reader
         run: |
           python3 -c "import ast; ast.parse(open('lib/_yaml.py').read())"
-          test "$(python3 lib/_yaml.py get .coop/project.yml profile.organization MISS)" = "Cooptimize"
+          # -S -I: no site-packages, so PyYAML cannot be there; coop's parser is the one parser.
+          test "$(python3 -S -I lib/_yaml.py get .coop/project.yml profile.organization MISS)" = "Cooptimize"
+          test "$(python3 -S -I lib/_yaml.py get .coop/project.yml tools.fabric_cli.enabled MISS)" = "true"
+          python3 -S -I -c "import sys; sys.path.insert(0, 'lib'); import _yaml; d = _yaml.loads('a: true\nb: null\nc: 12\nd: 1.5\ne: \"true\"\n'); assert d == {'a': True, 'b': None, 'c': 12, 'd': 1.5, 'e': 'true'}, d; assert 'yaml' not in sys.modules"
       - name: python extdeps helper
         # NB: this step runs under `bash -e`, so capture the intentionally-nonzero
         # exit codes with `|| rc=$?` (a list context, exempt from set -e) rather than

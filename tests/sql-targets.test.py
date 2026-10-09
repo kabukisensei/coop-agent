@@ -105,7 +105,7 @@ assert target(kind="azure_sql", server="x.database.windows.net", database="d", c
 assert target(kind="azure_sql", server="x.database.windows.net", database="d", colour="blue").state == "invalid"
 assert st.parse_target("dev", "just a string").state == "invalid"
 
-# --- read_scale_replicas: azure_sql only; the no-PyYAML reader hands it over as text
+# --- read_scale_replicas: azure_sql only; a plain value arrives as a bool, a quoted one as text
 AZ = dict(kind="azure_sql", server="x.database.windows.net", database="d")
 assert target(**AZ, read_scale_replicas=True).read_scale_replicas is True
 assert target(**AZ, read_scale_replicas="true").read_scale_replicas is True
