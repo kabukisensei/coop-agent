@@ -296,6 +296,18 @@ if (Test-Have 'pi') {
   }
 }
 
+# Third-party classifier keys (master plan J0): a TypeSafe, Cloudflare or
+# OpenRouter key on a client profile reaches that vendor from code mode's
+# models.classify(); client use waits on a signed DPA, so doctor flags one.
+if (Test-Have 'pi') {
+  $classifierSigns = @(Get-CoopThirdPartyClassifierSigns -AuthPaths @((Join-Path (Get-CoopPiAgentDir) 'auth.json'), (Join-Path (Get-CoopPersonalPiAgentDir) 'auth.json')))
+  if ($classifierSigns.Count -gt 0) {
+    D-Warn ('third-party classifier key present: ' + ($classifierSigns -join '; ')) 'client use of TypeSafe, Cloudflare or OpenRouter needs a signed DPA (master plan 6.6); remove the key from this profile, or keep it to one `coop router-trial` process on a workstation'
+  } else {
+    D-Ok 'no third-party classifier key (TypeSafe, Cloudflare, OpenRouter)'
+  }
+}
+
 # The person's name (master plan P1): the per-user user.json, else the
 # machine-level file; doctor says which one supplied it.
 $who = Get-CoopEffectiveProfileName

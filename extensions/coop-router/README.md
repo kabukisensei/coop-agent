@@ -26,6 +26,11 @@ same; `build`: `gpt-5.6-luna`, `gpt-6-luna`, `gpt-5.6-terra`). `COOP_ROUTER_MODE
 Codex sign-in the route fails with a message naming `/login openai-codex`; it never
 falls back to another provider.
 
+The new-prompt rule (the first three rows) is `lib/router-rules.mjs`, shared
+with `coop router-trial` (master plan J0), which scores the Jev and Clef
+classifiers against it on a synthetic set; a classifier replaces the rule only
+if that table says it routes measurably better.
+
 The phase is router state: Pi stores it on the session branch, so it follows forks
 and survives compaction. The footer (`coop-powerline`) shows the routed model beside
 the selection (`auto → gpt-5.6-luna`); `/router` lists the model per tier and the

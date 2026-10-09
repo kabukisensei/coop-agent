@@ -635,6 +635,7 @@ print("resume verdict contract OK")
     @{ Name = 'doctor-fleet-pins';      Lane = 'gate';     Head = 'doctor.ps1 npm tool pins and retired reviewers' },
     @{ Name = 'doctor-azure-sql';       Lane = 'gate';     Head = 'doctor.ps1 on an Azure SQL-only client: Fabric-only rows are informational, never red (section 8 item 7)' },
     @{ Name = 'catalog-cli';            Lane = 'gate';     Head = 'coop catalog status from a repository the client home repository lists (SQ9, C1)' },
+    @{ Name = 'router-trial';           Lane = 'gate';     Head = 'coop router-trial: workstation-only classifier trial and the doctor classifier-key row (J0)' },
     @{ Name = 'seeddocs';               Lane = 'gate';     Head = 'coop init --seed-docs shows the config-set status (not runnable = warning)' },
     @{ Name = 'data-doc-summary';       Lane = 'gate';     Head = 'coop data-doc summarizes the graph its config names (subfolder, --config, failures)' },
     @{ Name = 'fleet-manifest';         Lane = 'gate';     Head = 'fleet manifest (Coop-Manifest* helpers, fleet plan)' },
