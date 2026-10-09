@@ -25,6 +25,9 @@
 // forks and survives compaction. Opt in with `/model coop/auto`; the footer shows
 // the routed model beside the selection. Loaded only on Pi 1.x (bin/coop.ps1).
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+// The classification rule lives in lib/router-rules.mjs so the J0 classifier
+// trial (lib/router-trial.mjs) scores classifiers against the very same rule.
+import { classifyRequest as classifyRule, LONG_PROMPT_CHARS as LONG, SHORT_PROMPT_CHARS as SHORT } from "../../lib/router-rules.mjs";
 
 export const PROVIDER = "openai-codex";
 export const ROUTER_PROVIDER = "coop";
@@ -42,10 +45,10 @@ export const DEFAULT_TIER_MODELS: Record<Tier, readonly string[]> = {
   build: ["gpt-5.6-luna", "gpt-6-luna", "gpt-5.6-terra"],
 };
 
-/** A prompt at least this long (characters) plans on the plan model. */
-export const LONG_PROMPT_CHARS = 4000;
+/** A prompt at least this long (characters) plans on the plan model (lib/router-rules.mjs). */
+export const LONG_PROMPT_CHARS: number = LONG;
 /** A low-thinking prompt at most this long is a quick answer on the build model. */
-export const SHORT_PROMPT_CHARS = 400;
+export const SHORT_PROMPT_CHARS: number = SHORT;
 
 /** Tools whose successful result means implementation has started. */
 const EDIT_TOOLS = new Set(["edit", "write"]);
@@ -141,12 +144,9 @@ export function tierAbove(tier: Tier): Tier | undefined {
   return tier === "build" ? "standard" : tier === "standard" ? "plan" : undefined;
 }
 
-/** The tier a new user request starts on. */
+/** The tier a new user request starts on (the rule in lib/router-rules.mjs). */
 export function classifyRequest(prompt: string, level: ThinkingLevel): Tier {
-  const length = prompt.trim().length;
-  if (level === "high" || level === "xhigh" || level === "max" || length >= LONG_PROMPT_CHARS) return "plan";
-  if ((level === "low" || level === "minimal" || level === "off") && length <= SHORT_PROMPT_CHARS) return "build";
-  return "standard";
+  return classifyRule(prompt, level) as Tier;
 }
 
 function route(model: any, thinkingLevel: ThinkingLevel, state?: RouterState) {

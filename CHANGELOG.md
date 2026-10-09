@@ -23,6 +23,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   every route lands on the `openai-codex` sign-in, and with none the request
   fails naming `/login openai-codex`. `extensions/coop-router`, loaded on Pi
   1.x; `tests/coop-router.test.mjs`.
+- **`coop router-trial`, the J0 classifier trial** (master plan section 6.6,
+  row 15b). Scores TypeSafe Jev and Cloudflare Clef (Pi 1.1's classifier
+  providers) against the `coop/auto` routing rule on a shipped synthetic set of
+  50 labelled prompts (`tests/fixtures/router-trial/prompts.jsonl`, no client
+  data): accuracy per tier, agreement with the rule, errors, latency, cost and a
+  verdict. Workstation only: it refuses on Windows, so it never runs on a client
+  VM; the keys live in that one process's environment and coop stores none. The
+  rule itself moved to `lib/router-rules.mjs`, shared by the router extension and
+  the trial. `coop doctor` now warns when a TypeSafe, Cloudflare or OpenRouter key
+  or sign-in is on a profile, because client use waits on a signed DPA.
 
 ### Fixed
 

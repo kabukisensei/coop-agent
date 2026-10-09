@@ -1627,6 +1627,34 @@ function Test-CoopAuthHasCredential {
   } catch { return $false }
 }
 
+# Third-party classifier keys (master plan J0, section 6.6): until a signed DPA
+# (and TypeSafe's zero data retention) covers client data, no TypeSafe, OpenRouter
+# or Cloudflare key belongs in a client profile, because code mode's
+# models.classify() would reach that vendor outside the adapter's allowed
+# servers. Returns one line per sign found: an environment variable that is
+# set, or a provider entry stored in one of the auth.json files given. '' lines
+# never; an empty array means none.
+function Get-CoopThirdPartyClassifierSigns {
+  param([string[]]$AuthPaths = @())
+  $signs = @()
+  foreach ($name in @('TYPESAFE_API_KEY', 'CLOUDFLARE_API_KEY', 'CLOUDFLARE_ACCOUNT_ID', 'OPENROUTER_API_KEY')) {
+    if ([Environment]::GetEnvironmentVariable($name)) { $signs += "$name is set" }
+  }
+  foreach ($authPath in @($AuthPaths)) {
+    if (-not $authPath -or -not (Test-Path -LiteralPath $authPath -PathType Leaf)) { continue }
+    try {
+      $data = Get-Content -LiteralPath $authPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+      if ($null -eq $data -or $data -isnot [System.Management.Automation.PSCustomObject]) { continue }
+      foreach ($prop in $data.PSObject.Properties) {
+        if ($prop.Name -in @('typesafe', 'cloudflare-workers-ai', 'openrouter') -and $prop.Value -is [System.Management.Automation.PSCustomObject] -and @($prop.Value.PSObject.Properties).Count -gt 0) {
+          $signs += "$($prop.Name) sign-in stored in $authPath"
+        }
+      }
+    } catch { continue }
+  }
+  return @($signs)
+}
+
 # Align coop's ISOLATED extension tree's @earendil-works/pi-ai + pi-tui to the Pi
 # agent's OWN version. coop's
 # extensions load INTO the running agent, so they must share one pi-ai/pi-tui with

@@ -139,6 +139,30 @@ function Invoke-CoopTeamai {
   exit $LASTEXITCODE
 }
 
+# coop router-trial (master plan J0, section 6.6): score TypeSafe Jev and
+# Cloudflare Clef against the coop/auto routing rule on the shipped synthetic
+# prompt set (tests/fixtures/router-trial/prompts.jsonl, no client data). A
+# workstation command for the maintainer's Mac or a Linux box: it refuses on
+# Windows so it never runs on a client VM. The keys live in the environment of
+# this one process (the runbook fills them from the macOS keychain); coop stores
+# none, and coop doctor warns when one is left on a profile. Trailing arguments
+# go to lib/router-trial.mjs (--set, --classifiers, --out, --help).
+function Invoke-CoopRouterTrial {
+  param([string[]]$Rest)
+  if ($IsWindows -or $env:OS -eq 'Windows_NT') { Coop-Die 'coop router-trial runs on a workstation (macOS or Linux), never on a client VM' }
+  if (-not (Test-Have 'node')) { Coop-Die 'node is required for coop router-trial' }
+  $helper = Join-Path $script:CoopRoot 'lib/router-trial.mjs'
+  if ($Rest -contains '--help' -or $Rest -contains '-h') { & node $helper --help; exit $LASTEXITCODE }
+  $piDir = ''
+  foreach ($root in (Get-CoopNpmGlobalRoots)) {
+    $candidate = Join-Path $root '@earendil-works/pi-coding-agent'
+    if (Test-Path -LiteralPath (Join-Path $candidate 'package.json') -PathType Leaf) { $piDir = $candidate; break }
+  }
+  if (-not $piDir) { Coop-Die 'Pi (@earendil-works/pi-coding-agent) not found under an npm global root. Run: coop install' }
+  & node $helper --pi $piDir @Rest
+  exit $LASTEXITCODE
+}
+
 # coop catalog snapshot|status (master plan SQ9): the committed dev catalog
 # snapshot, written by lib/catalog_snapshot.py over the same read-only
 # dev/test connection path as the native SQL tools (never production). The
@@ -414,6 +438,9 @@ $(Coop-Bold)Usage$(Coop-Rst)
                             (--strict: exit 2 on a failing linter; --skip-docs: linters only)
   coop catalog <cmd>        Committed dev catalog snapshot: snapshot (read the dev/test catalog
                             into the contract's snapshot folder, read-only) | status
+  coop router-trial [args]  Score the Jev and Clef classifiers against the coop/auto rule on
+                            the shipped synthetic set (workstation only; keys from this
+                            process's environment; --classifiers, --set, --out, --help)
   coop support [--json]     Collect a sanitized support bundle (health, versions, events)
                             (--incident: incident record; --export PATH: write bundle)
   coop fabric [args]        Pass through to the Microsoft Fabric CLI (fab)
@@ -1771,6 +1798,7 @@ switch -CaseSensitive ($cmd) {
   'release' { Invoke-CoopRelease $rest; break }
   'data-doc' { Invoke-DataDoc $rest; break }
   'catalog' { Invoke-CoopCatalog $rest; break }
+  'router-trial' { Invoke-CoopRouterTrial $rest; break }
   'support' { & (Join-Path $script:CoopRoot 'scripts\support-center.ps1') @rest; exit $LASTEXITCODE }
   { $_ -ceq 'fabric' -or $_ -ceq 'fab' } {
     if (-not (Test-Have 'fab')) { Coop-Die 'Microsoft Fabric CLI (fab) not found. Run: coop install' }

@@ -773,6 +773,23 @@ zero-data-retention contract. Until then no TypeSafe, OpenRouter or Cloudflare
 key is set in a client profile, and doctor flags one, because code mode's
 `models.classify()` would reach it outside the adapter's `allowedServers`.
 
+**J0 as built** (Aaron, 2026-10-09 19:15, "And the jev trial?"). `coop
+router-trial` scores Jev (`typesafe/jev-latest`) and Clef
+(`cloudflare-workers-ai/@cf/cloudflare/clef`, and `clef-flash`) on the shipped
+set `tests/fixtures/router-trial/prompts.jsonl`: 50 synthetic prompts, each with
+a thinking level and a hand label (build, standard or plan), no client data. The
+rule itself lives in `lib/router-rules.mjs`, which the router extension and the
+trial share, so both decide alike. Each classifier answers one question with the
+tier criteria the rule uses; the report gives accuracy per tier against the
+labels, agreement with the rule, errors, mean latency and cost, and a verdict.
+The set includes a few short medium-thinking lookups the rule routes to the
+standard tier while the label says build, so a classifier can beat the rule
+where the rule is blind, and the verdict says by how much. The command refuses
+on Windows and runs on Aaron's Mac with the TypeSafe key read from the macOS
+keychain into that one process. `coop doctor` warns when a TypeSafe, Cloudflare
+or OpenRouter key or sign-in is on a profile. The run and its verdict are the
+row's remaining acceptance; the rule stays until the table says otherwise.
+
 **Pi Durable** stays on the section 12.1 watch list (re-checked the same day).
 
 ## 7. Phase 4 — Standards alignment and the reviewer decision
@@ -2033,7 +2050,7 @@ tags. A stale row is never a reason to re-do work: check the PR list first.
 | 13 | PK1 | `pi-lovely-codex` versus `pi-better-openai`, diagnostics, simplify (naming moved to N1) | U1 + explicit start | one owner of usage stats; adopt/build/defer recorded per candidate | not started |
 | 14 | B1 | Minimal beta channel | — | — | **skipped** (Aaron, 2026-09-30: seven people update from tags; the VM qualifies upgrades) |
 | 15 | K1, K2, K3 | TeamAI shared knowledge: isolated CLI and read-only recall, reviewed contribution, broader lifecycle | FR1 + explicit start; VM isolation | revision 2.0 section 8 gates, one PR per row | merged 2026-10-02 and shipped in v0.28.0: K1 ([#249](https://github.com/kabukisensei/coop-agent/pull/249)), K2 ([#250](https://github.com/kabukisensei/coop-agent/pull/250)), K3 ([#259](https://github.com/kabukisensei/coop-agent/pull/259), which landed [#251](https://github.com/kabukisensei/coop-agent/pull/251) on main); issue [#247](https://github.com/kabukisensei/coop-agent/issues/247) (K1) is still open and tracks the VM acceptance (project runbook `k1-teamai-vm-acceptance`), not implementation work |
-| 15b | J0–J3 | Jev shadow experiments; J0 is the Jev-versus-Clef classifier trial for R1 (section 6.6) | J0: R1 merged; test data off the client VM; J1–J3: explicit start | revision 2.0 gates; client use only with a signed DPA (TypeSafe: zero data retention) | J0 approved (Aaron, 2026-10-07 16:06); J1–J3 waiting (Aaron, 2026-09-30) |
+| 15b | J0–J3 | Jev shadow experiments; J0 is the Jev-versus-Clef classifier trial for R1 (section 6.6) | J0: R1 merged; test data off the client VM; J1–J3: explicit start | revision 2.0 gates; client use only with a signed DPA (TypeSafe: zero data retention) | J0 built: `coop router-trial` and the synthetic set, PR #TBD (Aaron, 2026-10-09 19:15 "And the jev trial?"); the Mac run and its verdict pending; J1–J3 waiting (Aaron, 2026-09-30) |
 | 16 | D1 | Electron desktop with packaged installer, worked as D1a–D1g (section 11.2) and the follow-ups D1h–D1k (section 11.7): decision record and salvage, `coop desktop` window from the terminal product (first deliverable, no installer or certificate), unsigned installer, bundled runtime, updates, signing last, teammate acceptance | 7–12 and 15 accepted; Aaron starts D1; each 11.3 item decided when its row starts (U2 is no longer a gate for D1d, section 11.7) | another user installs from the package alone (D1g); signing not required (Aaron, 2026-10-02) | D1a decision record and salvage list merged ([#255](https://github.com/kabukisensei/coop-agent/pull/255), revision 3.13, section 11.5); D1b `coop desktop` window merged ([#260](https://github.com/kabukisensei/coop-agent/pull/260), 2026-10-02), VM acceptance in `E:\coop-sandbox\d1b` pending; D1b2 side pane, attachments, draggable panes, splash and vibes, concise activity view merged ([#265](https://github.com/kabukisensei/coop-agent/pull/265), v0.29.0); D1c unsigned per-user installer built (revision 3.17; Aaron started it 2026-10-02), CI job on every PR, VM acceptance open; the six first-run fixes from the desktop UX review merged (revision 3.18; section 11.6 statuses); D1d bundled runtime built (revision 3.19; Aaron started it 2026-10-03: one install), blank-VM acceptance open; D1k one install for the window and the terminal (the package carries Git, Python with pipx and the tool wheels, the Azure CLI and ODBC 18; `scripts/bootstrap.ps1` runs that installer; the prerequisite offer in `coop install` for clones) in review (revision 3.30; Aaron started it 2026-10-05, widened it 2026-10-06); then D1e with the update notice first, D1h health pane, D1i integrated terminal pane, D1j approvals chip and skills browser (section 11.7); D1f and D1g as before |
 | 17 | FA1 | Fabric Apps with Rayfin (section 12.2): `fabric-apps` skill and a Rayfin deploy gate | Aaron started it 2026-10-02 | gate tests in the gate lane; acceptance on a tenant with Fabric Apps (preview) on: scaffold the todo template, connect one semantic model, deploy to a throwaway dev workspace through the prompt, delete the item in Fabric | merged ([#263](https://github.com/kabukisensei/coop-agent/pull/263), 2026-10-02) and shipped in v0.29.0; the tenant acceptance (Fabric Apps preview on, throwaway dev workspace) is Aaron's and not yet recorded |
 | 18 | G1 | Production writes only under the hidden human-only unlock, each one a yes/no at the desk; reads need no approval (section 12.3) | decided (Aaron, 2026-10-05); asked for in the demo; revised by Aaron 2026-10-07 (revision 3.29) | section 12.3 acceptance | merged ([#302](https://github.com/kabukisensei/coop-agent/pull/302), 2026-10-05), unreleased; VM check pending |
