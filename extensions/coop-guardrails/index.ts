@@ -720,7 +720,7 @@ function parseGitSegment(segment: string, segmentStart: number): ParsedGitComman
   }
   // A `-C` the shell expands (`$REPO`, `~`, a backtick) resolves to a directory
   // this parser cannot see (#2).
-  if (cwdOverride !== undefined && /[$~`]/.test(cwdOverride)) unverifiable = unverifiable || "-C names a directory the shell expands";
+  if (cwdOverride !== undefined && SHELL_EXPANDS_OPERAND.test(cwdOverride)) unverifiable = unverifiable || "-C names a directory the shell expands";
 
   const subcommand = toks[i]?.toLowerCase();
   const extra = { ...(unverifiable ? { unverifiable } : {}), ...(aliasOverride ? { aliasOverride } : {}) };
@@ -957,6 +957,12 @@ export function precedingStagingPlan(cmd: string, cwd: string, commit: ParsedGit
   return found ? plan : null;
 }
 
+/** A directory operand the shell rewrites before git sees it: a `$VAR`, a backtick
+ *  anywhere, or a tilde that BEGINS the word (`~`, `~/x`, `~user/x`). A tilde inside
+ *  the word is literal in bash and PowerShell alike (Windows 8.3 names such as
+ *  `C:\Users\RUNNER~1\...`), so it stays verifiable. */
+const SHELL_EXPANDS_OPERAND = /^~|[$`]/;
+
 /** The directory of the LAST `cd <dir>` / `pushd <dir>` in a command prefix, or null.
  *  Quote-aware (reuses tokenizeArgs). A `cd` whose target the text does not name
  *  (`cd`, `cd -`, `cd --`, `cd "$X"`) yields null; leadingCd() says why, and the
@@ -982,7 +988,7 @@ export function leadingCd(before: string): { dir: string | null; unverifiable: s
     if (operand === undefined || operand === "-" || operand === "--" || operand.startsWith("-")) {
       dir = null;
       unverifiable = `${word} ${operand === undefined ? "with no directory" : operand} resolves a directory the guardrail cannot read`;
-    } else if (/[$~`]/.test(operand)) {
+    } else if (SHELL_EXPANDS_OPERAND.test(operand)) {
       dir = null;
       unverifiable = `${word} names a directory the shell expands`;
     } else {

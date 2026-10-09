@@ -3020,6 +3020,17 @@ await t("#2: a commit on a repository the text cannot name asks (fails closed he
   // Source that git CAN see through a plain cd or -C is still blocked outright, not asked.
   assert.equal(blocked(await call("(cd /other && git commit -am wip)", { modifiedFiles: "src/app.py", confirm: true })), true);
   assert.equal(lastRepoDir, "/other");
+  // A tilde INSIDE the word is literal (Windows 8.3 names): git can see that target,
+  // so it is checked, not asked about. Only a leading `~` is the shell's home.
+  for (const short of ["C:\\Users\\RUNNER~1\\repo", "/srv/RUNNER~1/repo"]) {
+    const r = await call(`cd ${short} && git commit -am wip`, { modifiedFiles: "src/app.py", confirm: false });
+    assert.equal(blocked(r), true, `source behind a short-name cd: ${short}`);
+    assert.equal(confirmCount, 0, `no prompt for ${short}`);
+    assert.equal(lastRepoDir, short);
+    assert.equal(blocked(await call(`git -C ${short} commit -am wip`, { modifiedFiles: "docs/a.md" })), false, `-C ${short}`);
+    assert.equal(lastRepoDir, short);
+  }
+  assert.equal(cg.leadingCd("cd ~user/repo &&").dir, null, "~user is the shell's");
   assert.equal(leadingCdDir("(cd /a &&"), "/a");
   assert.deepEqual(cg.leadingCd('cd "$X" &&').dir, null);
   assert.equal(cg.commitTargetUnverifiable("git commit -m x", parseGitCommand("git commit -m x")), null);
@@ -3171,7 +3182,8 @@ await t("#6: untracked paths are listed repository-relative and the policy is ke
     const c = { ...ctx, cwd: policyRoot };
     const inLogs = `cd ${join(policyRoot, "logs")} && git add . && git commit -m log`;
     staged = ""; modified = ""; untracked = "logs/today.log"; confirmAnswer = false;
-    assert.equal(blocked(await handle({ toolName: "bash", input: { command: inLogs } }, c)), false, "logs/** allowed by the root's contract");
+    const r = await handle({ toolName: "bash", input: { command: inLogs } }, c);
+    assert.equal(blocked(r), false, `logs/** allowed by the root's contract (${r?.reason || "no reason"}; cd ${join(policyRoot, "logs")})`);
     untracked = "src/x.sql";
     assert.equal(blocked(await handle({ toolName: "bash", input: { command: inLogs } }, c)), true, "source at the root is still source");
     // Without git's answer the subfolder would be the policy key and logs/** would not apply.

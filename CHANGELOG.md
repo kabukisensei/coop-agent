@@ -39,7 +39,9 @@ Findings of the v0.35.0 code review:
   tools ask; the secret-file gate sees `.en''v`, `.env*`, `HEAD:.env`,
   `.git-credentials`, `gh/hosts.yml`, `.kube/config`; `\rm -rf` is `rm`;
   `az rest --meth post` is a write; printing the environment or naming the
-  Fabric token variable asks.
+  Fabric token variable asks. A `~` inside a `cd` or `-C` path (a Windows
+  short name such as `RUNNER~1`) is literal and the target is checked; only a
+  leading `~` is the shell's home.
 - **Launcher.** `coop init --ci` could not run (its function was defined
   after the dispatch); `coop init --template` wrote a UTF-16 contract under
   Windows PowerShell 5.1; the daily origin fetch failed on a checkout path
