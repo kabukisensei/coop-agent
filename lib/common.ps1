@@ -2281,7 +2281,9 @@ function Invoke-CoopRepoFetchThrottled {
   $env:GIT_TERMINAL_PROMPT = '0'
   $so = [System.IO.Path]::GetTempFileName(); $se = [System.IO.Path]::GetTempFileName()
   try {
-    $p = Start-Process -FilePath 'git' -ArgumentList @('-C', "$script:CoopRoot", 'fetch', '--quiet', 'origin') `
+    # Start-Process joins -ArgumentList unquoted: quote the path ourselves so a
+    # checkout under a profile with a space in it still fetches.
+    $p = Start-Process -FilePath 'git' -ArgumentList @('-C', ('"' + $script:CoopRoot + '"'), 'fetch', '--quiet', 'origin') `
           -NoNewWindow -PassThru -RedirectStandardOutput $so -RedirectStandardError $se -ErrorAction Stop
     if (-not $p.WaitForExit(5000)) { try { $p.Kill() } catch { } }
   } catch { }

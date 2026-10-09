@@ -386,7 +386,7 @@ if (Test-Have 'fab') {
     # Metadata unavailable: fall back to importing with a venv interpreter found
     # next to the shim or under common pipx homes.
     $venvCandidates = @()
-    foreach ($pipxHome in @($env:PIPX_HOME, (Join-Path $HOME 'pipx'), (Join-Path $HOME '.local\pipx'), (Join-Path $env:LOCALAPPDATA 'pipx\pipx'))) {
+    foreach ($pipxHome in @($env:PIPX_HOME, (Join-Path $HOME 'pipx'), (Join-Path $HOME '.local\pipx'), $(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'pipx\pipx' }))) {
       if ($pipxHome) {
         $venvCandidates += (Join-Path $pipxHome 'venvs\ms-fabric-cli\Scripts\python.exe')
         $venvCandidates += (Join-Path $pipxHome 'venvs\ms-fabric-cli\bin\python')
@@ -881,9 +881,8 @@ if ($script:FIX -and ($script:FAIL -gt 0 -or $script:WARN -gt 0)) {
     # Run in a CHILD process (like install/update) so its real exit code is read from
     # $LASTEXITCODE — invoking it in-process could leave $LASTEXITCODE stale from an
     # earlier native call and report a random success/failure.
-    $psExe = if (Get-Command pwsh -ErrorAction SilentlyContinue) { 'pwsh' } else { 'powershell' }
-    & $psExe -NoProfile -ExecutionPolicy Bypass -File $syncScript *> $null
-    if ($LASTEXITCODE -eq 0) { Coop-Ok 'synced extensions / MCP / assets' } else { Coop-Warn 'sync had issues (run: coop sync)' }
+    $syncRc = Invoke-CoopScript $syncScript
+    if ($syncRc -eq 0) { Coop-Ok 'synced extensions / MCP / assets' } else { Coop-Warn 'sync had issues (run: coop sync)' }
   }
   if (Test-Have 'pipx') {
     # The Fabric CLI is (re)built when fab is missing, or when its environment

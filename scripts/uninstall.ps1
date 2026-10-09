@@ -159,12 +159,14 @@ if ($KEEP_TOOLS) {
   } elseif (-not (Test-CoopBundledRuntime)) {
     Coop-Info 'pi not installed via npm globally (nothing to remove)'
   }
-  if (Test-Have 'pipx') {
-    $pipxList = (& pipx list 2>$null | Out-String)
+  if (Test-CoopPipxAvailable) {
+    # The same pipx probe install/update/doctor use (PATH, COOP_PIPX_BIN, or
+    # `python -m pipx`), so a pipx that only answers through Python still cleans up.
+    $pipxList = Get-CoopPipxOutput @('list')
     foreach ($pkg in $PY_TOOLS) {
       if ($pipxList -match ("package " + [regex]::Escape($pkg) + " ")) {
-        & pipx uninstall $pkg *> $null
-        if ($LASTEXITCODE -eq 0) { Coop-Ok "removed $pkg (pipx)" }
+        $rc = Invoke-CoopPipx @('uninstall', $pkg)
+        if ($rc -eq 0) { Coop-Ok "removed $pkg (pipx)" }
         else { Coop-Warn "could not pipx-uninstall $pkg — remove by hand: pipx uninstall $pkg" }
       }
     }
