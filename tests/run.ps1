@@ -358,15 +358,19 @@ try {
   # A child process, like the fixtures: the warning goes to the console's stderr
   # (Coop-Warn), which an in-process 2>&1 never sees. EAP Continue keeps
   # Windows PowerShell 5.1 from turning native stderr into NativeCommandError.
+  # The warning names the skipped skill, so stdout (the launch args) and stderr
+  # (the warnings) are read apart.
+  $badErrFile = Join-Path $stub 'kb-bad-stderr.txt'
   $badEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-  try { $badSpec = (& $psExe -NoProfile -ExecutionPolicy Bypass -File $coop launch-spec 2>&1 | Out-String) -replace '\\', '/' }
+  try { $badSpec = (& $psExe -NoProfile -ExecutionPolicy Bypass -File $coop launch-spec 2>$badErrFile | Out-String) -replace '\\', '/' }
   finally { $ErrorActionPreference = $badEap }
   $badRc = $LASTEXITCODE
+  $badErr = if (Test-Path -LiteralPath $badErrFile) { Get-Content -LiteralPath $badErrFile -Raw } else { '' }
   $env:COOP_DIR = $priorCoop
   if ($badRc -eq 0) { Ok 'valid + invalid-final: PowerShell launcher exits 0' } else { Ko "invalid-final aborted PowerShell launcher: rc=$badRc" }
   if ($badSpec -like '*aaa-valid-skill*') { Ok 'valid skill still loaded alongside invalid-final (PS)' } else { Ko 'valid skill lost (PS)' }
   if ($badSpec -like '*zzzz-invalid-final*') { Ko 'invalid-final present in PS launch args' } else { Ok 'invalid-final absent from PS launch args' }
-  if ($badSpec -like '*missing frontmatter name*') { Ok 'invalid-final warned (PS)' } else { Ko 'no invalid-final warning (PS)' }
+  if ($badErr -like '*missing frontmatter name*') { Ok 'invalid-final warned (PS)' } else { Ko 'no invalid-final warning (PS)' }
   if ($badSpec -like '*bbb-empty-invalid*') { Ko 'empty skill present in PS launch args' } else { Ok 'empty skill absent from PS launch args' }
   if ($badSpec -like '*ccc-multiline-no-name*') { Ko 'multiline-no-name skill present in PS launch args' } else { Ok 'multiline-no-name skill absent from PS launch args' }
 
