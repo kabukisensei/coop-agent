@@ -312,6 +312,9 @@ try {
   if (($spec -like '*extensions/coop-codemode*') -and ($spec -like '*--tools +codemode*') -and ($spec -notlike '*--exclude-tools codemode*')) {
     Ok "launch-spec turns on coop's own codemode on Pi 1.x"
   } else { Ko "launch-spec missing coop's codemode: $spec" }
+  # coop's router (master plan R1) needs Pi's virtual models (0.99+): loaded on Pi 1.x only.
+  if ($spec -like '*extensions/coop-router*') { Ok "launch-spec loads coop's router (coop/auto) on Pi 1.x" }
+  else { Ko "launch-spec missing coop's router: $spec" }
   $oldPi = Join-Path $stub 'old-pi'
   New-Item -ItemType Directory -Path $oldPi -Force | Out-Null
   [System.IO.File]::WriteAllText((Join-Path $oldPi 'pi'), "#!/bin/sh`n[ `"`$1`" = `"--version`" ] && { echo `"pi 0.87.1`"; exit 0; }`nexit 0`n")
@@ -322,7 +325,7 @@ try {
     $env:PATH = "$oldPi$([System.IO.Path]::PathSeparator)$pathBefore"
     $oldSpec = (& $coop launch-spec 2>&1 | Out-String)
   } finally { $env:PATH = $pathBefore }
-  if (($oldSpec -like '*coop-guardrails*') -and ($oldSpec -notlike '*--no-mcp*') -and ($oldSpec -notlike '*--tui-mode*') -and ($oldSpec -notlike '*coop-codemode*')) {
+  if (($oldSpec -like '*coop-guardrails*') -and ($oldSpec -notlike '*--no-mcp*') -and ($oldSpec -notlike '*--tui-mode*') -and ($oldSpec -notlike '*coop-codemode*') -and ($oldSpec -notlike '*coop-router*')) {
     Ok 'launch-spec leaves the Pi 1.x flags off for an older Pi, which would reject them'
   } else { Ko "launch-spec passed Pi 1.x flags to Pi 0.87.1: $oldSpec" }
 

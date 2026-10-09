@@ -208,7 +208,7 @@ shows anything still missing.
 | --- | --- |
 | **Pi** | installed globally via `npm` |
 | **Pi extensions** — `pi-mcp-adapter` (MCP), `pi-hermes-memory` (memory), `pi-better-openai` (plan usage limits), `pi-web-access` (web search/fetch — read-only), `@juicesharp/rpiv-ask-user-question` (structured questions), `@juicesharp/rpiv-todo` (the task list above the prompt), `@xl0/pi-lovely-rename` (automatic session names) | installed via `pi install` into coop's isolated agent dir (`~/.coop/agent`) |
-| **Coop companion extensions** — `coop-powerline` (footer/splash/vibes), `coop-tools` (native `data_doc`/`sql_impact`/`bpa_review` + standards-in-context + workflow prompts), `coop-profile`, `coop-guardrails` (policy enforcement), `coop-codemode` (Pi 1.x codemode scripts, with outside model calls off) | shipped in this repo, loaded at launch via `pi -e` (nothing to install) |
+| **Coop companion extensions** — `coop-powerline` (footer/splash/vibes), `coop-tools` (native `data_doc`/`sql_impact`/`bpa_review` + standards-in-context + workflow prompts), `coop-profile`, `coop-guardrails` (policy enforcement), `coop-codemode` (Pi 1.x codemode scripts, with outside model calls off), `coop-router` (the `coop/auto` model: plans on a large Codex model, implements on a small one; opt in with `/model coop/auto`) | shipped in this repo, loaded at launch via `pi -e` (nothing to install) |
 | **Standalone tool** — `coop-data-doc` | installed via `pipx` from PyPI |
 | **`fabric-cicd`** (deployment validation) | a Python **library** (no CLI), injected into the Fabric CLI's env via `pipx inject ms-fabric-cli fabric-cicd` |
 | **Microsoft Fabric CLI** (`ms-fabric-cli` → `fab`) | installed via `pipx` |

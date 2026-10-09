@@ -127,6 +127,14 @@ for the Node tools and extensions; no script builds these paths inline.
      script calls to outside models off and the mode fixed to `on`. It replaces
      Pi's built-in codemode; `coop-guardrails` checks every call a script makes
      and blocks any other codemode.
+   - **`coop-router` extension** — `extensions/coop-router/`, loaded on Pi 1.x
+     only: registers the `coop/auto` virtual model (master plan R1) over the
+     OpenAI Codex models coop already signs in to. Rules, never a classifier:
+     a large model plans, a smaller one implements after the first edit and
+     writes the summaries; the phase is router state on the session branch.
+     Opt in with `/model coop/auto`; the footer shows the routed model
+     (`auto → gpt-5.6-luna`); `/router` shows the model per tier. No new
+     vendor, nothing new leaves the machine.
    - **`coop-guardrails` extension** — `extensions/coop-guardrails/`: **enforces**
      governance at runtime via a `tool_call` hook (blocks the agent committing
      source; confirms destructive commands). Complements the advisory
@@ -331,6 +339,7 @@ flowchart TD
       ext_profile["ext: coop-profile\nhidden user-profile instruction"]
       ext_guard["ext: coop-guardrails\ntool_call hook · policy enforcement"]
       ext_codemode["ext: coop-codemode (Pi 1.x)\ncodemode scripts · no outside models"]
+      ext_router["ext: coop-router (Pi 1.x)\ncoop/auto · plan large, build small · Codex only"]
     end
 
     pi --> guard
@@ -342,6 +351,7 @@ flowchart TD
     pi --> ext_profile
     pi --> ext_guard
     pi --> ext_codemode
+    pi --> ext_router
 
     subgraph PIEXT["Pi extensions (npm, into ~/.coop/agent; the manifest's extensions list)"]
       mcpad["pi-mcp-adapter"]
