@@ -71,6 +71,7 @@ bundle coop-tools --alias:typebox="$ROOT/tests/typebox-stub.mjs"
 bundle coop-guardrails
 bundle coop-profile
 bundle coop-powerline
+bundle coop-router
 
 # Gate-lane home (#96 fixture rules). Every gate test below gets a fresh temp home:
 # HOME and USERPROFILE point at it (native Windows node and python find the home
@@ -199,6 +200,9 @@ COOP_TEST_DIST="$TMP" node "$ROOT/tests/codex-auth-recovery.test.mjs"
 
 echo "→ coop-profile tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/coop-profile.test.mjs"
+
+echo "→ coop-router (coop/auto) tests"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/coop-router.test.mjs"
 
 echo "→ isolated Pi settings tests"
 python3 "$ROOT/tests/pi-settings.test.py"

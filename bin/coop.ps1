@@ -628,6 +628,8 @@ function Build-CoopPiArgs {
   # settings, so a work repo's .pi/settings.json cannot turn them back on
   # (--exclude-tools applies after every other tool selection). Pi 0.x rejects
   # these flags, so they follow the installed Pi until `coop update` moves it.
+  # coop's router (master plan R1) registers the coop/auto virtual model over the
+  # Codex models; Pi 0.x has no virtual models, so it loads on Pi 1.x only too.
   $piVer = Get-CoopLaunchPiVersion
   if ($piVer -and ([int]($piVer.Split('.')[0]) -ge 1)) {
     $extCodemode = Join-Path $script:CoopRoot 'extensions\coop-codemode'
@@ -636,6 +638,8 @@ function Build-CoopPiArgs {
       $piArgs += @('-e', $extCodemode, '--tools', '+codemode')
       $excluded = 'tool_search'
     }
+    $extRouter = Join-Path $script:CoopRoot 'extensions\coop-router'
+    if (Test-Path -LiteralPath $extRouter) { $piArgs += @('-e', $extRouter) }
     $piArgs += @('--no-mcp', '--exclude-tools', $excluded, '--tui-mode', 'regular')
   }
   # Coop owns fleet updates. Hide Pi's upstream self-update banner so users do not

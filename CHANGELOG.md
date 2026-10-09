@@ -5,6 +5,23 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **`coop/auto`, a coop router over the Codex models** (master plan R1,
+  opt-in). `/model coop/auto` selects a coop-owned virtual model that picks an
+  OpenAI Codex model for each request by rules, never a classifier: a large
+  model plans (the plan model at `high`/`xhigh` thinking or for a long prompt,
+  the standard model otherwise), the first successful edit hands the rest of the
+  work to the small build model, which also answers short `low` prompts and
+  writes compaction summaries; retries stay on the model that failed. The phase
+  is router state on the session branch, so it follows forks and survives
+  compaction. The footer shows the routed model beside the selection
+  (`auto → gpt-5.6-luna`) and `/router` lists the model per tier.
+  `COOP_ROUTER_MODELS` overrides a tier for a measurement run. No new vendor:
+  every route lands on the `openai-codex` sign-in, and with none the request
+  fails naming `/login openai-codex`. `extensions/coop-router`, loaded on Pi
+  1.x; `tests/coop-router.test.mjs`.
+
 ### Fixed
 
 Findings of the v0.35.0 code review:

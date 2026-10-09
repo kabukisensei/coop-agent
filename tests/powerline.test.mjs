@@ -132,3 +132,17 @@ console.log("  ✓ the live footer surfaces pi-better-openai usage in full at 90
 
 await handlers.get("session_shutdown")({}, ctx);
 console.log("  5 powerline title and footer tests passed");
+
+// Under coop/auto (master plan R1) the model segment shows the routed physical
+// model beside the selection, read from the latest successful assistant reply.
+{
+  const { formatModel } = await import(pathToFileURL(join(dist, "coop-powerline.mjs")));
+  const auto = { provider: "coop", id: "auto", api: "pi-virtual" };
+  const branchOf = (...messages) => ({ getBranch: () => messages.map((message) => ({ type: "message", message })) });
+  assert.equal(formatModel({ model: { provider: "openai-codex", id: "gpt-5.6-terra", api: "openai-codex-responses" } }), "gpt-5.6-terra");
+  assert.equal(formatModel({ model: auto, sessionManager: branchOf() }), "auto", "no reply yet: the selection alone");
+  assert.equal(formatModel({ model: auto, sessionManager: branchOf({ role: "assistant", model: "gpt-5.6-terra", api: "openai-codex-responses", stopReason: "stop" }, { role: "assistant", model: "gpt-5.6-luna", api: "openai-codex-responses", stopReason: "stop" }) }), "auto → gpt-5.6-luna");
+  assert.equal(formatModel({ model: auto, sessionManager: branchOf({ role: "assistant", model: "gpt-5.6-terra", api: "openai-codex-responses", stopReason: "stop" }, { role: "assistant", model: "auto", api: "pi-virtual", stopReason: "error" }) }), "auto → gpt-5.6-terra", "a failed route is skipped");
+  assert.equal(formatModel({ model: undefined }), "");
+  console.log("  ✓ the footer shows the routed model under coop/auto");
+}
