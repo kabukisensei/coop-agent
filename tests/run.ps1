@@ -355,7 +355,12 @@ try {
   $badJson = '{"schema_version":1,"knowledge":{"enabled":true,"repos":[{"url":"https://example.com/repo.git","local_path":"' + ($kbBad -replace '\\', '/') + '"}]}}'
   Set-Content (Join-Path $kbBadCfg '.coop/config') $badJson
   $env:COOP_DIR = $kbBadCfg
-  $badSpec = (& $coop launch-spec 2>&1 | Out-String) -replace '\\', '/'
+  # A child process, like the fixtures: the warning goes to the console's stderr
+  # (Coop-Warn), which an in-process 2>&1 never sees. EAP Continue keeps
+  # Windows PowerShell 5.1 from turning native stderr into NativeCommandError.
+  $badEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+  try { $badSpec = (& $psExe -NoProfile -ExecutionPolicy Bypass -File $coop launch-spec 2>&1 | Out-String) -replace '\\', '/' }
+  finally { $ErrorActionPreference = $badEap }
   $badRc = $LASTEXITCODE
   $env:COOP_DIR = $priorCoop
   if ($badRc -eq 0) { Ok 'valid + invalid-final: PowerShell launcher exits 0' } else { Ko "invalid-final aborted PowerShell launcher: rc=$badRc" }
