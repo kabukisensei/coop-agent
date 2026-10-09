@@ -52,7 +52,14 @@ try {
   $rc = $LASTEXITCODE
   $ErrorActionPreference = $oldEa
   if ($onWindows) {
-    if ($rc -ne 0 -and $out -match 'never on a client VM') { Ok 'router-trial refuses on Windows' } else { Ko "router-trial on Windows (rc=$rc): $out" }
+    if ($rc -ne 0 -and $out -match 'not on a client VM') { Ok 'router-trial refuses on Windows without --allow-windows' } else { Ko "router-trial on Windows (rc=$rc): $out" }
+    if (Get-Command node -ErrorAction SilentlyContinue) {
+      $ErrorActionPreference = 'Continue'
+      $out2 = (& $psExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $coop router-trial --allow-windows --help 2>&1 | Out-String)
+      $rc2 = $LASTEXITCODE
+      $ErrorActionPreference = $oldEa
+      if ($rc2 -eq 0 -and $out2 -match 'usage: coop router-trial') { Ok 'router-trial --allow-windows runs on Windows' } else { Ko "router-trial --allow-windows on Windows (rc=$rc2): $out2" }
+    }
   } elseif (Get-Command node -ErrorAction SilentlyContinue) {
     if ($rc -eq 0 -and $out -match 'usage: coop router-trial') { Ok 'router-trial --help prints the usage without Pi' } else { Ko "router-trial --help (rc=$rc): $out" }
   } else {

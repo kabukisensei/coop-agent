@@ -59,6 +59,8 @@ assert.deepEqual(a.classifiers, ["typesafe", "cloudflare-flash"]);
 assert.equal(a.out, "x.json");
 assert.equal(a.pi, "/p");
 assert.equal(parseArgs([]).set, DEFAULT_SET);
+assert.equal(parseArgs([]).allowWindows, false);
+assert.equal(parseArgs(["--allow-windows"]).allowWindows, true);
 assert.throws(() => parseArgs(["--classifiers", "openai"]), /unknown classifier/);
 assert.throws(() => parseArgs(["--bogus"]), /unknown argument/);
 assert.deepEqual(missingKeys("typesafe", {}), ["TYPESAFE_API_KEY"]);

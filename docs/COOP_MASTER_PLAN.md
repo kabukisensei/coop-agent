@@ -785,8 +785,11 @@ labels, agreement with the rule, errors, mean latency and cost, and a verdict.
 The set includes a few short medium-thinking lookups the rule routes to the
 standard tier while the label says build, so a classifier can beat the rule
 where the rule is blind, and the verdict says by how much. The command refuses
-on Windows and runs on Aaron's Mac with the TypeSafe key read from the macOS
-keychain into that one process. `coop doctor` warns when a TypeSafe, Cloudflare
+on Windows, where every coop machine is a client VM, unless `--allow-windows`
+is passed on purpose; Aaron chose on 2026-10-09 at 21:02 to run it on the
+Windows VM ("We can test it on the windows vm"), since the set holds no client
+data, with the TypeSafe key typed at a masked prompt into that one process. On
+his Mac the key comes from the macOS keychain. `coop doctor` warns when a TypeSafe, Cloudflare
 or OpenRouter key or sign-in is on a profile. The run and its verdict are the
 row's remaining acceptance; the rule stays until the table says otherwise.
 

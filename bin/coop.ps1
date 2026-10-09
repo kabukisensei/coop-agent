@@ -143,13 +143,17 @@ function Invoke-CoopTeamai {
 # Cloudflare Clef against the coop/auto routing rule on the shipped synthetic
 # prompt set (tests/fixtures/router-trial/prompts.jsonl, no client data). A
 # workstation command for the maintainer's Mac or a Linux box: it refuses on
-# Windows so it never runs on a client VM. The keys live in the environment of
-# this one process (the runbook fills them from the macOS keychain); coop stores
-# none, and coop doctor warns when one is left on a profile. Trailing arguments
-# go to lib/router-trial.mjs (--set, --classifiers, --out, --help).
+# Windows, where every coop machine is a client VM, unless the person passes
+# --allow-windows on purpose (Aaron, 2026-10-09: the set holds no client data).
+# The keys live in the environment of this one process (the runbook fills them
+# from the macOS keychain, or a masked prompt on Windows); coop stores none, and
+# coop doctor warns when one is left on a profile. Trailing arguments go to
+# lib/router-trial.mjs (--set, --classifiers, --out, --help, --allow-windows).
 function Invoke-CoopRouterTrial {
   param([string[]]$Rest)
-  if ($IsWindows -or $env:OS -eq 'Windows_NT') { Coop-Die 'coop router-trial runs on a workstation (macOS or Linux), never on a client VM' }
+  if (($IsWindows -or $env:OS -eq 'Windows_NT') -and -not ($Rest -contains '--allow-windows')) {
+    Coop-Die 'coop router-trial runs on a workstation (macOS or Linux), not on a client VM. On a machine that holds no client data, pass --allow-windows: the prompts of the shipped set go to TypeSafe and Cloudflare.'
+  }
   if (-not (Test-Have 'node')) { Coop-Die 'node is required for coop router-trial' }
   $helper = Join-Path $script:CoopRoot 'lib/router-trial.mjs'
   if ($Rest -contains '--help' -or $Rest -contains '-h') { & node $helper --help; exit $LASTEXITCODE }

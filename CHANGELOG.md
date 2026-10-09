@@ -28,8 +28,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   providers) against the `coop/auto` routing rule on a shipped synthetic set of
   50 labelled prompts (`tests/fixtures/router-trial/prompts.jsonl`, no client
   data): accuracy per tier, agreement with the rule, errors, latency, cost and a
-  verdict. Workstation only: it refuses on Windows, so it never runs on a client
-  VM; the keys live in that one process's environment and coop stores none. The
+  verdict. Workstation only: it refuses on Windows, where every coop machine is
+  a client VM, unless `--allow-windows` is passed on purpose for a machine that
+  holds no client data; the keys live in that one process's environment and
+  coop stores none. The
   rule itself moved to `lib/router-rules.mjs`, shared by the router extension and
   the trial. `coop doctor` now warns when a TypeSafe, Cloudflare or OpenRouter key
   or sign-in is on a profile, because client use waits on a signed DPA.
