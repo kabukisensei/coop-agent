@@ -2,7 +2,7 @@
 // No provider session, network tool, credential lookup or package install is used.
 // Usage: node tests/guardrails-pi-runner.test.mjs /absolute/path/to/pi-coding-agent
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { createRequire } from "node:module";
@@ -265,8 +265,9 @@ if (existsSync(builtinIndex) && fauxIndex) {
     let open = 0, maxOpen = 0;
     const asked = [];
     const slow = (value) => { open++; maxOpen = Math.max(maxOpen, open); return new Promise((done) => setTimeout(() => { open--; done(value); }, 300)); };
+    let answerConfirm = false, holdConfirm = null;
     const uiContext = new Proxy({
-      confirm: async (_title, message) => { asked.push(String(message)); return slow(false); },
+      confirm: async (_title, message) => { asked.push(String(message)); return holdConfirm ? holdConfirm() : slow(answerConfirm); },
       // An edit's session approval: "Allow ... edits for this session".
       select: async (title, options) => { asked.push(String(title)); return slow(options[1]); },
     }, { get: (target, key) => (key in target ? target[key] : () => undefined) });
@@ -308,6 +309,58 @@ if (existsSync(builtinIndex) && fauxIndex) {
       .filter((r) => r.kind === "codemode-script" && r.decision === "ran");
     assert.equal(rows.at(-2).detail, "mcp:ok, mcp:error, bash:error, read:error, write:error", "each nested call is audited by name");
     assert.ok(!rows.some((r) => /DELETE|dbo\.Customer|rm -rf/.test(r.detail)), "never the arguments");
+    // #373: a script with more than 20 calls keeps every call in its audit row.
+    writeFileSync(join(cwd, "safe.txt"), "safe");
+    await run(`for (let i = 0; i < 21; i++) await tools.read({ path: "safe.txt" });
+    return await tools.mcp(${q("SELECT TOP (5) customer_id FROM dbo.Customer")});`);
+    const long = readFileSync(join(agentDir, "guardrails-audit.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l))
+      .filter((r) => r.kind === "codemode-script" && r.decision === "ran").at(-1);
+    assert.equal(long.detail, `${Array(21).fill("read:ok").join(", ")}, mcp:ok`, "every nested call, in order, the last one too");
+    // #371: a link alias to the production unlock, dangling or not, is refused
+    // without a prompt and never creates a grant.
+    const coopDir = mkdtempSync(join(scratch, "coop-dir-"));
+    mkdirSync(join(coopDir, ".coop"));
+    const savedCoopDir = process.env.COOP_DIR;
+    process.env.COOP_DIR = coopDir;
+    try {
+      const grantPath = join(coopDir, ".coop", PROD_UNLOCK_FILE);
+      symlinkSync(grantPath, join(cwd, "receipt.json"));
+      const grant = JSON.stringify({ schema_version: 1, id: "review-only", client: "Contoso",
+        created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 60_000).toISOString() });
+      asked.length = 0;
+      const alias = await run(`const r = await Promise.allSettled([
+        tools.write({ path: "receipt.json", content: ${JSON.stringify(grant)} }),
+        tools.edit({ path: "receipt.json", edits: [{ oldText: "a", newText: "b" }] }),
+      ]);
+      return r.map((x) => x.status).join(",");`);
+      assert.match(alias, /rejected,rejected/, alias);
+      assert.equal(existsSync(grantPath), false, "no grant was written");
+      writeFileSync(grantPath, "{}");
+      answerConfirm = true;
+      const present = await run(`try { await tools.write({ path: "receipt.json", content: ${JSON.stringify(grant)} }); return "wrote"; } catch { return "refused"; }`);
+      answerConfirm = false;
+      assert.match(present, /refused/, present);
+      assert.equal(readFileSync(grantPath, "utf8"), "{}", "an existing grant is not changed either");
+      assert.equal(asked.length, 0, "no confirmation was offered to override it");
+    } finally {
+      if (savedCoopDir === undefined) delete process.env.COOP_DIR; else process.env.COOP_DIR = savedCoopDir;
+    }
+    // #372: Esc while a script's approval is open closes it as a no; the next
+    // script is not held behind the old dialog, and a late answer grants nothing.
+    let pendingAnswer;
+    holdConfirm = () => new Promise((done) => { pendingAnswer = done; });
+    asked.length = 0;
+    core.setResponses([ai.fauxAssistantMessage(ai.fauxToolCall("codemode", { code: `await Promise.allSettled([tools.read({ path: ".env" }), tools.read({ path: ".env.local" })]); return "finished";` })), ai.fauxAssistantMessage("done")]);
+    const stopped = session.prompt("run the script");
+    for (let i = 0; i < 100 && asked.length === 0; i++) await new Promise((r) => setTimeout(r, 10));
+    assert.equal(asked.length, 1, "the first secret read is asking");
+    await session.abort();
+    await stopped;
+    holdConfirm = null;
+    const followup = await Promise.race([run(`return await tools.read({ path: "safe.txt" });`), new Promise((r) => setTimeout(() => r("still blocked"), 2000))]);
+    assert.match(followup, /safe/, `a harmless script after the stop completes: ${followup}`);
+    pendingAnswer?.(true);
+    assert.equal(asked.length, 1, "the queued call from the stopped script never asked");
     await session._extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
     session.dispose();
   }

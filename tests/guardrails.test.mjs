@@ -1,7 +1,7 @@
 // Tests for extensions/coop-guardrails — drives the REAL tool_call handler with a
 // mock pi/ctx (COOP_TEST_DIST set by tests/run.sh).
 import { strict as assert } from "node:assert";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, linkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -624,6 +624,8 @@ await t("#367: an innocent-looking link to a secret is the secret (native and ba
     assert.ok(cg.secretLinkTarget(join(dir, "chained.txt"), "/"), "chained link");
     assert.equal(cg.secretLinkTarget("readme-link.txt", dir), null);
     assert.equal(cg.secretLinkTarget("missing.txt", dir), null);
+    symlinkSync(join(dir, "not-yet", ".env"), join(dir, "dangling.txt"));
+    assert.ok(cg.secretLinkTarget("dangling.txt", dir), "a dangling link to a secret name is a secret write");
     const linkCtx = { ...ctx, cwd: dir };
     confirmAnswer = false; confirmCount = 0;
     assert.equal(blocked(await handle({ toolName: "read", input: { path: "notes.txt" } }, linkCtx)), true, "declined");
@@ -2777,6 +2779,88 @@ await t("Pi's registry decides a tool's server and whether `tool` dispatches", a
   await h.session_start({}, ctx);
 });
 
+await t("#371: a write through any alias of the production unlock is refused outright", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "coop-unlock-alias-"));
+  const profile = mkdtempSync(join(tmpdir(), "coop-unlock-profile-"));
+  const saved = process.env.COOP_DIR;
+  try {
+    process.env.COOP_DIR = profile;
+    mkdirSync(join(profile, ".coop"), { recursive: true });
+    const grant = join(profile, ".coop", cg.PROD_UNLOCK_FILE);
+    symlinkSync(grant, join(dir, "receipt.json"));            // dangling: the grant does not exist yet
+    symlinkSync(join(dir, "receipt.json"), join(dir, "chain.json"));
+    symlinkSync(join(profile, ".coop"), join(dir, "profile-link"));
+    writeFileSync(join(dir, "plain.json"), "{}");
+    for (const alias of ["receipt.json", join(dir, "chain.json"), "profile-link/" + cg.PROD_UNLOCK_FILE, "PROD-UNLOCK.JSON"]) {
+      assert.equal(cg.writesProdUnlock(alias, dir), true, alias);
+    }
+    assert.equal(cg.writesProdUnlock("plain.json", dir), false);
+    const linkCtx = { ...ctx, cwd: dir };
+    for (const tool of ["write", "edit"]) {
+      confirmAnswer = true; confirmCount = 0;
+      const result = await handle({ toolName: tool, input: { path: "receipt.json", content: "{}" } }, linkCtx);
+      assert.equal(blocked(result), true, `${tool} through a dangling alias`);
+      assert.match(result.reason, /never changes production access/);
+      assert.equal(confirmCount, 0, "no confirmation can override it");
+    }
+    assert.equal(existsSync(grant), false);
+    // A hard link to a grant that exists is the grant.
+    writeFileSync(grant, "{}");
+    linkSync(grant, join(dir, "copy.json"));
+    assert.equal(cg.writesProdUnlock("copy.json", dir), true, "hard link");
+    confirmAnswer = false; confirmCount = 0;
+    assert.equal(blocked(await handle({ toolName: "write", input: { path: "plain.json", content: "{}" } }, linkCtx)), false, "plain writes are untouched");
+    assert.equal(confirmCount, 0);
+  } finally {
+    if (saved === undefined) delete process.env.COOP_DIR; else process.env.COOP_DIR = saved;
+    rmSync(dir, { recursive: true, force: true }); rmSync(profile, { recursive: true, force: true });
+  }
+});
+
+await t("#372: a stopped turn closes its open dialog as a no and frees the queue", async () => {
+  await handleSessionStart({}, ctx);
+  const controller = new AbortController();
+  let release;
+  const stuck = new Promise((r) => (release = r));
+  let asked = 0;
+  // A UI that ignores the signal: the race must still free the queue.
+  const ui = { notify: () => {}, confirm: async () => { asked++; return stuck; }, select: async () => { asked++; return stuck; } };
+  const first = handle({ toolName: "read", input: { path: ".env" } }, { ...ctx, ui, signal: controller.signal });
+  const second = handle({ toolName: "read", input: { path: ".env.local" } }, { ...ctx, ui, signal: controller.signal });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(asked, 1, "one dialog open");
+  controller.abort();
+  assert.equal(blocked(await first), true, "the open dialog counts as declined");
+  const queued = await second;
+  assert.equal(blocked(queued), true);
+  assert.match(queued.reason, /turn was stopped/, "the queued call from the stopped turn is not checked or asked");
+  assert.equal(asked, 1);
+  // The next turn's harmless call is not held behind the old dialog.
+  const next = await Promise.race([handle({ toolName: "read", input: { path: "README.md" } }, ctx).then(() => "done"), new Promise((r) => setTimeout(() => r("stuck"), 500))]);
+  assert.equal(next, "done");
+  release(true); // a late yes grants nothing
+  await new Promise((r) => setTimeout(r, 0));
+  // Session approvals: a late "for this session" pick after the stop is not kept.
+  const c2 = new AbortController();
+  let pick;
+  const late = new Promise((r) => (pick = r));
+  const selectUi = { notify: () => {}, confirm: async () => false, select: async () => late };
+  const edit = handle(builtinModeling("measure_operations", "Create"), { ...ctx, ui: selectUi, signal: c2.signal });
+  await new Promise((r) => setTimeout(r, 20));
+  c2.abort();
+  assert.equal(blocked(await edit), true);
+  pick("x");
+  let askedAgain = 0;
+  const after = await handle(builtinModeling("measure_operations", "Update"), { ...ctx, ui: { notify: () => {}, confirm: async () => false, select: async () => { askedAgain++; return undefined; } } });
+  assert.equal(blocked(after), true);
+  assert.equal(askedAgain, 1, "no session approval was left behind");
+  // A turn that is not stopped still waits as long as the person needs.
+  const c3 = new AbortController();
+  const slow = await handle({ toolName: "read", input: { path: ".env" } }, { ...ctx, signal: c3.signal, ui: { notify: () => {}, confirm: () => new Promise((r) => setTimeout(() => r(true), 300)) } });
+  assert.equal(blocked(slow), false);
+  await handleSessionStart({}, ctx);
+});
+
 await t("codemode (U2 step 3): only coop's own copy runs, and each script is audited by its calls", async () => {
   const own = join(ROOT, "extensions", "coop-codemode");
   assert.equal(cg.isCoopCodemode({ sourceInfo: { path: own } }, ROOT), true);
@@ -2788,7 +2872,15 @@ await t("codemode (U2 step 3): only coop's own copy runs, and each script is aud
   assert.equal(cg.isCoopCodemode({ sourceInfo: { path: own.toUpperCase() } }, ROOT, "win32"), true, "Windows paths compare without case");
   assert.equal(cg.codemodeCallsDetail({ calls: [{ name: "bash", status: "ok", args: "rm -rf x" }, { name: "write", status: "error" }] }), "bash:ok, write:error");
   assert.equal(cg.codemodeCallsDetail({}), "no tool calls");
-  assert.match(cg.codemodeCallsDetail({ calls: Array.from({ length: 23 }, () => ({ name: "read", status: "ok" })) }), /, \+3 more$/);
+  // #373: every call is kept, in order; a long script spans rows that name their range.
+  const many = Array.from({ length: 23 }, () => ({ name: "read", status: "ok" })).concat([{ name: "mcp", status: "cancelled" }]);
+  assert.deepEqual(cg.codemodeCallsDetails({ calls: many }), [`${Array(23).fill("read:ok").join(", ")}, mcp:cancelled`]);
+  assert.deepEqual(cg.codemodeCallsDetails({ calls: [{ name: "bash", status: "error" }] }, true), ["bash:error (script failed)"]);
+  const huge = cg.codemodeCallsDetails({ calls: Array.from({ length: 450 }, (_, i) => ({ name: i === 449 ? "write" : "read", status: "ok" })) });
+  assert.equal(huge.length, 3);
+  assert.match(huge[0], /^calls 1-200 of 450: read:ok/);
+  assert.match(huge[2], /^calls 401-450 of 450: .*, write:ok$/);
+  assert.equal(huge.join(", ").match(/:ok/g).length, 450, "no call dropped");
 
   for (const [path, expectBlock] of [[own, false], ["builtin:codemode", true]]) {
     const h = {};
