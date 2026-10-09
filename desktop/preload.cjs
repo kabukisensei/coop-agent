@@ -73,7 +73,15 @@ contextBridge.exposeInMainWorld("coop", Object.freeze({
   // Attachments (D1b2). pathForFile turns a dropped or pasted File into its
   // path (File.path is gone in this Electron); the main process reads it.
   pickFiles: () => ipcRenderer.invoke("coop:pick-files"),
-  attachFile: (path) => ipcRenderer.invoke("coop:attach-file", String(path || "")),
+  // A picked path (one coop:pick-files returned) or a dropped/pasted File: the
+  // File's path is resolved here, so the renderer never sends a path of its own.
+  attachFile: (file) => {
+    if (typeof file === "string") return ipcRenderer.invoke("coop:attach-file", file);
+    let path = "";
+    try { path = webUtils.getPathForFile(file); } catch { path = ""; }
+    if (!path) return Promise.resolve({ success: false, error: "that file has no path on disk to read; save it first" });
+    return ipcRenderer.invoke("coop:attach-dropped", path);
+  },
   forgetAttachment: (id) => ipcRenderer.invoke("coop:attachment-forget", String(id || "")),
   pathForFile: (file) => { try { return webUtils.getPathForFile(file); } catch { return ""; } },
   // A fresh vibe (tip) for the empty screen and the working line; a set name switches the pool.

@@ -80,7 +80,7 @@ const pi = {
 mod.default(pi);
 const impactTool = tools.get("sql_impact");
 assert.ok(impactTool, "sql_impact must be publicly registered (SQ4)");
-assert.match(impactTool.description, /three fixed, parameterized catalog queries/);
+assert.match(impactTool.description, /three fixed,? parameterized catalog queries/);
 assert.match(impactTool.description, /never 'could not look'/);
 assert.match(impactTool.promptGuidelines.join(" "), /data_doc lineage for the same object/);
 const tool = tools.get("fabric_sql_query");
@@ -88,7 +88,7 @@ assert.ok(tool, "fabric_sql_query must be publicly registered");
 assert.match(tool.description, /When a managed fabric-sqlendpoint MCP tool exists, attempt it first/);
 assert.match(tool.description, /only after that actual attempt fails/);
 assert.match(tool.description, /Never use it for SQL\/business\/query rejection/);
-assert.match(tool.promptGuidelines.join(" "), /never fallback before MCP/);
+assert.match(tool.promptGuidelines.join(" "), /attempt it first/);
 assert.match(tool.promptGuidelines.join(" "), /never cascade automatically/);
 const oldRoot = process.env.COOP_ROOT;
 const oldPython = process.env.COOP_FABRIC_PYTHON;

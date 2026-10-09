@@ -157,6 +157,11 @@ ok("a production approval cannot be given from the phone, only declined", () => 
   assert.deepEqual(decideAnswer({ question: s, request: answer(s, { value: "Allow once" }), incarnation: INC }), { ok: false, code: "desktop-only" });
   assert.deepEqual(decideAnswer({ question: s, request: answer(s, { cancelled: true }), incarnation: INC }).response, { type: "extension_ui_response", id: "ui-4", cancelled: true });
 });
+ok("a session-granting confirm cannot be approved from the phone, only declined", () => {
+  const q = open(byName("bounded live-read confirm"));
+  assert.deepEqual(decideAnswer({ question: q, request: answer(q, { confirmed: true }), incarnation: INC }), { ok: false, code: "desktop-only" });
+  assert.deepEqual(decideAnswer({ question: q, request: answer(q, { confirmed: false }), incarnation: INC }).response, { type: "extension_ui_response", id: "ui-2b", confirmed: false });
+});
 ok("stale, altered, resolved and wrong-session answers are refused", () => {
   const q = open(byName("dev: answerable"));
   const yes = answer(q, { confirmed: true });

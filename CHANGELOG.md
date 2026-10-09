@@ -22,6 +22,63 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   fails naming `/login openai-codex`. `extensions/coop-router`, loaded on Pi
   1.x; `tests/coop-router.test.mjs`.
 
+### Fixed
+
+Findings of the v0.35.0 code review:
+
+- **Guardrails (tightened).** Git long-option abbreviations (`--amen`,
+  `--har`, `--force-w`) are read as the full option; a commit on a repository
+  the command cannot name (`(cd ../x && git commit)`, `git -C "$REPO"`,
+  `--git-dir`, `GIT_DIR=`) asks instead of passing; `git` by path, `.exe`,
+  under `nice`/`sudo`/`timeout`/`xargs`, through `bash -c`, `pwsh -Command`,
+  `eval`, or a `-c alias.*=` override, and git aliases, are all seen as Git;
+  `git add .` from a subfolder and `git add -f` are judged on the real paths;
+  ambiguous SQL on a production or unconfirmed Warehouse takes the production
+  path; `ALTER ROLE`, `CREATE USER`, `SWITCH PARTITION`, `DBCC`, `KILL` never
+  ride a session approval; Azure DevOps add/link/reply/resolve/set/queue
+  tools ask; the secret-file gate sees `.en''v`, `.env*`, `HEAD:.env`,
+  `.git-credentials`, `gh/hosts.yml`, `.kube/config`; `\rm -rf` is `rm`;
+  `az rest --meth post` is a write; printing the environment or naming the
+  Fabric token variable asks. A `~` inside a `cd` or `-C` path (a Windows
+  short name such as `RUNNER~1`) is literal and the target is checked; only a
+  leading `~` is the shell's home.
+- **Launcher.** `coop init --ci` could not run (its function was defined
+  after the dispatch); `coop init --template` wrote a UTF-16 contract under
+  Windows PowerShell 5.1; the daily origin fetch failed on a checkout path
+  with a space, so the update nudge never saw a newer release;
+  `coop uninstall <source>` called a Pi command that does not exist;
+  `COOP_NO_ISOLATE=true` let the launch preflight realign the personal
+  `~/.pi` tree; `coop uninstall` missed pipx tools when pipx answers only
+  through `python -m pipx`; a team skill without a name printed a red error
+  record every launch.
+- **Native SQL helpers.** Non-ASCII names or values crashed the helpers on
+  Windows (ANSI code page on a pipe) and could arrive as U+FFFD; they now
+  speak UTF-8 end to end. `mcp.fabric_sqlendpoint.enabled: false` was ignored
+  on machines without PyYAML; a contract with a YAML syntax error gave a
+  traceback at launch; the catalog snapshot could delete a `.sql` file
+  outside its folder when a committed manifest named one.
+- **YAML reader.** An apostrophe inside an unquoted value (`Aaron's`) no
+  longer swallows the rest of the line or a flow list; double-quoted escapes
+  decode as PyYAML does. fleet-digest reads `~/.coop/config` as the JSON it is.
+- **coop-tools.** The hidden lineage, Fabric-target and catalog-snapshot
+  notes return after `/new`, `/resume` and `/fork`; the pre-edit lineage
+  lookup is bounded (15 s) and records no "miss" when coop-data-doc failed;
+  `data_doc impact` and the menu's build run beside `coop-data-doc.yml`
+  (the client home repository layout); a missing coop-data-doc is reported
+  as missing, not as "unsupported".
+- **Project file.** Adding the first repository to a discovery-mode
+  contract wrote YAML the Python readers refused; after a share whose push
+  was refused, "Get the team's version" overwrote the committed edit with
+  origin's older copy (it now reads as not shared); sibling and child
+  repository scans follow junctions and ignore path case on Windows.
+- **coop window and phone.** A yes/no whose Yes covers the rest of the
+  session stays on the desk; the window attaches only files chosen in the
+  picker or dropped as files; one teammate's mistyped pairing codes no
+  longer lock pairing for the whole VM; team knowledge notes cannot follow
+  a symlink out of the clone; Export and the phone menu fail with a message
+  instead of an error; the Project pane keeps the cursor when the team
+  status arrives.
+
 ## [0.35.0] — 2026-10-09
 
 ### Changed

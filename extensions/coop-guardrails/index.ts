@@ -517,6 +517,12 @@ export type ParsedGitCommand = {
   subcommand?: string;
   args: string[];
   pathspecs: string[];
+  /** Why the repository this invocation targets cannot be resolved from the
+   *  command text (`--git-dir`, `--work-tree`, a `-C` value the shell expands),
+   *  so a commit check must ask instead of reading a guessed repo (#2). */
+  unverifiable?: string;
+  /** `-c alias.<name>=…` redefines a subcommand for this invocation (#3). */
+  aliasOverride?: boolean;
 };
 
 // git-commit options that consume a SEPARATE following token (so that token is the
@@ -543,42 +549,117 @@ function stripGluedQuotes(s: string): string {
   return s.replace(/(['"])(?=\S)/g, "").replace(/(?<=\S)(['"])/g, "");
 }
 
+/** The program name a command word runs: quotes and a leading backslash
+ *  (`\git`, `\rm`: bash's alias bypass) stripped, the directory dropped
+ *  (`/usr/bin/git`, `C:\Program Files\Git\bin\git.exe`), `.exe` dropped, lower
+ *  case. `git`, `"git"`, `\git`, `/usr/bin/git` and `git.exe` are all git. */
+export function programName(word: string): string {
+  const bare = word.replace(/['"]/g, "").toLowerCase();
+  const base = bare.split(/[\\/]/).pop() || "";
+  return base.replace(/\.exe$/, "");
+}
+
+/** Wrappers that run their last argument as the command: their flags that take
+ *  a separate value, and whether a positional operand precedes the command
+ *  (`timeout DURATION cmd`). `sudo`, `nice` and the rest are transparent to Git
+ *  exactly like `env` and `command` (#3). */
+const COMMAND_WRAPPERS: Record<string, { valueFlags: RegExp; positional: number }> = {
+  command: { valueFlags: /^$/, positional: 0 },
+  builtin: { valueFlags: /^$/, positional: 0 },
+  exec: { valueFlags: /^-a$/, positional: 0 },
+  time: { valueFlags: /^-f$|^--format$|^-o$|^--output$/, positional: 0 },
+  env: { valueFlags: /^-(u|S|C)$|^--(split-string|unset|chdir)$/, positional: 0 },
+  nice: { valueFlags: /^-n$|^--adjustment$/, positional: 0 },
+  nohup: { valueFlags: /^$/, positional: 0 },
+  sudo: { valueFlags: /^-(u|g|p|C|D|h|r|t|T|U)$|^--(user|group|prompt|close-from|chdir|host|role|type|command-timeout|other-user)$/, positional: 0 },
+  doas: { valueFlags: /^-(u|C)$/, positional: 0 },
+  timeout: { valueFlags: /^-(k|s)$|^--(kill-after|signal)$/, positional: 1 },
+  stdbuf: { valueFlags: /^-(i|o|e)$|^--(input|output|error)$/, positional: 0 },
+  chronic: { valueFlags: /^$/, positional: 0 },
+  caffeinate: { valueFlags: /^-(t|w)$/, positional: 0 },
+};
+
+/** Command words that run text as a NEW shell command line (or feed one from
+ *  stdin): what they execute cannot be read from this segment, so a segment
+ *  that mentions git and runs one of these fails closed (#3). */
+const SHELL_LIKE_COMMANDS = new Set(["bash", "sh", "zsh", "dash", "ksh", "fish", "pwsh", "powershell", "cmd", "eval", "xargs", "source", ".", "su", "script"]);
+
 /** Walk a shell segment's words and find the word that resolves to the COMMAND
  *  position, skipping grouping punctuation, reserved words (then/do/else/!),
- *  VAR=value assignments, and supported wrappers (command/builtin/exec/time/env
- *  with their flags and env value flags). Returns null when the command word is
- *  anything other than git — mentioning git as an ARGUMENT (grep git README.md)
- *  does not make a command a Git invocation. Quote-glued names count: bash
- *  executes "git" and "gi"t exactly like unquoted git. */
-function findGitAtCommandPosition(segment: string): { charOffset: number } | null {
-  const wordRe = /\S+/g;
+ *  VAR=value assignments, and supported wrappers (command/builtin/exec/time/env/
+ *  nice/nohup/sudo/timeout/stdbuf/chronic/caffeinate with their flags and
+ *  value flags). Returns that word's program name (see programName) and where it
+ *  starts, or null when the segment has no command word. Mentioning git as an
+ *  ARGUMENT (grep git README.md) never makes a command a Git invocation.
+ *  Quote-glued names count: bash executes "git" and "gi"t exactly like git. */
+function resolveCommandWord(segment: string): { name: string; charOffset: number } | null {
+  // A quoted word may hold spaces ("C:/Program Files/Git/bin/git.exe").
+  const wordRe = /"[^"]*"[^\s"']*|'[^']*'[^\s"']*|\S+/g;
   let m: RegExpExecArray | null;
-  let inWrapper = false;
-  let envValuePending = false;
+  let wrapper: { valueFlags: RegExp; positional: number } | null = null;
+  let valuePending = false;
   while ((m = wordRe.exec(segment))) {
     const w = m[0];
     const core = w.replace(/^[({]+/, "");
     const charOffset = m.index + (w.length - core.length);
     if (core === "") continue; // pure grouping token
-    if (envValuePending) { envValuePending = false; continue; } // consumed env flag value
-    if (inWrapper) {
-      if (core.startsWith("-")) {
-        // env flags that take a separate value (-u NAME, -S STR, -C DIR)
-        if (/^-(u|S|C)$|^--split-string$/.test(core)) envValuePending = true;
+    if (valuePending) { valuePending = false; continue; } // consumed wrapper flag value
+    if (wrapper) {
+      if (core.startsWith("-") && core !== "-") {
+        if (wrapper.valueFlags.test(core)) valuePending = true;
         continue;
       }
-      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(core)) continue; // env VAR=val
-      inWrapper = false; // wrapper arguments ended — this word is the command
+      if (wrapper === COMMAND_WRAPPERS.env && /^[A-Za-z_][A-Za-z0-9_]*=/.test(core)) continue; // env VAR=val
+      if (wrapper.positional > 0) { wrapper = { ...wrapper, positional: wrapper.positional - 1 }; continue; } // timeout DURATION
+      wrapper = null; // wrapper arguments ended — this word is the command
     }
     const bare = core.replace(/['"]/g, "").toLowerCase();
-    if (bare === "git") return { charOffset };
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(core)) continue; // assignment prefix
     if (/^(then|do|else|!)$/.test(bare)) continue; // reserved words
-    if (/^(command|builtin|exec|time|env)$/.test(bare)) { inWrapper = true; continue; }
-    return null; // command position resolves to something else — not a Git command
+    const name = programName(core);
+    if (Object.prototype.hasOwnProperty.call(COMMAND_WRAPPERS, name)) { wrapper = COMMAND_WRAPPERS[name]; continue; }
+    return { name, charOffset };
   }
   return null;
 }
+
+/** Where the Git command word starts in a segment, or null when the command
+ *  position resolves to something else (see resolveCommandWord). */
+function findGitAtCommandPosition(segment: string): { charOffset: number } | null {
+  const word = resolveCommandWord(segment);
+  // A split-quoted name ("gi"t) resolves through programName's quote strip too.
+  return word && word.name === "git" ? { charOffset: word.charOffset } : null;
+}
+
+/** Normalise one long option against the option names a check gates. Git
+ *  accepts any unambiguous prefix of a long option (`git commit --amen`,
+ *  `git reset --har`, `git push --force-w`), so the gated forms are matched by
+ *  prefix (at least two characters: `--am` is `--amend`) too; `--opt=value`
+ *  keeps its value. A prefix shared by several gated names is still gated (git
+ *  would refuse it as ambiguous, so nothing safe is lost). Other options pass
+ *  through. */
+export function normalizeGitLongOption(arg: string, gated: string[]): string {
+  if (!arg.startsWith("--")) return arg;
+  const eq = arg.indexOf("=");
+  const name = (eq >= 0 ? arg.slice(2, eq) : arg.slice(2)).toLowerCase();
+  const value = eq >= 0 ? arg.slice(eq) : "";
+  if (name.length < 2) return arg;
+  if (gated.includes(name)) return `--${name}${value}`;
+  const hits = gated.filter((g) => g.startsWith(name));
+  if (hits.length === 0) return arg;
+  // Prefer the shortest gated name (the one git would also pick when it is exact
+  // for no option): every hit is gated anyway, so the label only needs one.
+  hits.sort((a, b) => a.length - b.length);
+  return `--${hits[0]}${value}`;
+}
+
+// Long options a commit check reads (gated ones plus the value-taking ones, so an
+// abbreviated `--mess x` consumes its value instead of leaving a stray pathspec).
+const COMMIT_GATED_LONG = ["amend", "all", "pathspec-from-file", "pathspec-file-nul", "message", "file", "reuse-message", "reedit-message", "fixup", "squash", "template", "author", "date", "cleanup", "gpg-sign", "trailer"];
+const ADD_GATED_LONG = ["all", "no-ignore-removal", "interactive", "patch", "edit", "pathspec-from-file", "pathspec-file-nul", "update", "force", "dry-run"];
+const PUSH_GATED_LONG = ["force", "force-with-lease", "force-if-includes"];
+const RESET_GATED_LONG = ["hard"];
+const CLEAN_GATED_LONG = ["force"];
 
 /** Parse one Git invocation whose command word resolves to git. Shapes the walker
  *  cannot safely attribute are classified as ambiguous by hasAmbiguousGitInvocation()
@@ -590,11 +671,11 @@ function parseGitSegment(segment: string, segmentStart: number): ParsedGitComman
   const rawTail = segment.slice(loc.charOffset);
   let toks = tokenizeArgs(rawTail);
   if (toks.length === 0) return null;
-  if (toks[0].toLowerCase() !== "git") {
+  if (programName(toks[0]) !== "git") {
     // Split-quote command name ("gi"t): tokenizeArgs keeps it in pieces, so parse
     // the de-glued tail instead. Whole-word quotes ("git") already tokenize to git.
-    const degluedFirst = stripGluedQuotes(rawTail).split(/\s+/)[0]?.replace(/['"]/g, "").toLowerCase();
-    if (degluedFirst !== "git") return null;
+    const degluedFirst = stripGluedQuotes(rawTail).split(/\s+/)[0] || "";
+    if (programName(degluedFirst) !== "git") return null;
     segment = rawTail;
     toks = tokenizeArgs(stripGluedQuotes(rawTail));
   } else {
@@ -603,33 +684,57 @@ function parseGitSegment(segment: string, segmentStart: number): ParsedGitComman
 
   let i = 1;
   let cwdOverride: string | undefined;
+  let unverifiable: string | undefined;
+  let aliasOverride = false;
+  const noteConfig = (value: string) => { if (/^alias\./i.test(value.trim())) aliasOverride = true; };
   while (i < toks.length) {
     const t = toks[i];
     if (t.startsWith("-")) {
       const eq = t.indexOf("=");
       const opt = eq >= 0 ? t.slice(0, eq) : t;
-      if (GIT_GLOBAL_VALUE_OPTS.has(opt)) {
+      // `--git-dir` / `--work-tree` (any abbreviation) point the command at a
+      // repository the commit check cannot resolve from the text (#2).
+      const longOpt = normalizeGitLongOption(opt, ["git-dir", "work-tree"]);
+      if (longOpt === "--git-dir" || longOpt === "--work-tree") unverifiable = `${longOpt} names another repository`;
+      const key = longOpt === "--git-dir" || longOpt === "--work-tree" ? longOpt : opt;
+      if (GIT_GLOBAL_VALUE_OPTS.has(key)) {
         if (eq >= 0) {
           if (opt === "-C") cwdOverride = t.slice(eq + 1);
+          if (opt === "-c" || opt === "--config-env") noteConfig(t.slice(eq + 1));
           i++;
           continue;
         }
         if (i + 1 < toks.length) {
           if (opt === "-C") cwdOverride = toks[i + 1];
+          if (opt === "-c" || opt === "--config-env") noteConfig(toks[i + 1]);
           i += 2;
           continue;
         }
+      } else if (/^-c.+/.test(t) && !t.startsWith("--")) {
+        noteConfig(t.slice(2)); // glued `-calias.ci=commit`
       }
       i++;
       continue;
     }
     break; // first non-option token is the subcommand
   }
+  // A `-C` the shell expands (`$REPO`, `~`, a backtick) resolves to a directory
+  // this parser cannot see (#2).
+  if (cwdOverride !== undefined && SHELL_EXPANDS_OPERAND.test(cwdOverride)) unverifiable = unverifiable || "-C names a directory the shell expands";
 
   const subcommand = toks[i]?.toLowerCase();
-  if (!subcommand) return { segment, segmentStart, cwdOverride, args: [], pathspecs: [] };
+  const extra = { ...(unverifiable ? { unverifiable } : {}), ...(aliasOverride ? { aliasOverride } : {}) };
+  if (!subcommand) return { segment, segmentStart, cwdOverride, args: [], pathspecs: [], ...extra };
   i++;
 
+  // Git accepts any unambiguous prefix of a long option; the checks below read
+  // the full names, so normalise the ones they gate (#1).
+  const gatedLong = subcommand === "commit" ? COMMIT_GATED_LONG
+    : subcommand === "add" || subcommand === "stage" ? ADD_GATED_LONG
+    : subcommand === "push" ? PUSH_GATED_LONG
+    : subcommand === "reset" ? RESET_GATED_LONG
+    : subcommand === "clean" ? CLEAN_GATED_LONG
+    : [];
   const args: string[] = [];
   const pathspecs: string[] = [];
   let dashDash = false;
@@ -638,10 +743,11 @@ function parseGitSegment(segment: string, segmentStart: number): ParsedGitComman
     if (dashDash) { pathspecs.push(t); continue; }
     if (t === "--") { dashDash = true; continue; }
     if (t.startsWith("-")) {
-      args.push(t);
+      const norm = gatedLong.length ? normalizeGitLongOption(t, gatedLong) : t;
+      args.push(norm);
       if (subcommand === "commit") {
         // Long-form `--opt value` consumes the next token.
-        if (COMMIT_VALUE_OPTS.has(t) && i + 1 < toks.length) {
+        if (COMMIT_VALUE_OPTS.has(norm) && i + 1 < toks.length) {
           i++;
           args.push(toks[i]);
           continue;
@@ -664,7 +770,7 @@ function parseGitSegment(segment: string, segmentStart: number): ParsedGitComman
       args.push(t);
     }
   }
-  return { segment, segmentStart, cwdOverride, subcommand, args, pathspecs };
+  return { segment, segmentStart, cwdOverride, subcommand, args, pathspecs, ...extra };
 }
 
 /** Find every Git invocation in a command, quote-aware and segment-scoped. */
@@ -692,14 +798,114 @@ function unquotedText(text: string): string {
 export function hasAmbiguousGitInvocation(cmd: string): boolean {
   return splitShellSegments(cmd).some(({ segment, start }) => {
     // Git mentioned anywhere (prose-blanked or glue-stripped views)?
-    const mentioned = /\bgit\b/i.test(unquotedText(segment)) || /\bgit\b/i.test(stripGluedQuotes(segment));
+    const mentioned = /\bgit\b/i.test(unquotedText(segment)) || /\bgit\b/i.test(stripGluedQuotes(segment)) || /\bgit\b/i.test(segment);
     if (!mentioned) return false;
+    // A shell, `eval`, `xargs` or `source` runs text this segment does not show
+    // (`bash -c "git commit -am wip"`, `echo commit | xargs git`): fail closed (#3).
+    const word = resolveCommandWord(segment);
+    if (word && SHELL_LIKE_COMMANDS.has(word.name)) return true;
     // Real Git command word we cannot safely parse -> fail closed.
-    if (findGitAtCommandPosition(segment) && parseGitSegment(segment.trim(), start) === null) return true;
+    if (word && word.name === "git") {
+      const parsed = parseGitSegment(segment.trim(), start);
+      if (parsed === null) return true;
+      // `-c alias.<name>=…` redefines what the subcommand word runs (#3).
+      if (parsed.aliasOverride) return true;
+    }
+    // GIT_CONFIG_* variables inject configuration (aliases included) this parser
+    // never sees.
+    if (/\bGIT_CONFIG[A-Z_]*=/.test(segment)) return true;
     // Command substitution/backticks containing git execute it out of view.
     if (/\$\(/.test(segment) || segment.includes("`")) return true;
     return false;
   });
+}
+
+/** Git subcommands the gates know by name. Any other word in the subcommand
+ *  position may be an alias (`git ci` for `commit`), which the runtime resolves
+ *  with `git config --get alias.<name>` before the checks run (#3). */
+const KNOWN_GIT_SUBCOMMANDS = new Set([
+  "add", "am", "annotate", "apply", "archive", "bisect", "blame", "branch", "bugreport", "bundle", "cat-file",
+  "check-attr", "check-ignore", "check-mailmap", "check-ref-format", "checkout", "checkout-index", "cherry",
+  "cherry-pick", "citool", "clean", "clone", "column", "commit", "commit-graph", "commit-tree", "config",
+  "count-objects", "credential", "credential-cache", "credential-store", "daemon", "describe", "diagnose", "diff",
+  "diff-files", "diff-index", "diff-tree", "difftool", "fast-export", "fast-import", "fetch", "fetch-pack",
+  "filter-branch", "flow", "fmt-merge-msg", "for-each-ref", "for-each-repo", "format-patch", "fsck", "gc",
+  "get-tar-commit-id", "grep", "gui", "hash-object", "help", "hook", "http-fetch", "http-push", "imap-send",
+  "index-pack", "init", "instaweb", "interpret-trailers", "lfs", "log", "ls-files", "ls-remote", "ls-tree",
+  "mailinfo", "mailsplit", "maintenance", "merge", "merge-base", "merge-file", "merge-index", "merge-one-file",
+  "merge-tree", "mergetool", "mktag", "mktree", "multi-pack-index", "mv", "name-rev", "notes", "p4",
+  "pack-objects", "pack-redundant", "pack-refs", "patch-id", "prune", "prune-packed", "pull", "push",
+  "quiltimport", "range-diff", "read-tree", "rebase", "receive-pack", "reflog", "remote", "repack", "replace",
+  "request-pull", "rerere", "reset", "restore", "rev-list", "rev-parse", "revert", "rm", "send-email",
+  "send-pack", "sh-i18n", "sh-setup", "shortlog", "show", "show-branch", "show-index", "show-ref",
+  "sparse-checkout", "stage", "stash", "status", "stripspace", "submodule", "subtree", "svn", "switch",
+  "symbolic-ref", "tag", "unpack-file", "unpack-objects", "update-index", "update-ref", "update-server-info",
+  "upload-archive", "upload-pack", "var", "verify-commit", "verify-pack", "verify-tag", "version", "whatchanged",
+  "worktree", "write-tree",
+]);
+
+/** The subcommand word of one parsed Git invocation inside `cmd` (its start and
+ *  length), or null when it cannot be located. Walks the raw segment the way
+ *  parseGitSegment consumes global options, so quoted or odd shapes return null
+ *  and the caller fails closed. */
+function gitSubcommandSpan(cmd: string, parsed: ParsedGitCommand): { start: number; length: number } | null {
+  if (!parsed.subcommand) return null;
+  const wordRe = /\S+/g;
+  let m: RegExpExecArray | null;
+  let first = true;
+  let skipNext = false;
+  while ((m = wordRe.exec(parsed.segment))) {
+    const w = m[0];
+    if (first) { first = false; continue; } // the git word
+    if (skipNext) { skipNext = false; continue; }
+    const bare = w.replace(/['"]/g, "");
+    if (bare.startsWith("-")) {
+      const eq = bare.indexOf("=");
+      const opt = eq >= 0 ? bare.slice(0, eq) : bare;
+      if (eq < 0 && (GIT_GLOBAL_VALUE_OPTS.has(opt) || GIT_GLOBAL_VALUE_OPTS.has(normalizeGitLongOption(opt, ["git-dir", "work-tree"])))) skipNext = true;
+      continue;
+    }
+    if (bare.toLowerCase() !== parsed.subcommand || bare !== w) return null;
+    return { start: parsed.segmentStart + m.index, length: w.length };
+  }
+  return null;
+}
+
+export type GitAliasExpansion = { cmd: string } | { ambiguous: string };
+
+/** Expand Git aliases in the subcommand position (`git ci -am wip` where
+ *  `alias.ci=commit`) by asking git itself, so the commit and destructive gates
+ *  see the real subcommand (#3). A shell alias (`!…`), a lookup that errors, or
+ *  a subcommand word that cannot be rewritten in place is ambiguous and fails
+ *  closed. A missing alias (exit 1, empty output) leaves the word as it is. */
+export async function expandGitAliases(
+  exec: (bin: string, args: string[], opts: { cwd: string }) => Promise<{ stdout: string; code: number } | null | undefined>,
+  cmd: string,
+  cwd: string,
+): Promise<GitAliasExpansion> {
+  let current = cmd;
+  const notAliases = new Set<string>();
+  for (let round = 0; round < 8; round++) {
+    const candidate = parseGitCommands(current).find((g) => g.subcommand && !g.subcommand.startsWith("-") && !KNOWN_GIT_SUBCOMMANDS.has(g.subcommand) && !notAliases.has(g.subcommand));
+    if (!candidate) return { cmd: current };
+    const name = candidate.subcommand as string;
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,80}$/.test(name)) return { ambiguous: `git subcommand ${name.slice(0, 40)}` };
+    const repoDir = candidate.unverifiable ? cwd : gitRepoDir(current, cwd, candidate);
+    let res: { stdout: string; code: number } | null | undefined;
+    try {
+      res = await exec("git", ["-C", repoDir, "config", "--get", `alias.${name}`], { cwd });
+    } catch {
+      return { ambiguous: `git ${name} (alias lookup failed)` };
+    }
+    if (!res || (res.code !== 0 && res.code !== 1)) return { ambiguous: `git ${name} (alias lookup failed)` };
+    const value = String(res.stdout || "").trim();
+    if (res.code === 1 || value === "") { notAliases.add(name); continue; } // not an alias: an unknown subcommand is not gated
+    if (value.startsWith("!")) return { ambiguous: `git ${name} (a shell alias)` };
+    const span = gitSubcommandSpan(current, candidate);
+    if (!span) return { ambiguous: `git ${name} (alias)` };
+    current = current.slice(0, span.start) + value + current.slice(span.start + span.length);
+  }
+  return { ambiguous: "git alias chain" };
 }
 
 /** Backwards-compatible first-invocation helper. Runtime enforcement uses all. */
@@ -736,7 +942,10 @@ export function precedingStagingPlan(cmd: string, cwd: string, commit: ParsedGit
     if (seg.subcommand === "rm" || seg.subcommand === "mv") { plan.literal.push(...paths); continue; }
     const flags = seg.args.filter((a) => a.startsWith("-"));
     const short = (letter: string) => flags.some((a) => /^-[A-Za-z]+$/.test(a) && a.includes(letter));
-    if (flags.some((a) => a === "--all" || a === "--no-ignore-removal" || a === "--interactive" || a === "--patch" || a === "--edit" || a.startsWith("--pathspec-from-file"))
+    // `git add -f <path>` stages ignored files the untracked listing below never
+    // shows, so the named paths count literally, as rm/mv paths do (#7).
+    if (flags.includes("--force") || short("f")) plan.literal.push(...paths);
+    if (flags.some((a) => a === "--all" || a === "--no-ignore-removal" || a === "--interactive" || a === "--patch" || a === "--edit" || a.startsWith("--pathspec-from-file") || a === "--pathspec-file-nul")
         || short("A") || short("i") || short("p") || short("e")
         || paths.some((p) => p === "." || p === ":/" || p === "*" || p === "./")) {
       plan.everything = true;
@@ -748,18 +957,46 @@ export function precedingStagingPlan(cmd: string, cwd: string, commit: ParsedGit
   return found ? plan : null;
 }
 
+/** A directory operand the shell rewrites before git sees it: a `$VAR`, a backtick
+ *  anywhere, or a tilde that BEGINS the word (`~`, `~/x`, `~user/x`). A tilde inside
+ *  the word is literal in bash and PowerShell alike (Windows 8.3 names such as
+ *  `C:\Users\RUNNER~1\...`), so it stays verifiable. */
+const SHELL_EXPANDS_OPERAND = /^~|[$`]/;
+
 /** The directory of the LAST `cd <dir>` / `pushd <dir>` in a command prefix, or null.
- *  Quote-aware (reuses tokenizeArgs). `cd` with no arg or an option arg (`cd -`) is
- *  ignored — it can't be resolved to a concrete repo, so we fall back to cwd there. */
+ *  Quote-aware (reuses tokenizeArgs). A `cd` whose target the text does not name
+ *  (`cd`, `cd -`, `cd --`, `cd "$X"`) yields null; leadingCd() says why, and the
+ *  commit check asks instead of falling back to cwd. */
 export function leadingCdDir(before: string): string | null {
+  return leadingCd(before).dir;
+}
+
+/** The last `cd`/`pushd` of a command prefix: its directory when the text names
+ *  one, or why it cannot be resolved (#2): no operand (`cd` goes home), `-`
+ *  (the previous directory), `--`, or a value the shell expands (`$REPO`, `~`,
+ *  a backtick). Grouping punctuation before the word (`(cd x && …`) is skipped
+ *  the way the Git walker skips it. */
+export function leadingCd(before: string): { dir: string | null; unverifiable: string | null } {
   let dir: string | null = null;
+  let unverifiable: string | null = null;
   for (const seg of before.split(/&&|\|\||[;&|]/)) {
     const toks = tokenizeArgs(seg.trim());
-    if ((toks[0] === "cd" || toks[0] === "pushd") && toks[1] && !toks[1].startsWith("-")) {
-      dir = toks[1];
+    while (toks.length && /^[({]+$/.test(toks[0])) toks.shift(); // `{ cd x && …; }`
+    const word = (toks[0] || "").replace(/^[({]+/, "");
+    if (word !== "cd" && word !== "pushd") continue;
+    const operand = toks[1];
+    if (operand === undefined || operand === "-" || operand === "--" || operand.startsWith("-")) {
+      dir = null;
+      unverifiable = `${word} ${operand === undefined ? "with no directory" : operand} resolves a directory the guardrail cannot read`;
+    } else if (SHELL_EXPANDS_OPERAND.test(operand)) {
+      dir = null;
+      unverifiable = `${word} names a directory the shell expands`;
+    } else {
+      dir = operand;
+      unverifiable = null;
     }
   }
-  return dir;
+  return { dir, unverifiable };
 }
 
 function isAbsoluteOrWinAbsolute(dir: string): boolean {
@@ -789,7 +1026,20 @@ export function gitRepoDir(cmd: string, cwd: string, parsed: ParsedGitCommand | 
  *  reach. Used to prompt instead of silently allowing when the check can't determine. */
 export function commitHasLeadingCd(cmd: string, parsed: ParsedGitCommand | null = parseGitCommand(cmd)): boolean {
   if (!parsed) return false;
-  return leadingCdDir(cmd.slice(0, parsed.segmentStart)) !== null;
+  const cd = leadingCd(cmd.slice(0, parsed.segmentStart));
+  return cd.dir !== null || cd.unverifiable !== null;
+}
+
+/** Why the repository a Git invocation targets cannot be resolved from the
+ *  command text, or null when it can (#2): git's own `--git-dir`/`--work-tree`
+ *  or an expanded `-C`, a `GIT_DIR`/`GIT_WORK_TREE`-style variable anywhere in
+ *  the command, or a leading `cd` whose target the text does not name. */
+export function commitTargetUnverifiable(cmd: string, parsed: ParsedGitCommand): string | null {
+  if (parsed.unverifiable) return parsed.unverifiable;
+  if (/\bGIT_(DIR|WORK_TREE|INDEX_FILE|COMMON_DIR|OBJECT_DIRECTORY|NAMESPACE|CEILING_DIRECTORIES|DISCOVERY_ACROSS_FILESYSTEM)=/.test(cmd)) return "a GIT_DIR / GIT_WORK_TREE-style variable points git elsewhere";
+  // An absolute -C wins over any cd; a relative one resolves against the cd target.
+  if (parsed.cwdOverride && isAbsoluteOrWinAbsolute(parsed.cwdOverride)) return null;
+  return leadingCd(cmd.slice(0, parsed.segmentStart)).unverifiable;
 }
 
 /** Will this `git commit` auto-stage tracked changes (-a / --all / a short-flag
@@ -801,23 +1051,31 @@ export function commitStagesAll(cmd: string, parsed: ParsedGitCommand | null = p
   return parsed.args.some((a) => /^-[A-Za-z]*a[A-Za-z]*$/.test(a));
 }
 
-/** Committed paths that are NOT docs/logs/site, or null if it can't be determined
- *  (fail-open). Covers staged files AND, when the command auto-stages (-a/-am), the
- *  tracked modifications `-a` will stage at commit time. */
-async function offendingCommitPaths(pi: ExtensionAPI, cwd: string, cmd: string, parsed: ParsedGitCommand, governance: SessionGovernance): Promise<string[] | null> {
+/** What a `git commit` would commit that is NOT docs/logs/site (`offending`),
+ *  or why that cannot be determined (`unverifiable`: the target repository is
+ *  not named by the text, or git could not read it), in which case the runtime
+ *  asks instead of guessing (#2). Covers staged files AND, when the command
+ *  auto-stages (-a/-am), the tracked modifications `-a` will stage at commit
+ *  time. Paths are repository-relative (`--full-name`) and the policy is keyed on
+ *  the repository's top level, so `cd src && git add .` is judged against the
+ *  same root as the staged diff (#6). */
+export type CommitCheck = { offending: string[]; unverifiable: string | null; nothing: boolean };
+async function offendingCommitPaths(pi: ExtensionAPI, cwd: string, cmd: string, parsed: ParsedGitCommand, governance: SessionGovernance): Promise<CommitCheck> {
+  const unverifiable = commitTargetUnverifiable(cmd, parsed);
+  if (unverifiable) return { offending: [], unverifiable, nothing: true };
   const repoDir = gitRepoDir(cmd, cwd, parsed);
   const diff = async (extra: string[]): Promise<string[] | null> => {
     let res: { stdout: string; code: number };
     try {
       res = await pi.exec("git", ["-C", repoDir, ...extra], { cwd });
     } catch {
-      return null; // not a repo / git missing → don't block
+      return null; // not a repo / git missing → cannot determine
     }
     if (!res || res.code !== 0) return null;
     return String(res.stdout || "").split("\n").map((s) => s.trim()).filter(Boolean);
   };
   const staged = await diff(["diff", "--cached", "--name-only"]);
-  if (staged === null) return null; // can't determine → fail open (old behavior)
+  if (staged === null) return { offending: [], unverifiable: "git could not read the repository this commit targets", nothing: true };
   const files = [...staged];
   if (commitStagesAll(cmd, parsed)) {
     const modified = await diff(["diff", "--name-only"]); // -a will stage these
@@ -845,17 +1103,22 @@ async function offendingCommitPaths(pi: ExtensionAPI, cwd: string, cmd: string, 
     };
     if (staging.everything || staging.tracked) {
       add(await diff(["diff", "--name-only", "HEAD"]), "<every tracked change>");
-      if (staging.everything) add(await diff(["ls-files", "--others", "--exclude-standard"]), "<every untracked file>");
+      if (staging.everything) add(await diff(["ls-files", "--others", "--exclude-standard", "--full-name"]), "<every untracked file>");
     }
     if (staging.pathspecs.length) {
       add(await diff(["diff", "--name-only", "HEAD", "--", ...staging.pathspecs]), staging.pathspecs.join(" "));
-      add(await diff(["ls-files", "--others", "--exclude-standard", "--", ...staging.pathspecs]), staging.pathspecs.join(" "));
+      add(await diff(["ls-files", "--others", "--exclude-standard", "--full-name", "--", ...staging.pathspecs]), staging.pathspecs.join(" "));
     }
     for (const f of staging.literal) if (!files.includes(f)) files.push(f);
   }
-  if (!files.length) return null;
-  const { allowed, denied } = commitPolicy(repoDir, governance);
-  return files.filter((f) => !isAllowedCommitPath(f, allowed, denied));
+  if (!files.length) return { offending: [], unverifiable: null, nothing: true };
+  // Key the policy on the repository root git reports, not the folder the
+  // command happens to run in (#6). A git that cannot name it cannot be trusted.
+  const top = await diff(["rev-parse", "--show-toplevel"]);
+  if (top === null) return { offending: [], unverifiable: "git could not name the repository this commit targets", nothing: true };
+  const policyDir = top[0] ? resolve(top[0]) : repoDir;
+  const { allowed, denied } = commitPolicy(policyDir, governance);
+  return { offending: files.filter((f) => !isAllowedCommitPath(f, allowed, denied)), unverifiable: null, nothing: false };
 }
 
 // Fabric's MCP has no server-enforced read-only flag, and this hook can't see
@@ -870,7 +1133,19 @@ const MCP_TOOLISH =
 // live-read rules below govern. Running a pipeline, job, notebook, dataflow or
 // Spark job changes the client tenant, so that pair counts as a write (#154).
 const MCP_WRITE_VERB =
-  /(^|[_\-.:/])(create|update|delete|remove|deploy|publish|drop|write|patch|overwrite|rename|truncate|grant|revoke|provision|refresh|upload|modify|reset|upsert|insert|merge|move|import|restore|cancel|assign|(?:run|trigger|start|execute)[_\-.:/]?(?:pipeline|job|notebook|dataflow|spark))([_\-.:/A-Z]|$)/i;
+  /(^|[_\-.:/])(create|update|delete|remove|deploy|publish|drop|write|patch|overwrite|rename|truncate|grant|revoke|provision|refresh|upload|modify|reset|upsert|insert|merge|move|import|restore|cancel|assign|(?:run|trigger|start|execute|queue)[_\-.:/]?(?:pipeline|job|notebook|dataflow|spark|build))([_\-.:/A-Z]|$)/i;
+// Short write words the Azure DevOps server uses (`wit_add_work_item_comment`,
+// `repo_resolve_comment`, `core_set_project`, `build_run_build`) that must match a
+// WHOLE word only (#8): `get-settings`, `address` and `linked` are not writes.
+const MCP_WRITE_WORDS = new Set(["add", "link", "reply", "resolve", "set", "put", "post", "save", "apply", "submit", "queue"]);
+function hasMcpWriteWord(name: string): boolean {
+  const words = name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase().split(/[_\-.:/]+/).filter(Boolean);
+  if (words.some((w) => MCP_WRITE_WORDS.has(w))) return true;
+  return words.some((w, i) => (w === "run" || w === "queue") && words[i + 1] === "build");
+}
+function looksLikeMcpWrite(name: string): boolean {
+  return MCP_WRITE_VERB.test(name) || hasMcpWriteWord(name);
+}
 const DATA_SERVER = /(^|[_\-.:/])(fabric|powerbi|pbi|sql|database|db|warehouse|lakehouse|onelake|kusto|adx|eventhouse)([_\-.:/]|$)/i;
 const ROW_READ_VERB = /(^|[_\-.:/])(query|execute|evaluate|run_sql|runsql|sql_query|dax_query|preview|sample|row|rows|record|records|data|export|download)([_\-.:/]|$)/i;
 const PRODUCTION_WORD = /(^|[^a-z0-9])(prod|production)([^a-z0-9]|$)/i;
@@ -960,7 +1235,9 @@ const MANAGED_SQL_SERVER = "fabric-sqlendpoint";
 const FABRIC_SQL_FALLBACK_TOOL = "fabric_sql_query";
 const SQL_IMPACT_TOOL = "sql_impact";
 const CATALOG_SNAPSHOT_TOOL = "catalog_snapshot";
-const SQL_MUTATION_VERB = /\b(ALTER|CREATE|DELETE|DENY|DROP|EXEC|EXECUTE|GRANT|INSERT|MERGE|RENAME|REPLACE|REVOKE|TRUNCATE|UPDATE|UPSERT)\b/i;
+// DISABLE/ENABLE (triggers, indexes), DBCC (CHECKIDENT RESEED, SHRINK…), KILL,
+// RECONFIGURE and SETUSER change server or data state too (#5).
+const SQL_MUTATION_VERB = /\b(ALTER|CREATE|DBCC|DELETE|DENY|DISABLE|DROP|ENABLE|EXEC|EXECUTE|GRANT|IDENTITY_INSERT|INSERT|KILL|MERGE|RECONFIGURE|RENAME|REPLACE|REVOKE|SETUSER|TRUNCATE|UPDATE|UPSERT)\b/i;
 const SQL_MUTATING_INTO = /\b(?:SELECT|COPY)\b[\s\S]*?\bINTO\b/i;
 
 function sqlWithoutComments(sql: string, preserveBracketIdentifiers = false): string {
@@ -1221,7 +1498,7 @@ function normalizeMcpCall(event: any): { target: MutationTarget; args: any; prox
   // With no registry entry, `mcp__<a>__<b>` is either an adapter namespace (a server
   // named with `--`) or a built-in tool of a server coop doesn't know. When the name
   // itself carries a write verb, the stricter reading (the name) decides.
-  if (!origin && /^mcp__[A-Za-z0-9_]+?__[A-Za-z0-9]/.test(outerTool) && MCP_WRITE_VERB.test(outerTool)) {
+  if (!origin && /^mcp__[A-Za-z0-9_]+?__[A-Za-z0-9]/.test(outerTool) && looksLikeMcpWrite(outerTool)) {
     return { target: { outerTool }, args: input, proxy: false };
   }
   const server = namespace
@@ -1277,7 +1554,7 @@ export function mcpMutationLabel(toolName: string | { outerTool: string; innerTo
   const target = typeof toolName === "string" ? { outerTool: toolName } : toolName;
   const name = target.innerTool || target.outerTool;
   if (!name || (!target.innerTool && ["bash", "read", "edit", "write", "mcp"].includes(name))) return null;
-  if (!MCP_WRITE_VERB.test(name)) return null;
+  if (!looksLikeMcpWrite(name)) return null;
   // A proxied call's server identity proves this is MCP; remote tool names need not
   // repeat a Fabric/Power BI noun (e.g. azure-devops/create_work_item).
   const viaAdapter = target.outerTool === "mcp" || target.outerTool.startsWith("mcp__") || !!directToolServer(target.outerTool);
@@ -1888,7 +2165,9 @@ export function decideLiveRead(event: any, grant: LiveReadGrant | null, resolved
 // multi-step change asks once. Deletes and drops, anything that names production,
 // and destructive or multi-statement Warehouse SQL still ask on every call.
 const DESTRUCTIVE_VERB = /(^|[_\-.:/])(delete|remove|drop|truncate|purge|destroy|revoke)([_\-.:/A-Z]|$)/i;
-const SQL_SESSION_NEVER = /\b(DELETE|DROP|TRUNCATE|EXEC|EXECUTE|GRANT|REVOKE|DENY|sp_rename)\b/i;
+// Permission and principal changes (ROLE, USER, LOGIN, MEMBER), partition
+// SWITCH and the server-state verbs ask every time (#12, #5).
+const SQL_SESSION_NEVER = /\b(DELETE|DROP|TRUNCATE|EXEC|EXECUTE|GRANT|REVOKE|DENY|sp_rename|ROLE|USER|LOGIN|MEMBER|SWITCH|DBCC|KILL|RECONFIGURE|SETUSER|DISABLE|ENABLE)\b/i;
 
 /** A single dev/test SQL write a session approval may cover: one INSERT, UPDATE,
  * CREATE or ALTER statement, with no delete, drop, truncate, merge, execute or
@@ -1967,7 +2246,7 @@ export async function askEditApproval(ctx: any, title: string, message: string, 
  *  guardrail deliberately does not read. */
 export function usesCommitPathspecFile(git: ParsedGitCommand): boolean {
   return git.args.some(
-    (a) => a === "--pathspec-from-file" || a === "--pathspec-file-nul" || a.startsWith("--pathspec-from-file="),
+    (a) => a === "--pathspec-from-file" || a === "--pathspec-file-nul" || a.startsWith("--pathspec-from-file=") || a.startsWith("--pathspec-file-nul="),
   );
 }
 
@@ -1989,7 +2268,8 @@ function dangerLabel(cmd: string): string | null {
   // flags from sibling commands (`rm x && grep -rf y .`) must never classify as rm.
   for (const { segment } of splitShellSegments(cmd)) {
     const toks = tokenizeArgs(segment);
-    if (!toks.some((t) => t.replace(/['"]/g, "").split("/").pop()?.toLowerCase() === "rm")) continue;
+    // `\rm`, `/bin/rm` and `rm.exe` are rm (#10).
+    if (!toks.some((t) => programName(t) === "rm")) continue;
     // Dash-prefixed tokens of THIS segment only (never the literal "rm" itself).
     const flagTokens = toks.filter((t) => t.startsWith("-"));
     // Short-flag clusters (e.g. -rf, -fr) carry their letters after a single dash.
@@ -2103,8 +2383,15 @@ export function fabricWriteLabel(cmd: string): string | null {
     const sub = (toks[i + 1] || "").toLowerCase();
     const rest = toks.slice(i + 2);
     if (prog === "az" && sub === "rest") {
-      const method = (optionValue(rest, ["--method", "-m"]) || "get").toLowerCase();
-      if (!HTTP_READ_METHODS.has(method)) return `az rest ${method.toUpperCase()}`;
+      // The Azure CLI accepts any unambiguous prefix of `--method` (`--meth`,
+      // `--m`), so normalise before reading the value (#11).
+      const normalised = rest.map((t) => t.replace(/^--m(?:e(?:t(?:h(?:o(?:d)?)?)?)?)?(?==|$)/i, "--method"));
+      const named = normalised.some((t) => t === "--method" || t === "-m" || /^(--method|-m)=/.test(t));
+      const method = optionValue(normalised, ["--method", "-m"]);
+      if (named && (method === null || method.trim() === "")) return "az rest (method unreadable)";
+      if (method === null && normalised.some((t) => t === "--body" || t === "-b" || /^(--body|-b)=/.test(t))) return "az rest (body without --method)";
+      const verb = (method || "get").toLowerCase();
+      if (!HTTP_READ_METHODS.has(verb)) return `az rest ${verb.toUpperCase()}`;
     } else if (prog === "fab" || prog === "fab.exe") {
       if (sub === "api") {
         const method = (optionValue(rest, ["-X", "--method"]) || "get").toLowerCase();
@@ -2236,6 +2523,11 @@ export function decideDesktopReload(statusJson: string, target: DesktopReloadTar
 export function isSecretPath(p: string): boolean {
   const base = (p.split(/[/\\]/).pop() || "").toLowerCase();
   if (base.endsWith(".pub")) return false; // public keys are fine
+  // Credential stores named by their folder (#9): git's plain-text store, the
+  // GitHub CLI's hosts file, Docker's registry logins, kubeconfigs.
+  const lower = p.replace(/\\/g, "/").toLowerCase();
+  if (base === ".git-credentials" || /^kubeconfig(\.|$)/.test(base)) return true;
+  if (/(^|\/)gh\/hosts\.ya?ml$/.test(lower) || /(^|\/)\.docker\/config\.json$/.test(lower) || /(^|\/)\.kube\/config$/.test(lower)) return true;
   if (/^\.env(\.|$)/.test(base) && !/\.(example|sample|template|dist)$/.test(base)) return true;
   if (/\.(pem|key|p12|pfx|keystore|jks)$/.test(base)) return true;
   if (/^id_(rsa|dsa|ecdsa|ed25519)(\.|$)/.test(base)) return true;
@@ -2339,11 +2631,47 @@ export function bashSecretCmdPath(cmd: string, cwd = ""): string | null {
     t = t.replace(/^\d*[<>&]+/, "");         // strip redirection operators (>.env, <.env, 2>.env, &>.env)
     const at = t.lastIndexOf("@");       // curl -F field=@.env / scp x@host — take the tail
     const cand = at >= 0 ? t.slice(at + 1) : t;
-    if (cand && isSecretPath(cand)) return cand;
-    if (cand) cands.push(cand);
+    if (!cand) continue;
+    // The shell spellings that reach the same file (#9): glued quotes (`.en''v`),
+    // backslash escapes (`.\env`), a glob's literal prefix (`.env*`) and the
+    // path half of a `rev:path` (`git show HEAD:.env`).
+    const views = new Set<string>([cand]);
+    const unquoted = stripGluedQuotes(cand);
+    views.add(unquoted);
+    const unescaped = unquoted.replace(/\\(.)/g, "$1");
+    views.add(unescaped);
+    for (const v of [unquoted, unescaped]) {
+      const glob = v.search(/[*?[]/);
+      if (glob > 0) views.add(v.slice(0, glob));
+      const colon = v.indexOf(":");
+      if (colon > 0) views.add(v.slice(colon + 1));
+    }
+    for (const v of views) if (v && isSecretPath(v)) return v;
+    cands.push(unescaped);
   }
   // A link with an innocent name to a secret file (#367).
   if (cwd) for (const cand of cands) { const real = secretLinkTarget(cand, cwd); if (real) return `${cand} -> ${real}`; }
+  return null;
+}
+
+/** A bash command that prints the process environment, where Pi keeps the
+ *  Fabric launch bearer (`COOP_FABRIC_MCP_TOKEN`), or that names that variable
+ *  at all (#4). Narrow on purpose: bare `env`, `printenv`, `set`, `export -p`,
+ *  `declare -p` and PowerShell's `Get-ChildItem Env:` family with no other
+ *  argument; `printenv PATH`, `set -e` and `env FOO=1 cmd` are not dumps. */
+export function envDumpLabel(cmd: string): string | null {
+  if (/COOP_FABRIC_MCP_TOKEN/i.test(cmd)) return "COOP_FABRIC_MCP_TOKEN";
+  for (const { segment } of splitShellSegments(cmd)) {
+    const toks = tokenizeArgs(segment.trim()).map((t) => stripGluedQuotes(t));
+    let i = 0;
+    while (i < toks.length && /^[({]+$/.test(toks[i])) i++;
+    const word = programName((toks[i] || "").replace(/^[({]+/, ""));
+    const rest = toks.slice(i + 1).map((t) => t.replace(/[)}]+$/, "")).filter(Boolean);
+    if (!word) continue;
+    if ((word === "env" || word === "printenv" || word === "set") && rest.length === 0) return word;
+    if ((word === "export" || word === "declare" || word === "typeset") && rest.length === 1 && rest[0] === "-p") return `${word} -p`;
+    if (/^(get-childitem|gci|ls|dir|get-item|gi)$/.test(word) && rest.length === 1 && /^env:[/\\]?$/i.test(rest[0])) return `${word} env:`;
+  }
   return null;
 }
 
@@ -2723,7 +3051,11 @@ export default function coopGuardrails(pi: ExtensionAPI) {
           // resolves no dev or test target (a dev Warehouse may hold a schema named
           // prod_staging, and a production write without the word "prod" is still
           // a production write, #283). An active unlock falls back to asking.
-          const writeEnvironment = decision.kind === "ddl-dml-destructive"
+          // Ambiguous SQL (a DISABLE TRIGGER, DBCC, KILL, an unclosed quote) may
+          // write too, so off a confirmed dev/test target it takes the same
+          // production path as a destructive write instead of a yes/no (#5).
+          const mayWrite = decision.kind === "ddl-dml-destructive" || (decision.kind === "ambiguous-sql" && callSqlText(event).trim() !== "");
+          const writeEnvironment = mayWrite
             ? trustedWriteEnvironment(event, liveReadDeps, ensureSessionGovernance(ctx.cwd).sqlContract)
             : "";
           const production = decision.environment === "production" || decision.scope?.environment === "production" || writeEnvironment === "production";
@@ -2731,15 +3063,16 @@ export default function coopGuardrails(pi: ExtensionAPI) {
           // endpoint, blank environment_names with no matching sql_targets ids) may be
           // production, so it needs the same permit (Aaron, 2026-10-07: he had written
           // to production through such a target with only the ordinary approval).
-          const unconfirmedWrite = decision.kind === "ddl-dml-destructive" && writeEnvironment !== "dev" && writeEnvironment !== "test";
-          const sqlProductionWrite = decision.kind === "ddl-dml-destructive" && (
+          const unconfirmedWrite = mayWrite && writeEnvironment !== "dev" && writeEnvironment !== "test";
+          const sqlProductionWrite = mayWrite && (
             unconfirmedWrite || decision.scope?.environment === "production");
           if (sqlProductionWrite) {
             // Permitted once above for the same call, or asked now; never a session approval.
             if (productionPermitted) return;
+            const ambiguousNote = decision.kind === "ambiguous-sql" ? " (ambiguous SQL, treated as a write)" : "";
             const what = writeEnvironment === "production" || decision.environment === "production" || decision.scope?.environment === "production"
-              ? decision.label || "Warehouse SQL write"
-              : `${decision.label || "Warehouse SQL write"} (target not confirmed as dev or test; treated as production)`;
+              ? `${decision.label || "Warehouse SQL write"}${ambiguousNote}`
+              : `${decision.label || "Warehouse SQL write"}${ambiguousNote} (target not confirmed as dev or test; treated as production)`;
             const refused = await permitProductionWrite(ctx, "mcp-confirm", "governed-live-read", what);
             // Say why the target is unconfirmed and what to do; the write stays refused.
             if (refused && refused.reason === PROD_WRITE_LOCKED && writeEnvironment !== "production"
@@ -2787,10 +3120,18 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         return;
       }
 
-      const cmd = String(event?.input?.command ?? "").trim();
+      let cmd = String(event?.input?.command ?? "").trim();
       if (!cmd) return;
-      if (hasAmbiguousGitInvocation(cmd)) {
-        return { block: true, reason: "coop guardrails: blocked an ambiguous Git wrapper/segment that cannot be safely inspected. Run Git directly or use a supported env/command/group wrapper." };
+      const AMBIGUOUS_GIT = "coop guardrails: blocked an ambiguous Git wrapper/segment that cannot be safely inspected. Run Git directly or use a supported env/command/group wrapper.";
+      if (hasAmbiguousGitInvocation(cmd)) return { block: true, reason: AMBIGUOUS_GIT };
+      // A Git alias in the subcommand position runs the aliased command (#3): ask
+      // git what it is, check the expanded command, and fail closed when the
+      // lookup fails or the alias is a shell command.
+      const expanded = await expandGitAliases((bin, args, opts) => pi.exec(bin, args, opts), cmd, ctx.cwd);
+      if ("ambiguous" in expanded) return { block: true, reason: AMBIGUOUS_GIT };
+      if (expanded.cmd !== cmd) {
+        cmd = expanded.cmd;
+        if (hasAmbiguousGitInvocation(cmd)) return { block: true, reason: AMBIGUOUS_GIT };
       }
 
       // 1a'. G1: `coop unlock-prod` and its file belong to a person's own terminal.
@@ -2818,6 +3159,22 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         }
       }
 
+      // 1a''. Printing the environment prints the Fabric launch bearer (#4): ask,
+      // fail closed headlessly. The audit names the command word only.
+      const envDump = envDumpLabel(cmd);
+      if (envDump) {
+        if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
+          audit({ cwd: ctx.cwd, kind: "secret-confirm", tool: "bash", decision: "blocked-headless", label: "environment dump", detail: envDump });
+          return { block: true, reason: `coop guardrails: blocked a command that prints the environment (${envDump}); it would expose the Fabric sign-in token, and approval is unavailable in headless mode.` };
+        }
+        const ok = await ctx.ui.confirm(
+          "coop guardrails",
+          `This command prints the environment (${envDump}):\n  ${cmd.slice(0, 200)}\nPi's environment holds the Fabric sign-in token (COOP_FABRIC_MCP_TOKEN). Run it?`,
+        );
+        audit({ cwd: ctx.cwd, kind: "secret-confirm", tool: "bash", decision: ok ? "allowed" : "declined", label: "environment dump", detail: envDump });
+        if (!ok) return { block: true, reason: `coop guardrails: blocked a command that prints the environment (${envDump}) (you declined). Name the one variable you need instead.` };
+      }
+
       // 1. Never commit source (incl. `git commit -a/-am` auto-staging, `git -C <dir>`,
       //    `git commit <pathspec>`, and `cd <dir> && git commit` — the staged check runs
       //    against the repo the commit actually targets, see gitRepoDir).
@@ -2838,18 +3195,22 @@ export default function coopGuardrails(pi: ExtensionAPI) {
           audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: "blocked", label: hard, detail: hard });
           return { block: true, reason: `coop guardrails: ${hard} is never permitted — ${why}. Let a human run it.` };
         }
-        const offending = await offendingCommitPaths(pi, ctx.cwd, cmd, git, governance);
-        if (offending && offending.length) {
+        const { offending, unverifiable, nothing } = await offendingCommitPaths(pi, ctx.cwd, cmd, git, governance);
+        if (offending.length) {
           const shown = offending.slice(0, 8).join(", ");
           const more = offending.length > 8 ? ` (+${offending.length - 8} more)` : "";
           audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: "blocked", label: "git commit", detail: shown });
           return { block: true, reason: `coop guardrails: never commit source. These paths aren't docs/logs/site: ${shown}${more}. Unstage them and let a human commit source.` };
         }
-        if (offending === null && commitHasLeadingCd(cmd, git)) {
+        // Ask when the target repository cannot be resolved or read (#2), and,
+        // as before, when a chained `cd` precedes a commit the check found empty.
+        if (unverifiable || (nothing && commitHasLeadingCd(cmd, git))) {
           if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
+            audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: "blocked-headless", label: "unverifiable git commit", detail: "unverifiable git commit" });
             return { block: true, reason: "coop guardrails: blocked an unverifiable commit because approval is unavailable in headless mode." };
           }
-          const ok = await ctx.ui.confirm("coop guardrails", `Can't verify what this commit would include:\n  ${git.segment.slice(0, 200)}\nProceed?`);
+          const why = unverifiable ? `\n  (${unverifiable})` : "";
+          const ok = await ctx.ui.confirm("coop guardrails", `Can't verify what this commit would include:\n  ${git.segment.slice(0, 200)}${why}\nProceed?`);
           audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: ok ? "allowed" : "declined", label: "unverifiable git commit", detail: "unverifiable git commit" });
           if (!ok) return { block: true, reason: "coop guardrails: blocked an unverifiable commit (you declined)." };
         }

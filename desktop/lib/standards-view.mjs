@@ -11,7 +11,7 @@
 // searches, never a copy.
 import { execFile } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 
 export const DOMAINS = Object.freeze(["sql", "dax", "semantic_model", "fabric", "documentation"]);
@@ -155,7 +155,13 @@ export async function readNote(root, path, { readFileImpl = readFile } = {}) {
   const full = resolve(root, rel);
   const inside = relative(resolve(root), full);
   if (!rel || !inside || inside === ".." || inside.startsWith(`..${sep}`) || resolve(inside) === inside) throw new Error("that note is not in the knowledge repository");
-  const bytes = await readFileImpl(full);
+  // Both ends resolved (as readDocsPage does): a symlink in the clone cannot
+  // point outside it.
+  let realRoot;
+  let realFull;
+  try { [realRoot, realFull] = await Promise.all([realpath(root), realpath(full)]); } catch { throw new Error("that note is not in the knowledge repository"); }
+  if (realFull !== realRoot && !realFull.startsWith(realRoot + sep)) throw new Error("that note is not in the knowledge repository");
+  const bytes = await readFileImpl(realFull);
   const body = bytes.length > MAX_SNAPSHOT ? bytes.subarray(0, MAX_SNAPSHOT) : bytes;
   const text = body.toString("utf8").replace(/^\uFEFF/, "").replace(/^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/, "");
   return { text, truncated: bytes.length > MAX_SNAPSHOT };

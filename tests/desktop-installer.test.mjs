@@ -25,7 +25,7 @@ import { bootstrapProcess, bundledCoop, doctorReport, findCoop, folderArgument, 
 import { consoleProcess } from "../desktop/lib/terminal.mjs";
 import { APP_ID, taskbarDetails } from "../desktop/lib/app-identity.mjs";
 import { loadSettings, saveSettings } from "../desktop/lib/settings.mjs";
-import { DOWNLOAD_HOSTS, NODE_SHIMS_DROPPED, PIPX_SHIM, bundledDownloads, hasWheel, longestPath, nodeDownload, prefixPackages, pythonToolSpecs, prunable, pruneTree, readVersion, runtimeMarker, shippedPackage, snapshotIncludes, stage, stageEntries, stagePackage } from "../desktop/scripts/build-installer.mjs";
+import { DOWNLOAD_HOSTS, NODE_SHIMS_DROPPED, PIPX_SHIM, bundledDownloads, hasWheel, longestPath, nodeDownload, prefixPackages, pythonToolSpecs, prunable, pruneTree, readVersion, runtimeMarker, shellInvocation, shippedPackage, snapshotIncludes, stage, stageEntries, stagePackage } from "../desktop/scripts/build-installer.mjs";
 import { assertDisposableInstallerHost, nsisInvocation, packagePaths } from "../desktop/scripts/verify-installer.mjs";
 import { verifiedInstaller } from "../desktop/scripts/check-installer-report.mjs";
 
@@ -375,6 +375,14 @@ await check("stage: package.json carries the window's version and pdf.js; Electr
   const shipped = shippedPackage(staged);
   assert.deepEqual(shipped.dependencies, { "pdfjs-dist": MANIFEST.desktop.pdfjs });
   assert.equal(shipped.version, version);
+});
+
+await check("a .cmd through the shell is quoted, so a checkout path with a space still builds", () => {
+  const npm = "C:\\Users\\Aaron J\\coop-agent\\node_modules\\.bin\\npm.cmd";
+  assert.deepEqual(shellInvocation(npm, ["ci", "--prefix", "C:\\Stage Dir"], "win32"), { command: `"${npm}"`, args: ["ci", "--prefix", '"C:\\Stage Dir"'], shell: true });
+  assert.deepEqual(shellInvocation("npm.cmd", ["ci"], "win32"), { command: "npm.cmd", args: ["ci"], shell: true });
+  assert.deepEqual(shellInvocation("C:\\Program Files\\node.exe", ["-v"], "win32"), { command: "C:\\Program Files\\node.exe", args: ["-v"], shell: false }, "no shell, no quoting: spawn passes the path whole");
+  assert.deepEqual(shellInvocation("/opt/a b/npm.cmd", ["ci"], "linux"), { command: "/opt/a b/npm.cmd", args: ["ci"], shell: false });
 });
 
 await check("stage --no-install writes the files at their checkout paths with the shipped package.json", () => {

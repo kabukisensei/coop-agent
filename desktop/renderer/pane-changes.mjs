@@ -166,8 +166,15 @@ export function mountChanges(box, options, { coop, cwd }) {
   // a project file repository beside it); it picks
   // the repository that holds it. `repo` is a choice from the picker.
   async function load(want, repo) {
-    if (state.loading) return;
+    // A request during a load (a "View in Changes" click) is not dropped: the
+    // latest one runs again when this load ends.
+    if (state.loading) { state.queued = { want: want || (state.queued && state.queued.want) || "", repo }; return; }
     state.loading = true;
+    try { await loadNow(want, repo); } finally { state.loading = false; }
+    if (state.queued) { const next = state.queued; state.queued = null; await load(next.want, next.repo); }
+  }
+
+  async function loadNow(want, repo) {
     fill(summary, el("span", { class: "spinner" }), el("span", { text: " Reading changes" }));
     const asked = want;
     let pick = typeof repo === "string" ? repo : null;
@@ -181,7 +188,6 @@ export function mountChanges(box, options, { coop, cwd }) {
     }
     if (hit) want = hit.path;
     else if (want.startsWith("../")) want = "";
-    state.loading = false;
     if (!result.success) { summary.textContent = result.error || "Could not read the changes."; return; }
     const data = result.data;
     state.repos = data.repos || [];
