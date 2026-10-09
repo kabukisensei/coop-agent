@@ -1,7 +1,7 @@
 # coop-profile
 
-Injects the local COOP user profile (`~/.coop/user.json`) into each Pi session as
-one agent-visible, human-hidden note.
+Appends the local COOP user profile (`~/.coop/user.json`) to each Pi session's
+system prompt as one short instruction the user never sees in the transcript.
 
 ## What it injects
 

@@ -1,10 +1,11 @@
 # coop-tools
 
 Native, LLM-callable Cooptimize tools for Pi. This **companion** extension —
-loaded via `pi -e` (or automatically by `bin/coop.ps1`) — registers three tools the
+loaded via `pi -e` (or automatically by `bin/coop.ps1`) — registers five tools the
 agent can call directly instead of asking you to run a CLI: `data_doc`
-(coop-data-doc), `bpa_review` (Tabular Editor BPA, the deterministic model check)
-and the governed `fabric_sql_query` fallback:
+(coop-data-doc), `bpa_review` (Tabular Editor BPA, the deterministic model check),
+the governed `fabric_sql_query` fallback, `sql_impact` (the read-only live catalog
+trace of one object) and `catalog_snapshot` (the committed dev catalog):
 
 ```sh
 pi -e extensions/coop-tools
@@ -133,7 +134,7 @@ Power BI source is available and build lineage. Executes **sequentially**.
 
 | Param | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `command` | `scan` \| `build` \| `check` \| `lineage` | `scan` | See below. |
+| `command` | `scan` \| `build` \| `check` \| `lineage` \| `impact` | `scan` | See below. |
 | `object` | `string` | — | For `lineage`: the object to look up (e.g. `dbo.fact_sales`, or a table/measure name). Ambiguous names return candidates. |
 | `depth` | `number` | `1` | For `lineage`: hops up/downstream to include. |
 
@@ -142,6 +143,8 @@ Power BI source is available and build lineage. Executes **sequentially**.
   searchable portal, and `manifest.json`. Documentation outputs are committable;
   source is never touched.
 - **`check`** — CI staleness gate.
+- **`impact`** — read-only; lists every downstream object fed by the changed
+  source files (`files`, or the working tree's changes `against` a Git ref).
 - **`lineage`** — read-only; returns **one** object's upstream inputs, downstream
   dependents, and relationships as JSON, read from the **built** graph. Call it
   (or read the object's `<slug>.md` via `manifest.json`) **before** analyzing or
@@ -199,7 +202,7 @@ doc (located via `manifest.json`) plus its immediate neighbors — and to run
 `data_doc (build)` if the docs look stale.
 
 "Built" means the markdown output dir (from `coop-data-doc.yml`'s `output.dir`,
-defaulting to `./data-docs`) contains a `manifest.json` **or** an `index.md`. The
+defaulting to `./data-docs`) contains a built `graph.json`. The
 hook **degrades silently** when there's no `coop-data-doc.yml`, or when a config
 exists but hasn't been built yet — the docs are an aid, not a gate, and the whole
 hook is wrapped so it can never break a turn.

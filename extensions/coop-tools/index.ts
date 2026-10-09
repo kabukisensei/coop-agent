@@ -241,6 +241,7 @@ async function resolveFabricSqlPython(signal: AbortSignal | undefined): Promise<
       stdio: ["ignore", "pipe", "ignore"], shell: false,
       env: { ...process.env, ...invocation.env },
     });
+    child.stdout?.setEncoding("utf8");
     let stdout = "", finished = false, stopState = "";
     let forceTimer: ReturnType<typeof setTimeout> | undefined;
     let reapTimer: ReturnType<typeof setTimeout> | undefined;
@@ -328,7 +329,15 @@ async function runFabricSqlHelper(params: any, signal: AbortSignal | undefined, 
   if (signal?.aborted) return { ok: false, state: "aborted" };
   const invocation = fabricSqlHelperInvocation(selected.python, undefined, helper);
   return await new Promise((done) => {
-    const child = spawn(invocation.bin, invocation.args, { cwd, stdio: ["pipe", "pipe", "ignore"], shell: false });
+    // The helpers print JSON with ensure_ascii=False: pin Python's stdout to UTF-8
+    // (on Windows a pipe otherwise gets the ANSI code page and a non-ASCII value
+    // raises UnicodeEncodeError) and decode the stream as one UTF-8 text, so a
+    // multi-byte character split across chunks is not read as U+FFFD.
+    const child = spawn(invocation.bin, invocation.args, {
+      cwd, stdio: ["pipe", "pipe", "ignore"], shell: false,
+      env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" },
+    });
+    child.stdout?.setEncoding("utf8");
     let stdout = "", finished = false, stopState = "";
     let forceTimer: ReturnType<typeof setTimeout> | undefined;
     let reapTimer: ReturnType<typeof setTimeout> | undefined;
@@ -536,11 +545,16 @@ export function impactFileArgs(files: string[], cwd: string, env: Record<string,
     const cfg = parseExisting(safeRead(ymlPath));
     for (const repo of [cfg.sqlPath, cfg.pbiPath]) if (repo) roots.push(resolveRel(dirname(ymlPath), repo));
   }
+  // `impact` runs in the folder that holds coop-data-doc.yml (which can be the
+  // client home repository, not the session folder): a path given relative to
+  // the session is also passed absolute so the companion can resolve it there.
+  const runCwd = dataDocCwd(cwd, env);
   for (const file of files) {
     const given = file.trim();
     if (!given) continue;
     out.add(given.replace(/\\/g, "/").replace(/^\.\//, ""));
     const abs = resolveRel(cwd, given);
+    if (runCwd !== cwd && !isAbsolute(given)) out.add(abs.replace(/\\/g, "/"));
     for (const root of roots) {
       const rel = relative(root, abs);
       if (rel && !rel.startsWith("..") && !isAbsolute(rel)) out.add(rel.replace(/\\/g, "/"));
@@ -875,7 +889,7 @@ async function runBuild(pi: ExtensionAPI, ctx: any, outputDir?: string): Promise
   notify(ctx, "Building data docs… (this can take a moment on a large estate)", "info");
   let res: { stdout: string; stderr: string; code: number };
   try {
-    res = await pi.exec("coop-data-doc", ["build"], { cwd: ctx.cwd, signal: ctx.signal });
+    res = await pi.exec("coop-data-doc", ["build"], { cwd: dataDocCwd(ctx.cwd), signal: ctx.signal });
   } catch (e: any) {
     notify(ctx, `Couldn't run coop-data-doc: ${errMsg(e)}. Is it installed? (coop install)`, "error");
     return false;
@@ -1070,7 +1084,9 @@ async function supportsJsonlTransport(pi: ExtensionAPI, ctx: any): Promise<boole
     const res = await pi.exec("coop-data-doc", ["setup", "--help"], { cwd: ctx.cwd, signal: ctx.signal });
     jsonlSupported = /--transport/.test(`${res.stdout}\n${res.stderr}`);
   } catch {
-    jsonlSupported = false;
+    // Not installed (or not runnable) right now: say so, and probe again next
+    // time rather than remembering "unsupported" for the whole process.
+    return false;
   }
   return jsonlSupported;
 }
@@ -1201,7 +1217,9 @@ async function offerDataDocsCi(ctx: any): Promise<void> {
 /** Run the one authoritative coop-data-doc wizard; no local fallback exists. */
 async function runQuickSetup(pi: ExtensionAPI, ctx: any, prefill: DataDocSetupPrefill): Promise<boolean> {
   if (!(await supportsJsonlTransport(pi, ctx))) {
-    notify(ctx, "Your coop-data-doc does not support the native JSONL setup wizard. Run `coop update` (requires coop-data-doc 1.1.1+), then retry /setup-docs.", "error");
+    notify(ctx, jsonlSupported === false
+      ? "Your coop-data-doc does not support the native JSONL setup wizard. Run `coop update` (requires coop-data-doc 1.1.1+), then retry /setup-docs."
+      : "coop-data-doc could not run. Is it installed? Run `coop install`, then retry /setup-docs.", "error");
     return false;
   }
   const outcome: JsonlSetupOutcome = {};
@@ -2638,7 +2656,7 @@ export default function coopTools(pi: ExtensionAPI) {
         for (const file of impactFileArgs(files, ctx.cwd)) args.push(`--files=${file}`);
         let res;
         try {
-          res = await pi.exec("coop-data-doc", args, { cwd: ctx.cwd, signal });
+          res = await pi.exec("coop-data-doc", args, { cwd: dataDocCwd(ctx.cwd), signal });
         } catch (e: any) {
           return {
             content: [{ type: "text" as const, text: `coop-data-doc could not run: ${errMsg(e)}. Is it installed? (coop install)` }],
@@ -2729,6 +2747,11 @@ export default function coopTools(pi: ExtensionAPI) {
     seenToolErrorIds.clear();
     learningNudgeAnnounced = false;
     announcedTeamKnowledge = false;
+    // The hidden lineage, Fabric-target and catalog-snapshot notes are per
+    // session too: a /new, /resume or /fork starts a fresh context that needs them again.
+    announcedCwds.clear();
+    announcedFabricTargets.clear();
+    announcedCatalogSnapshots.clear();
     const primedLogin = primeModelLogin(ctx);
     // The shared project file (C1): say once per session when the team's copy
     // moved, when this copy is unshared, or when the team has a file this
@@ -2915,6 +2938,13 @@ export default function coopTools(pi: ExtensionAPI) {
   // whose result lands here too. An object already in the context costs no lookup.
   // The guardrails (loaded after this extension, so their hook runs after this
   // one) read the same store and stop an edit whose lookup never happened.
+  const EDIT_LINEAGE_TIMEOUT_MS = 15_000;
+  function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+    return new Promise<T>((done, fail) => {
+      const timer = setTimeout(() => fail(new Error("timeout")), ms);
+      promise.then((v) => { clearTimeout(timer); done(v); }, (e) => { clearTimeout(timer); fail(e); });
+    });
+  }
   async function holdLineageForEdit(event: any, ctx: ExtensionContext): Promise<void> {
     const tool = event?.toolName;
     if (tool !== "edit" && tool !== "write") return;
@@ -2928,11 +2958,15 @@ export default function coopTools(pi: ExtensionAPI) {
       let found: any = null;
       let asked = false;
       try {
-        const res = await pi.exec("coop-data-doc", ["lineage", "--", prepared.object], { cwd: dataDocCwd(ctx.cwd) });
-        asked = true;
+        // Bounded: the context is an aid and the gate decides, so a companion that
+        // hangs (a huge graph, a first-run antivirus scan) must not hold the edit.
+        const res = await withTimeout(pi.exec("coop-data-doc", ["lineage", "--", prepared.object], { cwd: dataDocCwd(ctx.cwd) }), EDIT_LINEAGE_TIMEOUT_MS);
         let parsed: any = null;
         try { parsed = JSON.parse(res.stdout); } catch { parsed = null; }
         if (res.code === 0 && parsed) found = lineageFromDocs(parsed);
+        // Only a companion that ran counts as the docs asked (same rule as the
+        // explicit data_doc lineage path): a crash or a missing graph is not a miss.
+        asked = res.code === 0 || !!found;
       } catch { asked = false; }
       if (asked) recordLineage(prepared.object, "docs", found);
     }
