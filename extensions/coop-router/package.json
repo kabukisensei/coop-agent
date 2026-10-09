@@ -1,0 +1,14 @@
+{
+  "name": "coop-router",
+  "version": "0.35.0",
+  "private": true,
+  "description": "coop/auto: a rule-based virtual model that plans on a large OpenAI Codex model and implements on a small one.",
+  "type": "module",
+  "main": "index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}

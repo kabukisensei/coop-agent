@@ -4,7 +4,8 @@
  * coop renders its OWN footer and splash (NOT a third-party powerline; pi-powerline-footer
  * was removed). It adds:
  *   • its OWN footer via ctx.ui.setFooter — left "⬢ Cooptimize · <session> · <branch>", right
- *     "<model> · ctx% · tokens · $cost · <ext statuses>", surfacing other extensions'
+ *     "<model> · ctx% · tokens · $cost · <ext statuses>" (under coop/auto the model reads
+ *     "auto → <routed model>"), surfacing other extensions'
  *     status text (e.g. pi-better-openai's plan usage limits) via getExtensionStatuses();
  *     one line when it fits, else the right side wraps onto extra lines (layoutFooter);
  *     plain text + common Unicode (no Nerd Font glyphs)
@@ -287,6 +288,27 @@ function wordmark(): string {
     .join(" ");
 }
 
+// Model segment. Under a virtual selection (coop/auto, master plan R1) the footer
+// shows the routed model beside it, as Pi's own footer does: "auto → gpt-5.6-luna",
+// read from the latest successful assistant response on the branch.
+export function formatModel(ctx: any): string {
+  try {
+    const model = ctx?.model;
+    if (!model?.id) return "";
+    if (model.api !== "pi-virtual") return String(model.id);
+    const branch = ctx?.sessionManager?.getBranch?.() ?? [];
+    for (let i = branch.length - 1; i >= 0; i--) {
+      const e = branch[i];
+      if (e?.type !== "message" || e.message?.role !== "assistant") continue;
+      if (e.message.stopReason === "error" || e.message.stopReason === "aborted" || e.message.api === "pi-virtual") continue;
+      if (e.message.model) return `${model.id} → ${e.message.model}`;
+    }
+    return String(model.id);
+  } catch {
+    return "";
+  }
+}
+
 // Usage string: context-window % (room left), token totals, cost — from the session,
 // so it works for any provider. Plain text + common Unicode only (no Nerd Font glyphs).
 function formatUsage(ctx: any): string {
@@ -423,7 +445,7 @@ export default function coopPowerline(pi: ExtensionAPI) {
               try {
                 const branch = typeof footerData?.getGitBranch === "function" ? footerData.getGitBranch() : "";
                 const session = formatSessionName(ctx.sessionManager?.getSessionName?.());
-                const model = ctx.model?.id || "";
+                const model = formatModel(ctx);
                 const usage = formatUsage(ctx);
                 // Surface other extensions' status text (e.g. pi-better-openai's plan
                 // usage limits / 5h+7d windows) in OUR footer — no duplicate bar.
