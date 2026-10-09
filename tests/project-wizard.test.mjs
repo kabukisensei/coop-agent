@@ -320,6 +320,36 @@ tools:
   assert.equal(projectYamlScalar(merged, ["repositories", "warehouse", "local_path"]), "../warehouse");
 });
 
+await t("a discovery-mode contract (repositories: {}) takes its first repository as parseable YAML", () => {
+  const original = `profile:
+  organization: 'Cooptimize'
+  client: 'Contoso'
+repositories: {}
+
+tools:
+  tabular_editor_cli:
+    enabled: false
+`;
+  const parsed = parseProjectWizardSettings(original, "/work/contoso");
+  parsed.repositories.push({ name: "warehouse", description: "Warehouse SQL", role: "sql", localPath: "../warehouse", remoteName: "origin", defaultBranch: "main", isNew: true });
+  const merged = applyProjectWizardSettings(original, parsed);
+  assert.doesNotMatch(merged, /repositories: \{\}/);
+  assert.equal(projectYamlScalar(merged, ["repositories", "warehouse", "local_path"]), "../warehouse");
+  const root = trackFixture(mkdtempSync(join(tmpdir(), "coop-discovery-")));
+  writeFileSync(join(root, "project.yml"), merged);
+  const py = ["python3", "python"].find((bin) => spawnSync(bin, ["--version"]).status === 0);
+  const read = spawnSync(py, ["-I", join(REPO_ROOT, "lib", "_yaml.py"), "get", join(root, "project.yml"), "repositories.warehouse.local_path", "MISS"], { encoding: "utf8" });
+  assert.equal(read.status, 0, read.stderr);
+  assert.equal(read.stdout.trim(), "../warehouse", "the dependency-free reader parses the written contract");
+});
+
+await t("a populated inline mapping is refused rather than losing its other keys", () => {
+  const original = "profile: {organization: 'Old', client: 'Keep'}\n";
+  const parsed = parseProjectWizardSettings(original, "/work/contoso");
+  parsed.client = "New";
+  assert.throws(() => applyProjectWizardSettings(original, parsed), /inline mapping/);
+});
+
 await t("coop init contract round-trips through /setup-project with a nested standards override intact", () => {
   const root = trackFixture(mkdtempSync(join(tmpdir(), "coop-init-roundtrip-")));
   const py = ["python3", "python"].find((bin) => spawnSync(bin, ["--version"]).status === 0);

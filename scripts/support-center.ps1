@@ -8,5 +8,9 @@ $ErrorActionPreference = 'Stop'
 $COOP_ROOT = Split-Path -Parent $PSScriptRoot
 $env:COOP_ROOT = $COOP_ROOT
 
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+  [Console]::Error.WriteLine('coop support needs Node.js (node was not found on PATH). Run: coop install')
+  exit 1
+}
 & node (Join-Path $COOP_ROOT 'lib\support-center-cli.mjs') @args
 exit $LASTEXITCODE

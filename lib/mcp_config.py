@@ -458,7 +458,7 @@ def main() -> int:
         atomic_write(args.output, generate(manifest, config, existing, project))
         if legacy is not None and legacy_value is not None and (migrating or "_coop" in legacy_value):
             legacy.unlink()
-    except ValueError as exc:
+    except Exception as exc:  # ValueError from the manifest, yaml.YAMLError from a contract
         print(f"mcp config: {exc}", file=os.sys.stderr)
         return 2
     return 0

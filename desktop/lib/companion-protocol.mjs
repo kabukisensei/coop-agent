@@ -391,6 +391,12 @@ export function classifyQuestion(request, incarnation) {
   if (PRODUCTION.test(base.title) || PRODUCTION.test(base.message)) {
     return { ...base, phone: "desktop", reason: "production", options: [], hidden: Array.isArray(request.options) ? request.options.length : 0 };
   }
+  // A confirm whose Yes grants more than the one action shown (coop-guardrails'
+  // "Approve this exact bounded scope for this session?") stays on the desktop;
+  // the phone may still decline it.
+  if (request.method === "confirm" && (WIDENING.test(base.title) || WIDENING.test(base.message))) {
+    return { ...base, phone: "desktop", reason: "session-wide", options: [], hidden: 0 };
+  }
   if (request.method !== "select") return { ...base, phone: "answer", reason: "", options: [], hidden: 0 };
   const all = Array.isArray(request.options) ? request.options.map(String) : [];
   if (PRODUCTION.test(all.join("\n"))) return { ...base, phone: "desktop", reason: "production", options: [], hidden: all.length };

@@ -413,6 +413,11 @@ await check("pairing codes work once, expire, die after five wrong tries; secret
   for (let i = 0; i < 5; i += 1) store.redeem("ZZZZZZZZ", "guess");
   assert.deepEqual(store.redeem(third.code, "after guesses"), { error: "not-paired" });
   assert.deepEqual(new DeviceStore(file).list().map((d) => d.name), ["Aaron's phone"]);
+  // A record whose times are not numbers (a hand edit, an older file) is dropped, not kept forever.
+  const raw = JSON.parse(readFileSync(file, "utf8"));
+  raw.devices.push({ ...raw.devices[0], id: "bad-times", name: "Odd", createdAt: "soon", lastSeenAt: null });
+  writeFileSync(file, JSON.stringify(raw));
+  assert.deepEqual(new DeviceStore(file).list().map((d) => d.name), ["Aaron's phone"], "a device with no finite times is dropped");
   store.revoke(device.id);
   assert.deepEqual(store.list(), []);
 });
@@ -732,6 +737,26 @@ try {
   await companion.close();
   rmSync(temp, { recursive: true, force: true });
 }
+
+await check("server: a new pairing code from the window resets the shared-address failure count", async () => {
+  // Behind `tailscale serve` every phone is 127.0.0.1: five mistypes by one
+  // teammate must not lock pairing for the VM for an hour.
+  const limitedStore = new DeviceStore(join(temp, "store-limit", "devices.json"));
+  const { hub: limitedHub } = newHub();
+  const limited = createCompanionServer({ store: limitedStore, active: () => limitedHub, origin: ORIGIN, webRoot, port: 0 });
+  await limited.listen();
+  const lport = limited.server.address().port;
+  try {
+    limitedStore.startPairing({ windowsUser: "VM\\aaron", client: "Example Co" });
+    for (let i = 0; i < LIMITS.pairFailuresPerHour; i += 1) assert.equal((await call(lport, "POST", "/api/pair", { body: { code: "ZZZZZZZZ", deviceName: "phone" } })).json.code, "not-paired");
+    assert.equal((await call(lport, "POST", "/api/pair", { body: { code: "ZZZZZZZZ", deviceName: "phone" } })).json.code, "rate-limited");
+    const { code } = limitedStore.startPairing({ windowsUser: "VM\\aaron", client: "Example Co" });
+    assert.equal((await call(lport, "POST", "/api/pair", { body: { code: "ZZZZZZZZ", deviceName: "phone" } })).json.code, "not-paired", "a wrong guess at the new code is counted, not rate-limited");
+    assert.equal((await call(lport, "POST", "/api/pair", { body: { code, deviceName: "phone" } })).status, 200, "the new code pairs");
+  } finally {
+    await limited.close();
+  }
+});
 
 // ---- pair once (Aaron, 2026-10-07): one app switch, the phone picks the tab ----------
 await check("hub: with the app switch on, a desk new session, a switch and a new Pi keep phone access", () => {

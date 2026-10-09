@@ -218,8 +218,12 @@ def doctor_lines(*, cwd: Path | None = None, project_arg: str | None = None) -> 
 # --- snapshot -------------------------------------------------------------------
 
 
+_RESERVED_FILE_NAMES = {"CON", "PRN", "AUX", "NUL"} | {f"COM{i}" for i in range(1, 10)} | {f"LPT{i}" for i in range(1, 10)}
+
+
 def _safe(name: str) -> bool:
-    return 0 < len(name) <= 128 and all(ch in _SAFE_NAME for ch in name)
+    # Reserved Windows device names cannot be written as `<name>.sql`.
+    return 0 < len(name) <= 128 and all(ch in _SAFE_NAME for ch in name) and name.upper() not in _RESERVED_FILE_NAMES
 
 
 def _bracket(name: str) -> str:
@@ -288,6 +292,23 @@ def _readme(target: dict[str, str], environment: str) -> str:
         "It is never a deployment artifact: nothing is run from this folder. Refresh it with `coop catalog snapshot` "
         "(or the `catalog_snapshot` tool in a session) and commit the result.\n"
     )
+
+
+def _remove_previous_files(folder: Path, previous: dict[str, Any]) -> None:
+    """Delete the .sql files the last manifest listed, inside the snapshot folder
+    only: a committed manifest naming an absolute or escaping path must never
+    delete anything elsewhere."""
+    root = folder.resolve()
+    for old in previous.get("files") or []:
+        if not (isinstance(old, str) and old.endswith(".sql") and ".." not in old) or os.path.isabs(old):
+            continue
+        try:
+            target = (folder / old).resolve()
+            if root not in target.parents:
+                continue
+            target.unlink()
+        except OSError:
+            pass
 
 
 def snapshot(*, cwd: Path | None = None, project_arg: str | None = None, now: datetime | None = None) -> dict[str, Any]:
@@ -381,13 +402,7 @@ def snapshot(*, cwd: Path | None = None, project_arg: str | None = None, now: da
         files.append((f"{schema}/{name}.sql", _header(summary, taken_at, schema, name, kind) + body))
 
     folder.mkdir(parents=True, exist_ok=True)
-    previous = read_manifest(folder) or {}
-    for old in previous.get("files") or []:
-        if isinstance(old, str) and old.endswith(".sql") and ".." not in old:
-            try:
-                (folder / old).unlink()
-            except OSError:
-                pass
+    _remove_previous_files(folder, read_manifest(folder) or {})
     for child in list(folder.iterdir()):
         if child.is_dir() and not any(child.iterdir()):
             shutil.rmtree(child, ignore_errors=True)
@@ -438,6 +453,18 @@ def execute(payload: Any, *, cwd: Path | None = None) -> dict[str, Any]:
     return sql_query.result("input_invalid")
 
 
+def _write_utf8(text: str) -> None:
+    """Write the JSON frame as UTF-8 whatever the console code page is: on Windows a
+    piped stdout defaults to the ANSI code page, and ensure_ascii=False output
+    with a character outside it would raise instead of answering."""
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+    sys.stdout.write(text)
+    sys.stdout.flush()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="catalog_snapshot", description=__doc__.splitlines()[0])
     parser.add_argument("--project", help="path to .coop/project.yml (default: nearest above the current folder)")
@@ -449,6 +476,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command is None:
         try:
+            try:
+                sys.stdin.reconfigure(encoding="utf-8")
+            except (AttributeError, ValueError):
+                pass
             payload = json.load(sys.stdin)
         except (UnicodeDecodeError, json.JSONDecodeError):
             payload = None
@@ -461,7 +492,7 @@ def main(argv: list[str] | None = None) -> int:
             output = snapshot(project_arg=args.project) if args.command == "snapshot" else status(project_arg=args.project)
         except Exception:
             output = sql_query.result("internal_error")
-    sys.stdout.write(json.dumps(output, ensure_ascii=False, separators=(",", ":"), sort_keys=True))
+    _write_utf8(json.dumps(output, ensure_ascii=False, separators=(",", ":"), sort_keys=True))
     return 0 if output["ok"] else 1
 
 

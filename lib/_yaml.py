@@ -20,6 +20,16 @@ In `list` mode a `*` segment fans out over every value of a dict, so e.g.
 import sys
 
 
+def _opens_quote(s, i):
+    """A quote character starts a quoted scalar only at the start of a value: at
+    the start of the line or right after `:`, `-`, `[`, `{` or `,` (plus spaces).
+    An apostrophe inside an unquoted value (Aaron's) is a plain character."""
+    j = i - 1
+    while j >= 0 and s[j] in ' \t':
+        j -= 1
+    return j < 0 or s[j] in ':-[{,'
+
+
 def _strip_comment(line):
     out = []
     q = None
@@ -28,7 +38,7 @@ def _strip_comment(line):
             out.append(c)
             if c == q:
                 q = None
-        elif c in ('"', "'"):
+        elif c in ('"', "'") and _opens_quote(line, i):
             q = c
             out.append(c)
         elif c == '#' and (i == 0 or line[i - 1] in ' \t'):
@@ -38,23 +48,42 @@ def _strip_comment(line):
     return ''.join(out).rstrip()
 
 
+_DQ_ESCAPES = {'\\': '\\', '"': '"', 'n': '\n', 't': '\t', 'r': '\r', '/': '/', '0': '\0'}
+
+
+def _decode_double_quoted(body):
+    """Decode the common escapes of a double-quoted scalar (what PyYAML would)."""
+    if '\\' not in body:
+        return body
+    out, i = [], 0
+    while i < len(body):
+        c = body[i]
+        if c == '\\' and i + 1 < len(body) and body[i + 1] in _DQ_ESCAPES:
+            out.append(_DQ_ESCAPES[body[i + 1]])
+            i += 2
+        else:
+            out.append(c)
+            i += 1
+    return ''.join(out)
+
+
 def _unquote(s):
     s = s.strip()
     if len(s) >= 2 and s[0] == s[-1] == "'":
         return s[1:-1].replace("''", "'")
     if len(s) >= 2 and s[0] == s[-1] == '"':
-        return s[1:-1]
+        return _decode_double_quoted(s[1:-1])
     return s
 
 
 def _split_top(s, sep):
     parts, depth, q, cur = [], 0, None, ''
-    for c in s:
+    for i, c in enumerate(s):
         if q:
             cur += c
             if c == q:
                 q = None
-        elif c in ('"', "'"):
+        elif c in ('"', "'") and _opens_quote(s, i):
             q = c
             cur += c
         elif c in '[{':
@@ -80,7 +109,7 @@ def _split_first_colon(s):
         if q:
             if c == q:
                 q = None
-        elif c in ('"', "'"):
+        elif c in ('"', "'") and _opens_quote(s, i):
             q = c
         elif c in '[{':
             depth += 1
@@ -97,7 +126,7 @@ def _parse_scalar(s):
     if len(s) >= 2 and s[0] == s[-1] == "'":
         return s[1:-1].replace("''", "'")  # YAML single-quote escaping
     if len(s) >= 2 and s[0] == s[-1] == '"':
-        return s[1:-1]                       # quoted → always a literal string
+        return _decode_double_quoted(s[1:-1])  # quoted → always a literal string
     if s.lower() in ('null', '~'):
         return None                          # match PyYAML: bare null/~ → None
     return s

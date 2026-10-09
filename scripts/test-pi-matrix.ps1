@@ -211,6 +211,7 @@ child.once("close", (code) => console.log(JSON.stringify({ code, gotState, event
       Ko "production sync failed during skew repair (exit $LASTEXITCODE)"
     } else {
       $repaired = VerOf '@earendil-works/pi-ai'
+      $base = ($pkgJson.dependencies.'@earendil-works/pi-ai') -replace '^[^\d]*', ''
       if ($repaired -eq $base) { Ok "convergence repaired the skew (pi-ai back to $base)" } else { Ko "skew not repaired (pi-ai: $repaired)" }
     }
   } else { SkipM 'skew planting failed (network?)' }

@@ -233,6 +233,21 @@ try {
     assert.match(audit[0].detail, /^push main:/);
   });
 
+  await t("status: a committed but unpushed contract is not-shared, and Get never overwrites it with origin's older copy", () => {
+    const { repo } = shareFixture("head-ahead");
+    const intended = CONTRACT + "  timezone: 'UTC'\n";
+    writeFileSync(join(repo, ps.CONTRACT_FILE), intended);
+    hook(repo, "pre-push", "exit 1");
+    const refused = ps.shareContract(repo, { name: "Fixture" });
+    assert.deepEqual([refused.ok, refused.state, refused.committed], [false, "push-refused", true]);
+    const status = ps.teamFileStatus(repo);
+    assert.equal(status.state, "not-shared", "HEAD ahead of origin is the user's unshared edit, not the team's newer copy");
+    assert.equal(status.committed, true);
+    const got = ps.getTeamContract(repo);
+    assert.equal(got.state, "not-shared");
+    assert.equal(readFileSync(join(repo, ps.CONTRACT_FILE), "utf8"), intended, "the committed edit stays on disk");
+  });
+
   await t("team branch: the file's own default branch (dev) wins over origin's default (main) when origin has it", () => {
     const { repo, origin } = shareFixture("dev-branch");
     git(repo, "checkout", "--quiet", "-b", "dev");

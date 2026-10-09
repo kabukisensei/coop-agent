@@ -146,7 +146,9 @@ ignored.
   companion page itself, the header `X-Coop-Companion: 1` and a JSON body
   (`checkOrigin`), on top of the `SameSite=Strict` cookie.
 - **Rate limits.** 60 requests a minute per device, 20 answers a minute, 5
-  failed pairings an hour per address; over that is `rate-limited`.
+  failed pairings an hour per address and pairing code (a new code from the
+  window resets the count, since behind `tailscale serve` every phone shares
+  one address); over that is `rate-limited`.
 
 ## Events and reconnect
 

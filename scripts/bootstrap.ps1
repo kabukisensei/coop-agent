@@ -34,9 +34,6 @@
 # Runs under `irm | iex` (no $PSScriptRoot, and `exit` would close the user's
 # shell, so every failure is a `return`) and as a file (tests, `pwsh -File`),
 # where the same code sets the exit code. Windows PowerShell 5.1 syntax only.
-# The file keeps the repo's UTF-8 BOM (scripts/check-bom.ps1); Invoke-RestMethod
-# decodes the response through a StreamReader, which drops it, so iex sees the
-# `#!` line first (checked against pwsh 7; 5.1 decodes the same way).
 
 $script:CoopBootstrapRepo = 'https://github.com/kabukisensei/coop-agent'
 

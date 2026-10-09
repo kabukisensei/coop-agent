@@ -769,8 +769,25 @@ await check("pi-session: killTree ends the whole tree (taskkill /T on Windows)",
   killTree(123, "win32", { execFileImpl: (file, args) => calls.push([file, args]), systemRoot: "C:\\Windows" });
   assert.deepEqual(calls, [["C:\\Windows\\System32\\taskkill.exe", ["/PID", "123", "/T", "/F"]]]);
   killTree(0, "win32", { execFileImpl: (file, args) => calls.push([file, args]), systemRoot: "C:\\Windows" });
-  killTree(5, "win32", { execFileImpl: (file, args) => calls.push([file, args]), systemRoot: "Windows" });
-  assert.equal(calls.length, 1);
+  const killed = [];
+  killTree(5, "win32", { execFileImpl: (file, args) => calls.push([file, args]), systemRoot: "Windows", killImpl: (pid) => killed.push(pid) });
+  // "" stands for an unset SystemRoot: `undefined` would take the default, the host's own.
+  killTree(6, "win32", { execFileImpl: (file, args) => calls.push([file, args]), systemRoot: "", killImpl: () => { throw new Error("gone"); } });
+  assert.equal(calls.length, 1, "no SystemRoot, no taskkill");
+  assert.deepEqual(killed, [5], "the process itself is still ended (child.kill())");
+});
+
+await check("attachments: the renderer attaches only picked paths or dropped File objects, never a path of its own", () => {
+  const main = readFileSync(join(ROOT, "desktop", "main.mjs"), "utf8");
+  const preload = readFileSync(join(ROOT, "desktop", "preload.cjs"), "utf8");
+  const app = readFileSync(join(ROOT, "desktop", "renderer", "app.mjs"), "utf8");
+  assert.match(main, /handle\("coop:attach-file", async \(state, path\) => \{\s*const file = String\(path \|\| ""\);\s*if \(!state\.pickedPaths \|\| !state\.pickedPaths\.has\(file\)\) return \{ success: false/, "a path not from the picker is refused");
+  assert.match(main, /for \(const path of picked\) state\.pickedPaths\.add\(path\);/, "the picker's paths are remembered per window");
+  assert.match(main, /if \(command\.type === "prompt" && state\.pickedPaths\) state\.pickedPaths\.clear\(\);/, "cleared when the prompt goes");
+  assert.match(preload, /path = webUtils\.getPathForFile\(file\);[\s\S]{0,200}ipcRenderer\.invoke\("coop:attach-dropped", path\)/, "a dropped File's path is resolved in the preload");
+  assert.equal(/ipcRenderer\.invoke\("coop:attach-dropped", (?!path\))/.test(preload), false, "attach-dropped takes only the preload's own path");
+  assert.equal(app.includes("coop:attach"), false, "the renderer has no channel of its own");
+  assert.match(app, /coop\.attachFile\(typeof entry === "string" \? entry : entry\.file\)/, "dropped files go by their File object");
 });
 
 await check("pi-session: on Windows, what a dead Pi left is found by its id and start time", async () => {

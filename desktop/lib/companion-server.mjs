@@ -61,6 +61,11 @@ export function createCompanionServer({ store, tabs = null, active = null, origi
   const requests = new Limiter(LIMITS.requestsPerMinute, 60_000, now);
   const answers = new Limiter(LIMITS.answersPerMinute, 60_000, now);
   const pairs = new Limiter(LIMITS.pairFailuresPerHour, 3600_000, now);
+  // The pairing the failure count belongs to: a new code from the window
+  // (startPairing) resets it. Behind `tailscale serve` every phone shares the
+  // loopback address, so one person's mistypes must not lock pairing for the
+  // whole VM for an hour; the code itself still dies after five wrong tries.
+  let countedPairing = store.pairing;
   /** @type {Map<string, Set<import("node:http").ServerResponse>>} open streams by device */
   const streams = new Map();
   // When each device last got a notice (MC11): one a minute at most.
@@ -203,6 +208,7 @@ export function createCompanionServer({ store, tabs = null, active = null, origi
     }
 
     if (request.op === "pair") {
+      if (store.pairing && store.pairing !== countedPairing) { countedPairing = store.pairing; pairs.hits.clear(); }
       if (!pairs.take(ip)) return refuse(res, "rate-limited");
       // A phone paired before presents its old cookie: the new pairing replaces it.
       const before = readCookie(req.headers.cookie);

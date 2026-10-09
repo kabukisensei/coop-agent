@@ -489,7 +489,7 @@ function Invoke-CoopLaunchPreflight {
     Coop-Die 'launch aborted — update the Pi agent above, then re-run: coop   (bypass once with COOP_SKIP_EXT_CHECK=1)'
   }
   elseif ($rc -eq 10) {
-    if ($env:COOP_NO_ISOLATE -eq '1') {
+    if (Test-CoopNoIsolate) {
       # Isolation off → Pi is loading the user's personal ~/.pi/agent. Don't silently
       # mutate the personal tree at launch; tell them how to align it deliberately.
       Coop-Warn "your Pi extension tree needs realignment to pi $ver (isolation is off) — align it deliberately: coop doctor --fix   (or unset COOP_NO_ISOLATE to use coop's isolated tree)"
@@ -587,7 +587,7 @@ function Build-CoopPiArgs {
           }
           $fm = Get-CoopSkillName $sk
           if (-not $fm) {
-            Write-Error 'missing frontmatter name'
+            Coop-Warn "skipping team skill '$($skillDir.Name)' (missing frontmatter name)"
             continue
           }
           if ($ownNames.Contains($fm)) {
@@ -1225,12 +1225,16 @@ function Invoke-CoopInit {
   if ($where.Kind -eq 'home-repo' -and $dir -eq $where.Root) { $env:COOP_INIT_REPOS = ($where.Repos -join ',') }
   if ($template) {
     New-Item -ItemType Directory -Force -Path (Join-Path $dir '.coop') | Out-Null
-    & $py $wizard "$dir" --template > "$dst"
+    # Capture and write the text ourselves: under Windows PowerShell 5.1 the `>`
+    # operator is Out-File with its UTF-16 default, which lib/_yaml.py (utf-8-sig)
+    # and the Node contract readers cannot parse.
+    $templateText = [string](& $py $wizard "$dir" --template | Out-String)
     if ($LASTEXITCODE -ne 0) {
       # Never leave an empty contract behind and report success.
       Remove-Item -LiteralPath $dst -Force -ErrorAction SilentlyContinue
       exit $LASTEXITCODE
     }
+    [System.IO.File]::WriteAllText($dst, $templateText, (New-Object System.Text.UTF8Encoding($false)))
   } else {
     & $py $wizard "$dir"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -1692,6 +1696,32 @@ function Invoke-CoopRelease {
   }
 }
 
+function Invoke-CoopInitCi {
+  param([string]$Dir, [string]$CiType)
+  if ($CiType -notin @('github','ado')) { Coop-Die "unknown CI type '$CiType' — usage: coop init --ci github|ado" }
+  $projYml = Join-Path $Dir '.coop\project.yml'
+  # The generated pipelines pin the coop tools at the release manifest's versions.
+  $manifest = $script:CoopReleaseManifest
+
+  if (-not (Test-Path -LiteralPath $projYml -PathType Leaf)) { Coop-Die "$projYml not found. Run ``coop init`` first." }
+
+  $pyCmd = Get-CoopPython
+  if ($pyCmd) {
+    $script = Join-Path $script:CoopRoot 'lib\_ciscaffold.py'
+    $outFile = (& $pyCmd $script $CiType $projYml $manifest $Dir)
+    $rc = $LASTEXITCODE
+    if ($rc -eq 0) {
+      Coop-Ok "Wrote $outFile"
+    } elseif ($rc -eq 3) {
+      Coop-Warn "No CI gates generated: no coop-data-doc.yml in $Dir" 'set up lineage docs first: coop data-doc setup   (or /setup-docs in the agent)'
+    } else {
+      Coop-Die "CI scaffolding failed"
+    }
+  } else {
+    Coop-Die "Python 3 required to scaffold CI"
+  }
+}
+
 # --- Dispatch ----------------------------------------------------------------
 $argList = @()
 if ($null -ne $args) { $argList = @($args) }
@@ -1768,7 +1798,7 @@ switch -CaseSensitive ($cmd) {
       exit $LASTEXITCODE
     }
     if (-not (Test-Have 'pi')) { Coop-Die 'pi not installed.' }
-    & pi uninstall @rest
+    & pi remove @rest
     exit $LASTEXITCODE
   }
   'list' {
@@ -1806,31 +1836,5 @@ switch -CaseSensitive ($cmd) {
     # Unknown flags (-*) or unknown subcommand: pass straight to pi (files/messages).
     Invoke-LaunchPi -PassArgs $argList
     break
-  }
-}
-
-function Invoke-CoopInitCi {
-  param([string]$Dir, [string]$CiType)
-  if ($CiType -notin @('github','ado')) { Coop-Die "unknown CI type '$CiType' — usage: coop init --ci github|ado" }
-  $projYml = Join-Path $Dir '.coop\project.yml'
-  # The generated pipelines pin the coop tools at the release manifest's versions.
-  $manifest = $script:CoopReleaseManifest
-
-  if (-not (Test-Path -LiteralPath $projYml -PathType Leaf)) { Coop-Die "$projYml not found. Run ``coop init`` first." }
-
-  $pyCmd = Get-CoopPython
-  if ($pyCmd) {
-    $script = Join-Path $script:CoopRoot 'lib\_ciscaffold.py'
-    $outFile = (& $pyCmd $script $CiType $projYml $manifest $Dir)
-    $rc = $LASTEXITCODE
-    if ($rc -eq 0) {
-      Coop-Ok "Wrote $outFile"
-    } elseif ($rc -eq 3) {
-      Coop-Warn "No CI gates generated: no coop-data-doc.yml in $Dir" 'set up lineage docs first: coop data-doc setup   (or /setup-docs in the agent)'
-    } else {
-      Coop-Die "CI scaffolding failed"
-    }
-  } else {
-    Coop-Die "Python 3 required to scaffold CI"
   }
 }

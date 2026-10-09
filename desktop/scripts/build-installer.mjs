@@ -105,13 +105,27 @@ export function readVersion(root = ROOT) {
   return readFileSync(join(root, "VERSION"), "utf8").trim();
 }
 
+/**
+ * A .cmd or .bat needs the shell on Windows, and the shell splits an unquoted
+ * path at its spaces: quote the command and each argument for that case.
+ * Returns `{ command, args, shell }` for spawnSync.
+ */
+export function shellInvocation(command, args, platform = process.platform) {
+  const shell = platform === "win32" && /\.(cmd|bat)$/i.test(command);
+  if (!shell) return { command, args, shell };
+  const quote = (text) => (/[\s&()^|<>"]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text);
+  return { command: quote(command), args: args.map(quote), shell };
+}
+
 function run(command, args, cwd, env = process.env) {
-  const result = spawnSync(command, args, { cwd, env, stdio: "inherit", shell: process.platform === "win32" && /\.(cmd|bat)$/i.test(command) });
+  const call = shellInvocation(command, args);
+  const result = spawnSync(call.command, call.args, { cwd, env, stdio: "inherit", shell: call.shell });
   if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed (${result.status === null ? result.signal : result.status})`);
 }
 
 function capture(command, args, cwd) {
-  const result = spawnSync(command, args, { cwd, encoding: "utf8", shell: process.platform === "win32" && /\.(cmd|bat)$/i.test(command) });
+  const call = shellInvocation(command, args);
+  const result = spawnSync(call.command, call.args, { cwd, encoding: "utf8", shell: call.shell });
   if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed (${result.status === null ? result.signal : result.status}): ${(result.stderr || "").trim().split("\n").slice(-3).join(" | ")}`);
   return result.stdout;
 }

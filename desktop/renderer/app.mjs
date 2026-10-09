@@ -783,16 +783,22 @@ async function addImages(files) {
   renderAttachments();
 }
 
-/** Files on disk (dropped, pasted from Explorer, or picked): the main process reads each one. */
-async function addPaths(paths) {
-  for (const path of paths) {
+/**
+ * Files on disk (dropped, pasted from Explorer, or picked): the main process
+ * reads each one. An entry is a picked path, or `{ path, file }` for a dropped
+ * or pasted File (the preload resolves its path again; the path here is only
+ * for the name and kind).
+ */
+async function addPaths(entries) {
+  for (const entry of entries) {
+    const path = typeof entry === "string" ? entry : entry && entry.path;
     if (!path) continue;
     if (!roomFor(/\.(png|jpe?g|gif|webp)$/i.test(path) ? "image" : "file")) break;
     if (/\.(png|jpe?g|gif|webp)$/i.test(path) && !modelReadsImages()) continue;
     const pending = { kind: "pending", name: path.split(/[\\/]/).pop() };
     app.attachments.push(pending);
     renderAttachments();
-    const result = await coop.attachFile(path);
+    const result = await coop.attachFile(typeof entry === "string" ? entry : entry.file);
     const index = app.attachments.indexOf(pending);
     if (index < 0) { if (result.success && result.data.id) coop.forgetAttachment(result.data.id); continue; }
     if (result.success) {
@@ -818,7 +824,7 @@ function addFiles(files) {
   const blobs = [];
   for (const file of files) {
     const path = coop.pathForFile(file);
-    if (path) paths.push(path);
+    if (path) paths.push({ path, file });
     else if (file.type.startsWith("image/")) blobs.push(file);
     else toast(`${file.name || "That"} has no file on disk to read; save it first.`, "warning");
   }
