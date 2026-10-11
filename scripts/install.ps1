@@ -189,7 +189,7 @@ function Invoke-CoopPrereqInstall([object[]]$Rows) {
 function Test-CoopPrereqInstallOffered {
   if ([Console]::IsInputRedirected -and $env:COOP_ASSUME_YES -ne '1') { return $false }
   if ($env:OS -eq 'Windows_NT') { return [bool](Test-Have 'winget') }
-  if ([string](& uname -s 2>$null) -eq 'Darwin') { return [bool](Test-Have 'brew') }
+  if (Test-CoopIsMac) { return [bool](Test-Have 'brew') }
   return $false
 }
 # A yes-by-default question: Enter or y/yes is yes, anything else is no.

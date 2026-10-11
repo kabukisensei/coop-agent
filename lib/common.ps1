@@ -1293,6 +1293,15 @@ function Coop-Head { param([string]$m) Coop-Emit "`n$($script:C_BOLD)$($script:C
 # Is a command available on PATH?
 function Test-Have { param([string]$Name) [bool](Get-Command $Name -ErrorAction SilentlyContinue) }
 
+# macOS, decided without throwing: `& uname` is a terminating error when uname
+# is not on PATH (a fixture that strips PATH, or a bare shell), and Windows
+# never asks. Windows PowerShell 5.1 has no $IsMacOS, so this stays explicit.
+function Test-CoopIsMac {
+  if ($env:OS -eq 'Windows_NT') { return $false }
+  if (-not (Test-Have 'uname')) { return $false }
+  try { return ([string](& uname -s 2>$null) -eq 'Darwin') } catch { return $false }
+}
+
 # Pick a usable python interpreter that ACTUALLY runs — not the Windows Store
 # App-Execution-Alias stub. python.org's installer never creates python3.exe, so
 # on stock Windows `python3` resolves ONLY to the Store stub under
@@ -1332,7 +1341,7 @@ function Test-CoopOdbcDriver18 {
 # when a Required row is not Ok; doctor reports the same rows with the same text.
 function Get-CoopPrereqs([bool]$NoFabric = $false) {
   $win = ($env:OS -eq 'Windows_NT')
-  $mac = (-not $win) -and ([string](& uname -s 2>$null) -eq 'Darwin')
+  $mac = (-not $win) -and (Test-CoopIsMac)
   if ($win) {
     $fix = @{
       git = 'winget install --id Git.Git -e'; node = 'winget install --id OpenJS.NodeJS.LTS -e'
