@@ -38,6 +38,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **Prerequisite rows no longer throw where `uname` is off PATH.** `coop
+  install`, `coop doctor` and the coop window's first launch ask the platform
+  through one helper (`Test-CoopIsMac`) that answers no instead of a
+  terminating error when `uname` is not on PATH. The nightly extended lane had
+  failed every day since 2026-10-04 on exactly that: the ubuntu job pins
+  Python outside `/usr/bin`, so the window-package fixture's stripped PATH
+  carried no `uname`.
+
 Findings of the v0.35.0 code review:
 
 - **Guardrails (tightened).** Git long-option abbreviations (`--amen`,
