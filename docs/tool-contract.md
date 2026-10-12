@@ -435,6 +435,75 @@ section; `coop init --seed-docs` uses the folder as coop-data-doc's SQL source w
 the contract has no SQL repository. The snapshot is reference, never a deployment
 artifact: nothing runs from it.
 
+### `schema_compare` (deterministic environment compare and promotion script)
+
+The deterministic schema compare (master plan row SQ10, Aaron's ask of 2026-10-12:
+compare the schemas of two Fabric workspaces, dev against prod, and help move the
+code across, because the Warehouse has no good option), implemented by
+`lib/schema_compare.py`. Each live side is read over the same connection path as
+`sql_impact` (`open_connection(environment=...)`: the named ready `sql_targets`
+entry, same identity pinning, driver, encryption and timeouts; a read of production
+is a plain read), with the four fixed, parameter-free catalog queries the snapshot
+uses (`sys.schemas`, `sys.objects`, `INFORMATION_SCHEMA.COLUMNS`, `sys.sql_modules`).
+The tool accepts two optional fields:
+
+| Field | Values | Default |
+| --- | --- | --- |
+| `source` | `dev`, `test`, `prod`, or `snapshot` (the committed catalog snapshot, read from its folder with no connection) | the contract's default dev/test entry |
+| `target` | `dev`, `test`, `prod` | `prod` |
+
+The same side on both ends, a value outside those sets, or any other field is
+`input_invalid` before anything connects. The direction is "what the target needs
+to match the source". The compare covers schemas (user schemas, system ones
+dropped), tables (each column's name, rendered type, nullability and position),
+and views, procedures and functions by definition, compared with line endings and
+runs of whitespace folded so a reformatted module is not a change. Everything else
+(constraints, indexes, permissions, row data) is out of scope and the report says so.
+
+The result carries both sides' summaries (environment, kind, database, object
+counts; the snapshot side adds `taken_at`), `counts` (`total`, `add`, `alter`,
+`drop`, `destructive`), the first 200 `changes` (kind, schema, name, action
+`add`/`alter`/`drop`/`replace`/`unknown`, detail, `destructive`), the script's
+statement counts, `notes` (an unreadable `sys.sql_modules` or a capped list on
+either side, named by side) and `path`: the folder
+`.coop/schema-compare/<source>-to-<target>/` beside the contract, holding
+`report.md` (the same table for people) and `deploy.sql`. The script is ordered to
+run top to bottom: new schemas, new tables, in-place column additions, then
+functions, views and procedures as `CREATE OR ALTER`, each kind sorted by the names
+its definition mentions inside the changed set and then by name. Every removal
+and every change that can lose data (a dropped or retyped column, a `NOT NULL`
+column added to an existing table, a name whose kind differs between the sides)
+lands last, commented out under a DESTRUCTIVE banner, so nothing lossy runs
+unless a person uncomments it. On a Fabric Warehouse or Lakehouse target a column
+change is rendered as a rebuild note with the source shape instead of
+`ALTER TABLE`, because those targets do not alter columns in place. A failed side
+is reported with its own state and `side` (`target_invalid` when the entry is not
+ready, `snapshot_missing` when no snapshot exists), and `output_unwritable` when
+the folder cannot be written. No server name, driver text, credential or exception
+text appears in the result or the files.
+
+Governance (`extensions/coop-guardrails`): both sides are catalog metadata reads,
+so the call runs without a prompt on every pair, production on either side
+included, and is audited as `governed-schema-compare` with the pair it compared
+(`dev->prod`, `snapshot->prod`, ...); a call with any other field, a value outside
+the sets or the same side twice is blocked outright. The tool applies nothing:
+running the script against a target is the user's act through the write rules in
+`docs/guardrails-reference.md`, one statement at a time. `coop schema compare
+[--source ...] [--target ...]` is the terminal form of the same helper and prints
+the counts and the two paths.
+
+Why coop has its own compare rather than wrapping a Microsoft tool: Fabric
+deployment pipelines and Git integration deploy a Warehouse through DacFx with no
+editable script, drop and recreate a table for a column change, carry no
+permissions, and only pair workspaces inside one tenant and pipeline; SqlPackage
+supports the Warehouse but is a separate .NET tool install per machine whose
+publish is a black box rather than a script a person reviews; dbt is a
+transformation framework, not a compare. coop's tool reuses the connection path
+and the snapshot it already has, needs nothing installed beyond the Fabric Python,
+and produces a plain script the team reads before any of it runs through the
+governed write path. SqlPackage remains the right tool for a full-fidelity dacpac
+of a large estate.
+
 ---
 
 ## Microsoft Fabric CLI (`fab`) and the Python Fabric collision

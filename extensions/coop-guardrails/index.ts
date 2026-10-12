@@ -1304,6 +1304,8 @@ const MANAGED_SQL_SERVER = "fabric-sqlendpoint";
 const FABRIC_SQL_FALLBACK_TOOL = "fabric_sql_query";
 const SQL_IMPACT_TOOL = "sql_impact";
 const CATALOG_SNAPSHOT_TOOL = "catalog_snapshot";
+const SCHEMA_COMPARE_TOOL = "schema_compare";
+const SCHEMA_COMPARE_SIDES = new Set(["dev", "test", "prod"]);
 // DISABLE/ENABLE (triggers, indexes), DBCC (CHECKIDENT RESEED, SHRINK…), KILL,
 // RECONFIGURE and SETUSER change server or data state too (#5).
 const SQL_MUTATION_VERB = /\b(ALTER|CREATE|DBCC|DELETE|DENY|DISABLE|DROP|ENABLE|EXEC|EXECUTE|GRANT|IDENTITY_INSERT|INSERT|KILL|MERGE|RECONFIGURE|RENAME|REPLACE|REVOKE|SETUSER|TRUNCATE|UPDATE|UPSERT)\b/i;
@@ -2105,6 +2107,32 @@ export function decideCatalogSnapshot(event: any, deps: LiveReadResolverDeps): S
   if (command === "status") return { action: "allow", environment: "", reason: "status reads the snapshot folder only" };
   if (command !== "snapshot") return { action: "block", environment: "", reason: "command must be status or snapshot" };
   return decideLiveMetadataRead(deps);
+}
+
+/** schema_compare (SQ10) reads two catalogs, a `sql_targets` entry or the
+ *  committed snapshot against a `sql_targets` entry, and writes its diff and
+ *  promotion script under the contract's compare folder; it never runs a
+ *  statement on either side. Both sides are plain metadata reads, so the call
+ *  runs on every environment, production included, and is audited with the
+ *  pair it compares. The sides come from the contract alone: a call carrying any
+ *  field beyond `source` and `target`, or a value outside the fixed sets, is
+ *  blocked outright. */
+export function decideSchemaCompare(event: any): SqlImpactDecision {
+  const input = event?.input ?? {};
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return { action: "block", environment: "", reason: "accepts only the fields source and target" };
+  }
+  for (const key of Object.keys(input)) {
+    if (key !== "source" && key !== "target") return { action: "block", environment: "", reason: "accepts only the fields source and target" };
+  }
+  const source = input.source === undefined ? "default" : input.source;
+  const target = input.target === undefined ? "prod" : input.target;
+  if (source !== "default" && source !== "snapshot" && !SCHEMA_COMPARE_SIDES.has(source)) {
+    return { action: "block", environment: "", reason: "source must be dev, test, prod or snapshot" };
+  }
+  if (!SCHEMA_COMPARE_SIDES.has(target)) return { action: "block", environment: "", reason: "target must be dev, test or prod" };
+  if (source === target) return { action: "block", environment: "", reason: "source and target must differ" };
+  return { action: "allow", environment: `${source}->${target}`, reason: "two catalog reads; nothing is applied" };
 }
 
 /** The target rule both live metadata tools share: catalog metadata is a read,
@@ -3069,11 +3097,13 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       if (tool !== "bash") {
         // 0b'. sql_impact (SQ4): catalog metadata for one object on the executor's
         // dev/test target runs without a prompt; anything else asks or is blocked.
-        if (tool === SQL_IMPACT_TOOL || tool === CATALOG_SNAPSHOT_TOOL) {
+        if (tool === SQL_IMPACT_TOOL || tool === CATALOG_SNAPSHOT_TOOL || tool === SCHEMA_COMPARE_TOOL) {
           const deps = { ...liveReadDeps, contract: () => ensureSessionGovernance(ctx.cwd).sqlContract };
-          const impact = tool === SQL_IMPACT_TOOL ? decideSqlImpact(event, deps) : decideCatalogSnapshot(event, deps);
-          const auditTool = tool === SQL_IMPACT_TOOL ? "governed-sql-impact" : "governed-catalog-snapshot";
-          const label = tool === SQL_IMPACT_TOOL ? "live metadata read" : "live catalog snapshot";
+          const impact = tool === SQL_IMPACT_TOOL ? decideSqlImpact(event, deps)
+            : tool === CATALOG_SNAPSHOT_TOOL ? decideCatalogSnapshot(event, deps)
+            : decideSchemaCompare(event);
+          const auditTool = tool === SQL_IMPACT_TOOL ? "governed-sql-impact" : tool === CATALOG_SNAPSHOT_TOOL ? "governed-catalog-snapshot" : "governed-schema-compare";
+          const label = tool === SQL_IMPACT_TOOL ? "live metadata read" : tool === CATALOG_SNAPSHOT_TOOL ? "live catalog snapshot" : "live schema compare";
           if (impact.action === "block") {
             audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: auditTool, decision: "blocked", label, detail: "input-invalid" });
             return { block: true, reason: `coop guardrails: blocked ${tool}; it ${impact.reason}.` };

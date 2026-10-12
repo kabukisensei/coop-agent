@@ -201,6 +201,11 @@ const CATALOG_SNAPSHOT_PARAMS = Type.Object({
   command: Type.Optional(Type.Union([Type.Literal("status"), Type.Literal("snapshot")], { description: "status (default) or snapshot." })),
 });
 
+const SCHEMA_COMPARE_PARAMS = Type.Object({
+  source: Type.Optional(Type.Union([Type.Literal("dev"), Type.Literal("test"), Type.Literal("prod"), Type.Literal("snapshot")], { description: "Side to promote from: a sql_targets entry or the committed snapshot. Default: the contract's default entry." })),
+  target: Type.Optional(Type.Union([Type.Literal("dev"), Type.Literal("test"), Type.Literal("prod")], { description: "Side to promote to. Default: prod." })),
+});
+
 const FABRIC_SQL_QUERY_PARAMS = Type.Object({
   query: Type.String({ description: "One plain SELECT with a literal TOP bound. Sent to the helper over stdin, never argv." }),
   maximum_rows: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000, description: "Optional result cap at or below the query's TOP bound." })),
@@ -223,7 +228,7 @@ export function fabricSqlPythonResolverInvocation(
   };
 }
 
-export type SqlHelper = "sql_query.py" | "sql_impact.py" | "catalog_snapshot.py";
+export type SqlHelper = "sql_query.py" | "sql_impact.py" | "catalog_snapshot.py" | "schema_compare.py";
 
 export function fabricSqlHelperInvocation(
   python: string,
@@ -315,9 +320,10 @@ export const CONTRACT_CHANGED_HINT = "the project contract (.coop/project.yml) c
 
 /** How long a helper may run. One bounded query or one object's trace answers
  *  in seconds; a catalog snapshot reads every object's definition (hundreds on
- *  a real warehouse, which took over a minute on the client VM). */
+ *  a real warehouse, which took over a minute on the client VM), and a schema
+ *  compare reads two catalogs that way. */
 export function sqlHelperTimeoutMs(helper: SqlHelper): number {
-  return helper === "catalog_snapshot.py" ? 300_000 : 60_000;
+  return helper === "catalog_snapshot.py" || helper === "schema_compare.py" ? 300_000 : 60_000;
 }
 
 async function runFabricSqlHelper(params: any, signal: AbortSignal | undefined, cwd: string, helper: SqlHelper = "sql_query.py"): Promise<any> {
@@ -2440,6 +2446,40 @@ export default function coopTools(pi: ExtensionAPI) {
           "see manifest.json in the snapshot folder",
         )
         : `catalog_snapshot unavailable: ${String(details?.state || "internal_error")}.${details?.state === "contract_changed" ? ` ${CONTRACT_CHANGED_HINT}` : ""}${details?.state === "output_not_snapshot" ? ` The folder ${details.path} holds files that are not a coop snapshot; move them or set catalog.path in .coop/project.yml.` : ""}`;
+      return { content: [{ type: "text" as const, text }], details };
+    },
+  });
+
+  pi.registerTool({
+    name: "schema_compare",
+    label: "Schema compare",
+    description: "Read-only compare of two sql_targets entries (or the committed snapshot) and an ordered promotion script: schemas, tables and columns, views, procedures, functions. Writes report.md and deploy.sql under .coop/schema-compare; never runs them.",
+    promptSnippet: "Compare dev and prod schemas; ordered promotion script, nothing applied",
+    promptGuidelines: [
+      "To move SQL changes between environments, call schema_compare first and work from its deploy.sql; destructive statements there are commented out and stay a person's call.",
+    ],
+    parameters: SCHEMA_COMPARE_PARAMS,
+    executionMode: "sequential",
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      const input: Record<string, string> = {};
+      if (typeof params?.source === "string") input.source = params.source;
+      if (typeof params?.target === "string") input.target = params.target;
+      const details = await runFabricSqlHelper(input, signal, ctx.cwd, "schema_compare.py");
+      const lines: string[] = [];
+      for (const c of Array.isArray(details?.changes) ? details.changes : []) {
+        const name = c.kind === "schema" ? String(c.schema) : `${c.schema}.${c.name}`;
+        lines.push(`- ${c.kind} ${name}: ${c.action}${c.destructive ? " (destructive)" : ""}${c.detail ? `, ${c.detail}` : ""}`);
+      }
+      if (details?.changes_truncated) lines.push("- more changes in report.md");
+      for (const note of Array.isArray(details?.notes) ? details.notes : []) lines.push(`- note: ${String(note)}`);
+      const side = (s: any) => `${s?.environment ?? "?"} ${s?.kind ?? ""} ${s?.database ?? ""}`.trim();
+      const text = details?.ok
+        ? modelText(
+          `schema_compare: ${side(details.source)} -> ${side(details.target)}: ${details.counts?.total ?? 0} difference(s) (${details.counts?.add ?? 0} add, ${details.counts?.alter ?? 0} alter, ${details.counts?.drop ?? 0} drop, ${details.counts?.destructive ?? 0} destructive). Script: ${details.script?.statements ?? 0} statement(s) to run, ${details.script?.destructive ?? 0} commented out. Files: ${details.path}/report.md and deploy.sql. Nothing was applied; a run against the target goes through the governed write path, one statement at a time, after the user has read the script.`,
+          lines,
+          "see report.md",
+        )
+        : `schema_compare unavailable: ${String(details?.state || "internal_error")}${details?.side ? ` (side: ${details.side})` : ""}.${details?.state === "contract_changed" ? ` ${CONTRACT_CHANGED_HINT}` : ""}${details?.state === "snapshot_missing" ? " No committed catalog snapshot exists; run catalog_snapshot (command=\"snapshot\") first or compare a live entry." : ""}${details?.state === "target_invalid" ? " That side is not a ready sql_targets entry in .coop/project.yml." : ""}`;
       return { content: [{ type: "text" as const, text }], details };
     },
   });

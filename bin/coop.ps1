@@ -223,6 +223,64 @@ function Invoke-CoopCatalog {
   exit $(if ($rc -eq 0 -or $state -in @('ok', 'stale', 'missing')) { 0 } else { 1 })
 }
 
+# coop schema compare [--source dev|test|prod|snapshot] [--target dev|test|prod]
+# (master plan SQ10): the deterministic schema compare, written by
+# lib/schema_compare.py over the same read-only connection path as the native SQL
+# tools (two catalog reads, production included, since reads need no approval),
+# into .coop/schema-compare/<source>-to-<target>/report.md and deploy.sql. Nothing
+# is applied to either side; the script is for a person to read and carry over.
+function Invoke-CoopSchema {
+  param([string[]]$Rest)
+  $py = Get-CoopFabricPython
+  if (-not $py) { $py = Get-CoopPython }
+  if (-not $py) { Coop-Die 'python3 is required for coop schema' }
+  $null = Set-CoopProjectYmlEnv
+  $usage = 'usage: coop schema compare [--source dev|test|prod|snapshot] [--target dev|test|prod]   (default: the contract''s default entry against prod; writes report.md and deploy.sql, applies nothing)'
+  $cmd = ''
+  if ($Rest -and $Rest.Count -ge 1) { $cmd = $Rest[0] }
+  if ($cmd -ne 'compare') { Coop-Die $usage }
+  $helperArgs = @('--cli')
+  $i = 1
+  while ($i -lt $Rest.Count) {
+    $flag = $Rest[$i]
+    if ($flag -notin @('--source', '--target') -or ($i + 1) -ge $Rest.Count) { Coop-Die $usage }
+    $value = $Rest[$i + 1]
+    $allowed = @('dev', 'test', 'prod')
+    if ($flag -eq '--source') { $allowed += 'snapshot' }
+    if ($value -notin $allowed) { Coop-Die $usage }
+    $helperArgs += @($flag, $value)
+    $i += 2
+  }
+  $helper = Join-Path $script:CoopRoot 'lib\schema_compare.py'
+  Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue
+  $token = Get-CoopFabricMcpToken
+  if ($token) { $env:COOP_FABRIC_MCP_TOKEN = $token }
+  $raw = (& $py $helper @helperArgs 2>$null | Out-String).Trim()
+  $rc = $LASTEXITCODE
+  Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue
+  $info = $null
+  try { if ($raw) { $info = $raw | ConvertFrom-Json } } catch { $info = $null }
+  if (-not $info) { Coop-Die 'coop schema compare: the helper printed no result (is python3 the Fabric Python with pyodbc?)' }
+  $state = [string]$info.state
+  if ($state -eq 'ok') {
+    $c = $info.counts
+    Coop-Ok "schema compare $($info.source.environment) -> $($info.target.environment): $($c.total) difference(s) ($($c.add) add, $($c.alter) alter, $($c.drop) drop, $($c.destructive) destructive)"
+    Coop-Info "report: $($info.path)/report.md; script: $($info.path)/deploy.sql ($($info.script.statements) statement(s) to run, $($info.script.destructive) destructive or manual, commented out)"
+    foreach ($n in @($info.notes)) { if ($n) { Coop-Warn "$n" } }
+    Coop-Info 'nothing was applied; read the script before running any of it against the target'
+    exit 0
+  }
+  $hint = switch ($state) {
+    'project_unavailable' { ' - no .coop/project.yml above this folder' }
+    'pyodbc_unavailable' { ' - pyodbc is missing in the Fabric Python (coop doctor)' }
+    'target_invalid' { " - side $($info.side) is not a ready sql_targets entry in .coop/project.yml" }
+    'snapshot_missing' { ' - no committed catalog snapshot; run: coop catalog snapshot' }
+    'input_invalid' { ' - source and target must be different sides' }
+    default { '' }
+  }
+  Coop-Die "coop schema compare failed: $state$hint"
+}
+
 # coop project status|get|share [--root <dir>] [--force]: the shared project file
 # (master plan C1). `share` is the one Git write coop performs on its own: it
 # stages and commits .coop/project.yml alone and pushes the current branch, after
@@ -442,6 +500,8 @@ $(Coop-Bold)Usage$(Coop-Rst)
                             (--strict: exit 2 on a failing linter; --skip-docs: linters only)
   coop catalog <cmd>        Committed dev catalog snapshot: snapshot (read the dev/test catalog
                             into the contract's snapshot folder, read-only) | status
+  coop schema compare       Compare two sql_targets entries (or the committed snapshot) and write
+                            an ordered promotion script, nothing applied (--source, --target)
   coop router-trial [args]  Score the Jev and Clef classifiers against the coop/auto rule on
                             the shipped synthetic set (workstation only; keys from this
                             process's environment; --classifiers, --set, --out, --help)
@@ -1802,6 +1862,7 @@ switch -CaseSensitive ($cmd) {
   'release' { Invoke-CoopRelease $rest; break }
   'data-doc' { Invoke-DataDoc $rest; break }
   'catalog' { Invoke-CoopCatalog $rest; break }
+  'schema' { Invoke-CoopSchema $rest; break }
   'router-trial' { Invoke-CoopRouterTrial $rest; break }
   'support' { & (Join-Path $script:CoopRoot 'scripts\support-center.ps1') @rest; exit $LASTEXITCODE }
   { $_ -ceq 'fabric' -or $_ -ceq 'fab' } {
