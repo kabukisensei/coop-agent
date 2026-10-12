@@ -36,6 +36,23 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   the trial. `coop doctor` now warns when a TypeSafe, Cloudflare or OpenRouter key
   or sign-in is on a profile, because client use waits on a signed DPA.
 
+- **`schema_compare` and `coop schema compare`, the deterministic environment
+  compare** (master plan row SQ10, Aaron's ask of 2026-10-12). Reads the catalog
+  of two `sql_targets` entries (dev against prod by default; the committed
+  catalog snapshot can be the source) over the same read-only connection path as
+  `sql_impact`, and writes `.coop/schema-compare/<source>-to-<target>/report.md`,
+  a sorted diff of schemas, tables and columns, views, procedures and functions,
+  and `deploy.sql`, an ordered promotion script (new schemas, tables, columns,
+  then functions, views and procedures as `CREATE OR ALTER` in dependency order)
+  with every DROP and every change that can lose data commented out under a
+  DESTRUCTIVE banner; on a Fabric Warehouse a column change is a rebuild note,
+  not `ALTER TABLE`. Nothing is applied: running the script is the user's act
+  through the usual write approvals. The guardrails run the compare without a
+  prompt on every pair, production included (reads), audit the pair, and block
+  any other input. `lib/schema_compare.py`, `tests/schema-compare.test.py`;
+  the fixed-context budget moved from 7200 to 7300 tokens for the tool's
+  metadata.
+
 ### Fixed
 
 - **Prerequisite rows no longer throw where `uname` is off PATH.** `coop

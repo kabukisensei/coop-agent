@@ -87,9 +87,12 @@ for the Node tools and extensions; no script builds these paths inline.
      (uniform-padded, width-robust; `assets/splash.ansi`).
    - **`coop-tools` extension** — `extensions/coop-tools/`: registers the native
      LLM-callable tools `data_doc`, `bpa_review` (Tabular Editor BPA), the
-     governed `fabric_sql_query` fallback and `sql_impact` (`lib/sql_impact.py`:
+     governed `fabric_sql_query` fallback, `sql_impact` (`lib/sql_impact.py`:
      three fixed catalog queries for one object's dependents, references and
-     columns on the contract's dev/test SQL target), which shell out and return
+     columns on the contract's dev/test SQL target), `catalog_snapshot` and
+     `schema_compare` (`lib/schema_compare.py`: two catalog reads, a sorted diff
+     and an ordered promotion script under `.coop/schema-compare/`, applied by
+     nobody but a person), which shell out and return
      JSON the model reasons over. SQL/DAX/semantic-model standards need no tool: at launch
      `lib/standards.mjs` resolves the active coop-standards wiki articles and the
      extension feeds them into every such task, and the agent self-checks its diff

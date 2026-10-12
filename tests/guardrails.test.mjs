@@ -1592,6 +1592,41 @@ await t("catalog_snapshot (SQ9): status never asks; snapshot follows the sql_imp
   await handleSessionStart({ reason: "new" }, liveCtx);
 });
 
+await t("schema_compare (SQ10): two catalog reads run on every pair without a prompt, audited with the pair; forged inputs are blocked", async () => {
+  clearAudit();
+  writeManagedTarget();
+  writeContract(AZURE_CONTRACT);
+  process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmAnswer = false; confirmCount = 0;
+  const call = (input) => ({ toolName: "schema_compare", input });
+  assert.equal(blocked(await handle(call({}), liveCtx)), false, "defaults: the contract's default entry against prod");
+  assert.equal(blocked(await handle(call({ source: "dev", target: "prod" }), liveCtx)), false);
+  assert.equal(blocked(await handle(call({ source: "prod", target: "dev" }), liveCtx)), false, "production is a read on either side");
+  assert.equal(blocked(await handle(call({ source: "snapshot" }), liveCtx)), false, "the committed snapshot as the source");
+  assert.equal(blocked(await handle(call({ source: "test", target: "prod" }), { ...liveCtx, hasUI: false, ui: {} })), false, "headless too: reads never ask");
+  assert.equal(confirmCount, 0);
+  const rows = readAudit().filter((x) => x.tool === "governed-schema-compare");
+  assert.deepEqual(rows.map((x) => [x.decision, x.label, x.detail]), [
+    ["allowed", "live schema compare", "default->prod"],
+    ["allowed", "live schema compare", "dev->prod"],
+    ["allowed", "live schema compare", "prod->dev"],
+    ["allowed", "live schema compare", "snapshot->prod"],
+    ["allowed", "live schema compare", "test->prod"],
+  ]);
+  for (const input of [
+    { source: "dev", target: "dev" }, { target: "snapshot" }, { source: "lord" }, { source: "dev", target: "prod", apply: true },
+    { source: "dev", server: "x" }, { source: ["dev"] }, "dev", { source: "prod", target: "prod" },
+  ]) {
+    assert.equal(blocked(await handle(call(input), liveCtx)), true, JSON.stringify(input));
+  }
+  assert.equal(confirmCount, 0, "forged shapes are blocked, never prompted");
+  assert.equal(readAudit().filter((x) => x.tool === "governed-schema-compare" && x.decision === "blocked").length, 8);
+  removeContract();
+  writeManagedTarget();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+});
+
 await t("sql_impact (SQ4): metadata runs without a prompt on every target; forged inputs are blocked", async () => {
   clearAudit();
   writeManagedTarget();

@@ -11,7 +11,9 @@ $coop = Join-Path (Join-Path $root 'bin') 'coop.ps1'
 $GUARDRAILS_LIMIT_BYTES = 6500
 # 7000 -> 7200 on 2026-10-01 (master plan row SQ4): one new native tool,
 # sql_impact, plus its one-line AGENTS.md mention. Its metadata is kept compact.
-$TOTAL_LIMIT_TOKENS = 7200
+# 7200 -> 7300 on 2026-10-12 (master plan row SQ10): one new native tool,
+# schema_compare, with its metadata kept to three short strings.
+$TOTAL_LIMIT_TOKENS = 7300
 
 $py = Get-Command python3 -ErrorAction SilentlyContinue
 if (-not $py) { $py = Get-Command python -ErrorAction SilentlyContinue }
