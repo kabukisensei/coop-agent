@@ -153,7 +153,14 @@ for the Node tools and extensions; no script builds these paths inline.
    (the `extensions` list of `config/release-manifest.json`, the one manifest,
    with their transitive dependencies in `config/extensions-lock.json`, which
    `coop sync` installs with `npm ci` so every machine on a release runs the same
-   tree). One convergence path (master plan S2): `coop install` and `coop update`
+   tree). Pi's own dependencies are pinned the same way: `config/pi-lock.json`
+   is the lockfile for a one-dependency package whose dependency is the
+   manifest's Pi, and after `npm install -g` of the pin, `coop install`, `coop
+   update` and the window package build apply it with `lib/pilock.js`
+   (`npm ci` beside Pi, the tree moved into Pi's `node_modules`, a marker with the
+   lock's hash), so a later upstream publish cannot change what a release
+   installs; `coop doctor` reports drift from it (row U3). One convergence path
+   (master plan S2): `coop install` and `coop update`
    converge Pi, the pipx tools, the Fabric CLI and the npm authoring tools through
    the same `lib/common.ps1` functions (`Get-CoopFleetPlan` reads the manifest;
    `Invoke-CoopPiConverge` / `Invoke-CoopPipxConverge` /

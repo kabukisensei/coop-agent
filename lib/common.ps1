@@ -2782,9 +2782,69 @@ function Test-CoopPiConvergeAllowed([string]$Command = 'coop update') {
   return $false
 }
 
-# Pi: probe `pi --version`; skip at the pin; else `npm install -g <spec>`.
-# -Edge converges an existing install to the unpinned package (upstream latest);
-# -Force reinstalls the spec even at the pin.
+# --- Pi's own dependency tree (config\pi-lock.json; master plan row U3) --------
+# `npm install -g <package>@<pin>` pins Pi alone: Pi stopped shipping its
+# npm-shrinkwrap.json in 1.0.1, so npm resolves Pi's dependencies on the day of
+# the install (pi-codemode 1.2.0 broke every fresh Pi 1.1.0 install on 2026-10-12
+# that way). lib\pilock.js installs the lock's tree beside Pi with `npm ci` and
+# moves it into Pi's node_modules, so every machine on a release runs the same
+# tree. The installed Pi package: the first npm global root (bundled prefix first)
+# that holds @earendil-works\pi-coding-agent\package.json; '' when none does.
+function Get-CoopPiPackageDir {
+  foreach ($root in (Get-CoopNpmGlobalRoots)) {
+    $dir = Join-Path $root '@earendil-works\pi-coding-agent'
+    if (Test-Path -LiteralPath (Join-Path $dir 'package.json') -PathType Leaf) { return $dir }
+  }
+  return ''
+}
+
+function Get-CoopPiLockPath { return (Join-Path $script:CoopRoot 'config\pi-lock.json') }
+
+# True when the shipped Pi lock applies to the installed Pi (lock present, Pi at
+# the manifest's pin) but its tree does not carry it yet: no marker under Pi's
+# node_modules, or one written from another lock.
+function Test-CoopPiLockPending([string]$PiDir, [string]$PiVersion) {
+  $lock = Get-CoopPiLockPath
+  if (-not $PiDir -or -not (Test-Path -LiteralPath $lock -PathType Leaf)) { return $false }
+  $want = Coop-ManifestGet -Key 'pi.version'
+  if (-not $want -or $PiVersion -ne $want) { return $false }
+  $marker = Join-Path (Join-Path $PiDir 'node_modules') '.coop-pi-lock.json'
+  if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) { return $true }
+  try { $applied = [string]((Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json).lock_sha256) } catch { return $true }
+  return ($applied.ToUpperInvariant() -ne (Get-CoopFileSha256 $lock))
+}
+
+# `node lib\pilock.js apply <pi-dir>`: Coop-UnitResult. Native stderr is the
+# only signal under Windows PowerShell 5.1 (see Install-CoopExtensionsLock).
+function Invoke-CoopPiLockApply([string]$PiDir) {
+  if (-not (Test-Have 'node')) { return (Coop-UnitResult $false 'cannot pin pi dependencies (node missing)') }
+  $previousEap = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'Continue'
+    $out = @(& node (Join-Path $script:CoopRoot 'lib\pilock.js') apply $PiDir (Get-CoopPiLockPath) 2>&1 | ForEach-Object { $_.ToString() })
+    $rc = $LASTEXITCODE
+  } catch { $rc = 1; $out = @("$_") } finally { $ErrorActionPreference = $previousEap }
+  if ($rc -eq 0) { return (Coop-UnitResult $true 'dependency tree from config/pi-lock.json') }
+  $detail = ((@($out | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $_ -notmatch '^npm (warn|notice)' }) | Select-Object -Last 2) -join ' | ')
+  return (Coop-UnitResult $false ("pi dependency tree not pinned{0} — try: coop update" -f $(if ($detail) { ": $detail" } else { '' })))
+}
+
+# After Pi is at the pin: apply the shipped lock when it is pending. Folds the
+# lock's result into the unit's message; a failed apply fails the unit (Pi still
+# runs on the tree npm resolved, as before the lock existed).
+function Complete-CoopPiConverge([bool]$Ok, [string]$Message, [string]$Pin) {
+  if (-not $Ok) { return (Coop-UnitResult $false $Message) }
+  $piDir = Get-CoopPiPackageDir
+  if (-not (Test-CoopPiLockPending $piDir $Pin)) { return (Coop-UnitResult $true $Message) }
+  $lockResult = Invoke-CoopPiLockApply $piDir
+  return (Coop-UnitResult $lockResult.ok "$Message; $($lockResult.msg)")
+}
+
+# Pi: probe `pi --version`; skip at the pin; else `npm install -g <spec>`; then
+# the dependency lock (above) when Pi is at the pin.
+# -Edge converges an existing install to the unpinned package (upstream latest)
+# and leaves its dependencies as npm resolved them; -Force reinstalls the spec
+# even at the pin.
 function Invoke-CoopPiConverge {
   param([string]$Package, [string]$Pin, [bool]$Edge = $false, [bool]$Force = $false)
   $spec = if (-not $Edge -and $Pin) { "${Package}@${Pin}" } else { $Package }
@@ -2799,15 +2859,15 @@ function Invoke-CoopPiConverge {
       return (Coop-UnitResult $false "failed to update pi to latest (npm install -g $Package)")
     }
     if (-not $Pin) { return (Coop-UnitResult $true "pi present ($cur) — no manifest pin") }
-    if ($cur -eq $Pin) { return (Coop-UnitResult $true "pi $cur matches manifest") }
+    if ($cur -eq $Pin) { return (Complete-CoopPiConverge $true "pi $cur matches manifest" $Pin) }
     if (-not $hasNpm) { return (Coop-UnitResult $false 'cannot converge pi (npm missing) — install Node.js, then re-run: coop install') }
     & npm install -g $spec *> $null
-    if ($LASTEXITCODE -eq 0) { return (Coop-UnitResult $true "pi converged $cur -> $Pin") }
+    if ($LASTEXITCODE -eq 0) { return (Complete-CoopPiConverge $true "pi converged $cur -> $Pin" $Pin) }
     return (Coop-UnitResult $false "failed to converge pi to $spec — try: npm install -g $spec")
   }
   if (-not $hasNpm) { return (Coop-UnitResult $false 'cannot install pi (npm missing) — install Node.js, then re-run: coop install') }
   & npm install -g $spec *> $null
-  if ($LASTEXITCODE -eq 0) { return (Coop-UnitResult $true "pi installed ($spec)") }
+  if ($LASTEXITCODE -eq 0) { return (Complete-CoopPiConverge $true "pi installed ($spec)" $Pin) }
   return (Coop-UnitResult $false "npm install of pi failed — try: npm install -g $spec")
 }
 

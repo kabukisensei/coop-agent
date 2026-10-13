@@ -7,6 +7,23 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- **Pi's own dependency tree is pinned at install** (master plan row U3).
+  `npm install -g` pins Pi alone, and Pi stopped shipping `npm-shrinkwrap.json`
+  in 1.0.1, so npm resolved Pi's dependencies on the day of each install; that
+  is how pi-codemode 1.2.0 broke fresh installs of the pinned Pi 1.1.0 on
+  2026-10-12 while every earlier install kept working. `config/pi-lock.json`
+  (`node lib/pilock.js generate`, regenerated with every Pi pin bump) is npm's
+  lockfile for a one-dependency package whose dependency is the manifest's Pi.
+  After Pi reaches the pin, `coop install` and `coop update` apply it
+  (`node lib/pilock.js apply`: `npm ci` of the lock beside Pi, the resolved tree
+  moved into Pi's `node_modules`, a marker with the lock's hash); the window
+  package build applies it to the bundled prefix; `coop doctor` reports a tree
+  that differs from the lock with `coop update` as the fix; the Pi matrix applies
+  the lock to the Pi it installs and imports the package on the locked tree, so
+  the pi-codemode break fails CI before a release. `coop update --edge` leaves
+  Pi's dependencies as npm resolves them. Only the extension tree was locked
+  before (`config/extensions-lock.json`).
+
 - **`coop/auto`, a coop router over the Codex models** (master plan R1,
   opt-in). `/model coop/auto` selects a coop-owned virtual model that picks an
   OpenAI Codex model for each request by rules, never a classifier: a large

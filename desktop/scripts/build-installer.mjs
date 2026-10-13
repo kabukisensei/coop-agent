@@ -444,6 +444,10 @@ export async function stageRuntime({ root = ROOT, runtimeDir = RUNTIME, cacheDir
   const piPkg = join(prefix, "node_modules", manifest.pi.package, "package.json");
   if (!existsSync(piPkg) || JSON.parse(readFileSync(piPkg, "utf8")).version !== manifest.pi.version) throw new Error(`Pi ${manifest.pi.version} is not in the bundled prefix`);
   if (!existsSync(join(prefix, "pi.cmd"))) throw new Error("the bundled prefix has no pi.cmd shim");
+  // Pi's own dependency tree from config/pi-lock.json (row U3), the same apply
+  // `coop install` runs after `npm install -g`, with the bundled npm first on PATH.
+  run(process.execPath, [join(root, "lib", "pilock.js"), "apply", dirname(piPkg), join(root, "config", "pi-lock.json")], runtimeDir, env);
+  run(process.execPath, [join(root, "lib", "pilock.js"), "matches", dirname(piPkg), join(root, "config", "pi-lock.json")], runtimeDir, env);
   const prunedPrefix = pruneTree(join(prefix, "node_modules"));
   console.log(`staged Pi ${manifest.pi.version} and ${Object.keys(manifest.npm_tools || {}).length} npm tool(s) in the bundled prefix (${prunedPrefix.files} declaration/map file(s) and ${prunedPrefix.dirs} dist-types folder(s) pruned)`);
 
