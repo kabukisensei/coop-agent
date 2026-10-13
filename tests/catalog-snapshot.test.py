@@ -169,7 +169,11 @@ with tempfile.TemporaryDirectory() as tmp:
     # Status after: fresh; stale once older than max_age_days; doctor rows follow.
     info = cs.status(cwd=root, now=NOW + timedelta(days=2))
     assert info["state"] == "ok" and info["age_days"] == 2.0 and info["objects"]["views"] == 2, info
-    rows = cs.doctor_lines(cwd=root)
+    # doctor_lines reads the real clock, so pin it: the snapshot's taken_at is
+    # the fixed NOW, and from 2026-10-13 on the wall clock made it stale.
+    with mock.patch.object(cs, "datetime", wraps=datetime) as fake_dt:
+        fake_dt.now.return_value = NOW + timedelta(days=2)
+        rows = cs.doctor_lines(cwd=root)
     assert rows[0][0] == "ok" and "1 tables, 2 views, 1 procedures, 1 functions" in rows[0][1], rows
     info = cs.status(cwd=root, now=NOW + timedelta(days=8))
     assert info["state"] == "stale" and info["age_days"] == 8.0, info
