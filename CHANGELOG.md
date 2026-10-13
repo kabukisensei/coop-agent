@@ -7,6 +7,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- **Azure sign-in commands ask first.** A bash call to `az account get-access-token`
+  (unless `--output none`), `az login`, `az logout`, `az account clear` or
+  `az account set` now asks in the UI and is blocked headlessly, the same way as
+  a command that prints the environment: a printed bearer token would land in the
+  session transcript, and a sign-in change affects every tool on the machine.
+  `az account show` and `list` pass. The Azure CLI's `service_principal_entries`
+  file joins the secret-file list. Nothing coop runs itself changes: its own
+  mints go through the token helper, not the agent's shell.
 - **Pi's own dependency tree is pinned at install** (master plan row U3).
   `npm install -g` pins Pi alone, and Pi stopped shipping `npm-shrinkwrap.json`
   in 1.0.1, so npm resolved Pi's dependencies on the day of each install; that

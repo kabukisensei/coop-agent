@@ -2680,7 +2680,7 @@ export function isSecretPath(p: string): boolean {
   // Provider and Azure sign-in stores (#365): Pi/coop keep model logins in
   // `<agent dir>/auth.json` (Codex and Composer use the same name), the Azure CLI
   // keeps tokens in its MSAL cache. Pi's models.json can carry API keys too.
-  if (base === "auth.json" || base === "accesstokens.json" || /^msal_token_cache\./.test(base)) return true;
+  if (base === "auth.json" || base === "accesstokens.json" || /^msal_token_cache\./.test(base) || /^service_principal_entries\./.test(base)) return true;
   if (base === "models.json" && isAgentDirFile(p)) return true;
   return false;
 }
@@ -2814,6 +2814,33 @@ export function envDumpLabel(cmd: string): string | null {
     if ((word === "env" || word === "printenv" || word === "set") && rest.length === 0) return word;
     if ((word === "export" || word === "declare" || word === "typeset") && rest.length === 1 && rest[0] === "-p") return `${word} -p`;
     if (/^(get-childitem|gci|ls|dir|get-item|gi)$/.test(word) && rest.length === 1 && /^env:[/\\]?$/i.test(rest[0])) return `${word} env:`;
+  }
+  return null;
+}
+
+/** An Azure CLI command that prints a bearer token or changes the workstation's
+ *  Azure sign-in: `az account get-access-token` (a token on stdout lands in the
+ *  session transcript), `az login`, `az logout`, `az account clear` and
+ *  `az account set`. Segment-scoped, read at the command position, verbs before
+ *  the first option. `get-access-token` with `--output none` / `-o none` prints
+ *  nothing (coop's own doctor line) and passes; `az account show|list` pass. */
+export function azSignInLabel(cmd: string): string | null {
+  for (const { segment } of splitShellSegments(cmd)) {
+    const word = resolveCommandWord(segment);
+    if (!word || word.name !== "az") continue;
+    const toks = tokenizeArgs(segment.slice(word.charOffset)).map((t) => stripGluedQuotes(t).replace(/^['"]|['"]$/g, ""));
+    const verbs: string[] = [];
+    for (const t of toks.slice(1)) { if (t.startsWith("-")) break; verbs.push(t.toLowerCase()); }
+    const [a, b] = verbs;
+    if (a === "login" || a === "logout") return `az ${a}`;
+    if (a !== "account") continue;
+    if (b === "clear" || b === "set") return `az account ${b}`;
+    if (b === "get-access-token") {
+      const rest = toks.slice(3).map((t) => t.toLowerCase());
+      const outputNone = rest.some((t, i) => (t === "--output" || t === "-o") && rest[i + 1] === "none")
+        || rest.some((t) => /^(--output|-o)=none$/.test(t));
+      if (!outputNone) return "az account get-access-token";
+    }
   }
   return null;
 }
@@ -3320,6 +3347,23 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         if (!ok) return { block: true, reason: `coop guardrails: blocked a command that prints the environment (${envDump}) (you declined). Name the one variable you need instead.` };
       }
 
+      // 1a-az. An az command that prints a bearer token or changes the Azure
+      // sign-in (login, logout, account clear/set): ask, fail closed headlessly.
+      // The audit names the az verbs only.
+      const azSignIn = azSignInLabel(cmd);
+      if (azSignIn) {
+        if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
+          audit({ cwd: ctx.cwd, kind: "secret-confirm", tool: "bash", decision: "blocked-headless", label: "azure sign-in", detail: azSignIn });
+          return { block: true, reason: `coop guardrails: blocked ${azSignIn}; it would print an Azure token or change the Azure sign-in, and approval is unavailable in headless mode.` };
+        }
+        const ok = await ctx.ui.confirm(
+          "coop guardrails",
+          `This command prints an Azure token or changes the Azure sign-in (${azSignIn}):\n  ${cmd.slice(0, 200)}\nA printed token lands in the session transcript; a sign-in change affects every tool on this machine. Run it?`,
+        );
+        audit({ cwd: ctx.cwd, kind: "secret-confirm", tool: "bash", decision: ok ? "allowed" : "declined", label: "azure sign-in", detail: azSignIn });
+        if (!ok) return { block: true, reason: `coop guardrails: blocked ${azSignIn} (you declined). coop mints its own tokens for the client tenant; use \`az account show\` to inspect the sign-in.` };
+      }
+
       // 1. Never commit source (incl. `git commit -a/-am` auto-staging, `git -C <dir>`,
       //    `git commit <pathspec>`, and `cd <dir> && git commit` — the staged check runs
       //    against the repo the commit actually targets, see gitRepoDir).
@@ -3535,7 +3579,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         "Enforced on the agent's tool calls (your own shell is never intercepted):",
         "  • never commit source — blocks `git commit` (incl. -a/-am, `git -C`, `git commit <path>`, and `cd <dir> && git commit`) of anything outside docs/logs/site; merge / cherry-pick / revert / am / commit-tree take the same gate",
         "  • destructive commands — confirms rm -rf / git push --force (incl. +refspec) or --delete / reset --hard / git clean -f / branch -D / stash drop·clear / checkout -- / restore / find -delete / az … delete / DROP·TRUNCATE",
-        "  • secret files — confirms read/edit/write AND bash access (cat .env etc.) of .env / keys / credentials",
+        "  • secret files — confirms read/edit/write AND bash access (cat .env etc.) of .env / keys / credentials; printing the environment, `az account get-access-token`, `az login|logout`, `az account clear|set` ask too",
         "  • live data — metadata and plain SQL reads run on every target, production included; reads coop cannot classify ask once",
         "  • mutating MCP actions — confirms create/update/delete/deploy/publish-looking Fabric/Power BI/MCP tool calls (best-effort)",
         `  • production writes — SQL on a production target, model edits after a production connection, Fabric writes naming prod: blocked and audited; never session-wide${activeProdUnlock(ctx) ? " (unlock active)" : ""}`,

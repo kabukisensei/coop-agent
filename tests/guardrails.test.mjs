@@ -610,7 +610,7 @@ await t("blocks bash writes to secrets via fd or combined redirects", async () =
 });
 
 await t("#365: provider and Azure sign-in stores are secrets; a project's models.json is not", () => {
-  for (const p of [join(AUDIT_DIR, "auth.json"), "C:\\Users\\a\\.coop\\agent\\auth.json", "~/.pi/agent/auth.json", "~/.codex/auth.json", "~/.azure/msal_token_cache.json", "~/.azure/msal_token_cache.bin", "~/.azure/accessTokens.json", join(AUDIT_DIR, "models.json"), "~/.pi/agent/models.json"]) {
+  for (const p of [join(AUDIT_DIR, "auth.json"), "C:\\Users\\a\\.coop\\agent\\auth.json", "~/.pi/agent/auth.json", "~/.codex/auth.json", "~/.azure/msal_token_cache.json", "~/.azure/msal_token_cache.bin", "~/.azure/accessTokens.json", "~/.azure/service_principal_entries.json", "C:\\Users\\a\\.azure\\service_principal_entries.bin", join(AUDIT_DIR, "models.json"), "~/.pi/agent/models.json"]) {
     assert.equal(isSecretPath(p), true, `${p} should be secret`);
   }
   for (const p of ["src/models.json", "docs/auth.md", "lib/auth.js"]) assert.equal(isSecretPath(p), false, `${p} should NOT be secret`);
@@ -3172,6 +3172,42 @@ await t("#4: printing the environment asks (the Fabric bearer lives there) and f
   assert.ok(audited.length > 0 && audited.every((e) => e.kind === "secret-confirm" && !String(e.detail).includes("$")), "audited without the command text");
 });
 
+await t("az sign-in: get-access-token / login / logout / account clear|set ask and fail closed headless; reads and --output none pass", async () => {
+  const asks = [
+    ["az account get-access-token", "az account get-access-token"],
+    ["az account get-access-token --resource https://api.fabric.microsoft.com --query accessToken -o tsv", "az account get-access-token"],
+    ["AZ ACCOUNT GET-ACCESS-TOKEN --output json", "az account get-access-token"],
+    ["az login", "az login"],
+    ["az login --tenant contoso.onmicrosoft.com --allow-no-subscriptions", "az login"],
+    ["az logout", "az logout"],
+    ["az account clear", "az account clear"],
+    ["az account set --subscription x", "az account set"],
+    ["ls && az login", "az login"],
+    ["( az account get-access-token )", "az account get-access-token"],
+    ["timeout 10 az account get-access-token", "az account get-access-token"],
+  ];
+  for (const [cmd, label] of asks) {
+    assert.equal(cg.azSignInLabel(cmd), label, cmd);
+    const r = await call(cmd, { confirm: false });
+    assert.equal(blocked(r), true, cmd);
+    assert.match(lastConfirm, /prints an Azure token or changes the Azure sign-in/, cmd);
+    assert.equal(blocked(await call(cmd, { confirm: true })), false, `approved: ${cmd}`);
+    assert.equal(blocked(await handle({ toolName: "bash", input: { command: cmd } }, headless)), true, `headless: ${cmd}`);
+  }
+  for (const cmd of [
+    "az account show", "az account list --all", "az account get-access-token --tenant contoso.onmicrosoft.com --resource https://api.fabric.microsoft.com --output none",
+    "az account get-access-token -o none", "az account get-access-token --output=none", "az --version", "az group list", "az account list-locations",
+    "echo az login", "git log --grep 'az login'", "fab auth status",
+  ]) {
+    assert.equal(cg.azSignInLabel(cmd), null, cmd);
+    confirmCount = 0;
+    assert.equal(blocked(await call(cmd, { confirm: false })), false, cmd);
+    assert.equal(confirmCount, 0, cmd);
+  }
+  const audited = readAudit().filter((e) => e.label === "azure sign-in");
+  assert.ok(audited.length > 0 && audited.every((e) => e.kind === "secret-confirm" && /^az /.test(String(e.detail)) && !String(e.detail).includes("--")), "audited with the verbs only");
+});
+
 await t("#5: ambiguous SQL on a production or unconfirmed Warehouse takes the production permit path; dev keeps the one confirm", async () => {
   const sqlCall = (query) => ({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify({ query }) } });
   const ambiguous = ["SELECT 1;\nGO\nSELECT 2", "SELECT 'unterminated FROM t", "SHOW TABLES"];
@@ -3369,7 +3405,7 @@ await t("find -delete / -exec rm and az … delete|purge ask first; reads, prose
   };
   for (const cmd of ["find . -name '*.tmp' -delete", "find /tmp/x -type f -delete -print", "find . -name '*.bak' -exec rm {} \\;", "find . -name '*.bak' -exec rm -f {} +", "find . -execdir rm {} \\;", "find . -ok rm {} \\;", "find . -exec /bin/rm {} +", "sudo find /var/tmp -mtime +7 -delete", "ls && find . -delete"]) await asks(cmd, "find -");
   for (const cmd of ["find . -name '*.sql'", "find . -type f -exec grep -l x {} +", "find . -exec cat {} \\;", "echo find . -delete", 'echo "find . -exec rm {} ;"', "grep -r delete src/"]) await passes(cmd);
-  for (const cmd of ["az sql db delete --name db --server s --resource-group g --yes", "az group delete -n g --yes", "az storage blob delete --container c --name b", "az storage blob delete-batch --source c", "az keyvault purge --name kv", "az webapp deployment slot delete --slot s", "AZ group delete -n g", "az login && az group delete -n g"]) await asks(cmd, "az ");
+  for (const cmd of ["az sql db delete --name db --server s --resource-group g --yes", "az group delete -n g --yes", "az storage blob delete --container c --name b", "az storage blob delete-batch --source c", "az keyvault purge --name kv", "az webapp deployment slot delete --slot s", "AZ group delete -n g", "az account show && az group delete -n g"]) await asks(cmd, "az ");
   for (const cmd of ["az sql db list --server s", "az group show -n g", "az storage blob list --container c", "az sql db show --name delete", `az group list --query "[?name=='purge']"`, "echo az group delete"]) await passes(cmd);
   // `az rest --method delete` keeps its own (Fabric REST write) prompt, not the destructive label.
   assert.equal(blocked(await call("az rest --method delete --url https://api.fabric.microsoft.com/v1/workspaces/w", { confirm: false })), true);
