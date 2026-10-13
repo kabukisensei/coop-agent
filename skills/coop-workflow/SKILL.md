@@ -67,7 +67,8 @@ partial, or connected project without requiring the user to edit YAML.
    source holds is stopped by the guardrails until `sql_impact` has been asked, a
    repeat edit of the same object costs no new call, the edit's result ends with one
    line naming each downstream object, and `/impact` shows the detail. To move
-   schema changes between environments (dev to prod), call `schema_compare` first
+   schema changes between environments (dev to prod) or between the repo's `.sql`
+   files and a live target (`source="repo"`), call `schema_compare` first
    and work from its `deploy.sql`: the destructive statements there are commented
    out and stay the user's decision, and every statement that runs against the
    target goes through the usual write approvals. If local

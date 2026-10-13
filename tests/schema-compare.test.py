@@ -358,6 +358,91 @@ with tempfile.TemporaryDirectory() as tmp:
     with mock.patch.object(sq, "open_connection", side_effect=AssertionError("the snapshot side never connects")):
         assert sc.compare({"source": "snapshot"}, cwd=repo)["state"] == "snapshot_missing"
 
+# --- repo sides: the contract repository's .sql files, read as code, no connection ------
+REPO_CONTRACT = CONTRACT + """repositories:
+  sql:
+    role: "sql"
+    local_path: "../sql-repo"
+    sql_root: "warehouse"
+  other:
+    role: "mixed"
+    local_path: "../other-repo"
+  docs:
+    role: "data_docs"
+    local_path: "../docs"
+"""
+assert sc.normalize_definition("-- banner\nCREATE OR ALTER VIEW v AS SELECT 1;") == sc.normalize_definition("CREATE VIEW v AS SELECT 1"), "a banner, OR ALTER and ; are not changes"
+with tempfile.TemporaryDirectory() as tmp:
+    home = Path(tmp) / "home"
+    (home / ".coop").mkdir(parents=True)
+    (home / ".coop" / "project.yml").write_text(REPO_CONTRACT, encoding="utf-8")
+    sql_repo = Path(tmp) / "sql-repo" / "warehouse"
+    for rel, content in {
+        "dbo/Tables/Orders.sql": "-- Orders as code\nCREATE TABLE [dbo].[Orders] (\n    [OrderId] INT NOT NULL,\n    [Amount] DECIMAL (18, 2) NULL,\n    [Region] nvarchar(50),\n    CONSTRAINT [PK_Orders] PRIMARY KEY NONCLUSTERED ([OrderId]) NOT ENFORCED\n);\nGO\n",
+        "dbo/Tables/NewTable.sql": "CREATE TABLE dbo.NewTable (Id bigint NOT NULL, Name varchar(max) NULL)\nGO\n",
+        "dbo/Views/vw_Sales.sql": "-- banner\n" + VIEW_DEV.replace("CREATE VIEW", "CREATE OR ALTER VIEW") + ";\nGO\n",
+        "dbo/Views/vw_Top.sql": VIEW_TOP + "\n",
+        "dbo/StoredProcedures/usp_Refresh.sql": PROC + "\nGO\n",
+        "fin/Functions/fn_Rate.sql": FN,
+        "Security/fin.sql": "CREATE SCHEMA [fin] AUTHORIZATION [dbo];\nGO\nCREATE SCHEMA stage;\n",
+        "Script.PostDeployment.sql": "INSERT INTO dbo.Orders VALUES (1, 2, 'x');\n",
+        "bin/Debug/ignored.sql": "CREATE TABLE dbo.Ignored (a int)\n",
+    }.items():
+        (sql_repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (sql_repo / rel).write_text(content, encoding="utf-8")
+    (Path(tmp) / "sql-repo" / "stray.sql").write_text("CREATE TABLE dbo.Stray (a int)\n", encoding="utf-8")
+    other_repo = Path(tmp) / "other-repo"
+    other_repo.mkdir()
+    (other_repo / "orders.sql").write_text("CREATE TABLE dbo.Orders (OrderId int NOT NULL, Amount decimal(18, 2) NULL)\n", encoding="utf-8")
+
+    # the repo reads as a catalog shaped like the live one
+    from_repo = sc.read_repo(sql_repo)
+    assert [c.render() for c in from_repo.tables[("dbo", "Orders")]] == ["[OrderId] int NOT NULL", "[Amount] decimal(18, 2) NULL", "[Region] nvarchar(50) NULL"]
+    assert from_repo.schemas == {"dbo", "fin", "stage"}
+    assert ("dbo", "Stray") not in from_repo.tables and ("dbo", "Ignored") not in from_repo.tables, "sql_root and bin/ are respected"
+    assert from_repo.notes == ["1 of 8 .sql file(s) create no schema, table, view, procedure or function and were ignored"], from_repo.notes
+    assert [(c["kind"], c["name"], c["action"]) for c in sc.diff(from_repo, dev)] == [("view", "Swapped", "drop")], "the repo matches dev apart from the view only dev holds"
+
+    # resolution: the named repository, its sql_root, a subfolder, the only one when unnamed
+    assert sc.resolve_repo("repo:sql", {}, home / ".coop" / "project.yml")[2] == "repo_missing"
+    project = sc.wmcp.load_project(home / ".coop" / "project.yml")
+    assert sc.resolve_repo("repo:sql", project, home / ".coop" / "project.yml") == (sql_repo.resolve(), "sql", "ok")
+    assert sc.resolve_repo("repo:sql/warehouse/dbo/Views", project, home / ".coop" / "project.yml") == ((sql_repo / "dbo" / "Views").resolve(), "sql/warehouse/dbo/Views", "ok"), "a subfolder is under the repository root, not sql_root"
+    assert sc.resolve_repo("repo:other", project, home / ".coop" / "project.yml")[1:] == ("other", "ok")
+    assert sc.resolve_repo("repo", project, home / ".coop" / "project.yml")[2] == "repo_ambiguous"
+    assert sc.resolve_repo("repo:docs", project, home / ".coop" / "project.yml")[2] == "repo_missing", "data_docs is not a SQL repository"
+    assert sc.resolve_repo("repo:sql/nowhere", project, home / ".coop" / "project.yml")[2] == "repo_unavailable"
+    assert sc.resolve_repo("repo:../x", project, home / ".coop" / "project.yml")[2] == "input_invalid"
+
+    # repo -> prod connects once (prod only); repo -> repo never connects
+    opened_envs: list[str | None] = []
+
+    def open_prod(*, cwd=None, environment=None):
+        opened_envs.append(environment)
+        return FakeConnection(FakeCursor(PROD)), target("prod"), "ODBC Driver 18 for SQL Server", None
+
+    with mock.patch.object(sq, "open_connection", side_effect=open_prod):
+        result = sc.compare({"source": "repo:sql", "target": "prod"}, cwd=home, now=NOW)
+    assert result["state"] == "ok" and opened_envs == ["prod"], result
+    assert result["source"] == {"environment": "repo", "kind": "sql source", "database": "sql", "tables": 2, "views": 2, "procedures": 1, "functions": 1}, result["source"]
+    assert result["path"] == ".coop/schema-compare/repo-sql-to-prod"
+    assert {(c["name"], c["action"]) for c in result["changes"] if c["kind"] == "table"} == {("Orders", "alter"), ("NewTable", "add"), ("Legacy", "drop"), ("Swapped", "drop")}
+    assert result["notes"] == ["source: 1 of 8 .sql file(s) create no schema, table, view, procedure or function and were ignored"]
+    deploy = (home / ".coop" / "schema-compare" / "repo-sql-to-prod" / "deploy.sql").read_text(encoding="utf-8")
+    assert "CREATE OR ALTER VIEW [dbo].[vw_Sales]" in deploy and "ALTER TABLE [dbo].[Orders] ADD [Region] nvarchar(50) NULL" in deploy
+    with mock.patch.object(sq, "open_connection", side_effect=AssertionError("repo sides never connect")):
+        both = sc.compare({"source": "repo:sql", "target": "repo:other"}, cwd=home, now=NOW)
+        assert both["state"] == "ok" and both["path"] == ".coop/schema-compare/repo-sql-to-repo-other", both
+        assert [(c["kind"], c["schema"] if c["kind"] == "schema" else c["name"], c["action"]) for c in both["changes"] if c["kind"] in ("schema", "table")] == [("schema", "fin", "add"), ("schema", "stage", "add"), ("table", "NewTable", "add"), ("table", "Orders", "alter")], both["changes"]
+        assert sc.compare({"source": "repo:sql", "target": "repo:sql"}, cwd=home)["state"] == "input_invalid"
+        assert sc.compare({"source": "repo:nope", "target": "prod"}, cwd=home) == sq.result("repo_missing", side="repo:nope")
+        assert sc.compare({"source": "dev", "target": "repo"}, cwd=home)["state"] == "repo_ambiguous"
+        assert sc.compare({"source": "repo:sql/../../x", "target": "prod"}, cwd=home)["state"] == "input_invalid"
+    with mock.patch.object(sq, "open_connection", side_effect=lambda **k: (FakeConnection(FakeCursor(DEV)), target("dev"), "d", None)):
+        to_repo = sc.compare({"source": "dev", "target": "repo:sql"}, cwd=home, now=NOW)
+        assert to_repo["state"] == "ok" and to_repo["target"]["kind"] == "sql source"
+        assert [(c["kind"], c["name"], c["action"]) for c in to_repo["changes"]] == [("view", "Swapped", "add")], to_repo["changes"]
+
 # --- stdin contract ---------------------------------------------------------------------
 with mock.patch.object(sc, "execute", return_value=sq.result("ok", path="x")) as run:
     import io
@@ -366,6 +451,8 @@ with mock.patch.object(sc, "execute", return_value=sq.result("ok", path="x")) as
     assert run.call_args.args[0] == {"source": "dev", "target": "prod"}
     assert sc.main(["--source", "snapshot", "--target", "test"]) == 0
     assert run.call_args.args[0] == {"source": "snapshot", "target": "test"}
+    assert sc.main(["--source", "repo:sql/warehouse", "--target", "prod"]) == 0
+    assert run.call_args.args[0] == {"source": "repo:sql/warehouse", "target": "prod"}
     with mock.patch.object(sys, "stdin", io.StringIO('{"source": "dev"}')):
         assert sc.main(["--cli"]) == 0, "the terminal form never reads stdin"
     assert run.call_args.args[0] == {}

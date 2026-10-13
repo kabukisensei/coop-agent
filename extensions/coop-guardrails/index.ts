@@ -1306,6 +1306,10 @@ const SQL_IMPACT_TOOL = "sql_impact";
 const CATALOG_SNAPSHOT_TOOL = "catalog_snapshot";
 const SCHEMA_COMPARE_TOOL = "schema_compare";
 const SCHEMA_COMPARE_SIDES = new Set(["dev", "test", "prod"]);
+// `repo`, `repo:<name>` or `repo:<name>/<subfolder>`: the .sql files of one contract
+// repositories entry, read with no connection (lib/schema_compare.py, SQ10).
+const SCHEMA_COMPARE_REPO = /^repo(?::[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_. -]+)*)?$/;
+const isSchemaCompareRepo = (value: unknown): boolean => typeof value === "string" && SCHEMA_COMPARE_REPO.test(value) && !value.includes("..");
 // DISABLE/ENABLE (triggers, indexes), DBCC (CHECKIDENT RESEED, SHRINK…), KILL,
 // RECONFIGURE and SETUSER change server or data state too (#5).
 const SQL_MUTATION_VERB = /\b(ALTER|CREATE|DBCC|DELETE|DENY|DISABLE|DROP|ENABLE|EXEC|EXECUTE|GRANT|IDENTITY_INSERT|INSERT|KILL|MERGE|RECONFIGURE|RENAME|REPLACE|REVOKE|SETUSER|TRUNCATE|UPDATE|UPSERT)\b/i;
@@ -2127,10 +2131,12 @@ export function decideSchemaCompare(event: any): SqlImpactDecision {
   }
   const source = input.source === undefined ? "default" : input.source;
   const target = input.target === undefined ? "prod" : input.target;
-  if (source !== "default" && source !== "snapshot" && !SCHEMA_COMPARE_SIDES.has(source)) {
-    return { action: "block", environment: "", reason: "source must be dev, test, prod or snapshot" };
+  if (source !== "default" && source !== "snapshot" && !SCHEMA_COMPARE_SIDES.has(source) && !isSchemaCompareRepo(source)) {
+    return { action: "block", environment: "", reason: "source must be dev, test, prod, snapshot or repo[:<name>[/<subfolder>]]" };
   }
-  if (!SCHEMA_COMPARE_SIDES.has(target)) return { action: "block", environment: "", reason: "target must be dev, test or prod" };
+  if (!SCHEMA_COMPARE_SIDES.has(target) && !isSchemaCompareRepo(target)) {
+    return { action: "block", environment: "", reason: "target must be dev, test, prod or repo[:<name>[/<subfolder>]]" };
+  }
   if (source === target) return { action: "block", environment: "", reason: "source and target must differ" };
   return { action: "allow", environment: `${source}->${target}`, reason: "two catalog reads; nothing is applied" };
 }

@@ -710,9 +710,10 @@ coop wraps one standalone pipx tool and exposes five native LLM tools: `data_doc
 `sql_targets` entry), `catalog_snapshot` (the committed dev catalog snapshot: one file
 per table, view, procedure and function under the contract's snapshot folder, read
 before coop writes SQL and used by coop-data-doc as a SQL source when the client has
-none), `schema_compare` (the deterministic compare of two `sql_targets` entries, or
-the committed snapshot against one: a sorted diff of schemas, tables and columns,
-views, procedures and functions, and an ordered promotion script with every
+none), `schema_compare` (the deterministic compare of two schemas, each a `sql_targets`
+entry, the committed snapshot or a contract repository's `.sql` files read as
+code, in any pairing: a sorted diff of schemas, tables and columns, views,
+procedures and functions, and an ordered promotion script with every
 destructive statement commented out, written under `.coop/schema-compare/`; `coop
 schema compare` is the terminal form; nothing is ever applied) and the optional,
 config-driven `bpa_review` (Tabular Editor BPA, the deterministic model check).

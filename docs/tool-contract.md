@@ -449,15 +449,41 @@ The tool accepts two optional fields:
 
 | Field | Values | Default |
 | --- | --- | --- |
-| `source` | `dev`, `test`, `prod`, or `snapshot` (the committed catalog snapshot, read from its folder with no connection) | the contract's default dev/test entry |
-| `target` | `dev`, `test`, `prod` | `prod` |
+| `source` | `dev`, `test`, `prod`, `snapshot` (the committed catalog snapshot, read from its folder with no connection) or `repo[:<name>[/<subfolder>]]` | the contract's default dev/test entry |
+| `target` | `dev`, `test`, `prod` or `repo[:<name>[/<subfolder>]]` | `prod` |
 
-The same side on both ends, a value outside those sets, or any other field is
-`input_invalid` before anything connects. The direction is "what the target needs
+The same side on both ends, a value outside those forms, a repo side containing
+`..`, or any other field is `input_invalid` before anything connects. Any pairing
+is allowed: repo against repo, live against live, repo against live.
+
+A **repo side** is the schema as code (`lib/sql_source.py`, Aaron's ask of
+2026-10-13): the `.sql` files of one of the contract's `repositories` entries
+with role `sql` or `mixed` and a filled `local_path`, under its `sql_root` when
+the entry names one, or under the subfolder the side names (relative to the
+repository root, never outside it). `repo` alone picks the only such entry
+(`repo_missing` when there is none, `repo_ambiguous` when there are several;
+`repo_unavailable` when the folder does not exist on this machine). Files are
+read in path order, split on `GO`, and a batch counts when its first statement
+is `CREATE SCHEMA`, `CREATE TABLE` or `CREATE [OR ALTER] VIEW | PROCEDURE |
+FUNCTION`; everything else (post-deployment scripts, `ALTER`, `INSERT`,
+`.sqlproj`, the `bin/`, `obj/`, `.git/` and `.coop/` folders) is ignored and
+the count of files that held no object goes into `notes`, so a mis-pointed
+folder is visible. A Fabric Warehouse Git export and a SQL database project both
+read this way. Table columns come from the column list with the type rendered
+the way the catalog renders it (`decimal(18, 2)`, `varchar(max)`; a length or
+precision the source leaves out gets the engine default, `varchar(1)`,
+`datetime2(7)`, as the engine would store it, so write them out for an exact
+compare); constraints, defaults, identity and computed-column expressions are out
+of scope as on the live side. The side's summary reads `environment: repo`,
+`kind: sql source`, `database: <name>[/<subfolder>]`; a repo target gets plain
+`ALTER TABLE` statements (there is no engine kind to rebuild for), and the
+output folder joins the side with hyphens (`repo-sql-to-prod`). The direction is "what the target needs
 to match the source". The compare covers schemas (user schemas, system ones
 dropped), tables (each column's name, rendered type, nullability and position),
 and views, procedures and functions by definition, compared with line endings and
-runs of whitespace folded so a reformatted module is not a change. Everything else
+runs of whitespace folded, and a leading comment banner, `OR ALTER` and a trailing
+`;` ignored, so a reformatted module, or a file beside the catalog's copy of the
+same object, is not a change. Everything else
 (constraints, indexes, permissions, row data) is out of scope and the report says so.
 
 The result carries both sides' summaries (environment, kind, database, object
@@ -485,8 +511,10 @@ text appears in the result or the files.
 Governance (`extensions/coop-guardrails`): both sides are catalog metadata reads,
 so the call runs without a prompt on every pair, production on either side
 included, and is audited as `governed-schema-compare` with the pair it compared
-(`dev->prod`, `snapshot->prod`, ...); a call with any other field, a value outside
-the sets or the same side twice is blocked outright. The tool applies nothing:
+(`dev->prod`, `snapshot->prod`, `repo:sql->prod`, ...); a call with any other
+field, a value outside the forms, a repo side containing `..` or the same side
+twice is blocked outright. A repo side touches no target: it reads files the
+contract already names. The tool applies nothing:
 running the script against a target is the user's act through the write rules in
 `docs/guardrails-reference.md`, one statement at a time. `coop schema compare
 [--source ...] [--target ...]` is the terminal form of the same helper and prints

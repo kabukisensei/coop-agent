@@ -10,9 +10,13 @@ is two files under the contract's compare folder.
 A side is one of the contract's `sql_targets` entries (`dev`, `test`, `prod`),
 read exactly as lib/sql_query.py reads it (`open_connection(environment=...)`:
 same identity pinning, driver, encryption and timeouts; production reads are
-plain reads), or `snapshot`, the committed dev catalog snapshot
+plain reads); `snapshot`, the committed dev catalog snapshot
 (lib/catalog_snapshot.py), so a compare can run against the state the team
-committed rather than whatever dev holds this minute.
+committed rather than whatever dev holds this minute; or `repo[:<name>[/<sub>]]`,
+the schema as code: the `.sql` files of one of the contract's `repositories`
+entries with role `sql` or `mixed` (its `sql_root` or a named subfolder), read
+by lib/sql_source.py with no connection. Any pairing works: repo against repo,
+live against live, repo against live.
 
 What is compared, per object, sorted by schema then name:
 
@@ -49,11 +53,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import catalog_snapshot as snapshot_lib  # noqa: E402
 import sql_query  # noqa: E402
+import sql_source  # noqa: E402
 import warehouse_mcp as wmcp  # noqa: E402
 
 SCHEMA_VERSION = 1
 ENVIRONMENTS = ("dev", "test", "prod")
 SIDES = ENVIRONMENTS + ("snapshot",)
+REPO_SIDE = re.compile(r"^repo(?::([A-Za-z0-9_.-]+)((?:/[A-Za-z0-9_. -]+)*))?$")
+REPO_ROLES = ("sql", "mixed")
 DEFAULT_TARGET = "prod"
 MAX_SCHEMAS = 1000
 MAX_CHANGES_IN_RESULT = 200
@@ -74,6 +81,7 @@ _IDENT = r"[A-Za-z_][A-Za-z0-9_@#$]{0,127}"
 _SNAPSHOT_HEADER = re.compile(r"^-- coop catalog snapshot: (table|view|procedure|function) (\S+)\.(\S+)$")
 _SNAPSHOT_COLUMN = re.compile(r"^\s{4}\[(.+?)\] (.+?) (NULL|NOT NULL)$")
 _CREATE_HEAD = re.compile(r"^(\s*)CREATE\s+(OR\s+ALTER\s+)?(VIEW|PROC(?:EDURE)?|FUNCTION)\b", re.IGNORECASE)
+_OR_ALTER = re.compile(r"^(\s*CREATE\s+)OR\s+ALTER\s+", re.IGNORECASE)
 
 
 # --- catalog model -----------------------------------------------------------------
@@ -101,6 +109,7 @@ class Catalog:
         self.modules: dict[tuple[str, str], tuple[str, str]] = {}  # (kind, definition)
         self.truncated: list[str] = []
         self.unavailable: list[str] = []
+        self.notes: list[str] = []
 
     def kinds(self) -> dict[tuple[str, str], str]:
         out = {key: "table" for key in self.tables}
@@ -125,10 +134,17 @@ def _plain(key: tuple[str, str]) -> str:
 
 
 def normalize_definition(definition: str) -> str:
-    """Line endings and runs of whitespace folded, trailing space dropped: a
-    definition reformatted by an editor is not a change, a changed token is."""
+    """Line endings and runs of whitespace folded, blank lines, a leading comment
+    banner, `OR ALTER` and a trailing `;` dropped: a definition reformatted by an
+    editor or kept in a repo file is not a change, a changed token is."""
     text = definition.replace("\r\n", "\n").replace("\r", "\n").strip()
-    return "\n".join(re.sub(r"[ \t]+", " ", line.rstrip()) for line in text.split("\n") if line.strip())
+    lines = [re.sub(r"[ \t]+", " ", line.rstrip()) for line in text.split("\n") if line.strip()]
+    while lines and lines[0].lstrip().startswith("--"):
+        lines.pop(0)
+    if lines:
+        lines[0] = _OR_ALTER.sub(r"\1", lines[0], count=1)
+        lines[-1] = lines[-1].rstrip(";").rstrip()
+    return "\n".join(line for line in lines if line.strip())
 
 
 # --- live side ---------------------------------------------------------------------
@@ -240,6 +256,68 @@ def read_snapshot(folder: Path) -> tuple[Catalog | None, str]:
             else:
                 catalog.modules[key] = (kind, body)
     return catalog, "ok"
+
+
+# --- repo side -----------------------------------------------------------------------
+
+
+def _is_todo(value: str) -> bool:
+    return not value or value.strip().upper().startswith("TODO")
+
+
+def _repo_entries(project: dict[str, Any]) -> dict[str, tuple[str, str]]:
+    """name -> (local_path, sql_root) for every sql or mixed repository with a path."""
+    repos = project.get("repositories")
+    out: dict[str, tuple[str, str]] = {}
+    if not isinstance(repos, dict):
+        return out
+    for name, entry in repos.items():
+        if not isinstance(entry, dict) or not isinstance(name, str):
+            continue
+        role = _text(entry.get("role")).lower().replace("-", "_")
+        local_path = _text(entry.get("local_path"))
+        if role in REPO_ROLES and not _is_todo(local_path):
+            sql_root = _text(entry.get("sql_root"))
+            out[name] = (local_path, "" if _is_todo(sql_root) else sql_root)
+    return out
+
+
+def resolve_repo(side: str, project: dict[str, Any], project_path: Path) -> tuple[Path | None, str, str]:
+    """(folder, label, state) for a `repo[:<name>[/<sub>]]` side: the named
+    repository (the only sql/mixed one when unnamed), its `sql_root` unless a
+    subfolder is named, and never a path outside the repository."""
+    match = REPO_SIDE.match(side)
+    if not match or ".." in side:
+        return None, "", "input_invalid"
+    name, sub = match.group(1), (match.group(2) or "").strip("/")
+    entries = _repo_entries(project)
+    if name is None:
+        if len(entries) != 1:
+            return None, "", "repo_missing" if not entries else "repo_ambiguous"
+        name = next(iter(entries))
+    if name not in entries:
+        return None, "", "repo_missing"
+    local_path, sql_root = entries[name]
+    root = (project_path.resolve().parent.parent / os.path.expanduser(local_path)).resolve()
+    folder = (root / (sub or sql_root)).resolve() if (sub or sql_root) else root
+    if folder != root and root not in folder.parents:
+        return None, "", "input_invalid"
+    if not folder.is_dir():
+        return None, "", "repo_unavailable"
+    label = name + (f"/{sub}" if sub else "")
+    return folder, label, "ok"
+
+
+def read_repo(folder: Path) -> Catalog:
+    """The folder's `.sql` files as a Catalog (lib/sql_source.py)."""
+    parsed = sql_source.parse_folder(folder)
+    catalog = Catalog()
+    catalog.schemas = set(parsed.schemas)
+    for key, columns in parsed.tables.items():
+        catalog.tables[key] = [Column(name, type_text, nullable, position) for position, (name, type_text, nullable) in enumerate(columns, 1)]
+    catalog.modules = dict(parsed.modules)
+    catalog.notes = sql_source.describe(parsed)
+    return catalog
 
 
 # --- diff ---------------------------------------------------------------------------
@@ -534,11 +612,15 @@ def _side_summary(catalog: Catalog, target: dict[str, str]) -> dict[str, Any]:
 # --- entry point ----------------------------------------------------------------------
 
 
+def _folder_word(side: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", side).strip("-") or "side"
+
+
 def resolve_output(project: dict[str, Any], project_path: Path, source: str, target: str) -> tuple[Path, str]:
-    """`.coop/schema-compare/<source>-to-<target>` beside the contract (or under
-    `catalog.path`'s parent when the contract names one)."""
+    """`.coop/schema-compare/<source>-to-<target>` beside the contract (a repo
+    side's name and subfolder joined with hyphens)."""
     root = project_path.resolve().parent.parent
-    folder = (root / ".coop" / "schema-compare" / f"{source}-to-{target}").resolve()
+    folder = (root / ".coop" / "schema-compare" / f"{_folder_word(source)}-to-{_folder_word(target)}").resolve()
     try:
         rel = folder.relative_to(root).as_posix()
     except ValueError:
@@ -548,6 +630,11 @@ def resolve_output(project: dict[str, Any], project_path: Path, source: str, tar
 
 def _read_side(side: str, *, cwd: Path | None, project: dict[str, Any], project_path: Path) -> tuple[Catalog | None, dict[str, str], dict[str, Any] | None]:
     """(catalog, target summary, error result)."""
+    if side.startswith("repo"):
+        folder, label, state = resolve_repo(side, project, project_path)
+        if folder is None:
+            return None, {}, sql_query.result(state, side=side)
+        return read_repo(folder), {"environment": "repo", "kind": "sql source", "database": label}, None
     if side == "snapshot":
         environment = snapshot_lib.default_environment(project)
         folder, _chosen = snapshot_lib.resolve_output(project, project_path, environment)
@@ -587,8 +674,14 @@ def compare(payload: Any, *, cwd: Path | None = None, now: datetime | None = Non
     project = project if isinstance(project, dict) else {}
     source = payload.get("source", snapshot_lib.default_environment(project))
     target = payload.get("target", DEFAULT_TARGET)
-    if source not in SIDES or target not in ENVIRONMENTS or source == target:
+    if not (valid_side(source) and valid_side(target, target=True)) or source == target:
         return sql_query.result("input_invalid")
+    for side in (source, target):
+        # A repo side is checked before anything connects: it is cheap and local.
+        if side.startswith("repo"):
+            _folder, _label, state = resolve_repo(side, project, Path(project_path))
+            if state != "ok":
+                return sql_query.result(state, side=side)
     source_catalog, source_summary, error = _read_side(source, cwd=cwd, project=project, project_path=Path(project_path))
     if error is not None or source_catalog is None:
         return error or sql_query.result("connection_failed", side=source)
@@ -600,6 +693,8 @@ def compare(payload: Any, *, cwd: Path | None = None, now: datetime | None = Non
     taken_at = (now or datetime.now(timezone.utc)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     notes: list[str] = []
     for label, catalog in (("source", source_catalog), ("target", target_catalog)):
+        for item in catalog.notes:
+            notes.append(f"{label}: {item}")
         for item in catalog.unavailable:
             notes.append(f"{label}: unavailable {item}")
         for item in catalog.truncated:
@@ -630,6 +725,14 @@ def compare(payload: Any, *, cwd: Path | None = None, now: datetime | None = Non
     )
 
 
+def valid_side(value: Any, *, target: bool = False) -> bool:
+    if not isinstance(value, str):
+        return False
+    if value in ENVIRONMENTS or (value == "snapshot" and not target):
+        return True
+    return bool(REPO_SIDE.match(value)) and ".." not in value
+
+
 def execute(payload: Any, *, cwd: Path | None = None) -> dict[str, Any]:
     return compare(payload, cwd=cwd)
 
@@ -650,8 +753,8 @@ def main(argv: list[str] | None = None) -> int:
     import argparse
 
     parser = argparse.ArgumentParser(prog="schema_compare", description=__doc__.splitlines()[0])
-    parser.add_argument("--source", choices=SIDES, help="side to promote from (default: the contract's default dev/test entry)")
-    parser.add_argument("--target", choices=ENVIRONMENTS, help=f"side to promote to (default: {DEFAULT_TARGET})")
+    parser.add_argument("--source", help="side to promote from: dev, test, prod, snapshot or repo[:<name>[/<subfolder>]] (default: the contract's default dev/test entry)")
+    parser.add_argument("--target", help=f"side to promote to: dev, test, prod or repo[:<name>[/<subfolder>]] (default: {DEFAULT_TARGET})")
     parser.add_argument("--stdin", action="store_true", help="read {\"source\": ..., \"target\": ...} from stdin (the tool contract)")
     parser.add_argument("--cli", action="store_true", help="never read stdin: the sides come from the flags or their defaults (bin/coop.ps1)")
     args = parser.parse_args(argv)

@@ -26,7 +26,8 @@ Native tools available: `data_doc` (advisory, read-only), `bpa_review` (Tabular
 Editor BPA, the deterministic model check, when configured), `sql_impact`
 (read-only live catalog trace of one SQL object; call it before editing a live SQL
 object, then `data_doc lineage` for the same object) and `schema_compare` (read-only
-diff of two SQL environments with an ordered promotion script; nothing applied),
+diff of two schemas, live or in the repo, with an ordered promotion script; nothing
+applied),
 plus the Microsoft Fabric CLI (`fab` = ms-fabric-cli) and `fabric_cicd` (a validate-only
 Python **library**, not a CLI — `import fabric_cicd` in deployment scripts), and
 read-only Fabric / Power BI / Microsoft Learn MCP servers. Persistent memory is provided
