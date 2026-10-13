@@ -169,7 +169,7 @@ with tempfile.TemporaryDirectory() as tmp:
     # Status after: fresh; stale once older than max_age_days; doctor rows follow.
     info = cs.status(cwd=root, now=NOW + timedelta(days=2))
     assert info["state"] == "ok" and info["age_days"] == 2.0 and info["objects"]["views"] == 2, info
-    rows = cs.doctor_lines(cwd=root)
+    rows = cs.doctor_lines(cwd=root, now=NOW + timedelta(days=2))  # a fixed clock: the fixture's taken_at never ages past max_age_days
     assert rows[0][0] == "ok" and "1 tables, 2 views, 1 procedures, 1 functions" in rows[0][1], rows
     info = cs.status(cwd=root, now=NOW + timedelta(days=8))
     assert info["state"] == "stale" and info["age_days"] == 8.0, info

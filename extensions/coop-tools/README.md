@@ -6,8 +6,8 @@ agent can call directly instead of asking you to run a CLI: `data_doc`
 (coop-data-doc), `bpa_review` (Tabular Editor BPA, the deterministic model check),
 the governed `fabric_sql_query` fallback, `sql_impact` (the read-only live catalog
 trace of one object), `catalog_snapshot` (the committed dev catalog) and
-`schema_compare` (the read-only diff of two SQL environments with an ordered
-promotion script that is never run by coop):
+`schema_compare` (the read-only diff of two schemas, live environments or the
+repo's `.sql` files, with an ordered promotion script that is never run by coop):
 
 ```sh
 pi -e extensions/coop-tools

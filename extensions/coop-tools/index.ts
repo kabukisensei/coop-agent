@@ -202,8 +202,8 @@ const CATALOG_SNAPSHOT_PARAMS = Type.Object({
 });
 
 const SCHEMA_COMPARE_PARAMS = Type.Object({
-  source: Type.Optional(Type.Union([Type.Literal("dev"), Type.Literal("test"), Type.Literal("prod"), Type.Literal("snapshot")], { description: "Side to promote from: a sql_targets entry or the committed snapshot. Default: the contract's default entry." })),
-  target: Type.Optional(Type.Union([Type.Literal("dev"), Type.Literal("test"), Type.Literal("prod")], { description: "Side to promote to. Default: prod." })),
+  source: Type.Optional(Type.String({ description: "Promote from: dev, test, prod, snapshot or repo[:<name>[/<sub>]] (a contract repositories entry's .sql files). Default: the contract's default entry." })),
+  target: Type.Optional(Type.String({ description: "Promote to: dev, test, prod or repo[:<name>[/<sub>]]. Default: prod." })),
 });
 
 const FABRIC_SQL_QUERY_PARAMS = Type.Object({
@@ -2453,10 +2453,10 @@ export default function coopTools(pi: ExtensionAPI) {
   pi.registerTool({
     name: "schema_compare",
     label: "Schema compare",
-    description: "Read-only compare of two sql_targets entries (or the committed snapshot) and an ordered promotion script: schemas, tables and columns, views, procedures, functions. Writes report.md and deploy.sql under .coop/schema-compare; never runs them.",
-    promptSnippet: "Compare dev and prod schemas; ordered promotion script, nothing applied",
+    description: "Read-only compare of two schemas (sql_targets entries, the snapshot or a repo of .sql files) with an ordered promotion script: schemas, tables, columns, views, procedures, functions. Writes report.md and deploy.sql under .coop/schema-compare, never runs them.",
+    promptSnippet: "Compare dev, prod or repo schemas; ordered promotion script, nothing applied",
     promptGuidelines: [
-      "To move SQL changes between environments, call schema_compare first and work from its deploy.sql; destructive statements there are commented out and stay a person's call.",
+      "To move SQL changes between environments, call schema_compare first and work from its deploy.sql; its commented-out destructive statements stay a person's call.",
     ],
     parameters: SCHEMA_COMPARE_PARAMS,
     executionMode: "sequential",
@@ -2479,7 +2479,7 @@ export default function coopTools(pi: ExtensionAPI) {
           lines,
           "see report.md",
         )
-        : `schema_compare unavailable: ${String(details?.state || "internal_error")}${details?.side ? ` (side: ${details.side})` : ""}.${details?.state === "contract_changed" ? ` ${CONTRACT_CHANGED_HINT}` : ""}${details?.state === "snapshot_missing" ? " No committed catalog snapshot exists; run catalog_snapshot (command=\"snapshot\") first or compare a live entry." : ""}${details?.state === "target_invalid" ? " That side is not a ready sql_targets entry in .coop/project.yml." : ""}`;
+        : `schema_compare unavailable: ${String(details?.state || "internal_error")}${details?.side ? ` (side: ${details.side})` : ""}.${details?.state === "contract_changed" ? ` ${CONTRACT_CHANGED_HINT}` : ""}${details?.state === "snapshot_missing" ? " No committed catalog snapshot exists; run catalog_snapshot (command=\"snapshot\") first or compare a live entry." : ""}${details?.state === "target_invalid" ? " That side is not a ready sql_targets entry in .coop/project.yml." : ""}${details?.state === "repo_missing" ? " No repositories entry with role sql or mixed and a local_path matches; name one as repo:<name>." : ""}${details?.state === "repo_ambiguous" ? " Several sql or mixed repositories exist; name one as repo:<name>." : ""}${details?.state === "repo_unavailable" ? " That repository folder (or its sql_root/subfolder) does not exist on this machine." : ""}`;
       return { content: [{ type: "text" as const, text }], details };
     },
   });

@@ -119,10 +119,12 @@ sql_targets:
 # catalog:
 #   path: ".coop/catalog/dev"   # default: the data_docs repository's catalog/<env>, else this
 #   max_age_days: 7             # older than this: coop offers a refresh at session start
-# `coop schema compare` (or the schema_compare tool) reads two of the sql_targets
-# entries above (or this snapshot against one) and writes a sorted diff and an
-# ordered promotion script under .coop/schema-compare/<source>-to-<target>/;
-# nothing is applied, and every DROP or lossy change is commented out there.
+# `coop schema compare` (or the schema_compare tool) reads two sides, each a
+# sql_targets entry above, this snapshot, or `repo[:<name>[/<subfolder>]]` (the
+# .sql files of a repositories entry with role sql or mixed, under its sql_root),
+# and writes a sorted diff and an ordered promotion script under
+# .coop/schema-compare/<source>-to-<target>/; nothing is applied, and every DROP
+# or lossy change is commented out there.
 
 power_bi:
   default_workspace_name: "TODO: dev semantic-model workspace name"
