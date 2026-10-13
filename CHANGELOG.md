@@ -55,6 +55,23 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **A fresh `coop install` gets a Pi that starts again: the pin moves to Pi
+  1.2.0.** On 2026-10-12 `@earendil-works/pi-codemode` 1.2.0 dropped an export
+  that Pi 1.1.0's codemode module imports; Pi 1.1.0 asks npm for `^1.1.0`, so a
+  new install resolved 1.2.0 and every extension that imports Pi failed at
+  launch with a `SyntaxError`. Installs made before that day, and the v0.35.0
+  window installer, keep pi-codemode 1.1.0 and are not affected. Pi 1.2.0 ships
+  with pi-codemode 1.2.0. The release manifest, the Pi matrix, the extension
+  lock (`node lib/extlock.js generate`), the window's RPC fixture and the
+  fixture stubs move to 1.2.0; the theme's `$schema` points at Pi's published
+  `https://pi.dev/schemas/theme.schema.json`. Pi 1.2.0's compaction call and
+  Codex WebSocket cache are unchanged, so both coop-tools workarounds stay;
+  its `before_agent_start` now also fires for extension-triggered runs, which
+  coop's two handlers already tolerate (no prompt means no standards context
+  and no daily-log opt-out). Pi's own dependency tree is still resolved by npm at
+  install time (Pi stopped shipping `npm-shrinkwrap.json` in 1.0.1); only the
+  extension tree is locked.
+
 - **Prerequisite rows no longer throw where `uname` is off PATH.** `coop
   install`, `coop doctor` and the coop window's first launch ask the platform
   through one helper (`Test-CoopIsMac`) that answers no instead of a
