@@ -80,7 +80,7 @@ try {
     if ($LASTEXITCODE -eq 0) { Ok 'config/pi-lock.json applied to the installed Pi' } else { Ko "pi-lock apply failed: $($applyOut.Trim())" }
     $matchOut = & node $pilock matches $PiPackageDir 2>&1 | Out-String
     if ($LASTEXITCODE -eq 0) { Ok "Pi's dependency tree matches config/pi-lock.json" } else { Ko "pi-lock matches failed: $($matchOut.Trim())" }
-    $loadOut = & node --input-type=module -e "await import(process.argv[1]); console.log('ok')" (Join-Path $PiPackageDir 'dist\index.js') 2>&1 | Out-String
+    $loadOut = & node --input-type=module -e "import { pathToFileURL } from 'node:url'; await import(pathToFileURL(process.argv[1]).href); console.log('ok')" (Join-Path $PiPackageDir 'dist\index.js') 2>&1 | Out-String
     if ($LASTEXITCODE -eq 0 -and $loadOut -match 'ok') { Ok 'the locked Pi package imports (the pi-codemode 1.2.0 break would fail here)' } else { Ko "Pi package import failed on the locked tree: $($loadOut.Trim())" }
   } else { Ok "pi-lock skipped (lock is for Pi $manifestPi, matrix runs $PiVersion)" }
 
