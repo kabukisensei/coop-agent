@@ -123,6 +123,26 @@ if (Test-Have 'pi') {
 # with `coop update`; maintainers take head of main + latest with `coop update --edge`.
 D-Head 'Release manifest'
 $piExpected = Coop-ManifestGet 'pi.version'
+# Pi's own dependency tree against config/pi-lock.json (row U3): the pin names
+# Pi alone, the lock names what Pi runs. Only for a Pi at the pin, found under an
+# npm global root; an --edge Pi resolves live by design.
+if ($piExpected -and (Test-Have 'node') -and (Test-Path -LiteralPath (Get-CoopPiLockPath) -PathType Leaf)) {
+  $piDirForLock = Get-CoopPiPackageDir
+  if ($piDirForLock -and (Get-CoopPiVersion) -eq $piExpected) {
+    $previousEap = $ErrorActionPreference
+    try {
+      $ErrorActionPreference = 'Continue'
+      $lockOut = @(& node (Join-Path $script:CoopRoot 'lib\pilock.js') matches $piDirForLock (Get-CoopPiLockPath) 2>&1 | ForEach-Object { $_.ToString() })
+      $lockRc = $LASTEXITCODE
+    } catch { $lockRc = 1; $lockOut = @() } finally { $ErrorActionPreference = $previousEap }
+    if ($lockRc -eq 0) { D-Ok "pi $piExpected dependency tree matches config/pi-lock.json" }
+    else {
+      $lockWhy = (@($lockOut | Where-Object { $_ -match 'difference\(s\)' }) | Select-Object -First 1)
+      if (-not $lockWhy) { $lockWhy = 'pi dependency tree differs from config/pi-lock.json' }
+      D-Warn ([string]$lockWhy -replace '^pilock: ', 'pi dependency tree: ') 'coop update'
+    }
+  }
+}
 if ($piExpected) {
   if (Test-Have 'pi') {
     $piv = Get-CoopPiVersion

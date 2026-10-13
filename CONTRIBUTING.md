@@ -131,6 +131,22 @@ fails to install keeps a copy in `npm/.coop-lock-failed.json` and resolves live
 until a new lock ships. The gate lane fails when the lock and the manifest
 disagree.
 
+A Pi pin bump also regenerates Pi's own dependency lock:
+
+```bash
+node lib/pilock.js generate       # rewrites config/pi-lock.json (needs the npm registry)
+node lib/pilock.js check          # expect: "pilock: lock matches the manifest"
+```
+
+`config/pi-lock.json` is npm's lockfile for a one-dependency package whose
+dependency is the manifest's Pi (row U3). `npm install -g` pins Pi alone (Pi
+stopped shipping `npm-shrinkwrap.json` in 1.0.1), so after it `coop install`,
+`coop update` and the window package build run `node lib/pilock.js apply`, which
+installs the lock's tree with `npm ci` beside Pi and moves it into Pi's
+`node_modules`; `coop doctor` reports drift from it, and the Pi matrix applies
+it to the Pi it installs. The gate lane fails when this lock and the manifest
+disagree.
+
 If you are on a headless dev box without the coop stack installed (no `pi`,
 pipx tools, or `fab`), **skip `coop doctor`** and say so in the PR — the five
 checks above plus CI fully cover script/doc changes.
