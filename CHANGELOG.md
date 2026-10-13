@@ -68,7 +68,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   prompt on every pair, production included (reads), audit the pair, and block
   any other input. `lib/schema_compare.py`, `tests/schema-compare.test.py`;
   the fixed-context budget moved from 7200 to 7300 tokens for the tool's
-  metadata.
+  metadata. A side can also be the repo (Aaron, 2026-10-13): `repo`,
+  `repo:<name>` or `repo:<name>/<subfolder>` reads the `.sql` files of a
+  contract `repositories` entry with role `sql` or `mixed` (under its
+  `sql_root`) as code with no connection (`lib/sql_source.py`: a Fabric
+  Warehouse Git export, a SQL database project or a hand-kept sql folder; one
+  `CREATE` per `GO` batch, column types rendered as the catalog renders them,
+  post-deployment scripts and `bin/` ignored and counted in the notes), so any
+  pairing works: repo against repo, live against live, repo against live. A
+  view, procedure or function compares with a leading comment banner,
+  `OR ALTER` and a trailing `;` ignored, so a file matches the catalog's copy
+  of the same object.
 
 ### Fixed
 

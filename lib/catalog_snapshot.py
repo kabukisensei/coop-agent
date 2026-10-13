@@ -195,12 +195,12 @@ def status(*, cwd: Path | None = None, project_arg: str | None = None, now: date
     return sql_query.result("stale" if age > limit else "ok", **details)
 
 
-def doctor_lines(*, cwd: Path | None = None, project_arg: str | None = None) -> list[tuple[str, str, str]]:
+def doctor_lines(*, cwd: Path | None = None, project_arg: str | None = None, now: datetime | None = None) -> list[tuple[str, str, str]]:
     """(level, message, hint) rows for coop doctor's project-contract section."""
     project, _path = _load(cwd, project_arg)
     if project is None or not has_sql_target(project):
         return []
-    info = status(cwd=cwd, project_arg=project_arg)
+    info = status(cwd=cwd, project_arg=project_arg, now=now)
     state = info["state"]
     if state == "project_unavailable":
         return []
