@@ -440,7 +440,9 @@ artifact: nothing runs from it.
 The deterministic schema compare (master plan row SQ10, Aaron's ask of 2026-10-12:
 compare the schemas of two Fabric workspaces, dev against prod, and help move the
 code across, because the Warehouse has no good option), implemented by
-`lib/schema_compare.py`. Each live side is read over the same connection path as
+`lib/schema_compare.py`. The same engine ships standalone as `coop-schema-compare`
+(PyPI, pinned in `config/release-manifest.json` and installed by `coop install`)
+for people and CI; the native tool keeps the in-process path below. Each live side is read over the same connection path as
 `sql_impact` (`open_connection(environment=...)`: the named ready `sql_targets`
 entry, same identity pinning, driver, encryption and timeouts; a read of production
 is a plain read), with the four fixed, parameter-free catalog queries the snapshot

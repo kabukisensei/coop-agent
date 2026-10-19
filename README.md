@@ -211,7 +211,7 @@ shows anything still missing.
 | **Pi** | installed globally via `npm` |
 | **Pi extensions** — `pi-mcp-adapter` (MCP), `pi-hermes-memory` (memory), `pi-better-openai` (plan usage limits), `pi-web-access` (web search/fetch — read-only), `@juicesharp/rpiv-ask-user-question` (structured questions), `@juicesharp/rpiv-todo` (the task list above the prompt), `@xl0/pi-lovely-rename` (automatic session names) | installed via `pi install` into coop's isolated agent dir (`~/.coop/agent`) |
 | **Coop companion extensions** — `coop-powerline` (footer/splash/vibes), `coop-tools` (native `data_doc`/`sql_impact`/`bpa_review` + standards-in-context + workflow prompts), `coop-profile`, `coop-guardrails` (policy enforcement), `coop-codemode` (Pi 1.x codemode scripts, with outside model calls off), `coop-router` (the `coop/auto` model: plans on a large Codex model, implements on a small one; opt in with `/model coop/auto`) | shipped in this repo, loaded at launch via `pi -e` (nothing to install) |
-| **Standalone tool** — `coop-data-doc` | installed via `pipx` from PyPI |
+| **Standalone tools** — `coop-data-doc` (lineage docs), `coop-schema-compare` (the deterministic schema compare, the same engine as the native `schema_compare` tool, for people and CI) | installed via `pipx` from PyPI at the manifest pins |
 | **`fabric-cicd`** (deployment validation) | a Python **library** (no CLI), injected into the Fabric CLI's env via `pipx inject ms-fabric-cli fabric-cicd` |
 | **Microsoft Fabric CLI** (`ms-fabric-cli` → `fab`) | installed via `pipx` |
 | **Power BI authoring tools** — Report Authoring CLI, Power BI Modeling MCP, and Windows-only Desktop Bridge | installed globally from manifest-pinned npm packages; Doctor requires Report Authoring and validates Modeling MCP arguments |
@@ -705,7 +705,11 @@ A project override is one Markdown file per domain in `.coop/project.yml`
 
 ## Standalone tools
 
-coop wraps one standalone pipx tool and exposes five native LLM tools: `data_doc`,
+coop installs two standalone pipx tools (`coop-data-doc`, and `coop-schema-compare`,
+the schema compare as a command people and CI run on their own: a side is a live
+database, a `fabric://<workspace>/<warehouse>` name, a snapshot folder or a repo
+folder, and the snapshot layout is the one `coop catalog snapshot` writes) and
+exposes five native LLM tools: `data_doc`,
 `sql_impact` (live catalog impact trace of one SQL object on the contract's dev/test
 `sql_targets` entry), `catalog_snapshot` (the committed dev catalog snapshot: one file
 per table, view, procedure and function under the contract's snapshot folder, read

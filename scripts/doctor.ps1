@@ -279,6 +279,7 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
   }
 }
 Check-PipxDist 'coop-data-doc' 'coop-data-doc'
+Check-PipxDist 'coop-schema-compare' 'coop-schema-compare'
 Check-PipxDist 'ms-fabric-cli' 'fab'
 
 # Retired standalone reviewers (ST1): an install from v0.24.0 or older still has
@@ -405,6 +406,7 @@ function Check-PipxTool([string]$Bin) {
   }
 }
 Check-PipxTool 'coop-data-doc'
+Check-PipxTool 'coop-schema-compare'
 
 D-Head 'Fabric / semantic-model tooling'
 
