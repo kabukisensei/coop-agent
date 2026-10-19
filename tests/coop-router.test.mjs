@@ -145,6 +145,14 @@ console.log("  ✓ a provider error or two failed edits step the turn up one tie
 
 // --- helpers --------------------------------------------------------------------
 assert.equal(lastUserText([user("a"), { role: "assistant", content: [] }, user([{ type: "text", text: "b" }, { type: "image" }])]), "b");
+// Pi hands the router coop's injected note (standards, team knowledge) as a user
+// message AFTER the prompt; the prompt is the first user message of the turn.
+const note = user("Cooptimize standards apply automatically to this task. " + "x".repeat(5000));
+assert.equal(lastUserText([user("What does `coop doctor` check?"), note]), "What does `coop doctor` check?");
+assert.equal(lastUserText([user("a"), { role: "assistant", content: [] }, toolResult("read"), user("Add a column"), note]), "Add a column");
+assert.equal(lastUserText([user("a"), note, { role: "assistant", content: [] }, toolResult("edit")]), "a", "mid-turn: the turn's prompt, not the note");
+assert.equal(routeRequest({ reason: "user", thinkingLevel: "medium", messages: [user("Add a column to the orders view"), note] }, full, env).model.id, "gpt-5.6-terra", "an injected note never turns an edit into a plan");
+assert.equal(routeRequest({ reason: "user", thinkingLevel: "low", messages: [user("What does `coop doctor` check?"), note] }, full, env).model.id, "gpt-5.6-luna", "an injected note never turns a quick question into a standard task");
 assert.equal(editedThisTurn([user("a"), toolResult("edit"), user("b"), toolResult("read")]), false, "an edit before the last user message does not count");
 assert.equal(storedState({ sessionManager: { getBranch: () => [{ type: "custom", customType: "pi.virtual-model-state", data: { provider: "coop", modelId: "auto", state: implementing } }] } }), implementing);
 assert.equal(storedState({}), undefined);

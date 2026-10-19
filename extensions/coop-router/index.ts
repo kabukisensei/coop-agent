@@ -120,8 +120,24 @@ export function resolveTier(tier: Tier, registry: Registry, env: NodeJS.ProcessE
   throw new Error(`coop/auto: none of the ${tier} models (${ids.join(", ")}) is in the catalog with an OpenAI Codex sign-in. Run /login openai-codex, or pick a model with /model.`);
 }
 
+/**
+ * The person's prompt for the latest user turn: the FIRST user-role message after
+ * the last assistant reply. Pi hands the router its LLM-shaped messages, where
+ * every custom message an extension injected (coop's standards and team-knowledge
+ * note, a few thousand characters, appended after the prompt) arrives as a user
+ * message too; classifying the last one sent a 27-character question to the
+ * standard model and a 240-character edit to the plan model (dev VM, 2026-10-19).
+ * So: the run of consecutive user-role messages that ends at the last user
+ * message (mid-turn, that run sits before the last assistant reply), and the
+ * first message of that run.
+ */
 export function lastUserText(messages: readonly any[]): string {
-  const content = messages.filter((m) => m?.role === "user").at(-1)?.content ?? "";
+  let last = -1;
+  for (let i = messages.length - 1; i >= 0; i--) if (messages[i]?.role === "user") { last = i; break; }
+  if (last < 0) return "";
+  let first = last;
+  while (first > 0 && messages[first - 1]?.role === "user") first--;
+  const content = messages[first]?.content ?? "";
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   return content.flatMap((block: any) => (block?.type === "text" ? [String(block.text ?? "")] : [])).join("\n");
