@@ -203,6 +203,13 @@ for the Node tools and extensions; no script builds these paths inline.
 5. **Standalone tools** (pipx, on PyPI) — invoked two ways: by the `coop`
    subcommands and by the native `coop-tools` extension, both via CLI with the
    exact contracts in [`tool-contract.md`](./tool-contract.md):
+   - `coop-schema-compare` — the schema compare as a standalone command
+     (`compare`, `snapshot`, `diff`) over live databases, `fabric://` names,
+     snapshot folders and repo folders; installed at the manifest pin for people
+     and CI pipelines. The native `schema_compare` tool still runs
+     `lib/schema_compare.py` in-process (contract `sql_targets` entries, the
+     guardrails' audit and coop's own token path); the two share the compare
+     engine and the snapshot layout.
    - `coop-data-doc` — SQL + Power BI documentation and lineage.
      `scan` → `graph.json`; `build` → `manifest.json` + Markdown docs + portal;
      `lineage <object> [--depth]` → one object's up/downstream + relationships as

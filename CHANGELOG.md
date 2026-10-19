@@ -5,6 +5,20 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **`coop-schema-compare` 0.1.0 is installed with coop** (master plan row SQ10,
+  Aaron's ask of 2026-10-12: the schema compare for coop and for people, like
+  coop-data-doc). `config/release-manifest.json` pins it under `python_tools`, so
+  `coop install` and `coop update` converge it with pipx, the window package
+  bundles its wheel, `coop doctor` has its rows, and the release gate checks its
+  pin against the website. The native `schema_compare` tool is unchanged: it
+  still runs `lib/schema_compare.py` in-process against the contract's
+  `sql_targets` entries under the guardrails; the standalone command is the same
+  engine for a terminal or a CI pipeline (`compare`, `snapshot`, `diff` over live
+  databases, `fabric://<workspace>/<warehouse>` names, snapshot folders and repo
+  folders), and either tool's snapshot folder is a side for the other.
+
 ### Fixed
 
 - **`schema_compare` no longer lists Fabric's internal `_rsc` schema as a drop.**

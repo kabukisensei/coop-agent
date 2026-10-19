@@ -1516,7 +1516,7 @@ function Test-CoopReleasePins {
   }
   $vraw = Get-Content -LiteralPath $vjson -Raw
   $mismatch = $false
-  foreach ($tool in @('coop-data-doc')) {
+  foreach ($tool in @('coop-data-doc', 'coop-schema-compare')) {
     $pin = Coop-ManifestObjectGet 'python_tools' $tool
     # versions.json keeps a strict one-`"key": "value"`-per-line layout (enforced
     # by coop-website's own checker), so a regex read is safe — and python-free.

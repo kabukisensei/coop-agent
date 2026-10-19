@@ -1,9 +1,11 @@
 # Releasing the coop-* suite
 
-Cross-repo runbook. The suite is three sibling repos (same GitHub owner, all
-released from `main`, checked out side by side): **coop-data-doc** (Python →
-PyPI), **coop-agent** (this repo), and **coop-website** (static site). Release
-**in the order below** — coop-data-doc first, website last.
+Cross-repo runbook. The suite is four sibling repos (same GitHub owner, all
+released from `main`, checked out side by side): **coop-data-doc** and
+**coop-schema-compare** (Python → PyPI, both pinned in
+`config/release-manifest.json` `python_tools`), **coop-agent** (this repo), and
+**coop-website** (static site). Release **in the order below** — the Python
+tools first, website last.
 
 `coop-review-core`, `coop-dax-review` and `coop-sql-review` are **archived**
 (master plan ST1 retired the review CLIs; their rules now live in the
