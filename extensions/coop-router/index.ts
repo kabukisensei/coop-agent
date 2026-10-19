@@ -17,8 +17,9 @@
 //   turn on a tier below plan step up one tier for the rest of the turn.
 // - `user` requests are classified by the thinking level picked and the prompt:
 //   high or xhigh, or a long prompt, is planning on the plan model; low (or off)
-//   with a short prompt is a quick answer on the build model; anything else is
-//   planning on the standard model. A session already implementing keeps the
+//   with a short prompt, or medium with a short lookup question ("What does
+//   `coop doctor` check?"), is a quick answer on the build model; anything else
+//   is planning on the standard model. A session already implementing keeps the
 //   build model for ordinary follow-ups, so it switches models once per phase.
 //
 // The phase is router state: Pi stores it on the session branch, so it follows

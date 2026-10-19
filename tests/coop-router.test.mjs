@@ -23,7 +23,12 @@ const env = {};
 
 // --- classification ---------------------------------------------------------
 assert.equal(classifyRequest("what does this view do?", "low"), "build");
-assert.equal(classifyRequest("what does this view do?", "medium"), "standard");
+// A short question at medium thinking is a lookup on the build model (the J0 trial's
+// seven misses, 2026-10-19); an imperative of the same length is not.
+assert.equal(classifyRequest("what does this view do?", "medium"), "build");
+assert.equal(classifyRequest("Define a Fabric capacity unit.", "medium"), "build");
+assert.equal(classifyRequest("Make `coop update --edge` print the commit it moved to.", "medium"), "standard");
+assert.equal(classifyRequest("What does this view do, and rewrite it so the join on dbo.orders uses the new key column?", "medium"), "standard");
 assert.equal(classifyRequest("x".repeat(401), "low"), "standard");
 assert.equal(classifyRequest("refactor", "high"), "plan");
 assert.equal(classifyRequest("refactor", "xhigh"), "plan");

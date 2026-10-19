@@ -4,7 +4,7 @@
 // rule gets wrong on purpose (the short medium-thinking lookups a classifier
 // could route better).
 import assert from "node:assert/strict";
-import { classifyRequest, LONG_PROMPT_CHARS, SHORT_PROMPT_CHARS, TIERS } from "../lib/router-rules.mjs";
+import { classifyRequest, isLookupQuestion, LONG_PROMPT_CHARS, LOOKUP_PROMPT_CHARS, SHORT_PROMPT_CHARS, TIERS } from "../lib/router-rules.mjs";
 import { CLASSIFIERS, DEFAULT_SET, formatReport, missingKeys, parseArgs, readSet, resolvePiEntry, runTrial } from "../lib/router-trial.mjs";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync as readFile, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -45,7 +45,13 @@ import { execFileSync } from "node:child_process";
 
 // --- the rule ---------------------------------------------------------------
 assert.equal(classifyRequest("What is DAX?", "low"), "build");
-assert.equal(classifyRequest("What is DAX?", "medium"), "standard");
+// A short question at medium thinking is a lookup on the build model since the J0
+// trial (2026-10-19); the same words with work attached, or an imperative, are not.
+assert.equal(classifyRequest("What is DAX?", "medium"), "build");
+assert.equal(classifyRequest("Explain CALCULATE in one sentence.", "medium"), "build");
+assert.equal(classifyRequest("Fix the DAX measure that divides by zero.", "medium"), "standard");
+assert.equal(classifyRequest("What is DAX? Rewrite every measure in the model to use it idiomatically, then list each change you made.", "medium"), "standard");
+assert.equal(isLookupQuestion("x".repeat(LOOKUP_PROMPT_CHARS + 1) + "?"), false);
 assert.equal(classifyRequest("x".repeat(SHORT_PROMPT_CHARS + 1), "low"), "standard");
 assert.equal(classifyRequest("Design the migration", "high"), "plan");
 assert.equal(classifyRequest("x".repeat(LONG_PROMPT_CHARS), "low"), "plan");
@@ -58,8 +64,9 @@ assert.equal(new Set(rows.map((r) => r.id)).size, 50, "ids are unique");
 for (const r of rows) assert.ok(TIERS.includes(r.label) && r.prompt.trim().length > 0);
 for (const t of TIERS) assert.ok(rows.filter((r) => r.label === t).length >= 7, `at least 7 rows labelled ${t}`);
 const ruleMisses = rows.filter((r) => classifyRequest(r.prompt, r.thinkingLevel) !== r.label);
-assert.ok(ruleMisses.length > 0 && ruleMisses.length < 10, "the set holds a few rows the rule gets wrong, so a classifier can beat it");
-assert.ok(ruleMisses.every((r) => r.label === "build" && r.thinkingLevel === "medium"), "the rule's misses are the short medium-thinking lookups");
+assert.equal(ruleMisses.length, 0, `the tightened rule routes the whole set: ${ruleMisses.map((r) => r.id).join(", ")}`);
+const lookups = rows.filter((r) => r.thinkingLevel === "medium" && r.label === "build");
+assert.ok(lookups.length >= 7 && lookups.every((r) => isLookupQuestion(r.prompt)), "the set keeps the seven short medium-thinking lookups the lookup rule now routes");
 assert.ok(rows.some((r) => r.prompt.length >= LONG_PROMPT_CHARS && r.label === "plan"), "one long brief plans by length");
 const rawText = (await import("node:fs")).readFileSync(DEFAULT_SET, "utf8");
 assert.ok(!/contoso\.com|@cooptimize|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i.test(rawText), "the set carries no tenant, workspace or item ids");
@@ -73,10 +80,16 @@ assert.equal(r1.classifiers.typesafe.accuracy, 1);
 assert.equal(r1.classifiers.typesafe.errors, 0);
 assert.equal(r1.classifiers.typesafe.disagreements.length, 0);
 assert.ok(Math.abs(r1.classifiers.typesafe.cost - 0.05) < 1e-9, "cost sums per row");
-assert.ok(r1.classifiers.typesafe.agreesWithRule < 1 && r1.classifiers.typesafe.agreesWithRule > 0.8);
+// With the lookup rule the set has no miss left, so a perfect classifier only ties the rule.
+assert.equal(r1.classifiers.typesafe.agreesWithRule, 1);
 const report1 = formatReport(r1);
 assert.match(report1, /^rows: 50/m);
-assert.match(report1, /verdict: typesafe routes better than the rule/);
+assert.match(report1, /verdict: no classifier beats the rule on this set/);
+// A classifier still wins where the rule misses: the same set with one lookup relabelled as the rule saw it before.
+const harder = rows.map((r) => (r.id === "r44" ? { ...r, prompt: "Tell me what the /router command prints" } : r));
+assert.equal(classifyRequest(harder.find((r) => r.id === "r44").prompt, "medium"), "standard", "an imperative without a question mark is not a lookup");
+const r1b = await runTrial(harder, ["typesafe"], perfect);
+assert.match(formatReport(r1b), /verdict: typesafe routes better than the rule by 2% on this set/);
 assert.ok(!report1.includes(rows[0].prompt), "the report prints no prompt text");
 
 // A classifier that always says standard loses to the rule; errors count, not score.

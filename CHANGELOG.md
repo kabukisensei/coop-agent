@@ -123,6 +123,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `OR ALTER` and a trailing `;` ignored, so a file matches the catalog's copy
   of the same object.
 
+### Changed
+
+- **`coop/auto` sends a short lookup question at medium thinking to the build
+  model.** The J0 trial (2026-10-19) scored the routing rule at 86% on its set,
+  and all seven misses were the same shape: a question of at most 80 characters
+  ("What does `SET NOCOUNT ON` do?", "Define a Fabric capacity unit.") at the
+  default medium thinking, sent to the standard model while a classifier sent it
+  to build. The rule now recognises that shape (a question word first and a
+  question mark last, or "define", "name" or "explain" first) and routes it to
+  build; an imperative of the same length, or a question with work attached,
+  stays on the standard model. The rule scores 100% on the shipped set.
+
 ### Fixed
 
 - **`coop/auto` says why a session stepped up a tier.** The R1 measurement on
