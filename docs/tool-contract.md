@@ -497,7 +497,10 @@ counts; the snapshot side adds `taken_at`), `counts` (`total`, `add`, `alter`,
 statement counts, `notes` (an unreadable `sys.sql_modules` or a capped list on
 either side, named by side) and `path`: the folder
 `.coop/schema-compare/<source>-to-<target>/` beside the contract, holding
-`report.md` (the same table for people) and `deploy.sql`. The script is ordered to
+`report.md` (the same table for people) and `deploy.sql`. The result line tells the
+model that the list is the whole diff (report.md repeats it, so it is not read)
+and that `deploy.sql` is opened only to promote, so a compare costs one tool
+result. The script is ordered to
 run top to bottom: new schemas, new tables, in-place column additions, then
 functions, views and procedures as `CREATE OR ALTER` in one dependency order across
 kinds (a function that reads a view follows the view; `schema.name` references

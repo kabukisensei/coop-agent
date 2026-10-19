@@ -2473,9 +2473,14 @@ export default function coopTools(pi: ExtensionAPI) {
       if (details?.changes_truncated) lines.push("- more changes in report.md");
       for (const note of Array.isArray(details?.notes) ? details.notes : []) lines.push(`- note: ${String(note)}`);
       const side = (s: any) => `${s?.environment ?? "?"} ${s?.kind ?? ""} ${s?.database ?? ""}`.trim();
+      // The list below is the whole diff: report.md repeats it for people, and
+      // deploy.sql is read only when promoting, so a compare costs one tool result.
+      const where = details?.changes_truncated
+        ? `The first ${Array.isArray(details?.changes) ? details.changes.length : 0} changes are listed below; the full table is ${details?.path}/report.md. The script, ${details?.path}/deploy.sql, is for promoting: open it only when the user wants to promote.`
+        : `Every change is listed below; ${details?.path}/report.md repeats this table for people, so do not read it. The script, ${details?.path}/deploy.sql, is for promoting: open it only when the user wants to promote.`;
       const text = details?.ok
         ? modelText(
-          `schema_compare: ${side(details.source)} -> ${side(details.target)}: ${details.counts?.total ?? 0} difference(s) (${details.counts?.add ?? 0} add, ${details.counts?.alter ?? 0} alter, ${details.counts?.drop ?? 0} drop, ${details.counts?.destructive ?? 0} destructive). Script: ${details.script?.statements ?? 0} statement(s) to run, ${details.script?.destructive ?? 0} commented out. Files: ${details.path}/report.md and deploy.sql. Nothing was applied; a run against the target goes through the governed write path, one statement at a time, after the user has read the script.`,
+          `schema_compare: ${side(details.source)} -> ${side(details.target)}: ${details.counts?.total ?? 0} difference(s) (${details.counts?.add ?? 0} add, ${details.counts?.alter ?? 0} alter, ${details.counts?.drop ?? 0} drop, ${details.counts?.destructive ?? 0} destructive). Script: ${details.script?.statements ?? 0} statement(s) to run, ${details.script?.destructive ?? 0} commented out. ${where} Nothing was applied; a run against the target goes through the governed write path, one statement at a time, after the user has read the script.`,
           lines,
           "see report.md",
         )

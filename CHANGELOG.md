@@ -32,6 +32,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   manual section with a one-line reason. Found in a 175-change simulation over
   310 objects (Aaron's case of 2026-10-19: releases too large for Fabric's
   schema manager). The same fix is in coop-schema-compare.
+- **A `schema_compare` costs one tool result.** The result line now says the
+  list is the whole diff and `report.md` repeats it for people, and that
+  `deploy.sql` is opened only to promote, so coop stops re-reading the report
+  (~700 tokens on a typical release) and the script (~2,700) after a compare
+  it only had to summarize. The tool result itself is unchanged in size: about
+  550 tokens for a 38-change release, capped at 12,000 characters.
 - **`schema_compare` no longer lists Fabric's internal `_rsc` schema as a drop.**
   The live side read every row of `sys.schemas`, so a Warehouse's internal,
   underscore-prefixed schema that holds no user object showed up as a schema to
