@@ -88,7 +88,7 @@ VIEW_PROD = "CREATE VIEW [dbo].[vw_Sales] AS\nSELECT OrderId, Amount FROM dbo.Or
 PROC = "CREATE PROCEDURE [dbo].[usp_Refresh] AS\r\nBEGIN\r\n    SELECT  1\r\nEND"
 PROC_REFORMATTED = "CREATE PROCEDURE [dbo].[usp_Refresh] AS\nBEGIN\n  SELECT 1\nEND\n"
 FN = "CREATE FUNCTION [fin].[fn_Rate]() RETURNS int AS BEGIN RETURN 1 END"
-VIEW_TOP = "CREATE VIEW [dbo].[vw_Top] AS SELECT * FROM dbo.vw_Sales WHERE fin.fn_Rate() > 0"
+VIEW_TOP = "CREATE VIEW [dbo].[vw_Top] AS SELECT * FROM dbo.vw_Sales WHERE fin.fn_Rate() > 0;"  # repo files end with ;
 
 DEV = {
     sc.SCHEMAS_SQL: [("dbo",), ("fin",), ("sys",), ("INFORMATION_SCHEMA",), ("stage",)],
@@ -244,6 +244,7 @@ assert "-- view dbo.vw_Sales: run after the rebuild: names region of dbo.Orders,
 assert "-- view dbo.vw_Top: run after the rebuild: follows view dbo.vw_Sales below\n-- CREATE OR ALTER VIEW [dbo].[vw_Top]" in wh_tail
 assert wh_tail.index("-- CREATE TABLE [dbo].[Orders] (") < wh_tail.index("-- CREATE OR ALTER VIEW [dbo].[vw_Sales]") < wh_tail.index("-- CREATE OR ALTER VIEW [dbo].[vw_Top]")
 assert wh_run == to_run - 3 and wh_destructive == destructive + 1, (wh_run, wh_destructive)
+assert not [line for line in wh_script.splitlines() if line.rstrip().endswith(";;")], "deferred module lines end with one semicolon"
 assert "CREATE TABLE [dbo].[NewTable]" in wh_live and "CREATE SCHEMA [stage]" in wh_live
 
 # a definition that already says CREATE OR ALTER is left alone; a PROC short form is handled

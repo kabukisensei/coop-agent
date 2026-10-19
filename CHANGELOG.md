@@ -31,7 +31,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   rebuilt column, or depends on such an object, follows the rebuild note in the
   manual section with a one-line reason. Found in a 175-change simulation over
   310 objects (Aaron's case of 2026-10-19: releases too large for Fabric's
-  schema manager). The same fix is in coop-schema-compare.
+  schema manager). A deferred module no
+  longer ends with `;;` when its source definition already carries the
+  semicolon (repo files do). The same fixes are in coop-schema-compare.
 - **A `schema_compare` costs one tool result.** The result line now says the
   list is the whole diff and `report.md` repeats it for people, and that
   `deploy.sql` is opened only to promote, so coop stops re-reading the report

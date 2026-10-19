@@ -464,6 +464,12 @@ def _rebuilt_columns(changes: list[dict[str, Any]]) -> dict[tuple[str, str], set
     return out
 
 
+def _terminated(text: str) -> str:
+    """One statement with exactly one trailing semicolon."""
+    text = text.rstrip()
+    return text if text.endswith(";") else text + ";"
+
+
 def _create_or_alter(definition: str) -> str:
     text = definition.strip()
     match = _CREATE_HEAD.match(text)
@@ -485,7 +491,7 @@ def render_script(
     destructive: list[str] = []
 
     def go(lines: list[str], text: str) -> None:
-        lines.append(text.rstrip() + ("" if text.rstrip().endswith(";") else ";"))
+        lines.append(_terminated(text))
         lines.append("GO")
         lines.append("")
 
@@ -538,7 +544,7 @@ def render_script(
                 + [f"follows {kind_word} {_plain(dep)} below" for dep in sorted(waits_on) for kind_word in [kinds.get(dep, "object")]]
             )
             deferred[key] = reason
-            destructive.append(f"-- {kind} {_plain(key)}: run after the rebuild: {reason}\n{_create_or_alter(definition)};")
+            destructive.append(f"-- {kind} {_plain(key)}: run after the rebuild: {reason}\n{_terminated(_create_or_alter(definition))}")
             continue
         go(live, _create_or_alter(definition))
     for c in changes:
@@ -549,7 +555,7 @@ def render_script(
             if c["kind"] == "table":
                 create = _render_table(source.tables[key], key) + ";"
             else:
-                create = _create_or_alter(definitions.get(key, "")) + ";" if definitions.get(key) else f"-- {c['kind']} definition not readable on the source; write it by hand"
+                create = _terminated(_create_or_alter(definitions.get(key, ""))) if definitions.get(key) else f"-- {c['kind']} definition not readable on the source; write it by hand"
             destructive.append(f"-- {_plain(key)}: {c['detail']}\nDROP {_drop_word(_target_kind_of(c))} {_qualified(key)};\nGO\n{create}")
     for kind in ("procedure", "view", "function", "table"):
         for c in changes:
