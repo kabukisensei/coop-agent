@@ -90,6 +90,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **`coop router-trial` finds Pi 1.2.0 again.** The trial resolved the installed
+  pi-coding-agent with `require.resolve`, and Pi 1.2.0's package exports carry
+  only an `import` condition, so every run died with 'No "exports" main
+  defined' before scoring anything (Aaron's first run on the dev VM). The entry
+  now comes from Pi's own package.json (its import export, else `main`), with a
+  test over every shape Pi has shipped and over the Pi installed on the machine.
 - **`coop sync` links the Pi sign-in under Windows PowerShell 5.1 when Developer
   Mode is on.** 5.1's `New-Item -ItemType SymbolicLink` never asks for the
   unprivileged symlink Developer Mode allows, so it refused with "Administrator
