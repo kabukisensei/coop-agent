@@ -215,16 +215,25 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
       # Windows PowerShell 5.1 turns each native stderr line into an ErrorRecord
       # whose rendering is prefixed with the command name and position; take the
       # record's own message so the row quotes the launcher's line verbatim.
+      # A Python traceback says nothing on its first line; its last line is the
+      # error (a PermissionError on the tool's own config file, say), and that
+      # is not a launcher problem, so the hint names the file instead.
       $probe = ''
       try {
         $pLines = @(& $Exe --version 2>&1 | ForEach-Object {
           if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { [string]$_ }
         })
-        $pLine = @($pLines | ForEach-Object { ($_ -split "`r?`n") } | Where-Object { $_.Trim() }) | Select-Object -First 1
+        $pAll = @($pLines | ForEach-Object { ($_ -split "`r?`n") } | Where-Object { $_.Trim() })
+        $pLine = $pAll | Select-Object -First 1
+        if ($pLine -and ([string]$pLine).Trim() -match '^Traceback \(most recent call last\)') { $pLine = $pAll | Select-Object -Last 1 }
         if ($pLine) { $probe = ([string]$pLine).Trim(); if ($probe.Length -gt 120) { $probe = $probe.Substring(0, 120) } }
       } catch {}
       $said = if ($probe) { "; it printed: $probe" } else { '' }
-      $hint = "a broken leftover launcher: delete it, then pipx reinstall $Dist, and open a new terminal"
+      if ($probe -match '(?i)PermissionError|Errno 13|Access is denied') {
+        $hint = "the launcher works but cannot read a file it needs (named above; a folder made from an administrator window keeps the normal user out): fix that file's permissions, then run: coop doctor"
+      } else {
+        $hint = "a broken leftover launcher: delete it, then pipx reinstall $Dist, and open a new terminal"
+      }
       D-Warn "${Dist}: $Exe at $($rc.Source) runs but prints no version (pipx metadata says $meta)$said" $hint
     } else {
       $hint = "put pipx's bin dir on PATH: pipx ensurepath, then open a new terminal; if the launcher is missing there: pipx reinstall $Dist"
@@ -378,7 +387,8 @@ if (-not (Test-Have 'fab') -and (Test-CoopAzureSqlOnly)) {
     }
   } else {
     $fv = (& fab --version 2>$null | Select-Object -First 1)
-    D-Ok "fab — Microsoft Fabric CLI  ($fv)"
+    if ($fv -and ([string]$fv).Trim()) { D-Ok "fab — Microsoft Fabric CLI  ($fv)" }
+    else { D-Warn 'fab — Microsoft Fabric CLI runs but prints no version' 'see the ms-fabric-cli row under Release manifest' }
   }
 } else {
   D-Bad 'fab missing' "coop install   (or: pipx install $(Coop-ManifestPythonSpec 'ms-fabric-cli'))"

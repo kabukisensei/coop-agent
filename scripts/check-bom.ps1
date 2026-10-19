@@ -22,10 +22,13 @@ function Ko([string]$m) { Write-Output "  $G_CROSS $m"; $script:fail = 1 }
 function Ok([string]$m) { Write-Output "  $G_CHECK $m" }
 
 # Every .ps1 under the repo, as repo-relative forward-slash paths in ordinal order
-# (.git, node_modules and .cache are never source).
+# (.git, node_modules and .cache are never source, and neither is the window
+# package build's staging under desktop/installer: a snapshot of these files plus
+# npm's own generated shims, all gitignored, left behind on a dev box that just
+# ran desktop/scripts/build-installer.mjs).
 $files = @(Get-ChildItem -LiteralPath $root -Recurse -File -Filter '*.ps1' |
   ForEach-Object { $_.FullName.Substring($root.Length).TrimStart('\', '/') -replace '\\', '/' } |
-  Where-Object { $_ -notmatch '^(\.git|\.cache)/' -and $_ -notmatch '(^|/)node_modules/' })
+  Where-Object { $_ -notmatch '^(\.git|\.cache)/' -and $_ -notmatch '(^|/)node_modules/' -and $_ -notmatch '^desktop/installer/(stage|runtime|coop|dist|cache)/' })
 $files = @([string[]]$files | Sort-Object { [string]$_ })
 
 function Get-LeadBytes([string]$Path, [int]$Count) {

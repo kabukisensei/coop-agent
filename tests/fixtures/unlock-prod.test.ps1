@@ -37,8 +37,12 @@ try {
   if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $file) -and $out -match '[0-9a-f]{8}') { Ok 'Write-CoopProdUnlock writes the grant and returns its id' } else { Ko 'Write-CoopProdUnlock must write the grant' $out }
   $g = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json
   if ($g.schema_version -eq 1 -and $g.client -eq 'Contoso' -and $g.minutes -eq 15 -and ([string]$g.id) -match '^[0-9a-f]{8}$') { Ok 'the file carries schema_version 1, the client, the minutes and an 8-hex id' } else { Ko 'grant fields' (Get-Content -LiteralPath $file -Raw) }
-  $created = [DateTime]::Parse([string]$g.created_at, $null, [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
-  $expires = [DateTime]::Parse([string]$g.expires_at, $null, [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+  # pwsh 7's ConvertFrom-Json already turns an ISO timestamp into a local-time
+  # [DateTime]; stringifying that and parsing it again drops the zone and, on a
+  # machine outside UTC, lands hours off. Take the DateTime where it is one.
+  $asUtc = { param($v) if ($v -is [DateTime]) { $v.ToUniversalTime() } else { [DateTime]::Parse([string]$v, $null, [System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime() } }
+  $created = & $asUtc $g.created_at
+  $expires = & $asUtc $g.expires_at
   if ([Math]::Abs((($expires - $created).TotalMinutes) - 15) -lt 0.01) { Ok 'expires_at is created_at plus the minutes' } else { Ko "expires_at - created_at must be 15 min (got $(($expires - $created).TotalMinutes))" }
   if ([Math]::Abs(((Get-Date).ToUniversalTime() - $created).TotalMinutes) -lt 5) { Ok 'created_at is now (UTC)' } else { Ko 'created_at must be about now' }
   $raw = Get-Content -LiteralPath $file -Raw

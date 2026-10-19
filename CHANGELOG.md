@@ -90,6 +90,39 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **`coop sync` links the Pi sign-in under Windows PowerShell 5.1 when Developer
+  Mode is on.** 5.1's `New-Item -ItemType SymbolicLink` never asks for the
+  unprivileged symlink Developer Mode allows, so it refused with "Administrator
+  privilege required" even on a machine set up as the install docs say, and sync
+  copied `auth.json` and `models.json` instead of linking them (a refreshed
+  login then stayed behind). Sync now tries cmd's `mklink` (which does ask, as
+  pwsh 7 does) before settling for the copy.
+- **`coop doctor` reads a launcher's traceback.** A pipx launcher that died in a
+  Python traceback had its first line quoted ("Traceback (most recent call
+  last):") and was called a broken leftover launcher to delete and reinstall.
+  The row now quotes the traceback's last line, the error, and when that is a
+  permission error it points at the unreadable file (a config folder first made
+  from an administrator window keeps the normal user out) instead of a
+  reinstall that would not help. The Fabric CLI row no longer shows green with
+  an empty version beside that warning.
+- **coop's output is UTF-8 on a stock Windows console.** Both PowerShell editions
+  wrote in the console's OEM code page, so `✓` reached the screen as `√`, `✗` and
+  em-dashes as `?`, and anything reading coop's output as UTF-8 (the window, Git
+  Bash, the tests) saw replacement characters. `lib/common.ps1` now switches the
+  console output encoding and `$OutputEncoding` to UTF-8 when it loads.
+- **`coop version` and doctor survive a Python without pipx under Windows
+  PowerShell 5.1.** The `<python> -m pipx --version` probe wrote "No module named
+  pipx" to stderr, which 5.1 turns into a terminating error under
+  `$ErrorActionPreference = 'Stop'` even through `*> $null`; the probe now runs
+  with the preference relaxed and its output discarded.
+- **`scripts/check-bom.ps1` skips the window package build's staging** under
+  `desktop/installer` (a gitignored snapshot plus npm's generated shims), so
+  `tests/run.ps1` passes on a dev box that just built the installer.
+- **`bash tests/run.sh` says when `python3` is unusable.** On a python.org
+  install `python3` in Git Bash is the Store's App Execution Alias stub, and the
+  suite died deep inside a test with "Python was not found"; it now stops up
+  front and prints the one-line fix (a `python3.exe` beside `python.exe`, which
+  the hosted CI runners have).
 - **A fresh `coop install` gets a Pi that starts again: the pin moves to Pi
   1.2.0.** On 2026-10-12 `@earendil-works/pi-codemode` 1.2.0 dropped an export
   that Pi 1.1.0's codemode module imports; Pi 1.1.0 asks npm for `^1.1.0`, so a
