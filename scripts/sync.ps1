@@ -38,10 +38,23 @@ foreach ($f in @('auth.json', 'models.json')) {
   if (-not (Test-Path -LiteralPath $dst) -and (Test-Path -LiteralPath $src -PathType Leaf)) {
     # Prefer a symlink so refreshed logins stay live (like bash `ln -sf`); fall back to a
     # static copy when symlinks aren't allowed (no Developer Mode / admin).
+    $linked = $false
     try {
       New-Item -ItemType SymbolicLink -Path $dst -Target $src -ErrorAction Stop | Out-Null
-      Coop-Ok "linked $f from your personal pi (login/models)"
+      $linked = $true
     } catch {
+      # Windows PowerShell 5.1 (coop.cmd's runtime) never asks for the unprivileged
+      # symlink Developer Mode allows, so its New-Item refuses with "Administrator
+      # privilege required" even when Developer Mode is on; cmd's mklink does ask
+      # (so does pwsh 7). Try it before settling for a copy.
+      if ($env:OS -eq 'Windows_NT') {
+        try { $null = & cmd.exe /d /c mklink "$dst" "$src" 2>&1 } catch {}
+        if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $dst)) { $linked = $true }
+      }
+    }
+    if ($linked) {
+      Coop-Ok "linked $f from your personal pi (login/models)"
+    } else {
       Copy-Item -LiteralPath $src -Destination $dst
       Coop-Ok "copied $f from your personal pi (login/models; enable Developer Mode for a live link)"
     }

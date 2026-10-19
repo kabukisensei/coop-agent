@@ -28,6 +28,24 @@ export COOP_SKIP_AZ=1
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+# Every lane runs `python3`, as the PowerShell code under test does. Windows dev
+# boxes: python.org's Python ships python.exe only, so `python3` in Git Bash is
+# the Store's App Execution Alias stub ("Python was not found", exit 49) or
+# nothing once that alias is off, and the suite then dies deep inside a test.
+# The hosted CI runners carry a python3.exe. Say so up front, with the fix: a
+# shim script would not do, because the PowerShell children run python3 too and
+# PowerShell cannot run an extensionless script.
+if ! python3 -c 'pass' >/dev/null 2>&1; then
+  echo "✗ python3 is not usable here ($(command -v python3 2>/dev/null || echo 'not on PATH'))." >&2
+  if python -c 'pass' >/dev/null 2>&1; then
+    echo "  Give this Python a python3.exe beside python.exe (the hosted CI runners have one):" >&2
+    echo "    python -c \"import shutil, sys; shutil.copy(sys.executable, sys.executable.replace('python.exe', 'python3.exe'))\"" >&2
+  else
+    echo "  Install Python 3.12 (docs/install-windows.md step 1) and open a new terminal." >&2
+  fi
+  exit 1
+fi
+
 # Lane selection. Only COOP_TEST_EXTENDED=1 selects the extended lane; normalize the
 # variable so every child test sees the same lane this runner does.
 if [ "${COOP_TEST_EXTENDED:-0}" = "1" ]; then

@@ -175,6 +175,22 @@ try {
   if ($sl.Count -ne 1 -or $sl[0].status -ne 'warn' -or -not ([string]$sl[0].hint).Contains('pipx reinstall coop-data-doc')) {
     Ko 'doctor.ps1 must report a silent launcher with its path and a reinstall hint' (Show-Rows $rows 'coop-data-doc')
   } else { Ok 'doctor.ps1 reports a silent launcher with its path and a reinstall hint' }
+
+  # 5. The launcher runs into a Python traceback (the tool's config file is not
+  #    readable, as when it was first made from an administrator window): the row
+  #    quotes the traceback's last line, the error, and the hint names the file,
+  #    not a reinstall.
+  if ($isWindowsHost) {
+    [System.IO.File]::WriteAllText($silent, "@echo off`r`necho Traceback (most recent call last): 1>&2`r`necho   File ""main.py"", line 24, in main 1>&2`r`necho PermissionError: [Errno 13] Permission denied: 'C:\Users\me\.config\tool\config.json' 1>&2`r`nexit /b 1`r`n", [System.Text.Encoding]::ASCII)
+  } else {
+    [System.IO.File]::WriteAllText($silent, "#!/bin/sh`necho 'Traceback (most recent call last):' >&2`necho '  File ""main.py"", line 24, in main' >&2`necho ""PermissionError: [Errno 13] Permission denied: '/home/me/.config/tool/config.json'"" >&2`nexit 1`n", $utf8)
+  }
+  $rows = Get-DoctorRows
+  $tbHead = "coop-data-doc: coop-data-doc at $silent runs but prints no version (pipx metadata says $Pin); it printed: PermissionError: [Errno 13] Permission denied: "
+  $tb = @($rows | Where-Object { ([string]$_.name).StartsWith($tbHead) -and ([string]$_.name).EndsWith("config.json'") })
+  if ($tb.Count -ne 1 -or $tb[0].status -ne 'warn' -or -not ([string]$tb[0].hint).Contains("fix that file's permissions") -or ([string]$tb[0].hint).Contains('pipx reinstall')) {
+    Ko 'doctor.ps1 must quote the last line of a launcher traceback and point at the unreadable file, not a reinstall' (Show-Rows $rows 'coop-data-doc')
+  } else { Ok 'doctor.ps1 quotes the last line of a launcher traceback and points at the unreadable file' }
 } catch {
   Ko "fixture error: $($_.Exception.Message)" ($_.ScriptStackTrace)
 } finally {
