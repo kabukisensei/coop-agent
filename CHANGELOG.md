@@ -125,6 +125,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **`coop/auto` says why a session stepped up a tier.** The R1 measurement on
+  the dev VM had two sessions open on the plan model for prompts the rule
+  classifies as standard, and nothing in the session said why: Pi keeps no
+  record of a failed call, and the router's state only named the tier it landed
+  on. The stored state now carries the model it stepped up from and the reason
+  (a provider error, or two failed edits), and `/router` shows it, as in
+  "planning on openai-codex/gpt-5.6-sol, stepped up from gpt-5.6-terra after a
+  provider error". The next user prompt that classifies to the same tier clears
+  the note, as it already cleared the failed-edit baseline.
 - **`coop router-trial` finds Pi 1.2.0 again.** The trial resolved the installed
   pi-coding-agent with `require.resolve`, and Pi 1.2.0's package exports carry
   only an `import` condition, so every run died with 'No "exports" main

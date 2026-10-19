@@ -62,6 +62,14 @@ export interface RouterState {
   tier: Tier;
   /** Failed edits of the turn already counted by an escalation, so each step needs new ones. */
   failedEdits?: number;
+  /**
+   * Why this state sits a tier above where the prompt was classified: the model
+   * that failed and what failed (a provider error on it, or two failed edits on
+   * it). Pi keeps no record of a failed call, so this is the one trace a session
+   * leaves of an escalation; /router shows it. Cleared by the next user prompt
+   * that classifies to the same tier (the escalation lasts the turn).
+   */
+  escalated?: { from: string; reason: "provider-error" | "failed-edits" };
 }
 
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -173,6 +181,13 @@ function phaseState(tier: Tier, model: any): RouterState {
   return { phase: tier === "build" ? "implementation" : "planning", model: model.id, tier };
 }
 
+/** The /router suffix for an escalated state: where it stepped up from and why. */
+export function describeEscalation(state: RouterState | undefined): string {
+  if (!state?.escalated) return "";
+  const why = state.escalated.reason === "provider-error" ? "a provider error" : `${FAILED_EDITS_TO_ESCALATE} failed edits`;
+  return `, stepped up from ${state.escalated.from} after ${why}`;
+}
+
 /** The model a stored state names, re-resolved by tier when the catalog no longer has it. */
 function stateModel(state: RouterState, registry: Registry, env: NodeJS.ProcessEnv): any {
   const model = registry.find(PROVIDER, state.model);
@@ -191,7 +206,7 @@ export function routeRequest(request: RouteInput, registry: Registry, env: NodeJ
     const up = state ? tierAbove(state.tier) : undefined;
     if (state && up && request.failed) {
       const model = resolveTier(up, registry, env);
-      return route(model, level, { ...state, model: model.id, tier: up });
+      return route(model, level, { ...state, model: model.id, tier: up, escalated: { from: state.model, reason: "provider-error" } });
     }
     const sticky = request.failed ?? request.previous;
     if (sticky && usable(registry, sticky.model)) return route(sticky.model, sticky.thinkingLevel ?? level, state);
@@ -206,7 +221,7 @@ export function routeRequest(request: RouteInput, registry: Registry, env: NodeJ
     const up = state ? tierAbove(state.tier) : undefined;
     if (state && up && failed - (state.failedEdits ?? 0) >= FAILED_EDITS_TO_ESCALATE) {
       const model = resolveTier(up, registry, env);
-      return route(model, level, { ...state, model: model.id, tier: up, failedEdits: failed });
+      return route(model, level, { ...state, model: model.id, tier: up, failedEdits: failed, escalated: { from: state.model, reason: "failed-edits" } });
     }
     if (state) return route(stateModel(state, registry, env), level, state);
     if (request.previous && usable(registry, request.previous.model)) return route(request.previous.model, level, state);
@@ -215,8 +230,8 @@ export function routeRequest(request: RouteInput, registry: Registry, env: NodeJ
   let tier = classifyRequest(typedPrompt || lastUserText(request.messages), level);
   if (state?.phase === "implementation" && tier !== "plan") tier = "build";
   if (state && state.tier === tier) {
-    // Same tier as the stored state: keep it, dropping a previous turn's escalation baseline.
-    return route(stateModel(state, registry, env), level, state.failedEdits ? { ...state, failedEdits: undefined } : state);
+    // Same tier as the stored state: keep it, dropping a previous turn's escalation baseline and note.
+    return route(stateModel(state, registry, env), level, state.failedEdits || state.escalated ? { ...state, failedEdits: undefined, escalated: undefined } : state);
   }
   const model = resolveTier(tier, registry, env);
   return route(model, level, phaseState(tier, model));
@@ -268,7 +283,7 @@ export default function coopRouter(pi: ExtensionAPI) {
       const lines = describeTiers(ctx.modelRegistry as unknown as Registry);
       const state = storedState(ctx);
       const selected = ctx.model?.provider === ROUTER_PROVIDER && ctx.model?.id === ROUTER_ID;
-      lines.push(selected ? (state ? `this session: ${state.phase} on ${PROVIDER}/${state.model}` : "this session: no request routed yet") : "not selected: /model coop/auto turns it on");
+      lines.push(selected ? (state ? `this session: ${state.phase} on ${PROVIDER}/${state.model}${describeEscalation(state)}` : "this session: no request routed yet") : "not selected: /model coop/auto turns it on");
       ctx.ui.notify(`coop/auto\n${lines.join("\n")}`, "info");
     },
   });
