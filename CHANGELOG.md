@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.36.0] — 2026-10-19
+
 ### Added
 
 - **Azure sign-in commands ask first.** A bash call to `az account get-access-token`
