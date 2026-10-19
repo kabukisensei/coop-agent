@@ -117,7 +117,7 @@ DEV = {
     ],
 }
 PROD = {
-    sc.SCHEMAS_SQL: [("dbo",), ("fin",), ("sys",), ("old",)],
+    sc.SCHEMAS_SQL: [("dbo",), ("fin",), ("sys",), ("old",), ("_rsc",), ("queryinsights",)],
     sc.OBJECTS_SQL: [
         ("dbo", "Orders", "U"),
         ("dbo", "Legacy", "U"),
@@ -170,10 +170,16 @@ assert no_schemas.schemas == {"dbo", "fin"}, "schemas fall back to the objects' 
 
 # --- diff: sorted, direction is what the target needs, destructive flagged ----------
 prod = catalog(PROD)
+# Fabric's internal `_rsc` (and any underscore-prefixed schema with no user object) is
+# skipped the way the snapshot skips it; an empty user schema such as `old` still counts.
+assert "_rsc" not in prod.schemas and "queryinsights" not in prod.schemas and "old" in prod.schemas, prod.schemas
+underscore = catalog({sc.SCHEMAS_SQL: [("dbo",), ("_rsc",), ("_mine",)], sc.OBJECTS_SQL: [("_mine", "Kept", "U")], sc.COLUMNS_SQL: [("_mine", "Kept", "Id", "int", None, 10, 0, None, "NO", 1)]})
+assert underscore.schemas == {"_mine"}, "an underscore schema that owns a user object is a user schema"
 changes = sc.diff(dev, prod)
 by = {(c["kind"], c["schema"], c["name"], c["action"]): c for c in changes}
 assert ("schema", "stage", "", "add") in by
 assert by[("schema", "old", "", "drop")]["destructive"] is True
+assert ("schema", "_rsc", "", "drop") not in by, "the internal schema is never a drop"
 assert by[("table", "dbo", "NewTable", "add")]["detail"] == "2 column(s)"
 assert by[("table", "dbo", "Legacy", "drop")]["destructive"] is True
 orders = by[("table", "dbo", "Orders", "alter")]
@@ -216,7 +222,7 @@ assert "-- ALTER TABLE [dbo].[Orders] DROP COLUMN [Obsolete];" in tail
 assert "-- ALTER TABLE [dbo].[Orders] ALTER COLUMN [Amount] decimal(18, 2) NULL;" in tail
 assert "-- DROP TABLE [dbo].[Legacy];" in tail
 assert "-- DROP PROCEDURE [dbo].[usp_Old];" in tail
-assert "-- DROP SCHEMA [old];" in tail
+assert "-- DROP SCHEMA [old];" in tail and "[_rsc]" not in script
 assert "-- DROP TABLE [dbo].[Swapped];\n-- GO\n-- CREATE OR ALTER VIEW [dbo].[Swapped] AS SELECT 1 AS x;" in tail, "a kind swap drops the target's kind and creates the source's, by hand"
 assert tail.index("DROP PROCEDURE") < tail.index("DROP TABLE [dbo].[Legacy]") < tail.index("DROP SCHEMA")
 for line in tail.splitlines():

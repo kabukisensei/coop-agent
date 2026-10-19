@@ -5,6 +5,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **`schema_compare` no longer lists Fabric's internal `_rsc` schema as a drop.**
+  The live side read every row of `sys.schemas`, so a Warehouse's internal,
+  underscore-prefixed schema that holds no user object showed up as a schema to
+  drop whenever the other side was a snapshot, a repo or a Warehouse without it.
+  The live side now skips such schemas the way the catalog snapshot does; an
+  underscore-prefixed schema that owns a user object is still compared. Found in
+  the SQ10 check on the dev Warehouse on 2026-10-19.
+
 ## [0.36.0] — 2026-10-19
 
 ### Added
