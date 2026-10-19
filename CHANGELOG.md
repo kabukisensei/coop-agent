@@ -5,6 +5,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **`schema_compare` no longer lists Fabric's internal `_rsc` schema as a drop.**
+  The live side read every row of `sys.schemas`, so a Warehouse's internal,
+  underscore-prefixed schema that holds no user object showed up as a schema to
+  drop whenever the other side was a snapshot, a repo or a Warehouse without it.
+  The live side now skips such schemas the way the catalog snapshot does; an
+  underscore-prefixed schema that owns a user object is still compared. Found in
+  the SQ10 check on the dev Warehouse on 2026-10-19.
+
+## [0.36.0] — 2026-10-19
+
 ### Added
 
 - **Azure sign-in commands ask first.** A bash call to `az account get-access-token`
@@ -90,13 +102,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
-- **`schema_compare` no longer lists Fabric's internal `_rsc` schema as a drop.**
-  The live side read every row of `sys.schemas`, so a Warehouse's internal,
-  underscore-prefixed schema that holds no user object showed up as a schema to
-  drop whenever the other side was a snapshot, a repo or a Warehouse without it.
-  The live side now skips such schemas the way the catalog snapshot does; an
-  underscore-prefixed schema that owns a user object is still compared. Found in
-  the SQ10 check on the dev Warehouse on 2026-10-19.
+- **`coop router-trial` finds Pi 1.2.0 again.** The trial resolved the installed
+  pi-coding-agent with `require.resolve`, and Pi 1.2.0's package exports carry
+  only an `import` condition, so every run died with 'No "exports" main
+  defined' before scoring anything (Aaron's first run on the dev VM). The entry
+  now comes from Pi's own package.json (its import export, else `main`), with a
+  test over every shape Pi has shipped and over the Pi installed on the machine.
 - **`coop sync` links the Pi sign-in under Windows PowerShell 5.1 when Developer
   Mode is on.** 5.1's `New-Item -ItemType SymbolicLink` never asks for the
   unprivileged symlink Developer Mode allows, so it refused with "Administrator
