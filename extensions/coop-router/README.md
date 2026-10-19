@@ -11,7 +11,8 @@ a classifier:
 
 | Request | Goes to |
 | --- | --- |
-| A new prompt at `high` or `xhigh` thinking, or a long prompt (4000+ characters) | the plan model |
+| A new prompt at `xhigh` thinking | the plan model |
+| A new prompt at `high` thinking, or a long prompt (4000+ characters) | planning on the standard model (the plan model costs twice as much per token and writes more; it is for the prompts a person marks `xhigh` on purpose) |
 | A new prompt at `low` thinking of at most 400 characters | the build model |
 | Any other new prompt | the standard model |
 | Tool follow-ups in a turn | the turn's model, until the first successful `edit` or `write`, which hands the rest of the work to the build model; the session stays there for ordinary follow-ups |

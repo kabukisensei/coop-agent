@@ -70,9 +70,15 @@ r = routeRequest({ reason: "user", thinkingLevel: "medium", state: implementing,
 assert.equal(r.model.id, "gpt-5.6-luna");
 assert.equal(r.state, implementing);
 r = routeRequest({ reason: "user", thinkingLevel: "high", state: implementing, messages: [user("add a column"), toolResult("edit"), user("rethink the model")] }, full, env);
-assert.equal(r.model.id, "gpt-5.6-sol");
+// Planning at high thinking runs on the standard model (Aaron, 2026-10-19: the plan model only on an explicit xhigh).
+assert.equal(r.model.id, "gpt-5.6-terra");
 assert.equal(r.thinkingLevel, "high");
+assert.deepEqual(r.state, { phase: "planning", model: "gpt-5.6-terra", tier: "plan" });
+r = routeRequest({ reason: "user", thinkingLevel: "xhigh", state: implementing, messages: [user("add a column"), toolResult("edit"), user("rethink the model")] }, full, env);
+assert.equal(r.model.id, "gpt-5.6-sol", "xhigh asks for the plan model");
 assert.deepEqual(r.state, { phase: "planning", model: "gpt-5.6-sol", tier: "plan" });
+assert.equal(routeRequest({ reason: "user", thinkingLevel: "medium", messages: [user("y".repeat(4000))] }, full, env).model.id, "gpt-5.6-terra", "a long brief plans on the standard model too");
+assert.deepEqual([mod.modelTier("plan", "high"), mod.modelTier("plan", "xhigh"), mod.modelTier("plan", "max"), mod.modelTier("standard", "xhigh"), mod.modelTier("build", "low")], ["standard", "plan", "plan", "standard", "build"]);
 
 // A quick question at low thinking goes straight to the build model.
 r = routeRequest({ reason: "user", thinkingLevel: "low", messages: [user("what is a lakehouse?")] }, full, env);
@@ -155,7 +161,7 @@ assert.equal(routeRequest({ reason: "user", thinkingLevel: "medium", messages: [
 assert.equal(routeRequest({ reason: "user", thinkingLevel: "low", messages: [user("What does `coop doctor` check?"), note] }, full, env).model.id, "gpt-5.6-luna", "an injected note never turns a quick question into a standard task");
 // The typed prompt from before_agent_start wins over the messages, even when the note is all they hold.
 assert.equal(routeRequest({ reason: "user", thinkingLevel: "medium", messages: [note] }, full, env, "Add a column to the orders view").model.id, "gpt-5.6-terra", "the typed prompt is classified when the messages hold only the note");
-assert.equal(routeRequest({ reason: "user", thinkingLevel: "medium", messages: [note] }, full, env).model.id, "gpt-5.6-sol", "without the typed prompt the note alone still plans (the fallback)");
+assert.equal(routeRequest({ reason: "user", thinkingLevel: "medium", messages: [note] }, full, env).state.tier, "plan", "without the typed prompt the note alone still classifies as a plan (the fallback)");
 assert.equal(editedThisTurn([user("a"), toolResult("edit"), user("b"), toolResult("read")]), false, "an edit before the last user message does not count");
 assert.equal(storedState({ sessionManager: { getBranch: () => [{ type: "custom", customType: "pi.virtual-model-state", data: { provider: "coop", modelId: "auto", state: implementing } }] } }), implementing);
 assert.equal(storedState({}), undefined);

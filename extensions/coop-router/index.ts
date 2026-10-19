@@ -16,9 +16,11 @@
 //   model, and the session stays there; and two failed edits or writes in a
 //   turn on a tier below plan step up one tier for the rest of the turn.
 // - `user` requests are classified by the thinking level picked and the prompt:
-//   high or xhigh, or a long prompt, is planning on the plan model; low (or off)
-//   with a short prompt is a quick answer on the build model; anything else is
-//   planning on the standard model. A session already implementing keeps the
+//   xhigh is planning on the plan model; high, or a long prompt, is planning on
+//   the standard model (Aaron, 2026-10-19: the plan model only on an explicit
+//   xhigh); low (or off) with a short prompt is a quick answer on the build
+//   model; anything else is planning on the standard model. A session already
+//   implementing keeps the
 //   build model for ordinary follow-ups, so it switches models once per phase.
 //
 // The phase is router state: Pi stores it on the session branch, so it follows
@@ -218,8 +220,23 @@ export function routeRequest(request: RouteInput, registry: Registry, env: NodeJ
     // Same tier as the stored state: keep it, dropping a previous turn's escalation baseline.
     return route(stateModel(state, registry, env), level, state.failedEdits ? { ...state, failedEdits: undefined } : state);
   }
-  const model = resolveTier(tier, registry, env);
+  const model = resolveTier(modelTier(tier, level), registry, env);
   return route(model, level, phaseState(tier, model));
+}
+
+/**
+ * The tier whose model a new request runs on. A plan-class prompt (high
+ * thinking, or a long brief) plans on the standard model; the plan model is for
+ * an explicit xhigh (or max) only. Aaron, 2026-10-19 ("top only on xhigh"): the
+ * dev VM's cost sample put a design brief at three times the price on the plan
+ * model, and sol is for the prompts a person deliberately marks as the hardest.
+ * The phase and tier stored with the state stay "plan", so the first edit still
+ * hands the work to the build model as for any planning turn. A retry or two
+ * failed edits still step up a tier, to the plan model, as before.
+ */
+export function modelTier(tier: Tier, level: ThinkingLevel | undefined): Tier {
+  if (tier === "plan" && level !== "xhigh" && level !== "max") return "standard";
+  return tier;
 }
 
 /** The latest router state stored on the session branch, for /router. */

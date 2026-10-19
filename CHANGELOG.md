@@ -5,6 +5,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **`coop/auto` keeps the plan model for an explicit `xhigh`.** A prompt at
+  `high` thinking, or a long brief, still classifies as planning, but it runs on
+  the standard model; the plan model (`gpt-5.6-sol`) answers only when the
+  person picks `xhigh` (or `max`) thinking. Aaron, 2026-10-19 ("top only on
+  xhigh"), after the dev VM's cost sample put a design brief at three times the
+  price on the plan model, twice the token price and two to three times the
+  output. The phase and tier stay "plan", so the first edit still hands the work
+  to the build model; a provider error or two failed edits still step a turn up
+  to the plan model; `COOP_ROUTER_MODELS` still overrides the tier lists.
+
 ### Fixed
 
 - **`coop/auto` classifies the person's prompt, not coop's own note.** Pi hands
