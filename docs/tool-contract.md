@@ -445,6 +445,8 @@ code across, because the Warehouse has no good option), implemented by
 entry, same identity pinning, driver, encryption and timeouts; a read of production
 is a plain read), with the four fixed, parameter-free catalog queries the snapshot
 uses (`sys.schemas`, `sys.objects`, `INFORMATION_SCHEMA.COLUMNS`, `sys.sql_modules`).
+System schemas and Fabric's internal underscore-prefixed schemas that hold no user
+object (`_rsc`) are left out, as the snapshot leaves them out.
 The tool accepts two optional fields:
 
 | Field | Values | Default |

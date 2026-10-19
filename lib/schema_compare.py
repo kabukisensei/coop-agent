@@ -20,7 +20,8 @@ live against live, repo against live.
 
 What is compared, per object, sorted by schema then name:
 
-- schemas (user schemas that hold compared objects, plus `sys.schemas`);
+- schemas (user schemas that hold compared objects, plus `sys.schemas` without the
+  system ones and Fabric's internal underscore-prefixed schemas such as `_rsc`);
 - tables: every column's name, rendered type, nullability and position
   (INFORMATION_SCHEMA.COLUMNS);
 - views, procedures and functions: the definition the catalog holds
@@ -67,7 +68,11 @@ MAX_CHANGES_IN_RESULT = 200
 MODULE_KINDS = ("function", "view", "procedure")
 # Kinds that cannot alter a column in place: the script renders a rebuild note.
 REBUILD_KINDS = ("fabric_warehouse", "fabric_lakehouse")
-SYSTEM_SCHEMAS = {"sys", "information_schema", "guest", "queryinsights", "dbo"}
+SYSTEM_SCHEMAS = {"sys", "information_schema", "guest", "queryinsights", "dbo", "_rsc"}
+# Fabric keeps internal, underscore-prefixed schemas (`_rsc` today) that hold no user
+# object; the catalog snapshot never sees them, so the live side skips them too. An
+# underscore-prefixed schema that does hold user objects is a user schema and stays.
+INTERNAL_SCHEMA_PREFIX = "_"
 
 SCHEMAS_SQL = (
     f"SELECT TOP ({MAX_SCHEMAS + 1}) s.name FROM sys.schemas AS s "
@@ -167,10 +172,11 @@ def read_live(cursor: Any) -> Catalog:
     catalog = Catalog()
     try:
         rows, truncated = _rows(cursor, SCHEMAS_SQL, MAX_SCHEMAS)
-        catalog.schemas = {_text(r[0]) for r in rows if _text(r[0]) and _text(r[0]).lower() not in SYSTEM_SCHEMAS}
+        listed = {_text(r[0]) for r in rows if _text(r[0]) and _text(r[0]).lower() not in SYSTEM_SCHEMAS}
         if truncated:
             catalog.truncated.append("schemas")
     except Exception:
+        listed = set()
         catalog.unavailable.append("schemas (sys.schemas is not readable on this target; schemas come from the objects)")
     objects, truncated = _rows(cursor, OBJECTS_SQL, snapshot_lib.MAX_OBJECTS)
     if truncated:
@@ -207,6 +213,7 @@ def read_live(cursor: Any) -> Catalog:
             catalog.tables[key] = sorted(by_table.get(key, []), key=lambda c: (c.position, c.name))
         else:
             catalog.modules[key] = (kind, modules.get(key, ""))
+    catalog.schemas |= {s for s in listed if not (s.startswith(INTERNAL_SCHEMA_PREFIX) and s not in catalog.schemas)}
     return catalog
 
 
