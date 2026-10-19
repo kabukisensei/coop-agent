@@ -40,6 +40,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   (~700 tokens on a typical release) and the script (~2,700) after a compare
   it only had to summarize. The tool result itself is unchanged in size: about
   550 tokens for a 38-change release, capped at 12,000 characters.
+- **`coop/auto` classifies the person's prompt, not coop's own note.** Pi hands
+  the router its LLM-shaped messages, where the standards and team-knowledge
+  note coop injects after the prompt (a custom message of a few thousand
+  characters) arrives as a user message too. The router read the last user
+  message, so a 27-character question went to the standard model and a
+  240-character edit to the plan model, and every "standard" prompt in the dev
+  VM's cost sample opened on `gpt-5.6-sol` (2026-10-19). The router now
+  classifies the prompt Pi hands it in `before_agent_start`, the text the
+  person typed, and falls back to the first message of the latest user turn.
 - **`schema_compare` no longer lists Fabric's internal `_rsc` schema as a drop.**
   The live side read every row of `sys.schemas`, so a Warehouse's internal,
   underscore-prefixed schema that holds no user object showed up as a schema to

@@ -120,8 +120,24 @@ export function resolveTier(tier: Tier, registry: Registry, env: NodeJS.ProcessE
   throw new Error(`coop/auto: none of the ${tier} models (${ids.join(", ")}) is in the catalog with an OpenAI Codex sign-in. Run /login openai-codex, or pick a model with /model.`);
 }
 
+/**
+ * The person's prompt for the latest user turn: the FIRST user-role message after
+ * the last assistant reply. Pi hands the router its LLM-shaped messages, where
+ * every custom message an extension injected (coop's standards and team-knowledge
+ * note, a few thousand characters, appended after the prompt) arrives as a user
+ * message too; classifying the last one sent a 27-character question to the
+ * standard model and a 240-character edit to the plan model (dev VM, 2026-10-19).
+ * So: the run of consecutive user-role messages that ends at the last user
+ * message (mid-turn, that run sits before the last assistant reply), and the
+ * first message of that run.
+ */
 export function lastUserText(messages: readonly any[]): string {
-  const content = messages.filter((m) => m?.role === "user").at(-1)?.content ?? "";
+  let last = -1;
+  for (let i = messages.length - 1; i >= 0; i--) if (messages[i]?.role === "user") { last = i; break; }
+  if (last < 0) return "";
+  let first = last;
+  while (first > 0 && messages[first - 1]?.role === "user") first--;
+  const content = messages[first]?.content ?? "";
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   return content.flatMap((block: any) => (block?.type === "text" ? [String(block.text ?? "")] : [])).join("\n");
@@ -165,7 +181,7 @@ function stateModel(state: RouterState, registry: Registry, env: NodeJS.ProcessE
 }
 
 /** Pick the physical model and thinking level for one request. Pure: no Pi, no I/O. */
-export function routeRequest(request: RouteInput, registry: Registry, env: NodeJS.ProcessEnv = process.env) {
+export function routeRequest(request: RouteInput, registry: Registry, env: NodeJS.ProcessEnv = process.env, typedPrompt = "") {
   const level = request.thinkingLevel;
   if (request.reason === "direct") return route(resolveTier("build", registry, env), "low");
   const state = request.state;
@@ -196,7 +212,7 @@ export function routeRequest(request: RouteInput, registry: Registry, env: NodeJ
     if (request.previous && usable(registry, request.previous.model)) return route(request.previous.model, level, state);
   }
   // A user request (or the first request of a session with no state yet).
-  let tier = classifyRequest(lastUserText(request.messages), level);
+  let tier = classifyRequest(typedPrompt || lastUserText(request.messages), level);
   if (state?.phase === "implementation" && tier !== "plan") tier = "build";
   if (state && state.tier === tier) {
     // Same tier as the stored state: keep it, dropping a previous turn's escalation baseline.
@@ -228,6 +244,12 @@ export function describeTiers(registry: Registry, env: NodeJS.ProcessEnv = proce
 
 export default function coopRouter(pi: ExtensionAPI) {
   if (typeof (pi as any).registerVirtualModel !== "function") return; // Pi before 0.99: no virtual models
+  // The prompt the person typed, from Pi's before_agent_start (fired for every
+  // user turn before the first route): the one text a `user` request classifies.
+  // By routing time the messages may hold coop's injected note beside, or even
+  // without, that prompt (see lastUserText), so the event is the reliable source.
+  let typedPrompt = "";
+  if (typeof (pi as any).on === "function") pi.on("before_agent_start", async (event: any) => { typedPrompt = String(event?.prompt ?? ""); });
   pi.registerVirtualModel<RouterState>({
     provider: ROUTER_PROVIDER,
     id: ROUTER_ID,
@@ -237,7 +259,7 @@ export default function coopRouter(pi: ExtensionAPI) {
     contextWindow: 272_000,
     maxTokens: 128_000,
     route(request, ctx: ExtensionContext) {
-      return routeRequest(request as RouteInput, ctx.modelRegistry as unknown as Registry);
+      return routeRequest(request as RouteInput, ctx.modelRegistry as unknown as Registry, process.env, typedPrompt);
     },
   });
   pi.registerCommand("router", {
