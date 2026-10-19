@@ -9,14 +9,15 @@ const dist = process.env.COOP_TEST_DIST || "/tmp/coop-test-dist";
 const modPath = join(dist, "coop-router.mjs");
 assert.ok(existsSync(modPath), `missing bundle ${modPath}`);
 const mod = await import(pathToFileURL(modPath).href);
-const { routeRequest, classifyRequest, resolveTier, parseTierOverride, describeTiers, storedState, editedThisTurn, lastUserText } = mod;
+const { routeRequest, classifyRequest, resolveTier, parseTierOverride, describeTiers, storedState, editedThisTurn, lastUserText, parseCodexModelId, compareVersions, newestInFamily, TIER_FAMILIES } = mod;
 
 const codex = (id) => ({ provider: "openai-codex", id, api: "openai-codex-responses", name: id });
 const catalog = (ids, signedIn = true) => {
   const models = new Map(ids.map((id) => [id, codex(id)]));
-  return { find: (p, id) => (p === "openai-codex" ? models.get(id) : undefined), hasConfiguredAuth: (m) => signedIn && models.has(m.id) };
+  return { find: (p, id) => (p === "openai-codex" ? models.get(id) : undefined), hasConfiguredAuth: (m) => signedIn && models.has(m.id), getAll: () => [...models.values()] };
 };
-const full = catalog(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna", "gpt-5.5"]);
+// A catalog with one version per family, so the tier assertions below name fixed ids.
+const full = catalog(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"]);
 const user = (text) => ({ role: "user", content: text });
 const toolResult = (toolName, isError = false) => ({ role: "toolResult", toolName, isError, content: [] });
 const env = {};
@@ -34,13 +35,38 @@ console.log("  ✓ thinking level and prompt length pick the tier");
 assert.equal(resolveTier("plan", full, env).id, "gpt-5.6-sol");
 assert.equal(resolveTier("standard", full, env).id, "gpt-5.6-terra");
 assert.equal(resolveTier("build", full, env).id, "gpt-5.6-luna");
-assert.equal(resolveTier("plan", catalog(["gpt-6-sol", "gpt-6-luna"]), env).id, "gpt-6-sol", "falls through the tier list");
+assert.equal(resolveTier("plan", catalog(["gpt-6-sol", "gpt-6-luna"]), env).id, "gpt-6-sol", "the newest sol in the catalog");
 assert.throws(() => resolveTier("build", catalog(["gpt-5.6-luna"], false), env), /login openai-codex/, "no sign-in: a clear error, never another vendor");
-assert.throws(() => resolveTier("plan", catalog([]), env), /none of the plan models/);
+assert.throws(() => resolveTier("plan", catalog([]), env), /none of the plan models \(newest sol\)/);
 assert.deepEqual(parseTierOverride("plan=gpt-6-sol, gpt-5.5;build=gpt-6-luna;bogus=x;standard="), { plan: ["gpt-6-sol", "gpt-5.5"], build: ["gpt-6-luna"] });
-assert.equal(resolveTier("plan", full, { COOP_ROUTER_MODELS: "plan=gpt-5.5" }).id, "gpt-5.5", "COOP_ROUTER_MODELS overrides a tier");
-assert.deepEqual(describeTiers(full, env), ["plan: openai-codex/gpt-5.6-sol", "standard: openai-codex/gpt-5.6-terra", "build: openai-codex/gpt-5.6-luna"]);
-assert.match(describeTiers(catalog([]), env)[0], /none available/);
+assert.equal(resolveTier("plan", full, { COOP_ROUTER_MODELS: "plan=gpt-5.5" }).id, "gpt-5.5", "COOP_ROUTER_MODELS pins a tier");
+assert.deepEqual(describeTiers(full, env), ["plan: openai-codex/gpt-5.6-sol (newest sol)", "standard: openai-codex/gpt-5.6-terra (newest terra)", "build: openai-codex/gpt-5.6-luna (newest luna)"]);
+assert.match(describeTiers(full, { COOP_ROUTER_MODELS: "plan=gpt-5.5" })[0], /gpt-5\.5 \(pinned by COOP_ROUTER_MODELS\)/);
+assert.match(describeTiers(catalog([]), env)[0], /none available \(newest sol\)/);
+// --- newest version in a family (Aaron, 2026-10-19: new releases without a code change) ----
+assert.deepEqual(parseCodexModelId("gpt-6.1-sol"), { family: "sol", version: [6, 1] });
+assert.deepEqual(parseCodexModelId("gpt-6-astra"), { family: "astra", version: [6] });
+assert.equal(parseCodexModelId("gpt-5.5"), undefined);
+assert.equal(parseCodexModelId("gpt-5.3-codex-spark"), undefined);
+assert.ok(compareVersions([6, 1], [6]) > 0 && compareVersions([6], [5, 6]) > 0 && compareVersions([5, 6], [5, 6]) === 0);
+const today = catalog(["gpt-5.3-codex-spark", "gpt-5.5", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra", "gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol"]);
+assert.equal(resolveTier("plan", today, env).id, "gpt-6.1-sol", "plan takes the newest sol");
+assert.equal(resolveTier("standard", today, env).id, "gpt-5.6-terra", "standard takes the only terra");
+assert.equal(resolveTier("build", today, env).id, "gpt-6-luna", "build takes the newest luna");
+assert.equal(newestInFamily("astra", today).id, "gpt-6-astra");
+assert.equal(newestInFamily("terra", catalog(["gpt-6-sol"])), undefined);
+assert.equal(resolveTier("build", catalog(["gpt-5.6-terra", "gpt-6-sol"]), env).id, "gpt-5.6-terra", "no luna: the build tier falls back to the newest terra");
+assert.equal(resolveTier("standard", catalog(["gpt-6-sol"]), env).id, "gpt-6-sol", "no terra: the standard tier falls back to the newest sol");
+assert.deepEqual(TIER_FAMILIES, { plan: ["sol"], standard: ["terra", "sol"], build: ["luna", "terra"] });
+// A later catalog change does not move a session that already resolved (one resolution per registry).
+{
+  const models = new Map(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"].map((id) => [id, codex(id)]));
+  const live = { find: (p, id) => models.get(id), hasConfiguredAuth: () => true, getAll: () => [...models.values()] };
+  assert.equal(resolveTier("plan", live, env).id, "gpt-5.6-sol");
+  models.set("gpt-7-sol", codex("gpt-7-sol"));
+  assert.equal(resolveTier("plan", live, env).id, "gpt-5.6-sol", "the session keeps the model it started on");
+  assert.equal(resolveTier("plan", catalog([...models.keys()]), env).id, "gpt-7-sol", "a fresh registry (the next start) picks the new release");
+}
 console.log("  ✓ each tier resolves to the first signed-in Codex model, with a COOP_ROUTER_MODELS override");
 
 // --- routing ------------------------------------------------------------------

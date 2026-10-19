@@ -19,10 +19,14 @@ a classifier:
 | Two failed `edit` or `write` calls in a turn on one tier | one tier up for the rest of the turn; the next prompt starts afresh |
 | Compaction summaries and extension calls | the build model at `low` thinking |
 
-Tiers resolve to the first model of a list that the signed-in account can use
-(`plan`: `gpt-5.6-sol`, `gpt-6-sol`, `gpt-5.5`; `standard`: `gpt-5.6-terra`, then the
-same; `build`: `gpt-5.6-luna`, `gpt-6-luna`, `gpt-5.6-terra`). `COOP_ROUTER_MODELS`
-(`plan=a,b;standard=c;build=d`) overrides a tier for a measurement run. With no
+Tiers map to model families, and each resolves to the newest version of its
+family that the signed-in account can use (`plan`: `sol`; `standard`: `terra`, else
+`sol`; `build`: `luna`, else `terra`), read from the catalog the first time a session
+routes and kept for the rest of the session. A new release in a family (the catalog
+names them `gpt-<version>-<family>`: `gpt-5.6-sol`, `gpt-6-luna`, `gpt-6.1-sol`) is
+picked up at the next start with no code change; `/router` shows the version each
+tier resolved to. `COOP_ROUTER_MODELS` (`plan=a,b;standard=c;build=d`) pins exact
+ids instead, first usable wins, for a measurement run or to hold a version. With no
 Codex sign-in the route fails with a message naming `/login openai-codex`; it never
 falls back to another provider.
 

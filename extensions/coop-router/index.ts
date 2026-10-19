@@ -36,14 +36,37 @@ export const ROUTER_ID = "auto";
 export type Tier = "plan" | "standard" | "build";
 export const TIERS: readonly Tier[] = ["plan", "standard", "build"];
 
-/** Candidate model ids per tier, first available wins. Override with COOP_ROUTER_MODELS
- * (`plan=a,b;standard=c;build=d`) for a measurement run; the ids must be openai-codex
- * chat models that the signed-in account can use. */
-export const DEFAULT_TIER_MODELS: Record<Tier, readonly string[]> = {
-  plan: ["gpt-5.6-sol", "gpt-6-sol", "gpt-5.5"],
-  standard: ["gpt-5.6-terra", "gpt-6-sol", "gpt-5.5"],
-  build: ["gpt-5.6-luna", "gpt-6-luna", "gpt-5.6-terra"],
+/**
+ * Model families per tier, fallback families in order. The Codex catalog names a
+ * model by family and version (gpt-5.6-sol, gpt-6-luna, gpt-6.1-sol), so a tier
+ * resolves to the newest version of its first family the signed-in account can
+ * use, else the next family, read from the catalog the first time the session
+ * routes and kept for the rest of the session. A new release is picked up at
+ * the next start with no code change (Aaron, 2026-10-19: sol 6.1, terra 5.6 and
+ * luna 6 today, terra 6 expected). COOP_ROUTER_MODELS (`plan=a,b;standard=c;build=d`)
+ * pins exact ids instead, first usable wins, for a measurement run or a hold.
+ */
+export const TIER_FAMILIES: Record<Tier, readonly string[]> = {
+  plan: ["sol"],
+  standard: ["terra", "sol"],
+  build: ["luna", "terra"],
 };
+
+/** `gpt-<version>-<family>` → its family and version parts; undefined for any other id (gpt-5.5, gpt-5.3-codex-spark). */
+export function parseCodexModelId(id: string): { family: string; version: number[] } | undefined {
+  const m = /^gpt-(\d+(?:\.\d+)*)-([a-z]+)$/.exec(String(id ?? ""));
+  if (!m) return undefined;
+  return { family: m[2], version: m[1].split(".").map(Number) };
+}
+
+/** Newer first: 6.1 > 6 > 5.6. */
+export function compareVersions(a: readonly number[], b: readonly number[]): number {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const d = (a[i] ?? 0) - (b[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
 
 /** A prompt at least this long (characters) plans on the plan model (lib/router-rules.mjs). */
 export const LONG_PROMPT_CHARS: number = LONG;
@@ -88,6 +111,8 @@ export interface RouteInput {
 export interface Registry {
   find(provider: string, modelId: string): any;
   hasConfiguredAuth?(model: any): boolean;
+  /** Every catalog model (Pi's ModelRegistry.getAll); the newest-in-family lookup reads it. */
+  getAll?(): any[];
 }
 
 /** Parse a COOP_ROUTER_MODELS override; unknown tiers and empty lists are ignored. */
@@ -105,9 +130,10 @@ export function parseTierOverride(raw: string | undefined): Partial<Record<Tier,
   return out;
 }
 
-export function tierModels(env: NodeJS.ProcessEnv = process.env): Record<Tier, readonly string[]> {
+/** What a tier is asked to resolve to: pinned ids from COOP_ROUTER_MODELS, else its families. */
+export function tierSpec(tier: Tier, env: NodeJS.ProcessEnv = process.env): { pinned?: readonly string[]; families: readonly string[] } {
   const override = parseTierOverride(env.COOP_ROUTER_MODELS);
-  return { plan: override.plan ?? DEFAULT_TIER_MODELS.plan, standard: override.standard ?? DEFAULT_TIER_MODELS.standard, build: override.build ?? DEFAULT_TIER_MODELS.build };
+  return { pinned: override[tier], families: TIER_FAMILIES[tier] };
 }
 
 function usable(registry: Registry, model: any): boolean {
@@ -118,14 +144,42 @@ function usable(registry: Registry, model: any): boolean {
   return true;
 }
 
-/** The first catalog model of a tier the signed-in account can use. */
-export function resolveTier(tier: Tier, registry: Registry, env: NodeJS.ProcessEnv = process.env): any {
-  const ids = tierModels(env)[tier];
-  for (const id of ids) {
-    const model = registry.find(PROVIDER, id);
-    if (usable(registry, model)) return model;
+/** The newest usable Codex model of a family in the catalog, or undefined. */
+export function newestInFamily(family: string, registry: Registry): any {
+  const all: any[] = typeof registry.getAll === "function" ? registry.getAll() ?? [] : [];
+  let best: any; let bestVersion: number[] = [];
+  for (const model of all) {
+    if (model?.provider !== PROVIDER) continue;
+    const parsed = parseCodexModelId(model.id);
+    if (!parsed || parsed.family !== family || !usable(registry, model)) continue;
+    if (!best || compareVersions(parsed.version, bestVersion) > 0) { best = model; bestVersion = parsed.version; }
   }
-  throw new Error(`coop/auto: none of the ${tier} models (${ids.join(", ")}) is in the catalog with an OpenAI Codex sign-in. Run /login openai-codex, or pick a model with /model.`);
+  return best;
+}
+
+// One resolution per tier per registry (one registry per Pi process): the model
+// a session routes to does not change while it runs, whatever the catalog does.
+const resolvedTiers = new WeakMap<Registry, Map<string, any>>();
+
+/** The catalog model a tier runs on: a pinned id the signed-in account can use, else the newest of its families. */
+export function resolveTier(tier: Tier, registry: Registry, env: NodeJS.ProcessEnv = process.env): any {
+  const spec = tierSpec(tier, env);
+  const key = `${tier}|${(spec.pinned ?? []).join(",")}`;
+  let cache = resolvedTiers.get(registry);
+  if (!cache) { cache = new Map(); resolvedTiers.set(registry, cache); }
+  if (cache.has(key)) return cache.get(key);
+  let found: any;
+  if (spec.pinned) {
+    for (const id of spec.pinned) { const model = registry.find(PROVIDER, id); if (usable(registry, model)) { found = model; break; } }
+  } else {
+    for (const family of spec.families) { found = newestInFamily(family, registry); if (found) break; }
+  }
+  if (!found) {
+    const wanted = spec.pinned ? spec.pinned.join(", ") : spec.families.map((f) => `newest ${f}`).join(", ");
+    throw new Error(`coop/auto: none of the ${tier} models (${wanted}) is in the catalog with an OpenAI Codex sign-in. Run /login openai-codex, or pick a model with /model.`);
+  }
+  cache.set(key, found);
+  return found;
 }
 
 /**
@@ -250,10 +304,17 @@ export function storedState(ctx: any): RouterState | undefined {
   return undefined;
 }
 
-/** One line per tier naming the model it resolves to, or why it cannot. */
+/** One line per tier naming the model it resolves to and how (newest of a family, or pinned), or why it cannot. */
 export function describeTiers(registry: Registry, env: NodeJS.ProcessEnv = process.env): string[] {
   return TIERS.map((tier) => {
-    try { return `${tier}: ${PROVIDER}/${resolveTier(tier, registry, env).id}`; } catch { return `${tier}: none available (${tierModels(env)[tier].join(", ")})`; }
+    const spec = tierSpec(tier, env);
+    try {
+      const model = resolveTier(tier, registry, env);
+      const how = spec.pinned ? "pinned by COOP_ROUTER_MODELS" : `newest ${parseCodexModelId(model.id)?.family ?? "model"}`;
+      return `${tier}: ${PROVIDER}/${model.id} (${how})`;
+    } catch {
+      return `${tier}: none available (${spec.pinned ? spec.pinned.join(", ") : spec.families.map((f) => `newest ${f}`).join(", ")})`;
+    }
   });
 }
 

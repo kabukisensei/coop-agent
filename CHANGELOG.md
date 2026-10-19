@@ -18,6 +18,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   engine for a terminal or a CI pipeline (`compare`, `snapshot`, `diff` over live
   databases, `fabric://<workspace>/<warehouse>` names, snapshot folders and repo
   folders), and either tool's snapshot folder is a side for the other.
+### Changed
+
+- **`coop/auto` picks the newest model of each family by itself.** The tiers
+  were lists of exact ids (`gpt-5.6-sol` first for plan, `gpt-5.6-luna` for
+  build), so a new release sat unused until someone edited the list; today's
+  catalog already holds `gpt-6.1-sol` and `gpt-6-luna`. Each tier now maps to a
+  family (`plan`: sol; `standard`: terra, else sol; `build`: luna, else terra)
+  and resolves to the newest version the signed-in account can use, read from
+  the catalog the first time a session routes and kept for the rest of that
+  session, so a release never moves a running session. `/router` shows the
+  version each tier resolved to and whether it was pinned; `COOP_ROUTER_MODELS`
+  still pins exact ids. Aaron, 2026-10-19: "it needs to be flexible enough when
+  the new version of models comes out to auto go to them".
 
 ### Fixed
 
