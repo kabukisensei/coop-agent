@@ -7,7 +7,7 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
-- **`coop-schema-compare` 0.1.0 is installed with coop** (master plan row SQ10,
+- **`coop-schema-compare` 0.1.1 is installed with coop** (master plan row SQ10,
   Aaron's ask of 2026-10-12: the schema compare for coop and for people, like
   coop-data-doc). `config/release-manifest.json` pins it under `python_tools`, so
   `coop install` and `coop update` converge it with pipx, the window package
@@ -21,6 +21,25 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **`schema_compare`'s `deploy.sql` runs in the right order on a large release.**
+  Modules were ordered per kind, so a function that reads a new view came before
+  the view; two objects sharing a bare name in different schemas resolved to one
+  of them; and on a Fabric Warehouse a view that selects a column the table
+  rebuild adds sat in the live part of the script, where it fails until the
+  person rebuilds the table. Modules are now one dependency order across kinds
+  with `schema.name` resolution, and on a rebuild target anything that names a
+  rebuilt column, or depends on such an object, follows the rebuild note in the
+  manual section with a one-line reason. Found in a 175-change simulation over
+  310 objects (Aaron's case of 2026-10-19: releases too large for Fabric's
+  schema manager). A deferred module no
+  longer ends with `;;` when its source definition already carries the
+  semicolon (repo files do). The same fixes are in coop-schema-compare.
+- **A `schema_compare` costs one tool result.** The result line now says the
+  list is the whole diff and `report.md` repeats it for people, and that
+  `deploy.sql` is opened only to promote, so coop stops re-reading the report
+  (~700 tokens on a typical release) and the script (~2,700) after a compare
+  it only had to summarize. The tool result itself is unchanged in size: about
+  550 tokens for a 38-change release, capped at 12,000 characters.
 - **`coop/auto` classifies the person's prompt, not coop's own note.** Pi hands
   the router its LLM-shaped messages, where the standards and team-knowledge
   note coop injects after the prompt (a custom message of a few thousand

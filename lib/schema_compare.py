@@ -412,22 +412,62 @@ def _mentions(definition: str, names: set[str]) -> set[str]:
     return {name for name in names if re.search(r"\b" + re.escape(name.lower()) + r"\b", lowered)}
 
 
-def _ordered(keys: list[tuple[str, str]], definitions: dict[tuple[str, str], str]) -> list[tuple[str, str]]:
-    """Topological order by name mentions inside the set, ties and cycles by name."""
-    pending = sorted(keys, key=lambda k: (k[0].lower(), k[1].lower()))
-    by_name = {k[1]: k for k in pending}
-    deps = {k: {by_name[n] for n in _mentions(definitions.get(k, ""), set(by_name)) if by_name[n] != k} for k in pending}
+def _references(definition: str, keys: list[tuple[str, str]]) -> set[tuple[str, str]]:
+    """The objects among `keys` a definition names: `schema.name` (brackets or not)
+    resolves exactly; a bare name resolves only when one object in the set has it."""
+    lowered = definition.lower()
+    out: set[tuple[str, str]] = set()
+    counts: dict[str, int] = {}
+    for key in keys:
+        counts[key[1].lower()] = counts.get(key[1].lower(), 0) + 1
+    for key in keys:
+        schema, name = key[0].lower(), key[1].lower()
+        qualified = r"\[?" + re.escape(schema) + r"\]?\s*\.\s*\[?" + re.escape(name) + r"\]?"
+        if re.search(r"(?<![\w\].])" + qualified + r"(?![\w\[])", lowered):
+            out.add(key)
+        elif counts[name] == 1 and re.search(r"(?<![\w.])\[?" + re.escape(name) + r"\]?(?![\w\[])", lowered):
+            out.add(key)
+    return out
+
+
+def _ordered(keys: list[tuple[str, str]], definitions: dict[tuple[str, str], str], kinds: dict[tuple[str, str], str] | None = None) -> list[tuple[str, str]]:
+    """Topological order by the objects each definition names, across kinds (a
+    function over a view follows the view); ties by kind order then name, a cycle
+    broken by that same order."""
+    rank = {kind: i for i, kind in enumerate(MODULE_KINDS)}
+    order = lambda k: (rank.get((kinds or {}).get(k, ""), len(rank)), k[0].lower(), k[1].lower())
+    pending = sorted(keys, key=order)
+    deps = {k: _references(definitions.get(k, ""), pending) - {k} for k in pending}
     out: list[tuple[str, str]] = []
     placed: set[tuple[str, str]] = set()
     while pending:
         ready = [k for k in pending if deps[k] <= placed]
         if not ready:
-            ready = [pending[0]]  # a cycle: break it by name order
+            ready = [pending[0]]  # a cycle: break it by kind and name order
         for k in ready:
             out.append(k)
             placed.add(k)
             pending.remove(k)
     return out
+
+
+def _rebuilt_columns(changes: list[dict[str, Any]]) -> dict[tuple[str, str], set[str]]:
+    """Per altered table, the columns its detail adds: a module that names one
+    cannot bind until the table is rebuilt (a dropped or retyped column binds
+    either way)."""
+    out: dict[tuple[str, str], set[str]] = {}
+    for c in changes:
+        if c["kind"] == "table" and c["action"] == "alter":
+            names = {m.group(1).replace("]]", "]").lower() for m in re.finditer(r"add column \[(.+?)\] ", c.get("detail", ""))}
+            if names:
+                out[(c["schema"], c["name"])] = names
+    return out
+
+
+def _terminated(text: str) -> str:
+    """One statement with exactly one trailing semicolon."""
+    text = text.rstrip()
+    return text if text.endswith(";") else text + ";"
 
 
 def _create_or_alter(definition: str) -> str:
@@ -451,7 +491,7 @@ def render_script(
     destructive: list[str] = []
 
     def go(lines: list[str], text: str) -> None:
-        lines.append(text.rstrip() + ("" if text.rstrip().endswith(";") else ";"))
+        lines.append(_terminated(text))
         lines.append("GO")
         lines.append("")
 
@@ -483,14 +523,30 @@ def render_script(
                     else:
                         go(live, statement)
     definitions = {key: definition for key, (_kind, definition) in source.modules.items()}
-    for kind in MODULE_KINDS:
-        keys = [(c["schema"], c["name"]) for c in changes if c["kind"] == kind and c["action"] in ("add", "alter")]
-        for key in _ordered(keys, definitions):
-            definition = definitions.get(key, "")
-            if not definition:
-                destructive.append(f"-- {kind} {_plain(key)}: definition not readable on the source; write it by hand")
-                continue
-            go(live, _create_or_alter(definition))
+    kinds = {key: kind for key, (kind, _definition) in source.modules.items()}
+    keys = [(c["schema"], c["name"]) for c in changes if c["kind"] in MODULE_KINDS and c["action"] in ("add", "alter")]
+    # On a target that rebuilds tables by hand, a module that names a column the
+    # rebuild adds or changes cannot run until that rebuild: it goes below, after
+    # the rebuild notes, with everything that depends on it.
+    rebuilt = _rebuilt_columns(changes) if rebuild else {}
+    deferred: dict[tuple[str, str], str] = {}
+    for key in _ordered(keys, definitions, kinds):
+        kind = kinds.get(key, "")
+        definition = definitions.get(key, "")
+        if not definition:
+            destructive.append(f"-- {kind} {_plain(key)}: definition not readable on the source; write it by hand")
+            continue
+        waits_on = [dep for dep in _references(definition, list(deferred)) if dep != key]
+        rebuilt_tables = [t for t in _references(definition, list(rebuilt)) if _mentions(definition, rebuilt[t])]
+        if waits_on or rebuilt_tables:
+            reason = "; ".join(
+                [f"names {', '.join(sorted(_mentions(definition, rebuilt[t])))} of {_plain(t)}, which the target has only after that table's rebuild above" for t in sorted(rebuilt_tables)]
+                + [f"follows {kind_word} {_plain(dep)} below" for dep in sorted(waits_on) for kind_word in [kinds.get(dep, "object")]]
+            )
+            deferred[key] = reason
+            destructive.append(f"-- {kind} {_plain(key)}: run after the rebuild: {reason}\n{_terminated(_create_or_alter(definition))}")
+            continue
+        go(live, _create_or_alter(definition))
     for c in changes:
         if c["action"] == "replace":
             # The target holds another kind under this name: drop it, then create
@@ -499,7 +555,7 @@ def render_script(
             if c["kind"] == "table":
                 create = _render_table(source.tables[key], key) + ";"
             else:
-                create = _create_or_alter(definitions.get(key, "")) + ";" if definitions.get(key) else f"-- {c['kind']} definition not readable on the source; write it by hand"
+                create = _terminated(_create_or_alter(definitions.get(key, ""))) if definitions.get(key) else f"-- {c['kind']} definition not readable on the source; write it by hand"
             destructive.append(f"-- {_plain(key)}: {c['detail']}\nDROP {_drop_word(_target_kind_of(c))} {_qualified(key)};\nGO\n{create}")
     for kind in ("procedure", "view", "function", "table"):
         for c in changes:

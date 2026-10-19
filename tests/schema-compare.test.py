@@ -88,7 +88,7 @@ VIEW_PROD = "CREATE VIEW [dbo].[vw_Sales] AS\nSELECT OrderId, Amount FROM dbo.Or
 PROC = "CREATE PROCEDURE [dbo].[usp_Refresh] AS\r\nBEGIN\r\n    SELECT  1\r\nEND"
 PROC_REFORMATTED = "CREATE PROCEDURE [dbo].[usp_Refresh] AS\nBEGIN\n  SELECT 1\nEND\n"
 FN = "CREATE FUNCTION [fin].[fn_Rate]() RETURNS int AS BEGIN RETURN 1 END"
-VIEW_TOP = "CREATE VIEW [dbo].[vw_Top] AS SELECT * FROM dbo.vw_Sales WHERE fin.fn_Rate() > 0"
+VIEW_TOP = "CREATE VIEW [dbo].[vw_Top] AS SELECT * FROM dbo.vw_Sales WHERE fin.fn_Rate() > 0;"  # repo files end with ;
 
 DEV = {
     sc.SCHEMAS_SQL: [("dbo",), ("fin",), ("sys",), ("INFORMATION_SCHEMA",), ("stage",)],
@@ -236,12 +236,34 @@ wh_script, wh_run, wh_destructive = sc.render_script(dev, changes, source_name="
 assert "ALTER TABLE" not in wh_script
 assert "-- A fabric warehouse does not alter columns in place" in wh_script
 assert "-- CREATE TABLE [dbo].[Orders] (" in wh_script, "the source shape rides along, commented"
-assert wh_run == to_run - 1 and wh_destructive == destructive - 1, (wh_run, wh_destructive)
+# vw_Sales selects [Region], which prod gets only with the rebuild, so it and
+# vw_Top (which reads vw_Sales) move below the rebuild note instead of failing live
+wh_live, _, wh_tail = wh_script.partition("-- DESTRUCTIVE OR MANUAL: each block below can lose data or needs a person.\n")
+assert "CREATE OR ALTER VIEW [dbo].[vw_Sales]" not in wh_live and "CREATE OR ALTER VIEW [dbo].[vw_Top]" not in wh_live
+assert "-- view dbo.vw_Sales: run after the rebuild: names region of dbo.Orders, which the target has only after that table's rebuild above\n-- CREATE OR ALTER VIEW [dbo].[vw_Sales]" in wh_tail
+assert "-- view dbo.vw_Top: run after the rebuild: follows view dbo.vw_Sales below\n-- CREATE OR ALTER VIEW [dbo].[vw_Top]" in wh_tail
+assert wh_tail.index("-- CREATE TABLE [dbo].[Orders] (") < wh_tail.index("-- CREATE OR ALTER VIEW [dbo].[vw_Sales]") < wh_tail.index("-- CREATE OR ALTER VIEW [dbo].[vw_Top]")
+assert wh_run == to_run - 3 and wh_destructive == destructive + 1, (wh_run, wh_destructive)
+assert not [line for line in wh_script.splitlines() if line.rstrip().endswith(";;")], "deferred module lines end with one semicolon"
+assert "CREATE TABLE [dbo].[NewTable]" in wh_live and "CREATE SCHEMA [stage]" in wh_live
 
 # a definition that already says CREATE OR ALTER is left alone; a PROC short form is handled
 assert sc._create_or_alter("create or alter view v as select 1") == "create or alter view v as select 1"
 assert sc._create_or_alter("  CREATE PROC p AS SELECT 1") == "CREATE OR ALTER PROC p AS SELECT 1"
 assert sc._ordered([("dbo", "vw_Top"), ("dbo", "vw_Sales")], {("dbo", "vw_Top"): VIEW_TOP, ("dbo", "vw_Sales"): VIEW_DEV}) == [("dbo", "vw_Sales"), ("dbo", "vw_Top")]
+# across kinds: an inline function over a view follows the view, although functions
+# come first otherwise; a bare name shared by two schemas resolves only when qualified
+tvf = "CREATE FUNCTION [fin].[fn_Top]() RETURNS TABLE AS RETURN (SELECT * FROM [dbo].[vw_Top])"
+cross_keys = [("fin", "fn_Top"), ("dbo", "vw_Top"), ("dbo", "vw_Sales"), ("fin", "fn_Rate")]
+cross_defs = {("fin", "fn_Top"): tvf, ("dbo", "vw_Top"): VIEW_TOP, ("dbo", "vw_Sales"): VIEW_DEV, ("fin", "fn_Rate"): FN}
+cross_kinds = {("fin", "fn_Top"): "function", ("dbo", "vw_Top"): "view", ("dbo", "vw_Sales"): "view", ("fin", "fn_Rate"): "function"}
+assert sc._ordered(cross_keys, cross_defs, cross_kinds) == [("fin", "fn_Rate"), ("dbo", "vw_Sales"), ("dbo", "vw_Top"), ("fin", "fn_Top")]
+dup_defs = {("mart", "vw_dup"): "CREATE VIEW [mart].[vw_dup] AS SELECT 1 AS x", ("stage", "vw_dup"): "CREATE VIEW [stage].[vw_dup] AS SELECT x FROM mart.vw_dup"}
+assert sc._ordered(list(dup_defs), dup_defs) == [("mart", "vw_dup"), ("stage", "vw_dup")]
+assert sc._references("select * from dbo.vw_dup join [stage].[vw_dup] s on 1=1", list(dup_defs)) == {("stage", "vw_dup")}
+assert sc._references("select * from vw_dup", list(dup_defs)) == set(), "an ambiguous bare name is no dependency"
+assert sc._references("select Region from Orders", [("dbo", "Orders")]) == {("dbo", "Orders")}
+assert sc._references("select 1 from dbo.Orders_Archive", [("dbo", "Orders")]) == set()
 cycle = {("dbo", "a"): "select * from b", ("dbo", "b"): "select * from a"}
 assert sc._ordered(list(cycle), cycle) == [("dbo", "a"), ("dbo", "b")], "a cycle breaks by name"
 
