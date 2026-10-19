@@ -5,7 +5,43 @@
 // could route better).
 import assert from "node:assert/strict";
 import { classifyRequest, LONG_PROMPT_CHARS, SHORT_PROMPT_CHARS, TIERS } from "../lib/router-rules.mjs";
-import { CLASSIFIERS, DEFAULT_SET, formatReport, missingKeys, parseArgs, readSet, runTrial } from "../lib/router-trial.mjs";
+import { CLASSIFIERS, DEFAULT_SET, formatReport, missingKeys, parseArgs, readSet, resolvePiEntry, runTrial } from "../lib/router-trial.mjs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync as readFile, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+
+// --- the Pi entry --------------------------------------------------------------
+// Pi 1.2.0's package.json exports only an `import` condition, which
+// require.resolve (the `require` condition) rejects with 'No "exports" main
+// defined' (Aaron's first trial run on the dev VM, 2026-10-19). The entry comes
+// from the package's own manifest instead, for every shape Pi has shipped.
+{
+  const t = mkdtempSync(join(tmpdir(), "coop-router-trial-pi-"));
+  const pkgDir = (name, manifest) => { const d = join(t, name); mkdirSync(d, { recursive: true }); writeFileSync(join(d, "package.json"), JSON.stringify(manifest)); return d; };
+  const importOnly = pkgDir("pi-1.2.0", { name: "@earendil-works/pi-coding-agent", version: "1.2.0", main: "./dist/index.js", exports: { ".": { types: "./dist/index.d.ts", import: "./dist/index.js" }, "./rpc-entry": { import: "./dist/bundle/rpc-entry.js" } } });
+  assert.equal(resolvePiEntry(importOnly), join(importOnly, "dist", "index.js"), "an import-only export resolves to its import entry");
+  const mainOnly = pkgDir("pi-main", { name: "@earendil-works/pi-coding-agent", version: "1.1.0", main: "dist/index.js" });
+  assert.equal(resolvePiEntry(mainOnly), join(mainOnly, "dist", "index.js"), "a package with main alone resolves to main");
+  const stringExport = pkgDir("pi-string", { name: "x", exports: "./lib/entry.js" });
+  assert.equal(resolvePiEntry(stringExport), join(stringExport, "lib", "entry.js"), "a string export is the entry");
+  const nested = pkgDir("pi-nested", { name: "x", exports: { ".": { import: { default: "./dist/i.js" } } } });
+  assert.equal(resolvePiEntry(nested), join(nested, "dist", "i.js"), "a nested import.default export is the entry");
+  const bare = pkgDir("pi-bare", { name: "x" });
+  assert.equal(resolvePiEntry(bare), join(bare, "dist", "index.js"), "no exports and no main fall back to dist/index.js");
+  // The Pi this machine has, when there is one: its entry exists and is the file
+  // Node itself picks for an import of the package.
+  try {
+    const root = execFileSync(process.platform === "win32" ? "npm.cmd" : "npm", ["root", "-g"], { encoding: "utf8", shell: process.platform === "win32" }).trim();
+    const piDir = join(root, "@earendil-works", "pi-coding-agent");
+    if (existsSync(join(piDir, "package.json"))) {
+      const entry = resolvePiEntry(piDir);
+      assert.ok(existsSync(entry), `the installed Pi's entry exists: ${entry}`);
+      const manifest = JSON.parse(readFile(join(piDir, "package.json"), "utf8"));
+      assert.ok(entry.endsWith(join(...String(manifest.exports?.["."]?.import ?? manifest.main).replace(/^\.\//, "").split("/"))), "the installed Pi's entry is its import export");
+    }
+  } catch { /* no global npm here: the fixtures above cover the shapes */ }
+}
 
 // --- the rule ---------------------------------------------------------------
 assert.equal(classifyRequest("What is DAX?", "low"), "build");
