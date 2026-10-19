@@ -113,10 +113,15 @@ assert.deepEqual([tierAbove("build"), tierAbove("standard"), tierAbove("plan")],
 // A provider error on the build model: the retry steps up to the standard model, phase kept.
 r = routeRequest({ reason: "retry", thinkingLevel: "medium", state: implementing, failed: { model: codex("gpt-5.6-luna"), thinkingLevel: "medium", message: { stopReason: "error", errorMessage: "overloaded" } }, messages: [user("x"), toolResult("edit")] }, full, env);
 assert.equal(r.model.id, "gpt-5.6-terra");
-assert.deepEqual(r.state, { phase: "implementation", model: "gpt-5.6-terra", tier: "standard" });
+assert.deepEqual(r.state, { phase: "implementation", model: "gpt-5.6-terra", tier: "standard", escalated: { from: "gpt-5.6-luna", reason: "provider-error" } });
+// The state says where it stepped up from and why (the dev VM's R1 runs opened on
+// the plan model with nothing in the session explaining it, 2026-10-19); /router shows it.
+assert.equal(mod.describeEscalation(r.state), ", stepped up from gpt-5.6-luna after a provider error");
+assert.equal(mod.describeEscalation(implementing), "");
 // ...and again from standard to plan; on the plan model the retry stays put.
 r = routeRequest({ reason: "retry", thinkingLevel: "medium", state: r.state, failed: { model: codex("gpt-5.6-terra"), message: { stopReason: "error" } }, messages: [user("x")] }, full, env);
 assert.equal(r.model.id, "gpt-5.6-sol");
+assert.deepEqual(r.state.escalated, { from: "gpt-5.6-terra", reason: "provider-error" });
 const onPlan = r.state;
 r = routeRequest({ reason: "retry", thinkingLevel: "medium", state: onPlan, failed: { model: codex("gpt-5.6-sol"), message: { stopReason: "error" } }, messages: [user("x")] }, full, env);
 assert.equal(r.model.id, "gpt-5.6-sol");
@@ -127,7 +132,8 @@ r = routeRequest({ reason: "continuation", thinkingLevel: "medium", state: imple
 assert.equal(r.model.id, "gpt-5.6-luna");
 r = routeRequest({ reason: "continuation", thinkingLevel: "medium", state: implementing, messages: turn(toolResult("edit", true), toolResult("read"), toolResult("write", true)) }, full, env);
 assert.equal(r.model.id, "gpt-5.6-terra");
-assert.deepEqual(r.state, { phase: "implementation", model: "gpt-5.6-terra", tier: "standard", failedEdits: 2 });
+assert.deepEqual(r.state, { phase: "implementation", model: "gpt-5.6-terra", tier: "standard", failedEdits: 2, escalated: { from: "gpt-5.6-luna", reason: "failed-edits" } });
+assert.equal(mod.describeEscalation(r.state), ", stepped up from gpt-5.6-luna after 2 failed edits");
 const escalated = r.state;
 // The escalated tier needs two NEW failed edits before the next step; a successful edit on it does not drop it back to build.
 r = routeRequest({ reason: "continuation", thinkingLevel: "medium", state: escalated, messages: turn(toolResult("edit", true), toolResult("write", true), toolResult("edit")) }, full, env);
