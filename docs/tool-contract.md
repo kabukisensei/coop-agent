@@ -499,14 +499,19 @@ either side, named by side) and `path`: the folder
 `.coop/schema-compare/<source>-to-<target>/` beside the contract, holding
 `report.md` (the same table for people) and `deploy.sql`. The script is ordered to
 run top to bottom: new schemas, new tables, in-place column additions, then
-functions, views and procedures as `CREATE OR ALTER`, each kind sorted by the names
-its definition mentions inside the changed set and then by name. Every removal
+functions, views and procedures as `CREATE OR ALTER` in one dependency order across
+kinds (a function that reads a view follows the view; `schema.name` references
+resolve exactly, a bare name only when one changed object has it; ties by kind
+then name). Every removal
 and every change that can lose data (a dropped or retyped column, a `NOT NULL`
 column added to an existing table, a name whose kind differs between the sides)
 lands last, commented out under a DESTRUCTIVE banner, so nothing lossy runs
 unless a person uncomments it. On a Fabric Warehouse or Lakehouse target a column
 change is rendered as a rebuild note with the source shape instead of
-`ALTER TABLE`, because those targets do not alter columns in place. A failed side
+`ALTER TABLE`, because those targets do not alter columns in place, and a view,
+function or procedure that names a column the rebuild adds follows that note in
+the manual section, with everything that depends on it, instead of failing in the
+live part. A failed side
 is reported with its own state and `side` (`target_invalid` when the entry is not
 ready, `snapshot_missing` when no snapshot exists), and `output_unwritable` when
 the folder cannot be written. No server name, driver text, credential or exception

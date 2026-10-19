@@ -21,6 +21,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **`schema_compare`'s `deploy.sql` runs in the right order on a large release.**
+  Modules were ordered per kind, so a function that reads a new view came before
+  the view; two objects sharing a bare name in different schemas resolved to one
+  of them; and on a Fabric Warehouse a view that selects a column the table
+  rebuild adds sat in the live part of the script, where it fails until the
+  person rebuilds the table. Modules are now one dependency order across kinds
+  with `schema.name` resolution, and on a rebuild target anything that names a
+  rebuilt column, or depends on such an object, follows the rebuild note in the
+  manual section with a one-line reason. Found in a 175-change simulation over
+  310 objects (Aaron's case of 2026-10-19: releases too large for Fabric's
+  schema manager). The same fix is in coop-schema-compare.
 - **`schema_compare` no longer lists Fabric's internal `_rsc` schema as a drop.**
   The live side read every row of `sys.schemas`, so a Warehouse's internal,
   underscore-prefixed schema that holds no user object showed up as a schema to
