@@ -12,9 +12,9 @@ a classifier:
 | Request | Goes to |
 | --- | --- |
 | A new prompt at `high` or `xhigh` thinking, or a long prompt (4000+ characters) | the plan model |
-| A new prompt at `low` thinking of at most 400 characters | the build model |
+| A new prompt at `low` or `medium` thinking of at most 400 characters | the build model |
 | Any other new prompt | the standard model |
-| Tool follow-ups in a turn | the turn's model, until the first successful `edit` or `write`, which hands the rest of the work to the build model; the session stays there for ordinary follow-ups |
+| Tool follow-ups in a turn | the turn's model, until the first successful `edit` or `write` (the agent log under `docs/agent/logs/` does not count), which hands the rest of the work to the build model; the session stays there for ordinary follow-ups |
 | A retry after a provider error | one tier up for the rest of the turn (build to standard, standard to plan); on the plan model it stays |
 | Two failed `edit` or `write` calls in a turn on one tier | one tier up for the rest of the turn; the next prompt starts afresh |
 | Compaction summaries and extension calls | the build model at `low` thinking |

@@ -14,23 +14,23 @@
 {"id": "r14", "prompt": "What does `coop doctor` check?", "thinkingLevel": "low", "label": "build"}
 {"id": "r15", "prompt": "Is TRUNCATE TABLE logged in SQL Server?", "thinkingLevel": "low", "label": "build"}
 {"id": "r16", "prompt": "What file is the coop project contract?", "thinkingLevel": "low", "label": "build"}
-{"id": "r17", "prompt": "Add a `--json` flag to `coop status` that prints the same fields as the text output as one JSON object.", "thinkingLevel": "medium", "label": "standard"}
-{"id": "r18", "prompt": "Write a T-SQL view `vw_orders_open` over `dbo.orders` that returns every order with no `shipped_at`, with the customer name joined from `dbo.customers`.", "thinkingLevel": "medium", "label": "standard"}
-{"id": "r19", "prompt": "Fix the bug where the footer shows the wrong model name after `/model` is used mid-session.", "thinkingLevel": "medium", "label": "standard"}
-{"id": "r20", "prompt": "Write a DAX measure `Revenue YTD` using the fiscal calendar in the `Date` table (fiscal year starts in July).", "thinkingLevel": "medium", "label": "standard"}
-{"id": "r21", "prompt": "Rename the `fab_workspace` config key to `fabric_workspace` everywhere and keep reading the old key with a deprecation warning.", "thinkingLevel": "medium", "label": "standard"}
-{"id": "r22", "prompt": "Add a unit test for `classifyRequest` covering the short-prompt rule at low thinking.", "thinkingLevel": "medium", "label": "standard"}
-{"id": "r23", "prompt": "Review this stored procedure for places that violate our T-SQL standards and fix them: it uses SELECT *, has no SET NOCOUNT ON, and uses NOLOCK hints.", "thinkingLevel": "medium", "label": "standard"}
-{"id": "r24", "prompt": "Convert the onboarding doc's Windows and macOS sections into back-to-back powershell and sh fences so they render as tabs.", "thinkingLevel": "medium", "label": "standard"}
-{"id": "r25", "prompt": "The `check-links.sh` script misses markdown links that span two lines. Make it handle them.", "thinkingLevel": "medium", "label": "standard"}
-{"id": "r26", "prompt": "Add a CHANGELOG entry under Unreleased for the new router extension and link the plan row.", "thinkingLevel": "medium", "label": "standard"}
-{"id": "r27", "prompt": "Write a PowerShell function `Get-CoopPiVersion` that returns the installed Pi version as a [version] or $null.", "thinkingLevel": "medium", "label": "standard"}
-{"id": "r28", "prompt": "Create a Lakehouse notebook cell in PySpark that deduplicates `bronze.customers` on `customer_id` keeping the latest `updated_at`.", "thinkingLevel": "medium", "label": "standard"}
-{"id": "r29", "prompt": "Update the README's install section: the installer now adds coop to PATH, so remove the manual PATH step.", "thinkingLevel": "medium", "label": "standard"}
-{"id": "r30", "prompt": "Add an index to `dbo.fact_sales` on `(date_key, store_key)` and explain the expected effect on the monthly report query.", "thinkingLevel": "medium", "label": "standard"}
-{"id": "r31", "prompt": "Make `coop update --edge` print the commit it moved to.", "thinkingLevel": "medium", "label": "standard"}
-{"id": "r32", "prompt": "Write a SQL query that returns the top 10 customers by revenue in the last 90 days with their share of the total.", "thinkingLevel": "medium", "label": "standard"}
-{"id": "r33", "prompt": "Our DAX measure `Margin %` divides by zero on empty months. Fix it with DIVIDE and a sensible blank.", "thinkingLevel": "medium", "label": "standard"}
+{"id": "r17", "prompt": "Add a `--json` flag to `coop status` that prints the same fields as the text output as one JSON object.", "thinkingLevel": "medium", "label": "build"}
+{"id": "r18", "prompt": "Write a T-SQL view `vw_orders_open` over `dbo.orders` that returns every order with no `shipped_at`, with the customer name joined from `dbo.customers`.", "thinkingLevel": "medium", "label": "build"}
+{"id": "r19", "prompt": "Fix the bug where the footer shows the wrong model name after `/model` is used mid-session.", "thinkingLevel": "medium", "label": "build"}
+{"id": "r20", "prompt": "Write a DAX measure `Revenue YTD` using the fiscal calendar in the `Date` table (fiscal year starts in July).", "thinkingLevel": "medium", "label": "build"}
+{"id": "r21", "prompt": "Rename the `fab_workspace` config key to `fabric_workspace` everywhere and keep reading the old key with a deprecation warning.", "thinkingLevel": "medium", "label": "build"}
+{"id": "r22", "prompt": "Add a unit test for `classifyRequest` covering the short-prompt rule at low thinking.", "thinkingLevel": "medium", "label": "build"}
+{"id": "r23", "prompt": "Review this stored procedure for places that violate our T-SQL standards and fix them: it uses SELECT *, has no SET NOCOUNT ON, and uses NOLOCK hints.", "thinkingLevel": "medium", "label": "build"}
+{"id": "r24", "prompt": "Convert the onboarding doc's Windows and macOS sections into back-to-back powershell and sh fences so they render as tabs.", "thinkingLevel": "medium", "label": "build"}
+{"id": "r25", "prompt": "The `check-links.sh` script misses markdown links that span two lines. Make it handle them.", "thinkingLevel": "medium", "label": "build"}
+{"id": "r26", "prompt": "Add a CHANGELOG entry under Unreleased for the new router extension and link the plan row.", "thinkingLevel": "medium", "label": "build"}
+{"id": "r27", "prompt": "Write a PowerShell function `Get-CoopPiVersion` that returns the installed Pi version as a [version] or $null.", "thinkingLevel": "medium", "label": "build"}
+{"id": "r28", "prompt": "Create a Lakehouse notebook cell in PySpark that deduplicates `bronze.customers` on `customer_id` keeping the latest `updated_at`.", "thinkingLevel": "medium", "label": "build"}
+{"id": "r29", "prompt": "Update the README's install section: the installer now adds coop to PATH, so remove the manual PATH step.", "thinkingLevel": "medium", "label": "build"}
+{"id": "r30", "prompt": "Add an index to `dbo.fact_sales` on `(date_key, store_key)` and explain the expected effect on the monthly report query.", "thinkingLevel": "medium", "label": "build"}
+{"id": "r31", "prompt": "Make `coop update --edge` print the commit it moved to.", "thinkingLevel": "medium", "label": "build"}
+{"id": "r32", "prompt": "Write a SQL query that returns the top 10 customers by revenue in the last 90 days with their share of the total.", "thinkingLevel": "medium", "label": "build"}
+{"id": "r33", "prompt": "Our DAX measure `Margin %` divides by zero on empty months. Fix it with DIVIDE and a sensible blank.", "thinkingLevel": "medium", "label": "build"}
 {"id": "r34", "prompt": "Design how coop should keep three concurrent sessions from racing on the shared `~/.coop/state.json`: locking, retries, crash recovery and the migration from the current single-writer file. Touch the launcher, the guardrails extension and the tests.", "thinkingLevel": "high", "label": "plan"}
 {"id": "r35", "prompt": "Our nightly Warehouse load doubles row counts about once a week and nobody can reproduce it. Walk through the pipeline (ingest notebook, merge procedure, the semantic model refresh) and find the cause.", "thinkingLevel": "high", "label": "plan"}
 {"id": "r36", "prompt": "Plan the move of the guardrail rules from the extension into a shared library the phone companion can also use, without changing what the terminal blocks today.", "thinkingLevel": "high", "label": "plan"}

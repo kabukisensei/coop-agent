@@ -19,13 +19,17 @@ const catalog = (ids, signedIn = true) => {
 // A catalog with one version per family, so the tier assertions below name fixed ids.
 const full = catalog(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"]);
 const user = (text) => ({ role: "user", content: text });
-const toolResult = (toolName, isError = false) => ({ role: "toolResult", toolName, isError, content: [] });
+const toolResult = (toolName, isError = false, toolCallId = undefined) => ({ role: "toolResult", toolName, isError, toolCallId, content: [] });
+const toolCall = (id, name, path) => ({ role: "assistant", content: [{ type: "toolCall", id, name, arguments: { path } }] });
 const env = {};
 
 // --- classification ---------------------------------------------------------
 assert.equal(classifyRequest("what does this view do?", "low"), "build");
-assert.equal(classifyRequest("what does this view do?", "medium"), "standard");
+// A short prompt at medium thinking is a build-model task too (blind quality test, 2026-10-19).
+assert.equal(classifyRequest("what does this view do?", "medium"), "build");
+assert.equal(classifyRequest("Add a loaded_at column to sales.fact_sales and set it in usp_load_fact_sales.", "medium"), "build");
 assert.equal(classifyRequest("x".repeat(401), "low"), "standard");
+assert.equal(classifyRequest("x".repeat(401), "medium"), "standard");
 assert.equal(classifyRequest("refactor", "high"), "plan");
 assert.equal(classifyRequest("refactor", "xhigh"), "plan");
 assert.equal(classifyRequest("y".repeat(4000), "medium"), "plan");
@@ -70,8 +74,10 @@ assert.deepEqual(TIER_FAMILIES, { plan: ["sol"], standard: ["terra", "sol"], bui
 console.log("  ✓ each tier resolves to the first signed-in Codex model, with a COOP_ROUTER_MODELS override");
 
 // --- routing ------------------------------------------------------------------
-// A new session: an ordinary prompt plans on the standard model and keeps the thinking level.
-let r = routeRequest({ reason: "user", thinkingLevel: "medium", messages: [user("add a column to the sales view")] }, full, env);
+// A new session: an ordinary prompt (medium thinking, longer than a short task) plans on the standard model and keeps the thinking level.
+const ordinary = "Add a loaded_at column to the sales view and every view that reads it, keep the column order the deploy runner expects, update the DAX measures that reference the view, and leave a note in the README on why the column exists. " + "The loader writes it from the batch start time. ".repeat(5);
+assert.ok(ordinary.length > 400 && ordinary.length < 4000);
+let r = routeRequest({ reason: "user", thinkingLevel: "medium", messages: [user(ordinary)] }, full, env);
 assert.equal(r.model.id, "gpt-5.6-terra");
 assert.equal(r.thinkingLevel, "medium");
 assert.deepEqual(r.state, { phase: "planning", model: "gpt-5.6-terra", tier: "standard" });
@@ -183,12 +189,19 @@ const note = user("Cooptimize standards apply automatically to this task. " + "x
 assert.equal(lastUserText([user("What does `coop doctor` check?"), note]), "What does `coop doctor` check?");
 assert.equal(lastUserText([user("a"), { role: "assistant", content: [] }, toolResult("read"), user("Add a column"), note]), "Add a column");
 assert.equal(lastUserText([user("a"), note, { role: "assistant", content: [] }, toolResult("edit")]), "a", "mid-turn: the turn's prompt, not the note");
-assert.equal(routeRequest({ reason: "user", thinkingLevel: "medium", messages: [user("Add a column to the orders view"), note] }, full, env).model.id, "gpt-5.6-terra", "an injected note never turns an edit into a plan");
+assert.equal(routeRequest({ reason: "user", thinkingLevel: "medium", messages: [user("Add a column to the orders view"), note] }, full, env).model.id, "gpt-5.6-luna", "an injected note never turns an edit into a plan");
 assert.equal(routeRequest({ reason: "user", thinkingLevel: "low", messages: [user("What does `coop doctor` check?"), note] }, full, env).model.id, "gpt-5.6-luna", "an injected note never turns a quick question into a standard task");
 // The typed prompt from before_agent_start wins over the messages, even when the note is all they hold.
-assert.equal(routeRequest({ reason: "user", thinkingLevel: "medium", messages: [note] }, full, env, "Add a column to the orders view").model.id, "gpt-5.6-terra", "the typed prompt is classified when the messages hold only the note");
+assert.equal(routeRequest({ reason: "user", thinkingLevel: "medium", messages: [note] }, full, env, "Add a column to the orders view").model.id, "gpt-5.6-luna", "the typed prompt is classified when the messages hold only the note");
 assert.equal(routeRequest({ reason: "user", thinkingLevel: "medium", messages: [note] }, full, env).model.id, "gpt-5.6-sol", "without the typed prompt the note alone still plans (the fallback)");
 assert.equal(editedThisTurn([user("a"), toolResult("edit"), user("b"), toolResult("read")]), false, "an edit before the last user message does not count");
+// The contract's daily log entry is bookkeeping, not implementation: a write under docs/agent/logs/ neither hands over nor counts as a failure.
+const logWrite = [user("brief"), toolCall("c1", "write", "docs/agent/logs/daily/2026-10-19.md"), toolResult("write", false, "c1")];
+assert.equal(editedThisTurn(logWrite), false, "a log write does not hand the turn to the build model");
+assert.equal(failedEditsThisTurn([...logWrite.slice(0, 2), toolResult("write", true, "c1")]), 0, "a failed log write is not a failed edit");
+assert.equal(editedThisTurn([...logWrite, toolCall("c2", "edit", "sql\\views\\v_sales.sql"), toolResult("edit", false, "c2")]), true, "a real edit after the log write does");
+r = routeRequest({ reason: "continuation", thinkingLevel: "high", state: { phase: "planning", model: "gpt-5.6-sol", tier: "plan" }, messages: logWrite }, full, env);
+assert.equal(r.model.id, "gpt-5.6-sol", "a brief stays on the plan model after its log entry");
 assert.equal(storedState({ sessionManager: { getBranch: () => [{ type: "custom", customType: "pi.virtual-model-state", data: { provider: "coop", modelId: "auto", state: implementing } }] } }), implementing);
 assert.equal(storedState({}), undefined);
 
@@ -203,11 +216,11 @@ assert.equal(definition.provider, "coop");
 assert.equal(definition.id, "auto");
 assert.deepEqual(definition.thinkingLevels, ["low", "medium", "high", "xhigh"]);
 const ctx = { modelRegistry: full, model: { provider: "coop", id: "auto", api: "pi-virtual" }, sessionManager: { getBranch: () => [] }, ui: { notify: (m) => notices.push(m) } };
-const routed = await definition.route({ reason: "user", thinkingLevel: "medium", messages: [user("hello there, what changed?")] }, ctx);
+const routed = await definition.route({ reason: "user", thinkingLevel: "medium", messages: [user(ordinary)] }, ctx);
 assert.equal(routed.model.id, "gpt-5.6-terra");
 // The live path: before_agent_start carries the typed prompt; the messages Pi routes on may hold only coop's note.
 await hooks.get("before_agent_start")({ prompt: "Add a column to the orders view" });
-assert.equal((await definition.route({ reason: "user", thinkingLevel: "medium", messages: [note] }, ctx)).model.id, "gpt-5.6-terra", "the typed prompt is classified, not the note");
+assert.equal((await definition.route({ reason: "user", thinkingLevel: "medium", messages: [note] }, ctx)).model.id, "gpt-5.6-luna", "the typed prompt is classified, not the note");
 await commands.get("router").handler("", ctx);
 assert.match(notices.at(-1), /plan: openai-codex\/gpt-5.6-sol/);
 assert.match(notices.at(-1), /no request routed yet/);

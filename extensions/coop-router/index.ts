@@ -14,11 +14,15 @@
 // - `continuation` stays on the turn's model, except that the first successful
 //   edit or write of a planning turn hands the rest of the work to the build
 //   model, and the session stays there; and two failed edits or writes in a
-//   turn on a tier below plan step up one tier for the rest of the turn.
+//   turn on a tier below plan step up one tier for the rest of the turn. Writes
+//   to the agent log (`docs/agent/logs/`) count for neither: the contract asks
+//   for a daily log entry at the start of a turn, and that write handed
+//   read-only briefs to the build model (3 of 40 in the dev VM's blind quality
+//   test, 2026-10-19).
 // - `user` requests are classified by the thinking level picked and the prompt:
-//   high or xhigh, or a long prompt, is planning on the plan model; low (or off)
-//   with a short prompt is a quick answer on the build model; anything else is
-//   planning on the standard model. A session already implementing keeps the
+//   high or xhigh, or a long prompt, is planning on the plan model; low, off or
+//   medium with a short prompt is a short task on the build model; anything
+//   else is planning on the standard model. A session already implementing keeps the
 //   build model for ordinary follow-ups, so it switches models once per phase.
 //
 // The phase is router state: Pi stores it on the session branch, so it follows
@@ -75,6 +79,8 @@ export const SHORT_PROMPT_CHARS: number = SHORT;
 
 /** Tools whose successful result means implementation has started. */
 const EDIT_TOOLS = new Set(["edit", "write"]);
+/** Paths whose edits are bookkeeping, not implementation: the contract's agent log. */
+const LOG_PATH = /(^|[\\/])docs[\\/]agent[\\/]logs[\\/]/;
 /** Failed edits or writes in one turn, on one tier, that step the turn up a tier. */
 export const FAILED_EDITS_TO_ESCALATE = 2;
 
@@ -205,16 +211,31 @@ export function lastUserText(messages: readonly any[]): string {
   return content.flatMap((block: any) => (block?.type === "text" ? [String(block.text ?? "")] : [])).join("\n");
 }
 
+/** The path an edit or write tool result was called with, from the assistant's tool call. */
+function editedPath(messages: readonly any[], result: any): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m?.role !== "assistant" || !Array.isArray(m.content)) continue;
+    const call = m.content.find((block: any) => block?.type === "toolCall" && block.id === result.toolCallId);
+    if (call) return String(call.arguments?.path ?? call.arguments?.file_path ?? "");
+  }
+  return "";
+}
+
+/** The edit and write tool results since the last user message, the agent log left out. */
+function editsThisTurn(messages: readonly any[]): any[] {
+  const lastUser = messages.findLastIndex((m) => m?.role === "user");
+  return messages.slice(lastUser + 1).filter((m) => m?.role === "toolResult" && EDIT_TOOLS.has(m.toolName) && !LOG_PATH.test(editedPath(messages, m)));
+}
+
 /** Whether a tool call since the last user message edited a file successfully. */
 export function editedThisTurn(messages: readonly any[]): boolean {
-  const lastUser = messages.findLastIndex((m) => m?.role === "user");
-  return messages.slice(lastUser + 1).some((m) => m?.role === "toolResult" && EDIT_TOOLS.has(m.toolName) && !m.isError);
+  return editsThisTurn(messages).some((m) => !m.isError);
 }
 
 /** Failed edit or write tool calls since the last user message. */
 export function failedEditsThisTurn(messages: readonly any[]): number {
-  const lastUser = messages.findLastIndex((m) => m?.role === "user");
-  return messages.slice(lastUser + 1).filter((m) => m?.role === "toolResult" && EDIT_TOOLS.has(m.toolName) && m.isError).length;
+  return editsThisTurn(messages).filter((m) => m.isError).length;
 }
 
 /** The next tier up, or undefined on the plan model. */
