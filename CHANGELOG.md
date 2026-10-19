@@ -134,6 +134,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   "planning on openai-codex/gpt-5.6-sol, stepped up from gpt-5.6-terra after a
   provider error". The next user prompt that classifies to the same tier clears
   the note, as it already cleared the failed-edit baseline.
+- **The bootstrap one-liner upgrades a coop window that lives in another
+  folder instead of hanging.** With a window already installed somewhere other
+  than `%LOCALAPPDATA%\Programs\coop`, the silent installer sat forever on
+  NSIS's "already installed" question (dev VM, 2026-10-19). `bootstrap.ps1` now
+  finds the installed window through its Add/Remove entry, reports "the coop
+  window is already installed in <folder>; this version goes there too", and
+  hands that folder to the installer, so the upgrade lands in place; the
+  already-installed and first-launch checks look there as well.
 - **`coop router-trial` finds Pi 1.2.0 again.** The trial resolved the installed
   pi-coding-agent with `require.resolve`, and Pi 1.2.0's package exports carry
   only an `import` condition, so every run died with 'No "exports" main
