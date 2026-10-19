@@ -13,8 +13,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   characters) arrives as a user message too. The router read the last user
   message, so a 27-character question went to the standard model and a
   240-character edit to the plan model, and every "standard" prompt in the dev
-  VM's cost sample opened on `gpt-5.6-sol` (2026-10-19). The router now reads
-  the first message of the latest user turn, the prompt the person typed.
+  VM's cost sample opened on `gpt-5.6-sol` (2026-10-19). The router now
+  classifies the prompt Pi hands it in `before_agent_start`, the text the
+  person typed, and falls back to the first message of the latest user turn.
 - **`schema_compare` no longer lists Fabric's internal `_rsc` schema as a drop.**
   The live side read every row of `sys.schemas`, so a Warehouse's internal,
   underscore-prefixed schema that holds no user object showed up as a schema to

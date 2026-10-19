@@ -153,6 +153,9 @@ assert.equal(lastUserText([user("a"), { role: "assistant", content: [] }, toolRe
 assert.equal(lastUserText([user("a"), note, { role: "assistant", content: [] }, toolResult("edit")]), "a", "mid-turn: the turn's prompt, not the note");
 assert.equal(routeRequest({ reason: "user", thinkingLevel: "medium", messages: [user("Add a column to the orders view"), note] }, full, env).model.id, "gpt-5.6-terra", "an injected note never turns an edit into a plan");
 assert.equal(routeRequest({ reason: "user", thinkingLevel: "low", messages: [user("What does `coop doctor` check?"), note] }, full, env).model.id, "gpt-5.6-luna", "an injected note never turns a quick question into a standard task");
+// The typed prompt from before_agent_start wins over the messages, even when the note is all they hold.
+assert.equal(routeRequest({ reason: "user", thinkingLevel: "medium", messages: [note] }, full, env, "Add a column to the orders view").model.id, "gpt-5.6-terra", "the typed prompt is classified when the messages hold only the note");
+assert.equal(routeRequest({ reason: "user", thinkingLevel: "medium", messages: [note] }, full, env).model.id, "gpt-5.6-sol", "without the typed prompt the note alone still plans (the fallback)");
 assert.equal(editedThisTurn([user("a"), toolResult("edit"), user("b"), toolResult("read")]), false, "an edit before the last user message does not count");
 assert.equal(storedState({ sessionManager: { getBranch: () => [{ type: "custom", customType: "pi.virtual-model-state", data: { provider: "coop", modelId: "auto", state: implementing } }] } }), implementing);
 assert.equal(storedState({}), undefined);
@@ -161,13 +164,18 @@ assert.equal(storedState({}), undefined);
 let definition;
 const commands = new Map();
 const notices = [];
-mod.default({ registerVirtualModel: (d) => { definition = d; }, registerCommand: (name, opts) => commands.set(name, opts) });
+const hooks = new Map();
+mod.default({ registerVirtualModel: (d) => { definition = d; }, registerCommand: (name, opts) => commands.set(name, opts), on: (name, fn) => hooks.set(name, fn) });
+assert.ok(hooks.has("before_agent_start"), "the router listens for the typed prompt");
 assert.equal(definition.provider, "coop");
 assert.equal(definition.id, "auto");
 assert.deepEqual(definition.thinkingLevels, ["low", "medium", "high", "xhigh"]);
 const ctx = { modelRegistry: full, model: { provider: "coop", id: "auto", api: "pi-virtual" }, sessionManager: { getBranch: () => [] }, ui: { notify: (m) => notices.push(m) } };
 const routed = await definition.route({ reason: "user", thinkingLevel: "medium", messages: [user("hello there, what changed?")] }, ctx);
 assert.equal(routed.model.id, "gpt-5.6-terra");
+// The live path: before_agent_start carries the typed prompt; the messages Pi routes on may hold only coop's note.
+await hooks.get("before_agent_start")({ prompt: "Add a column to the orders view" });
+assert.equal((await definition.route({ reason: "user", thinkingLevel: "medium", messages: [note] }, ctx)).model.id, "gpt-5.6-terra", "the typed prompt is classified, not the note");
 await commands.get("router").handler("", ctx);
 assert.match(notices.at(-1), /plan: openai-codex\/gpt-5.6-sol/);
 assert.match(notices.at(-1), /no request routed yet/);

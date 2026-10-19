@@ -181,7 +181,7 @@ function stateModel(state: RouterState, registry: Registry, env: NodeJS.ProcessE
 }
 
 /** Pick the physical model and thinking level for one request. Pure: no Pi, no I/O. */
-export function routeRequest(request: RouteInput, registry: Registry, env: NodeJS.ProcessEnv = process.env) {
+export function routeRequest(request: RouteInput, registry: Registry, env: NodeJS.ProcessEnv = process.env, typedPrompt = "") {
   const level = request.thinkingLevel;
   if (request.reason === "direct") return route(resolveTier("build", registry, env), "low");
   const state = request.state;
@@ -212,7 +212,7 @@ export function routeRequest(request: RouteInput, registry: Registry, env: NodeJ
     if (request.previous && usable(registry, request.previous.model)) return route(request.previous.model, level, state);
   }
   // A user request (or the first request of a session with no state yet).
-  let tier = classifyRequest(lastUserText(request.messages), level);
+  let tier = classifyRequest(typedPrompt || lastUserText(request.messages), level);
   if (state?.phase === "implementation" && tier !== "plan") tier = "build";
   if (state && state.tier === tier) {
     // Same tier as the stored state: keep it, dropping a previous turn's escalation baseline.
@@ -244,6 +244,12 @@ export function describeTiers(registry: Registry, env: NodeJS.ProcessEnv = proce
 
 export default function coopRouter(pi: ExtensionAPI) {
   if (typeof (pi as any).registerVirtualModel !== "function") return; // Pi before 0.99: no virtual models
+  // The prompt the person typed, from Pi's before_agent_start (fired for every
+  // user turn before the first route): the one text a `user` request classifies.
+  // By routing time the messages may hold coop's injected note beside, or even
+  // without, that prompt (see lastUserText), so the event is the reliable source.
+  let typedPrompt = "";
+  if (typeof (pi as any).on === "function") pi.on("before_agent_start", async (event: any) => { typedPrompt = String(event?.prompt ?? ""); });
   pi.registerVirtualModel<RouterState>({
     provider: ROUTER_PROVIDER,
     id: ROUTER_ID,
@@ -253,7 +259,7 @@ export default function coopRouter(pi: ExtensionAPI) {
     contextWindow: 272_000,
     maxTokens: 128_000,
     route(request, ctx: ExtensionContext) {
-      return routeRequest(request as RouteInput, ctx.modelRegistry as unknown as Registry);
+      return routeRequest(request as RouteInput, ctx.modelRegistry as unknown as Registry, process.env, typedPrompt);
     },
   });
   pi.registerCommand("router", {
