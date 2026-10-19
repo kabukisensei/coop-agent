@@ -1160,6 +1160,19 @@ function Coop-Rst  { $script:C_RST }
 $script:G_BULLET = [char]0x2022   # •
 $script:G_CHECK  = [char]0x2713   # ✓
 $script:G_CROSS  = [char]0x2717   # ✗
+# A stock Windows console writes in the OEM code page (437 on an English box), so
+# those glyphs reach the screen and every pipe as their best-fit neighbours: ✓
+# prints as √, ✗ and — as ?, and a program reading coop's output as UTF-8 (the
+# tests, the window, Git Bash) sees U+FFFD. Both PowerShell editions switch to
+# UTF-8 cleanly (Windows Terminal and conhost render it), so coop's own output
+# goes out as UTF-8 wherever it runs; $OutputEncoding does the same for text
+# coop pipes into native programs. Nothing reads the console's input encoding.
+if ($env:OS -eq 'Windows_NT') {
+  try {
+    if ([Console]::OutputEncoding.CodePage -ne 65001) { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false }
+    $OutputEncoding = New-Object System.Text.UTF8Encoding $false
+  } catch {}
+}
 
 # --- Progress: one determinate "overall" bar + an animated active-item line ---
 # Built for installers where each item (npm/pipx/pi install)
@@ -1407,8 +1420,7 @@ function Get-CoopPrereqs([bool]$NoFabric = $false) {
   else {
     foreach ($p in @($fabPy, $genPy)) {
       if (-not $p) { continue }
-      & $p -m pipx --version *> $null
-      if ($LASTEXITCODE -eq 0) { $pipxDet = "via $p -m pipx"; $pipxVia = @($p, '-m', 'pipx'); break }
+      if (Test-CoopPythonModulePipx $p) { $pipxDet = "via $p -m pipx"; $pipxVia = @($p, '-m', 'pipx'); break }
     }
   }
   # A general Python that is itself 3.10-3.13 is Fabric-compatible even when the
@@ -2875,6 +2887,21 @@ function Invoke-CoopPiConverge {
 # The pipx to run: COOP_PIPX_BIN when set (tests pin one), else `pipx` on PATH,
 # else `python -m pipx` for a pipx that `pip install --user pipx` put in a Scripts
 # dir not on PATH yet (the Windows Store alias is skipped). @() when none answers.
+# `<python> -m pipx --version` writes "No module named pipx" to stderr where pipx
+# is absent; under Windows PowerShell 5.1 with $ErrorActionPreference = 'Stop'
+# that stderr line is a terminating NativeCommandError even through *> $null, so
+# the caller (coop version, doctor, a test fixture) died instead of reading "no".
+# Probe with the preference relaxed and every byte of output discarded.
+function Test-CoopPythonModulePipx([string]$Python) {
+  if (-not $Python) { return $false }
+  $eap = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'Continue'
+    $null = & $Python -m pipx --version 2>&1
+    return ($LASTEXITCODE -eq 0)
+  } catch { return $false } finally { $ErrorActionPreference = $eap }
+}
+
 function Get-CoopPipxInvocation {
   if ($env:COOP_PIPX_BIN) {
     if (Get-Command $env:COOP_PIPX_BIN -ErrorAction SilentlyContinue) { return @([string]$env:COOP_PIPX_BIN) }
@@ -2884,8 +2911,7 @@ function Get-CoopPipxInvocation {
   foreach ($name in @('python3', 'python')) {
     $c = Get-Command $name -ErrorAction SilentlyContinue
     if (-not $c -or ($c.Source -and $c.Source -match '\\WindowsApps\\')) { continue }
-    & $c.Source -m pipx --version *> $null
-    if ($LASTEXITCODE -eq 0) { return @($c.Source, '-m', 'pipx') }
+    if (Test-CoopPythonModulePipx $c.Source) { return @($c.Source, '-m', 'pipx') }
   }
   return @()
 }

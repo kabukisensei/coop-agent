@@ -105,6 +105,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   from an administrator window keeps the normal user out) instead of a
   reinstall that would not help. The Fabric CLI row no longer shows green with
   an empty version beside that warning.
+- **coop's output is UTF-8 on a stock Windows console.** Both PowerShell editions
+  wrote in the console's OEM code page, so `✓` reached the screen as `√`, `✗` and
+  em-dashes as `?`, and anything reading coop's output as UTF-8 (the window, Git
+  Bash, the tests) saw replacement characters. `lib/common.ps1` now switches the
+  console output encoding and `$OutputEncoding` to UTF-8 when it loads.
+- **`coop version` and doctor survive a Python without pipx under Windows
+  PowerShell 5.1.** The `<python> -m pipx --version` probe wrote "No module named
+  pipx" to stderr, which 5.1 turns into a terminating error under
+  `$ErrorActionPreference = 'Stop'` even through `*> $null`; the probe now runs
+  with the preference relaxed and its output discarded.
+- **`scripts/check-bom.ps1` skips the window package build's staging** under
+  `desktop/installer` (a gitignored snapshot plus npm's generated shims), so
+  `tests/run.ps1` passes on a dev box that just built the installer.
 - **`bash tests/run.sh` says when `python3` is unusable.** On a python.org
   install `python3` in Git Bash is the Store's App Execution Alias stub, and the
   suite died deep inside a test with "Python was not found"; it now stops up
