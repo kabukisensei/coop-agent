@@ -90,6 +90,26 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **`coop sync` links the Pi sign-in under Windows PowerShell 5.1 when Developer
+  Mode is on.** 5.1's `New-Item -ItemType SymbolicLink` never asks for the
+  unprivileged symlink Developer Mode allows, so it refused with "Administrator
+  privilege required" even on a machine set up as the install docs say, and sync
+  copied `auth.json` and `models.json` instead of linking them (a refreshed
+  login then stayed behind). Sync now tries cmd's `mklink` (which does ask, as
+  pwsh 7 does) before settling for the copy.
+- **`coop doctor` reads a launcher's traceback.** A pipx launcher that died in a
+  Python traceback had its first line quoted ("Traceback (most recent call
+  last):") and was called a broken leftover launcher to delete and reinstall.
+  The row now quotes the traceback's last line, the error, and when that is a
+  permission error it points at the unreadable file (a config folder first made
+  from an administrator window keeps the normal user out) instead of a
+  reinstall that would not help. The Fabric CLI row no longer shows green with
+  an empty version beside that warning.
+- **`bash tests/run.sh` says when `python3` is unusable.** On a python.org
+  install `python3` in Git Bash is the Store's App Execution Alias stub, and the
+  suite died deep inside a test with "Python was not found"; it now stops up
+  front and prints the one-line fix (a `python3.exe` beside `python.exe`, which
+  the hosted CI runners have).
 - **A fresh `coop install` gets a Pi that starts again: the pin moves to Pi
   1.2.0.** On 2026-10-12 `@earendil-works/pi-codemode` 1.2.0 dropped an export
   that Pi 1.1.0's codemode module imports; Pi 1.1.0 asks npm for `^1.1.0`, so a

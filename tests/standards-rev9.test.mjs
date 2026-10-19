@@ -232,10 +232,12 @@ try {
     const doctorOut = (name) => { const d = runDoctor(tmp, doctorEnv(env, name)); return `${d.stdout}\n${d.stderr}`; };
     try {
       const fresh = JSON.parse(saved);
+      // A whole `coop doctor` run can take over a minute on a slow Windows box, so
+      // the stamp set here reads 20 or 21 minutes by the time the row is printed.
       writeFileSync(state, JSON.stringify({ ...fresh, last_successful_check_ms: Date.now() - 20 * 60 * 1000 }));
       const stale = doctorLines();
-      assert.match(stale, /source\tcanonical-sync\tstale\tlast checked 20 min ago; standards refresh at every coop launch, or now with: coop sync/);
-      assert.match(doctorOut("doctor-stale-home"), /✓ source canonical-sync: stale @ last checked 20 min ago/);
+      assert.match(stale, /source\tcanonical-sync\tstale\tlast checked 2[01] min ago; standards refresh at every coop launch, or now with: coop sync/);
+      assert.match(doctorOut("doctor-stale-home"), /✓ source canonical-sync: stale @ last checked 2[01] min ago/);
       writeFileSync(state, JSON.stringify({ ...fresh, ok: false, degraded: true, detail: "canonical remote unavailable or authentication required", last_attempt_ms: Date.now() }));
       const failed = doctorLines();
       assert.match(failed, /source\tcanonical-sync\tfailed\tcanonical remote unavailable or authentication required; run: coop sync/);
