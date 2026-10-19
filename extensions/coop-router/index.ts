@@ -29,8 +29,8 @@
 // forks and survives compaction. Opt in with `/model coop/auto`; the footer shows
 // the routed model beside the selection. Loaded only on Pi 1.x (bin/coop.ps1).
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-// The classification rule lives in lib/router-rules.mjs so the J0 classifier
-// trial (lib/router-trial.mjs) scores classifiers against the very same rule.
+// The classification rule lives in lib/router-rules.mjs, tested on its own
+// against the synthetic prompt sets (tests/router-rules.test.mjs).
 import { classifyRequest as classifyRule, LONG_PROMPT_CHARS as LONG, SHORT_PROMPT_CHARS as SHORT } from "../../lib/router-rules.mjs";
 
 export const PROVIDER = "openai-codex";

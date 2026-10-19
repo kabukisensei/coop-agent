@@ -5,6 +5,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Removed
+
+- **`coop router-trial`, the Jev classifier trial (master plan J0).** Aaron's
+  call of 2026-10-19 after the bigger trial on the dev VM: TypeSafe's Jev
+  scored 100% on 200 synthetic prompts against the tightened rule's 98%, but
+  the two differ only on four long briefs that Jev sends to the plan model, so
+  it saves no tokens over the rule, needs a vendor key, and would need a DPA
+  before any client use. The command, `lib/router-trial.mjs` and its tests are
+  gone; the synthetic sets stay as fixtures for the rule's own tests
+  (`tests/router-rules.test.mjs`), and `coop doctor` still warns when a
+  third-party classifier key is left on a profile.
+
 ### Added
 
 - **`coop-schema-compare` 0.1.1 is installed with coop** (master plan row SQ10,
