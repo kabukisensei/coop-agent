@@ -7,7 +7,7 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
-- **`coop-schema-compare` 0.1.0 is installed with coop** (master plan row SQ10,
+- **`coop-schema-compare` 0.1.1 is installed with coop** (master plan row SQ10,
   Aaron's ask of 2026-10-12: the schema compare for coop and for people, like
   coop-data-doc). `config/release-manifest.json` pins it under `python_tools`, so
   `coop install` and `coop update` converge it with pipx, the window package
