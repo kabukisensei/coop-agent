@@ -237,8 +237,9 @@ fabric_skills:
 #     path: "docs/standards/client-sql.md"
 
 # --- Backups / logging / documentation ---------------------------------------
+# Backups go to this client's folder (%USERPROFILE%\.coop\backups\<repository>\), never
+# inside the repository; only the timestamp and the file name pattern are read here.
 backup:
-  root: ".backups"
   timestamp_format: "%Y%m%d_%H%M%S"
   naming_pattern: "{original_name}.{timestamp}.bak"
   required_before_edit: true

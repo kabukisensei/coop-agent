@@ -249,10 +249,12 @@ jobs:
   installer:
     # The coop window package (master plan D1c, D1d): stage the pinned Node,
     # Pi, the extension tree and the repository snapshot, build the unsigned
-    # NSIS per-user installer on every PR as an artifact, then install it
-    # silently on this disposable runner, run `coop.exe --doctor`, check the
-    # bundled runtime, run the bundled `coop.ps1 version` and uninstall
-    # (desktop/scripts/verify-installer.mjs refuses to run anywhere else).
+    # NSIS per-machine installer (F3) on every PR as an artifact, then install
+    # it silently for every account on this disposable runner, check the
+    # machine shim, PATH entry and "coop update" task, run the auto-update dry
+    # run, `coop.exe --doctor`, check the bundled runtime, run the bundled
+    # `coop.ps1 version` and uninstall (desktop/scripts/verify-installer.mjs
+    # refuses to run anywhere else).
     name: installer (Windows)
     runs-on: windows-latest
     timeout-minutes: 45
@@ -278,6 +280,8 @@ jobs:
         shell: pwsh
         env:
           COOP_INSTALLER_TEST: '1'
+          # F3: the auto-update dry run asks api.github.com; a token keeps a shared runner address off the unauthenticated rate limit.
+          GH_TOKEN: ${{ github.token }}
         run: node desktop/scripts/verify-installer.mjs --output "$env:RUNNER_TEMP\installer-acceptance.json"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -289,10 +293,12 @@ jobs:
   installer-upgrade:
     # Upgrade acceptance (master plan D1k; Aaron 2026-10-07: the one installer
     # must work for people who already have coop, and its "coop" shortcut must
-    # open the window): the latest release's installer, then this build over it;
+    # open the window; F3: one install per machine): the latest release's
+    # installer for this account, then this build for every account over it;
     # then this build over a terminal install (this checkout). Shortcuts, the
-    # `coop` link, the profile and the next launch's setup are checked
-    # (desktop/scripts/verify-upgrade.mjs refuses to run anywhere else).
+    # `coop` link, the machine shim and task, the profile and the next launch's
+    # setup are checked (desktop/scripts/verify-upgrade.mjs refuses to run
+    # anywhere else).
     name: installer upgrade (Windows)
     needs: [installer]
     runs-on: windows-latest
@@ -334,6 +340,13 @@ jobs:
           $second = (& $ps -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $cmd 2>&1 | Out-String)
           Write-Output $second
           if ($second -notmatch 'is already installed') { throw 'a second run of the one-liner did not find the window installed' }
+      - name: the acceptance reports in the log (what a failed launch saw, windows and processes)
+        if: always()
+        shell: pwsh
+        run: |
+          foreach ($f in @("$env:RUNNER_TEMP\upgrade-acceptance.json", "$env:RUNNER_TEMP\launch-acceptance.json")) {
+            if (Test-Path -LiteralPath $f) { Write-Output "--- $f"; Get-Content -LiteralPath $f -Raw }
+          }
       - uses: actions/upload-artifact@v4
         if: always()
         with:

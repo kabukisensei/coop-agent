@@ -1,14 +1,19 @@
 // electron-builder configuration for the coop window package (master plan
-// D1c, D1d): an unsigned NSIS per-user installer of the window with Node, Pi,
+// D1c, D1d, F3): an unsigned NSIS per-machine installer of the window with Node, Pi,
 // the extension tree and the coop snapshot inside, Windows x64. The app it
 // packs is the stage desktop/scripts/build-installer.mjs writes (desktop/, the
 // lib/ modules the window imports, the vibes, the splash and the icon, plus
 // pdf.js); the runtime and the snapshot ride beside the asar as
 // resources\runtime and resources\coop; Electron's version is the release
 // manifest's pin.
-// NSIS options and the fuses are the ones salvaged from the September branch
-// (plan section 11.5): no administrator, no elevation, keep the user's data
-// on uninstall, do not start the app when the installer closes.
+// NSIS options: one install per machine (master plan F3, Aaron 2026-10-20),
+// so the installer asks for an administrator once and every Windows account
+// shares the program under %ProgramFiles%\coop (each account keeps its own
+// %USERPROFILE%\.coop); resources/installer.nsh adds the machine-wide step
+// (scripts/machine-install.ps1: the `coop` command for every account, the
+// "coop update" task). The fuses are the ones salvaged from the September
+// branch (plan section 11.5); the user's data is kept on uninstall and the app
+// is not started when the installer closes.
 const { readFileSync } = require("node:fs");
 const { join } = require("node:path");
 
@@ -60,8 +65,10 @@ module.exports = {
   },
   nsis: {
     oneClick: false,
-    perMachine: false,
-    allowElevation: false,
+    // F3: per machine (%ProgramFiles%\coop, HKLM, all-users shortcuts), one
+    // administrator prompt; /S /allusers installs silently.
+    perMachine: true,
+    allowElevation: true,
     allowToChangeInstallationDirectory: true,
     runAfterFinish: false,
     deleteAppDataOnUninstall: false,
@@ -69,11 +76,13 @@ module.exports = {
     createStartMenuShortcut: true,
     // D1m: the icon is the front door, so the package's shortcut is plain "coop".
     shortcutName: "coop",
-    uninstallDisplayName: "coop (window)",
+    uninstallDisplayName: "coop",
     installerIcon: icon,
     uninstallerIcon: icon,
-    // D1d: the uninstaller also drops the `coop` link and "coop" shortcuts the
-    // package's first launch wrote (resources/installer.nsh).
+    // D1d, F3: the welcome and finish text, the removal of this account's older
+    // per-user coop, the machine-wide step and its undo on uninstall, and the
+    // `coop` link and "coop" shortcuts an older package's first launch wrote
+    // (resources/installer.nsh).
     include: join(__dirname, "resources", "installer.nsh"),
     artifactName: "coop-window-${version}-${os}-${arch}.${ext}",
   },

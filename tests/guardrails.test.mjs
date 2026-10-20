@@ -583,6 +583,31 @@ await t("blocks a declined read of a secret file", async () => {
 await t("blocks a declined write to a secret file", async () => {
   assert.equal(blocked(await callFile("write", ".env", { confirm: false })), true);
 });
+await t("F2: writes under this client's backups and drafts folders never ask (a .env backup, a draft .sql)", async () => {
+  const { isClientWorkPath } = cg;
+  const savedCoopDir = process.env.COOP_DIR;
+  const home = join(tmpdir(), `coop-guardrails-tiers-${process.pid}`);
+  process.env.COOP_DIR = home;
+  try {
+    const backups = join(home, ".coop", "backups", "acme-sql");
+    const drafts = join(home, ".coop", "drafts", "acme-sql");
+    assert.equal(isClientWorkPath(join(backups, "config", ".env.20261020_140509.bak"), ctx.cwd), true);
+    assert.equal(isClientWorkPath(join(drafts, "proposals", "usp_New.sql"), ctx.cwd), true);
+    assert.equal(isClientWorkPath(join(home, ".coop", "backups-not", "x"), ctx.cwd), false, "a sibling folder is not the backups folder");
+    assert.equal(isClientWorkPath(join(home, ".coop", "agent", "auth.json"), ctx.cwd), false);
+    assert.equal(isClientWorkPath("config/.env", ctx.cwd), false);
+    assert.equal(isClientWorkPath("", ctx.cwd), false);
+    // The write hook: no confirmation for either folder, declined or not; the secret rule still holds elsewhere.
+    confirmCount = 0;
+    assert.equal(blocked(await callFile("write", join(backups, ".env.20261020_140509.bak"), { confirm: false })), false);
+    assert.equal(confirmCount, 0, "no prompt for a backup");
+    assert.equal(blocked(await callFile("write", join(drafts, "usp_New.sql"), { confirm: false })), false);
+    assert.equal(blocked(await callFile("edit", join(drafts, "usp_New.sql"), { confirm: false })), false);
+    assert.equal(blocked(await callFile("write", join(home, ".coop", "config", ".env"), { confirm: false })), true, "a secret outside those folders still asks");
+  } finally {
+    if (savedCoopDir === undefined) delete process.env.COOP_DIR; else process.env.COOP_DIR = savedCoopDir;
+  }
+});
 await t("allows an approved secret-file read; allows non-secret files", async () => {
   assert.equal(blocked(await callFile("read", ".env", { confirm: true })), false);
   assert.equal(blocked(await callFile("read", "src/app.py", { confirm: false })), false);

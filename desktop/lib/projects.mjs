@@ -1,45 +1,23 @@
-// The project picker (master plan D1m): the folders the window has opened
-// before, each with the client its committed project file names, the Git
-// branch and whether the team's copy of the file is in step. The picker is
-// the front door when the installed window starts from its icon with no
-// folder; "open this one next time" skips it. Pure where it can be: the
-// readers are injected so the gate lane tests it without a repository.
+// The client folder in the window (master plan F1): the folder the icon opens
+// without asking is this Windows user's recorded client folder
+// (~/.coop/client.json, lib/client-folder.mjs); the one question
+// (desktop/renderer/picker.html) records it. The window title and header name
+// the client from the project file coop reads in that folder. Pure where it
+// can be: the readers are injected so the gate lane tests it without a repository.
 import { existsSync, readFileSync } from "node:fs";
 import { basename, isAbsolute, relative, resolve } from "node:path";
 import { findProjectContract } from "../../lib/standards.mjs";
+import { clientRecord } from "../../lib/client-folder.mjs";
 import { projectYamlScalar } from "../../lib/project-contract.mjs";
 import { teamFileStatus } from "../../lib/project-share.mjs";
 import { readBranch } from "./git.mjs";
 
-/** How many folders the picker remembers. */
-export const MAX_PROJECTS = 12;
-
 const CLEAN = (value) => (typeof value === "string" && !/[\0\r\n]/.test(value) ? value.slice(0, 1024) : "");
 
-/** Case-insensitive on Windows, where the shell hands folders in either case. */
-export function sameFolder(a, b, platform = process.platform) {
-  const x = resolve(a), y = resolve(b);
-  return platform === "win32" ? x.toLowerCase() === y.toLowerCase() : x === y;
-}
-
-/** The settings with `folder` first in the remembered list (newest first, deduplicated). */
-export function rememberProject(settings, folder, platform = process.platform) {
-  const clean = CLEAN(folder);
-  if (!clean) return settings;
-  const rest = (settings.projects || []).filter((known) => !sameFolder(known, clean, platform));
-  return { ...settings, projects: [clean, ...rest].slice(0, MAX_PROJECTS) };
-}
-
-/** The settings without `folder`; a forgotten folder is no longer the one opened next time. */
-export function forgetProject(settings, folder, platform = process.platform) {
-  const projects = (settings.projects || []).filter((known) => !sameFolder(known, folder, platform));
-  const openNextTime = settings.openNextTime && sameFolder(settings.openNextTime, folder, platform) ? "" : settings.openNextTime;
-  return { ...settings, projects, openNextTime };
-}
-
-/** The folder to open straight away when the icon starts the window, or "" to ask. */
-export function startFolder(settings, exists = existsSync) {
-  const folder = CLEAN(settings.openNextTime);
+/** The folder to open straight away when the icon starts the window (the
+ *  recorded client folder, when it still exists), or "" to ask the one question. */
+export function startFolder(record = clientRecord(), exists = existsSync) {
+  const folder = CLEAN(record && record.root);
   return folder && exists(folder) ? folder : "";
 }
 
@@ -49,8 +27,8 @@ function within(root, path, platform = process.platform) {
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
-/** The team state of a project file in one word for the picker, from a
- *  teamFileStatus result taken without a fetch (the picker never waits on the network). */
+/** The team state of a project file in one word, from a teamFileStatus result
+ *  taken without a fetch (the window never waits on the network for it). */
 export function teamWord(status) {
   if (!status) return "";
   switch (status.state) {
@@ -71,10 +49,10 @@ const defaultReaders = {
 };
 
 /**
- * One picker entry for a folder: its name, the client from the project file
- * coop would read there (above the folder, or in the client home repository
- * beside it), where that file lives, the branch and the team word. `exists`
- * false means the folder is gone (a moved clone); the picker drops it.
+ * One description of a folder: its name, the client from the project file
+ * coop would read there (above the folder, in the client home repository
+ * beside it, or the recorded one), where that file lives, the branch and the
+ * team word. `exists` false means the folder is gone (a moved clone).
  */
 export function describeProject(folder, readers = {}) {
   const r = { ...defaultReaders, ...readers };
@@ -91,11 +69,6 @@ export function describeProject(folder, readers = {}) {
   entry.home = !within(entry.root, path);
   entry.team = teamWord(r.team(entry.root));
   return entry;
-}
-
-/** The picker's rows, newest first, folders that still exist only. */
-export function projectEntries(settings, readers = {}) {
-  return (settings.projects || []).map((folder) => describeProject(folder, readers)).filter((entry) => entry.exists);
 }
 
 /** The window title: the client and the folder when a project file names one. */

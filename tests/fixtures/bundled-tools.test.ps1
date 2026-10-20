@@ -71,7 +71,7 @@ try {
   )
   foreach ($c in $cases) {
     $s = Use-CoopBundledWheels $c.Args
-    $isOff = ($env:PIP_NO_INDEX -eq '1' -and $env:PIP_FIND_LINKS -eq (Join-Path $rt 'python-wheels'))
+    $isOff = ($env:PIP_NO_INDEX -eq '1' -and $env:PIP_FIND_LINKS -eq (Get-CoopPipFindLink (Join-Path $rt 'python-wheels')))
     Restore-CoopBundledWheels $s
     $back = (-not $env:PIP_NO_INDEX -and $env:PIP_FIND_LINKS -eq 'user-links')
     if ($isOff -ne $c.Offline) { Ko "$($c.Name): offline=$isOff, expected $($c.Offline)" }
@@ -83,6 +83,11 @@ try {
   Restore-CoopBundledWheels $s
   Remove-Item Env:\COOP_PIP_ONLINE -ErrorAction SilentlyContinue
   if ($fail -eq 0) { Ok 'pipx installs and injects of exact pins read the wheel folder offline; --edge, upgrade and COOP_PIP_ONLINE=1 keep the index; the old values come back' }
+  # pip splits PIP_FIND_LINKS on whitespace: the folder travels as a file: URL.
+  $spaced = Get-CoopPipFindLink (Join-Path (Join-Path $t 'Program Files') 'coop\python-wheels')
+  if ($spaced -notmatch '^file:///' -or $spaced -match ' ' -or $spaced -notmatch 'Program%20Files/coop/python-wheels$') { Ko "a wheel folder with a space is not a file: URL for pip: $spaced" }
+  elseif ($env:PIP_FIND_LINKS -eq 'user-links' -and (Get-CoopPipFindLink (Join-Path $rt 'python-wheels')) -match '^file:///.*python-wheels$') { Ok 'the wheel folder reaches pip as a file: URL (a space in C:\Program Files becomes %20, never two locations)' }
+  else { Ko "the wheel folder link is wrong: $(Get-CoopPipFindLink (Join-Path $rt 'python-wheels'))" }
 
   # A D1d package (Node and Pi only) still loads, with nothing of D1k set.
   $old = Join-Path $t 'runtime-d1d'

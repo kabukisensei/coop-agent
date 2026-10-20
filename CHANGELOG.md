@@ -5,6 +5,168 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **The client folder (master plan F1; Aaron, 2026-10-20).** coop's folder
+  model is three places, named the same way everywhere coop speaks: this
+  machine (`%ProgramData%\coop`), this client (`%USERPROFILE%\.coop`, one
+  Windows user is one client) and the repository (`<repo>\.coop`). One client
+  is one folder holding all of its repositories; coop always opens in that
+  client folder, finds the one project file from there and edits in whichever
+  repository the task names. The record is `~/.coop/client.json`
+  (`client`, `root`, `project_file`), read by the launcher
+  (`Get-CoopClientRecord`, `lib/common.ps1`) and the window
+  (`lib/client-folder.mjs`); it replaces `home-project.json`, which is carried
+  over once at the next launch (with one line saying so) and left in place.
+  One rule says where the root is (`Get-CoopClientRootFor` / `clientRootFor`,
+  tested on the same fixtures): the folder the user chose, else the repository
+  when the file is found above the launch folder and lists no siblings, its
+  parent when it does, the launch folder when the file is in a repository
+  inside it. The shortcuts open the client folder; `coop project home <folder>`
+  records the folder given as the root and `coop project home` prints the
+  three fields; every launch prints `Client: <client> · folder <root> ·
+  project file <path>` (`Get-CoopClientLine`), and the window shows it on its
+  welcome.
+- **The window asks one question, once.** The project picker (the list of
+  folders opened before, Browse, Forget and "open this one next time") is
+  replaced by "Where is this client's code?" with one button, Choose folder...:
+  the choice is recorded in `client.json` and the window opens there; a folder
+  without a project file still opens, and the set-up notices offer
+  `/setup-project`. File > Switch project is now File > Switch client (the
+  same question, a new window on the chosen folder). The window settings'
+  `projects` list and `openNextTime` are no longer read or written.
+
+- **One install per machine (master plan F3).** The coop window installer now
+  installs once for every account on the computer, under `%ProgramFiles%\coop`,
+  after one administrator prompt (electron-builder `perMachine`,
+  `allowElevation`; the Add/Remove Programs entry is **coop**). An older
+  per-user package under `%LOCALAPPDATA%\Programs\coop` is removed by the new
+  installer before it installs; every account's client under `~/.coop` is never
+  touched, by install or uninstall. `scripts/machine-install.ps1` (run by the
+  installer, `-Remove` by the uninstaller) writes the `coop` shim
+  `%ProgramFiles%\coop\bin\coop.cmd` for every account's terminal (an
+  account's own terminal install still wins), adds it to the machine PATH,
+  writes the marker `resources\runtime\machine-install.json` and registers the
+  "coop update" scheduled task. On a machine install the bundled first launch no
+  longer writes a per-account `coop` link or shortcuts (`Test-CoopMachineInstall`
+  in `lib/common.ps1`), and `coop doctor` has an install row: this machine, this
+  account only, or developer clone.
+- **Updates install themselves on a machine install.** The "coop update" task
+  (SYSTEM, highest privileges, daily at 03:00 repeating hourly for a day, at
+  logon, start when missed, only with a network, 30 minute limit) runs the new
+  standalone `scripts/auto-update.ps1`: newest GitHub release, the exe whose
+  SHA-256 the release's verified report names, waits while a coop from the
+  package is open, `/S /allusers /D=`, state in
+  `%ProgramData%\coop\update-state.json`, log in
+  `%ProgramData%\coop\logs\update.log` (under 1 MB); `-DryRun` or
+  `COOP_AUTO_UPDATE_DRY_RUN=1` changes nothing. Each account's next launch
+  prints one line about an update that installed since its last launch, or one
+  waiting (`Write-CoopUpdateLines`; the window shows it in its notices). On a
+  machine install `coop update` prints "This coop updates itself (this
+  machine): last checked <time>, installed <version>" and exits 0, `--check`
+  lists the task's state and `--edge` is refused (exit 1). `scripts/bootstrap.ps1`
+  now needs an administrator PowerShell and runs the installer with
+  `/S /allusers`. The `installer (Windows)` CI job proves the per-machine
+  install, the shim, PATH entry, task and the dry run, and `verify-upgrade.mjs`
+  proves the per-user to per-machine upgrade; the new `machine-install`
+  PowerShell fixture covers every pure part.
+
+- **File tiers (master plan row F2, Aaron's decision of 2026-10-20).** coop's
+  folder model is three fixed places, named the same way everywhere coop speaks:
+  **this machine** (`%ProgramData%\coop`: the program, the standards, your name
+  and preferences), **this client** (`%USERPROFILE%\.coop`, one Windows user is
+  one client: sessions, memory, backups, drafts) and **the repository**
+  (`<repo>\.coop`: the team's project file, client skills and prompts). No
+  options; task logs stay in the repository.
+  - *Standards on this machine.* The standards root is `%ProgramData%\coop\standards`
+    when that folder exists and is writable (`coop sync` creates it when it can,
+    without a prompt), else this client's `~/.coop/standards` as before;
+    `canonical\` and `snapshots\` live under it and `COOP_STANDARDS_ROOT` still
+    names the canonical checkout. New helpers in all three languages
+    (`standardsLocation` / `Get-CoopStandardsLocation` / `standards_location`).
+    The first launch that reads the machine copy prints one line; `coop doctor`
+    names the path and the place.
+  - *Backups in this client.* Backups go to `~/.coop/backups/<repository>/<path>.<timestamp>.bak`,
+    never inside the repository. The launcher sets `COOP_BACKUP_DIR`; `backupDirFor`
+    / `backupPathFor` in `lib/paths.mjs` put the project file's own backup there
+    too (`/setup-project`, `/project-get`, the window's Project form), named
+    `Backup (this client): <path>`. The contract's `backup.root` is no longer read
+    (`timestamp_format` and `naming_pattern` still are); the `coop init` templates
+    and the bundled `.coop/project.yml` drop it. The guardrails never ask for a
+    write under this client's `backups` or `drafts` folder.
+  - *Drafts in this client.* A file written for review that edits nothing in the
+    repository goes to `~/.coop/drafts/<repository>/` (`COOP_DRAFTS_DIR`), named
+    `Draft (this client): <path>`; the window's Changes pane lists them under
+    Drafts (newest first, opened as a new file).
+  - `coop doctor` gains a Folders section (this machine, this client, the
+    repository, plus the standards, backups and drafts rows; a repository without
+    a project file warns `/setup-project creates one`), and the window's Project
+    pane shows the same rows from a new `coop:folders` RPC.
+- **`coop doctor` sends a stale coop-tool pin to `coop update`.** The pipx rows
+  (`coop-data-doc`, `coop-schema-compare`, the Fabric CLI) answered a version
+  behind, ahead of or different from the manifest with `pipx install
+  <tool>==<pin>`, while the product answer is `coop update`, which converges
+  every pin at once (the Pi row already said so). The remedy now leads with
+  `coop update` and keeps the pipx line in brackets for a machine without
+  coop on PATH; the ownership rows (a foreign copy on PATH) keep their pipx
+  hints, since a stale pin is not their problem. Found on the dev VM's pre-tag
+  check of v0.37.0 (2026-10-20).
+
+- **A launch that opens no window is never silent.** The window writes a
+  launch log, `<profile>\desktop\launch.log` (this client): one line when it
+  starts coop's setup console, every line that console prints with its time
+  (coop's own lines are mirrored there, since the console's stdin is NUL and
+  it closes at once on a failure), any PowerShell error, the console's exit
+  code, and one line when that console exits with its code and whether a
+  window opened. A console that exits
+  without a window, with any code, now gets a message box with the console's
+  last lines, the code and the log (before, a non-zero exit quit without a
+  word).
+
+- **A first launch never asks for an administrator (F3).** The ODBC Driver 18
+  for SQL Server, with its VC++ runtime, is installed by the installer's own
+  elevated step for every account when the machine has no Driver 18 or newer
+  (`scripts/machine-install.ps1`, logged in `machine-install.log`), so the
+  window's first launch in any account, a standard user's included, installs
+  nothing that needs an administrator. Before, that launch raised the Windows
+  administrator prompt for the driver, which a standard user's console could
+  not answer: on the dev VM (2026-10-20) a second account's first launch hung
+  on it for two minutes with nothing printed, then quit. If the driver is still
+  missing, the first launch and `coop doctor` on a machine install say so as a
+  warning naming the administrator's step (run the installer again) and go on;
+  live SQL waits, everything else works. The same launch has no one at the
+  console's keyboard, so it no longer reaches the profile wizard: the COOP
+  profile is written with the Windows account's name and the default settings,
+  the console says so with the way to change it (`coop onboard`), and the
+  window's set-up card repeats it once at the next launch. A `coop install`
+  at a keyboard still asks. (`onboard.py onboard --name <name> --no-sign-in`
+  is what it runs: the name is the default answer, and `--no-sign-in` keeps
+  that launch from starting an Azure device-code sign-in, which with no one at
+  the keyboard would wait in the hidden setup console forever and keep the
+  window from opening; the console says the sign-in comes later, from
+  `coop onboard --config-only`.)
+- **The package's tools install from a folder with a space in its path.** pip
+  splits `PIP_FIND_LINKS` on whitespace, so under `C:\Program Files\coop` (the
+  machine install) the wheel folder arrived as two ignored locations and every
+  tool install (Fabric CLI, coop-data-doc, coop-schema-compare) failed with
+  "No matching distribution"; the per-user package under `%LOCALAPPDATA%` never
+  hit it. The folder now reaches pip as a `file:` URL. Found on the dev VM
+  (2026-10-20) as a standard user's first launch that opened no window.
+- **A first launch whose setup did not finish still opens the window** when Pi
+  and Node are in place: the console and the window's set-up card say which
+  tools are missing and where the lines are, and the setup runs again at the
+  next launch (before, the launch stopped with no window).
+- **A failed pipx install says why.** The install's "could not install
+  <tool>" lines now end with pipx's or pip's error line (or its last
+  line), so a standard user's first launch on a machine install names the
+  path or package that failed instead of leaving it to a verbose re-run.
+
+### Added
+
+- **`coop folders`**: a read-only command printing the three places coop uses
+  (this machine, this client, the repository) with their real paths and what
+  each holds; other rows build on it.
+
 ### Fixed
 
 - **Warehouse SQL MCP reads no longer time out at a fixed 60 seconds.** The
@@ -46,18 +208,6 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   is now a retired command, like `coop web`: one line naming the removal and
   the CHANGELOG entry, exit code 1, nothing launched. The classifier-keys
   fixture runs it and checks that no helper or dispatch to the trial remains.
-
-### Changed
-
-- **`coop doctor` sends a stale coop-tool pin to `coop update`.** The pipx rows
-  (`coop-data-doc`, `coop-schema-compare`, the Fabric CLI) answered a version
-  behind, ahead of or different from the manifest with `pipx install
-  <tool>==<pin>`, while the product answer is `coop update`, which converges
-  every pin at once (the Pi row already said so). The remedy now leads with
-  `coop update` and keeps the pipx line in brackets for a machine without
-  coop on PATH; the ownership rows (a foreign copy on PATH) keep their pipx
-  hints, since a stale pin is not their problem. Found on the dev VM's pre-tag
-  check of v0.37.0 (2026-10-20).
 
 ## [0.37.0] — 2026-10-20
 

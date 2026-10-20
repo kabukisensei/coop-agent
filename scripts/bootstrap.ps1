@@ -5,6 +5,8 @@
 #
 #   irm https://raw.githubusercontent.com/kabukisensei/coop-agent/main/scripts/bootstrap.ps1 | iex
 #
+# into a PowerShell started as administrator (one install for every account).
+#
 # This file is ASCII with NO UTF-8 BOM, the one .ps1 exempt from the BOM rule
 # (scripts/check-bom.ps1): `irm | iex` hands a BOM to iex as a character, so
 # the first line stops being a comment and prints a red error first.
@@ -16,11 +18,15 @@
 #   1. the release    the newest coop-agent release on github.com
 #   2. the installer  its coop-window-<version>-win-x64.exe, checked against
 #                     the SHA-256 in the release's installer-acceptance report
-#   3. install        silently, for this user, no administrator
-#   4. first launch   opens the coop window, which sets up this computer from
-#                     the package (the `coop` command, the Python tools, the
-#                     sign-ins) and asks Windows for administrator permission
-#                     once, for the SQL driver
+#   3. install        silently, once for every account on this computer
+#                     (F3: one install per machine, so paste the command into a
+#                     PowerShell started as administrator; it stops with that
+#                     ask otherwise). Updates then install themselves (the
+#                     "coop update" task); `coop update` is not needed.
+#   4. first launch   opens the coop window, which sets up this account from
+#                     the package (the Python tools, the sign-ins) and asks
+#                     for nothing: the installer's one administrator prompt
+#                     already covered everything, the SQL driver included
 # Running it again repairs a half-finished setup: an installed window at the
 # same version is kept and simply opened.
 #
@@ -58,23 +64,33 @@ function Get-CoopBootstrapLatestVersion {
   return ''
 }
 
-# The folder the coop window lives in: the per-user Add/Remove entry's
-# InstallLocation when it still holds coop.exe (an earlier install may sit in a
-# folder someone chose), else the default %LOCALAPPDATA%\Programs\coop. A second
-# install into a different folder leaves the silent installer waiting forever on
-# NSIS's "already installed" question (dev VM, 2026-10-19), so an upgrade goes
-# into the folder the window already has.
+# The folder the coop window lives in: an Add/Remove entry's InstallLocation
+# when it still holds coop.exe (this machine's install in HKLM first, then an
+# older per-user one in HKCU; an earlier install may sit in a folder someone
+# chose), else the per-machine default %ProgramFiles%\coop. A second install
+# into a different folder leaves the silent installer waiting forever on NSIS's
+# "already installed" question (dev VM, 2026-10-19), so an upgrade goes into the
+# folder the window already has.
 function Get-CoopBootstrapWindowDir {
-  $default = Join-Path $env:LOCALAPPDATA 'Programs\coop'
-  try {
-    foreach ($entry in @(Get-ChildItem -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction Stop)) {
-      $props = Get-ItemProperty -Path $entry.PSPath -ErrorAction SilentlyContinue
-      if (-not $props -or [string]$props.DisplayName -ne 'coop (window)') { continue }
-      $loc = ([string]$props.InstallLocation).Trim().TrimEnd('\')
-      if ($loc -and (Test-Path -LiteralPath (Join-Path $loc 'coop.exe') -PathType Leaf)) { return $loc }
-    }
-  } catch { }
+  $pf = if ($env:ProgramW6432) { $env:ProgramW6432 } else { $env:ProgramFiles }
+  $default = Join-Path $pf 'coop'
+  foreach ($hive in @('HKLM:', 'HKCU:')) {
+    try {
+      foreach ($entry in @(Get-ChildItem -Path "$hive\Software\Microsoft\Windows\CurrentVersion\Uninstall" -ErrorAction Stop)) {
+        $props = Get-ItemProperty -Path $entry.PSPath -ErrorAction SilentlyContinue
+        if (-not $props -or (@('coop', 'coop (window)') -notcontains [string]$props.DisplayName)) { continue }
+        $loc = ([string]$props.InstallLocation).Trim().TrimEnd('\')
+        if ($loc -and (Test-Path -LiteralPath (Join-Path $loc 'coop.exe') -PathType Leaf)) { return $loc }
+      }
+    } catch { }
+  }
   return $default
+}
+function Test-CoopBootstrapElevated {
+  try {
+    $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+    return (New-Object Security.Principal.WindowsPrincipal $id).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+  } catch { return $false }
 }
 function Get-CoopBootstrapWindowExe { return (Join-Path (Get-CoopBootstrapWindowDir) 'coop.exe') }
 
@@ -127,18 +143,17 @@ function Install-CoopBootstrapWindow([string]$Version) {
   # The hash check above is the trust decision; the download mark would only
   # bring the SmartScreen click the install page describes.
   Unblock-File -LiteralPath $exe -ErrorAction SilentlyContinue
-  Coop-BootstrapInfo 'installing the coop window for this user (silent, no administrator)'
-  $installArgs = @('/S', '/currentuser')
+  Coop-BootstrapInfo 'installing coop for every account on this computer (silent; this machine)'
+  # F3: one install per machine. NSIS reads /D only as the last argument and
+  # without quotes, spaces included; the folder is the one the window already
+  # has, else %ProgramFiles%\coop.
+  $installArgs = @('/S', '/allusers')
   $dir = Get-CoopBootstrapWindowDir
-  if ($dir -ne (Join-Path $env:LOCALAPPDATA 'Programs\coop')) {
-    Coop-BootstrapInfo "the coop window is already installed in $dir; this version goes there too"
-    # NSIS reads /D only as the last argument and without quotes, spaces included.
-    $installArgs += "/D=$dir"
-  }
+  $installArgs += "/D=$dir"
   $p = Start-Process -FilePath $exe -ArgumentList $installArgs -Wait -PassThru
   if ($p.ExitCode -ne 0) { Coop-BootstrapFail "the window installer exited with code $($p.ExitCode)"; return $false }
   Remove-Item -LiteralPath $exe -Force -ErrorAction SilentlyContinue
-  Coop-BootstrapOk 'the coop window is installed: "coop" on the Desktop and in the Start Menu'
+  Coop-BootstrapOk 'the coop window is installed for every account: "coop" on the Desktop and in the Start Menu, coop in a new terminal; updates install themselves'
   return $true
 }
 
@@ -147,12 +162,16 @@ function Invoke-CoopBootstrap {
   Coop-BootstrapHead 'coop bootstrap: one installer with everything coop needs'
   Coop-BootstrapInfo '1. find the newest coop release on github.com'
   Coop-BootstrapInfo '2. download its coop window installer, SHA-256 checked'
-  Coop-BootstrapInfo '3. install it for this user (no administrator)'
+  Coop-BootstrapInfo '3. install it once for every account on this computer (this machine; needs an administrator PowerShell); updates then install themselves'
   if ($noLaunch) { Coop-BootstrapInfo '4. first launch: skipped (COOP_BOOTSTRAP_NO_LAUNCH=1); open "coop" from the Desktop to finish setup' }
-  else { Coop-BootstrapInfo '4. open the coop window: its first launch sets up this computer from the package (Windows asks for administrator permission once, for the SQL driver)' }
+  else { Coop-BootstrapInfo '4. open the coop window: its first launch sets up this account from the package and asks for nothing (the installer''s one administrator prompt covered the SQL driver too)' }
   if ($env:COOP_BOOTSTRAP_DRY_RUN -eq '1') { Coop-BootstrapOk 'dry run (COOP_BOOTSTRAP_DRY_RUN=1): nothing was changed'; $script:CoopBootstrapRc = 0; return }
   if ($env:OS -ne 'Windows_NT') {
     Coop-BootstrapFail 'this bootstrap runs on Windows only. On macOS or Linux: git clone the repository, then run ./bin/coop install'
+    $script:CoopBootstrapRc = 1; return
+  }
+  if (-not (Test-CoopBootstrapElevated)) {
+    Coop-BootstrapFail 'coop installs once for every account on this computer, so this needs an administrator: close this window, open PowerShell with "Run as administrator" (right-click it in the Start Menu), then paste the command again'
     $script:CoopBootstrapRc = 1; return
   }
   try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
@@ -162,7 +181,7 @@ function Invoke-CoopBootstrap {
   if (-not $version) { Coop-BootstrapFail "could not read the newest release from github.com. Check this machine can open $($script:CoopBootstrapRepo)/releases/latest, then run this command again"; $script:CoopBootstrapRc = 1; return }
   Coop-BootstrapOk "coop $version"
 
-  Coop-BootstrapHead '2-3. The coop window'
+  Coop-BootstrapHead '2-3. The coop window (this machine)'
   if (-not (Install-CoopBootstrapWindow $version)) { $script:CoopBootstrapRc = 1; return }
 
   Coop-BootstrapHead '4. First launch'

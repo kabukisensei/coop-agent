@@ -6,7 +6,8 @@ import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
+import { profileDir } from "../lib/paths.mjs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -118,7 +119,12 @@ try {
     assert.equal(ps.teamFileStatus(b).state, "not-shared");
     const got = ps.getTeamContract(b);
     assert.deepEqual([got.ok, got.method], [true, "file"]);
-    assert.equal(got.backup, join(b, ".coop", "project.yml.bak"));
+    // F2: the backup lives in this client's backups folder, never beside the project file.
+    assert.equal(basename(dirname(got.backup)), ".coop");
+    assert.ok(got.backup.startsWith(join(profileDir(), "backups") + sep), `backup under <profile dir>/backups: ${got.backup}`);
+    assert.match(basename(got.backup), /^project\.yml\.\d{8}_\d{6}\.bak$/);
+    assert.equal(readFileSync(got.backup, "utf8"), CONTRACT + "  timezone: 'America/Chicago'\n", "the local edits are kept in the backup");
+    assert.equal(existsSync(join(b, ".coop", "project.yml.bak")), false, "nothing is written inside the repository");
     assert.equal(readFileSync(join(b, ".coop", "project.yml"), "utf8"), CONTRACT + "  timezone: 'Europe/Amsterdam'\n");
     assert.equal(readFileSync(join(b, "work.txt"), "utf8"), "in progress\n", "nothing else moved");
     assert.equal(git(b, "rev-parse", "HEAD"), git(b, "rev-parse", "HEAD"), "no pull happened");

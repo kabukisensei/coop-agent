@@ -71,16 +71,51 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
 `~/.pi/agent`; settings/extensions/MCP are isolated. Provisioned by `coop install` /
 `coop sync`. Disable with `COOP_NO_ISOLATE=1` (`true`, `yes` and `on` also count).
 
-The rest of coop's profile (`config`, `user.json`, `support/`, `standards/`) lives
-next to the agent dir in `~/.coop`. A second, machine-level `user.json` can hold
-your name and communication preference once per machine (`%ProgramData%\coop`,
-written by `coop onboard --machine`; master plan P1) for VMs where every client is
-its own Windows user; the per-user file wins field by field and the machine file
-never carries anything client-shaped. `COOP_DIR` moves the whole profile: it is the
+The rest of coop's profile (`config`, `user.json`, `support/`) lives next to the
+agent dir in `~/.coop`. A second, machine-level `user.json` can hold your name and
+communication preference once per machine (`%ProgramData%\coop`, written by
+`coop onboard --machine`; master plan P1) for VMs where every client is its own
+Windows user; the per-user file wins field by field and the machine file never
+carries anything client-shaped. `COOP_DIR` moves the whole profile: it is the
 **parent** of `.coop`, so `COOP_DIR=D:\coop-profile` puts the profile at
 `D:\coop-profile\.coop` and the agent dir at `D:\coop-profile\.coop\agent` unless
 `COOP_AGENT_DIR` overrides it. Every coop command, script and extension reads the
 same two rules (`lib/common.ps1`, `lib/coop_paths.py`, `lib/paths.mjs`).
+
+### Three places
+
+coop keeps its files in three fixed places, named the same way everywhere coop
+speaks (`coop doctor`'s Folders section, the window's Project pane, the agent's
+replies). There are no options to pick; one Windows user is one client, and a
+client's repositories (the home repository with the project file, the SQL
+repository, the Power BI repository) are parts of one codebase listed in the
+project file's `repositories`.
+
+| Place | Folder | Holds |
+| --- | --- | --- |
+| **this machine** | `%ProgramData%\coop` (`/etc/coop` elsewhere) | the program's shared files, the standards, your name and preferences |
+| **this client** | `%USERPROFILE%\.coop` | sessions, memory, backups, drafts, the client folder record (`client.json`) |
+| **the repository** | `<repo>\.coop` | the team's project file, client skills and prompts |
+
+- **Standards** live once on this machine, `%ProgramData%\coop\standards`
+  (`canonical\` and `snapshots\` under it), refreshed with every update and at
+  every launch. `coop sync` creates that folder when it can; when it cannot (no
+  elevation) or another user owns it, this client's `%USERPROFILE%\.coop\standards`
+  holds them, silently. `coop doctor` names the path and the place. The first
+  launch that reads the machine copy says so once. `COOP_STANDARDS_ROOT` still
+  names the canonical checkout for tests and sandboxes.
+- **Backups** go to `%USERPROFILE%\.coop\backups\<repository>\<path>.<timestamp>.bak`,
+  never inside the repository. The launcher sets `COOP_BACKUP_DIR` for the launch
+  folder's repository (its `repositories` key in the project file, else its folder
+  name); the contract's `backup.timestamp_format` and `naming_pattern` still
+  apply, `backup.root` is no longer read. Every backup coop makes, including the
+  one `/setup-project` takes of the project file, is named `Backup (this client): <path>`.
+- **Drafts** (a file written for review that edits nothing in the repository: a
+  draft `.sql`, a proposed script) go to `%USERPROFILE%\.coop\drafts\<repository>\`
+  (`COOP_DRAFTS_DIR`), named `Draft (this client): <path>`. The window's Changes
+  pane lists them under Drafts. Writes to the backups and drafts folders never ask
+  for approval.
+- Task logs stay in the repository (`logging.*` in the project file), unchanged.
 
 ---
 
@@ -136,8 +171,9 @@ cd coop-agent
 
 Or, with nothing installed yet, one line in Windows PowerShell downloads and
 runs the coop window installer, which carries everything above (Git, Python with
-pipx and the coop tools, the Azure CLI, ODBC 18) and needs no winget; its first
-launch asks for administrator permission once, for the ODBC driver
+pipx and the coop tools, the Azure CLI, ODBC 18) and needs no winget; the
+installer asks for an administrator once and installs for every account,
+the ODBC driver included, so no first launch asks again
 (`scripts/bootstrap.ps1`; details in `docs/install-windows.md`):
 
 ```powershell
@@ -216,10 +252,11 @@ shows anything still missing.
 | **Microsoft Fabric CLI** (`ms-fabric-cli` → `fab`) | installed via `pipx` |
 | **Power BI authoring tools** — Report Authoring CLI, Power BI Modeling MCP, and Windows-only Desktop Bridge | installed globally from manifest-pinned npm packages; Doctor requires Report Authoring and validates Modeling MCP arguments |
 | **Managed MCP entries** — `fabric`, `fabric-sqlendpoint`, `powerbi-modeling-mcp`, `azure-devops`, `microsoft-learn` | generated from Coop config with release-manifest pins; npm-backed servers use `npx`. Power BI Modeling is also installed globally. `context-mode` is a native Pi extension, not MCP. |
-| **Windows double-click launchers**: **coop** and **coop (terminal)** | created on the Start Menu and Desktop; `coop update` repairs older shortcuts. **coop** is the front door (master plan D1m): it opens the window once the window runtime is installed (your first `coop desktop`, or the window package) and the terminal until then; **coop (terminal)** always opens the terminal. Once coop remembers the client's project file (`coop project home`), both start in that file's repository rather than your user folder, so saved sessions (kept per folder) stay in one list. The window asks which project to open the first time (the folders opened before, each with its client, branch and whether the team's project file is in step; Browse for a new one) and opens straight on the last one once you tick "open this one next time"; File > Switch project changes it. Purely additive: `coop` in any terminal is unchanged. An isolated install (`USERPROFILE` redirected at a sandbox folder) keeps its shortcuts inside that profile and leaves your user PATH alone |
+| **Windows double-click launchers**: **coop** and **coop (terminal)** | created on the Start Menu and Desktop; `coop update` repairs older shortcuts. **coop** is the front door (master plan D1m): it opens the window once the window runtime is installed (your first `coop desktop`, or the window package) and the terminal until then; **coop (terminal)** always opens the terminal. Once coop has this client's folder recorded (`~/.coop/client.json`: the window's one question, the first launch that finds a project file, or `coop project home <folder>`), both start in the client folder rather than your user folder, so saved sessions (kept per folder) stay in one list. The window asks once, "Where is this client's code?", and opens there every launch from then on; File > Switch client changes it. Purely additive: `coop` in any terminal is unchanged. An isolated install (`USERPROFILE` redirected at a sandbox folder) keeps its shortcuts inside that profile and leaves your user PATH alone |
 
 **The coop window package (master plan D1c, D1d).** Every release carries an
-unsigned, per-user Windows installer of the window with coop inside: the
+unsigned Windows installer of the window with coop inside, installed once for
+every account on this machine (master plan F3): the
 pinned Node, Pi and extension tree (`resources\runtime`) and a snapshot of
 this repository (`resources\coop`), so a teammate needs the one download and
 no terminal install, Node or Pi; the first launch runs `coop install` in its
@@ -229,12 +266,16 @@ seeds the extension tree from the bundle. It is the installer of the window
 download it from the [newest release](https://github.com/kabukisensei/coop-agent/releases/latest),
 see `docs/install-windows.md` step 6). CI builds the same installer on every PR
 (the `coop-window-installer` artifact of the `installer (Windows)` job).
-It installs under `%LOCALAPPDATA%\Programs\coop` with no administrator prompt,
-adds a **coop** shortcut to the Start Menu and Desktop and an Add/Remove
-Programs entry, and keeps the window's data (`~/.coop/desktop/data`) on
-uninstall. SmartScreen shows "unknown publisher" once (one click; signing is
-D1f, optional). Its shortcut shows the project picker (or opens the project
-you ticked to open next time), then runs the bundled
+It installs under `%ProgramFiles%\coop` after one administrator prompt, adds
+a **coop** shortcut to the Start Menu and Desktop of every account and an
+Add/Remove Programs entry named **coop**, puts `coop` on every account's PATH
+(the shim `%ProgramFiles%\coop\bin\coop.cmd`, written by
+`scripts/machine-install.ps1`; an account's own terminal install still wins),
+registers the "coop update" scheduled task and keeps each account's client
+(`~/.coop`, including the window's data under `~/.coop/desktop/data`) on
+uninstall; the uninstaller removes the shim, the PATH entry and the task. SmartScreen shows "unknown publisher" once (one click; signing is
+D1f, optional). Its shortcut asks where the client's code is the first time (then opens the
+recorded client folder without asking), then runs the bundled
 `coop desktop --app <its exe>` in a console, so the window gets the same launch
 checks, spec and token as `coop desktop`. The bundled coop finds its runtime by
 location (`resources\runtime\coop-runtime.json` next to `resources\coop`): it
@@ -248,15 +289,27 @@ Windows administrator prompt). It stops with the exact lines to fix only when
 that does not work; `coop sync`
 then copies the bundled
 extension tree into `~/.coop/agent` instead of downloading it. `coop doctor`
-names the bundled versions on its coop window row. On a machine that already
+names the bundled versions on its coop window row. In an account that already
 has the terminal coop, the package shares `~/.coop` (settings, sign-ins,
 sessions) and leaves the `coop` command and the "coop" shortcut with that
 install (`Test-CoopForeignLauncherLink`); the two should stay at the same
-release, since they share one extension lock. Without a terminal install, the
-first launch writes the `coop` command and the "coop" shortcut for the package,
-and uninstalling the window removes them again (`scripts/window-uninstall.ps1`,
-run by the uninstaller; a terminal install's own stay). Updates with D1e; until then
-install the newer exe over the old one. Build it yourself with `npm ci` in
+release, since they share one extension lock. On a machine install
+(`Test-CoopMachineInstall`: the marker `resources\runtime\machine-install.json`,
+or a package under `%ProgramFiles%`) the first launch writes no per-account
+`coop` link or shortcuts, since the shim and the all-users shortcuts already
+exist; an older per-user package (`%LOCALAPPDATA%\Programs\coop`) wrote them
+itself, and the installer removes that package before it installs for the
+machine. Updates install themselves: the "coop update" scheduled task (SYSTEM,
+daily at 03:00 and hourly until it succeeds, at logon, only with a network)
+runs `scripts/auto-update.ps1`, which reads the newest release on GitHub,
+downloads the installer whose SHA-256 the release's verified report names,
+waits while any coop window or terminal from the package is open, installs it
+silently and writes `%ProgramData%\coop\update-state.json` and
+`%ProgramData%\coop\logs\update.log`. The next launch in each account prints
+one line about an update that installed since that account's last launch (the
+window shows it in its notices); `coop update` on a machine install only reports
+the task's state, and `coop doctor`'s install row says which install this is
+(this machine, this account only, or a developer clone). Build it yourself with `npm ci` in
 `desktop/installer` and `node desktop/scripts/build-installer.mjs` on Windows
 (it downloads the pinned Node zip, checks its SHA-256, drops the zip's
 `npm.ps1` and `npx.ps1` so PowerShell's `& npm` reaches `npm.cmd`, stages Pi,
@@ -297,9 +350,9 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | Command | Description |
 | --- | --- |
 | `coop` | Launch the branded Pi agent (skills, prompts, theme, guardrails, splash) |
-| `coop desktop [folder]` | Open coop in a window on a folder (default: the current one): the same Pi, arguments, guardrails and approvals as `coop`, drawn as a modern UI with four themes (Modern and Retro, dark and light). The first run installs the window's runtime (Electron and pdf.js, about 150 MB to download and 400 MB on disk, pinned in the release manifest, into `~/.coop/desktop`) and makes the **coop** shortcut open the window (**coop (terminal)** keeps the terminal); `coop sync` keeps it current. The window names the client from the project file in its title and header, and File > Switch project opens the project picker. Anything only the terminal can show opens the same session in a terminal. A side pane (Ctrl+\\) shows the changes since the last commit (in a folder that holds several repositories, a picker chooses the folder's own, one directly inside it, or one the project file lists), the standards coop applies together with the team knowledge clones (`cooptimize/incremental-bi` and the TeamAI team share `cooptimize/coop-team-knowledge`, one note at a time), a form for `.coop/project.yml` and the docs setup with Build; the sidebar and panes resize by dragging. The paperclip, Ctrl+V or drag and drop attach images, text files, Word, Excel, PowerPoint and PDF files (documents are read to Markdown and referenced by path, so coop reads them through its guarded read tool). The thinking and tool calls between coop's replies fold into one expandable line (Ctrl+O keeps them open); nothing leaves the session log. Master plan D1b and D1b2; the parity checklist is `desktop/PARITY.md`. `--app <exe>` opens the window in the installed **coop window package** instead of the runtime tree (the package passes it itself; see below) |
+| `coop desktop [folder]` | Open coop in a window on a folder (default: the current one): the same Pi, arguments, guardrails and approvals as `coop`, drawn as a modern UI with four themes (Modern and Retro, dark and light). The first run installs the window's runtime (Electron and pdf.js, about 150 MB to download and 400 MB on disk, pinned in the release manifest, into `~/.coop/desktop`) and makes the **coop** shortcut open the window (**coop (terminal)** keeps the terminal); `coop sync` keeps it current. The window names the client from the project file in its title and header, and File > Switch client asks for another client folder in a new window. Anything only the terminal can show opens the same session in a terminal. A side pane (Ctrl+\\) shows the changes since the last commit (in a folder that holds several repositories, a picker chooses the folder's own, one directly inside it, or one the project file lists), the standards coop applies together with the team knowledge clones (`cooptimize/incremental-bi` and the TeamAI team share `cooptimize/coop-team-knowledge`, one note at a time), a form for `.coop/project.yml` and the docs setup with Build; the sidebar and panes resize by dragging. The paperclip, Ctrl+V or drag and drop attach images, text files, Word, Excel, PowerPoint and PDF files (documents are read to Markdown and referenced by path, so coop reads them through its guarded read tool). The thinking and tool calls between coop's replies fold into one expandable line (Ctrl+O keeps them open); nothing leaves the session log. Master plan D1b and D1b2; the parity checklist is `desktop/PARITY.md`. `--app <exe>` opens the window in the installed **coop window package** instead of the runtime tree (the package passes it itself; see below) |
 | `coop doctor [--fix] [--json] [--publish]` | Check dependencies/configuration; optionally apply safe fixes, emit JSON, or publish a fleet snapshot to `fleet.publish_dir` |
-| `coop update [--check] [--edge] [--yes] [--no-fabric]` | Move coop-agent to the newest release tag (never backwards), converge tools to that release's manifest, and run Doctor. `--edge` is the maintainer channel: head of `main` plus latest upstream; `--check` fetches origin, then reports what the update would do and changes nothing; `--pi-latest` is a deprecated alias of `--edge` |
+| `coop update [--check] [--edge] [--yes] [--no-fabric]` | Move coop-agent to the newest release tag (never backwards), converge tools to that release's manifest, and run Doctor. `--edge` is the maintainer channel: head of `main` plus latest upstream; `--check` fetches origin, then reports what the update would do and changes nothing; `--pi-latest` is a deprecated alias of `--edge`. On the window package installed for this machine it changes nothing: it prints "This coop updates itself (this machine): last checked <time>, installed <version>" (`--check` lists the update task's state; `--edge` is refused, exit 1) |
 | `coop support [--json] [--incident] [--export PATH]` | Offline Support Center: sanitized diagnostics, incident timeline, preview/export, and standards status; works without Pi/model availability |
 | `coop onboard [--edit|--config-only|--reset|--json]` | Configure profile and managed integrations without launching the agent |
 | `coop onboard --machine [--reset|--json]` | Write the machine-level profile (your name and communication preference) once per machine, from an elevated terminal: on a VM with one Windows user per client, every user without a profile of its own starts from it, and a per-user profile wins field by field. It never holds a client, tenant, workspace or contract |
@@ -317,6 +370,8 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop help` | Show usage |
 | **Authoring** | |
 | `coop init [dir] [--seed-docs] [--template] [--ci github|ado] [--yes]` | Guided minimal project-contract wizard (default `.`); beside several repositories it creates the client home repository `<client>-coop` and puts the file there; `--template` explicitly selects the full legacy template and `--seed-docs` generates/patches `coop-data-doc.yml` |
+| `coop project home [<folder>]` | Show this Windows user's client folder record (client, folder, project file), or set it to `<folder>` (the folder given becomes the client folder; the project file is the one found in or above it) |
+| `coop folders` | Print the three places coop uses (this machine, this client, the repository) with their real paths; read-only |
 | `coop project status\|get\|share [--root <dir>] [--force]` | The shared project file from a shell: compare `.coop/project.yml` with the team's copy on origin, get the team's version (a fast-forward pull when nothing else would move, else only that file with a backup), or share yours (commits only that file and pushes the current branch; `--force` from a branch other than the default). Same code as `/project-get`, `/project-share` and the window's Project pane |
 | `coop new-skill <name> [--client\|--personal]` | Scaffold `skills/<name>/SKILL.md` here, or in the client tier (`.coop/skills/` beside the committed contract) or your personal tier (`~/.coop/skills/`) |
 | `coop new-prompt <name> [--client\|--personal]` | Scaffold `prompts/<name>.md` here, or in the client tier (`.coop/prompts/`) or your personal tier (`~/.coop/prompts/`) |
@@ -531,7 +586,7 @@ launch.
 
 1. Read-only by default — prefer reading, listing, inspecting.
 2. Plan before you edit — present a PLAN and get explicit approval first.
-3. Back up before editing — timestamped backup of every file to be changed.
+3. Back up before editing — timestamped backup of every file to be changed, in this client's backups folder (never inside the repository).
 4. **Never commit source** — never commit SQL, DAX, semantic model, report,
    Python, or notebook source. Make the edit, show the diff, let a human commit.
    Only docs / logs / diagrams / glossary / site may be committed, after approval.
@@ -563,7 +618,7 @@ command text and should not be shared as sanitized exports.
 2. Locate the repo/object and assess upstream/downstream impact; `git status` && `git pull`.
 3. Read the target file(s) + look up the object's upstream/downstream via the `data_doc` tool (`command="lineage"`) before touching it; use the Microsoft Learn MCP for current docs.
 4. Write a short **PLAN** and get explicit approval **before** any edit.
-5. Create a timestamped backup of every file to be changed.
+5. Create a timestamped backup of every file to be changed in this client's backups folder (`Backup (this client): <path>`); a file written for review that edits nothing goes in the drafts folder (`Draft (this client): <path>`).
 6. Make the smallest safe edit; T-SQL coop writes or reformats follows the `sql-formatting` skill (the Cooptimize layout).
 7. Self-check: before presenting SQL, DAX, or model changes, check the diff against the same standards articles used to write them; fix what does not meet them, and deviate only on a user exception or a stated reason (plus Tabular Editor BPA / `fabric-cicd` validate where relevant).
 8. Show `git diff` and summarize the change.
@@ -593,11 +648,23 @@ second one), then share it with
 own, after your yes and only for that file. Use `coop init --template` only when
 you intentionally want the full legacy template.
 
-Each Windows user has one client, so coop remembers that client's project file:
-the first launch that finds it (from the repository or the folder above it)
-records it in `~/.coop/home-project.json`, and every later launch from any folder
-uses it, unless a repository opened directly has its own. `coop project home`
-shows it and `coop project home <folder>` sets it.
+coop keeps its files in three places (this machine, this client, the
+repository; see "Three places" under Isolation above), and `coop folders` prints
+the three with their real paths.
+
+One client is one folder, the client folder, which holds all of its repositories
+(the home repository with the project file, the sql repository, the powerbi
+repository...): they are parts of one codebase, and the home repository's
+`.coop/project.yml` lists them under `repositories`. coop always opens in the
+client folder, finds the one project file from there and edits in whichever
+repository the task names. The record is `~/.coop/client.json` (`client`, `root`,
+`project_file`): the window's one question writes it, as does the first terminal
+launch that finds a project file (the repository when it is alone, its parent
+when the file lists sibling repositories, the launch folder when the file is in
+a repository inside it) and `coop project home <folder>` (the folder given is the
+root). Every launch prints one line, `Client: <client> · folder <root> · project
+file <path>`, and the window shows it on its welcome. `coop project home` prints
+the record; an older `home-project.json` is carried over once and left in place.
 
 Fabric projects may use two workspaces per environment. Record Warehouse/Lakehouse
 DEV/TEST/PROD workspaces in `fabric.environment_names` and semantic-model
@@ -968,6 +1035,15 @@ coop sync            # refresh governed MCP/catalog/team-knowledge/assets non-de
 coop doctor          # re-check dependencies and configuration
 coop support --incident  # export a sanitized escalation bundle
 ```
+
+**Updates on a machine install.** The window package installed for this machine
+updates itself: the "coop update" scheduled task runs as SYSTEM overnight (and
+hourly until it succeeds, and at logon) and installs the newest GitHub release
+once no coop from the package is open. Nothing in any account's `~/.coop` is
+touched. `coop update` there only reports the last check and the installed
+version; the install row of `coop doctor` warns when the last run failed and
+names `%ProgramData%\coop\logs\update.log`. A dry run for a check:
+`powershell -File "%ProgramFiles%\coop\resources\coop\scripts\auto-update.ps1" -DryRun`.
 
 `coop update` keeps Pi, its extensions, standalone tools, and a Git-backed Coop repo
 current, then runs Doctor. On Windows, a running Coop/Pi process causes the Pi update to be

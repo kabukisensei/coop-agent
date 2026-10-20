@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld("coop", Object.freeze({
   // Panes (D1b2).
   changes: (repo) => ipcRenderer.invoke("coop:changes", typeof repo === "string" ? repo : null),
   changeDiff: (path) => ipcRenderer.invoke("coop:change-diff", String(path || "")),
+  folders: () => ipcRenderer.invoke("coop:folders"),
   standards: () => ipcRenderer.invoke("coop:standards"),
   standardsText: (domain) => ipcRenderer.invoke("coop:standards-text", String(domain || "")),
   knowledgeNote: (source, path) => ipcRenderer.invoke("coop:knowledge-note", String(source || ""), String(path || "")),
@@ -52,12 +53,10 @@ contextBridge.exposeInMainWorld("coop", Object.freeze({
   projectTeam: () => ipcRenderer.invoke("coop:project-team"),
   projectGet: () => ipcRenderer.invoke("coop:project-get"),
   projectShare: (force) => ipcRenderer.invoke("coop:project-share", force === true),
-  // The project picker (D1m): its own page, before any window, or File > Switch project.
+  // The client folder question (F1): its own page, before any window, or File > Switch client.
   switchProject: () => ipcRenderer.invoke("coop:switch-project"),
-  pickerList: () => ipcRenderer.invoke("coop:picker-list"),
-  pickerOpen: (path, openNextTime) => ipcRenderer.invoke("coop:picker-open", String(path || ""), openNextTime === true),
-  pickerBrowse: () => ipcRenderer.invoke("coop:picker-browse"),
-  pickerForget: (path) => ipcRenderer.invoke("coop:picker-forget", String(path || "")),
+  pickerInfo: () => ipcRenderer.invoke("coop:picker-info"),
+  pickerChoose: () => ipcRenderer.invoke("coop:picker-choose"),
   pickerCancel: () => ipcRenderer.invoke("coop:picker-cancel"),
   pickerTheme: () => ipcRenderer.invoke("coop:picker-theme"),
   pickFolder: (purpose, current) => ipcRenderer.invoke("coop:pick-folder", String(purpose || ""), String(current || "")),

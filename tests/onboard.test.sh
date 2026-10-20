@@ -90,6 +90,43 @@ rm "$COOP_DIR/.coop/config"
 ( HOME="$COOP_DIR" USERPROFILE="$COOP_DIR" COOP_ROOT="$ROOT" "$PWSH" -NoLogo -NoProfile -ExecutionPolicy Bypass -Command '. (Join-Path $env:COOP_ROOT "lib/common.ps1"); if (Test-CoopOnboardingMissing) { exit 0 } else { exit 1 }' ) && ok "missing global config retriggers onboarding" || ko "missing global config did not retrigger onboarding"
 printf '%s\n' '{"schema_version":1,"azure":{"enabled":false,"tenant_id":"","tenant_name":""},"integrations":{},"azure_devops":{"organization":""},"mcp":{"safe_mode":"read_only_first"},"fleet":{"publish_dir":""}}' > "$COOP_DIR/.coop/config"
 
+# --- the window's first launch: --name answers the name with no one at the keyboard --
+WN="$COOP_DIR/window-name"; mkdir -p "$WN"
+wn_err="$(HOME="$WN" COOP_DIR="$WN" COOP_AZ_BIN=/nonexistent/az "$PY" "$ROOT/scripts/onboard.py" onboard --name "Pat Example" </dev/null 2>&1 >/dev/null)"; wn_rc=$?
+wn_name="$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$WN/.coop/user.json" 2>/dev/null)"
+wn_preset="$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["communication"]["preset"])' "$WN/.coop/user.json" 2>/dev/null)"
+[ "$wn_rc" -eq 0 ] && [ "$wn_name" = "Pat Example" ] && [ "$wn_preset" = "balanced" ] && [ -f "$WN/.coop/config" ] && ok "onboard --name with stdin closed writes the profile with that name and the defaults" || ko "onboard --name at EOF: rc=$wn_rc name=$wn_name preset=$wn_preset: $wn_err"
+wn2_err="$(HOME="$WN" COOP_DIR="$WN" COOP_AZ_BIN=/nonexistent/az "$PY" "$ROOT/scripts/onboard.py" onboard --name "Someone Else" </dev/null 2>&1 >/dev/null)"
+wn_name2="$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$WN/.coop/user.json" 2>/dev/null)"
+[ "$wn_name2" = "Pat Example" ] && ok "onboard --name never renames an existing profile" || ko "onboard --name renamed an existing profile: $wn_name2: $wn2_err"
+# A signed-out Azure CLI must not start a device-code sign-in on that launch: it would
+# wait in the hidden setup console forever (dev VM, 2026-10-20). --no-sign-in skips it.
+WN3="$COOP_DIR/window-nosignin"; mkdir -p "$WN3"
+wn3_stub="$WN3/az-stub"; wn3_mark="$WN3/login-started"
+cat > "$wn3_stub" <<'SH'
+#!/bin/sh
+if [ "$1" = "login" ]; then
+  : > "$COOP_TEST_AZ_STATE"
+  printf '%s\n' '[{"tenantId":"tenant-after-login","name":"Signed In Tenant"}]'
+  exit 0
+fi
+exit 1
+SH
+chmod +x "$wn3_stub"
+if command -v cygpath >/dev/null 2>&1; then
+  printf '%s\r\n' \
+    '@echo off' \
+    'if "%1"=="login" (type nul > "%COOP_TEST_AZ_STATE%" & echo [{"tenantId":"tenant-after-login","name":"Signed In Tenant"}] & exit /b 0)' \
+    'exit /b 1' > "$WN3/az-stub.bat"
+  wn3_stub="$(cygpath -w "$WN3/az-stub.bat")"
+  wn3_mark="$(cygpath -w "$wn3_mark")"
+fi
+wn3_err="$(HOME="$WN3" COOP_DIR="$WN3" COOP_AZ_BIN="$wn3_stub" COOP_TEST_AZ_STATE="$wn3_mark" "$PY" "$ROOT/scripts/onboard.py" onboard --name "Pat Example" --no-sign-in </dev/null 2>&1 >/dev/null)"; wn3_rc=$?
+[ "$wn3_rc" -eq 0 ] && [ ! -e "$WN3/login-started" ] && [[ "$wn3_err" == *"Azure sign-in skipped"* ]] && [ -f "$WN3/.coop/config" ] \
+  && ok "onboard --name --no-sign-in never starts az login and still writes the profile and config" \
+  || ko "onboard --no-sign-in: rc=$wn3_rc login_started=$([ -e "$WN3/login-started" ] && echo yes || echo no): $wn3_err"
+rm -rf "$WN" "$WN3"
+
 # --- profile show ---------------------------------------------------------------
 show="$(HOME="$COOP_DIR" "$PY" "$ROOT/scripts/onboard.py" profile)"
 case "$show" in *"Name: Test User"*) ok "profile shows name" ;; *) ko "profile show: $show" ;; esac

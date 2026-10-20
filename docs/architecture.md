@@ -19,13 +19,33 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
 
 One profile root (master plan S3). `COOP_DIR` is the **parent** of `.coop`: the
 profile dir is `$COOP_DIR\.coop` (default `~/.coop`) and holds `config`,
-`user.json`, `agent\`, `support\`, `standards\` and `devops\`. The agent dir Pi
+`user.json`, `agent\`, `support\`, `backups\`, `drafts\` and `devops\`. The agent dir Pi
 actually loads is one chain everywhere: `PI_CODING_AGENT_DIR`, else
 `COOP_NO_ISOLATE` truthy → `~/.pi/agent`, else `COOP_AGENT_DIR`, else
 `<profile dir>\agent`. The helpers are `Get-CoopProfileDir` / `Get-CoopConfigFile` /
 `Get-CoopUserProfileFile` / `Get-CoopPiAgentDir` / `Get-CoopEffectiveAgentDir` in
 `lib/common.ps1`, `lib/coop_paths.py` for the Python scripts and `lib/paths.mjs`
 for the Node tools and extensions; no script builds these paths inline.
+
+Three places (F2, Aaron 2026-10-20). coop's folder model is fixed and named the
+same way everywhere coop speaks: **this machine** (`%ProgramData%\coop`, `/etc/coop`
+elsewhere: the program's shared files, the standards, the person's name and
+preferences), **this client** (`%USERPROFILE%\.coop`; one Windows user is one
+client: sessions, memory, backups, drafts) and **the repository** (`<repo>\.coop`:
+the team's project file, client skills and prompts). The standards root is
+`<machine dir>\standards` when that folder exists and this process can write it
+(`coop sync` creates it when it can, no prompt), else `<profile dir>\standards`;
+`COOP_STANDARDS_ROOT` still names the canonical checkout for tests, and
+`canonical\` and `snapshots\` sit under the root (`standardsLocation` /
+`Get-CoopStandardsLocation` / `standards_location`). Backups and drafts are
+`<profile dir>\backups\<repository>\` and `<profile dir>\drafts\<repository>\`,
+where the repository name is the project file's `repositories` key for the git
+root holding the file, else the git root's folder name (`backupDirFor` /
+`draftsDirFor`, `Get-CoopBackupDir` / `Get-CoopDraftsDir`, `backup_dir_for` /
+`drafts_dir_for`); the launcher exports them as `COOP_BACKUP_DIR` and
+`COOP_DRAFTS_DIR`, the guardrails never ask for a write under either, and
+`coop doctor`'s Folders section and the window's Project pane (`coop:folders`)
+show all of it. Task logs stay in the repository.
 
 ## Layers
 
@@ -276,8 +296,9 @@ for the Node tools and extensions; no script builds these paths inline.
    `~/.coop/desktop/runtime` on first use; the window's own settings live in
    `~/.coop/desktop/data`. Closing the window ends Pi and every process it
    started. The **coop window package** (master plan D1c) is the same `desktop/`
-   code packed by electron-builder into an unsigned NSIS per-user installer
-   (`desktop/installer/electron-builder.cjs`, staged by
+   code packed by electron-builder into an unsigned NSIS installer, installed
+   once per machine under `%ProgramFiles%\coop` since F3 (`perMachine`,
+   `allowElevation`; `desktop/installer/electron-builder.cjs`, staged by
    `desktop/scripts/build-installer.mjs`: `desktop/`, the `lib/*.mjs` modules it
    imports, the vibes, the splash and the icon in an asar, pdf.js and its reader
    script unpacked beside it, the September fuse policy applied). Since D1d it
@@ -304,11 +325,36 @@ for the Node tools and extensions; no script builds these paths inline.
    `installer (Windows)` CI job builds the installer, installs it silently, runs
    that, runs the bundled `coop.ps1 version`, checks that PowerShell's `& npm`
    answers from the bundled `npm.cmd` and that every bundled path fits Windows'
-   limit, and uninstalls (`desktop/scripts/verify-installer.mjs`). The
-   uninstaller's `customUnInstall` (`desktop/installer/resources/installer.nsh`)
-   runs the snapshot's `scripts/window-uninstall.ps1`, which removes the `coop`
-   link and "coop" shortcuts the first launch wrote only when they point into
-   the package. What only the terminal can show (model sign-in, `custom()` screens,
+   limit, checks the machine install's shim, PATH entry, marker and scheduled
+   task, runs the auto-update dry run, and uninstalls
+   (`desktop/scripts/verify-installer.mjs`; `verify-upgrade.mjs` installs the
+   previous release per user first and proves the new installer replaces it).
+   The installer's `customInit` (`desktop/installer/resources/installer.nsh`)
+   removes an older per-user package, `customInstall` runs the snapshot's
+   `scripts/machine-install.ps1`, which writes the `coop` shim
+   (`%ProgramFiles%\coop\bin\coop.cmd`, deferring to an account's own
+   `%LOCALAPPDATA%\coop\bin\coop.cmd`), adds it to the machine PATH, writes
+   the marker `resources\runtime\machine-install.json`
+   (`Test-CoopMachineInstall` in `lib/common.ps1`) and registers the "coop
+   update" scheduled task: SYSTEM, highest privileges, daily at 03:00 repeating
+   hourly for a day, at logon, start when missed, only with a network, a 30 minute
+   limit. The task runs `scripts/auto-update.ps1` standalone: it reads the
+   newest release from the GitHub API (or the `releases/latest` redirect),
+   downloads the exe whose SHA-256 the release's installer report names, waits
+   while a process from the package is open, runs the installer with
+   `/S /allusers /D=<dir>`, and writes `%ProgramData%\coop\update-state.json`
+   (`schema_version`, `last_run`, `last_result`, `installed_version`,
+   `pending_version`, `latest_version`, `release_url`) and
+   `%ProgramData%\coop\logs\update.log` (trimmed under 1 MB). It never writes
+   under any account's `~/.coop`. `Write-CoopUpdateLines` (called from
+   `Initialize-CoopLaunch`) compares the installed version with the account's
+   `~/.coop/last-seen-version` and the state file, and prints the one line
+   about an installed or waiting update, also into the window's notices; `coop
+   update` and `coop doctor` read the same state file. The uninstaller's
+   `customUnInstall` runs the snapshot's `scripts/window-uninstall.ps1`, which
+   removes the `coop` link and "coop" shortcuts a per-user first launch wrote
+   only when they point into the package, then `machine-install.ps1 -Remove`
+   (shim, PATH entry, task, marker). What only the terminal can show (model sign-in, `custom()` screens,
    `/trust`) opens the same session in a terminal; `desktop/PARITY.md` maps every
    Pi command, keybinding and extension command, and `tests/desktop.test.mjs`
    checks it against a recorded session.

@@ -115,6 +115,14 @@ function Get-CoopBundledPython {
 # index. Returns the previous values for Restore-CoopBundledWheels, or $null when
 # nothing changed. The variables are set only around coop's own pipx calls, never
 # for the session, so a pip the user runs inside coop still reaches PyPI.
+# The wheel folder as pip must receive it: pip splits PIP_FIND_LINKS on
+# whitespace, so a folder under "C:\Program Files" (the machine install, F3)
+# arrived as two ignored locations and every pipx install failed with "No
+# matching distribution" (the dev VM, 2026-10-20, a standard user's first
+# launch). A file: URL carries the space as %20.
+function Get-CoopPipFindLink([string]$Dir) {
+  try { return (New-Object System.Uri ([System.IO.Path]::GetFullPath($Dir))).AbsoluteUri } catch { return $Dir }
+}
 function Use-CoopBundledWheels([string[]]$PipxArgs) {
   $wheels = [string]$env:COOP_BUNDLED_WHEELS
   if (-not $wheels -or $env:COOP_PIP_ONLINE -eq '1' -or -not (Test-Path -LiteralPath $wheels -PathType Container)) { return $null }
@@ -131,7 +139,7 @@ function Use-CoopBundledWheels([string[]]$PipxArgs) {
   foreach ($spec in $specs) { if ($spec -notmatch '^[A-Za-z0-9._-]+==[^=]+$') { return $null } }
   $saved = @{ PIP_NO_INDEX = $env:PIP_NO_INDEX; PIP_FIND_LINKS = $env:PIP_FIND_LINKS }
   $env:PIP_NO_INDEX = '1'
-  $env:PIP_FIND_LINKS = $wheels
+  $env:PIP_FIND_LINKS = Get-CoopPipFindLink $wheels
   return $saved
 }
 function Restore-CoopBundledWheels($Saved) {
@@ -222,6 +230,154 @@ function Get-CoopBundledNpmRoot {
   $prefix = Join-Path $script:CoopBundledRuntime ([string]$script:CoopBundledRuntimeInfo.npm.prefix)
   if ($env:OS -eq 'Windows_NT') { return (Join-Path $prefix 'node_modules') }
   return (Join-Path $prefix 'lib/node_modules')
+}
+
+# --- One install per machine (master plan F3; Aaron 2026-10-20) ---------------
+# The coop window package installs once per machine (electron-builder's NSIS
+# per-machine installer under %ProgramFiles%\coop, one administrator prompt) and
+# every Windows account shares it; each account's data stays in its own
+# %USERPROFILE%\.coop. scripts\machine-install.ps1, run elevated by the installer,
+# writes runtime\machine-install.json beside coop-runtime.json (the marker the
+# helpers below read), the machine shim <app>\bin\coop.cmd on the machine PATH
+# and the "coop update" scheduled task, which runs scripts\auto-update.ps1 as
+# SYSTEM and keeps %ProgramData%\coop\update-state.json. Vocabulary everywhere
+# coop speaks: "this machine" (%ProgramData%\coop and the program under
+# %ProgramFiles%\coop), "this client" (%USERPROFILE%\.coop), "the repository"
+# (<repo>\.coop).
+function Get-CoopBundledRuntimeDir {
+  if ($script:CoopBundledRuntime) { return $script:CoopBundledRuntime }
+  if ($env:COOP_BUNDLED_RUNTIME) { return [string]$env:COOP_BUNDLED_RUNTIME }
+  return (Join-Path (Split-Path -Parent $script:CoopRoot) 'runtime')
+}
+function Get-CoopMachineInstallMarker { return (Join-Path (Get-CoopBundledRuntimeDir) 'machine-install.json') }
+# The marker's content (schema_version 1: install_dir, version, installed_at), or
+# $null when this coop is not a machine install or the marker is unreadable.
+function Get-CoopMachineInstallInfo {
+  $marker = Get-CoopMachineInstallMarker
+  if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) { return $null }
+  try {
+    $info = Get-Content -LiteralPath $marker -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    if ($info -and $info.schema_version -eq 1) { return $info }
+  } catch { }
+  return $null
+}
+# The package root <app> (two levels above the snapshot <app>\resources\coop).
+function Get-CoopPackageRoot { return (Split-Path -Parent (Split-Path -Parent $script:CoopRoot)) }
+function Test-CoopUnderProgramFiles([string]$Path) {
+  if (-not $Path) { return $false }
+  foreach ($name in @('ProgramFiles', 'ProgramW6432', 'ProgramFiles(x86)')) {
+    $pf = [Environment]::GetEnvironmentVariable($name)
+    if ($pf -and (Test-CoopPathInside -Path $Path -Root $pf)) { return $true }
+  }
+  return $false
+}
+# This coop is the machine install: the marker is there, or the checkout sits
+# under %ProgramFiles% (an installer that could not write the marker).
+function Test-CoopMachineInstall {
+  if ($null -ne (Get-CoopMachineInstallInfo)) { return $true }
+  return (Test-CoopUnderProgramFiles $script:CoopRoot)
+}
+# Where coop is installed: 'machine' (this machine), 'account' (the per-user
+# window package: this account only), 'clone' (a git checkout, a developer's) or
+# 'copy' (a zip or shared-drive copy).
+function Get-CoopInstallKind {
+  if (Test-CoopMachineInstall) { return 'machine' }
+  if (Test-CoopBundledRuntime) { return 'account' }
+  if (Test-CoopGitCheckout $script:CoopRoot) { return 'clone' }
+  return 'copy'
+}
+# The update task's state (scripts\auto-update.ps1): %ProgramData%\coop\update-state.json.
+function Get-CoopUpdateStateFile { return (Join-Path (Get-CoopMachineProfileDir) 'update-state.json') }
+function Get-CoopUpdateState {
+  $file = Get-CoopUpdateStateFile
+  if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return $null }
+  try {
+    $state = Get-Content -LiteralPath $file -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    if ($state -and $state.schema_version -eq 1) { return $state }
+  } catch { }
+  return $null
+}
+# Is $Candidate a newer x.y.z than $Than? $false when either is not a version.
+function Test-CoopVersionNewer([string]$Candidate, [string]$Than) {
+  try { return ([version]$Candidate -gt [version]$Than) } catch { return $false }
+}
+# A time from the state file as "yyyy-MM-dd HH:mm" (pwsh 7's ConvertFrom-Json
+# hands a DateTime, Windows PowerShell 5.1 the ISO string), or $Default.
+function Format-CoopUpdateTime($Value, [string]$Default = 'never') {
+  if ($null -eq $Value -or [string]$Value -eq '') { return $Default }
+  try { return ([datetime]$Value).ToString('yyyy-MM-dd HH:mm') } catch { return [string]$Value }
+}
+# The doctor row for where coop is installed. @{ Level ('ok'|'warn'); Message; Hint }.
+function Get-CoopInstallDoctorRow {
+  $kind = Get-CoopInstallKind
+  $ver = [string]$script:CoopVersion
+  if ($kind -eq 'machine') {
+    $state = Get-CoopUpdateState
+    $detail = 'updates itself (no run yet)'
+    if ($state) {
+      $last = Format-CoopUpdateTime $state.last_run
+      $installed = if ($state.installed_version) { [string]$state.installed_version } else { $ver }
+      $detail = "updates itself (last run $last, installed $installed, result: $($state.last_result))"
+    }
+    $msg = "install: this machine ($(Get-CoopPackageRoot)), version $ver, $detail"
+    if ($state -and ([string]$state.last_result).StartsWith('failed')) {
+      return @{ Level = 'warn'; Message = $msg; Hint = "see $(Join-Path (Get-CoopMachineProfileDir) 'logs\update.log'); the task retries within the hour" }
+    }
+    return @{ Level = 'ok'; Message = $msg; Hint = '' }
+  }
+  if ($kind -eq 'account') {
+    return @{ Level = 'ok'; Message = "install: this account only ($(Get-CoopPackageRoot)), version $ver; the installer from https://github.com/kabukisensei/coop-agent/releases/latest, run once by an administrator, installs coop for every account on this machine and keeps it updated"; Hint = '' }
+  }
+  if ($kind -eq 'clone') {
+    return @{ Level = 'ok'; Message = "install: developer clone ($($script:CoopRoot)), version $ver; coop update moves it to the newest release"; Hint = '' }
+  }
+  return @{ Level = 'ok'; Message = "install: a copy of coop-agent ($($script:CoopRoot)), version $ver"; Hint = '' }
+}
+# What `coop update` says on a machine install: the update task does the work.
+function Get-CoopMachineUpdateSummary {
+  $state = Get-CoopUpdateState
+  $checked = if ($state) { Format-CoopUpdateTime $state.last_run 'not yet' } else { 'not yet' }
+  $installed = if ($state -and $state.installed_version) { [string]$state.installed_version } else { [string]$script:CoopVersion }
+  return "This coop updates itself (this machine): last checked $checked, installed $installed"
+}
+# The per-account marker of the version this account last launched.
+function Get-CoopLastSeenVersionFile { return (Join-Path (Get-CoopProfileDir) 'last-seen-version') }
+# The launch lines about updates, pure: the installed version changed since this
+# account's last launch, and an update waiting for coop to close. @() otherwise.
+function Get-CoopUpdateLines {
+  param([string]$Installed, [string]$LastSeen, $State, [string]$ReleaseUrl = '')
+  $lines = @()
+  if ($LastSeen -and $Installed -and ($LastSeen -ne $Installed)) {
+    $url = if ($ReleaseUrl) { $ReleaseUrl } else { "https://github.com/kabukisensei/coop-agent/releases/tag/v$Installed" }
+    $lines += "coop updated to v$Installed (this machine): $url. Your client's sessions and settings are unchanged."
+  }
+  if ($State -and $State.pending_version -and (([string]$State.last_result) -like 'waiting*') -and (Test-CoopVersionNewer ([string]$State.pending_version) $Installed)) {
+    $lines += "An update to v$($State.pending_version) is ready; it installs within the hour after coop closes."
+  }
+  return @($lines)
+}
+# On a machine install: the console lines (and the window's notices, through the
+# warn sink) about an update that installed since this account's last launch, or
+# one waiting; then the per-account marker moves to this version. Fail-soft and
+# silent on the account's very first launch (nothing to compare with).
+function Write-CoopUpdateLines {
+  if (-not (Test-CoopMachineInstall)) { return }
+  try {
+    $file = Get-CoopLastSeenVersionFile
+    $seen = ''
+    if (Test-Path -LiteralPath $file -PathType Leaf) { $seen = ([System.IO.File]::ReadAllText($file)).Trim() }
+    $state = Get-CoopUpdateState
+    $url = ''
+    if ($state -and ([string]$state.installed_version -eq [string]$script:CoopVersion) -and $state.release_url) { $url = [string]$state.release_url }
+    foreach ($line in (Get-CoopUpdateLines -Installed ([string]$script:CoopVersion) -LastSeen $seen -State $state -ReleaseUrl $url)) {
+      Coop-Info $line
+      if ($null -ne $script:CoopWarnSink) { [void]$script:CoopWarnSink.Add($line) }
+    }
+    if ($seen -ne [string]$script:CoopVersion) {
+      New-Item -ItemType Directory -Force -Path (Split-Path -Parent $file) | Out-Null
+      [System.IO.File]::WriteAllText($file, [string]$script:CoopVersion)
+    }
+  } catch { }
 }
 
 function Coop-ManifestGet([string]$Key, [string]$Default = '') {
@@ -646,6 +802,16 @@ function Install-CoopBundledOdbc {
   return 'ok'
 }
 
+# Is this process elevated (a member of the Administrators group with the token
+# to match)? False off Windows.
+function Test-CoopProcessElevated {
+  if ($env:OS -ne 'Windows_NT') { return $false }
+  try {
+    $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+    return (New-Object Security.Principal.WindowsPrincipal $id).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+  } catch { return $false }
+}
+
 function Ensure-CoopFabricOdbcDriver([bool]$AllowPrereqs = $true, [bool]$Auto = $false) {
   $status = Get-CoopFabricSqlRuntimeStatus
   if ($status.state -eq 'ready') { return $true }
@@ -656,15 +822,24 @@ function Ensure-CoopFabricOdbcDriver([bool]$AllowPrereqs = $true, [bool]$Auto = 
   }
   if (-not $AllowPrereqs) { Coop-Warn 'ODBC Driver 18+ is missing (--no-prereqs)' 'install Microsoft.msodbcsql.18, then run: coop doctor'; return $false }
   if ($script:CoopBundledOdbc) {
-    # The window's first launch (--prereqs auto) needs no keyboard question: the
-    # Windows administrator prompt is the ask, and the docs name the license.
-    if (-not $Auto -and -not (Coop-Confirm 'Install Microsoft ODBC Driver 18 for SQL Server from the coop window package and accept its license?')) {
+    # The window's first launch (--prereqs auto) never asks Windows for an
+    # administrator: the driver is a machine prerequisite the installer put on
+    # this computer (scripts/machine-install.ps1, F3), and a standard user's
+    # console has no one to answer the prompt (the dev VM, 2026-10-20: it hung
+    # there with nothing printed). Live SQL waits; everything else works.
+    if ($Auto) {
+      Coop-Warn 'ODBC Driver 18 for SQL Server is not installed on this computer: live SQL waits until it is; everything else works' 'ask whoever installed coop to run the coop installer again (it installs the driver for every account), or an administrator runs: coop install --yes'
+      return $true
+    }
+    # At a keyboard: the Windows administrator prompt is the ask, and the docs
+    # name the license.
+    if (-not (Coop-Confirm 'Install Microsoft ODBC Driver 18 for SQL Server from the coop window package and accept its license?')) {
       Coop-Warn 'ODBC Driver 18+ is required for live SQL; license was not accepted' 're-run with --yes, or start the coop window again'
       return $false
     }
     Coop-Info "installing ODBC Driver $($script:CoopBundledOdbc.Version) for SQL Server from the coop window package: Windows asks for administrator permission once, and installing it accepts Microsoft's license for the driver"
     $result = Install-CoopBundledOdbc
-    if ($result -eq 'declined') { Coop-Warn 'ODBC Driver 18 was not installed: the administrator prompt was declined' 'live SQL needs it; start the coop window again and choose Yes, or ask whoever manages this machine'; return $false }
+    if ($result -eq 'declined') { Coop-Warn 'ODBC Driver 18 was not installed: the administrator prompt was declined' 'live SQL needs it; run coop install --yes again and choose Yes, or ask whoever installed coop to run the coop installer again (it installs the driver for every account)'; return $false }
     if ($result -ne 'ok') { Coop-Warn 'ODBC Driver 18 installation failed' 'start the coop window again, or install Microsoft ODBC Driver 18 for SQL Server yourself, then run: coop doctor'; return $false }
     $after = Get-CoopFabricSqlRuntimeStatus
     if ($after.state -ne 'ready') { Coop-Warn 'ODBC Driver 18 installation completed but the selected Fabric runtime cannot see it' 'open a new terminal, then run: coop doctor'; return $false }
@@ -1256,6 +1431,12 @@ function Coop-ProgEnd {
 # doctor/sync/dispatcher) this is a plain WriteLine, exactly as before.
 function Coop-Emit {
   param([string]$Line)
+  # The window's launch log (COOP_BOOT_LOG, set by coop.exe for its setup
+  # console): every line also lands there with the time, colours stripped,
+  # because the console may close at once and nothing else records its stderr.
+  if ($env:COOP_BOOT_LOG) {
+    try { [System.IO.File]::AppendAllText($env:COOP_BOOT_LOG, ((Get-Date -Format 'HH:mm:ss') + ' ' + ($Line -replace "$([char]27)\[[0-9;?]*[A-Za-z]", '') + "`r`n")) } catch { }
+  }
   # Non-TTY branch. The [Console]::Error contract is load-bearing: callers and
   # fixtures replace it via [Console]::SetError($writer) to capture output, so
   # emission MUST go through [Console]::Error. But on Windows PowerShell 5.1 in
@@ -1298,6 +1479,9 @@ function Coop-Warn {
   Coop-Emit "$($script:C_OLIVE)!$($script:C_RST) $text"
   if ($null -ne $script:CoopWarnSink) { [void]$script:CoopWarnSink.Add($text) }
 }
+# A launch note the window shows too (the client folder record, F1): printed like
+# Coop-Info and collected with the warnings for `coop desktop`.
+function Coop-Notice { param([string]$m) Coop-Info $m; if ($null -ne $script:CoopWarnSink) { [void]$script:CoopWarnSink.Add($m) } }
 function Coop-Err  { param([string]$m) Coop-Emit "$($script:C_RED)$($script:G_CROSS)$($script:C_RST) $m" }
 function Coop-Die  { param([string]$m) Coop-Err $m; exit 1 }
 function Coop-Head { param([string]$m) Coop-Emit "`n$($script:C_BOLD)$($script:C_NAVY)$m$($script:C_RST)" }
@@ -1516,6 +1700,155 @@ function Get-CoopMachineProfileDir {
   return '/etc/coop'
 }
 function Get-CoopMachineProfileFile { return (Join-Path (Get-CoopMachineProfileDir) 'user.json') }
+
+# --- File tiers (F2, Aaron 2026-10-20) -----------------------------------------
+# coop keeps its files in three places, named the same way everywhere coop speaks:
+#   this machine   Get-CoopMachineProfileDir (%ProgramData%\coop): the program,
+#                  the standards, the person's name and preferences
+#   this client    Get-CoopProfileDir (%USERPROFILE%\.coop; one Windows user is
+#                  one client): sessions, memory, backups, drafts
+#   the repository <repo>\.coop: the team's project file, client skills and prompts
+# Mirrors of lib/paths.mjs (standardsLocation, backupDirFor, draftsDirFor,
+# repositoryCoopDir) and lib/coop_paths.py. Task logs stay in the repository.
+
+# True when $Dir exists and this process can create a file in it (the one honest
+# test on Windows, where an ACL check says yes to every existing folder).
+function Test-CoopDirWritable {
+  param([string]$Dir)
+  if (-not $Dir -or -not (Test-Path -LiteralPath $Dir -PathType Container)) { return $false }
+  $probe = Join-Path $Dir ('.coop-write-probe-' + $PID + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+  try {
+    [System.IO.File]::WriteAllText($probe, '')
+    Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+    return $true
+  } catch { return $false }
+}
+
+# Where the standards live: @{ Root; Tier } with Tier 'override' (COOP_STANDARDS_ROOT
+# names the canonical checkout, as it always has, so the root is its parent),
+# 'machine' (<machine dir>\standards exists and is writable by this process: once
+# per machine, refreshed with every update) or 'client' (<profile dir>\standards,
+# the place before F2). canonical\ and snapshots\ live under the root.
+function Get-CoopStandardsLocation {
+  if ($env:COOP_STANDARDS_ROOT) {
+    $full = [System.IO.Path]::GetFullPath([string]$env:COOP_STANDARDS_ROOT).TrimEnd('\', '/')
+    return @{ Root = (Split-Path -Parent $full); Tier = 'override' }
+  }
+  $machine = Join-Path (Get-CoopMachineProfileDir) 'standards'
+  if (Test-CoopDirWritable $machine) { return @{ Root = $machine; Tier = 'machine' } }
+  return @{ Root = (Join-Path (Get-CoopProfileDir) 'standards'); Tier = 'client' }
+}
+function Get-CoopStandardsRoot { return [string](Get-CoopStandardsLocation).Root }
+
+# The words doctor and the launcher use for a tier.
+function Get-CoopTierLabel {
+  param([string]$Tier)
+  switch ($Tier) {
+    'machine' { return 'this machine' }
+    'client' { return 'this client' }
+    'override' { return 'COOP_STANDARDS_ROOT' }
+    default { return $Tier }
+  }
+}
+
+# The one launch line the first time this user's launches use the machine
+# standards folder (marker <profile dir>\standards-moved). Silent otherwise.
+function Write-CoopStandardsPlaceNote {
+  $loc = Get-CoopStandardsLocation
+  if ($loc.Tier -ne 'machine') { return }
+  $marker = Join-Path (Get-CoopProfileDir) 'standards-moved'
+  if (Test-Path -LiteralPath $marker -PathType Leaf) { return }
+  Coop-Info "Standards now live once on this machine: $($loc.Root), refreshed with every update."
+  try {
+    $dir = Split-Path -Parent $marker
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    [System.IO.File]::WriteAllText($marker, ((Get-Date).ToUniversalTime().ToString('o') + "`n"), (New-Object System.Text.UTF8Encoding $false))
+  } catch { }
+}
+
+# This client's backups and drafts: one folder per repository under each.
+function Get-CoopBackupsRoot { return (Join-Path (Get-CoopProfileDir) 'backups') }
+function Get-CoopDraftsRoot { return (Join-Path (Get-CoopProfileDir) 'drafts') }
+
+# The name of the repository holding $StartDir: the project file's `repositories`
+# key whose local_path is that repository (COOP_PROJECT_YML, else the nearest
+# project file at or above the repository), else the git root's folder name,
+# else the folder's own name (a folder in no repository).
+function Get-CoopRepositoryName {
+  param([string]$StartDir = (Get-Location).Path)
+  $full = [System.IO.Path]::GetFullPath($StartDir).TrimEnd('\', '/')
+  if (Test-Path -LiteralPath $full -PathType Leaf) { $full = Split-Path -Parent $full }
+  $gitRoot = Find-CoopGitRoot $full
+  if (-not $gitRoot) {
+    # No git: the folder whose .coop\project.yml is nearest above, else the folder itself.
+    $above = Find-CoopContractAbove $full
+    $folder = if ($above) { Split-Path -Parent (Split-Path -Parent $above) } else { $full }
+    $leaf = Split-Path -Leaf $folder
+    if ($leaf) { return $leaf } else { return 'root' }
+  }
+  $contract = ''
+  if ($env:COOP_PROJECT_YML -and (Test-Path -LiteralPath $env:COOP_PROJECT_YML -PathType Leaf)) { $contract = [string]$env:COOP_PROJECT_YML }
+  else { $contract = Find-CoopContractAbove $gitRoot }
+  if ($contract) {
+    $root = Split-Path -Parent (Split-Path -Parent $contract)
+    $target = [System.IO.Path]::GetFullPath($gitRoot).TrimEnd('\', '/')
+    $inRepos = $false; $name = ''
+    foreach ($line in (Get-Content -LiteralPath $contract -ErrorAction SilentlyContinue)) {
+      if ($line -match '^\S') { $inRepos = ($line -match '^repositories:\s*(#.*)?$'); $name = ''; continue }
+      if (-not $inRepos) { continue }
+      if ($line -match '^  ([A-Za-z0-9_.-]+):\s*(#.*)?$') { $name = $Matches[1]; continue }
+      if ($name -and $line -match '^\s+local_path:\s*(.+?)\s*$') {
+        $value = $Matches[1].Trim()
+        if ($value.Length -ge 2 -and (($value[0] -eq '"' -and $value[-1] -eq '"') -or ($value[0] -eq "'" -and $value[-1] -eq "'"))) { $value = $value.Substring(1, $value.Length - 2) }
+        if (-not $value -or $value -match '^TODO') { continue }
+        if ($value -match '^~([\\/]|$)') { $value = (Join-Path $HOME $value.Substring(1).TrimStart('\', '/')) }
+        $resolved = [System.IO.Path]::GetFullPath((Join-Path $root $value)).TrimEnd('\', '/')
+        if ([string]::Equals($resolved, $target, [System.StringComparison]::OrdinalIgnoreCase)) { return $name }
+      }
+    }
+  }
+  $leaf = Split-Path -Leaf $gitRoot
+  if ($leaf) { return $leaf } else { return 'root' }
+}
+
+# <profile dir>\backups\<repository name> and <profile dir>\drafts\<repository name>
+# for the repository holding $StartDir.
+function Get-CoopBackupDir {
+  param([string]$StartDir = (Get-Location).Path)
+  return (Join-Path (Get-CoopBackupsRoot) (Get-CoopRepositoryName $StartDir))
+}
+function Get-CoopDraftsDir {
+  param([string]$StartDir = (Get-Location).Path)
+  return (Join-Path (Get-CoopDraftsRoot) (Get-CoopRepositoryName $StartDir))
+}
+
+# Hand the launch folder's backup and drafts folders to Pi and the window
+# (COOP_BACKUP_DIR, COOP_DRAFTS_DIR), so the agent, the extensions and the
+# Changes pane name the same places. Called right after Set-CoopProjectYmlEnv
+# (the repository name reads COOP_PROJECT_YML when it is set).
+function Set-CoopClientFolderEnv {
+  param([string]$StartDir = (Get-Location).Path)
+  $name = Get-CoopRepositoryName $StartDir
+  $env:COOP_BACKUP_DIR = Join-Path (Get-CoopBackupsRoot) $name
+  $env:COOP_DRAFTS_DIR = Join-Path (Get-CoopDraftsRoot) $name
+  return $name
+}
+
+# The repository's .coop folder for a launch in $StartDir: the folder of the
+# project file coop uses there (the nearest one at or above, else COOP_PROJECT_YML
+# or the launch lookup), else <git root>\.coop, else <StartDir>\.coop. The folder
+# may not exist yet (doctor says so).
+function Get-CoopRepositoryCoopDir {
+  param([string]$StartDir = (Get-Location).Path)
+  $above = Find-CoopContractAbove $StartDir
+  if ($above) { return (Split-Path -Parent $above) }
+  if ($env:COOP_PROJECT_YML -and (Test-Path -LiteralPath $env:COOP_PROJECT_YML -PathType Leaf)) { return (Split-Path -Parent ([System.IO.Path]::GetFullPath([string]$env:COOP_PROJECT_YML))) }
+  $launch = Find-CoopLaunchContract $StartDir
+  if ($launch) { return (Split-Path -Parent $launch) }
+  $gitRoot = Find-CoopGitRoot $StartDir
+  if ($gitRoot) { return (Join-Path $gitRoot '.coop') }
+  return (Join-Path ([System.IO.Path]::GetFullPath($StartDir).TrimEnd('\', '/')) '.coop')
+}
 
 # The name coop calls the person and the file that supplied it: @{ Name; Source }
 # with Source 'user', 'machine' or '' (no usable name anywhere). Same resolution
@@ -2939,16 +3272,34 @@ function Invoke-CoopPipxBootstrap {
   if (Test-CoopPipxAvailable) { return (Coop-UnitResult $true "pipx installed ($pathNote)") }
   return (Coop-UnitResult $false "pipx was installed but does not answer (`"$py`" -m pipx --version) — see https://pipx.pypa.io")
 }
-# Run pipx quietly; the exit code (1 when no pipx answers).
+# Run pipx quietly; the exit code (1 when no pipx answers). A failure's reason
+# (pipx's or pip's ERROR line, else its last line) is kept in
+# $script:CoopPipxLastFailure for the unit's message: "could not install X" alone
+# sent the dev VM (2026-10-20) looking for the cause by hand.
+$script:CoopPipxLastFailure = ''
+function Coop-PipxFailureTail([string]$Out) {
+  $reason = Coop-PipErrorTail $Out
+  if (-not $reason) {
+    foreach ($line in ($Out -split "`r?`n")) { if ($line.Trim()) { $reason = $line.Trim() } }
+    if ($reason.Length -gt 160) { $reason = $reason.Substring(0, 157) + '...' }
+  }
+  return $reason
+}
 function Invoke-CoopPipx([string[]]$PipxArgs) {
   $inv = @(Get-CoopPipxInvocation)
-  if ($inv.Count -eq 0) { return 1 }
+  if ($inv.Count -eq 0) { $script:CoopPipxLastFailure = 'no pipx answers'; return 1 }
   $exe = $inv[0]
   $rest = @($inv | Select-Object -Skip 1) + @($PipxArgs)
   $wheelEnv = Use-CoopBundledWheels $PipxArgs
-  try { & $exe @rest *> $null; $rc = $LASTEXITCODE }
+  $out = ''
+  try { $out = [string](& $exe @rest 2>&1 | Out-String); $rc = $LASTEXITCODE }
   finally { Restore-CoopBundledWheels $wheelEnv }
+  $script:CoopPipxLastFailure = if ($rc -ne 0) { Coop-PipxFailureTail $out } else { '' }
   return $rc
+}
+# ": <reason>" for a unit message after a failed Invoke-CoopPipx, '' when none.
+function Get-CoopPipxFailureSuffix {
+  if ($script:CoopPipxLastFailure) { return ": $($script:CoopPipxLastFailure)" } else { return '' }
 }
 # pipx's stdout as one string ('' when no pipx answers).
 function Get-CoopPipxOutput([string[]]$PipxArgs) {
@@ -2991,7 +3342,7 @@ function Invoke-CoopPipxConverge {
   $installed = Get-CoopPipxToolVersion $Package
   $outcome = ''
   if ($Force) {
-    if ((Invoke-CoopPipx (New-PipxInstallArgs $true)) -ne 0) { return (Coop-UnitResult $false "failed to reinstall $Package ($spec)") }
+    if ((Invoke-CoopPipx (New-PipxInstallArgs $true)) -ne 0) { return (Coop-UnitResult $false "failed to reinstall $Package ($spec)$(Get-CoopPipxFailureSuffix)") }
     $outcome = "$Package reinstalled ($spec)"
   } elseif ($installed) {
     if ($Edge) {
@@ -3005,12 +3356,12 @@ function Invoke-CoopPipxConverge {
     if (-not $Pin) { return (Coop-UnitResult $true "$Package present ($installed) — no manifest pin") }
     if ($installed -eq $Pin -and -not $FetchPython) { return (Coop-UnitResult $true "$Package $installed matches manifest") }
     if ((Invoke-CoopPipx (New-PipxInstallArgs $true)) -ne 0) {
-      if ($installed -eq $Pin) { return (Coop-UnitResult $false "failed to rebuild $Package with standalone Python $Python") }
-      return (Coop-UnitResult $false "failed to converge $Package to $Pin")
+      if ($installed -eq $Pin) { return (Coop-UnitResult $false "failed to rebuild $Package with standalone Python $Python$(Get-CoopPipxFailureSuffix)") }
+      return (Coop-UnitResult $false "failed to converge $Package to $Pin$(Get-CoopPipxFailureSuffix)")
     }
     $outcome = if ($installed -eq $Pin) { "$Package $Pin rebuilt with Python $Python" } else { "$Package converged $installed -> $Pin" }
   } else {
-    if ((Invoke-CoopPipx (New-PipxInstallArgs $false)) -ne 0) { return (Coop-UnitResult $false "could not install $Package ($spec)") }
+    if ((Invoke-CoopPipx (New-PipxInstallArgs $false)) -ne 0) { return (Coop-UnitResult $false "could not install $Package ($spec)$(Get-CoopPipxFailureSuffix)") }
     $outcome = "$Package installed ($spec)"
   }
   if (-not $Edge -and $Pin) {
@@ -3466,12 +3817,23 @@ function Find-CoopChildContract {
   return ''
 }
 
-# The client's one project file, remembered per Windows user (one Windows user
-# per client): <profile dir>\home-project.json names the .coop\project.yml in the
-# client home repository. A launch that finds a project file records it when none
-# is recorded yet (Save-CoopHomeProjectFile); `coop project home <folder>` sets it.
-# From then on a launch from any folder without a project file above it uses it,
-# so the shortcut finds the file wherever it opens (Aaron, 2026-10-08).
+# The client folder (master plan F1; Aaron, 2026-10-20). coop's folder model is
+# three places, named the same way everywhere coop speaks: this machine
+# (%ProgramData%\coop), this client (%USERPROFILE%\.coop: one Windows user is one
+# client) and the repository (<repo>\.coop). One client is one folder, the client
+# folder, holding all of its repositories (the home repository with the team's
+# project file, the sql repository, the powerbi repository...): parts of one
+# codebase, listed under `repositories` in the home repository's
+# .coop\project.yml. coop always opens in the client folder, finds the one
+# project file from there and edits in whichever repository the task names.
+# The record is <profile dir>\client.json:
+#   { schema_version: 1, client: <profile.client or ''>, root: <client folder>, project_file: <...\.coop\project.yml or ''> }
+# It replaces home-project.json (2026-10-08), which stays on disk, harmless: a
+# profile with only the old file carries it over once, at the next launch
+# (Register-CoopHomeProjectFile), and says so in one line. The window's one
+# question and `coop project home <folder>` set the record; a terminal launch
+# that finds a project file records it when nothing is recorded yet.
+function Get-CoopClientRecordPath { return (Join-Path (Get-CoopProfileDir) 'client.json') }
 function Get-CoopHomeProjectRecordPath { return (Join-Path (Get-CoopProfileDir) 'home-project.json') }
 
 # True when $Path is a client project file coop may remember: an existing
@@ -3488,36 +3850,127 @@ function Test-CoopHomeProjectCandidate {
   return $true
 }
 
+# The client a project file names (`profile.client`; a line scan like
+# Get-CoopContractLocalPaths, so no Python is needed at launch), quotes
+# stripped, or ''.
+function Get-CoopContractClientName {
+  param([string]$File)
+  if (-not $File -or -not (Test-Path -LiteralPath $File -PathType Leaf)) { return '' }
+  $inProfile = $false
+  foreach ($line in (Get-Content -LiteralPath $File -ErrorAction SilentlyContinue)) {
+    if ($line -match '^\S') { $inProfile = ($line -match '^profile:\s*(#.*)?$'); continue }
+    if (-not $inProfile) { continue }
+    if ($line -match '^\s+client:\s*(.+?)\s*$') {
+      $value = $Matches[1].Trim()
+      if ($value -match '^"([^"]*)"') { $value = $Matches[1] }
+      elseif ($value -match "^'([^']*)'") { $value = $Matches[1] }
+      elseif ($value -match '^(.*?)\s+#.*$') { $value = $Matches[1].Trim() }
+      if (-not $value -or $value -match '^TODO') { return '' }
+      return $value
+    }
+  }
+  return ''
+}
+
+# Where the client folder is for a project file: the one rule, mirrored by
+# clientRootFor in lib/client-folder.mjs. $StartDir is the launch folder whose
+# search found the file ('' when carrying an old record over, or when the user
+# chose the folder):
+#   - found at or above the launch folder: the repository, or its parent when
+#     the file's `repositories` list points to siblings (a local_path starting '..');
+#   - found in the home repository beside the launch folder's repository: that parent;
+#   - found in a repository inside the launch folder: the launch folder.
+function Get-CoopClientRootForRaw {
+  param([string]$ProjectFile, [string]$StartDir = '')
+  $repo = [System.IO.Path]::GetFullPath((Split-Path -Parent (Split-Path -Parent $ProjectFile))).TrimEnd('\', '/')
+  $parent = Split-Path -Parent $repo
+  if (-not $parent) { $parent = $repo }
+  $sepChar = [string][System.IO.Path]::DirectorySeparatorChar
+  if ($StartDir) {
+    $start = [System.IO.Path]::GetFullPath($StartDir).TrimEnd('\', '/')
+    $startInRepo = [string]::Equals($start, $repo, [System.StringComparison]::OrdinalIgnoreCase) -or $start.StartsWith($repo + $sepChar, [System.StringComparison]::OrdinalIgnoreCase)
+    if (-not $startInRepo) {
+      if ($repo.StartsWith($start + $sepChar, [System.StringComparison]::OrdinalIgnoreCase)) { return $start }
+      return $parent
+    }
+  }
+  foreach ($rel in (Get-CoopContractLocalPaths $ProjectFile)) {
+    if ($rel -match '^\.\.([\\/]|$)') { return $parent }
+  }
+  return $repo
+}
+
+# The user folder is never the client folder: a shortcut launch starts there,
+# and a repository sitting directly in it holds the client, not the profile.
+# Wraps the rule above so every caller records a real client folder.
+function Get-CoopClientRootFor {
+  param([string]$ProjectFile, [string]$StartDir = '', [string]$UserHome = $HOME)
+  $root = Get-CoopClientRootForRaw $ProjectFile $StartDir
+  $userHome = [System.IO.Path]::GetFullPath($UserHome).TrimEnd('\', '/')
+  if ([string]::Equals($root.TrimEnd('\', '/'), $userHome, [System.StringComparison]::OrdinalIgnoreCase)) {
+    $root = Get-CoopClientRootForRaw $ProjectFile
+    if ([string]::Equals($root.TrimEnd('\', '/'), $userHome, [System.StringComparison]::OrdinalIgnoreCase)) {
+      $root = [System.IO.Path]::GetFullPath((Split-Path -Parent (Split-Path -Parent $ProjectFile))).TrimEnd('\', '/')
+    }
+  }
+  return $root
+}
+
+# The client record: @{ Client; Root; ProjectFile; Carried; Exists }. Reads
+# client.json; with only the old home-project.json it carries that over in
+# memory (Carried = $true; the launch writes it) with the root the rule gives
+# without a launch folder. Exists is $false when neither file is there.
+function Get-CoopClientRecord {
+  $empty = @{ Client = ''; Root = ''; ProjectFile = ''; Carried = $false; Exists = $false }
+  $record = Get-CoopClientRecordPath
+  if (Test-Path -LiteralPath $record -PathType Leaf) {
+    try {
+      $doc = Get-Content -LiteralPath $record -Raw | ConvertFrom-Json
+      return @{ Client = [string]$doc.client; Root = [string]$doc.root; ProjectFile = [string]$doc.project_file; Carried = $false; Exists = $true }
+    } catch { return $empty }
+  }
+  $old = Get-CoopHomeProjectRecordPath
+  if (-not (Test-Path -LiteralPath $old -PathType Leaf)) { return $empty }
+  try { $file = [string]((Get-Content -LiteralPath $old -Raw | ConvertFrom-Json).project_file) } catch { return $empty }
+  if (-not $file) { return $empty }
+  return @{ Client = (Get-CoopContractClientName $file); Root = (Get-CoopClientRootFor $file); ProjectFile = $file; Carried = $true; Exists = $true }
+}
+
+# Write client.json. Returns $true when written.
+function Save-CoopClientRecord {
+  param([string]$ProjectFile, [string]$Root, [string]$Client = '')
+  if (-not $Root) { return $false }
+  $record = Get-CoopClientRecordPath
+  try {
+    $dir = Split-Path -Parent $record
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    $file = if ($ProjectFile) { [System.IO.Path]::GetFullPath($ProjectFile) } else { '' }
+    $json = ([ordered]@{ schema_version = 1; client = [string]$Client; root = [System.IO.Path]::GetFullPath($Root); project_file = $file } | ConvertTo-Json -Compress)
+    [System.IO.File]::WriteAllText($record, $json + "`n", (New-Object System.Text.UTF8Encoding $false))
+    return $true
+  } catch { return $false }
+}
+
 # The remembered project file, or '' when none is recorded or it is gone.
 function Get-CoopHomeProjectFile {
-  $record = Get-CoopHomeProjectRecordPath
-  if (-not (Test-Path -LiteralPath $record -PathType Leaf)) { return '' }
-  try {
-    $value = [string]((Get-Content -LiteralPath $record -Raw | ConvertFrom-Json).project_file)
-  } catch { return '' }
+  $value = (Get-CoopClientRecord).ProjectFile
   if (Test-CoopHomeProjectCandidate $value) { return [System.IO.Path]::GetFullPath($value) }
   return ''
 }
 
 # The recorded path even when its file is gone (for the notes), or ''.
-function Get-CoopHomeProjectRecorded {
-  $record = Get-CoopHomeProjectRecordPath
-  if (-not (Test-Path -LiteralPath $record -PathType Leaf)) { return '' }
-  try { return [string]((Get-Content -LiteralPath $record -Raw | ConvertFrom-Json).project_file) } catch { return '' }
-}
+function Get-CoopHomeProjectRecorded { return [string](Get-CoopClientRecord).ProjectFile }
 
-# Remember $Path as this Windows user's project file. Returns $true when written.
+# Remember $Path as this Windows user's project file, with the client folder the
+# rule gives for $StartDir, or $Root when the user chose the folder. Returns the
+# client folder recorded, or ''.
 function Save-CoopHomeProjectFile {
-  param([string]$Path)
-  if (-not (Test-CoopHomeProjectCandidate $Path)) { return $false }
-  $record = Get-CoopHomeProjectRecordPath
-  try {
-    $dir = Split-Path -Parent $record
-    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-    $json = ([ordered]@{ schema_version = 1; project_file = [System.IO.Path]::GetFullPath($Path) } | ConvertTo-Json -Compress)
-    [System.IO.File]::WriteAllText($record, $json + "`n", (New-Object System.Text.UTF8Encoding $false))
-    return $true
-  } catch { return $false }
+  param([string]$Path, [string]$StartDir = '', [string]$Root = '')
+  if (-not (Test-CoopHomeProjectCandidate $Path)) { return '' }
+  $full = [System.IO.Path]::GetFullPath($Path)
+  if (-not $Root) { $Root = Get-CoopClientRootFor $full $StartDir }
+  if (Save-CoopClientRecord -ProjectFile $full -Root $Root -Client (Get-CoopContractClientName $full)) { return [System.IO.Path]::GetFullPath($Root) }
+  return ''
 }
 
 # The project file a search from $StartDir finds, without the remembered one: the
@@ -3544,32 +3997,60 @@ function Find-CoopLaunchContract {
   return (Find-CoopSearchedContract $StartDir)
 }
 
-# Record the project file this launch found when none is recorded yet, so later
-# launches from anywhere use it. Returns the path recorded, or ''.
+# At launch: carry an old home-project.json over to client.json once; else, with
+# no project file recorded yet (nothing, or a folder chosen without one), record
+# the one this launch's search finds (a chosen folder stays the root). Returns
+# the client folder this launch recorded, or '' when the record is unchanged.
 function Register-CoopHomeProjectFile {
   param([string]$StartDir = (Get-Location).Path)
-  if (Get-CoopHomeProjectFile) { return '' }
+  $record = Get-CoopClientRecord
+  if ($record.Carried) {
+    if (Save-CoopClientRecord -ProjectFile $record.ProjectFile -Root $record.Root -Client $record.Client) { return [System.IO.Path]::GetFullPath($record.Root) }
+    return ''
+  }
+  if ($record.Exists -and (Test-CoopHomeProjectCandidate $record.ProjectFile)) { return '' }
   $found = Find-CoopSearchedContract $StartDir
-  if ($found -and (Save-CoopHomeProjectFile $found)) { return [System.IO.Path]::GetFullPath($found) }
-  return ''
+  if (-not $found) { return '' }
+  if ($record.Exists -and $record.Root -and (Test-Path -LiteralPath $record.Root -PathType Container)) {
+    if (Save-CoopClientRecord -ProjectFile $found -Root $record.Root -Client (Get-CoopContractClientName $found)) { return [System.IO.Path]::GetFullPath($record.Root) }
+    return ''
+  }
+  return (Save-CoopHomeProjectFile -Path $found -StartDir $StartDir)
+}
+
+# The one line a launch prints when it records (or carries over) the client folder.
+function Get-CoopClientRecordedLine {
+  param([string]$Root)
+  return "coop now opens this client's folder every time: $Root   (File > Switch client, or: coop project home <folder>, changes it)"
+}
+
+# The one line every launch prints saying where coop is (console, and the
+# window's welcome): `Client: <client> · folder <root> · project file <path>`,
+# or `Client: not set yet · folder <cwd>` before a client is recorded. F2/F3
+# and doctor reuse it.
+function Get-CoopClientLine {
+  param([string]$StartDir = (Get-Location).Path)
+  $record = Get-CoopClientRecord
+  if (-not $record.Exists -or -not $record.Root) { return "Client: not set yet · folder $StartDir" }
+  $name = if ($record.Client) { $record.Client } else { 'unnamed' }
+  $file = if ($record.ProjectFile) { $record.ProjectFile } else { 'none yet' }
+  return "Client: $name · folder $($record.Root) · project file $file"
 }
 
 # The "coop" and "coop (terminal)" shortcuts start in the user folder (their
 # WorkingDirectory is $HOME; bin\coop-desktop.ps1 sets COOP_SHORTCUT). Pi keeps
 # saved sessions per folder, so a shortcut launch that stayed there listed the
-# user folder's old sessions, not the project's (2026-10-08). When coop remembers
-# this Windows user's project file, a shortcut launch opens its repository
-# instead. Returns the folder entered, or ''.
+# user folder's old sessions, not the client's (2026-10-08). When coop has this
+# Windows user's client folder recorded, a shortcut launch opens it instead.
+# Returns the folder entered, or ''.
 function Enter-CoopShortcutFolder {
   $here = [System.IO.Path]::GetFullPath((Get-Location).ProviderPath).TrimEnd('\', '/')
   $userHome = [System.IO.Path]::GetFullPath($HOME).TrimEnd('\', '/')
   if (-not [string]::Equals($here, $userHome, [System.StringComparison]::OrdinalIgnoreCase)) { return '' }
-  $file = Get-CoopHomeProjectFile
-  if (-not $file) { return '' }
-  $repo = Split-Path -Parent (Split-Path -Parent $file)
-  if (-not (Test-Path -LiteralPath $repo -PathType Container)) { return '' }
-  Set-Location -LiteralPath $repo
-  return $repo
+  $root = (Get-CoopClientRecord).Root
+  if (-not $root -or -not (Test-Path -LiteralPath $root -PathType Container)) { return '' }
+  Set-Location -LiteralPath $root
+  return [System.IO.Path]::GetFullPath($root)
 }
 
 # Warn when $StartDir is in no repository and several repositories inside it have
@@ -3762,6 +4243,66 @@ function Set-CoopFirstRunLaunch {
     # A read-only profile dir must not block the launch; the menu simply opens again next time.
   }
   $env:COOP_FIRST_RUN = '1'
+}
+
+# The name the Windows account shows (its full name, else the user name); off
+# Windows the login name. '' when nothing answers.
+function Get-CoopAccountDisplayName {
+  $login = if ($env:USERNAME) { [string]$env:USERNAME } elseif ($env:USER) { [string]$env:USER } else { '' }
+  if ($env:OS -eq 'Windows_NT' -and $login) {
+    try {
+      $acct = Get-CimInstance -ClassName Win32_UserAccount -Filter "Name='$($login.Replace("'", "''"))' AND LocalAccount=True" -ErrorAction Stop | Select-Object -First 1
+      if ($acct -and $acct.FullName -and ([string]$acct.FullName).Trim()) { return ([string]$acct.FullName).Trim() }
+    } catch { }
+  }
+  return $login
+}
+# The marker the window's first launch leaves when it wrote the default profile
+# (<profile>\desktop\profile-defaulted, holding the name); the next window launch
+# says so once (Write-CoopProfileDefaultedLine).
+function Get-CoopProfileDefaultedFile { return (Join-Path (Get-CoopProfileDir) 'desktop\profile-defaulted') }
+# The coop window's first launch (F3; the dev VM, 2026-10-20): no one is at the
+# console's keyboard, so the profile questions cannot be asked there. The profile
+# is written with the Windows account's name and the default settings, said so on
+# the console and, through the marker, in the window's set-up card; `coop
+# onboard` changes it any time. $script:CoopOnboardRc as Invoke-CoopMaybeOnboard.
+function Invoke-CoopDefaultOnboard {
+  $script:CoopOnboardRc = 0
+  if (-not (Test-CoopOnboardingMissing)) { return }
+  if ($env:COOP_NO_ONBOARD -eq '1') { return }
+  $py = Get-CoopPython
+  if (-not $py) { Coop-Warn 'python3 required for the COOP profile. Run: coop onboard once python is available.'; return }
+  $name = Get-CoopAccountDisplayName
+  if (-not $name) { Coop-Warn (Get-CoopOnboardingMissingMessage); return }
+  Coop-Info "First launch: writing your COOP profile with the default settings (no keyboard here to ask; Azure sign-in comes later, from: coop onboard --config-only)"
+  $onboardArgs = @('onboard', '--name', $name, '--no-sign-in')
+  if ($env:COOP_CLIENT_PLATFORM) { $onboardArgs += @('--platform', $env:COOP_CLIENT_PLATFORM) }
+  & $py (Join-Path $script:CoopRoot 'scripts\onboard.py') @onboardArgs 2>&1 | Out-Null
+  $script:CoopOnboardRc = $LASTEXITCODE
+  if ($script:CoopOnboardRc -ne 0 -or (Test-CoopUserProfileMissing)) {
+    Coop-Warn "could not write the default COOP profile (onboard.py exited $($script:CoopOnboardRc))" 'run: coop onboard'
+    return
+  }
+  Coop-Ok "COOP calls you $name (your Windows account's name) and uses the default settings; change them any time with: coop onboard"
+  try {
+    $f = Get-CoopProfileDefaultedFile
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $f) | Out-Null
+    [System.IO.File]::WriteAllText($f, $name)
+  } catch { }
+}
+# The window launch after the default profile was written: one notice naming the
+# name and how to change it (console, and the set-up card through the warn sink).
+function Write-CoopProfileDefaultedLine {
+  try {
+    $f = Get-CoopProfileDefaultedFile
+    if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return }
+    $name = ([System.IO.File]::ReadAllText($f)).Trim()
+    Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+    if (-not $name) { return }
+    $line = "COOP calls you $name, your Windows account's name, with the default settings; change them any time with: coop onboard"
+    Coop-Info $line
+    if ($null -ne $script:CoopWarnSink) { [void]$script:CoopWarnSink.Add($line) }
+  } catch { }
 }
 
 # Interactive onboarding wizard (name, communication preference, client platform,
