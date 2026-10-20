@@ -28,7 +28,7 @@ try {
   $app = 'C:\Program Files\coop'
   $shim = Get-CoopMachineShimBody $app
   if ($shim -notmatch '(?m)^if not exist "%LOCALAPPDATA%\\coop\\bin\\coop\.cmd" goto machine') { Ko 'the shim does not check this account''s link first' $shim }
-  elseif ($shim -notmatch '(?m)^findstr /I /C:"\\Programs\\coop\\" "%LOCALAPPDATA%\\coop\\bin\\coop\.cmd" >nul 2>nul\r?$\s+^if not errorlevel 1 goto machine') { Ko 'the shim does not skip a link into an older per-account package' $shim }
+  elseif ($shim -notmatch '(?m)^findstr /I /C:"\\Programs\\coop\\\\" "%LOCALAPPDATA%\\coop\\bin\\coop\.cmd" >nul 2>nul\r?$\s+^if not errorlevel 1 goto machine\r?$\s+^rem [^\r\n]*\r?$\s+^ver >nul\r?$\s+^call "%LOCALAPPDATA%') { Ko 'the shim does not skip a link into an older per-account package (findstr''s \\" quoting), or leaves findstr''s ERRORLEVEL 1 for the link' $shim }
   elseif ($shim -notmatch [regex]::Escape('call "C:\Program Files\coop\resources\coop\bin\coop.cmd" %*')) { Ko 'the shim does not fall back to the package''s coop' $shim }
   elseif ($shim -notmatch [regex]::Escape('call "%LOCALAPPDATA%\coop\bin\coop.cmd" %*')) { Ko 'the shim does not run this account''s link' $shim }
   elseif (($shim -split "`r`n" | Where-Object { $_ -eq 'exit /b %ERRORLEVEL%' }).Count -ne 2) { Ko 'the shim does not pass the exit code through' $shim }
