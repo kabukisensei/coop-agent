@@ -370,8 +370,12 @@ def validate_ado_organization(value: str) -> str | None:
 
 
 def run_config_questions(
-    existing: dict | None = None, *, quick_start: bool = False
+    existing: dict | None = None, *, quick_start: bool = False, no_sign_in: bool = False
 ) -> dict:
+    """`no_sign_in` (`--no-sign-in`): never start an Azure sign-in. The coop
+    window's first launch runs with no one at the keyboard; a device-code prompt
+    there would wait in a hidden console forever. Azure connects later, from the
+    window or `coop onboard --config-only`."""
     existing = existing or load_config()
     old_azure = (
         existing.get("azure", {}) if isinstance(existing.get("azure", {}), dict) else {}
@@ -405,7 +409,12 @@ def run_config_questions(
     )
 
     configure_cloud = True
-    if quick_start and not tenant:
+    if no_sign_in and not tenant:
+        configure_cloud = False
+        sys.stderr.write(
+            "Azure sign-in skipped (no one at the keyboard). Connect the client tenant later with `coop onboard --config-only`.\n"
+        )
+    elif quick_start and not tenant:
         configure_cloud = read_confirm(
             f"Connect Coop to client {services} now?", True
         )
@@ -972,6 +981,7 @@ def cmd_onboard(args: argparse.Namespace) -> int:
     config = run_config_questions(
         existing_config,
         quick_start="integrations" not in existing_config and not args.config_only,
+        no_sign_in=bool(getattr(args, "no_sign_in", False)),
     )
     save_config(config)
     try:
@@ -1053,6 +1063,11 @@ def main(argv: list[str] | None = None) -> int:
         "--platform",
         choices=PLATFORMS,
         help="Answer the client platform question (fabric, azure_sql, both) without a prompt.",
+    )
+    onboard.add_argument(
+        "--no-sign-in",
+        action="store_true",
+        help="Never start an Azure sign-in (the coop window's first launch has no one at the keyboard); connect Azure later with --config-only.",
     )
     onboard.add_argument(
         "--name",

@@ -4274,8 +4274,8 @@ function Invoke-CoopDefaultOnboard {
   if (-not $py) { Coop-Warn 'python3 required for the COOP profile. Run: coop onboard once python is available.'; return }
   $name = Get-CoopAccountDisplayName
   if (-not $name) { Coop-Warn (Get-CoopOnboardingMissingMessage); return }
-  Coop-Info "First launch: writing your COOP profile with the default settings (no keyboard here to ask)"
-  $onboardArgs = @('onboard', '--name', $name)
+  Coop-Info "First launch: writing your COOP profile with the default settings (no keyboard here to ask; Azure sign-in comes later, from: coop onboard --config-only)"
+  $onboardArgs = @('onboard', '--name', $name, '--no-sign-in')
   if ($env:COOP_CLIENT_PLATFORM) { $onboardArgs += @('--platform', $env:COOP_CLIENT_PLATFORM) }
   & $py (Join-Path $script:CoopRoot 'scripts\onboard.py') @onboardArgs 2>&1 | Out-Null
   $script:CoopOnboardRc = $LASTEXITCODE
