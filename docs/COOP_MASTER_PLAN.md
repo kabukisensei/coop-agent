@@ -2325,8 +2325,18 @@ the project file; production is a person's. **coop commits** the scripted files
 ("2..commit is fine"), one approval per commit, only on a repository the project
 file allows, and never pushes: "I just want to be sure before things get pushed
 to other user repos". Nothing is lost between SSMS and the files in either
-direction (the three-way check above). This supersedes the earlier choice of a
+direction (the three-way check above). Before every commit coop fetches the
+branch's upstream and, after the approval, fast-forwards onto it ("Yes pull
+first", 23:47Z): a fetch failure or a branch that cannot fast-forward stops the
+commit before any prompt and the user pulls by hand; a repository with no
+upstream commits locally as before, and the prompt says so. This supersedes the earlier choice of a
 manual install with a person committing (revision 3.38's first draft of this row).
+A follow-up for the next release ("Yes", 23:49Z): `sql_source init`, where coop
+makes the empty repository and runs `sqlsc init` with approval (it creates the
+lock table in dev), then the baseline; until then a person runs those two steps.
+Known in sqlsc 1.0.1 (dev VM, 2026-10-20): its text mode prints a `✓` that fails
+on a cp1252 pipe; coop only ever calls it with `--json` (ASCII), so a 1.0.2 fix
+moves the pin later, not here.
 
 **Gate.** `tests/sqlsc.test.mjs` in the gate lane: the argv never carries
 check-in, push, force or a production release; a teammate's checkout stops
@@ -2464,7 +2474,7 @@ tags. A stale row is never a reason to re-do work: check the PR list first.
 | 35 | F1 | Client folder: the one question asked once per Windows user, `~/.coop/client.json` read by the launcher and the window, the shortcut and the terminal open the client folder, `coop folders`, the client line on every launch (section 12.7) | Aaron 2026-10-20 16:07 | a new Windows user on the dev VM answers once and every later launch opens the client folder; an existing user sees only the carry-over line | merged (PR #406; dev VM check 2026-10-20, project file `f1-f3-vm-results-2026-10-20.md`; unreleased) |
 | 36 | F2 | File tiers: standards once per machine, backups and drafts under the client's `~/.coop`, never inside the repository; doctor Folders section and the Project pane rows; drafts in the Changes pane (section 12.7) | F1 | doctor and the Project pane name the three places with real paths on the dev VM; a backup lands under the client's folder and the repository stays clean | merged (PR #406; dev VM check 2026-10-20, project file `f1-f3-vm-results-2026-10-20.md`; unreleased) |
 | 37 | F3 | One install: per-machine installer under `%ProgramFiles%\coop`, the machine `coop` shim, the "coop update" scheduled task that installs each release silently and records its state, the launch line after an update, `coop update` on a machine install; supersedes D1e (section 12.7) | F2; the dev VM | an administrator installs once, two users each see their own client, a newer tag installs overnight by itself and both users' next launch says so | merged (PR #406; dev VM check 2026-10-20, project file `f1-f3-vm-results-2026-10-20.md`; unreleased) |
-| 38 | SQ12 | SQL source control at clients through coop-sql-source-control, shipped with coop and off until the user runs `/sql-source on`: the `sql_source` tool checks out as `coop-agent:<user>`, scripts, applies to dev, commits with one approval each (never pushes) and deploys to dev or test, every write classified by the project file; nothing lost between SSMS and the files; `sqlsc commit`/`checkin` hard-blocked from the shell (section 12.8) | Aaron 2026-10-20 ("go"; "2..commit is fine"; deploy to dev or test only) | section 12.8 gate | in review ([#408](https://github.com/kabukisensei/coop-agent/pull/408)); the sqlsc repository is public since 2026-10-20, so the installer job fetches the wheel anonymously and checks its SHA-256 |
+| 38 | SQ12 | SQL source control at clients through coop-sql-source-control, shipped with coop and off until the user runs `/sql-source on`: the `sql_source` tool checks out as `coop-agent:<user>`, scripts, applies to dev, pulls then commits with one approval each (never pushes) and deploys to dev or test, every write classified by the project file; nothing lost between SSMS and the files; `sqlsc commit`/`checkin` hard-blocked from the shell (section 12.8) | Aaron 2026-10-20 ("go"; "2..commit is fine"; deploy to dev or test only) | section 12.8 gate | in review ([#408](https://github.com/kabukisensei/coop-agent/pull/408)); the sqlsc repository is public since 2026-10-20, so the installer job fetches the wheel anonymously and checks its SHA-256 |
 | 39 | SQ13 | Lineage from the SQL source-control repository: triggers, functions and column lineage in coop-data-doc, the database's dependency list committed by sqlsc and checked, `/setup-docs` set up for an sqlsc repository (section 12.9) | asked by Aaron 2026-10-20 ("go for it"); SQ12 | section 12.9 gate | in review (coop-data-doc [#70](https://github.com/kabukisensei/coop-data-doc/pull/70), coop-sql-source-control [#28](https://github.com/kabukisensei/coop-sql-source-control/pull/28), coop-agent [#408](https://github.com/kabukisensei/coop-agent/pull/408) with row SQ12, superseding #410); coop-data-doc 1.4.0 published to PyPI 2026-10-20 and pinned |
 
 Phase 0 rows can each be released as a patch. Later phases are minor versions.

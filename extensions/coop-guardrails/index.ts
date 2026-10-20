@@ -37,7 +37,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { DEPLOY_ENVIRONMENTS, SQLSC_BIN, classifySqlscWrite, findSqlscConfig, sqlSourceEnabled, sqlscFolder } from "../../lib/sqlsc.mjs";
+import { DEPLOY_ENVIRONMENTS, SQLSC_BIN, checkUpstream, classifySqlscWrite, findSqlscConfig, sqlSourceEnabled, sqlscFolder } from "../../lib/sqlsc.mjs";
 import { findProjectContract } from "../../lib/standards.mjs";
 import { appendFileSync, existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, parse, resolve } from "node:path";
@@ -3348,7 +3348,14 @@ export default function coopGuardrails(pi: ExtensionAPI) {
             }
             const message = String(event?.input?.message || "").slice(0, 200);
             const objects = Array.isArray(event?.input?.objects) && event.input.objects.length ? event.input.objects.join(", ") : "every changed object";
-            const choice = await askEditApproval(ctx, "coop guardrails", `SQL source control: commit the scripted SQL files in ${dirname(cfg || "")} (sqlsc commit, not pushed).\nObjects: ${objects}\nMessage: ${message}\nObjects a teammate has checked out or changed in the repo are left alone. Commit?`, null);
+            // Pull first (Aaron, 2026-10-20): fetch now and stop before asking when
+            // the branch is behind and cannot fast-forward; the tool pulls after the yes.
+            const upstream = await checkUpstream((bin, args, opts) => pi.exec(bin, args, opts), dirname(cfg || ""));
+            if (!upstream.ok) {
+              audit({ cwd: ctx.cwd, kind: "commit-block", tool: "governed-sql-source", decision: "blocked", label, detail: upstream.reason });
+              return { block: true, reason: `coop guardrails: blocked ${label}; ${upstream.reason}.` };
+            }
+            const choice = await askEditApproval(ctx, "coop guardrails", `SQL source control: commit the scripted SQL files in ${dirname(cfg || "")} (sqlsc commit, not pushed).\nObjects: ${objects}\nMessage: ${message}\nBranch: ${upstream.note}. Objects a teammate has checked out or changed in the repo are left alone. Commit?`, null);
             audit({ cwd: ctx.cwd, kind: "commit-block", tool: "governed-sql-source", decision: choice === "declined" ? "declined" : "allowed", label, detail: `${dirname(cfg || "")}: ${message}` });
             if (choice === "declined") return { block: true, reason: `coop guardrails: blocked ${label} (you declined).` };
             return;

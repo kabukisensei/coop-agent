@@ -52,6 +52,8 @@ import {
   SQLSC_BIN,
   agentIdentity,
   findSqlscConfig,
+  pullBeforeCommit,
+  pullRefusalText,
   setSqlSourceEnabled,
   scriptConflictText,
   scriptConflicts,
@@ -2557,6 +2559,7 @@ export default function coopTools(pi: ExtensionAPI) {
       const agent = agentIdentity(email);
       if (!agent) return { content: [{ type: "text" as const, text: SQL_SOURCE_NO_USER }], details: { state: "no_user", config } };
       let res;
+      let pullNote = "";
       try {
         // Nothing lost between SSMS and the files: before scripting, read status
         // and refuse objects changed on both sides (lib/sqlsc.mjs scriptConflicts).
@@ -2569,6 +2572,15 @@ export default function coopTools(pi: ExtensionAPI) {
             const { head, lines } = scriptConflictText(conflicts);
             return { content: [{ type: "text" as const, text: modelText(head, lines, "name fewer objects") }], details: { state: "conflict", command: input.command, config, user: agent, conflicts } };
           }
+        }
+        // Pull first (Aaron, 2026-10-20): a teammate may have pushed since this
+        // copy last pulled. Fast-forward onto the upstream or stop.
+        if (input.command === "commit") {
+          const pull = await pullBeforeCommit((bin, args, opts) => pi.exec(bin, args, { ...opts, signal }), dirname(config));
+          if (!pull.ok) {
+            return { content: [{ type: "text" as const, text: pullRefusalText(pull) }], details: { state: "behind", command: input.command, config, user: agent, pull } };
+          }
+          pullNote = pull.note;
         }
         res = await pi.exec(SQLSC_BIN, sqlSourceArgs(input, config, agent), { cwd: dirname(config), signal });
       } catch (e: any) {
@@ -2584,6 +2596,7 @@ export default function coopTools(pi: ExtensionAPI) {
         return { content: [{ type: "text" as const, text }], details: { state: "failed", exitCode: res.code } };
       }
       const { head, lines } = sqlSourceText(input, out);
+      if (pullNote) lines.push(`- ${pullNote}`);
       return {
         content: [{ type: "text" as const, text: modelText(head, lines, "run sql_source with fewer objects") }],
         details: { state: out.ok === false ? "refused" : "ok", command: input.command, config, user: agent, result: out },

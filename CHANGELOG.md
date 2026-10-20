@@ -17,9 +17,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   native tool drives the CLI: `status`, `diff`, `checkout`/`release` as
   `coop-agent:<user>`, `script` (dev's
   changes into the files), `get_latest` (the files onto dev; a dry run unless
-  `apply=true`, which asks), `commit` (the scripted files, one approval per
-  commit, only where the project file's `agent_allowed_to_commit` covers the
-  sqlsc folder; never pushed) and `deploy` (one commit to dev or test; a dry run
+  `apply=true`, which asks), `commit` (pulls the branch first, fast-forward only, then the scripted files, one
+  approval per commit, only where the project file's `agent_allowed_to_commit`
+  covers the sqlsc folder; never pushed) and `deploy` (one commit to dev or test; a dry run
   unless `apply=true`, which asks every time). Every database write is classified
   by the project file first: the target's real server and database must be the
   contract's dev or test entry, never protected or named like production, and

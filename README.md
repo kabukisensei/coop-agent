@@ -792,8 +792,8 @@ schema compare` is the terminal form; nothing is ever applied), `sql_source` (SQ
 source control through `coop-sqlsc` where the client SQL repository has an
 `sqlsc.yml` and the user has run `/sql-source on`: coop checks objects out as
 `coop-agent:<user>` before changing them, writes dev's changes into the files or
-applies the files to dev, commits the scripted files with one approval each and
-never pushes, and can release a commit to dev or test; nothing is overwritten when
+applies the files to dev, pulls the branch and commits the scripted files with one
+approval each and never pushes, and can release a commit to dev or test; nothing is overwritten when
 an object changed both in SSMS and in the files) and the optional,
 config-driven `bpa_review` (Tabular Editor BPA, the deterministic model check).
 `sql_impact`, `schema_compare` and `bpa_review` are read-only on every target;

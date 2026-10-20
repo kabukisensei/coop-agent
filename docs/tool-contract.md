@@ -577,7 +577,7 @@ two schemas, `sql_impact` the live dependency trace and `data_doc` the lineage.
 | `release` | `sqlsc unlock objects --as coop-agent:<user>` (coop's own only, never `--force`) | the lock table |
 | `script` | `sqlsc status` first; then `sqlsc script -t dev [objects]`: dev's changed objects into the repo files. Refused (`conflict`) for any object changed on both sides since the last sync | repo files |
 | `get_latest` | `sqlsc get-latest -t dev --dry-run [objects]`; with `apply=true` it runs (asks). sqlsc keeps objects the database changed (`kept`) | the dev database |
-| `commit` | `sqlsc commit -t dev --as coop-agent:<user> -m <message> [objects]` (asks every time; never `--push` or `--force`). sqlsc leaves objects a teammate has checked out or the repo changed (`skipped`, `held_back`) | the repository's history (one commit on the current branch, not pushed) |
+| `commit` | the guardrails `git fetch` the branch's upstream before asking (a fetch failure or a branch that cannot fast-forward blocks the commit before any prompt; no upstream: the commit stays local, said in the prompt), the tool runs `git pull --ff-only` after the approval (`behind` if it fails), then `sqlsc commit -t dev --as coop-agent:<user> -m <message> [objects]` (asks every time; never `--push` or `--force`). sqlsc leaves objects a teammate has checked out or the repo changed (`skipped`, `held_back`) | the repository's history (one commit on the current branch, not pushed) |
 | `deploy` | `sqlsc deploy -t <dev\|test> --ref <ref> --dry-run`; with `apply=true` it runs (asks every time). Never `--allow-drops` or `--confirm` | the dev or test database, and `sqlsc.Deployment` there |
 
 `environment` (dev, test, prod) is accepted on `status` and `diff` and, as dev or
