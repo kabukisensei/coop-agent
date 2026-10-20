@@ -332,7 +332,7 @@ if (Test-Have 'pi') {
 if (Test-Have 'pi') {
   $classifierSigns = @(Get-CoopThirdPartyClassifierSigns -AuthPaths @((Join-Path (Get-CoopPiAgentDir) 'auth.json'), (Join-Path (Get-CoopPersonalPiAgentDir) 'auth.json')))
   if ($classifierSigns.Count -gt 0) {
-    D-Warn ('third-party classifier key present: ' + ($classifierSigns -join '; ')) 'client use of TypeSafe, Cloudflare or OpenRouter needs a signed DPA (master plan 6.6); remove the key from this profile, or keep it to one `coop router-trial` process on a workstation'
+    D-Warn ('third-party classifier key present: ' + ($classifierSigns -join '; ')) 'client use of TypeSafe, Cloudflare or OpenRouter needs a signed DPA (master plan 6.6); coop itself uses none of them, so remove the key from this profile'
   } else {
     D-Ok 'no third-party classifier key (TypeSafe, Cloudflare, OpenRouter)'
   }

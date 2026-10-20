@@ -1,16 +1,15 @@
 ﻿#!/usr/bin/env pwsh
-# J0 (master plan section 6.6): `coop router-trial` and the third-party classifier
-# key check. The command never runs on Windows (a client VM), prints the helper's
-# usage with --help elsewhere, and Get-CoopThirdPartyClassifierSigns (the doctor
-# row) sees a TypeSafe, Cloudflare or OpenRouter key in the environment or an
-# auth.json. Offline; temp dirs only; no classifier is called.
+# The third-party classifier key check (master plan section 6.6): until a signed
+# DPA, no TypeSafe, Cloudflare or OpenRouter key belongs on a client profile, so
+# Get-CoopThirdPartyClassifierSigns (the doctor row) sees one in the environment
+# or an auth.json and names it without echoing its value. The classifier trial
+# that once used such keys (`coop router-trial`, J0) is gone; the policy row stays.
+# Offline; temp dirs only.
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '_common.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$coop = Join-Path (Join-Path $root 'bin') 'coop.ps1'
-$t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-router-trial-' + [guid]::NewGuid().ToString('N'))
+$t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-classifier-keys-' + [guid]::NewGuid().ToString('N'))
 $utf8 = New-Object System.Text.UTF8Encoding($false)
-$onWindows = [bool]$isWindowsHost
 
 $saved = Save-Env @('HOME', 'USERPROFILE', 'COOP_DIR', 'NO_COLOR', 'COOP_SKIP_AZ', 'TYPESAFE_API_KEY', 'CLOUDFLARE_API_KEY', 'CLOUDFLARE_ACCOUNT_ID', 'OPENROUTER_API_KEY')
 try {
@@ -22,7 +21,6 @@ try {
 
   . (Join-Path $root 'lib\common.ps1')
 
-  # --- the doctor helper ------------------------------------------------------
   $auth = Join-Path $t 'auth.json'
   $signs = @(Get-CoopThirdPartyClassifierSigns -AuthPaths @($auth, ''))
   if ($signs.Count -eq 0) { Ok 'no key, no auth.json: no sign' } else { Ko "expected no sign, got: $($signs -join '; ')" }
@@ -45,34 +43,13 @@ try {
   $doctor = [System.IO.File]::ReadAllText((Join-Path $root 'scripts\doctor.ps1'))
   if ($doctor.Contains('Get-CoopThirdPartyClassifierSigns')) { Ok 'doctor.ps1 carries the classifier-key row' } else { Ko 'doctor.ps1 must call Get-CoopThirdPartyClassifierSigns' }
 
-  # --- the command ------------------------------------------------------------
-  $oldEa = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  $out = (& $psExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $coop router-trial --help 2>&1 | Out-String)
-  $rc = $LASTEXITCODE
-  $ErrorActionPreference = $oldEa
-  if ($onWindows) {
-    if ($rc -ne 0 -and $out -match 'not on a client VM') { Ok 'router-trial refuses on Windows without --allow-windows' } else { Ko "router-trial on Windows (rc=$rc): $out" }
-    if (Get-Command node -ErrorAction SilentlyContinue) {
-      $ErrorActionPreference = 'Continue'
-      $out2 = (& $psExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $coop router-trial --allow-windows --help 2>&1 | Out-String)
-      $rc2 = $LASTEXITCODE
-      $ErrorActionPreference = $oldEa
-      if ($rc2 -eq 0 -and $out2 -match 'usage: coop router-trial') { Ok 'router-trial --allow-windows runs on Windows' } else { Ko "router-trial --allow-windows on Windows (rc=$rc2): $out2" }
-    }
-  } elseif (Get-Command node -ErrorAction SilentlyContinue) {
-    if ($rc -eq 0 -and $out -match 'usage: coop router-trial') { Ok 'router-trial --help prints the usage without Pi' } else { Ko "router-trial --help (rc=$rc): $out" }
-  } else {
-    if ($rc -ne 0 -and $out -match 'node is required') { Ok 'router-trial names node when it is missing' } else { Ko "router-trial without node (rc=$rc): $out" }
-  }
-
-  $set = Join-Path $root 'tests\fixtures\router-trial\prompts.jsonl'
-  $rows = @([System.IO.File]::ReadAllLines($set) | Where-Object { $_.Trim() })
-  if ($rows.Count -eq 50) { Ok 'the shipped set holds 50 rows' } else { Ko "the shipped set holds $($rows.Count) rows, want 50" }
+  # The trial is gone: no command, no helper, no key reaches a vendor from coop.
+  $launcher = [System.IO.File]::ReadAllText((Join-Path $root 'bin\coop.ps1'))
+  if ($launcher -match 'router-trial' -or (Test-Path -LiteralPath (Join-Path $root 'lib\router-trial.mjs'))) { Ko 'the router-trial command or helper is still present' } else { Ok 'coop has no router-trial command or helper' }
 }
 finally {
   Restore-Env $saved
   Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue
 }
-if ($fail -eq 0) { Write-Host '  router-trial tests passed' } else { Write-Host "  $G_CROSS router-trial tests FAILED" }
+if ($fail -eq 0) { Write-Host '  classifier-keys tests passed' } else { Write-Host "  $G_CROSS classifier-keys tests FAILED" }
 exit $fail

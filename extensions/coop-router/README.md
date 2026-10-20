@@ -30,10 +30,11 @@ ids instead, first usable wins, for a measurement run or to hold a version. With
 Codex sign-in the route fails with a message naming `/login openai-codex`; it never
 falls back to another provider.
 
-The new-prompt rule (the first three rows) is `lib/router-rules.mjs`, shared
-with `coop router-trial` (master plan J0), which scores the Jev and Clef
-classifiers against it on a synthetic set; a classifier replaces the rule only
-if that table says it routes measurably better.
+The new-prompt rule (the first three rows) is `lib/router-rules.mjs`, tested
+against two synthetic prompt sets in `tests/fixtures/router-trial/`
+(`tests/router-rules.test.mjs`). The J0 trial that scored third-party
+classifiers against it found no token saving over the rule and was removed
+(2026-10-19); the rule routes alone.
 
 The phase is router state: Pi stores it on the session branch, so it follows forks
 and survives compaction. The footer (`coop-powerline`) shows the routed model beside

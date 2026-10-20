@@ -222,8 +222,8 @@ COOP_TEST_DIST="$TMP" node "$ROOT/tests/coop-profile.test.mjs"
 echo "→ coop-router (coop/auto) tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/coop-router.test.mjs"
 
-echo "→ router-trial (J0 classifier trial) tests"
-node "$ROOT/tests/router-trial.test.mjs"
+echo "→ router-rules (the coop/auto rule on the synthetic sets) tests"
+node "$ROOT/tests/router-rules.test.mjs"
 
 echo "→ isolated Pi settings tests"
 python3 "$ROOT/tests/pi-settings.test.py"
