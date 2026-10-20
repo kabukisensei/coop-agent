@@ -46,6 +46,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   through coop-data-doc's `config-set`, so the build warns about each reference
   its parse missed; a coop-data-doc without that key is told to update instead.
 
+- **`coop folders`**: a read-only command printing the three places coop uses
+  (this machine, this client, the repository) with their real paths and what
+  each holds; other rows build on it.
+
 ### Changed
 
 - **The client folder (master plan F1; Aaron, 2026-10-20).** coop's folder
@@ -197,12 +201,6 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   <tool>" lines now end with pipx's or pip's error line (or its last
   line), so a standard user's first launch on a machine install names the
   path or package that failed instead of leaving it to a verbose re-run.
-
-### Added
-
-- **`coop folders`**: a read-only command printing the three places coop uses
-  (this machine, this client, the repository) with their real paths and what
-  each holds; other rows build on it.
 
 ### Fixed
 
