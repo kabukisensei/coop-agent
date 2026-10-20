@@ -149,7 +149,8 @@ try {
   [System.IO.File]::WriteAllText((Join-Path $snapshot 'VERSION'), "0.37.0`n", $utf8)
   Copy-Item -LiteralPath (Join-Path $root 'scripts\auto-update.ps1') -Destination (Join-Path $snapshot 'scripts\auto-update.ps1')
   $machineDir = Join-Path $t 'ProgramData\coop'
-  $stateFile = Join-Path $machineDir 'update-state.json'
+  $stateFile = Join-Path $machineDir 'update-state.dry-run.json'
+  $liveState = Join-Path $machineDir 'update-state.json'
   function Invoke-AutoUpdate([string[]]$MoreArgs) {
     $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
     $lines = @(& $psExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $snapshot 'scripts\auto-update.ps1') -MachineDir $machineDir @MoreArgs 2>&1 | ForEach-Object { "$_" })
@@ -171,6 +172,7 @@ try {
   elseif (-not (Test-Path -LiteralPath (Join-Path $machineDir 'logs\update.log'))) { Ko 'the dry run wrote no log' }
   elseif (Test-Path -LiteralPath (Join-Path $machineDir 'updates')) { Ko 'the dry run downloaded something' }
   elseif ($out -notmatch 'coop auto-update: dry run: would install v99\.0\.0') { Ko 'the dry run does not say what it would do' $out }
+  elseif (Test-Path -LiteralPath $liveState) { Ko 'the dry run wrote the live update-state.json (every launch would announce a version nobody installs)' }
   else { Ok 'a dry run with a newer release records "dry run: would install", the pending version and the release page, downloads nothing, exits 0' }
   $out = Invoke-AutoUpdate @('-DryRun', '-LatestVersion', '0.37.0')
   $s = Get-State
@@ -187,6 +189,9 @@ try {
   else { Ok 'the log carries one line per run with the result, the installed and the newest version' }
 
   # --- lib/common.ps1 on a machine install ------------------------------------------------
+  # The live state the task writes (the dry runs above wrote only their own file): the last run's.
+  $stateFile = $liveState
+  Write-CoopUpdateStateFile $stateFile (Get-Content -LiteralPath (Join-Path $machineDir 'update-state.dry-run.json') -Raw | ConvertFrom-Json)
   $env:COOP_BUNDLED_RUNTIME = $runtime
   $env:COOP_MACHINE_DIR = $machineDir
   $home2 = New-SandboxHome (Join-Path $t 'home')

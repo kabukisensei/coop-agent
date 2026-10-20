@@ -25,8 +25,9 @@
 # (kept under 1 MB). The accounts' launches read the state (lib/common.ps1
 # Write-CoopUpdateLines); nothing under any %USERPROFILE%\.coop is touched.
 #
-# -DryRun (or COOP_AUTO_UPDATE_DRY_RUN=1) checks and records, downloads and
-# installs nothing ("dry run: ..."). -LatestVersion (COOP_AUTO_UPDATE_LATEST)
+# -DryRun (or COOP_AUTO_UPDATE_DRY_RUN=1) checks and records to
+# update-state.dry-run.json (never the live state), downloads and installs
+# nothing ("dry run: ..."). -LatestVersion (COOP_AUTO_UPDATE_LATEST)
 # skips github.com, for the tests. Standalone on purpose (no lib/common.ps1):
 # the installer it runs replaces this folder. Windows PowerShell 5.1 syntax
 # only. Exit 0 unless the result is "failed: ...". The tests dot-source this
@@ -176,7 +177,9 @@ function Invoke-CoopAutoUpdate {
   $app = if ($InstallDir) { $InstallDir } else { Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) }
   $app = $app.Trim().TrimEnd('\')
   $machine = if ($MachineDir) { $MachineDir } elseif ($env:COOP_MACHINE_DIR) { [string]$env:COOP_MACHINE_DIR } elseif ($env:ProgramData) { Join-Path $env:ProgramData 'coop' } else { Join-Path $app 'machine' }
-  $stateFile = Join-Path $machine 'update-state.json'
+  # A dry run never writes the live state: every account's launch reads it and would
+  # announce "an update to vX is ready" for a version nobody will install.
+  $stateFile = Join-Path $machine $(if ($dry) { 'update-state.dry-run.json' } else { 'update-state.json' })
   $logFile = Join-Path (Join-Path $machine 'logs') 'update.log'
   $updates = Join-Path $machine 'updates'
   $installed = ''
@@ -240,7 +243,7 @@ function Invoke-CoopAutoUpdate {
   $state = New-CoopUpdateState $result $installed $pending $latest $releaseUrl
   try { Write-CoopUpdateStateFile $stateFile $state } catch { Write-Host "could not write $stateFile`: $($_.Exception.Message)" }
   try { Add-CoopUpdateLogLine $logFile "$result (installed $installed, newest $latest)" } catch { }
-  Write-Host "coop auto-update: $result (installed $installed, newest $latest)"
+  Write-Host "coop auto-update: $result (installed $installed, newest $latest)$(if ($dry) { " [dry run: state in $stateFile]" })"
   if ($result.StartsWith('failed')) { return 1 }
   return 0
 }
