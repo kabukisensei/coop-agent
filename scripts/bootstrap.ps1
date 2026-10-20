@@ -58,7 +58,25 @@ function Get-CoopBootstrapLatestVersion {
   return ''
 }
 
-function Get-CoopBootstrapWindowExe { return (Join-Path $env:LOCALAPPDATA 'Programs\coop\coop.exe') }
+# The folder the coop window lives in: the per-user Add/Remove entry's
+# InstallLocation when it still holds coop.exe (an earlier install may sit in a
+# folder someone chose), else the default %LOCALAPPDATA%\Programs\coop. A second
+# install into a different folder leaves the silent installer waiting forever on
+# NSIS's "already installed" question (dev VM, 2026-10-19), so an upgrade goes
+# into the folder the window already has.
+function Get-CoopBootstrapWindowDir {
+  $default = Join-Path $env:LOCALAPPDATA 'Programs\coop'
+  try {
+    foreach ($entry in @(Get-ChildItem -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction Stop)) {
+      $props = Get-ItemProperty -Path $entry.PSPath -ErrorAction SilentlyContinue
+      if (-not $props -or [string]$props.DisplayName -ne 'coop (window)') { continue }
+      $loc = ([string]$props.InstallLocation).Trim().TrimEnd('\')
+      if ($loc -and (Test-Path -LiteralPath (Join-Path $loc 'coop.exe') -PathType Leaf)) { return $loc }
+    }
+  } catch { }
+  return $default
+}
+function Get-CoopBootstrapWindowExe { return (Join-Path (Get-CoopBootstrapWindowDir) 'coop.exe') }
 
 # The installed window's version from `coop.exe --doctor` (one JSON line), or ''.
 function Get-CoopBootstrapWindowVersion {
@@ -110,7 +128,14 @@ function Install-CoopBootstrapWindow([string]$Version) {
   # bring the SmartScreen click the install page describes.
   Unblock-File -LiteralPath $exe -ErrorAction SilentlyContinue
   Coop-BootstrapInfo 'installing the coop window for this user (silent, no administrator)'
-  $p = Start-Process -FilePath $exe -ArgumentList @('/S', '/currentuser') -Wait -PassThru
+  $installArgs = @('/S', '/currentuser')
+  $dir = Get-CoopBootstrapWindowDir
+  if ($dir -ne (Join-Path $env:LOCALAPPDATA 'Programs\coop')) {
+    Coop-BootstrapInfo "the coop window is already installed in $dir; this version goes there too"
+    # NSIS reads /D only as the last argument and without quotes, spaces included.
+    $installArgs += "/D=$dir"
+  }
+  $p = Start-Process -FilePath $exe -ArgumentList $installArgs -Wait -PassThru
   if ($p.ExitCode -ne 0) { Coop-BootstrapFail "the window installer exited with code $($p.ExitCode)"; return $false }
   Remove-Item -LiteralPath $exe -Force -ErrorAction SilentlyContinue
   Coop-BootstrapOk 'the coop window is installed: "coop" on the Desktop and in the Start Menu'

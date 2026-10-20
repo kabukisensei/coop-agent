@@ -56,6 +56,15 @@ try {
   if ($code -match '(?i)winget\s+install|&\s*(winget|git)\b') { Ko 'bootstrap.ps1 still runs winget or git clone' }
   else { Ok 'the bootstrap needs neither winget nor git' }
 
+  # An earlier window in another folder: the upgrade goes into that folder (NSIS's
+  # /D, last and unquoted), never a second install beside it, which would hang the
+  # silent installer on the "already installed" question (dev VM, 2026-10-19).
+  $install = ($code -split "`n" | Where-Object { $_ -match 'Start-Process -FilePath \$exe' }) -join "`n"
+  if ($code -notmatch "DisplayName -ne 'coop \(window\)'" -or $code -notmatch 'InstallLocation') { Ko 'bootstrap.ps1 must find the installed window through its Add/Remove entry' }
+  elseif ($code -notmatch '\$installArgs \+= "/D=\$dir"' -or $install -notmatch '-ArgumentList \$installArgs') { Ko 'bootstrap.ps1 must hand an existing install folder to the installer as its last /D argument' $install }
+  elseif ($code -match '"/D=\$dir"\s*,|/D="' ) { Ko 'the /D argument must be last and unquoted' }
+  else { Ok 'an existing window folder is reused through /D, so a second install never waits on NSIS' }
+
   # The one-liner in the docs fetches this file from main at this path.
   $url = 'https://raw.githubusercontent.com/kabukisensei/coop-agent/main/scripts/bootstrap.ps1'
   $text = [System.IO.File]::ReadAllText($script)
