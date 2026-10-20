@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.37.0] — 2026-10-20
+
 ### Removed
 
 - **`coop router-trial`, the Jev classifier trial (master plan J0).** Aaron's
