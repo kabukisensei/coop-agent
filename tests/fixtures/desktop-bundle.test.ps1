@@ -126,7 +126,8 @@ try {
   # --- B. the first coop desktop on a profile without the lock runs the install
   $d = Invoke-Coop $coop @('desktop', $work) $work
   $log = if (Test-Path -LiteralPath $installLog) { [System.IO.File]::ReadAllText($installLog) } else { '' }
-  if ($d.Rc -ne 0 -and ($d.Out + $d.Err) -match 'setup did not finish' -and $log -match 'install\.ps1 --prereqs auto') { Ok 'first coop desktop runs scripts\install.ps1 --prereqs auto first (D1k) and stops when it fails' } else { Ko "first launch (rc=$($d.Rc))" ($d.Out + $d.Err + "`nlog: " + $log) }
+  # A failed setup is a warning that names the launch log, not the end of the launch (F3): the window would open when Pi is there; here no Pi, so the launch stops after it.
+  if ($d.Rc -ne 0 -and ($d.Out + $d.Err) -match 'setup did not finish.*The window opens anyway' -and $log -match 'install\.ps1 --prereqs auto') { Ok 'first coop desktop runs scripts\install.ps1 --prereqs auto first (D1k), warns with the launch log when it fails and goes on' } else { Ko "first launch (rc=$($d.Rc))" ($d.Out + $d.Err + "`nlog: " + $log) }
   if (-not (Test-Path -LiteralPath (Join-Path $agent 'npm\node_modules'))) { Ok 'a failed setup seeds nothing' } else { Ko 'a failed setup must not seed the tree' }
 
   # --- C. the library in process: detection, prefix, seeding --------------------

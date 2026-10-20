@@ -105,6 +105,45 @@ try {
   $defaultMachine = Get-CoopMachineProfileDir
   if ($defaultMachine -and -not $defaultMachine.StartsWith($cdir)) { Ok 'without COOP_MACHINE_DIR the machine folder is outside the profile dir (ProgramData or /etc/coop)' } else { Ko "default machine dir '$defaultMachine'" }
 
+  # --- file tiers (F2): standards place, backups and drafts, the repository ----
+  # Mirrors the F2 block of tests/paths.test.mjs. The machine folder is a fixture.
+  Clear-Vars; $env:COOP_DIR = $cdir; $env:COOP_MACHINE_DIR = $mdir
+  foreach ($n in @('COOP_STANDARDS_ROOT', 'COOP_PROJECT_YML')) { Remove-Item "Env:\$n" -ErrorAction SilentlyContinue }
+  $loc = Get-CoopStandardsLocation
+  if ($loc.Tier -eq 'client') { Same 'no <machine dir>\standards: the standards stay in this client (<profile>\standards)' $loc.Root (Join-Path $cdir '.coop\standards') } else { Ko "standards tier without a machine folder: $($loc.Tier)" }
+  New-Item -ItemType Directory -Force -Path (Join-Path $mdir 'standards') | Out-Null
+  $loc = Get-CoopStandardsLocation
+  if ($loc.Tier -eq 'machine') { Same 'a writable <machine dir>\standards is the machine tier' $loc.Root (Join-Path $mdir 'standards') } else { Ko "standards tier with a writable machine folder: $($loc.Tier)" }
+  Same 'Get-CoopStandardsRoot is the location root' (Get-CoopStandardsRoot) (Join-Path $mdir 'standards')
+  $env:COOP_STANDARDS_ROOT = Join-Path $t 'ovr\canonical'
+  $loc = Get-CoopStandardsLocation
+  if ($loc.Tier -eq 'override') { Same 'COOP_STANDARDS_ROOT names the canonical checkout: the root is its parent' $loc.Root (Join-Path $t 'ovr') } else { Ko "override tier: $($loc.Tier)" }
+  Remove-Item "Env:\COOP_STANDARDS_ROOT" -ErrorAction SilentlyContinue
+  if ((Get-CoopTierLabel 'machine') -eq 'this machine' -and (Get-CoopTierLabel 'client') -eq 'this client') { Ok 'tier labels: this machine / this client' } else { Ko 'tier labels' }
+  # Backups and drafts: <profile>\{backups,drafts}\<repository>, the repository named by the project file, else its folder.
+  $client = Join-Path $t 'client'
+  $repo = Join-Path $client 'acme-sql'
+  New-Item -ItemType Directory -Force -Path (Join-Path $repo '.git'), (Join-Path $repo 'sql\dbo') | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $repo 'sql\dbo\v.sql'), 'SELECT 1')
+  if ((Get-CoopRepositoryName (Join-Path $repo 'sql\dbo\v.sql')) -eq 'acme-sql') { Ok 'repository name: the git root folder' } else { Ko "repository name: $(Get-CoopRepositoryName (Join-Path $repo 'sql\dbo\v.sql'))" }
+  Same 'backups: <profile>\backups\<repository>' (Get-CoopBackupDir (Join-Path $repo 'sql')) (Join-Path $cdir '.coop\backups\acme-sql')
+  Same 'drafts: <profile>\drafts\<repository>' (Get-CoopDraftsDir $repo) (Join-Path $cdir '.coop\drafts\acme-sql')
+  Same 'the repository .coop: <git root>\.coop without a project file' (Get-CoopRepositoryCoopDir (Join-Path $repo 'sql')) (Join-Path $repo '.coop')
+  $homeRepo = Join-Path $client 'acme-coop'
+  New-Item -ItemType Directory -Force -Path (Join-Path $homeRepo '.coop') | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $homeRepo '.coop\project.yml'), "profile:`n  client: Acme`nrepositories:`n  sql:`n    local_path: ../acme-sql`n  home:`n    local_path: .`n")
+  $env:COOP_PROJECT_YML = Join-Path $homeRepo '.coop\project.yml'
+  if ((Get-CoopRepositoryName (Join-Path $repo 'sql')) -eq 'sql') { Ok 'repository name: the project file key for that git root wins' } else { Ko "repository name with a project file: $(Get-CoopRepositoryName (Join-Path $repo 'sql'))" }
+  $null = Set-CoopClientFolderEnv (Join-Path $repo 'sql')
+  Same 'Set-CoopClientFolderEnv exports COOP_BACKUP_DIR' $env:COOP_BACKUP_DIR (Join-Path $cdir '.coop\backups\sql')
+  Same 'Set-CoopClientFolderEnv exports COOP_DRAFTS_DIR' $env:COOP_DRAFTS_DIR (Join-Path $cdir '.coop\drafts\sql')
+  Same 'the repository .coop: the project file folder when a launch resolved one' (Get-CoopRepositoryCoopDir (Join-Path $repo 'sql')) (Join-Path $homeRepo '.coop')
+  Remove-Item "Env:\COOP_PROJECT_YML" -ErrorAction SilentlyContinue
+  foreach ($n in @('COOP_BACKUP_DIR', 'COOP_DRAFTS_DIR')) { Remove-Item "Env:\$n" -ErrorAction SilentlyContinue }
+  $loose = Join-Path $t 'loose'; New-Item -ItemType Directory -Force -Path $loose | Out-Null
+  if ((Get-CoopRepositoryName $loose) -eq 'loose') { Ok 'repository name: a folder in no repository is its own name' } else { Ko "loose folder name: $(Get-CoopRepositoryName $loose)" }
+  Same 'the repository .coop: <folder>\.coop in no repository' (Get-CoopRepositoryCoopDir $loose) (Join-Path $loose '.coop')
+
   # --- no inline duplicates of the chain or the profile paths remain -----------
   $inline = @()
   foreach ($f in @('bin\coop.ps1', 'lib\common.ps1', 'scripts\sync.ps1', 'scripts\doctor.ps1', 'scripts\uninstall.ps1', 'scripts\install.ps1', 'scripts\update.ps1')) {

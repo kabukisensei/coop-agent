@@ -21,12 +21,12 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { bootstrapProcess, bundledCoop, doctorReport, findCoop, folderArgument, launcherPath, packagedPaths, packagedRuntime } from "../desktop/lib/bootstrap.mjs";
+import { bootstrapProcess, bundledCoop, consoleTail, doctorReport, findCoop, folderArgument, launcherPath, packagedPaths, packagedRuntime } from "../desktop/lib/bootstrap.mjs";
 import { consoleProcess } from "../desktop/lib/terminal.mjs";
 import { APP_ID, taskbarDetails } from "../desktop/lib/app-identity.mjs";
 import { loadSettings, saveSettings } from "../desktop/lib/settings.mjs";
 import { DOWNLOAD_HOSTS, NODE_SHIMS_DROPPED, PIPX_SHIM, bundledDownloads, fetchSourcedWheel, hasWheel, sourcedWheelUrl, longestPath, nodeDownload, prefixPackages, pythonToolSources, pythonToolSpecs, prunable, pruneTree, readVersion, runtimeMarker, shellInvocation, shippedPackage, snapshotIncludes, stage, stageEntries, stagePackage } from "../desktop/scripts/build-installer.mjs";
-import { assertDisposableInstallerHost, nsisInvocation, packagePaths } from "../desktop/scripts/verify-installer.mjs";
+import { UPDATE_TASK, assertDisposableInstallerHost, nsisInvocation, packagePaths, pathHasEntry } from "../desktop/scripts/verify-installer.mjs";
 import { verifiedInstaller } from "../desktop/scripts/check-installer-report.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -89,7 +89,7 @@ await check("packagedRuntime: the marker names Node, Pi and the extension tree; 
 });
 
 await check("bootstrapProcess: a console running `coop desktop --app <exe>`, paths only in the environment", () => {
-  const proc = bootstrapProcess({ coop: "C:\\Users\\me\\AppData\\Local\\coop\\bin\\coop.cmd", app: "C:\\Users\\me\\AppData\\Local\\Programs\\coop\\coop.exe", cwd: "C:\\work\\repo", env: { X: "1" }, systemRoot: "C:\\Windows" });
+  const proc = bootstrapProcess({ coop: "C:\\Users\\me\\AppData\\Local\\coop\\bin\\coop.cmd", app: "C:\\Users\\me\\AppData\\Local\\Programs\\coop\\coop.exe", cwd: "C:\\work\\repo", log: "C:\\Users\\me\\.coop\\desktop\\launch.log", env: { X: "1", COOP_BOOT_LOG: "stale" }, systemRoot: "C:\\Windows" });
   assert.equal(proc.command, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
   assert.equal(proc.options.windowsHide, false);
   assert.equal(proc.options.stdio, "ignore");
@@ -100,6 +100,24 @@ await check("bootstrapProcess: a console running `coop desktop --app <exe>`, pat
   const script = decode(proc.args[proc.args.length - 1]);
   assert.match(script, /desktop --app \$env:COOP_BOOT_APP/);
   assert.match(script, /Read-Host/);
+  // The console appends to the launch log named in the environment (a silent launch leaves it behind): its start, PowerShell errors and the exit code around coop desktop; never Start-Transcript (it held the file so coop's own lines could not be appended).
+  assert.equal(proc.options.env.COOP_BOOT_LOG, "C:\\Users\\me\\.coop\\desktop\\launch.log");
+  assert.match(script, /AppendAllText\(\$log[\s\S]*running coop desktop[\s\S]*try \{ & \$env:COOP_BOOT_COOP desktop --app \$env:COOP_BOOT_APP; \$code = \$LASTEXITCODE \} catch \{ Boot-Log[\s\S]*coop desktop exited/);
+  assert.doesNotMatch(script, /Start-Transcript/);
+  assert.equal(bootstrapProcess({ coop: "C:\\c.cmd", app: "C:\\a.exe", cwd: "C:\\w", env: { COOP_BOOT_LOG: "stale" }, systemRoot: "C:\\Windows" }).options.env.COOP_BOOT_LOG, undefined, "no log: no stale COOP_BOOT_LOG reaches the console");
+  assert.throws(() => bootstrapProcess({ coop: "C:\\c.cmd", app: "C:\\a.exe", cwd: "C:\\w", log: "launch.log", systemRoot: "C:\\Windows" }), /log is not an absolute path/);
+  // The error box shows what the console said: coop's lines since this launch's console started, not coop.exe's lines or the transcript's header.
+  const log = [
+    "2026-10-20T19:00:00.000Z coop.exe 0.37.0 [1]: starting coop's setup console (coop desktop) in C:\\dev\\a; its transcript follows",
+    "old line from an earlier launch",
+    "2026-10-20T20:04:56.000Z coop.exe 0.37.0 [2]: starting coop's setup console (coop desktop) in C:\\dev\\a; its transcript follows",
+    "**********************", "Windows PowerShell transcript start", "Start time: 20261020130459", "Username: VM\\coopuser2", "RunAs User: VM\\coopuser2", "PSVersion: 5.1.26100.1", "**********************",
+    "", "First launch of the coop window: setting up this computer", "  - everything comes from this package", "  x setup did not finish: do what the lines above say",
+    "PS>TerminatingError(): \"The pipeline has been stopped.\"", "2026-10-20T20:07:08.000Z coop.exe 0.37.0 [2]: the setup console exited with code 1 after 131s; windows open: 0",
+  ].join("\r\n");
+  assert.deepEqual(consoleTail(log), ["First launch of the coop window: setting up this computer", "  - everything comes from this package", "  x setup did not finish: do what the lines above say"]);
+  assert.deepEqual(consoleTail(log, 1), ["  x setup did not finish: do what the lines above say"]);
+  assert.deepEqual(consoleTail(""), []);
   assert.doesNotMatch(script, /coop\.exe|C:\\/);
   assert.throws(() => bootstrapProcess({ coop: "coop", app: "C:\\a.exe", cwd: "C:\\w", systemRoot: "C:\\Windows" }), /coop is not an absolute path/);
   assert.throws(() => bootstrapProcess({ coop: "C:\\c.cmd", app: "C:\\a.exe", cwd: "C:\\w\n", systemRoot: "C:\\Windows" }), /cwd/);
@@ -155,13 +173,15 @@ await check("settings keep the last folder for the package's picker", () => {
 // --- electron-builder configuration ------------------------------------------
 const config = require("../desktop/installer/electron-builder.cjs");
 
-await check("electron-builder: NSIS per-user, no elevation, data kept, shortcuts, unsigned (plan 11.2 and 11.5)", () => {
+await check("electron-builder: NSIS per-machine with elevation (F3), data kept, shortcuts, unsigned (plan 11.2 and 11.5)", () => {
   assert.equal(config.appId, "com.cooptimize.coop");
   assert.equal(config.productName, "coop");
   assert.equal(config.electronVersion, MANIFEST.desktop.electron);
   assert.deepEqual(config.win.target, [{ target: "nsis", arch: ["x64"] }]);
-  assert.equal(config.nsis.perMachine, false);
-  assert.equal(config.nsis.allowElevation, false);
+  // F3 (Aaron 2026-10-20): one install per machine, one administrator prompt.
+  assert.equal(config.nsis.perMachine, true);
+  assert.equal(config.nsis.allowElevation, true);
+  assert.equal(config.nsis.uninstallDisplayName, "coop");
   assert.equal(config.nsis.oneClick, false);
   assert.equal(config.nsis.deleteAppDataOnUninstall, false);
   assert.equal(config.nsis.runAfterFinish, false);
@@ -179,6 +199,26 @@ await check("electron-builder: NSIS per-user, no elevation, data kept, shortcuts
   // D1k: an upgrade (the new installer runs this uninstaller with --updated) keeps them.
   assert.match(nsh, /\$\{ifNot\} \$\{isUpdated\}[\s\S]*window-uninstall\.ps1[\s\S]*\$\{endIf\}/);
   assert.ok(existsSync(join(ROOT, "scripts", "window-uninstall.ps1")) && snapshotIncludes("scripts/window-uninstall.ps1"));
+  // F3: the machine-wide step from the installer (customInstall) and its undo
+  // (customUnInstall, not on an upgrade), through the snapshot's scripts/machine-install.ps1.
+  assert.match(nsh, /!macro customInstall[\s\S]*\$installMode == "all"[\s\S]*resources\\coop\\scripts\\machine-install\.ps1" -InstallDir "\$INSTDIR"/);
+  assert.match(nsh, /!macro customUnInstall[\s\S]*\$\{ifNot\} \$\{isUpdated\}[\s\S]*machine-install\.ps1" -Remove -InstallDir "\$INSTDIR"/);
+  // F3: this account's older per-user coop is uninstalled first, completely (no --updated), from customInit.
+  assert.match(nsh, /!macro customInit[\s\S]*ReadRegStr \$R2 HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\\$\{APP_GUID\}" "InstallLocation"[\s\S]*ExecWait '"\$R2\\Uninstall coop\.exe" \/S \/currentuser _\?=\$R2'/);
+  assert.doesNotMatch(nsh.split("!macro customInit")[1].split("!macroend")[0], /--updated/);
+  // A v0.37.0 per-user install wrote no InstallLocation: the folder comes from its UninstallString, else the default per-user dir.
+  assert.match(nsh, /!macro customInit[\s\S]*ReadRegStr \$R3 HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\\$\{APP_GUID\}" "UninstallString"[\s\S]*\$\{GetParent\} \$R3 \$R2[\s\S]*\$LOCALAPPDATA\\Programs\\coop\\Uninstall coop\.exe/);
+  assert.match(nsh, /!macro customInstall[\s\S]*WriteRegStr SHCTX "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\\$\{APP_GUID\}" "InstallLocation" "\$INSTDIR"/);
+  // The installer is 32-bit: the scripts run in the 64-bit PowerShell (Sysnative) on a 64-bit Windows, and the log is named.
+  assert.match(nsh, /!macro coopPowerShell OUT[\s\S]*\$\{RunningX64\}[\s\S]*\$WINDIR\\Sysnative\\WindowsPowerShell\\v1\.0\\powershell\.exe/);
+  assert.doesNotMatch(nsh, /nsExec::ExecToLog '"\$SYSDIR/);
+  assert.match(nsh, /MessageBox[^\n]*%ProgramData%\\coop\\logs\\machine-install\.log/);
+  // F3: what the installer says.
+  assert.match(nsh, /!macro customWelcomePage[\s\S]*MUI_WELCOMEPAGE_TEXT "coop installs once for every account on this computer\.\$\\r\$\\n\$\\r\$\\nEach Windows account keeps its own client's sessions, memory and backups under its user folder\.\$\\r\$\\n\$\\r\$\\nUpdates install themselves overnight\./);
+  assert.match(nsh, /!macro customFinishPage[\s\S]*MUI_PAGE_FINISH/);
+  for (const script of ["scripts/machine-install.ps1", "scripts/auto-update.ps1"]) {
+    assert.ok(existsSync(join(ROOT, script)) && snapshotIncludes(script), `${script} ships in the snapshot`);
+  }
   for (const icon of [config.win.icon, config.nsis.installerIcon, config.nsis.uninstallerIcon]) {
     assert.equal(icon, join(ROOT, "themes", "coop.ico"));
     assert.ok(existsSync(icon));
@@ -481,34 +521,65 @@ await check("verify-installer refuses every host but an opted-in GitHub-hosted W
   assert.doesNotThrow(() => assertDisposableInstallerHost({ GITHUB_ACTIONS: "true", RUNNER_ENVIRONMENT: "github-hosted", COOP_INSTALLER_TEST: "1" }, "win32"));
 });
 
-await check("verify-installer: NSIS gets /S /currentuser then /D= or _?= last and unquoted", () => {
-  const install = nsisInvocation("C:\\dist\\coop-window-0.29.0-win-x64.exe", "C:\\Users\\me\\AppData\\Local\\Programs\\coop");
-  assert.deepEqual(install.args, ["/S", "/currentuser", "/D=C:\\Users\\me\\AppData\\Local\\Programs\\coop"]);
+await check("verify-installer: NSIS gets /S /allusers (F3; /currentuser for an older release) then /D= or _?= last and unquoted", () => {
+  const install = nsisInvocation("C:\\dist\\coop-window-0.38.0-win-x64.exe", "C:\\Program Files\\coop");
+  assert.deepEqual(install.args, ["/S", "/allusers", "/D=C:\\Program Files\\coop"]);
   assert.equal(install.options.windowsVerbatimArguments, true);
-  const uninstall = nsisInvocation("C:\\Users\\me\\AppData\\Local\\Programs\\coop\\Uninstall coop.exe", "C:\\Users\\me\\AppData\\Local\\Programs\\coop", { uninstall: true });
-  assert.equal(uninstall.args[2], "_?=C:\\Users\\me\\AppData\\Local\\Programs\\coop");
+  const uninstall = nsisInvocation("C:\\Program Files\\coop\\Uninstall coop.exe", "C:\\Program Files\\coop", { uninstall: true });
+  assert.deepEqual(uninstall.args, ["/S", "/allusers", "_?=C:\\Program Files\\coop"]);
+  const previous = nsisInvocation("C:\\prev\\coop-window-0.37.0-win-x64.exe", "C:\\Users\\me\\AppData\\Local\\Programs\\coop", { mode: "currentuser" });
+  assert.deepEqual(previous.args, ["/S", "/currentuser", "/D=C:\\Users\\me\\AppData\\Local\\Programs\\coop"]);
   assert.throws(() => nsisInvocation("relative.exe", "C:\\x"), /invalid/);
   assert.throws(() => nsisInvocation("C:\\a.exe", "C:\\x\"y"), /invalid/);
+  assert.throws(() => nsisInvocation("C:\\a.exe", "C:\\x", { mode: "everyone" }), /install mode/);
 });
 
-await check("verify-installer: the package's paths follow electron-builder's per-user layout", () => {
-  const env = { LOCALAPPDATA: "C:\\Users\\me\\AppData\\Local", APPDATA: "C:\\Users\\me\\AppData\\Roaming", USERPROFILE: "C:\\Users\\me" };
+await check("verify-installer: the package's paths follow electron-builder's per-machine layout (F3), the per-user one for an older release", () => {
+  const env = { LOCALAPPDATA: "C:\\Users\\me\\AppData\\Local", APPDATA: "C:\\Users\\me\\AppData\\Roaming", USERPROFILE: "C:\\Users\\me", ProgramFiles: "C:\\Program Files", ProgramData: "C:\\ProgramData", Public: "C:\\Users\\Public" };
   const paths = packagePaths(env);
-  assert.equal(paths.exe, join("C:\\Users\\me\\AppData\\Local", "Programs", "coop", "coop.exe"));
-  assert.equal(paths.uninstaller, join("C:\\Users\\me\\AppData\\Local", "Programs", "coop", "Uninstall coop.exe"));
-  // D1m: the package's shortcut is plain "coop"; the first launch adds "coop (terminal)".
-  assert.match(paths.startMenuShortcut, /Start Menu[\\/]Programs[\\/]coop\.lnk$/);
-  assert.match(paths.desktopShortcut, /Desktop[\\/]coop\.lnk$/);
-  assert.match(paths.terminalShortcut, /Desktop[\\/]coop \(terminal\)\.lnk$/);
-  assert.match(paths.startMenuTerminalShortcut, /Start Menu[\\/]Programs[\\/]coop \(terminal\)\.lnk$/);
+  assert.equal(paths.mode, "machine");
+  assert.equal(paths.installDir, join("C:\\Program Files", "coop"));
+  assert.equal(paths.exe, join("C:\\Program Files", "coop", "coop.exe"));
+  assert.equal(paths.uninstaller, join("C:\\Program Files", "coop", "Uninstall coop.exe"));
+  // D1m: the package's shortcut is plain "coop", for every account (F3).
+  assert.equal(paths.startMenuShortcut, join("C:\\ProgramData", "Microsoft", "Windows", "Start Menu", "Programs", "coop.lnk"));
+  assert.equal(paths.desktopShortcut, join("C:\\Users\\Public", "Desktop", "coop.lnk"));
+  // The account's own files (a terminal install's, or an older package's first launch).
+  assert.equal(paths.terminalShortcut, join("C:\\Users\\me", "Desktop", "coop (terminal).lnk"));
+  assert.equal(paths.startMenuTerminalShortcut, join("C:\\Users\\me\\AppData\\Roaming", "Microsoft", "Windows", "Start Menu", "Programs", "coop (terminal).lnk"));
+  assert.equal(paths.launcherLink, join("C:\\Users\\me\\AppData\\Local", "coop", "bin", "coop.cmd"));
+  assert.equal(paths.userDesktopShortcut, join("C:\\Users\\me", "Desktop", "coop.lnk"));
   assert.equal(paths.profileData, join("C:\\Users\\me", ".coop", "desktop", "data"));
   assert.equal(paths.electronAppData, join("C:\\Users\\me\\AppData\\Roaming", "coop"));
+  // F3: the machine-wide pieces scripts/machine-install.ps1 writes.
+  assert.equal(paths.machineShim, join("C:\\Program Files", "coop", "bin", "coop.cmd"));
+  assert.equal(paths.machineBin, join("C:\\Program Files", "coop", "bin"));
+  assert.equal(paths.machineMarker, join("C:\\Program Files", "coop", "resources", "runtime", "machine-install.json"));
+  assert.equal(paths.autoUpdate, join("C:\\Program Files", "coop", "resources", "coop", "scripts", "auto-update.ps1"));
+  assert.equal(paths.updateState, join("C:\\ProgramData", "coop", "update-state.json"));
+  assert.equal(paths.dryRunState, join("C:\\ProgramData", "coop", "update-state.dry-run.json"));
+  assert.equal(paths.updateLog, join("C:\\ProgramData", "coop", "logs", "update.log"));
+  assert.equal(UPDATE_TASK, "coop update");
   // D1d: the runtime and the snapshot beside the asar.
   assert.equal(paths.runtime, join(paths.installDir, "resources", "runtime"));
   assert.equal(paths.nodeExe, join(paths.runtime, "node", "node.exe"));
   assert.equal(paths.piShim, join(paths.runtime, "npm", "pi.cmd"));
   assert.equal(paths.extensions, join(paths.runtime, "extensions"));
   assert.equal(paths.coopPs1, join(paths.installDir, "resources", "coop", "bin", "coop.ps1"));
+  assert.equal(paths.coopCmd, join(paths.installDir, "resources", "coop", "bin", "coop.cmd"));
+  // The 64-bit Program Files wins over a 32-bit process's view.
+  assert.equal(packagePaths({ ...env, ProgramW6432: "C:\\Program Files", ProgramFiles: "C:\\Program Files (x86)" }).installDir, join("C:\\Program Files", "coop"));
+  // The per-user layout of releases before F3 (the upgrade acceptance installs one first).
+  const user = packagePaths(env, "user");
+  assert.equal(user.mode, "user");
+  assert.equal(user.installDir, join("C:\\Users\\me\\AppData\\Local", "Programs", "coop"));
+  assert.equal(user.uninstaller, join(user.installDir, "Uninstall coop.exe"));
+  assert.equal(user.startMenuShortcut, join("C:\\Users\\me\\AppData\\Roaming", "Microsoft", "Windows", "Start Menu", "Programs", "coop.lnk"));
+  assert.equal(user.desktopShortcut, join("C:\\Users\\me", "Desktop", "coop.lnk"));
+  assert.equal(user.launcherLink, paths.launcherLink);
+  // The machine PATH entry test behind the acceptance.
+  assert.ok(pathHasEntry("C:\\Windows;C:\\Program Files\\coop\\bin\\;%SystemRoot%", "c:\\program files\\coop\\bin"));
+  assert.ok(!pathHasEntry("C:\\Windows;C:\\Program Files\\coop;%SystemRoot%", "C:\\Program Files\\coop\\bin"));
 });
 
 await check("check-installer-report: publishes only the exe whose SHA-256 the passing report names (#277)", () => {
@@ -538,6 +609,9 @@ await check("ci.yml: the upgrade acceptance installs the latest release, then th
   assert.match(upgrade, /COOP_INSTALLER_TEST: '1'/);
   assert.match(upgrade, /gh release download --repo "\$env:GITHUB_REPOSITORY" --pattern 'coop-window-\*\.exe' --pattern 'installer-acceptance\.json'/);
   assert.match(upgrade, /run: node desktop\/scripts\/verify-upgrade\.mjs --previous /);
+  // F3: the acceptance runs auto-update.ps1's dry run against api.github.com; the token keeps the runner off the rate limit.
+  const installerJob = jobs.find((job) => job.startsWith("installer:"));
+  assert.match(installerJob, /GH_TOKEN: \$\{\{ github\.token \}\}\s+run: node desktop\/scripts\/verify-installer\.mjs/);
   assert.match(upgrade, /run: node desktop\/scripts\/verify-launch\.mjs /, "the shortcut is double-clicked and a window must open");
   assert.match(gate, /needs: \[[^\]]*\binstaller-upgrade\b/, "the gate needs the upgrade job");
   // verify-launch.mjs finds the picker by its window title; the page's <title> replaces the BrowserWindow one.

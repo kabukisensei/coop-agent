@@ -87,8 +87,16 @@ partial, or connected project without requiring the user to edit YAML.
    blast radius, rollback). For single-edit tasks, still write a short PLAN.
    **Do not edit anything until the user approves the slice or plan.** That approval
    covers the complete stated slice; do not seek approval again at its internal steps.
-5. **Back up.** Create a timestamped backup of every file you will change, under
-   `.backups/...` using `backup.timestamp_format` from the contract.
+5. **Back up.** Copy every file you will change to this client's backups folder
+   before you touch it: `COOP_BACKUP_DIR` (the launcher sets it to
+   `%USERPROFILE%\.coop\backups\<repository>\`), keeping the file's path inside the
+   repository and the contract's `backup.timestamp_format` and `naming_pattern`
+   (`<path>.<timestamp>.bak`). Never write a backup inside the repository. Name the
+   copy in your reply as `Backup (this client): <path>`.
+   **Drafts.** A file you write for review that is not an edit of a repository
+   file (a draft `.sql`, a proposed script) goes in this client's drafts folder,
+   `COOP_DRAFTS_DIR` (`%USERPROFILE%\.coop\drafts\<repository>\`), and the reply names
+   it as `Draft (this client): <path>`. Writes to both folders never need approval.
 6. **Smallest safe edit.** Make the minimal change that satisfies the request.
    Lay out any T-SQL you write, or are asked to reformat, with the `sql-formatting`
    skill (the Cooptimize layout); leave unrelated lines as they are.

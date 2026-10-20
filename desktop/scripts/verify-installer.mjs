@@ -1,17 +1,23 @@
 #!/usr/bin/env node
-// Installer acceptance for the coop window package (master plan D1c, D1d):
-// install the built NSIS installer silently as the current user, check the
-// Add/Remove entry and the shortcuts, run `coop.exe --doctor`, check the
-// bundled runtime (the pinned Node answers, Pi and every extension are at
-// their pins, the lock is the shipped one) and the coop snapshot (its
-// `coop version` runs the bundled Pi), uninstall silently and check nothing of
-// the package is left while the profile is untouched.
+// Installer acceptance for the coop window package (master plan D1c, D1d, F3):
+// install the built NSIS installer silently for every account (/S /allusers,
+// the runner is an administrator), check the Add/Remove entry (HKLM), the
+// all-users shortcuts, the machine-wide pieces scripts/machine-install.ps1
+// wrote (the `coop` command for every account on the machine PATH, the
+// machine marker, the "coop update" scheduled task) and that the shim runs
+// the bundled coop, run scripts/auto-update.ps1 as a dry run and read its
+// state, run `coop.exe --doctor`, check the bundled runtime (the pinned Node
+// answers, Pi and every extension are at their pins, the lock is the shipped
+// one) and the coop snapshot (its `coop version` runs the bundled Pi),
+// uninstall silently and check nothing of the package, the shim, the PATH
+// entry or the task is left while the profile is untouched.
 //
-// It MUTATES the machine it runs on (an install, registry entries, shortcuts),
-// so it runs only on a disposable GitHub-hosted Windows runner that opted in
-// with COOP_INSTALLER_TEST=1 (salvaged from the September branch's
-// assertDisposableInstallerHost); anywhere else it refuses. The CI job
-// `installer (Windows)` runs it after desktop/scripts/build-installer.mjs.
+// It MUTATES the machine it runs on (an install, registry entries, the machine
+// PATH, a scheduled task, shortcuts), so it runs only on a disposable
+// GitHub-hosted Windows runner that opted in with COOP_INSTALLER_TEST=1
+// (salvaged from the September branch's assertDisposableInstallerHost);
+// anywhere else it refuses. The CI job `installer (Windows)` runs it after
+// desktop/scripts/build-installer.mjs.
 //
 //   node desktop/scripts/verify-installer.mjs [--dist <dir>] [--output <report.json>]
 import { spawn } from "node:child_process";
@@ -22,10 +28,14 @@ import { fileURLToPath } from "node:url";
 import { NODE_SHIMS_DROPPED, bundledDownloads, hasWheel, longestPath } from "./build-installer.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const PRODUCT = "coop (window)";
+// F3: the Add/Remove entry is plain "coop" (electron-builder nsis.uninstallDisplayName);
+// releases before it were "coop (window)".
+const PRODUCT = "coop";
 // D1m: the package's own shortcut is plain "coop" (electron-builder nsis.shortcutName);
-// the first launch adds "coop (terminal)" beside it.
+// a per-user first launch used to add "coop (terminal)" beside it.
 const SHORTCUT = "coop";
+// F3: the scheduled task scripts/machine-install.ps1 registers.
+export const UPDATE_TASK = "coop update";
 
 export function assertDisposableInstallerHost(env = process.env, platform = process.platform) {
   if (platform !== "win32") throw new Error("installer acceptance runs on Windows only");
@@ -34,31 +44,59 @@ export function assertDisposableInstallerHost(env = process.env, platform = proc
   }
 }
 
-/** NSIS: `/S /currentuser`, then `/D=` (install) or `_?=` (uninstall) last and unquoted, as NSIS requires. */
-export function nsisInvocation(executable, directory, { uninstall = false } = {}) {
+/**
+ * NSIS: `/S`, the install mode (`/allusers`, the package's own since F3, or
+ * `/currentuser` for a release before it), then `/D=` (install) or `_?=`
+ * (uninstall) last and unquoted, as NSIS requires.
+ */
+export function nsisInvocation(executable, directory, { uninstall = false, mode = "allusers" } = {}) {
   for (const path of [executable, directory]) {
     if (typeof path !== "string" || !win32.isAbsolute(path) || /["\0-\x1f]/.test(path)) throw new Error(`NSIS path is invalid: ${path}`);
   }
+  if (mode !== "allusers" && mode !== "currentuser") throw new Error(`NSIS install mode is invalid: ${mode}`);
   return {
     command: executable,
-    args: ["/S", "/currentuser", `${uninstall ? "_?=" : "/D="}${directory}`],
+    args: ["/S", `/${mode}`, `${uninstall ? "_?=" : "/D="}${directory}`],
     options: { shell: false, windowsVerbatimArguments: true, windowsHide: true },
   };
 }
 
-/** The places the package touches (electron-builder's per-user NSIS layout). */
-export function packagePaths(env = process.env) {
-  const installDir = join(env.LOCALAPPDATA, "Programs", "coop");
+function pick(env, name) {
+  return env[name] || env[name.toUpperCase()] || "";
+}
+
+/**
+ * The places the package touches: electron-builder's per-machine NSIS layout
+ * (F3: %ProgramFiles%\coop, all-users shortcuts, HKLM) plus the machine-wide
+ * pieces scripts/machine-install.ps1 adds; mode "user" gives the per-user
+ * layout of the releases before F3 (%LOCALAPPDATA%\Programs\coop, this
+ * account's shortcuts), which the upgrade acceptance installs first. The
+ * per-account files (the `coop` link and the shortcuts a terminal install or
+ * an older package's first launch wrote) are the same in both modes.
+ */
+export function packagePaths(env = process.env, mode = "machine") {
+  const machine = mode === "machine";
+  const programFiles = pick(env, "ProgramW6432") || pick(env, "ProgramFiles");
+  const programData = pick(env, "ProgramData");
+  const publicDir = pick(env, "Public") || join(pick(env, "SystemDrive") || "C:", "Users", "Public");
+  const installDir = machine ? join(programFiles, "coop") : join(env.LOCALAPPDATA, "Programs", "coop");
+  const programs = machine ? join(programData, "Microsoft", "Windows", "Start Menu", "Programs") : join(env.APPDATA, "Microsoft", "Windows", "Start Menu", "Programs");
+  const desktop = machine ? join(publicDir, "Desktop") : join(env.USERPROFILE, "Desktop");
   const runtime = join(installDir, "resources", "runtime");
+  const machineDir = join(programData, "coop");
   return {
+    mode,
     installDir,
     exe: join(installDir, "coop.exe"),
-    // The package's first launch writes these (scripts/install.ps1 in bundled
-    // mode); the uninstaller removes them when they point into installDir.
-    // The package's own "coop" shortcut is the exe's; the launch adds "coop (terminal)".
+    // What a terminal install, or an older package's first launch, writes for
+    // this account (scripts/install.ps1); the uninstaller removes the package's
+    // own when they point into installDir. The package's own "coop" shortcut
+    // is the exe's; a per-user launch added "coop (terminal)".
     launcherLink: join(env.LOCALAPPDATA, "coop", "bin", "coop.cmd"),
     terminalShortcut: join(env.USERPROFILE, "Desktop", "coop (terminal).lnk"),
     startMenuTerminalShortcut: join(env.APPDATA, "Microsoft", "Windows", "Start Menu", "Programs", "coop (terminal).lnk"),
+    userDesktopShortcut: join(env.USERPROFILE, "Desktop", `${SHORTCUT}.lnk`),
+    userStartMenuShortcut: join(env.APPDATA, "Microsoft", "Windows", "Start Menu", "Programs", `${SHORTCUT}.lnk`),
     uninstaller: join(installDir, "Uninstall coop.exe"),
     // D1d: the bundled runtime and the coop snapshot beside the asar.
     runtime,
@@ -69,8 +107,19 @@ export function packagePaths(env = process.env) {
     piShim: join(runtime, "npm", "pi.cmd"),
     extensions: join(runtime, "extensions"),
     coopPs1: join(installDir, "resources", "coop", "bin", "coop.ps1"),
-    startMenuShortcut: join(env.APPDATA, "Microsoft", "Windows", "Start Menu", "Programs", `${SHORTCUT}.lnk`),
-    desktopShortcut: join(env.USERPROFILE, "Desktop", `${SHORTCUT}.lnk`),
+    coopCmd: join(installDir, "resources", "coop", "bin", "coop.cmd"),
+    startMenuShortcut: join(programs, `${SHORTCUT}.lnk`),
+    desktopShortcut: join(desktop, `${SHORTCUT}.lnk`),
+    // F3: the machine-wide pieces (scripts/machine-install.ps1).
+    machineBin: join(installDir, "bin"),
+    machineShim: join(installDir, "bin", "coop.cmd"),
+    machineMarker: join(runtime, "machine-install.json"),
+    autoUpdate: join(installDir, "resources", "coop", "scripts", "auto-update.ps1"),
+    machineDir,
+    updateState: join(machineDir, "update-state.json"),
+    // What a dry run writes instead (never the live state, which every launch reads).
+    dryRunState: join(machineDir, "update-state.dry-run.json"),
+    updateLog: join(machineDir, "logs", "update.log"),
     // Electron's default appData folder for the product; the window keeps its
     // data under the coop profile instead, so this must never appear.
     electronAppData: join(env.APPDATA, "coop"),
@@ -101,25 +150,50 @@ export function runOwned(command, args, options = {}, timeoutMs = 180000) {
   });
 }
 
+function powershellExe() {
+  return win32.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+}
+
+/** Run Windows PowerShell 5.1 with a command; values travel in the environment. */
+export async function ps(command, env = {}, timeoutMs = 60000) {
+  return (await runOwned(powershellExe(), ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command], { windowsHide: true, env: { ...process.env, ...env } }, timeoutMs)).trim();
+}
+
 const REGISTRY = `
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 $paths = @('HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*', 'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*', 'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*')
-$items = @(Get-ItemProperty -Path $paths -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like 'coop (window)*' } | Select-Object DisplayName, DisplayVersion, UninstallString, InstallLocation)
+$items = @(Get-ItemProperty -Path $paths -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -eq 'coop' -or $_.DisplayName -like 'coop (window)*' } | Select-Object DisplayName, DisplayVersion, UninstallString, InstallLocation, @{ Name = 'Hive'; Expression = { if ($_.PSPath -like '*HKEY_CURRENT_USER*') { 'HKCU' } else { 'HKLM' } } })
 ConvertTo-Json -InputObject @($items) -Depth 3 -Compress
 `;
 
+/** The package's Add/Remove entries, with the hive each one lives in. */
 export async function registryEntries() {
-  const powershell = win32.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-  const out = await runOwned(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", REGISTRY], { windowsHide: true }, 60000);
+  const out = await ps(REGISTRY);
   const parsed = JSON.parse(out.trim() || "[]");
   return Array.isArray(parsed) ? parsed : [parsed];
 }
 
+/** The raw machine PATH (HKLM, %VAR% tokens unexpanded). */
+export async function machinePath() {
+  return ps("[Console]::Out.Write([string](Get-ItemProperty -LiteralPath 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment').Path)");
+}
+export function pathHasEntry(pathValue, entry) {
+  const needle = entry.replace(/[\\/]+$/, "").toLowerCase();
+  return pathValue.split(";").some((e) => e.trim().replace(/[\\/]+$/, "").toLowerCase() === needle);
+}
+
+/** The scheduled task's XML (schtasks /Query /XML), or "" when it is not registered. */
+export async function scheduledTaskXml(name = UPDATE_TASK) {
+  try {
+    return await runOwned("schtasks.exe", ["/Query", "/TN", name, "/XML"], { windowsHide: true }, 60000);
+  } catch { return ""; }
+}
+
 /** Write a "coop (terminal)" shortcut the way scripts/install.ps1 does (powershell.exe -File <launcher>). */
 export async function writeTerminalShortcut(file, launcher) {
-  const powershell = win32.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const powershell = powershellExe();
   const script = `$ws = New-Object -ComObject WScript.Shell; $sc = $ws.CreateShortcut($env:COOP_LNK); $sc.TargetPath = '${powershell.replace(/'/g, "''")}'; $sc.Arguments = ('-NoLogo -NoProfile -ExecutionPolicy Bypass -File "' + $env:COOP_LAUNCHER + '"'); $sc.Save()`;
-  await runOwned(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { windowsHide: true, env: { ...process.env, COOP_LNK: file, COOP_LAUNCHER: launcher } }, 60000);
+  await ps(script, { COOP_LNK: file, COOP_LAUNCHER: launcher });
   if (!existsSync(file)) throw new Error(`could not write ${file}`);
 }
 
@@ -142,17 +216,21 @@ async function main(argv) {
   const version = readFileSync(join(ROOT, "VERSION"), "utf8").trim();
   const manifest = JSON.parse(readFileSync(join(ROOT, "config", "release-manifest.json"), "utf8"));
   const lockSha256 = sha256(join(ROOT, "config", "extensions-lock.json"));
-  const powershell = win32.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const powershell = powershellExe();
   const paths = packagePaths();
+  const userPaths = packagePaths(process.env, "user");
   const report = { ok: false, installer: installers[0], installerSha256: sha256(installer), version, steps: [] };
   const step = (name, detail) => { report.steps.push({ name, ...detail }); console.log(`  ✓ ${name}${detail && detail.note ? `: ${detail.note}` : ""}`); };
 
   if ((await registryEntries()).length) throw new Error(`${PRODUCT} is already registered on this runner`);
-  if (existsSync(paths.installDir)) throw new Error(`${paths.installDir} already exists on this runner`);
-  if (existsSync(paths.electronAppData)) throw new Error(`${paths.electronAppData} already exists on this runner`);
-  for (const file of [paths.launcherLink, paths.terminalShortcut, paths.startMenuTerminalShortcut]) {
+  for (const dir of [paths.installDir, userPaths.installDir, paths.electronAppData]) {
+    if (existsSync(dir)) throw new Error(`${dir} already exists on this runner`);
+  }
+  for (const file of [paths.launcherLink, paths.terminalShortcut, paths.startMenuTerminalShortcut, paths.updateState, paths.dryRunState]) {
     if (existsSync(file)) throw new Error(`${file} already exists on this runner`);
   }
+  if (pathHasEntry(await machinePath(), paths.machineBin)) throw new Error(`${paths.machineBin} is already on this runner's machine PATH`);
+  if (await scheduledTaskXml()) throw new Error(`the scheduled task "${UPDATE_TASK}" already exists on this runner`);
   // The profile's window data: a sentinel that must survive install, doctor and uninstall.
   mkdirSync(paths.profileData, { recursive: true });
   const sentinelFile = join(paths.profileData, "installer-acceptance-sentinel.txt");
@@ -167,19 +245,61 @@ async function main(argv) {
     installed = true;
     const installSeconds = Math.round((Date.now() - installStarted) / 1000);
     if (!existsSync(paths.exe) || !existsSync(paths.uninstaller)) throw new Error(`install left no ${paths.exe} or uninstaller`);
-    step("silent per-user install", { note: `${paths.installDir} (${installSeconds}s)`, seconds: installSeconds });
+    if (existsSync(userPaths.installDir)) throw new Error(`a per-machine install also wrote ${userPaths.installDir}`);
+    step("silent per-machine install (/S /allusers)", { note: `${paths.installDir} (${installSeconds}s)`, seconds: installSeconds });
 
     const entries = await registryEntries();
-    if (entries.length !== 1) throw new Error(`expected one Add/Remove entry for ${PRODUCT}, found ${entries.length}`);
+    if (entries.length !== 1) throw new Error(`expected one Add/Remove entry for ${PRODUCT}, found ${entries.length}: ${JSON.stringify(entries)}`);
     const entry = entries[0];
+    if (entry.Hive !== "HKLM") throw new Error(`the Add/Remove entry is in ${entry.Hive}, not HKLM (this machine)`);
+    if (entry.DisplayName !== PRODUCT) throw new Error(`the Add/Remove entry is "${entry.DisplayName}", not "${PRODUCT}"`);
     if (entry.DisplayVersion !== version) throw new Error(`Add/Remove shows version ${entry.DisplayVersion}, built ${version}`);
     if (!String(entry.UninstallString || "").toLowerCase().includes(paths.uninstaller.toLowerCase())) throw new Error(`Add/Remove uninstall string is ${entry.UninstallString}`);
-    step("Add/Remove Programs entry", { note: `${entry.DisplayName} ${entry.DisplayVersion}` });
+    step("Add/Remove Programs entry (HKLM, this machine)", { note: `${entry.DisplayName} ${entry.DisplayVersion}` });
 
-    for (const [name, file] of [["Start Menu", paths.startMenuShortcut], ["Desktop", paths.desktopShortcut]]) {
+    for (const [name, file] of [["all-users Start Menu", paths.startMenuShortcut], ["Public Desktop", paths.desktopShortcut]]) {
       if (!existsSync(file)) throw new Error(`${name} shortcut missing: ${file}`);
     }
-    step("Start Menu and Desktop shortcuts", { note: SHORTCUT });
+    for (const file of [paths.userDesktopShortcut, paths.userStartMenuShortcut]) {
+      if (existsSync(file)) throw new Error(`a per-machine install wrote this account's shortcut: ${file}`);
+    }
+    step("Start Menu and Desktop shortcuts for every account", { note: SHORTCUT });
+
+    // F3: the machine-wide pieces scripts/machine-install.ps1 wrote from the installer.
+    if (!existsSync(paths.machineShim)) throw new Error(`no machine shim: ${paths.machineShim}`);
+    const shim = readFileSync(paths.machineShim, "utf8");
+    if (!shim.includes("%LOCALAPPDATA%\\coop\\bin\\coop.cmd") || !shim.toLowerCase().includes(paths.coopCmd.toLowerCase())) throw new Error(`the machine shim does not prefer this account's link and fall back to the package: ${shim}`);
+    if (!existsSync(paths.machineMarker)) throw new Error(`no machine marker: ${paths.machineMarker}`);
+    const marker = JSON.parse(readFileSync(paths.machineMarker, "utf8"));
+    if (marker.schema_version !== 1 || marker.version !== version || String(marker.install_dir || "").toLowerCase() !== paths.installDir.toLowerCase()) throw new Error(`the machine marker is wrong: ${JSON.stringify(marker)}`);
+    const machinePathAfter = await machinePath();
+    if (!pathHasEntry(machinePathAfter, paths.machineBin)) throw new Error(`${paths.machineBin} is not on the machine PATH: ${machinePathAfter}`);
+    step("the coop command for every account: the machine shim, the marker, the machine PATH entry", { note: paths.machineShim });
+
+    const taskXml = await scheduledTaskXml();
+    if (!taskXml) throw new Error(`the scheduled task "${UPDATE_TASK}" is not registered`);
+    if (!taskXml.includes("S-1-5-18") || !taskXml.toLowerCase().includes(paths.autoUpdate.toLowerCase())) throw new Error(`the scheduled task does not run ${paths.autoUpdate} as SYSTEM: ${taskXml.slice(-600)}`);
+    for (const needle of ["<LogonTrigger>", "<CalendarTrigger>", "<Interval>PT1H</Interval>", "<ExecutionTimeLimit>PT30M</ExecutionTimeLimit>", "<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>", "<RunOnlyIfNetworkAvailable>true</RunOnlyIfNetworkAvailable>", "<StartWhenAvailable>true</StartWhenAvailable>"]) {
+      if (!taskXml.includes(needle)) throw new Error(`the scheduled task lacks ${needle}`);
+    }
+    step(`scheduled task "${UPDATE_TASK}" (SYSTEM; daily 03:00 hourly, at logon)`, { note: paths.autoUpdate });
+
+    // The shim is what `coop` resolves to in a new terminal: through cmd.exe it runs the bundled coop.
+    const shimOut = await runOwned(process.env.ComSpec || "cmd.exe", ["/d", "/c", `"${paths.machineShim}" version`], { windowsHide: true, windowsVerbatimArguments: true, cwd: paths.machineDir }, 180000);
+    const shimLine = shimOut.split(/\r?\n/).find((line) => /^coop \d/.test(line.trim())) || "";
+    if (!shimLine.includes(`coop ${version}`)) throw new Error(`the machine shim's \`coop version\` printed: ${shimOut.trim().slice(-300)}`);
+    step("the machine shim runs the bundled coop", { note: shimLine.trim() });
+
+    // The update task's script, as a dry run: it checks github.com, installs
+    // nothing and records the state every account's launch reads.
+    const dryOut = await runOwned(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", paths.autoUpdate, "-DryRun"], { windowsHide: true, cwd: paths.machineDir }, 180000);
+    if (!existsSync(paths.dryRunState)) throw new Error(`auto-update.ps1 -DryRun wrote no ${paths.dryRunState}: ${dryOut.trim().slice(-300)}`);
+    if (existsSync(paths.updateState)) throw new Error(`auto-update.ps1 -DryRun wrote the live ${paths.updateState} (every launch would announce its result)`);
+    const state = JSON.parse(readFileSync(paths.dryRunState, "utf8"));
+    if (state.schema_version !== 1 || state.installed_version !== version || !state.last_run) throw new Error(`the update state is wrong: ${JSON.stringify(state)}`);
+    if (!/^(up to date|dry run: would install v\d|waiting: coop is open)/.test(String(state.last_result))) throw new Error(`auto-update.ps1 -DryRun recorded: ${state.last_result}`);
+    if (!existsSync(paths.updateLog)) throw new Error(`auto-update.ps1 wrote no ${paths.updateLog}`);
+    step("auto-update.ps1 dry run records its own state file (not the live one) and the log", { note: `${state.last_result} (newest ${state.latest_version})`, updateState: state });
 
     const doctorOut = await runOwned(paths.exe, ["--doctor"], { windowsHide: true, cwd: paths.installDir }, 60000);
     const doctorLine = doctorOut.trim().split(/\r?\n/).filter(Boolean).pop() || "";
@@ -212,8 +332,8 @@ async function main(argv) {
     // The Node zip's npm.ps1 answered `npm prefix -g` with 'Unknown command'
     // (D1d VM check): PowerShell must resolve `& npm` to the bundled npm.cmd,
     // with the bundled Node first on PATH as lib/common.ps1 puts it.
-    for (const shim of NODE_SHIMS_DROPPED) {
-      if (existsSync(join(paths.nodeDir, shim))) throw new Error(`the bundled Node still carries ${shim}`);
+    for (const shimFile of NODE_SHIMS_DROPPED) {
+      if (existsSync(join(paths.nodeDir, shimFile))) throw new Error(`the bundled Node still carries ${shimFile}`);
     }
     const npmScript = "$env:PATH = $env:COOP_NODE_DIR + ';' + $env:PATH; $env:npm_config_prefix = $env:COOP_NPM_PREFIX; & npm prefix -g";
     const npmOut = (await runOwned(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", npmScript], { windowsHide: true, env: { ...process.env, COOP_NODE_DIR: paths.nodeDir, COOP_NPM_PREFIX: paths.npmPrefix } }, 120000)).trim();
@@ -241,10 +361,11 @@ async function main(argv) {
     }
     step("bundled Git, Python with pipx, the Azure CLI, the Python tool wheels and the ODBC installers", { note: `${gitOut}; ${pyOut}; pipx ${pipxOut}; az ${manifest.desktop.azure_cli.version}; ${wheels.length} wheel(s)` });
 
-    // Every bundled file must fit Windows' 260-character path limit in a
-    // teammate's profile: the runner's user name is short, so measure against
-    // the per-user default C:\Users\<name>\AppData\Local\Programs\coop\resources\
-    // with a 20-character name (the longest a Windows account name can be).
+    // Every bundled file must fit Windows' 260-character path limit. The
+    // machine install's C:\Program Files\coop\resources\ is short; measure
+    // against the longer per-user default an older release used, with a
+    // 20-character name (the longest a Windows account name can be), so a
+    // release never grows a path a per-user install could not hold either.
     const longest = longestPath(join(paths.installDir, "resources"));
     const worst = "C:\\Users\\".length + 20 + "\\AppData\\Local\\Programs\\coop\\resources\\".length + longest.length;
     if (worst >= 260) throw new Error(`the package's longest path is ${longest.length} characters under resources (${longest.path}): ${worst} with a 20-character user name, over Windows' limit`);
@@ -259,20 +380,26 @@ async function main(argv) {
     if (!coopLine.includes(`coop ${version}`) || !piLine.includes(manifest.pi.version)) throw new Error(`bundled coop version printed: ${versionOut.trim().slice(-300)}`);
     step("bundled coop.ps1 version runs the bundled Pi", { note: `${coopLine.trim()}; ${piLine.trim()}` });
 
+    // The snapshot knows it is this machine's install (lib/common.ps1), so a
+    // first launch links nothing for the account and doctor says so.
+    const kindOut = await ps(". (Join-Path $env:COOP_CALL_ROOT 'lib\\common.ps1'); [Console]::Out.Write((Get-CoopInstallKind) + '|' + [string](Test-CoopMachineInstall) + '|' + (Get-CoopInstallDoctorRow).Message)", { COOP_CALL_ROOT: join(paths.installDir, "resources", "coop") }, 120000);
+    if (!kindOut.startsWith("machine|True|install: this machine (")) throw new Error(`the snapshot does not see the machine install: ${kindOut}`);
+    step("the bundled coop knows it is this machine's install", { note: kindOut.split("|").pop() });
+
     if (readFileSync(sentinelFile, "utf8") !== sentinel) throw new Error("install or doctor changed the profile's window data");
     if (existsSync(paths.electronAppData)) throw new Error(`${paths.electronAppData} appeared: the window's data left the coop profile`);
-    step("profile untouched by install and doctor");
+    step("profile untouched by install, doctor and the update dry run");
 
-    // What the package's first launch writes (scripts/install.ps1 in bundled
-    // mode): the `coop` link and "coop (terminal)" shortcut pointing into the
-    // package, which the uninstaller must remove, beside a terminal install's
+    // What an older package's first launch wrote for this account (scripts/install.ps1
+    // in bundled mode): a `coop` link and "coop (terminal)" shortcut pointing into
+    // the package, which the uninstaller must remove, beside a terminal install's
     // own shortcut pointing elsewhere, which it must keep.
     mkdirSync(dirname(paths.launcherLink), { recursive: true });
-    writeFileSync(paths.launcherLink, `@call "${join(paths.installDir, "resources", "coop", "bin", "coop.cmd")}" %*\r\n`, { flag: "wx" });
+    writeFileSync(paths.launcherLink, `@call "${paths.coopCmd}" %*\r\n`, { flag: "wx" });
     await writeTerminalShortcut(paths.terminalShortcut, join(paths.installDir, "resources", "coop", "bin", "coop-desktop.ps1"));
     const foreignLauncher = join(process.env.USERPROFILE, "coop-agent-elsewhere", "bin", "coop-desktop.ps1");
     await writeTerminalShortcut(paths.startMenuTerminalShortcut, foreignLauncher);
-    step("first-launch link and shortcuts written for the uninstall check");
+    step("an account's link and shortcuts written for the uninstall check");
 
     const uninstall = nsisInvocation(paths.uninstaller, paths.installDir, { uninstall: true });
     const uninstallStarted = Date.now();
@@ -286,6 +413,10 @@ async function main(argv) {
     for (const file of [paths.startMenuShortcut, paths.desktopShortcut]) {
       if (existsSync(file)) throw new Error(`uninstall left a shortcut: ${file}`);
     }
+    if (existsSync(paths.machineShim)) throw new Error(`uninstall left the machine shim: ${paths.machineShim}`);
+    const machinePathGone = await machinePath();
+    if (pathHasEntry(machinePathGone, paths.machineBin)) throw new Error(`uninstall left ${paths.machineBin} on the machine PATH`);
+    if (await scheduledTaskXml()) throw new Error(`uninstall left the scheduled task "${UPDATE_TASK}"`);
     if (readFileSync(sentinelFile, "utf8") !== sentinel) throw new Error("uninstall removed or changed the profile's window data");
     if (existsSync(paths.electronAppData)) throw new Error(`${paths.electronAppData} appeared during uninstall`);
     for (const file of [paths.launcherLink, paths.terminalShortcut]) {
@@ -293,7 +424,7 @@ async function main(argv) {
     }
     if (!existsSync(paths.startMenuTerminalShortcut)) throw new Error("uninstall removed a terminal install's own \"coop (terminal)\" shortcut");
     rmSync(paths.startMenuTerminalShortcut, { force: true });
-    step("silent uninstall leaves no package, entry, shortcut, link or first-launch shortcut; profile data and a foreign shortcut kept", { note: `${uninstallSeconds}s`, seconds: uninstallSeconds });
+    step("silent uninstall leaves no package, entry, shortcut, shim, PATH entry, task, link or first-launch shortcut; profile data and a foreign shortcut kept", { note: `${uninstallSeconds}s`, seconds: uninstallSeconds });
     report.ok = true;
   } catch (error) {
     report.error = error.message;
@@ -307,6 +438,8 @@ async function main(argv) {
     }
     throw error;
   } finally {
+    rmSync(paths.updateState, { force: true });
+    rmSync(paths.dryRunState, { force: true });
     if (output) writeFileSync(output, JSON.stringify(report, null, 2) + "\n");
   }
   console.log(JSON.stringify({ ok: report.ok, installer: report.installer, sha256: report.installerSha256, version }));

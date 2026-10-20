@@ -133,7 +133,7 @@ try {
   $priorPiAgentDir = $env:PI_CODING_AGENT_DIR
   $priorNoOnboard = $env:COOP_NO_ONBOARD
   $priorHomeVars = @{}
-  $homeVarNames = @('HOME', 'USERPROFILE', 'COOP_STANDARDS_ROOT', 'COOP_STANDARDS_STATE', 'COOP_STANDARDS_SNAPSHOT_ROOT')
+  $homeVarNames = @('HOME', 'USERPROFILE', 'COOP_MACHINE_DIR', 'COOP_STANDARDS_ROOT', 'COOP_STANDARDS_STATE', 'COOP_STANDARDS_SNAPSHOT_ROOT')
   foreach ($name in $homeVarNames) { $priorHomeVars[$name] = [Environment]::GetEnvironmentVariable($name) }
   if ($extendedLane) { $env:COOP_TEST_EXTENDED = '1' }
   else { Remove-Item Env:\COOP_TEST_EXTENDED -ErrorAction SilentlyContinue }
@@ -168,6 +168,9 @@ try {
   foreach ($name in @('COOP_STANDARDS_ROOT', 'COOP_STANDARDS_STATE', 'COOP_STANDARDS_SNAPSHOT_ROOT')) {
     [Environment]::SetEnvironmentVariable($name, $null)
   }
+  # F2: the machine folder is a sandbox too (`coop sync` creates <machine dir>\standards
+  # when it can, which on a root or elevated box would be the real /etc/coop or ProgramData).
+  $env:COOP_MACHINE_DIR = Join-Path $stub 'machine'
 
   # --- 0b. public onboarding dispatcher supplies the Python subcommand -------
   Head 'onboarding dispatcher contract test'
@@ -629,6 +632,7 @@ print("resume verdict contract OK")
     @{ Name = 'install-prereq-gate';    Lane = 'gate';     Head = 'install prerequisite gate (and the D1k offer: --yes, continue after a passing re-check)' },
     @{ Name = 'bootstrap';              Lane = 'gate';     Head = 'scripts/bootstrap.ps1: one command downloads and runs the window installer (D1k; dry run, Windows-only guard, no winget)' },
     @{ Name = 'bundled-tools';          Lane = 'gate';     Head = 'the window package''s bundled Git, Python, pipx, Azure CLI, wheels and ODBC (D1k)' },
+    @{ Name = 'machine-install';        Lane = 'gate';     Head = 'one install per machine (F3): machine-install.ps1 and auto-update.ps1 pure parts, the dry run, the lib helpers, coop update and doctor on a machine install' },
     @{ Name = 'azcache';                Lane = 'gate';     Head = 'Azure sign-in preflight (tenant chain, token check, automatic sign-in, .az-ok cache)' },
     @{ Name = 'doctor-warehouse';       Lane = 'gate';     Head = 'doctor.ps1 Warehouse tenant and fabric MCP rows' },
     @{ Name = 'doctor-pipx-shadow';     Lane = 'gate';     Head = 'doctor.ps1 pipx PATH-shadow rows (foreign coop-data-doc on PATH vs. stale venv)' },
@@ -653,6 +657,7 @@ print("resume verdict contract OK")
     @{ Name = 'mcp-retarget';           Lane = 'gate';     Head = 'managed Warehouse MCP entry follows the launch folder' },
     @{ Name = 'profile-root';           Lane = 'gate';     Head = 'one profile root: COOP_DIR parent of .coop, one agent-dir chain (S3, #220)' },
     @{ Name = 'contract-root';          Lane = 'gate';     Head = 'Get-CoopContractRootProposal: one committed contract at the client Git root (C1)' },
+    @{ Name = 'client-folder';          Lane = 'gate';     Head = 'the client folder record (client.json), the one root rule, Get-CoopClientLine, coop folders (F1)' },
     @{ Name = 'unlock-prod';            Lane = 'gate';     Head = 'coop unlock-prod: the human-only production-write unlock (G1)' },
     @{ Name = 'sync-knowledge';         Lane = 'gate';     Head = 'team knowledge sync (sync-knowledge.ps1; hang cases in the extended lane)' },
     @{ Name = 'teamai';                 Lane = 'gate';     Head = 'coop teamai: isolated TeamAI adapter entry (K1; off by default)' },

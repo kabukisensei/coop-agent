@@ -3,7 +3,7 @@ import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const dist = process.env.COOP_TEST_DIST;
@@ -25,7 +25,8 @@ const {
   proposedSqlTargetKind,
   sqlTargetsBlock,
 } = await import(pathToFileURL(`${dist}/coop-tools.mjs`).href);
-const { findProjectContract } = await import(pathToFileURL(join(REPO_ROOT, "lib", "standards.mjs")).href);
+const { findProjectContract, searchProjectContract } = await import(pathToFileURL(join(REPO_ROOT, "lib", "standards.mjs")).href);
+const { clientRecord, clientRootFor } = await import(pathToFileURL(join(REPO_ROOT, "lib", "client-folder.mjs")).href);
 // The contract module itself, for the C2 mapping helpers the bundle does not re-export.
 const lib = await import(pathToFileURL(join(REPO_ROOT, "lib", "project-contract.mjs")).href);
 
@@ -586,8 +587,8 @@ await t("C1: proposeContractRoot names the client home repository beside several
   assert.match(contractCreatedNote(client), /Share \.coop\/project\.yml with the team .*Open coop at or below /);
 });
 
-await t("the remembered project file (home-project.json) is used from any folder without one above; a contract above still wins", async () => {
-  const client = trackFixture(mkdtempSync(join(tmpdir(), "coop-home-project-")));
+await t("the recorded project file (client.json, F1) is used from any folder without one above; a contract above still wins", async () => {
+  const client = trackFixture(mkdtempSync(join(tmpdir(), "coop-client-folder-")));
   skipIfContaminated(client);
   const profile = join(client, "profile");
   mkdirSync(join(profile, ".coop"), { recursive: true });
@@ -596,17 +597,53 @@ await t("the remembered project file (home-project.json) is used from any folder
   const contract = join(client, "fabric", ".coop", "project.yml");
   writeFileSync(contract, "profile:\n  client: 'Contoso'\n");
   const env = { COOP_DIR: profile };
-  assert.equal(findProjectContract(join(client, "elsewhere"), env), null, "nothing remembered, nothing found");
-  writeFileSync(join(profile, ".coop", "home-project.json"), JSON.stringify({ schema_version: 1, project_file: contract }));
+  const record = (file) => JSON.stringify({ schema_version: 1, client: "Contoso", root: join(client, "fabric"), project_file: file });
+  assert.equal(findProjectContract(join(client, "elsewhere"), env), null, "nothing recorded, nothing found");
+  writeFileSync(join(profile, ".coop", "client.json"), record(contract));
   assert.equal(findProjectContract(join(client, "elsewhere"), env), contract);
+  assert.equal(searchProjectContract(join(client, "elsewhere")), null, "the search alone (what the window's question records) never reads the record");
   mkdirSync(join(client, "elsewhere", ".coop"));
   writeFileSync(join(client, "elsewhere", ".coop", "project.yml"), "profile:\n  client: 'Own'\n");
   assert.equal(findProjectContract(join(client, "elsewhere"), env), join(client, "elsewhere", ".coop", "project.yml"), "a contract above wins");
-  writeFileSync(join(profile, ".coop", "home-project.json"), JSON.stringify({ schema_version: 1, project_file: join(client, "fabric", "notes.yml") }));
+  assert.equal(searchProjectContract(join(client, "elsewhere")), join(client, "elsewhere", ".coop", "project.yml"));
+  writeFileSync(join(profile, ".coop", "client.json"), record(join(client, "fabric", "notes.yml")));
   assert.equal(findProjectContract(client, env) === join(client, "fabric", "notes.yml"), false, "only a .coop/project.yml counts");
+  writeFileSync(join(profile, ".coop", "client.json"), JSON.stringify({ schema_version: 1, client: "", root: client, project_file: "" }));
+  assert.equal(findProjectContract(join(client, "profile"), env), null, "a folder chosen without a project file records none");
   rmSync(contract);
-  writeFileSync(join(profile, ".coop", "home-project.json"), JSON.stringify({ schema_version: 1, project_file: contract }));
-  assert.equal(findProjectContract(join(client, "profile"), env), null, "a remembered file that is gone counts for nothing");
+  writeFileSync(join(profile, ".coop", "client.json"), record(contract));
+  assert.equal(findProjectContract(join(client, "profile"), env), null, "a recorded file that is gone counts for nothing");
+});
+
+await t("F1: an old home-project.json alone is carried over, with the client folder the one rule gives", async () => {
+  const root = trackFixture(mkdtempSync(join(tmpdir(), "coop-client-carry-")));
+  skipIfContaminated(root);
+  const profile = join(root, "profile");
+  mkdirSync(join(profile, ".coop"), { recursive: true });
+  const env = { COOP_DIR: profile };
+  // A home repository beside the repositories its project file lists: the client folder is their parent.
+  const client = join(root, "client");
+  const home = join(client, "contoso-coop", ".coop", "project.yml");
+  mkdirSync(join(client, "contoso-coop", ".coop"), { recursive: true });
+  mkdirSync(join(client, "analytics", ".git"), { recursive: true });
+  writeFileSync(home, "profile:\n  client: 'Contoso Retail'\nrepositories:\n  analytics:\n    local_path: '../analytics'\n");
+  writeFileSync(join(profile, ".coop", "home-project.json"), JSON.stringify({ schema_version: 1, project_file: home }));
+  assert.deepEqual(clientRecord(env), { client: "Contoso Retail", root: client, project_file: home, carried: true, exists: true });
+  assert.equal(findProjectContract(join(root, "elsewhere-none"), env), home, "the carried-over file is used like a recorded one");
+  // A lone repository (nothing listed beside it): the repository is the client folder.
+  const acme = join(root, "solo", "acme", ".coop", "project.yml");
+  mkdirSync(join(root, "solo", "acme", ".coop"), { recursive: true });
+  writeFileSync(acme, "profile:\n  client: \"Acme\"\nrepositories:\n  self:\n    local_path: '.'\n");
+  writeFileSync(join(profile, ".coop", "home-project.json"), JSON.stringify({ schema_version: 1, project_file: acme }));
+  assert.deepEqual(clientRecord(env), { client: "Acme", root: join(root, "solo", "acme"), project_file: acme, carried: true, exists: true });
+  assert.equal(clientRootFor(acme, root), root, "found inside the launch folder: the launch folder");
+  assert.equal(clientRootFor(home, join(client, "analytics")), client, "found beside the launch folder's repository: their parent");
+  // client.json present: the old file is ignored, whatever it says.
+  writeFileSync(join(profile, ".coop", "client.json"), JSON.stringify({ schema_version: 1, client: "", root: root, project_file: "" }));
+  assert.deepEqual(clientRecord(env), { client: "", root, project_file: "", carried: false, exists: true });
+  writeFileSync(join(profile, ".coop", "home-project.json"), "{not json");
+  rmSync(join(profile, ".coop", "client.json"));
+  assert.equal(clientRecord(env).exists, false, "an unreadable old file is no record");
 });
 
 await t("C1: opened in the folder that holds the repositories, the one repository inside it with a contract is used", async () => {
@@ -772,6 +809,7 @@ await t("editing through /setup-project writes a backup and keeps custom setting
   const original = `profile:\n  organization: 'Cooptimize'\n  client: 'Contoso'\n  default_branch: 'main'\nrepositories:\n  app:\n    description: 'App'\n    role: 'generic'\n    local_path: '.'\n    remote_name: 'origin'\n    default_branch: 'main'\ncustom_section:\n  keep: 'yes'\ntools:\n  fabric_cli:\n    enabled: false\n  tabular_editor_cli:\n    enabled: false\n`;
   writeFileSync(contract, original);
   const confirms = [false, false, false, false, true]; // edit repo, add repo, Fabric, TE, write
+  const notes = [];
   const ctx = {
     cwd: root,
     hasUI: true,
@@ -779,12 +817,20 @@ await t("editing through /setup-project writes a backup and keeps custom setting
     ui: {
       input: async (_label, def) => def,
       confirm: async () => confirms.shift() ?? false,
-      notify: () => {},
+      notify: (message) => notes.push(String(message)),
     },
   };
   assert.equal(await runProjectWizard({}, ctx), true);
-  assert.ok(existsSync(`${contract}.bak`));
-  assert.equal(readFileSync(`${contract}.bak`, "utf8"), original);
+  // F2: the backup goes to this client's backups folder (<profile dir>/backups/<repository>/.coop/project.yml.<timestamp>.bak),
+  // never beside the project file, and the notice names it as "Backup (this client): <path>".
+  assert.equal(existsSync(`${contract}.bak`), false, "nothing is written inside the repository");
+  const note = notes.find((m) => m.includes("Backup (this client): "));
+  assert.ok(note, `a backup notice: ${notes.join("\n")}`);
+  const backup = note.slice(note.indexOf("Backup (this client): ") + "Backup (this client): ".length).trim();
+  const { backupDirFor } = await import("../lib/paths.mjs");
+  assert.equal(dirname(backup), join(backupDirFor(contract), ".coop"));
+  assert.match(basename(backup), /^project\.yml\.\d{8}_\d{6}\.bak$/);
+  assert.equal(readFileSync(backup, "utf8"), original);
   assert.match(readFileSync(contract, "utf8"), /custom_section:\n  keep: 'yes'/);
 });
 

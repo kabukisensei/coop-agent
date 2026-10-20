@@ -23,9 +23,9 @@ irm https://raw.githubusercontent.com/kabukisensei/coop-agent/main/scripts/boots
 ```
 
 The installer carries everything coop needs, so nothing else is downloaded and
-winget is not used: see step 6. The first launch asks Windows for administrator
-permission once, for the SQL driver. Paste the same line again to repair a
-half-finished setup. Set `COOP_BOOTSTRAP_NO_LAUNCH=1` first to install without
+winget is not used: see step 6. The installer asks Windows for an administrator
+once and installs for every account, the SQL driver included; no first launch
+asks again. Paste the same line again to repair a half-finished setup. Set `COOP_BOOTSTRAP_NO_LAUNCH=1` first to install without
 opening the window.
 
 Steps 1 to 5 are the terminal-only setup from a Git clone, for maintainers or
@@ -174,16 +174,24 @@ app with four themes. The window installer carries everything: Node, Pi, coop,
 Git, Python with pipx and every coop tool, the Azure CLI, and the ODBC Driver 18
 with the VC++ runtime it needs. It is a large download and works offline.
 
+One administrator runs the installer once per computer. After that every
+account on it has the **coop** icon and the `coop` command, and updates install
+themselves overnight. Each account keeps its own sessions, memory, settings and
+sign-ins under its user folder (`%USERPROFILE%\.coop`).
+
 - **New to coop:** download and run the window installer below; that is the
   whole install. Nothing from step 1 is needed and nothing is fetched from the
-  internet. The first launch asks Windows for administrator permission once, to
-  install the ODBC driver for live SQL; choosing **Yes** accepts Microsoft's
-  license for the driver. Choose **No** and everything else still works; the next
-  launch asks again.
+  internet. The installer's one administrator prompt covers everything,
+  including the ODBC Driver 18 for live SQL (installing it accepts Microsoft's
+  license for the driver); the first launch in each account, a standard
+  user's too, never asks for an administrator.
 - **Already have coop:** run `coop update` in PowerShell, then run the same
   installer. Your sessions, memory, settings and sign-ins stay where they are,
   and `coop` in the terminal keeps working as before. The update comes first
   because both installs share one extension set, which must be the same release.
+- **Already have an older window** (installed for your user only, under
+  `%LOCALAPPDATA%\Programs\coop`): run the new installer. It removes that
+  copy and installs once for the computer; your `~/.coop` stays.
 
 1. Download `coop-window-<version>-win-x64.exe` from the newest release at
    [github.com/kabukisensei/coop-agent/releases/latest](https://github.com/kabukisensei/coop-agent/releases/latest)
@@ -191,28 +199,43 @@ with the VC++ runtime it needs. It is a large download and works offline.
 2. Double-click it. Windows shows **Windows protected your PC** because the
    installer is not signed: click **More info**, then **Run anyway**. That is
    the only time you see it.
-3. Click **Next** and **Install**. No administrator password is asked; it
-   installs for your user only, under `%LOCALAPPDATA%\Programs\coop`.
+3. Click **Next** and **Install**. Windows asks for an administrator once,
+   because coop installs for every account on this computer, under
+   `%ProgramFiles%\coop`.
 4. Double-click the new **coop** icon on your Desktop or Start Menu. It asks
-   which project to open: the folders you opened before, each with its client
-   and branch, or **Browse** to one of the client's repositories (or the client
-   home repository beside them) so the team's `.coop/project.yml` is found.
-   Tick **Open this one next time** and the icon opens straight on it from then
-   on (File > Switch project changes it). The first time, a console runs the same
-   checklist as `coop install` (prerequisites from the package, the coop tools
-   from the package, the ODBC driver, then the Azure and OpenAI sign-ins): follow
-   what it prints, then start the window again if it stopped.
-   After that the console only shows coop's launch checks and closes on its own.
+   once, **Where is this client's code?**: click **Choose folder...** and pick
+   the folder that holds the client's repositories (the home repository with the
+   team's `.coop/project.yml` and the others beside it). coop records it in
+   `~/.coop/client.json`, finds the project file inside it and opens there every
+   time from then on (File > Switch client changes it). One Windows account is
+   one client: its sessions, memory and backups stay in that account. The first
+   time, a console runs the same checklist as `coop install` (prerequisites from
+   the package, the coop tools from the package, your COOP profile with your
+   Windows account's name and the default settings, then the Azure and OpenAI
+   sign-ins), with nothing that needs an administrator and no questions: follow
+   what it prints (`coop onboard` changes the profile any time),
+   then start the window again if it stopped. If no window opens, a message
+   shows the console's last lines and names the launch log
+   (`%USERPROFILE%\.coop\desktop\launch.log`). After that the console only
+   shows coop's launch checks and closes on its own.
 
 With the terminal coop from steps 1 to 5 as well, the window shares your
 `~/.coop` settings, sign-ins and sessions, leaves your `coop` command and the
 "coop (terminal)" icon with the terminal install, and uses its own bundled copy
 of coop.
-Keep both at the same release: `coop update` for the terminal, then the newer
-installer for the window. To remove the window, use **Add or
-remove programs** and pick **coop (window)**; your settings under `~/.coop`
-stay, and so do a terminal install's `coop` command and "coop (terminal)" icon
-(the ones the window wrote for itself go with it). A newer window comes as a newer
-installer: run it over the old one.
+Keep both at the same release: `coop update` for the terminal; the window
+updates itself. To remove the window, use **Add or remove programs** and pick
+**coop** (an administrator confirms); every account's settings under `~/.coop`
+stay, and so do a terminal install's `coop` command and "coop (terminal)" icon.
+
+**Updates install themselves.** A scheduled task named "coop update" checks
+GitHub for the newest release every night at 03:00 (and hourly until it
+succeeds, and when someone signs in) and installs it while no coop window or
+`coop` terminal from the package is open. You never run `coop update` for the
+window: that command only reports when the last check ran and which version is
+installed. The next time you open coop after an update, it prints one line
+saying so, with a link to the release notes; `coop doctor` shows the same on its
+install row and names the log, `%ProgramData%\coop\logs\update.log`, if a
+run failed.
 
 Next: [onboarding](onboarding.md) has a safe first task and the day-to-day commands.

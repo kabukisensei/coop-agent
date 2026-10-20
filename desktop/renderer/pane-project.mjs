@@ -41,6 +41,24 @@ export function initialValues(data) {
   return values;
 }
 
+/**
+ * The three places coop keeps its files (F2), as the Project pane and
+ * `coop doctor` name them: [{ label, path, holds }] from the `coop:folders`
+ * answer ({ machine, client, repository, standards, standardsTier, backups, drafts }).
+ */
+export function folderRows(folders) {
+  const f = folders || {};
+  const tier = f.standardsTier === "machine" ? "this machine" : f.standardsTier === "client" ? "this client" : f.standardsTier || "";
+  return [
+    { label: "this machine", path: f.machine || "", holds: "the program, the standards, your name and preferences" },
+    { label: "this client", path: f.client || "", holds: "sessions, memory, backups, drafts" },
+    { label: "the repository", path: f.repository || "", holds: "the team's project file, client skills and prompts" },
+    { label: "standards", path: f.standards || "", holds: tier ? `(${tier})` : "" },
+    { label: "backups", path: f.backups || "", holds: "(this client)" },
+    { label: "drafts", path: f.drafts || "", holds: "(this client)" },
+  ];
+}
+
 /** What the window sends to save: only the fields the form owns. */
 export function formInput(values) {
   const input = Object.fromEntries(FLAT.map((key) => [key, String(values[key] || "")]));
@@ -51,9 +69,19 @@ export function formInput(values) {
 }
 
 export function mountProject(box, options, { coop, newSession }) {
-  const state = { data: null, values: null, dirty: false, kindTouched: false, view: "form", preview: null, team: null };
+  const state = { data: null, values: null, dirty: false, kindTouched: false, view: "form", preview: null, team: null, folders: null };
   const body = el("div", { class: "pane-scroll project-form" });
   box.append(body);
+
+  // F2: the three places coop keeps its files for this folder, at the top of the form.
+  function foldersBlock(folders) {
+    if (!folders) return null;
+    return el("dl", { class: "folder-rows", "aria-label": "Where coop keeps its files" },
+      ...folderRows(folders).flatMap((row) => [
+        el("dt", { text: row.label }),
+        el("dd", {}, el("code", { text: row.path }), el("span", { class: "hint", text: ` ${row.holds}` })),
+      ]));
+  }
 
   // --- Fields -------------------------------------------------------------
 
@@ -168,13 +196,14 @@ export function mountProject(box, options, { coop, newSession }) {
       row({ field: "bpaRulesPath", label: "BPA rules file path", hint: "Optional.", control: text(values, "bpaRulesPath") }));
     const hint = platformHint(data.platform);
     const repos = values.repositories;
-    fill(body, 
+    fill(body,
+      foldersBlock(state.folders),
       el("div", { class: "pane-summary" },
         el("span", { text: data.exists ? "Editing " : "No contract yet: saving creates " }),
         el("code", { text: data.path })),
       data.exists ? null : el("p", { class: "hint", text: data.locationNote || "" }),
       el("div", { class: "team-slot" }, teamLine()),
-      el("p", { class: "hint", text: "The same questions as /setup-project. Review shows the change before anything is written; the old file is backed up." }),
+      el("p", { class: "hint", text: "The same questions as /setup-project. Review shows the change before anything is written; the old file is backed up in this client's backups folder." }),
       data.profileMissing ? section("You",
         row({ field: "profileName", label: "What should coop call you?", hint: "Your local profile, not the project. Leave blank to skip.", control: text(values, "profileName") })) : null,
       section("Project",
@@ -336,7 +365,7 @@ export function mountProject(box, options, { coop, newSession }) {
     const result = await coop.projectGet();
     button.disabled = false;
     if (!result.success || !result.data.ok) { toast((result.data && result.data.reason) || result.error || "Could not get the team's project file.", "error", { timeout: 0 }); return; }
-    toast(result.data.method === "pull" ? "Got the team's project file (fast-forward pull)." : "Got the team's project file (only .coop/project.yml changed; the old file is backed up).", "success");
+    toast(result.data.method === "pull" ? "Got the team's project file (fast-forward pull)." : `Got the team's project file (only .coop/project.yml changed). Backup (this client): ${result.data.backup || "kept"}`, "success");
     reload(false);
   }
 
@@ -377,6 +406,8 @@ export function mountProject(box, options, { coop, newSession }) {
     fill(body, el("div", { class: "working" }, el("span", { class: "spinner" }), el("span", { text: "Reading .coop/project.yml" })));
     const result = await coop.projectLoad();
     if (!result.success) { fill(body, el("p", { class: "pane-empty", text: result.error || "Could not read the project contract." })); return; }
+    // F2: the three places (machine, client, repository) sit above the form.
+    try { const folders = await coop.folders(); state.folders = folders && folders.success ? folders.data : null; } catch { state.folders = null; }
     state.data = result.data;
     state.values = initialValues(result.data);
     state.dirty = false;

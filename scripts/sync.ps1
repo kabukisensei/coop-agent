@@ -169,6 +169,15 @@ if ($teamaiPy) {
 }
 
 # --- 5c. Canonical standards (forced, bounded, fail-soft) ---------------------
+# F2: the standards live once on this machine (<machine dir>\standards) when that
+# folder can be made; without elevation the attempt fails quietly and this user's
+# profile folder keeps them. No prompt, no warning: both places work.
+$standardsLoc = Get-CoopStandardsLocation
+if ($standardsLoc.Tier -eq 'client') {
+  try { New-Item -ItemType Directory -Force -Path (Join-Path (Get-CoopMachineProfileDir) 'standards') -ErrorAction Stop | Out-Null } catch { }
+  $standardsLoc = Get-CoopStandardsLocation
+}
+Coop-Info "standards folder ($(Get-CoopTierLabel $standardsLoc.Tier)): $($standardsLoc.Root)"
 if (Test-Have 'node') {
   $standardsCli = Join-Path $script:CoopRoot 'lib\standards-cli.mjs'
   try {

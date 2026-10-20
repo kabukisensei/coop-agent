@@ -1738,7 +1738,7 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
     if (home.created || home.initialized) notify(ctx, `Created the client home repository ${root}${home.initialized ? " (git init)" : ""}. Add its remote (for example cooptimize/${basename(root)}) when the team should clone it.`, "info");
   }
   const backup = writeProjectContract(path, output);
-  notify(ctx, `Project contract ${existing ? "updated" : "created"}: ${path}${backup ? ` (backup: ${backup})` : ""}`, "info");
+  notify(ctx, `Project contract ${existing ? "updated" : "created"}: ${path}${backup ? `. Backup (this client): ${backup}` : ""}`, "info");
   if (!existing) notify(ctx, contractCreatedNote(root), "info");
   notify(ctx, "Run /new or restart Coop before governed work so the guardrails load the updated contract.", "info");
   await offerShare(ctx, path);
@@ -1767,7 +1767,7 @@ async function offerTeamContract(ctx: any): Promise<boolean> {
     if (!get) return false;
     const result = getTeamContract(repo);
     if (!result.ok) { notify(ctx, `Could not get the team's project file: ${result.reason}`, "warning"); return false; }
-    notify(ctx, `Got the team's project file (${result.method === "pull" ? "fast-forward pull" : "only .coop/project.yml changed"}): ${result.path}${result.backup ? ` (backup: ${result.backup})` : ""}`, "info");
+    notify(ctx, `Got the team's project file (${result.method === "pull" ? "fast-forward pull" : "only .coop/project.yml changed"}): ${result.path}${result.backup ? `. Backup (this client): ${result.backup}` : ""}`, "info");
     return true;
   } catch (e: any) {
     notify(ctx, `Could not check origin for the team's project file: ${errMsg(e)}`, "warning");
@@ -3271,7 +3271,7 @@ export default function coopTools(pi: ExtensionAPI) {
         }
         const result = getTeamContract(repo);
         if (!result.ok) { notify(ctx, `Could not get the team's project file: ${result.reason}`, "warning"); return; }
-        notify(ctx, `Got the team's project file (${result.method === "pull" ? "fast-forward pull" : "only .coop/project.yml changed"}): ${result.path}${result.backup ? ` (backup: ${result.backup})` : ""}. Run /new so the guardrails use it.`, "info");
+        notify(ctx, `Got the team's project file (${result.method === "pull" ? "fast-forward pull" : "only .coop/project.yml changed"}): ${result.path}${result.backup ? `. Backup (this client): ${result.backup}` : ""}. Run /new so the guardrails use it.`, "info");
       } catch (e: any) {
         notify(ctx, `Get failed: ${errMsg(e)}`, "error");
       }

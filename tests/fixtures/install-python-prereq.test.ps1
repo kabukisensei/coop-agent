@@ -394,6 +394,19 @@ exit /b 0
   $expectedWinget = 'WINGET install --id Microsoft.msodbcsql.18 -e --source winget --accept-source-agreements --accept-package-agreements --silent --disable-interactivity'
   if ($transcript -notlike "*$expectedWinget*") { Write-Error "Driver installer used the wrong winget vector`n$transcript" }
   Ok 'Driver 18 provisioning requires consent and uses the pinned winget package ID'
+
+  # The window's first launch (--prereqs auto) with the package's own MSI never
+  # asks Windows for an administrator (F3: the installer put the driver on the
+  # machine): a warning with the admin's step, and the launch goes on.
+  Remove-Item -LiteralPath $driverReady -Force -ErrorAction SilentlyContinue
+  $script:CoopBundledOdbc = [pscustomobject]@{ Version = '18.6.2.1'; Msi = (Join-Path $t 'msodbcsql.msi'); VcRedist = (Join-Path $t 'VC_redist.x64.exe') }
+  $elevations = Join-Path $t 'elevations'
+  function Install-CoopBundledOdbc { Set-Content -LiteralPath $elevations -Value 'elevated'; return 'ok' }
+  $autoOk = Ensure-CoopFabricOdbcDriver $true $true
+  $script:CoopBundledOdbc = $null
+  if (-not $autoOk) { Write-Error 'the window''s first launch failed on a missing driver instead of going on' }
+  elseif (Test-Path -LiteralPath $elevations) { Write-Error 'the window''s first launch asked Windows for an administrator for the driver' }
+  else { Ok 'the window''s first launch never elevates for the driver: it warns with the installer step and goes on' }
 }
 finally {
   Restore-Env $saved

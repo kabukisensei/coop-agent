@@ -16,7 +16,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
@@ -40,13 +40,13 @@ const tools = await import(pathToFileURL(join(dist, "coop-tools.mjs")).href);
 
 const { parseUnifiedDiff, pairAndEmphasize, buildSplitRows, computeMatches, hunkStats } = await import("../desktop/renderer/unified-diff.mjs");
 const { unifiedDiff } = await import("../desktop/lib/text-diff.mjs");
-const { listChanges, fileDiff, parseNameStatus, parseNumstat, newFileDiff, changeRepos, defaultChangeRepo } = await import("../desktop/lib/changes.mjs");
+const { listChanges, listDrafts, fileDiff, parseNameStatus, parseNumstat, newFileDiff, changeRepos, defaultChangeRepo } = await import("../desktop/lib/changes.mjs");
 const { readStandards, readSnapshot, readNote, listNotes, knowledgeView, domainView, DOMAINS, KNOWLEDGE_LABELS } = await import("../desktop/lib/standards-view.mjs");
 const { loadProject, previewProject, saveProject, settingsFromForm } = await import("../desktop/lib/project-form.mjs");
 const docs = await import("../desktop/lib/docs-setup.mjs");
 const { normalizePath, relativePath, repoForPath } = await import("../desktop/renderer/pane-changes.mjs");
 const { articleOutline, sourceLine, noteLabel, isKnowledgeId, STATE_LABELS, KNOWLEDGE_STATE_LABELS } = await import("../desktop/renderer/pane-standards.mjs");
-const { initialValues, formInput, platformHint, ROLE_LABELS } = await import("../desktop/renderer/pane-project.mjs");
+const { initialValues, formInput, platformHint, folderRows, ROLE_LABELS } = await import("../desktop/renderer/pane-project.mjs");
 const { resolvePage, isDocsLink, stripFrontMatter, answerLabel, typeLabel } = await import("../desktop/renderer/pane-docs.mjs");
 const { paneLinksForTool, paneLinksForText } = await import("../desktop/renderer/view.mjs");
 const { parseMarkdown } = await import("../desktop/renderer/markdown.mjs");
@@ -223,6 +223,36 @@ await check("changes: a real repository's edits, new, deleted, renamed and binar
   const first = await listChanges(fresh);
   assert.deepEqual(first.files.map((f) => [f.path, f.status]), [["x.txt", "added"]]);
   assert.match((await fileDiff(fresh, first.files[0])).diff, /^\+x$/m);
+});
+
+await check("drafts (F2): the repository's drafts folder lists newest first, read-only; the Project pane names the three places", () => {
+  const drafts = join(temp, "drafts-home", ".coop", "drafts", "acme-sql");
+  assert.deepEqual(listDrafts(drafts), [], "no folder yet: nothing, no error");
+  assert.deepEqual(listDrafts(""), []);
+  mkdirSync(join(drafts, "proposals"), { recursive: true });
+  writeFileSync(join(drafts, "vw_Old.sql"), "SELECT 1\n");
+  writeFileSync(join(drafts, "proposals", "usp_New.sql"), "SELECT 2\n");
+  utimesSync(join(drafts, "vw_Old.sql"), new Date(2026, 0, 1), new Date(2026, 0, 1));
+  utimesSync(join(drafts, "proposals", "usp_New.sql"), new Date(2026, 5, 1), new Date(2026, 5, 1));
+  const listed = listDrafts(drafts);
+  assert.deepEqual(listed.map((d) => d.path), ["proposals/usp_New.sql", "vw_Old.sql"]);
+  assert.equal(listed[0].name, "usp_New.sql");
+  // A draft opens as a new file (the same reader the changes list uses).
+  return fileDiff(drafts, { status: "new", path: listed[0].path }).then((diff) => {
+    assert.equal(diff.diff, "@@ -0,0 +1,1 @@\n+SELECT 2");
+    const rows = folderRows({ machine: "C:\\ProgramData\\coop", client: "C:\\Users\\acme\\.coop", repository: "C:\\Work\\acme-coop\\.coop", standards: "C:\\ProgramData\\coop\\standards", standardsTier: "machine", backups: "C:\\Users\\acme\\.coop\\backups\\acme-sql", drafts: "C:\\Users\\acme\\.coop\\drafts\\acme-sql" });
+    assert.deepEqual(rows.map((r) => r.label), ["this machine", "this client", "the repository", "standards", "backups", "drafts"]);
+    assert.equal(rows[0].holds, "the program, the standards, your name and preferences");
+    assert.equal(rows[1].holds, "sessions, memory, backups, drafts");
+    assert.equal(rows[2].holds, "the team's project file, client skills and prompts");
+    assert.equal(rows[3].holds, "(this machine)");
+    assert.equal(folderRows({ standardsTier: "client" })[3].holds, "(this client)");
+    // The renderer shows the group only when there are drafts, and the main process reads a draft from the drafts folder.
+    const pane = readFileSync(join(ROOT, "desktop", "renderer", "pane-changes.mjs"), "utf8");
+    assert.match(pane, /if \(!state\.drafts\.length\) return \[\];/);
+    const main = readFileSync(join(ROOT, "desktop", "main.mjs"), "utf8");
+    assert.match(main, /path\.startsWith\("draft:"\)/);
+  });
 });
 
 await check("changes: a tool call's path finds its file in the list", () => {
@@ -544,7 +574,12 @@ await check("project form: the same answers write the same file as /setup-projec
   assert.equal(readFileSync(join(viaForm, ".coop", "project.yml"), "utf8"), ORIGINAL, "a preview writes nothing");
   const saved = saveProject(viaForm, input, preview.token, { env: process.env });
   assert.equal(saved.created, false);
-  assert.equal(saved.backup, join(viaForm, ".coop", "project.yml.bak"));
+  // F2: the old file is backed up in this client's backups folder, never beside the project file.
+  const { backupDirFor } = await import("../lib/paths.mjs");
+  assert.equal(dirname(dirname(saved.backup)), backupDirFor(join(viaForm, ".coop", "project.yml")), "backups go to <profile dir>/backups/<repository>");
+  assert.equal(dirname(dirname(saved.backup)), join(coopDir, ".coop", "backups", "analytics"), "the repository is named by the project file's repositories key");
+  assert.match(basename(saved.backup), /^project\.yml\.\d{8}_\d{6}\.bak$/);
+  assert.equal(existsSync(join(viaForm, ".coop", "project.yml.bak")), false, "nothing is written inside the repository");
   assert.equal(readFileSync(saved.backup, "utf8"), ORIGINAL, "the old file is backed up");
   const written = readFileSync(join(viaForm, ".coop", "project.yml"), "utf8");
   assert.equal(written, expected, "the form and /setup-project write the same contract");
@@ -882,7 +917,7 @@ await check("bridge: every pane call in preload.cjs has a handler in main.mjs", 
   const invoked = [...preload.matchAll(/ipcRenderer\.invoke\("(coop:[a-z-]+)"/g)].map((m) => m[1]);
   // handle(...) for a window, pickerHandle(...) for the project picker (D1m).
   const handled = new Set([...main.matchAll(/[hH]andle\("(coop:[a-z-]+)"/g)].map((m) => m[1]));
-  for (const channel of ["coop:changes", "coop:change-diff", "coop:standards", "coop:standards-text", "coop:knowledge-note", "coop:project-load", "coop:project-preview", "coop:project-save", "coop:pick-folder", "coop:docs-start", "coop:docs-answer", "coop:docs-cancel", "coop:docs-build", "coop:docs-page", "coop:docs-portal"]) {
+  for (const channel of ["coop:changes", "coop:change-diff", "coop:folders", "coop:standards", "coop:standards-text", "coop:knowledge-note", "coop:project-load", "coop:project-preview", "coop:project-save", "coop:pick-folder", "coop:docs-start", "coop:docs-answer", "coop:docs-cancel", "coop:docs-build", "coop:docs-page", "coop:docs-portal"]) {
     assert.ok(invoked.includes(channel), `preload exposes ${channel}`);
   }
   for (const channel of invoked) assert.ok(handled.has(channel), `main handles ${channel}`);

@@ -21,7 +21,7 @@ try {
   $env:COOP_BOOTSTRAP_DRY_RUN = '1'
   Remove-Item Env:\COOP_BOOTSTRAP_NO_LAUNCH -ErrorAction SilentlyContinue
   $out = Invoke-Bootstrap
-  foreach ($want in @('1. find the newest coop release on github.com', '2. download its coop window installer, SHA-256 checked', '3. install it for this user (no administrator)', '4. open the coop window: its first launch sets up this computer from the package', 'dry run (COOP_BOOTSTRAP_DRY_RUN=1): nothing was changed')) {
+  foreach ($want in @('1. find the newest coop release on github.com', '2. download its coop window installer, SHA-256 checked', '3. install it once for every account on this computer (this machine; needs an administrator PowerShell); updates then install themselves', '4. open the coop window: its first launch sets up this account from the package', 'dry run (COOP_BOOTSTRAP_DRY_RUN=1): nothing was changed')) {
     if (-not $out.Contains($want)) { Ko "bootstrap dry run is missing: $want" $out }
   }
   if ($bootRc -ne 0) { Ko "bootstrap dry run exited $bootRc" $out }
@@ -60,10 +60,17 @@ try {
   # /D, last and unquoted), never a second install beside it, which would hang the
   # silent installer on the "already installed" question (dev VM, 2026-10-19).
   $install = ($code -split "`n" | Where-Object { $_ -match 'Start-Process -FilePath \$exe' }) -join "`n"
-  if ($code -notmatch "DisplayName -ne 'coop \(window\)'" -or $code -notmatch 'InstallLocation') { Ko 'bootstrap.ps1 must find the installed window through its Add/Remove entry' }
+  if ($code -notmatch "@\('coop', 'coop \(window\)'\) -notcontains" -or $code -notmatch 'InstallLocation' -or $code -notmatch "@\('HKLM:', 'HKCU:'\)") { Ko 'bootstrap.ps1 must find the installed window through its Add/Remove entry, this machine (HKLM) first' }
   elseif ($code -notmatch '\$installArgs \+= "/D=\$dir"' -or $install -notmatch '-ArgumentList \$installArgs') { Ko 'bootstrap.ps1 must hand an existing install folder to the installer as its last /D argument' $install }
   elseif ($code -match '"/D=\$dir"\s*,|/D="' ) { Ko 'the /D argument must be last and unquoted' }
   else { Ok 'an existing window folder is reused through /D, so a second install never waits on NSIS' }
+
+  # F3: one install per machine. The installer runs for every account (/S /allusers,
+  # never /currentuser), from an administrator PowerShell: a plain one stops with
+  # the ask before touching anything.
+  if ($code -notmatch "@\('/S', '/allusers'\)" -or $code -match '/currentuser') { Ko 'bootstrap.ps1 must install for every account (/S /allusers)' }
+  elseif ($code -notmatch 'Test-CoopBootstrapElevated' -or $code -notmatch 'Run as administrator') { Ko 'bootstrap.ps1 must stop with the administrator ask when not elevated' }
+  else { Ok 'the bootstrap installs for every account on the machine and asks for an administrator PowerShell' }
 
   # The one-liner in the docs fetches this file from main at this path.
   $url = 'https://raw.githubusercontent.com/kabukisensei/coop-agent/main/scripts/bootstrap.ps1'

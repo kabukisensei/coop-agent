@@ -8,7 +8,7 @@
 // allowlist (lib/rpc-commands.mjs) before it reaches Pi.
 import { app, BrowserWindow, WebContentsView, ipcMain, protocol, session, dialog, shell, clipboard, nativeTheme, Menu, Notification, screen } from "electron";
 import { readFile } from "node:fs/promises";
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import { hostname, userInfo } from "node:os";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -25,15 +25,17 @@ import { resolveAsset, isAppUrl, CSP, APP_ORIGIN } from "./lib/serve.mjs";
 import { readBranch } from "./lib/git.mjs";
 import { listFiles, rankFiles } from "./lib/files.mjs";
 import { fitToScreen, loadSettings, saveSettings, THEMES } from "./lib/settings.mjs";
-import { changeRepos, defaultChangeRepo, listChanges, fileDiff } from "./lib/changes.mjs";
+import { changeRepos, defaultChangeRepo, listChanges, listDrafts, fileDiff } from "./lib/changes.mjs";
 import { readStandards, readSnapshot, readNote } from "./lib/standards-view.mjs";
 import { getTeamProject, loadProject, previewProject, saveProject, shareProject, teamStatus } from "./lib/project-form.mjs";
 import { DocsSetupRun, AnswerError, docsLocation, listDocsPages, pickedPathAnswer, readDocsPage, runDocsBuild } from "./lib/docs-setup.mjs";
 import { attach, forget, pruneStore, saveUpload, findPdfjs, AttachError, LIMITS as ATTACH_LIMITS } from "./lib/attachments.mjs";
 import { loadSplash } from "./lib/splash.mjs";
 import { vibesDir, loadVibes, vibeSets, userName, fillVibe, pickVibe } from "./lib/vibes.mjs";
-import { bootstrapProcess, doctorReport, findCoop, folderArgument, packagedPaths } from "./lib/bootstrap.mjs";
-import { describeProject, forgetProject, projectEntries, rememberProject, startFolder, windowTitle } from "./lib/projects.mjs";
+import { bootstrapProcess, consoleTail, doctorReport, findCoop, folderArgument, packagedPaths } from "./lib/bootstrap.mjs";
+import { describeProject, startFolder, windowTitle } from "./lib/projects.mjs";
+import { clientRecord, contractClientName, saveClientRecord } from "../lib/client-folder.mjs";
+import { searchProjectContract } from "../lib/standards.mjs";
 import { menuTemplate, notificationFor } from "./lib/menu.mjs";
 import { restartOnce } from "./lib/restart.mjs";
 import { APP_ID, taskbarDetails } from "./lib/app-identity.mjs";
@@ -42,7 +44,7 @@ import { DeviceStore } from "./lib/companion-devices.mjs";
 import { createCompanionServer, DEFAULT_PORT } from "./lib/companion-server.mjs";
 import { tailnetOrigin } from "./lib/companion-tailscale.mjs";
 import { createPushSender, loadVapid } from "./lib/companion-push.mjs";
-import { profileDir } from "../lib/paths.mjs";
+import { draftsDirFor, folderPlaces, profileDir } from "../lib/paths.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RENDERER = join(HERE, "renderer");
@@ -247,6 +249,8 @@ function windowInfo(state) {
     canOpenFolder: Boolean(spec.coop),
     loginPresent: spec.loginPresent,
     notices: state.noticesShown ? [] : spec.notices,
+    // Where coop is (F1): the launcher's one line, shown on the welcome.
+    clientLine: spec.clientLine || "",
     // The first interactive launch per profile (coop.ps1 sets COOP_FIRST_RUN):
     // the window opens the Start menu once, as the terminal does.
     firstRun: !state.noticesShown && /^(1|true|yes|on)$/i.test(String(spec.env.COOP_FIRST_RUN || "")),
@@ -308,8 +312,8 @@ function openWindow(rawSpec, token) {
   // The tab strip page's <title> would replace the project title in the taskbar.
   win.on("page-title-updated", (event) => event.preventDefault());
   frames.set(frame.id, frame);
-  // The picker remembers every folder a window opened (D1m), newest first.
-  try { settings = saveSettings(settingsFile, rememberProject({ ...settings, lastFolder: spec.cwd }, spec.cwd)); } catch { /* keep going */ }
+  // The last folder opened: where the client folder question's dialog starts.
+  try { settings = saveSettings(settingsFile, { ...settings, lastFolder: spec.cwd }); } catch { /* keep going */ }
   if (settings.maximized) win.maximize();
   win.once("ready-to-show", () => win.show());
   win.on("focus", () => {
@@ -712,7 +716,8 @@ handle("coop:open-folder", async (state) => {
   return openFolderWindow(state, result.filePaths[0]);
 });
 
-// File > Switch project (D1m): the same picker the icon shows, then a new window.
+// File > Switch client (F1): the same question the icon asks on a fresh profile,
+// then a new window on the folder chosen (the record is updated for every launch).
 handle("coop:switch-project", async (state) => {
   if (!state.spec.coop) return { success: false, error: "this window was not started by coop desktop" };
   const folder = await pickProject(state.win);
@@ -720,15 +725,16 @@ handle("coop:switch-project", async (state) => {
   return openFolderWindow(state, folder);
 });
 
-// --- The project picker (D1m) ------------------------------------------------
-// One small window: the folders opened before with their client, branch and
-// team state, Browse, and "open this one next time". It resolves the folder
-// picked or "" (Cancel, Escape, or the window closed). Its page is served
-// like the main one; its IPC answers only that page.
+// --- The client folder question (F1) -----------------------------------------
+// One small window asking "Where is this client's code?" with one button that
+// opens the OS folder dialog; the choice is recorded in ~/.coop/client.json
+// (one question, once per Windows user). It resolves the folder chosen or ""
+// (Cancel, Escape, or the window closed). Its page is served like the main
+// one; its IPC answers only that page.
 const picker = { win: null, resolve: null, awaitingSpec: false };
 
 function pickerState(event) {
-  if (!picker.win || picker.win.isDestroyed() || event.sender.id !== picker.win.webContents.id || !event.senderFrame || !isAppUrl(event.senderFrame.url)) throw new Error("not the project picker");
+  if (!picker.win || picker.win.isDestroyed() || event.sender.id !== picker.win.webContents.id || !event.senderFrame || !isAppUrl(event.senderFrame.url)) throw new Error("not the client folder question");
   return picker;
 }
 
@@ -746,11 +752,11 @@ function pickProject(parent) {
     picker.resolve = resolve;
     picker.win = new BrowserWindow({
       width: 560,
-      height: 600,
+      height: 360,
       minWidth: 420,
-      minHeight: 360,
+      minHeight: 300,
       parent: parent && !parent.isDestroyed() ? parent : undefined,
-      title: "coop - open a project",
+      title: "coop - client folder",
       show: false,
       backgroundColor: nativeTheme.shouldUseDarkColors ? "#0f1318" : "#f6f7f9",
       autoHideMenuBar: true,
@@ -770,23 +776,26 @@ function pickerHandle(channel, fn) {
   });
 }
 
-pickerHandle("coop:picker-list", () => ({ entries: projectEntries(settings), openNextTime: startFolder(settings) }));
+// The client named today (the record, else the project file the last folder reads), for the question's title.
+pickerHandle("coop:picker-info", () => {
+  const record = clientRecord();
+  const client = record.client || (record.exists ? "" : (settings.lastFolder && existsSync(settings.lastFolder) ? describeProject(settings.lastFolder).client : ""));
+  return { client, root: record.root && existsSync(record.root) ? record.root : "" };
+});
 pickerHandle("coop:picker-theme", () => ({ theme: settings.theme, systemDark: nativeTheme.shouldUseDarkColors }));
-pickerHandle("coop:picker-open", (_picker, path, openNextTime) => {
-  const folder = typeof path === "string" && isAbsolute(path) && !/[\0\r\n]/.test(path) && existsSync(path) ? path : "";
-  if (!folder) throw new Error("that folder does not exist any more");
-  settings = saveSettings(settingsFile, rememberProject({ ...settings, openNextTime: openNextTime === true ? folder : "" }, folder));
+// The one question's answer: the OS folder dialog, then the record (the client
+// from the project file the folder finds: above, beside or inside it; "" when
+// none, and the launch's set-up notices offer /setup-project), then the window.
+pickerHandle("coop:picker-choose", async (state) => {
+  const result = await dialog.showOpenDialog(state.win, { title: "Where is this client's code?", defaultPath: settings.lastFolder && existsSync(settings.lastFolder) ? settings.lastFolder : app.getPath("home"), properties: ["openDirectory"], buttonLabel: "Choose" });
+  if (result.canceled || !result.filePaths.length) return "";
+  const folder = result.filePaths[0];
+  if (!isAbsolute(folder) || /[\0\r\n]/.test(folder) || !existsSync(folder)) throw new Error("that folder does not exist any more");
+  const contract = searchProjectContract(folder) || "";
+  saveClientRecord({ client: contract ? contractClientName(contract) : "", root: folder, project_file: contract });
   finishPicker(folder);
   return folder;
 });
-pickerHandle("coop:picker-browse", async (state) => {
-  const result = await dialog.showOpenDialog(state.win, { title: "Open a folder in coop", defaultPath: settings.lastFolder && existsSync(settings.lastFolder) ? settings.lastFolder : app.getPath("home"), properties: ["openDirectory"], buttonLabel: "Choose" });
-  if (result.canceled || !result.filePaths.length) return "";
-  const folder = result.filePaths[0];
-  settings = saveSettings(settingsFile, rememberProject(settings, folder));
-  return folder;
-});
-pickerHandle("coop:picker-forget", (_picker, path) => { settings = saveSettings(settingsFile, forgetProject(settings, String(path || ""))); return true; });
 pickerHandle("coop:picker-cancel", () => { finishPicker(""); return true; });
 
 // One restart at a time per window (#286): a second request during the
@@ -867,14 +876,28 @@ handle("coop:changes", async (state, want) => {
   state.changeDir = repo ? repo.dir : state.spec.cwd;
   const result = repo ? await listChanges(repo.dir) : { repo: false, files: [], truncated: false };
   state.changes = result.files;
-  return { success: true, data: { ...result, repos: repos.map(({ id, label, rel }) => ({ id, label, rel })), current: repo ? repo.id : null } };
+  // F2: the drafts coop wrote for this repository in this client's drafts folder.
+  state.draftsDir = draftsDirFor(repo ? repo.dir : state.spec.cwd, toolEnv(state));
+  state.drafts = listDrafts(state.draftsDir);
+  return { success: true, data: { ...result, drafts: state.drafts, draftsDir: state.draftsDir, repos: repos.map(({ id, label, rel }) => ({ id, label, rel })), current: repo ? repo.id : null } };
 });
 
 handle("coop:change-diff", async (state, path) => {
+  // A draft ("draft:<path>") is read from the drafts folder as a new file.
+  if (typeof path === "string" && path.startsWith("draft:")) {
+    const draft = (state.drafts || []).find((file) => file.path === path.slice(6));
+    if (!draft) return { success: false, error: "that draft is not in the list; refresh it" };
+    return { success: true, data: await fileDiff(state.draftsDir, { status: "new", path: draft.path }) };
+  }
   const entry = state.changes.find((file) => file.path === path);
   if (!entry) return { success: false, error: "that file is not in the list of changes; refresh it" };
   return { success: true, data: await fileDiff(state.changeDir || state.spec.cwd, entry) };
 });
+
+// F2: the three places coop keeps its files for this folder (the Project pane
+// shows them): this machine, this client, the repository, plus the standards,
+// backups and drafts folders, from lib/paths.mjs alone.
+handle("coop:folders", (state) => ({ success: true, data: folderPlaces(state.spec.cwd, toolEnv(state)) }));
 
 handle("coop:standards", async (state) => {
   const result = await readStandards({ node: state.spec.node, repoRoot: repoRootFor(state.spec), cwd: state.spec.cwd, env: toolEnv(state) });
@@ -1225,7 +1248,7 @@ async function pairPhone(state) {
 
 async function pairPhoneNow(state) {
   if (!state.hub.client) {
-    dialog.showMessageBox(state.win, { type: "info", title: "Pair a phone", message: "This folder's project file names no client.", detail: "A phone is paired for one client. Open a client's project (File > Switch project), or create its project file with /setup-project, then pair the phone." });
+    dialog.showMessageBox(state.win, { type: "info", title: "Pair a phone", message: "This folder's project file names no client.", detail: "A phone is paired for one client. Open the client's folder (File > Switch client), or create its project file with /setup-project, then pair the phone." });
     return;
   }
   let origin;
@@ -1359,43 +1382,73 @@ async function bootstrap() {
     return;
   }
   // The icon is the front door (D1m): `coop.exe <folder>` names the folder,
-  // "open this one next time" skips the question, else the project picker.
-  let folder = folderArgument(process.argv.slice(1)) || startFolder(settings);
+  // else the recorded client folder (~/.coop/client.json, F1; an old
+  // home-project.json counts, and coop.ps1 carries it over at this launch),
+  // else the one question.
+  let folder = folderArgument(process.argv.slice(1)) || startFolder();
   if (!folder) {
     picker.awaitingSpec = true;
     folder = await pickProject();
     if (!folder) { picker.awaitingSpec = false; app.quit(); return; }
   }
+  // The launch log (this client: <profile>\desktop\launch.log): one line from
+  // this process at each step, and the setup console's whole transcript in
+  // between, so a launch that opened no window is never silent (D1k; the dev
+  // VM, 2026-10-20: a second account's coop.exe exited 0 with no window and no
+  // output). Cut to a fresh file past 1 MB.
+  const launchLog = join(profileDir(process.env), "desktop", "launch.log");
+  const logLine = (text) => {
+    try {
+      mkdirSync(dirname(launchLog), { recursive: true });
+      if (existsSync(launchLog) && statSync(launchLog).size > 1048576) renameSync(launchLog, `${launchLog}.1`);
+      appendFileSync(launchLog, `${new Date().toISOString()} coop.exe ${app.getVersion()} [${process.pid}]: ${text}\r\n`);
+    } catch { /* best effort */ }
+  };
+  const seeLog = `\n\nThe launch log: ${launchLog}`;
   let proc;
   try {
-    proc = bootstrapProcess({ coop, app: process.execPath, cwd: folder, env: process.env });
+    proc = bootstrapProcess({ coop, app: process.execPath, cwd: folder, log: launchLog, env: process.env });
   } catch (error) {
-    dialog.showErrorBox("coop", `coop could not start its window: ${error.message}`);
+    logLine(`could not build the setup console command: ${error.message}`);
+    dialog.showErrorBox("coop", `coop could not start its window: ${error.message}${seeLog}`);
     app.quit();
     return;
   }
+  logLine(`starting coop's setup console (coop desktop) in ${folder}; its transcript follows`);
+  const startedAt = Date.now();
   const child = spawn(proc.command, proc.args, proc.options);
   booting = true;
   child.on("error", (error) => {
     booting = false;
-    dialog.showErrorBox("coop", `coop could not start its window: ${error.message}`);
+    logLine(`the setup console could not start: ${error.message}`);
+    dialog.showErrorBox("coop", `coop could not start its window: ${error.message}${seeLog}`);
     app.quit();
   });
   child.on("exit", (code) => {
     booting = false;
+    const seconds = Math.round((Date.now() - startedAt) / 1000);
+    logLine(`the setup console exited with code ${code} after ${seconds}s; windows open: ${frames.size}`);
     // The console showed coop's own message on a failure (and waited for
-    // Enter); on success the window is open by now. A clean exit with no
-    // window is never silent (D1k: a shortcut that "never opens").
+    // Enter); on success the window is open by now. An exit with no window,
+    // clean or not, is never silent (D1k: a shortcut that "never opens"): the
+    // box names the code and the log.
     setTimeout(() => {
       if (frames.size || (picker.win && !picker.win.isDestroyed())) return;
-      if (code === 0) dialog.showErrorBox("coop", "coop finished starting but no window opened.\n\nStart coop again from its shortcut. If it happens again, run coop doctor in a terminal and send its output to your coop admin.");
+      logLine(`no window opened after the setup console's exit (code ${code}); quitting`);
+      // The console's own last lines (coop's message names the step that
+      // failed), because the console closed with them.
+      let said = "";
+      try { said = consoleTail(readFileSync(launchLog, "utf8")).join("\n"); } catch { said = ""; }
+      const saidBlock = said ? `\n\nThe setup console said:\n${said}` : "";
+      if (code === 0) dialog.showErrorBox("coop", `coop finished starting but no window opened.${saidBlock}\n\nStart coop again from its shortcut. If it happens again, run coop doctor in a terminal and send its output and the launch log to your coop admin.${seeLog}`);
+      else dialog.showErrorBox("coop", `coop could not start: its setup console exited with code ${code}.${saidBlock}\n\nStart coop again from its shortcut. If it happens again, send the launch log to your coop admin.${seeLog}`);
       app.quit();
     }, 5000);
   });
 }
 
 // The shortcut clicked while coop is already running: never a silent no-op
-// (D1k). Bring the open window (or the project picker) forward, say so while
+// (D1k). Bring the open window (or the client folder question) forward, say so while
 // the first launch's console is still setting up, else start again.
 function onShortcutAgain() {
   if (picker.win && !picker.win.isDestroyed()) { picker.win.show(); picker.win.focus(); return; }

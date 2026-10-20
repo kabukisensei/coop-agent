@@ -350,7 +350,36 @@ $existing = if (Test-Path -LiteralPath $launcher -PathType Leaf) {
 # The coop window package (master plan D1d) running this from its snapshot leaves
 # a terminal install's `coop` command alone: that install keeps `coop update`.
 $keepLink = (Test-CoopBundledRuntime) -and (Test-CoopForeignLauncherLink -LauncherDir $LOCALBIN)
-if ($keepLink) {
+# The machine install (F3) already serves `coop` to every account through its
+# shim on the machine PATH; this account links nothing of its own.
+$machineLink = (Test-CoopBundledRuntime) -and (Test-CoopMachineInstall)
+if ($machineLink) {
+  Coop-Ok "``coop`` in every account's terminal is this machine's install ($(Join-Path (Get-CoopPackageRoot) 'bin\coop.cmd')); nothing to link for this account"
+  # What this account's older per-user package left behind once the machine
+  # install removed it (scripts\machine-install.ps1 sweeps every profile's
+  # files, but only this account can clear its own registry hive): a link that
+  # still calls into %LOCALAPPDATA%\Programs\coop and the Add/Remove entry.
+  if ($existing -and ($existing -match '(?i)\\Programs\\coop\\') -and -not (Get-CoopLinkedLauncherTarget -LauncherDir $LOCALBIN)) {
+    try { Remove-Item -LiteralPath $launcher -Force -ErrorAction Stop; Coop-Ok "removed this account's link to its older coop ($launcher); the machine's coop serves it now" }
+    catch { Coop-Warn "could not remove $launcher`: $($_.Exception.Message)" }
+  }
+  foreach ($hive in @('Software\Microsoft\Windows\CurrentVersion\Uninstall\com.cooptimize.coop', 'Software\com.cooptimize.coop')) {
+    try {
+      $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($hive, $false)
+      if (-not $key) { continue }
+      $where = [string]$key.GetValue('InstallLocation', '')
+      if (-not $where) {
+        $cmd = [string]$key.GetValue('UninstallString', '')
+        if ($cmd -match '^\s*"?([^"]+)\\Uninstall coop\.exe"?') { $where = $Matches[1] }
+      }
+      $key.Close()
+      if ($where -and -not (Test-Path -LiteralPath (Join-Path $where 'Uninstall coop.exe') -PathType Leaf)) {
+        [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($hive, $false)
+        Coop-Ok "cleared this account's Add/Remove entry for its older coop ($where is gone)"
+      }
+    } catch { Coop-Info "could not check HKCU\$hive`: $($_.Exception.Message)" }
+  }
+} elseif ($keepLink) {
   $linkedRoot = Split-Path -Parent (Split-Path -Parent (Get-CoopLinkedLauncherTarget -LauncherDir $LOCALBIN))
   Coop-Info "``coop`` in your terminal stays the install at $linkedRoot; the window uses its own bundled copy"
 } elseif ($existing -ne $launcherBody) {
@@ -364,7 +393,7 @@ if ($keepLink) {
 } else {
   Coop-Ok 'coop already linked'
 }
-if (($env:PATH -split ';') -notcontains $LOCALBIN) {
+if (-not $machineLink -and (($env:PATH -split ';') -notcontains $LOCALBIN)) {
   if (Test-CoopProfileRedirected) {
     # An isolated install (HOME / USERPROFILE redirected at a sandbox) must not
     # touch the real account's persistent PATH in the registry: the sandbox is on
@@ -413,7 +442,10 @@ if (($env:PATH -split ';') -notcontains $LOCALBIN) {
 # shortcuts too. An isolated install (redirected profile) gets its shortcuts inside
 # the sandbox profile, never on the real Desktop / Start Menu.
 try {
-  if ((Test-CoopBundledRuntime) -and (Test-CoopForeignTerminalShortcut)) {
+  if ($machineLink) {
+    # The per-machine installer wrote "coop" in the all-users Start Menu and Desktop (F3).
+    Coop-Ok 'the "coop" shortcuts are this machine''s install''s (Start Menu and Desktop, every account)'
+  } elseif ((Test-CoopBundledRuntime) -and (Test-CoopForeignTerminalShortcut)) {
     Coop-Info 'the "coop" double-click launcher stays with your terminal install'
   } elseif (Set-CoopDesktopShortcuts) {
     $where = if (Test-CoopProfileRedirected) { "in the isolated profile $(Get-CoopProfileInUse)" } else { 'Start Menu + Desktop' }
@@ -425,10 +457,15 @@ try {
 
 # --- 7. First-run onboarding -----------------------------------------------------
 # If this is an interactive install and there's no local profile yet, ask the user
-# for their name and communication preference before the first real session.
+# for their name and communication preference before the first real session. The
+# coop window's first launch (--prereqs auto, no keyboard) writes the profile with
+# the Windows account's name and the defaults instead, and says so.
 if (-not [Console]::IsInputRedirected -and $env:COOP_NO_ONBOARD -ne '1') {
   Coop-Head '7/8  Personalize Coop'
   Invoke-CoopMaybeOnboard
+} elseif ($PREREQS_AUTO -and $env:COOP_NO_ONBOARD -ne '1' -and (Test-CoopOnboardingMissing)) {
+  Coop-Head '7/8  Personalize Coop'
+  Invoke-CoopDefaultOnboard
 }
 # --platform is kept even when onboarding did not run (non-interactive or
 # COOP_NO_ONBOARD): the first interactive launch then skips that question.

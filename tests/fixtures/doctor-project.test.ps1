@@ -21,7 +21,7 @@ $agent = Join-Path $t 'agent'
 $doctor = Join-Path $root 'scripts\doctor.ps1'
 
 $saved = Save-Env @('HOME','USERPROFILE','COOP_DIR','COOP_AGENT_DIR','PI_CODING_AGENT_DIR','COOP_NO_ISOLATE','COOP_SKIP_AZ','NO_COLOR',
-           'COOP_STANDARDS_ROOT','COOP_STANDARDS_STATE','COOP_STANDARDS_SNAPSHOT_ROOT','PSModuleAnalysisCachePath')
+           'COOP_STANDARDS_ROOT','COOP_STANDARDS_STATE','COOP_STANDARDS_SNAPSHOT_ROOT','PSModuleAnalysisCachePath','COOP_MACHINE_DIR','COOP_PROJECT_YML')
 $savedLocation = Get-Location
 try {
   New-Item -ItemType Directory -Force -Path $sandboxHome, (Join-Path $t 'coop\.coop'), $agent | Out-Null
@@ -35,6 +35,11 @@ try {
   $env:COOP_AGENT_DIR = $agent
   $env:COOP_SKIP_AZ = '1'
   $env:NO_COLOR = '1'
+  # F2: the machine folder is a sandbox (never %ProgramData% or /etc/coop); the Folders
+  # rows below read it, and no contract from a launch leaks into the repository row.
+  $env:COOP_MACHINE_DIR = Join-Path $t 'machine'
+  New-Item -ItemType Directory -Force -Path $env:COOP_MACHINE_DIR | Out-Null
+  Remove-Item -LiteralPath 'Env:\COOP_PROJECT_YML' -ErrorAction SilentlyContinue
   # Windows PowerShell 5.1 writes its module analysis cache under LOCALAPPDATA and,
   # when that is unset (a sandboxed profile on the VM), into the CURRENT folder,
   # which the read-only digest below would count as Doctor mutating the project.
@@ -65,11 +70,44 @@ try {
   $good = Join-Path $t 'good'
   Write-Contract $good (@('profile:', '  organization: Cooptimize', '  default_branch: main', 'repositories:', '  good:',
     "    local_path: $(($good -replace '\\', '/'))", '    default_branch: main') + $off)
-  $proj = Get-ProjectRows (Get-ProjectDoctorRows $good)
+  $allRows = Get-ProjectDoctorRows $good
+  $proj = Get-ProjectRows $allRows
   $found = @($proj | Where-Object { ([string]$_.name).Contains('project.yml found') -and $_.status -eq 'ok' })
   $warns = @($proj | Where-Object { $_.status -eq 'warn' })
   if ($proj.Count -ge 1 -and $found.Count -ge 1 -and $warns.Count -eq 0) { Ok 'Project contract section present and clean' }
   else { Ko 'Project contract validation failed' (Show-Rows $proj) }
+
+  # --- F2: the Folders section names the three places and this client's folders --
+  function Get-FolderRows($Rows) { @($Rows | Where-Object { [string]$_.section -eq 'Folders' }) }
+  function Test-FolderRow($Rows, [string]$Prefix, [string]$Status = 'ok') {
+    (@($Rows | Where-Object { ([string]$_.name).StartsWith($Prefix) -and $_.status -eq $Status })).Count -eq 1
+  }
+  $folders = Get-FolderRows $allRows
+  $profileDir = Join-Path $env:COOP_DIR '.coop'
+  if (Test-FolderRow $folders "this machine: $($env:COOP_MACHINE_DIR): the program, the standards, your name and preferences") { Ok 'Folders: this machine row names the machine folder and what it holds' } else { Ko 'Folders: this machine row' (Show-Rows $folders) }
+  if (Test-FolderRow $folders "this client: ${profileDir}: sessions, memory, backups, drafts") { Ok 'Folders: this client row names the profile folder and what it holds' } else { Ko 'Folders: this client row' (Show-Rows $folders) }
+  if (Test-FolderRow $folders "the repository: $(Join-Path $good '.coop'): the team's project file, client skills and prompts") { Ok 'Folders: the repository row names the project file folder' } else { Ko 'Folders: the repository row' (Show-Rows $folders) }
+  if (Test-FolderRow $folders "standards (this client): $(Join-Path $profileDir 'standards')") { Ok 'Folders: the standards row names the path and the tier (this client without a machine folder)' } else { Ko 'Folders: standards row' (Show-Rows $folders) }
+  if (Test-FolderRow $folders "backups (this client): $(Join-Path (Join-Path $profileDir 'backups') 'good')") { Ok 'Folders: backups go under <profile dir>\backups\<repository>' } else { Ko 'Folders: backups row' (Show-Rows $folders) }
+  if (Test-FolderRow $folders "drafts (this client): $(Join-Path (Join-Path $profileDir 'drafts') 'good')") { Ok 'Folders: drafts go under <profile dir>\drafts\<repository>' } else { Ko 'Folders: drafts row' (Show-Rows $folders) }
+  $stdRows = @($allRows | Where-Object { [string]$_.section -eq 'Standards' })
+  if (Test-FolderRow $stdRows "standards folder (this client): $(Join-Path $profileDir 'standards')") { Ok 'Standards: the first row names the folder and the tier' } else { Ko 'Standards: folder row' (Show-Rows $stdRows) }
+  # A writable machine folder moves the standards to this machine.
+  New-Item -ItemType Directory -Force -Path (Join-Path $env:COOP_MACHINE_DIR 'standards') | Out-Null
+  $folders = Get-FolderRows (Get-ProjectDoctorRows $good)
+  if (Test-FolderRow $folders "standards (this machine): $(Join-Path $env:COOP_MACHINE_DIR 'standards')") { Ok 'Folders: a writable <machine dir>\standards is the machine tier' } else { Ko 'Folders: machine tier' (Show-Rows $folders) }
+  Remove-Item -LiteralPath (Join-Path $env:COOP_MACHINE_DIR 'standards') -Recurse -Force
+  # The client is named from the project file; a folder with no project file warns.
+  $named = Join-Path $t 'named'
+  Write-Contract $named (@('profile:', '  organization: Cooptimize', '  client: Contoso', '  default_branch: main', 'estate:', '  mode: discovery', 'repositories: {}') + $off)
+  $folders = Get-FolderRows (Get-ProjectDoctorRows $named)
+  if (Test-FolderRow $folders "this client (Contoso): ${profileDir}: sessions, memory, backups, drafts") { Ok 'Folders: the client row carries profile.client' } else { Ko 'Folders: client name' (Show-Rows $folders) }
+  $none = Join-Path $t 'none'
+  New-Item -ItemType Directory -Force -Path $none | Out-Null
+  $noneRows = Get-ProjectDoctorRows $none
+  $folders = Get-FolderRows $noneRows
+  $repoRow = @($folders | Where-Object { ([string]$_.name).StartsWith("the repository: $(Join-Path $none '.coop'): no project file yet") })
+  if ($repoRow.Count -eq 1 -and $repoRow[0].status -eq 'warn' -and ([string]$repoRow[0].hint) -eq '/setup-project creates one') { Ok 'Folders: a folder without a project file warns and points at /setup-project' } else { Ko 'Folders: no project file row' (Show-Rows $folders) }
 
   # --- legacy project health is visible and Doctor remains read-only ------------
   $legacy = Join-Path $t 'legacy'

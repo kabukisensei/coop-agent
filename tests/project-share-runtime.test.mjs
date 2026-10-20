@@ -153,7 +153,7 @@ try {
     assert.ok(readFileSync(join(b, ".coop", "project.yml"), "utf8").includes("Fabrikam"));
     const replaced = makeCtx(b, [true]);
     await commands.get("project-get").handler("", replaced);
-    assert.ok(replaced.notes.some((m) => m.startsWith("Got the team's project file (only .coop/project.yml changed)") && m.includes("backup:")), replaced.notes.join("\n"));
+    assert.ok(replaced.notes.some((m) => m.startsWith("Got the team's project file (only .coop/project.yml changed)") && m.includes("Backup (this client): ")), replaced.notes.join("\n"));
     assert.equal(readFileSync(join(b, ".coop", "project.yml"), "utf8"), CONTRACT);
     assert.ok(existsSync(join(b, ".coop")), "backup kept beside the file");
     assert.equal(git(b, "diff", "--name-only", "--", ".coop/project.yml"), "", "the file is back to the committed content");

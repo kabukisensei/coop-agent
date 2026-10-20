@@ -72,7 +72,7 @@ export function repoForPath(repos, path) {
 }
 
 export function mountChanges(box, options, { coop, cwd }) {
-  const state = { files: [], selected: "", mode: "unified", query: "", active: 0, matches: [], diff: null, loading: false, repos: [], repo: null };
+  const state = { files: [], drafts: [], draftsDir: "", selected: "", mode: "unified", query: "", active: 0, matches: [], diff: null, loading: false, repos: [], repo: null };
   // Shown only when the open folder holds more than one repository.
   const repoPicker = el("select", { class: "field", "aria-label": "Repository to compare", title: "Which repository's changes to show", onchange: (event) => load("", event.target.value) });
   const repoRow = el("label", { class: "pane-toolbar change-repo", hidden: true }, el("span", { class: "change-repo-label", text: "Repository" }), repoPicker);
@@ -118,7 +118,25 @@ export function mountChanges(box, options, { coop, cwd }) {
       item.addEventListener("click", () => select(file.path));
       item.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(file.path); } });
       return item;
-    }));
+    }), ...draftItems());
+  }
+
+  // F2: the drafts coop wrote for this repository (this client's drafts folder),
+  // newest first, as a group after the changed files; nothing when there are none.
+  function draftItems() {
+    if (!state.drafts.length) return [];
+    const head = el("li", { class: "change-group", role: "presentation", title: state.draftsDir ? `Draft (this client): ${state.draftsDir}` : "" }, el("span", { text: "Drafts (this client)" }));
+    const items = state.drafts.map((draft) => {
+      const key = `draft:${draft.path}`;
+      const item = el("li", { class: `change-file${key === state.selected ? " active" : ""}`, role: "option", "aria-selected": key === state.selected ? "true" : "false", tabindex: "0", title: `Draft (this client): ${draft.path}` },
+        el("span", { class: "change-status draft", text: "D", title: "Draft: a file coop wrote for review, not an edit of a repository file", "aria-label": "Draft" }),
+        el("span", { class: "change-path", text: draft.path }),
+        el("span", { class: "chip", text: "draft", title: "Lives in this client's drafts folder, not in the repository" }));
+      item.addEventListener("click", () => select(key));
+      item.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(key); } });
+      return item;
+    });
+    return [head, ...items];
   }
 
   function renderDiffView(scroll = false) {
@@ -144,7 +162,8 @@ export function mountChanges(box, options, { coop, cwd }) {
     state.active = 0;
     renderList();
     const file = state.files.find((f) => f.path === path);
-    fill(fileHead, file ? el("code", { text: file.oldPath ? `${file.oldPath} -> ${file.path}` : file.path }) : "");
+    const draft = path.startsWith("draft:") ? state.drafts.find((d) => `draft:${d.path}` === path) : null;
+    fill(fileHead, draft ? el("code", { text: `Draft (this client): ${draft.path}` }) : file ? el("code", { text: file.oldPath ? `${file.oldPath} -> ${file.path}` : file.path }) : "");
     fill(diffBox, el("div", { class: "working" }, el("span", { class: "spinner" }), el("span", { text: "Reading the diff" })));
     const result = await coop.changeDiff(path);
     if (state.selected !== path) return;
@@ -193,6 +212,8 @@ export function mountChanges(box, options, { coop, cwd }) {
     state.repos = data.repos || [];
     if (state.repo !== data.current) state.selected = "";
     state.repo = data.current;
+    state.drafts = data.drafts || [];
+    state.draftsDir = data.draftsDir || "";
     renderRepos();
     if (!data.repo) {
       state.files = [];

@@ -388,8 +388,9 @@ def build_project_yml(answers: dict) -> str:
     lines.extend(STANDARDS_OVERRIDE_COMMENT)
     lines.append("")
 
+    lines.append("# Backups go to this client's folder (%USERPROFILE%\\.coop\\backups\\<repository>\\), never")
+    lines.append("# inside the repository; only the timestamp and the file name pattern are read here.")
     lines.append("backup:")
-    lines.append('  root: ".backups"')
     lines.append('  timestamp_format: "%Y%m%d_%H%M%S"')
     lines.append('  naming_pattern: "{original_name}.{timestamp}.bak"')
     lines.append("  required_before_edit: true")
