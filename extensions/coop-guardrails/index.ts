@@ -2661,6 +2661,24 @@ export function decideDesktopReload(statusJson: string, target: DesktopReloadTar
   return dirty || { action: "allow", pid: connected.map((x) => String(x.pid)).join(",") };
 }
 
+/** F2: is `p` (relative to `cwd`) inside this client's backups or drafts folder
+ *  (`<profile dir>/backups`, `<profile dir>/drafts`)? Writes there never need
+ *  approval: they are coop's own copies and proposals, not source. Lexical, on
+ *  the resolved path; a link out of the folder is still judged by its target
+ *  name (the secret and SQL checks below see nothing under these folders). */
+export function isClientWorkPath(p: string, cwd: string, env: Record<string, string | undefined> = process.env): boolean {
+  if (!p) return false;
+  const full = resolve(cwd || ".", p);
+  const key = (x: string) => (process.platform === "win32" ? x.toLowerCase() : x);
+  const profile = coopProfileDir(env);
+  for (const folder of [join(profile, "backups"), join(profile, "drafts")]) {
+    const base = key(resolve(folder));
+    const target = key(full);
+    if (target.startsWith(base + "/") || target.startsWith(base + "\\")) return true;
+  }
+  return false;
+}
+
 /** Does this path look like a secret (private key / credential / .env) the agent
  *  shouldn't read or write? Public keys (.pub) and *.example/.sample are excluded. */
 export function isSecretPath(p: string): boolean {
@@ -3096,6 +3114,10 @@ export default function coopGuardrails(pi: ExtensionAPI) {
           audit({ cwd: ctx.cwd, kind: "secret-confirm", tool, decision: "blocked", label: "production unlock", detail: "prod-unlock-self" });
           return { block: true, reason: PROD_UNLOCK_SELF_BLOCK };
         }
+        // F2: this client's backups and drafts (<profile dir>/backups, <profile dir>/drafts)
+        // are coop's own working folders, never source: a backup of a .env or a draft
+        // .sql written there needs no confirmation and no lineage lookup.
+        if ((tool === "edit" || tool === "write") && path && isClientWorkPath(path, ctx.cwd)) return;
         // #367: an innocent-looking link to a secret is the secret.
         const linked = path && !isSecretPath(path) ? secretLinkTarget(path, ctx.cwd) : null;
         if (path && (linked || isSecretPath(path))) {

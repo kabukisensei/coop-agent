@@ -252,10 +252,13 @@ The run scripts are the list; this page does not repeat it.
   on a copy of the tree without `.git` (the #104 pattern). A fixture that only
   runs doctor may instead pre-write a fresh `.coop-fetch-stamp` in its temp agent
   dir so the throttled fetch never runs (`tests/standards-rev9.test.mjs`).
-- No fixture touches the real home. Point `HOME`, `USERPROFILE`, `COOP_DIR`,
-  `COOP_AGENT_DIR`, `PI_CODING_AGENT_DIR` and the standards roots
-  (`COOP_STANDARDS_ROOT`, `COOP_STANDARDS_STATE`, `COOP_STANDARDS_SNAPSHOT_ROOT`)
-  at temp directories, so the fixture is also safe to run on its own. `COOP_DIR`
+- No fixture touches the real home or the machine folder. Point `HOME`,
+  `USERPROFILE`, `COOP_DIR`, `COOP_AGENT_DIR`, `PI_CODING_AGENT_DIR`, the machine
+  dir (`COOP_MACHINE_DIR`: `coop sync` creates `<machine dir>/standards` when it
+  can, which on a root or elevated box would be the real `/etc/coop` or
+  `%ProgramData%\coop`) and the standards roots (`COOP_STANDARDS_ROOT`,
+  `COOP_STANDARDS_STATE`, `COOP_STANDARDS_SNAPSHOT_ROOT`) at temp directories, so
+  the fixture is also safe to run on its own. `COOP_DIR`
   is the parent of `.coop`: a fixture that sets `COOP_DIR=X` finds (and onboarding
   writes) the profile at `X/.coop` (`config`, `user.json`, `support/`), and the
   agent dir at `X/.coop/agent` unless `COOP_AGENT_DIR` or `PI_CODING_AGENT_DIR`

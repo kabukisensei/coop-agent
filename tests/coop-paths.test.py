@@ -26,7 +26,8 @@ sys.path.insert(0, str(ROOT / "lib"))
 sys.path.insert(0, str(ROOT / "scripts"))
 import coop_paths  # noqa: E402
 
-LOCATION_VARS = ("COOP_DIR", "COOP_AGENT_DIR", "PI_CODING_AGENT_DIR", "COOP_NO_ISOLATE", "COOP_MCP_CONFIG")
+LOCATION_VARS = ("COOP_DIR", "COOP_AGENT_DIR", "PI_CODING_AGENT_DIR", "COOP_NO_ISOLATE", "COOP_MCP_CONFIG",
+                 "COOP_MACHINE_DIR", "COOP_STANDARDS_ROOT", "COOP_PROJECT_YML")
 passed = 0
 
 # Windows runners default stdout to cp1252, which cannot encode the check mark.
@@ -184,5 +185,40 @@ with tempfile.TemporaryDirectory(prefix="coop-paths-") as tmp:
         assert coop_paths.machine_profile_dir() == expected
         assert coop_paths.machine_profile_path() != coop_paths.user_profile_path()
     ok("machine_profile_path: COOP_MACHINE_DIR, else %ProgramData%\\coop (Windows) or /etc/coop; never under COOP_DIR")
+
+    # --- file tiers (F2): mirrors the F2 block of tests/paths.test.mjs ----------
+    machine = root / "machine"
+    machine.mkdir()
+    with mock.patch.dict(os.environ, env(home, COOP_DIR=str(cdir), COOP_MACHINE_DIR=str(machine)), clear=True):
+        assert coop_paths.standards_location() == (cdir / ".coop" / "standards", "client"), "no <machine dir>/standards yet"
+        (machine / "standards").mkdir()
+        assert coop_paths.standards_location() == (machine / "standards", "machine")
+        assert coop_paths.standards_root() == machine / "standards"
+    with mock.patch.dict(os.environ, env(home, COOP_MACHINE_DIR=str(machine), COOP_STANDARDS_ROOT=str(root / "ovr" / "canonical")), clear=True):
+        assert coop_paths.standards_location() == (root / "ovr", "override")
+    ok("standards_location: COOP_STANDARDS_ROOT (its parent), else a writable <machine dir>/standards, else <profile dir>/standards")
+
+    client = root / "client"
+    repo = client / "acme-sql"
+    (repo / ".git").mkdir(parents=True)
+    (repo / "sql" / "dbo").mkdir(parents=True)
+    (repo / "sql" / "dbo" / "v.sql").write_text("SELECT 1", encoding="utf-8")
+    home_repo = client / "acme-coop"
+    (home_repo / ".coop").mkdir(parents=True)
+    (home_repo / ".coop" / "project.yml").write_text("profile:\n  client: Acme\nrepositories:\n  sql:\n    local_path: ../acme-sql\n  home:\n    local_path: .\n", encoding="utf-8")
+    loose = root / "loose"
+    loose.mkdir()
+    with mock.patch.dict(os.environ, env(home, COOP_DIR=str(cdir)), clear=True):
+        assert coop_paths.repository_name_for(repo / "sql" / "dbo" / "v.sql") == "acme-sql"
+        assert coop_paths.backup_dir_for(repo / "sql" / "dbo" / "v.sql") == cdir / ".coop" / "backups" / "acme-sql"
+        assert coop_paths.drafts_dir_for(repo) == cdir / ".coop" / "drafts" / "acme-sql"
+        assert coop_paths.repository_name_for(loose / "notes.md") == "loose"
+        assert coop_paths.repository_coop_dir(repo / "sql") == repo / ".coop"
+        assert coop_paths.repository_coop_dir(home_repo) == home_repo / ".coop"
+    with mock.patch.dict(os.environ, env(home, COOP_DIR=str(cdir), COOP_PROJECT_YML=str(home_repo / ".coop" / "project.yml")), clear=True):
+        assert coop_paths.repository_name_for(repo / "sql") == "sql", "the project file's key for that git root wins"
+        assert coop_paths.backup_dir_for(repo) == cdir / ".coop" / "backups" / "sql"
+        assert coop_paths.repository_coop_dir(repo / "sql") == home_repo / ".coop"
+    ok("backups and drafts: <profile dir>/{backups,drafts}/<repository>; the repository's .coop is the project file's folder, else <git root>/.coop")
 
 print(f"  coop-paths tests passed ({passed} checks)")

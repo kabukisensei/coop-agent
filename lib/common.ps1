@@ -1668,6 +1668,155 @@ function Get-CoopMachineProfileDir {
 }
 function Get-CoopMachineProfileFile { return (Join-Path (Get-CoopMachineProfileDir) 'user.json') }
 
+# --- File tiers (F2, Aaron 2026-10-20) -----------------------------------------
+# coop keeps its files in three places, named the same way everywhere coop speaks:
+#   this machine   Get-CoopMachineProfileDir (%ProgramData%\coop): the program,
+#                  the standards, the person's name and preferences
+#   this client    Get-CoopProfileDir (%USERPROFILE%\.coop; one Windows user is
+#                  one client): sessions, memory, backups, drafts
+#   the repository <repo>\.coop: the team's project file, client skills and prompts
+# Mirrors of lib/paths.mjs (standardsLocation, backupDirFor, draftsDirFor,
+# repositoryCoopDir) and lib/coop_paths.py. Task logs stay in the repository.
+
+# True when $Dir exists and this process can create a file in it (the one honest
+# test on Windows, where an ACL check says yes to every existing folder).
+function Test-CoopDirWritable {
+  param([string]$Dir)
+  if (-not $Dir -or -not (Test-Path -LiteralPath $Dir -PathType Container)) { return $false }
+  $probe = Join-Path $Dir ('.coop-write-probe-' + $PID + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+  try {
+    [System.IO.File]::WriteAllText($probe, '')
+    Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+    return $true
+  } catch { return $false }
+}
+
+# Where the standards live: @{ Root; Tier } with Tier 'override' (COOP_STANDARDS_ROOT
+# names the canonical checkout, as it always has, so the root is its parent),
+# 'machine' (<machine dir>\standards exists and is writable by this process: once
+# per machine, refreshed with every update) or 'client' (<profile dir>\standards,
+# the place before F2). canonical\ and snapshots\ live under the root.
+function Get-CoopStandardsLocation {
+  if ($env:COOP_STANDARDS_ROOT) {
+    $full = [System.IO.Path]::GetFullPath([string]$env:COOP_STANDARDS_ROOT).TrimEnd('\', '/')
+    return @{ Root = (Split-Path -Parent $full); Tier = 'override' }
+  }
+  $machine = Join-Path (Get-CoopMachineProfileDir) 'standards'
+  if (Test-CoopDirWritable $machine) { return @{ Root = $machine; Tier = 'machine' } }
+  return @{ Root = (Join-Path (Get-CoopProfileDir) 'standards'); Tier = 'client' }
+}
+function Get-CoopStandardsRoot { return [string](Get-CoopStandardsLocation).Root }
+
+# The words doctor and the launcher use for a tier.
+function Get-CoopTierLabel {
+  param([string]$Tier)
+  switch ($Tier) {
+    'machine' { return 'this machine' }
+    'client' { return 'this client' }
+    'override' { return 'COOP_STANDARDS_ROOT' }
+    default { return $Tier }
+  }
+}
+
+# The one launch line the first time this user's launches use the machine
+# standards folder (marker <profile dir>\standards-moved). Silent otherwise.
+function Write-CoopStandardsPlaceNote {
+  $loc = Get-CoopStandardsLocation
+  if ($loc.Tier -ne 'machine') { return }
+  $marker = Join-Path (Get-CoopProfileDir) 'standards-moved'
+  if (Test-Path -LiteralPath $marker -PathType Leaf) { return }
+  Coop-Info "Standards now live once on this machine: $($loc.Root), refreshed with every update."
+  try {
+    $dir = Split-Path -Parent $marker
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    [System.IO.File]::WriteAllText($marker, ((Get-Date).ToUniversalTime().ToString('o') + "`n"), (New-Object System.Text.UTF8Encoding $false))
+  } catch { }
+}
+
+# This client's backups and drafts: one folder per repository under each.
+function Get-CoopBackupsRoot { return (Join-Path (Get-CoopProfileDir) 'backups') }
+function Get-CoopDraftsRoot { return (Join-Path (Get-CoopProfileDir) 'drafts') }
+
+# The name of the repository holding $StartDir: the project file's `repositories`
+# key whose local_path is that repository (COOP_PROJECT_YML, else the nearest
+# project file at or above the repository), else the git root's folder name,
+# else the folder's own name (a folder in no repository).
+function Get-CoopRepositoryName {
+  param([string]$StartDir = (Get-Location).Path)
+  $full = [System.IO.Path]::GetFullPath($StartDir).TrimEnd('\', '/')
+  if (Test-Path -LiteralPath $full -PathType Leaf) { $full = Split-Path -Parent $full }
+  $gitRoot = Find-CoopGitRoot $full
+  if (-not $gitRoot) {
+    # No git: the folder whose .coop\project.yml is nearest above, else the folder itself.
+    $above = Find-CoopContractAbove $full
+    $folder = if ($above) { Split-Path -Parent (Split-Path -Parent $above) } else { $full }
+    $leaf = Split-Path -Leaf $folder
+    if ($leaf) { return $leaf } else { return 'root' }
+  }
+  $contract = ''
+  if ($env:COOP_PROJECT_YML -and (Test-Path -LiteralPath $env:COOP_PROJECT_YML -PathType Leaf)) { $contract = [string]$env:COOP_PROJECT_YML }
+  else { $contract = Find-CoopContractAbove $gitRoot }
+  if ($contract) {
+    $root = Split-Path -Parent (Split-Path -Parent $contract)
+    $target = [System.IO.Path]::GetFullPath($gitRoot).TrimEnd('\', '/')
+    $inRepos = $false; $name = ''
+    foreach ($line in (Get-Content -LiteralPath $contract -ErrorAction SilentlyContinue)) {
+      if ($line -match '^\S') { $inRepos = ($line -match '^repositories:\s*(#.*)?$'); $name = ''; continue }
+      if (-not $inRepos) { continue }
+      if ($line -match '^  ([A-Za-z0-9_.-]+):\s*(#.*)?$') { $name = $Matches[1]; continue }
+      if ($name -and $line -match '^\s+local_path:\s*(.+?)\s*$') {
+        $value = $Matches[1].Trim()
+        if ($value.Length -ge 2 -and (($value[0] -eq '"' -and $value[-1] -eq '"') -or ($value[0] -eq "'" -and $value[-1] -eq "'"))) { $value = $value.Substring(1, $value.Length - 2) }
+        if (-not $value -or $value -match '^TODO') { continue }
+        if ($value -match '^~([\\/]|$)') { $value = (Join-Path $HOME $value.Substring(1).TrimStart('\', '/')) }
+        $resolved = [System.IO.Path]::GetFullPath((Join-Path $root $value)).TrimEnd('\', '/')
+        if ([string]::Equals($resolved, $target, [System.StringComparison]::OrdinalIgnoreCase)) { return $name }
+      }
+    }
+  }
+  $leaf = Split-Path -Leaf $gitRoot
+  if ($leaf) { return $leaf } else { return 'root' }
+}
+
+# <profile dir>\backups\<repository name> and <profile dir>\drafts\<repository name>
+# for the repository holding $StartDir.
+function Get-CoopBackupDir {
+  param([string]$StartDir = (Get-Location).Path)
+  return (Join-Path (Get-CoopBackupsRoot) (Get-CoopRepositoryName $StartDir))
+}
+function Get-CoopDraftsDir {
+  param([string]$StartDir = (Get-Location).Path)
+  return (Join-Path (Get-CoopDraftsRoot) (Get-CoopRepositoryName $StartDir))
+}
+
+# Hand the launch folder's backup and drafts folders to Pi and the window
+# (COOP_BACKUP_DIR, COOP_DRAFTS_DIR), so the agent, the extensions and the
+# Changes pane name the same places. Called right after Set-CoopProjectYmlEnv
+# (the repository name reads COOP_PROJECT_YML when it is set).
+function Set-CoopClientFolderEnv {
+  param([string]$StartDir = (Get-Location).Path)
+  $name = Get-CoopRepositoryName $StartDir
+  $env:COOP_BACKUP_DIR = Join-Path (Get-CoopBackupsRoot) $name
+  $env:COOP_DRAFTS_DIR = Join-Path (Get-CoopDraftsRoot) $name
+  return $name
+}
+
+# The repository's .coop folder for a launch in $StartDir: the folder of the
+# project file coop uses there (the nearest one at or above, else COOP_PROJECT_YML
+# or the launch lookup), else <git root>\.coop, else <StartDir>\.coop. The folder
+# may not exist yet (doctor says so).
+function Get-CoopRepositoryCoopDir {
+  param([string]$StartDir = (Get-Location).Path)
+  $above = Find-CoopContractAbove $StartDir
+  if ($above) { return (Split-Path -Parent $above) }
+  if ($env:COOP_PROJECT_YML -and (Test-Path -LiteralPath $env:COOP_PROJECT_YML -PathType Leaf)) { return (Split-Path -Parent ([System.IO.Path]::GetFullPath([string]$env:COOP_PROJECT_YML))) }
+  $launch = Find-CoopLaunchContract $StartDir
+  if ($launch) { return (Split-Path -Parent $launch) }
+  $gitRoot = Find-CoopGitRoot $StartDir
+  if ($gitRoot) { return (Join-Path $gitRoot '.coop') }
+  return (Join-Path ([System.IO.Path]::GetFullPath($StartDir).TrimEnd('\', '/')) '.coop')
+}
+
 # The name coop calls the person and the file that supplied it: @{ Name; Source }
 # with Source 'user', 'machine' or '' (no usable name anywhere). Same resolution
 # as lib/user-profile.mjs effectiveProfile; a malformed file counts as absent.

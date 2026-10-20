@@ -845,6 +845,8 @@ function Invoke-CoopPiProcess {
   # one repository inside it, travels as COOP_PROJECT_YML so Pi's extensions and
   # the Python helpers read the same file.
   $sibling = Set-CoopProjectYmlEnv
+  # F2: this client's backups and drafts folders for the launch folder's repository.
+  [void](Set-CoopClientFolderEnv)
   if ($sibling) {
     $searched = Find-CoopSearchedContract (Get-Location).Path
     if (-not $searched -or ([System.IO.Path]::GetFullPath($searched) -ne [System.IO.Path]::GetFullPath($sibling))) { Coop-Info "project file: $sibling (this Windows user's project file, remembered by coop; change it with: coop project home <folder>)" }
@@ -940,6 +942,8 @@ function Initialize-CoopLaunch {
   if (Test-Have 'node') {
     try { & node (Join-Path $script:CoopRoot 'lib\standards-cli.mjs') refresh 2>$null | Out-Null } catch { }
   }
+  # F2: one line the first time this user's launches read the standards from this machine.
+  Write-CoopStandardsPlaceNote
 
   Invoke-CoopAzPreflight
 }
@@ -986,6 +990,9 @@ function Get-CoopLaunchEnvMap {
   if ($env:COOP_VIBES_DIR)      { $envMap['COOP_VIBES_DIR']      = $env:COOP_VIBES_DIR }
   if ($env:COOP_SPLASH_FILE)    { $envMap['COOP_SPLASH_FILE']    = $env:COOP_SPLASH_FILE }
   if ($env:COOP_PROJECT_YML)    { $envMap['COOP_PROJECT_YML']    = $env:COOP_PROJECT_YML }
+  # F2: this client's backups and drafts folders for the launch folder's repository.
+  if ($env:COOP_BACKUP_DIR)     { $envMap['COOP_BACKUP_DIR']     = $env:COOP_BACKUP_DIR }
+  if ($env:COOP_DRAFTS_DIR)     { $envMap['COOP_DRAFTS_DIR']     = $env:COOP_DRAFTS_DIR }
   # coop-guardrails finds coop's own codemode (and the Fabric header helper) under it.
   if ($env:COOP_ROOT)           { $envMap['COOP_ROOT']           = $env:COOP_ROOT }
   return $envMap
@@ -1089,6 +1096,7 @@ function Invoke-CoopDesktop {
     $token = Get-CoopFabricMcpToken
   }
   [void](Set-CoopProjectYmlEnv)
+  [void](Set-CoopClientFolderEnv)
   $piArgs = Build-CoopPiArgs
   $envMap = Get-CoopLaunchEnvMap
   # The profile location travels too, so a second window handed to an

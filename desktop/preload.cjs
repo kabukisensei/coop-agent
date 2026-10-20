@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld("coop", Object.freeze({
   // Panes (D1b2).
   changes: (repo) => ipcRenderer.invoke("coop:changes", typeof repo === "string" ? repo : null),
   changeDiff: (path) => ipcRenderer.invoke("coop:change-diff", String(path || "")),
+  folders: () => ipcRenderer.invoke("coop:folders"),
   standards: () => ipcRenderer.invoke("coop:standards"),
   standardsText: (domain) => ipcRenderer.invoke("coop:standards-text", String(domain || "")),
   knowledgeNote: (source, path) => ipcRenderer.invoke("coop:knowledge-note", String(source || ""), String(path || "")),

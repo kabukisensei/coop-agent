@@ -71,16 +71,51 @@ themes, splash) stays untouched. Your login (auth/models) is shared in from
 `~/.pi/agent`; settings/extensions/MCP are isolated. Provisioned by `coop install` /
 `coop sync`. Disable with `COOP_NO_ISOLATE=1` (`true`, `yes` and `on` also count).
 
-The rest of coop's profile (`config`, `user.json`, `support/`, `standards/`) lives
-next to the agent dir in `~/.coop`. A second, machine-level `user.json` can hold
-your name and communication preference once per machine (`%ProgramData%\coop`,
-written by `coop onboard --machine`; master plan P1) for VMs where every client is
-its own Windows user; the per-user file wins field by field and the machine file
-never carries anything client-shaped. `COOP_DIR` moves the whole profile: it is the
+The rest of coop's profile (`config`, `user.json`, `support/`) lives next to the
+agent dir in `~/.coop`. A second, machine-level `user.json` can hold your name and
+communication preference once per machine (`%ProgramData%\coop`, written by
+`coop onboard --machine`; master plan P1) for VMs where every client is its own
+Windows user; the per-user file wins field by field and the machine file never
+carries anything client-shaped. `COOP_DIR` moves the whole profile: it is the
 **parent** of `.coop`, so `COOP_DIR=D:\coop-profile` puts the profile at
 `D:\coop-profile\.coop` and the agent dir at `D:\coop-profile\.coop\agent` unless
 `COOP_AGENT_DIR` overrides it. Every coop command, script and extension reads the
 same two rules (`lib/common.ps1`, `lib/coop_paths.py`, `lib/paths.mjs`).
+
+### Three places
+
+coop keeps its files in three fixed places, named the same way everywhere coop
+speaks (`coop doctor`'s Folders section, the window's Project pane, the agent's
+replies). There are no options to pick; one Windows user is one client, and a
+client's repositories (the home repository with the project file, the SQL
+repository, the Power BI repository) are parts of one codebase listed in the
+project file's `repositories`.
+
+| Place | Folder | Holds |
+| --- | --- | --- |
+| **this machine** | `%ProgramData%\coop` (`/etc/coop` elsewhere) | the program's shared files, the standards, your name and preferences |
+| **this client** | `%USERPROFILE%\.coop` | sessions, memory, backups, drafts |
+| **the repository** | `<repo>\.coop` | the team's project file, client skills and prompts |
+
+- **Standards** live once on this machine, `%ProgramData%\coop\standards`
+  (`canonical\` and `snapshots\` under it), refreshed with every update and at
+  every launch. `coop sync` creates that folder when it can; when it cannot (no
+  elevation) or another user owns it, this client's `%USERPROFILE%\.coop\standards`
+  holds them, silently. `coop doctor` names the path and the place. The first
+  launch that reads the machine copy says so once. `COOP_STANDARDS_ROOT` still
+  names the canonical checkout for tests and sandboxes.
+- **Backups** go to `%USERPROFILE%\.coop\backups\<repository>\<path>.<timestamp>.bak`,
+  never inside the repository. The launcher sets `COOP_BACKUP_DIR` for the launch
+  folder's repository (its `repositories` key in the project file, else its folder
+  name); the contract's `backup.timestamp_format` and `naming_pattern` still
+  apply, `backup.root` is no longer read. Every backup coop makes, including the
+  one `/setup-project` takes of the project file, is named `Backup (this client): <path>`.
+- **Drafts** (a file written for review that edits nothing in the repository: a
+  draft `.sql`, a proposed script) go to `%USERPROFILE%\.coop\drafts\<repository>\`
+  (`COOP_DRAFTS_DIR`), named `Draft (this client): <path>`. The window's Changes
+  pane lists them under Drafts. Writes to the backups and drafts folders never ask
+  for approval.
+- Task logs stay in the repository (`logging.*` in the project file), unchanged.
 
 ---
 
@@ -547,7 +582,7 @@ launch.
 
 1. Read-only by default — prefer reading, listing, inspecting.
 2. Plan before you edit — present a PLAN and get explicit approval first.
-3. Back up before editing — timestamped backup of every file to be changed.
+3. Back up before editing — timestamped backup of every file to be changed, in this client's backups folder (never inside the repository).
 4. **Never commit source** — never commit SQL, DAX, semantic model, report,
    Python, or notebook source. Make the edit, show the diff, let a human commit.
    Only docs / logs / diagrams / glossary / site may be committed, after approval.
@@ -579,7 +614,7 @@ command text and should not be shared as sanitized exports.
 2. Locate the repo/object and assess upstream/downstream impact; `git status` && `git pull`.
 3. Read the target file(s) + look up the object's upstream/downstream via the `data_doc` tool (`command="lineage"`) before touching it; use the Microsoft Learn MCP for current docs.
 4. Write a short **PLAN** and get explicit approval **before** any edit.
-5. Create a timestamped backup of every file to be changed.
+5. Create a timestamped backup of every file to be changed in this client's backups folder (`Backup (this client): <path>`); a file written for review that edits nothing goes in the drafts folder (`Draft (this client): <path>`).
 6. Make the smallest safe edit; T-SQL coop writes or reformats follows the `sql-formatting` skill (the Cooptimize layout).
 7. Self-check: before presenting SQL, DAX, or model changes, check the diff against the same standards articles used to write them; fix what does not meet them, and deviate only on a user exception or a stated reason (plus Tabular Editor BPA / `fabric-cicd` validate where relevant).
 8. Show `git diff` and summarize the change.

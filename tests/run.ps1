@@ -133,7 +133,7 @@ try {
   $priorPiAgentDir = $env:PI_CODING_AGENT_DIR
   $priorNoOnboard = $env:COOP_NO_ONBOARD
   $priorHomeVars = @{}
-  $homeVarNames = @('HOME', 'USERPROFILE', 'COOP_STANDARDS_ROOT', 'COOP_STANDARDS_STATE', 'COOP_STANDARDS_SNAPSHOT_ROOT')
+  $homeVarNames = @('HOME', 'USERPROFILE', 'COOP_MACHINE_DIR', 'COOP_STANDARDS_ROOT', 'COOP_STANDARDS_STATE', 'COOP_STANDARDS_SNAPSHOT_ROOT')
   foreach ($name in $homeVarNames) { $priorHomeVars[$name] = [Environment]::GetEnvironmentVariable($name) }
   if ($extendedLane) { $env:COOP_TEST_EXTENDED = '1' }
   else { Remove-Item Env:\COOP_TEST_EXTENDED -ErrorAction SilentlyContinue }
@@ -168,6 +168,9 @@ try {
   foreach ($name in @('COOP_STANDARDS_ROOT', 'COOP_STANDARDS_STATE', 'COOP_STANDARDS_SNAPSHOT_ROOT')) {
     [Environment]::SetEnvironmentVariable($name, $null)
   }
+  # F2: the machine folder is a sandbox too (`coop sync` creates <machine dir>\standards
+  # when it can, which on a root or elevated box would be the real /etc/coop or ProgramData).
+  $env:COOP_MACHINE_DIR = Join-Path $stub 'machine'
 
   # --- 0b. public onboarding dispatcher supplies the Python subcommand -------
   Head 'onboarding dispatcher contract test'

@@ -136,7 +136,7 @@ The `/spec-first`, `/annotate`, `/slice-next`, `/explain`, and `/handoff` prompt
 2. Identify the repo/object and upstream/downstream impact; run `git status` and `git pull`.
 3. Read the target file(s) and related docs/lineage — use the `coop-data-doc` tool.
 4. Write a short **PLAN** and get explicit review/approval before any edit.
-5. Create a timestamped backup of every file to be changed.
+5. Create a timestamped backup of every file to be changed in this client's backups folder (`COOP_BACKUP_DIR`, `%USERPROFILE%\.coop\backups\<repository>\<path>.<timestamp>.bak`; never inside the repository) and say so: `Backup (this client): <path>`. A file written for review that edits nothing in the repository goes in this client's drafts folder (`COOP_DRAFTS_DIR`, `%USERPROFILE%\.coop\drafts\<repository>\`): `Draft (this client): <path>`.
 6. Make the smallest safe edit.
 7. Self-check: before presenting SQL, DAX, or model changes, check the diff against the same standards articles used to write them; fix what does not meet them, and deviate only on a user exception or a stated reason (plus Tabular Editor BPA / `fabric-cicd` validate where relevant).
 8. Show `git diff` and summarize the change.
