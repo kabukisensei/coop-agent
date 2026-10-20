@@ -60,6 +60,9 @@ try {
     $got = Get-CoopClientRootFor $c.File $c.Start
     if ((Full $got) -eq (Full $c.Want)) { Ok "root rule: $($c.Why)" } else { Ko "root rule: $($c.Why): got $got, expected $($c.Want)" }
   }
+  # The user folder is never the client folder (a shortcut launch starts there).
+  if ((Full (Get-CoopClientRootFor $fabricFile $user -UserHome $user)) -eq (Full $fabricRepo)) { Ok 'root rule: found below the user folder itself: the repository, never the user folder' } else { Ko "root rule: user folder guard: got $(Get-CoopClientRootFor $fabricFile $user -UserHome $user)" }
+  if ((Full (Get-CoopClientRootFor $homeFile (Join-Path $homeRepo 'src') -UserHome $client)) -eq (Full $homeRepo)) { Ok 'root rule: repositories directly in the user folder: the home repository, never the user folder' } else { Ko "root rule: user folder guard (siblings): got $(Get-CoopClientRootFor $homeFile (Join-Path $homeRepo 'src') -UserHome $client)" }
   $names = @((Get-CoopContractClientName $homeFile), (Get-CoopContractClientName $acmeFile), (Get-CoopContractClientName $fabricFile), (Get-CoopContractClientName (Join-Path $t 'none.yml')))
   if (($names -join '|') -eq 'Contoso Retail|Acme|Fabrikam|') { Ok 'the client name comes from profile.client (single quotes, double quotes with a comment, bare)' } else { Ko "client names: $($names -join '|')" }
 

@@ -648,6 +648,9 @@ await check("F1 client folder: the root rule, the record and its carry-over, the
   assert.equal(clientRootFor(home), client);
   assert.equal(clientRootFor(acme), join(solo, "acme"));
   assert.equal(clientRootFor(fabric), join(user, "devops", "fabric"));
+  // The user folder is never the client folder (a shortcut launch starts there).
+  assert.equal(clientRootFor(fabric, user, process.platform, user), join(user, "devops", "fabric"), "found below the user folder itself: the repository");
+  assert.equal(clientRootFor(home, join(client, "contoso-coop", "src"), process.platform, client), join(client, "contoso-coop"), "repositories directly in the user folder: the home repository");
   assert.deepEqual([contractClientName(home), contractClientName(acme), contractClientName(fabric), contractClientName(join(root, "none.yml"))], ["Contoso Retail", "Acme", "Fabrikam", ""]);
 
   // The record: client.json first; only the old home-project.json carries over in memory.

@@ -3529,7 +3529,7 @@ function Get-CoopContractClientName {
 #     the file's `repositories` list points to siblings (a local_path starting '..');
 #   - found in the home repository beside the launch folder's repository: that parent;
 #   - found in a repository inside the launch folder: the launch folder.
-function Get-CoopClientRootFor {
+function Get-CoopClientRootForRaw {
   param([string]$ProjectFile, [string]$StartDir = '')
   $repo = [System.IO.Path]::GetFullPath((Split-Path -Parent (Split-Path -Parent $ProjectFile))).TrimEnd('\', '/')
   $parent = Split-Path -Parent $repo
@@ -3547,6 +3547,22 @@ function Get-CoopClientRootFor {
     if ($rel -match '^\.\.([\\/]|$)') { return $parent }
   }
   return $repo
+}
+
+# The user folder is never the client folder: a shortcut launch starts there,
+# and a repository sitting directly in it holds the client, not the profile.
+# Wraps the rule above so every caller records a real client folder.
+function Get-CoopClientRootFor {
+  param([string]$ProjectFile, [string]$StartDir = '', [string]$UserHome = $HOME)
+  $root = Get-CoopClientRootForRaw $ProjectFile $StartDir
+  $userHome = [System.IO.Path]::GetFullPath($UserHome).TrimEnd('\', '/')
+  if ([string]::Equals($root.TrimEnd('\', '/'), $userHome, [System.StringComparison]::OrdinalIgnoreCase)) {
+    $root = Get-CoopClientRootForRaw $ProjectFile
+    if ([string]::Equals($root.TrimEnd('\', '/'), $userHome, [System.StringComparison]::OrdinalIgnoreCase)) {
+      $root = [System.IO.Path]::GetFullPath((Split-Path -Parent (Split-Path -Parent $ProjectFile))).TrimEnd('\', '/')
+    }
+  }
+  return $root
 }
 
 # The client record: @{ Client; Root; ProjectFile; Carried; Exists }. Reads

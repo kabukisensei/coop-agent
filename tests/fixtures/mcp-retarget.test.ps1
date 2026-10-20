@@ -262,8 +262,8 @@ sys.exit(0)
   if ($r.Rc -eq 0 -and $seenCwd -and ([System.IO.Path]::GetFullPath($seenCwd) -eq [System.IO.Path]::GetFullPath($elsewhere))) { Ok 'a shortcut launch from another folder stays in that folder' }
   else { Ko "shortcut launch elsewhere: rc=$($r.Rc) pi cwd=$seenCwd" ($r.Out + $r.Err) }
   # A fresh profile has nothing recorded: the very first shortcut launch from a
-  # user folder holding one client repository records it (F1: found inside the
-  # launch folder, so the user folder is the client folder) and opens there.
+  # user folder holding one client repository records it (F1: the user folder is
+  # never the client folder, so the repository is) and opens the repository.
   $freshHome = Join-Path $t 'fresh-home'
   $freshRepo = Join-Path $freshHome 'acme'
   New-Item -ItemType Directory -Force -Path (Join-Path $freshHome '.coop'), (Join-Path $freshRepo '.git'), (Join-Path $freshRepo '.coop') | Out-Null
@@ -277,7 +277,7 @@ sys.exit(0)
   $seenCwd = if (Test-Path -LiteralPath $piCwd) { (Get-Content -LiteralPath $piCwd -Raw).Trim() } else { '' }
   $recordedFresh = if (Test-Path -LiteralPath $freshRecord) { (Get-Content -LiteralPath $freshRecord -Raw | ConvertFrom-Json).project_file } else { '' }
   $recordedRoot = if (Test-Path -LiteralPath $freshRecord) { (Get-Content -LiteralPath $freshRecord -Raw | ConvertFrom-Json).root } else { '' }
-  if ($r.Rc -eq 0 -and $seenCwd -and ([System.IO.Path]::GetFullPath($seenCwd) -eq [System.IO.Path]::GetFullPath($freshHome)) -and $recordedFresh -eq [System.IO.Path]::GetFullPath((Join-Path $freshRepo '.coop\project.yml')) -and $recordedRoot -eq [System.IO.Path]::GetFullPath($freshHome) -and ($r.Out + $r.Err) -match "coop now opens this client's folder every time" -and ($r.Out + $r.Err) -match 'Client: .* folder .* project file ') { Ok 'the first shortcut launch on a fresh profile records the one project file, the user folder as the client folder, opens there and says so' }
+  if ($r.Rc -eq 0 -and $seenCwd -and ([System.IO.Path]::GetFullPath($seenCwd) -eq [System.IO.Path]::GetFullPath($freshRepo)) -and $recordedFresh -eq [System.IO.Path]::GetFullPath((Join-Path $freshRepo '.coop\project.yml')) -and $recordedRoot -eq [System.IO.Path]::GetFullPath($freshRepo) -and ($r.Out + $r.Err) -match "coop now opens this client's folder every time" -and ($r.Out + $r.Err) -match 'Client: .* folder .* project file ') { Ok 'the first shortcut launch on a fresh profile records the one project file, its repository as the client folder, opens there and says so' }
   else { Ko "first shortcut launch, fresh profile: rc=$($r.Rc) pi cwd=$seenCwd record=$recordedFresh root=$recordedRoot" ($r.Out + $r.Err) }
   # The remembered file is gone and nothing else is found: blank target, a clear warning.
   Remove-Item -LiteralPath (Join-Path $clientRepo '.coop\project.yml') -Force
