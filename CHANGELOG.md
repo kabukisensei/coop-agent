@@ -114,10 +114,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 - **A launch that opens no window is never silent.** The window writes a
   launch log, `<profile>\desktop\launch.log` (this client): one line when it
-  starts coop's setup console, every line that console prints (coop's own
-  lines are mirrored there, since the console's stdin is NUL and it closes at
-  once on a failure), PowerShell's transcript, and one line when that console
-  exits with its code and whether a window opened. A console that exits
+  starts coop's setup console, every line that console prints with its time
+  (coop's own lines are mirrored there, since the console's stdin is NUL and
+  it closes at once on a failure), any PowerShell error, the console's exit
+  code, and one line when that console exits with its code and whether a
+  window opened. A console that exits
   without a window, with any code, now gets a message box with the console's
   last lines, the code and the log (before, a non-zero exit quit without a
   word).

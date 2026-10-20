@@ -50,15 +50,20 @@ export function findCoop(env = process.env, exists = existsSync, resourcesPath =
 // Its stdin is NUL (the window has no console of its own to hand it), so the
 // Read-Host below cannot hold it open on a failure: what it said survives in
 // the launch log (COOP_BOOT_LOG, <profile>\desktop\launch.log) instead. coop's
-// own lines go there from lib/common.ps1 (Coop-Emit mirrors every line to that
-// file, because they are written to stderr, which a transcript never sees), and
-// the transcript adds PowerShell's own errors; coop.exe shows the tail in its box.
+// own lines go there from lib/common.ps1 (Coop-Emit appends every line to that
+// file with the time), this script adds its start, any PowerShell error and the
+// exit code, and coop.exe shows the tail in its box. No Start-Transcript: it
+// held the file open, so nothing else could append (the dev VM, 2026-10-20),
+// and it never saw coop's lines anyway (they are written to stderr).
 const SCRIPT = [
-  "if ($env:COOP_BOOT_LOG) { try { Start-Transcript -LiteralPath $env:COOP_BOOT_LOG -Append -Force | Out-Null } catch { } }",
+  "$log = $env:COOP_BOOT_LOG",
+  "function Boot-Log($t) { if ($log) { try { [System.IO.File]::AppendAllText($log, (Get-Date -Format 'HH:mm:ss') + ' console: ' + $t + \"`r`n\") } catch { } } }",
+  "Boot-Log ('PowerShell ' + $PSVersionTable.PSVersion + ' as ' + $env:USERNAME + ': running coop desktop')",
   "Set-Location -LiteralPath $env:COOP_BOOT_CWD",
-  "& $env:COOP_BOOT_COOP desktop --app $env:COOP_BOOT_APP",
-  "$code = $LASTEXITCODE",
-  "if ($env:COOP_BOOT_LOG) { try { Stop-Transcript | Out-Null } catch { } }",
+  "$code = 1",
+  "try { & $env:COOP_BOOT_COOP desktop --app $env:COOP_BOOT_APP; $code = $LASTEXITCODE } catch { Boot-Log ('error: ' + $_.Exception.Message); $code = 1 }",
+  "if ($null -eq $code) { $code = 0 }",
+  "Boot-Log ('coop desktop exited ' + $code)",
   "if ($code) { Read-Host 'Press Enter to close' }",
   "exit $code",
 ].join("; ");
@@ -72,6 +77,7 @@ export function consoleTail(logText, max = 8) {
   const lines = String(logText || "").split(/\r?\n/);
   let start = 0;
   lines.forEach((line, i) => { if (/ coop\.exe .*: starting coop's setup console/.test(line)) start = i + 1; });
+  // (The transcript header lines are an older build's; a log may still hold them.)
   const noise = /^(\*{5,}|Windows PowerShell transcript (start|end)|Start time:|End time:|Username:|RunAs User:|Configuration Name:|Machine:|Host Application:|Process ID:|PSVersion:|PSEdition:|PSCompatibleVersions:|BuildVersion:|CLRVersion:|WSManStackVersion:|PSRemotingProtocolVersion:|SerializationVersion:|Transcript started|Command start time:|PS>)/;
   const said = lines.slice(start).map((l) => l.trimEnd()).filter((l) => l && !/^\d{4}-\d\d-\d\dT[^ ]+ coop\.exe /.test(l) && !noise.test(l));
   return said.slice(-max);

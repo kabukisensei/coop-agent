@@ -1424,10 +1424,10 @@ function Coop-ProgEnd {
 function Coop-Emit {
   param([string]$Line)
   # The window's launch log (COOP_BOOT_LOG, set by coop.exe for its setup
-  # console): every line also lands there, colours stripped, because the
-  # console's stderr is not a transcript's and the console may close at once.
+  # console): every line also lands there with the time, colours stripped,
+  # because the console may close at once and nothing else records its stderr.
   if ($env:COOP_BOOT_LOG) {
-    try { [System.IO.File]::AppendAllText($env:COOP_BOOT_LOG, (($Line -replace "$([char]27)\[[0-9;?]*[A-Za-z]", '') + "`r`n")) } catch { }
+    try { [System.IO.File]::AppendAllText($env:COOP_BOOT_LOG, ((Get-Date -Format 'HH:mm:ss') + ' ' + ($Line -replace "$([char]27)\[[0-9;?]*[A-Za-z]", '') + "`r`n")) } catch { }
   }
   # Non-TTY branch. The [Console]::Error contract is load-bearing: callers and
   # fixtures replace it via [Console]::SetError($writer) to capture output, so

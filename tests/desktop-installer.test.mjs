@@ -100,9 +100,10 @@ await check("bootstrapProcess: a console running `coop desktop --app <exe>`, pat
   const script = decode(proc.args[proc.args.length - 1]);
   assert.match(script, /desktop --app \$env:COOP_BOOT_APP/);
   assert.match(script, /Read-Host/);
-  // The console's transcript goes to the launch log named in the environment (a silent launch leaves it behind), bracketing coop desktop.
+  // The console appends to the launch log named in the environment (a silent launch leaves it behind): its start, PowerShell errors and the exit code around coop desktop; never Start-Transcript (it held the file so coop's own lines could not be appended).
   assert.equal(proc.options.env.COOP_BOOT_LOG, "C:\\Users\\me\\.coop\\desktop\\launch.log");
-  assert.match(script, /Start-Transcript -LiteralPath \$env:COOP_BOOT_LOG -Append[\s\S]*desktop --app[\s\S]*Stop-Transcript/);
+  assert.match(script, /AppendAllText\(\$log[\s\S]*running coop desktop[\s\S]*try \{ & \$env:COOP_BOOT_COOP desktop --app \$env:COOP_BOOT_APP; \$code = \$LASTEXITCODE \} catch \{ Boot-Log[\s\S]*coop desktop exited/);
+  assert.doesNotMatch(script, /Start-Transcript/);
   assert.equal(bootstrapProcess({ coop: "C:\\c.cmd", app: "C:\\a.exe", cwd: "C:\\w", env: { COOP_BOOT_LOG: "stale" }, systemRoot: "C:\\Windows" }).options.env.COOP_BOOT_LOG, undefined, "no log: no stale COOP_BOOT_LOG reaches the console");
   assert.throws(() => bootstrapProcess({ coop: "C:\\c.cmd", app: "C:\\a.exe", cwd: "C:\\w", log: "launch.log", systemRoot: "C:\\Windows" }), /log is not an absolute path/);
   // The error box shows what the console said: coop's lines since this launch's console started, not coop.exe's lines or the transcript's header.
