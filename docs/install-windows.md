@@ -210,8 +210,10 @@ sign-ins under its user folder (`%USERPROFILE%\.coop`).
    time from then on (File > Switch client changes it). One Windows account is
    one client: its sessions, memory and backups stay in that account. The first
    time, a console runs the same checklist as `coop install` (prerequisites from
-   the package, the coop tools from the package, then the Azure and OpenAI
-   sign-ins), with nothing that needs an administrator: follow what it prints,
+   the package, the coop tools from the package, your COOP profile with your
+   Windows account's name and the default settings, then the Azure and OpenAI
+   sign-ins), with nothing that needs an administrator and no questions: follow
+   what it prints (`coop onboard` changes the profile any time),
    then start the window again if it stopped. If no window opens, a message
    shows the console's last lines and names the launch log
    (`%USERPROFILE%\.coop\desktop\launch.log`). After that the console only

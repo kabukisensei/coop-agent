@@ -457,10 +457,15 @@ try {
 
 # --- 7. First-run onboarding -----------------------------------------------------
 # If this is an interactive install and there's no local profile yet, ask the user
-# for their name and communication preference before the first real session.
+# for their name and communication preference before the first real session. The
+# coop window's first launch (--prereqs auto, no keyboard) writes the profile with
+# the Windows account's name and the defaults instead, and says so.
 if (-not [Console]::IsInputRedirected -and $env:COOP_NO_ONBOARD -ne '1') {
   Coop-Head '7/8  Personalize Coop'
   Invoke-CoopMaybeOnboard
+} elseif ($PREREQS_AUTO -and $env:COOP_NO_ONBOARD -ne '1' -and (Test-CoopOnboardingMissing)) {
+  Coop-Head '7/8  Personalize Coop'
+  Invoke-CoopDefaultOnboard
 }
 # --platform is kept even when onboarding did not run (non-interactive or
 # COOP_NO_ONBOARD): the first interactive launch then skips that question.

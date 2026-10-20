@@ -922,6 +922,8 @@ function Initialize-CoopLaunch {
   if ($Window) { Write-CoopSeveralContractsWarning (Get-Location).Path }
   # F3: on a machine install, the lines about an update that installed since this account's last launch, or one waiting (console and the window's notices).
   Write-CoopUpdateLines
+  # The window's first launch wrote the profile with the account's name: say so once.
+  if ($Window) { Write-CoopProfileDefaultedLine }
   $mcpState = Update-CoopManagedMcpConfig -Quiet
   if ($mcpState -eq 'failed') {
     Coop-Warn 'could not refresh the MCP config for this folder; run: coop sync   (from this folder)'

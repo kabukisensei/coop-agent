@@ -207,6 +207,33 @@ sys.exit(0)
   if ((Get-GateValue $r.Out 'firstRunFlag') -eq '' -and (Get-GateValue $r.Out 'stamp') -eq 'True') { Ok 'second window launch: stamp present, no COOP_FIRST_RUN' }
   else { Ko "second window launch: flag=$(Get-GateValue $r.Out 'firstRunFlag') stamp=$(Get-GateValue $r.Out 'stamp')" ($r.Out + $r.Err) }
 
+  # --- A4. the window's first launch writes the default profile (install.ps1, --prereqs auto) --
+  $def = Join-Path $t 'default-onboard.ps1'
+  [System.IO.File]::WriteAllText($def, (@(
+    "`$ErrorActionPreference = 'Continue'",
+    ". '$((Join-Path $root 'lib\common.ps1').Replace("'", "''"))'",
+    "function Get-CoopPython { return '$($realPy.Replace("'", "''"))' }",
+    "function Get-CoopAccountDisplayName { return 'Pat Example' }",
+    "Invoke-CoopDefaultOnboard",
+    "Write-Output ('rc=' + `$script:CoopOnboardRc)",
+    "Write-Output ('missing=' + (Test-CoopOnboardingMissing))",
+    "Write-Output ('marker=' + (Test-Path -LiteralPath (Get-CoopProfileDefaultedFile) -PathType Leaf))",
+    "`$script:CoopWarnSink = New-Object System.Collections.Generic.List[string]",
+    "Write-CoopProfileDefaultedLine",
+    "Write-Output ('notice=' + `$script:CoopWarnSink.Count)",
+    "Write-Output ('markerAfter=' + (Test-Path -LiteralPath (Get-CoopProfileDefaultedFile) -PathType Leaf))",
+    "exit 0") -join "`n") + "`n", $utf8)
+  Reset-Home
+  $env:COOP_AZ_BIN = Join-Path $t 'nonexistent-az'
+  $r = Invoke-Redirected $def
+  $all = $r.Out + $r.Err
+  $userJson = Join-Path $sandboxHome '.coop\user.json'
+  $savedName = if (Test-Path -LiteralPath $userJson) { try { (Get-Content -LiteralPath $userJson -Raw | ConvertFrom-Json).name } catch { '' } } else { '' }
+  if ((Get-GateValue $r.Out 'rc') -eq '0' -and (Get-GateValue $r.Out 'missing') -eq 'False' -and $savedName -eq 'Pat Example' -and $all.Contains('COOP calls you Pat Example') -and $all.Contains('coop onboard')) { Ok 'window first launch: the default profile carries the account''s name, and the console says so with the way to change it' }
+  else { Ko "window first launch default profile: rc=$(Get-GateValue $r.Out 'rc') missing=$(Get-GateValue $r.Out 'missing') name=$savedName" $all }
+  if ((Get-GateValue $r.Out 'marker') -eq 'True' -and (Get-GateValue $r.Out 'notice') -eq '1' -and (Get-GateValue $r.Out 'markerAfter') -eq 'False') { Ok 'the next window launch gets the notice once (warn sink) and the marker goes' }
+  else { Ko "profile-defaulted notice: marker=$(Get-GateValue $r.Out 'marker') notice=$(Get-GateValue $r.Out 'notice') after=$(Get-GateValue $r.Out 'markerAfter')" $all }
+
   # --- B. end-to-end: plain `coop` on a fresh home continues into pi ----------------
   $coop = Join-Path $root 'bin\coop.ps1'
   Reset-Home

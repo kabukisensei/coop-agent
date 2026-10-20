@@ -3261,16 +3261,34 @@ function Invoke-CoopPipxBootstrap {
   if (Test-CoopPipxAvailable) { return (Coop-UnitResult $true "pipx installed ($pathNote)") }
   return (Coop-UnitResult $false "pipx was installed but does not answer (`"$py`" -m pipx --version) — see https://pipx.pypa.io")
 }
-# Run pipx quietly; the exit code (1 when no pipx answers).
+# Run pipx quietly; the exit code (1 when no pipx answers). A failure's reason
+# (pipx's or pip's ERROR line, else its last line) is kept in
+# $script:CoopPipxLastFailure for the unit's message: "could not install X" alone
+# sent the dev VM (2026-10-20) looking for the cause by hand.
+$script:CoopPipxLastFailure = ''
+function Coop-PipxFailureTail([string]$Out) {
+  $reason = Coop-PipErrorTail $Out
+  if (-not $reason) {
+    foreach ($line in ($Out -split "`r?`n")) { if ($line.Trim()) { $reason = $line.Trim() } }
+    if ($reason.Length -gt 160) { $reason = $reason.Substring(0, 157) + '...' }
+  }
+  return $reason
+}
 function Invoke-CoopPipx([string[]]$PipxArgs) {
   $inv = @(Get-CoopPipxInvocation)
-  if ($inv.Count -eq 0) { return 1 }
+  if ($inv.Count -eq 0) { $script:CoopPipxLastFailure = 'no pipx answers'; return 1 }
   $exe = $inv[0]
   $rest = @($inv | Select-Object -Skip 1) + @($PipxArgs)
   $wheelEnv = Use-CoopBundledWheels $PipxArgs
-  try { & $exe @rest *> $null; $rc = $LASTEXITCODE }
+  $out = ''
+  try { $out = [string](& $exe @rest 2>&1 | Out-String); $rc = $LASTEXITCODE }
   finally { Restore-CoopBundledWheels $wheelEnv }
+  $script:CoopPipxLastFailure = if ($rc -ne 0) { Coop-PipxFailureTail $out } else { '' }
   return $rc
+}
+# ": <reason>" for a unit message after a failed Invoke-CoopPipx, '' when none.
+function Get-CoopPipxFailureSuffix {
+  if ($script:CoopPipxLastFailure) { return ": $($script:CoopPipxLastFailure)" } else { return '' }
 }
 # pipx's stdout as one string ('' when no pipx answers).
 function Get-CoopPipxOutput([string[]]$PipxArgs) {
@@ -3313,7 +3331,7 @@ function Invoke-CoopPipxConverge {
   $installed = Get-CoopPipxToolVersion $Package
   $outcome = ''
   if ($Force) {
-    if ((Invoke-CoopPipx (New-PipxInstallArgs $true)) -ne 0) { return (Coop-UnitResult $false "failed to reinstall $Package ($spec)") }
+    if ((Invoke-CoopPipx (New-PipxInstallArgs $true)) -ne 0) { return (Coop-UnitResult $false "failed to reinstall $Package ($spec)$(Get-CoopPipxFailureSuffix)") }
     $outcome = "$Package reinstalled ($spec)"
   } elseif ($installed) {
     if ($Edge) {
@@ -3327,12 +3345,12 @@ function Invoke-CoopPipxConverge {
     if (-not $Pin) { return (Coop-UnitResult $true "$Package present ($installed) — no manifest pin") }
     if ($installed -eq $Pin -and -not $FetchPython) { return (Coop-UnitResult $true "$Package $installed matches manifest") }
     if ((Invoke-CoopPipx (New-PipxInstallArgs $true)) -ne 0) {
-      if ($installed -eq $Pin) { return (Coop-UnitResult $false "failed to rebuild $Package with standalone Python $Python") }
-      return (Coop-UnitResult $false "failed to converge $Package to $Pin")
+      if ($installed -eq $Pin) { return (Coop-UnitResult $false "failed to rebuild $Package with standalone Python $Python$(Get-CoopPipxFailureSuffix)") }
+      return (Coop-UnitResult $false "failed to converge $Package to $Pin$(Get-CoopPipxFailureSuffix)")
     }
     $outcome = if ($installed -eq $Pin) { "$Package $Pin rebuilt with Python $Python" } else { "$Package converged $installed -> $Pin" }
   } else {
-    if ((Invoke-CoopPipx (New-PipxInstallArgs $false)) -ne 0) { return (Coop-UnitResult $false "could not install $Package ($spec)") }
+    if ((Invoke-CoopPipx (New-PipxInstallArgs $false)) -ne 0) { return (Coop-UnitResult $false "could not install $Package ($spec)$(Get-CoopPipxFailureSuffix)") }
     $outcome = "$Package installed ($spec)"
   }
   if (-not $Edge -and $Pin) {
@@ -4214,6 +4232,66 @@ function Set-CoopFirstRunLaunch {
     # A read-only profile dir must not block the launch; the menu simply opens again next time.
   }
   $env:COOP_FIRST_RUN = '1'
+}
+
+# The name the Windows account shows (its full name, else the user name); off
+# Windows the login name. '' when nothing answers.
+function Get-CoopAccountDisplayName {
+  $login = if ($env:USERNAME) { [string]$env:USERNAME } elseif ($env:USER) { [string]$env:USER } else { '' }
+  if ($env:OS -eq 'Windows_NT' -and $login) {
+    try {
+      $acct = Get-CimInstance -ClassName Win32_UserAccount -Filter "Name='$($login.Replace("'", "''"))' AND LocalAccount=True" -ErrorAction Stop | Select-Object -First 1
+      if ($acct -and $acct.FullName -and ([string]$acct.FullName).Trim()) { return ([string]$acct.FullName).Trim() }
+    } catch { }
+  }
+  return $login
+}
+# The marker the window's first launch leaves when it wrote the default profile
+# (<profile>\desktop\profile-defaulted, holding the name); the next window launch
+# says so once (Write-CoopProfileDefaultedLine).
+function Get-CoopProfileDefaultedFile { return (Join-Path (Get-CoopProfileDir) 'desktop\profile-defaulted') }
+# The coop window's first launch (F3; the dev VM, 2026-10-20): no one is at the
+# console's keyboard, so the profile questions cannot be asked there. The profile
+# is written with the Windows account's name and the default settings, said so on
+# the console and, through the marker, in the window's set-up card; `coop
+# onboard` changes it any time. $script:CoopOnboardRc as Invoke-CoopMaybeOnboard.
+function Invoke-CoopDefaultOnboard {
+  $script:CoopOnboardRc = 0
+  if (-not (Test-CoopOnboardingMissing)) { return }
+  if ($env:COOP_NO_ONBOARD -eq '1') { return }
+  $py = Get-CoopPython
+  if (-not $py) { Coop-Warn 'python3 required for the COOP profile. Run: coop onboard once python is available.'; return }
+  $name = Get-CoopAccountDisplayName
+  if (-not $name) { Coop-Warn (Get-CoopOnboardingMissingMessage); return }
+  Coop-Info "First launch: writing your COOP profile with the default settings (no keyboard here to ask)"
+  $onboardArgs = @('onboard', '--name', $name)
+  if ($env:COOP_CLIENT_PLATFORM) { $onboardArgs += @('--platform', $env:COOP_CLIENT_PLATFORM) }
+  & $py (Join-Path $script:CoopRoot 'scripts\onboard.py') @onboardArgs 2>&1 | Out-Null
+  $script:CoopOnboardRc = $LASTEXITCODE
+  if ($script:CoopOnboardRc -ne 0 -or (Test-CoopUserProfileMissing)) {
+    Coop-Warn "could not write the default COOP profile (onboard.py exited $($script:CoopOnboardRc))" 'run: coop onboard'
+    return
+  }
+  Coop-Ok "COOP calls you $name (your Windows account's name) and uses the default settings; change them any time with: coop onboard"
+  try {
+    $f = Get-CoopProfileDefaultedFile
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $f) | Out-Null
+    [System.IO.File]::WriteAllText($f, $name)
+  } catch { }
+}
+# The window launch after the default profile was written: one notice naming the
+# name and how to change it (console, and the set-up card through the warn sink).
+function Write-CoopProfileDefaultedLine {
+  try {
+    $f = Get-CoopProfileDefaultedFile
+    if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return }
+    $name = ([System.IO.File]::ReadAllText($f)).Trim()
+    Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+    if (-not $name) { return }
+    $line = "COOP calls you $name, your Windows account's name, with the default settings; change them any time with: coop onboard"
+    Coop-Info $line
+    if ($null -ne $script:CoopWarnSink) { [void]$script:CoopWarnSink.Add($line) }
+  } catch { }
 }
 
 # Interactive onboarding wizard (name, communication preference, client platform,

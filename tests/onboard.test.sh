@@ -90,6 +90,17 @@ rm "$COOP_DIR/.coop/config"
 ( HOME="$COOP_DIR" USERPROFILE="$COOP_DIR" COOP_ROOT="$ROOT" "$PWSH" -NoLogo -NoProfile -ExecutionPolicy Bypass -Command '. (Join-Path $env:COOP_ROOT "lib/common.ps1"); if (Test-CoopOnboardingMissing) { exit 0 } else { exit 1 }' ) && ok "missing global config retriggers onboarding" || ko "missing global config did not retrigger onboarding"
 printf '%s\n' '{"schema_version":1,"azure":{"enabled":false,"tenant_id":"","tenant_name":""},"integrations":{},"azure_devops":{"organization":""},"mcp":{"safe_mode":"read_only_first"},"fleet":{"publish_dir":""}}' > "$COOP_DIR/.coop/config"
 
+# --- the window's first launch: --name answers the name with no one at the keyboard --
+WN="$COOP_DIR/window-name"; mkdir -p "$WN"
+wn_err="$(HOME="$WN" COOP_DIR="$WN" COOP_AZ_BIN=/nonexistent/az "$PY" "$ROOT/scripts/onboard.py" onboard --name "Pat Example" </dev/null 2>&1 >/dev/null)"; wn_rc=$?
+wn_name="$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$WN/.coop/user.json" 2>/dev/null)"
+wn_preset="$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["communication"]["preset"])' "$WN/.coop/user.json" 2>/dev/null)"
+[ "$wn_rc" -eq 0 ] && [ "$wn_name" = "Pat Example" ] && [ "$wn_preset" = "balanced" ] && [ -f "$WN/.coop/config" ] && ok "onboard --name with stdin closed writes the profile with that name and the defaults" || ko "onboard --name at EOF: rc=$wn_rc name=$wn_name preset=$wn_preset: $wn_err"
+wn2_err="$(HOME="$WN" COOP_DIR="$WN" COOP_AZ_BIN=/nonexistent/az "$PY" "$ROOT/scripts/onboard.py" onboard --name "Someone Else" </dev/null 2>&1 >/dev/null)"
+wn_name2="$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$WN/.coop/user.json" 2>/dev/null)"
+[ "$wn_name2" = "Pat Example" ] && ok "onboard --name never renames an existing profile" || ko "onboard --name renamed an existing profile: $wn_name2: $wn2_err"
+rm -rf "$WN"
+
 # --- profile show ---------------------------------------------------------------
 show="$(HOME="$COOP_DIR" "$PY" "$ROOT/scripts/onboard.py" profile)"
 case "$show" in *"Name: Test User"*) ok "profile shows name" ;; *) ko "profile show: $show" ;; esac

@@ -134,7 +134,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   on it for two minutes with nothing printed, then quit. If the driver is still
   missing, the first launch and `coop doctor` on a machine install say so as a
   warning naming the administrator's step (run the installer again) and go on;
-  live SQL waits, everything else works.
+  live SQL waits, everything else works. The same launch has no one at the
+  console's keyboard, so it no longer reaches the profile wizard: the COOP
+  profile is written with the Windows account's name and the default settings,
+  the console says so with the way to change it (`coop onboard`), and the
+  window's set-up card repeats it once at the next launch. A `coop install`
+  at a keyboard still asks. (`onboard.py onboard --name <name>` is the
+  default answer it uses.)
+- **A failed pipx install says why.** The install's "could not install
+  <tool>" lines now end with pipx's or pip's error line (or its last
+  line), so a standard user's first launch on a machine install names the
+  path or package that failed instead of leaving it to a verbose re-run.
 
 ### Added
 
