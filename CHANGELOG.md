@@ -23,7 +23,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   timeout it was approved for. Identity, target, production and
   mutation-approval checks are unchanged, and the native `fabric_sql_query`
   fallback keeps its own separate bound. The terminal and the window share the
-  one generator, so both get it. `coop doctor` prints the timeout in force.
+  one generator, so both get it. `coop doctor` prints the timeout in force, and
+  `coop sync` now shows the generator's note when it exits 0 (it was dropped
+  before, so the invalid-value note never reached the console).
 - **`coop release` on a Mac without PowerShell 7 no longer stops at the test
   gate.** Since the guardrails change of 2026-10-07 `tests/run.sh` refuses to
   start without `pwsh` (its coop.ps1 tests cannot self-skip), so the gate died
