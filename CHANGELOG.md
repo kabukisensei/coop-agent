@@ -17,6 +17,25 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   the release's test evidence; a run still in progress, a red check, no runs,
   or an unreachable GitHub still stop the release, and `--no-check` stays the
   explicit opt-out. New `tests/release-gate.test.sh` (gate lane).
+- **`coop router-trial` says it was removed instead of opening a session.** An
+  unknown word after `coop` goes to Pi as a message, so after the trial's
+  removal (0.37.0) a scripted `coop router-trial` opened an interactive session
+  and hung with no terminal (the dev VM's pre-tag check, 2026-10-20). The word
+  is now a retired command, like `coop web`: one line naming the removal and
+  the CHANGELOG entry, exit code 1, nothing launched. The classifier-keys
+  fixture runs it and checks that no helper or dispatch to the trial remains.
+
+### Changed
+
+- **`coop doctor` sends a stale coop-tool pin to `coop update`.** The pipx rows
+  (`coop-data-doc`, `coop-schema-compare`, the Fabric CLI) answered a version
+  behind, ahead of or different from the manifest with `pipx install
+  <tool>==<pin>`, while the product answer is `coop update`, which converges
+  every pin at once (the Pi row already said so). The remedy now leads with
+  `coop update` and keeps the pipx line in brackets for a machine without
+  coop on PATH; the ownership rows (a foreign copy on PATH) keep their pipx
+  hints, since a stale pin is not their problem. Found on the dev VM's pre-tag
+  check of v0.37.0 (2026-10-20).
 
 ## [0.37.0] — 2026-10-20
 

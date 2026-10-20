@@ -232,6 +232,9 @@ sys.exit(1)
   $rows = Get-InventoryRows
   $older = @($rows | Where-Object { ([string]$_.name).Contains('ms-fabric-cli 1.6.1') -and ([string]$_.name).Contains('older than manifest') })
   if ($older.Count -gt 0) { Ok 'older version reported with manifest reference' } else { Ko 'wrong version not classified' (Show-Rows $rows 'ms-fabric-cli') }
+  # The remedy is the product's own command, with the pipx line as the fallback.
+  if ($older.Count -gt 0 -and ([string]$older[0].hint).StartsWith('coop update') -and ([string]$older[0].hint).Contains('pipx install ms-fabric-cli==')) { Ok 'a stale pin is sent to coop update, pipx install as the fallback' }
+  elseif ($older.Count -gt 0) { Ko 'a stale pin must lead with coop update' (Show-Rows $rows 'ms-fabric-cli') }
 
   # F4b: pipx metadata unreadable -> classify by the CLI, flag the unreadable metadata.
   # (F4 stale/corrupt and F4c-F4f are tests/fixtures/doctor-pipx-shadow.test.ps1.)

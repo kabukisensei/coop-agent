@@ -43,9 +43,24 @@ try {
   $doctor = [System.IO.File]::ReadAllText((Join-Path $root 'scripts\doctor.ps1'))
   if ($doctor.Contains('Get-CoopThirdPartyClassifierSigns')) { Ok 'doctor.ps1 carries the classifier-key row' } else { Ko 'doctor.ps1 must call Get-CoopThirdPartyClassifierSigns' }
 
-  # The trial is gone: no command, no helper, no key reaches a vendor from coop.
+  # The trial is gone: no helper, no dispatch to it, no key reaches a vendor from
+  # coop. The word itself stays in the launcher as a retired command that says
+  # so, instead of falling through to Pi as a message and opening a session.
   $launcher = [System.IO.File]::ReadAllText((Join-Path $root 'bin\coop.ps1'))
-  if ($launcher -match 'router-trial' -or (Test-Path -LiteralPath (Join-Path $root 'lib\router-trial.mjs'))) { Ko 'the router-trial command or helper is still present' } else { Ok 'coop has no router-trial command or helper' }
+  if ($launcher -match 'router-trial\.mjs' -or $launcher -match 'Invoke-CoopRouterTrial' -or (Test-Path -LiteralPath (Join-Path $root 'lib\router-trial.mjs'))) { Ko 'the router-trial helper or its dispatch is still present' } else { Ok 'coop has no router-trial helper' }
+  $psi = New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
+  if (-not $psi.FileName) { $psi.FileName = (Get-Command powershell).Source }
+  $psi.Arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$(Join-Path $root 'bin\coop.ps1')`" router-trial"
+  $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.RedirectStandardInput = $true
+  $psi.Environment['COOP_SKIP_AZ'] = '1'
+  $proc = [System.Diagnostics.Process]::Start($psi)
+  $proc.StandardInput.Close()
+  $ended = $proc.WaitForExit(60000)
+  $text = ''
+  if ($ended) { $text = $proc.StandardOutput.ReadToEnd() + $proc.StandardError.ReadToEnd() } else { try { $proc.Kill($true) } catch { } }
+  if ($ended -and $proc.ExitCode -ne 0 -and $text -match 'router-trial was removed') { Ok 'coop router-trial says it was removed and exits non-zero, no session opens' }
+  else { Ko "coop router-trial must say it was removed and exit non-zero (ended=$ended exit=$(if ($ended) { $proc.ExitCode } else { 'hung' }))" }
 }
 finally {
   Restore-Env $saved
