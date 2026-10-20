@@ -115,6 +115,14 @@ function Get-CoopBundledPython {
 # index. Returns the previous values for Restore-CoopBundledWheels, or $null when
 # nothing changed. The variables are set only around coop's own pipx calls, never
 # for the session, so a pip the user runs inside coop still reaches PyPI.
+# The wheel folder as pip must receive it: pip splits PIP_FIND_LINKS on
+# whitespace, so a folder under "C:\Program Files" (the machine install, F3)
+# arrived as two ignored locations and every pipx install failed with "No
+# matching distribution" (the dev VM, 2026-10-20, a standard user's first
+# launch). A file: URL carries the space as %20.
+function Get-CoopPipFindLink([string]$Dir) {
+  try { return (New-Object System.Uri ([System.IO.Path]::GetFullPath($Dir))).AbsoluteUri } catch { return $Dir }
+}
 function Use-CoopBundledWheels([string[]]$PipxArgs) {
   $wheels = [string]$env:COOP_BUNDLED_WHEELS
   if (-not $wheels -or $env:COOP_PIP_ONLINE -eq '1' -or -not (Test-Path -LiteralPath $wheels -PathType Container)) { return $null }
@@ -131,7 +139,7 @@ function Use-CoopBundledWheels([string[]]$PipxArgs) {
   foreach ($spec in $specs) { if ($spec -notmatch '^[A-Za-z0-9._-]+==[^=]+$') { return $null } }
   $saved = @{ PIP_NO_INDEX = $env:PIP_NO_INDEX; PIP_FIND_LINKS = $env:PIP_FIND_LINKS }
   $env:PIP_NO_INDEX = '1'
-  $env:PIP_FIND_LINKS = $wheels
+  $env:PIP_FIND_LINKS = Get-CoopPipFindLink $wheels
   return $saved
 }
 function Restore-CoopBundledWheels($Saved) {

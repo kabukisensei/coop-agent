@@ -1046,6 +1046,7 @@ function Invoke-CoopDesktop {
   $folder = ''
   $printSpec = $false
   $appExe = ''
+  $setupNote = ''
   for ($i = 0; $i -lt $DesktopArgs.Count; $i++) {
     $a = $DesktopArgs[$i]
     if ($a -ceq '--print-spec') { $printSpec = $true }
@@ -1080,8 +1081,17 @@ function Invoke-CoopDesktop {
       Coop-Info 'anything still missing is installed below with winget (Windows may ask for permission); the window opens once setup finishes'
     }
     $setupRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\install.ps1') @('--prereqs', 'auto')
-    if ($setupRc -ne 0) { Coop-Die 'setup did not finish: do what the lines above say, then start the coop window again' }
-    Set-CoopBundledSetupDone
+    if ($setupRc -ne 0) {
+      # Not the end of the launch (the dev VM, 2026-10-20: three tool installs
+      # failed and the window never opened, with the reason in a console that
+      # closed at once). When Pi and Node are there the window opens anyway,
+      # the set-up card carries this line, and the setup runs again next time
+      # because the done marker is not written.
+      $setupNote = 'setup did not finish: some tools are missing (the console lines above say which; they are also in ' + (Join-Path (Get-CoopProfileDir) 'desktop\launch.log') + '). The window opens anyway; the next launch tries again, or run: coop doctor'
+      Coop-Warn $setupNote
+    } else {
+      Set-CoopBundledSetupDone
+    }
   }
   if (-not (Test-Have 'pi')) { Coop-Die 'pi is not installed. Run: coop install   (installs the release''s tested Pi)' }
   # The window starts node directly (no shell), so on Windows only node.exe will do.
@@ -1092,6 +1102,7 @@ function Invoke-CoopDesktop {
   if (-not $entry) { Coop-Die 'could not find the Pi package in the npm global folder. Run: coop install' }
 
   $script:CoopWarnSink = New-Object System.Collections.Generic.List[string]
+  if ($setupNote) { [void]$script:CoopWarnSink.Add($setupNote) }
   $token = ''
   if (-not $printSpec) {
     Initialize-CoopLaunch -Window

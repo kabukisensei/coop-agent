@@ -141,6 +141,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   window's set-up card repeats it once at the next launch. A `coop install`
   at a keyboard still asks. (`onboard.py onboard --name <name>` is the
   default answer it uses.)
+- **The package's tools install from a folder with a space in its path.** pip
+  splits `PIP_FIND_LINKS` on whitespace, so under `C:\Program Files\coop` (the
+  machine install) the wheel folder arrived as two ignored locations and every
+  tool install (Fabric CLI, coop-data-doc, coop-schema-compare) failed with
+  "No matching distribution"; the per-user package under `%LOCALAPPDATA%` never
+  hit it. The folder now reaches pip as a `file:` URL. Found on the dev VM
+  (2026-10-20) as a standard user's first launch that opened no window.
+- **A first launch whose setup did not finish still opens the window** when Pi
+  and Node are in place: the console and the window's set-up card say which
+  tools are missing and where the lines are, and the setup runs again at the
+  next launch (before, the launch stopped with no window).
 - **A failed pipx install says why.** The install's "could not install
   <tool>" lines now end with pipx's or pip's error line (or its last
   line), so a standard user's first launch on a machine install names the
