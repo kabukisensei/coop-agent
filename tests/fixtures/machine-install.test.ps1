@@ -27,12 +27,26 @@ try {
   . (Join-Path $root 'scripts\machine-install.ps1')
   $app = 'C:\Program Files\coop'
   $shim = Get-CoopMachineShimBody $app
-  if ($shim -notmatch '(?m)^if exist "%LOCALAPPDATA%\\coop\\bin\\coop\.cmd" goto account') { Ko 'the shim does not check this account''s link first' $shim }
+  if ($shim -notmatch '(?m)^if not exist "%LOCALAPPDATA%\\coop\\bin\\coop\.cmd" goto machine') { Ko 'the shim does not check this account''s link first' $shim }
+  elseif ($shim -notmatch '(?m)^findstr /I /C:"\\Programs\\coop\\" "%LOCALAPPDATA%\\coop\\bin\\coop\.cmd" >nul 2>nul\r?$\s+^if not errorlevel 1 goto machine') { Ko 'the shim does not skip a link into an older per-account package' $shim }
   elseif ($shim -notmatch [regex]::Escape('call "C:\Program Files\coop\resources\coop\bin\coop.cmd" %*')) { Ko 'the shim does not fall back to the package''s coop' $shim }
   elseif ($shim -notmatch [regex]::Escape('call "%LOCALAPPDATA%\coop\bin\coop.cmd" %*')) { Ko 'the shim does not run this account''s link' $shim }
   elseif (($shim -split "`r`n" | Where-Object { $_ -eq 'exit /b %ERRORLEVEL%' }).Count -ne 2) { Ko 'the shim does not pass the exit code through' $shim }
   elseif ($shim -match '[^\x00-\x7F]') { Ko 'the shim is not ASCII' }
-  else { Ok 'the machine shim runs this account''s link when there is one, else the package''s coop, and passes the exit code through' }
+  else { Ok 'the machine shim runs this account''s clone link when there is one, skips a link into an older package, else runs the package''s coop, and passes the exit code through' }
+
+  if (-not (Test-CoopLinkPointsIntoPackage "@echo off`r`ncall `"C:\Users\a\AppData\Local\Programs\coop\resources\coop\bin\coop.cmd`" %*`r`n")) { Ko 'Test-CoopLinkPointsIntoPackage misses a link into a per-account package' }
+  elseif (Test-CoopLinkPointsIntoPackage "@echo off`r`ncall `"C:\dev\coop-agent\bin\coop.cmd`" %*`r`n") { Ko 'Test-CoopLinkPointsIntoPackage flags a developer clone' }
+  elseif (-not (Test-CoopLinkPointsIntoPackage 'c:\users\a\appdata\local\programs\coop\coop.exe')) { Ko 'Test-CoopLinkPointsIntoPackage misses a shortcut target into a package (any case)' }
+  elseif (Test-CoopLinkPointsIntoPackage '') { Ko 'Test-CoopLinkPointsIntoPackage flags an empty body' }
+  else { Ok 'a link or shortcut into %LOCALAPPDATA%\Programs\coop is an older package''s; a developer clone is not' }
+
+  $users = Join-Path $t 'Users'
+  foreach ($d in @('Public', 'Default', 'Default User', 'All Users', 'alice', 'bob.admin')) { New-Item -ItemType Directory -Force -Path (Join-Path $users $d) | Out-Null }
+  $profiles = @(Get-CoopProfileDirs $users | ForEach-Object { Split-Path -Leaf $_ } | Sort-Object)
+  if (($profiles -join ',') -ne 'alice,bob.admin') { Ko "Get-CoopProfileDirs: $($profiles -join ',')" }
+  elseif (@(Get-CoopProfileDirs (Join-Path $t 'nowhere')).Count -ne 0) { Ko 'Get-CoopProfileDirs invents profiles under a missing folder' }
+  else { Ok 'the per-account sweep visits every profile but Public and Default*' }
 
   $path = 'C:\Windows;C:\Windows\System32;%SystemRoot%\x'
   $with = Add-CoopPathEntry $path 'C:\Program Files\coop\bin'
@@ -81,6 +95,7 @@ try {
     if (-not (Test-CoopUpdateTaskCurrent $xmlText $xmlText)) { Ko 'Test-CoopUpdateTaskCurrent rejects the task it would write' }
     elseif (Test-CoopUpdateTaskCurrent ($xmlText -replace 'auto-update\.ps1', 'other.ps1') $xmlText) { Ko 'Test-CoopUpdateTaskCurrent accepts a task running another script' }
     elseif (Test-CoopUpdateTaskCurrent '' $xmlText) { Ko 'Test-CoopUpdateTaskCurrent accepts a missing task' }
+    elseif (-not (Test-CoopUpdateTaskCurrent (($xmlText -replace '&quot;', '&amp;quot;') -replace '<Command>', "<Command>`r`n      ") $xmlText)) { Ko 'Test-CoopUpdateTaskCurrent rejects the XML schtasks /Query writes back (&amp;quot; for the quotes, re-wrapped)' }
     else { Ok 'a registered task running this script as SYSTEM is left alone; any other is re-registered' }
   }
   $escaped = Get-CoopUpdateTaskXml 'C:\A & B\coop' 'C:\ProgramData\coop' 'C:\ps.exe'

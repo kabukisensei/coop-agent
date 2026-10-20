@@ -340,6 +340,13 @@ jobs:
           $second = (& $ps -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $cmd 2>&1 | Out-String)
           Write-Output $second
           if ($second -notmatch 'is already installed') { throw 'a second run of the one-liner did not find the window installed' }
+      - name: the acceptance reports in the log (what a failed launch saw, windows and processes)
+        if: always()
+        shell: pwsh
+        run: |
+          foreach ($f in @("$env:RUNNER_TEMP\upgrade-acceptance.json", "$env:RUNNER_TEMP\launch-acceptance.json")) {
+            if (Test-Path -LiteralPath $f) { Write-Output "--- $f"; Get-Content -LiteralPath $f -Raw }
+          }
       - uses: actions/upload-artifact@v4
         if: always()
         with:

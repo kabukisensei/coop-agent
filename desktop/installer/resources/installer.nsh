@@ -8,16 +8,20 @@
 ; the snapshot's PowerShell scripts, run with the built-in Windows PowerShell:
 ;
 ;   customInit        before anything is written: this account's older
-;                     per-user coop (HKCU, %LOCALAPPDATA%\Programs\coop) is
+;                     per-user coop (HKCU InstallLocation, else the folder of
+;                     its UninstallString, else %LOCALAPPDATA%\Programs\coop) is
 ;                     uninstalled completely (not --updated), so its own
 ;                     uninstaller also drops the `coop` link and "coop"
 ;                     shortcuts its first launch wrote; the machine shim then
 ;                     serves the account. ~\.coop is never touched.
 ;   customInstall     scripts\machine-install.ps1: the machine shim
 ;                     <app>\bin\coop.cmd on the machine PATH (the `coop`
-;                     command for every account), the machine marker and the
+;                     command for every account), the machine marker, the
 ;                     "coop update" scheduled task (scripts\auto-update.ps1 as
-;                     SYSTEM installs each new release silently).
+;                     SYSTEM installs each new release silently), the shared
+;                     standards folder, and the removal of EVERY account's
+;                     older per-user package, link and icons (elevated, so
+;                     the other accounts' copies go too; their ~\.coop stays).
 ;   customUnInstall   before the uninstaller deletes the package, so the
 ;                     snapshot's scripts are still there: window-uninstall.ps1
 ;                     removes the `coop` launcher link and "coop" shortcuts an
@@ -32,6 +36,23 @@
 ;
 ; ${APP_GUID} is electron-builder's uninstall key for this appId (the same in
 ; every mode); $installMode is "all" for a per-machine install (multiUser.nsh).
+;
+; The installer is a 32-bit process: "$SYSDIR\WindowsPowerShell" is the 32-bit
+; PowerShell under file-system redirection. coopPowerShell picks the 64-bit one
+; through Sysnative on a 64-bit Windows (schtasks and the per-account sweep run
+; there), else the only one. machine-install.ps1 logs every step to
+; %ProgramData%\coop\logs\machine-install.log; the message box names it.
+
+!include x64.nsh
+!include FileFunc.nsh
+!include WordFunc.nsh
+
+!macro coopPowerShell OUT
+  StrCpy ${OUT} "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe"
+  ${if} ${RunningX64}
+    StrCpy ${OUT} "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+  ${endIf}
+!macroend
 
 !macro customWelcomePage
   !define MUI_WELCOMEPAGE_TITLE "coop"
@@ -51,6 +72,23 @@
     ${if} $R2 == ""
       ReadRegStr $R2 HKCU "Software\${APP_GUID}" "InstallLocation"
     ${endIf}
+    ${if} $R2 == ""
+      ; A v0.37.0 per-user install wrote no InstallLocation: take the folder
+      ; from its uninstall command, "<dir>\Uninstall coop.exe" /currentuser.
+      ReadRegStr $R3 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_GUID}" "UninstallString"
+      ${if} $R3 != ""
+        StrCpy $R4 $R3 1
+        ${if} $R4 == '"'
+          StrCpy $R3 $R3 "" 1
+          ${WordFind} $R3 '"' "+1" $R3
+        ${endIf}
+        ${GetParent} $R3 $R2
+      ${endIf}
+    ${endIf}
+    ${if} $R2 == ""
+    ${andIf} ${FileExists} "$LOCALAPPDATA\Programs\coop\Uninstall coop.exe"
+      StrCpy $R2 "$LOCALAPPDATA\Programs\coop"
+    ${endIf}
     ${if} $R2 != ""
     ${andIf} ${FileExists} "$R2\Uninstall coop.exe"
       DetailPrint "removing this account's older coop at $R2 (its data under the user folder stays)"
@@ -64,14 +102,17 @@
 !macroend
 
 !macro customInstall
+  ; The folder, for the next installer and for coop doctor (v0.37.0 wrote none).
+  WriteRegStr SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_GUID}" "InstallLocation" "$INSTDIR"
   ${if} $installMode == "all"
-    DetailPrint "setting up coop for every account: the coop command, the update task"
-    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\coop\scripts\machine-install.ps1" -InstallDir "$INSTDIR"'
+    DetailPrint "setting up coop for every account: the coop command, the update task, older per-account copies"
+    !insertmacro coopPowerShell $R9
+    nsExec::ExecToLog '"$R9" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\coop\scripts\machine-install.ps1" -InstallDir "$INSTDIR"'
     Pop $0
     ${if} $0 != 0
-      DetailPrint "machine-install.ps1 exited $0"
+      DetailPrint "machine-install.ps1 exited $0 (log: %ProgramData%\coop\logs\machine-install.log)"
       ${ifNot} ${Silent}
-        MessageBox MB_OK|MB_ICONEXCLAMATION "coop is installed, but the coop command for every account or its update task could not be set up (code $0).$\r$\n$\r$\nRun this as an administrator, then try again:$\r$\npowershell -ExecutionPolicy Bypass -File $\"$INSTDIR\resources\coop\scripts\machine-install.ps1$\" -InstallDir $\"$INSTDIR$\""
+        MessageBox MB_OK|MB_ICONEXCLAMATION "coop is installed, but the coop command for every account, its update task or the removal of older per-account copies did not finish (code $0).$\r$\n$\r$\nThe log: %ProgramData%\coop\logs\machine-install.log$\r$\n$\r$\nRun this as an administrator, then try again:$\r$\npowershell -ExecutionPolicy Bypass -File $\"$INSTDIR\resources\coop\scripts\machine-install.ps1$\" -InstallDir $\"$INSTDIR$\""
       ${endIf}
     ${endIf}
   ${endIf}
@@ -79,10 +120,11 @@
 
 !macro customUnInstall
   ${ifNot} ${isUpdated}
-    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\coop\scripts\window-uninstall.ps1" "$INSTDIR"'
+    !insertmacro coopPowerShell $R9
+    nsExec::ExecToLog '"$R9" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\coop\scripts\window-uninstall.ps1" "$INSTDIR"'
     Pop $0
     ${if} $installMode == "all"
-      nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\coop\scripts\machine-install.ps1" -Remove -InstallDir "$INSTDIR"'
+      nsExec::ExecToLog '"$R9" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\coop\scripts\machine-install.ps1" -Remove -InstallDir "$INSTDIR"'
       Pop $0
     ${endIf}
   ${endIf}

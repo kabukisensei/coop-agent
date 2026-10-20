@@ -188,6 +188,13 @@ await check("electron-builder: NSIS per-machine with elevation (F3), data kept, 
   // F3: this account's older per-user coop is uninstalled first, completely (no --updated), from customInit.
   assert.match(nsh, /!macro customInit[\s\S]*ReadRegStr \$R2 HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\\$\{APP_GUID\}" "InstallLocation"[\s\S]*ExecWait '"\$R2\\Uninstall coop\.exe" \/S \/currentuser _\?=\$R2'/);
   assert.doesNotMatch(nsh.split("!macro customInit")[1].split("!macroend")[0], /--updated/);
+  // A v0.37.0 per-user install wrote no InstallLocation: the folder comes from its UninstallString, else the default per-user dir.
+  assert.match(nsh, /!macro customInit[\s\S]*ReadRegStr \$R3 HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\\$\{APP_GUID\}" "UninstallString"[\s\S]*\$\{GetParent\} \$R3 \$R2[\s\S]*\$LOCALAPPDATA\\Programs\\coop\\Uninstall coop\.exe/);
+  assert.match(nsh, /!macro customInstall[\s\S]*WriteRegStr SHCTX "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\\$\{APP_GUID\}" "InstallLocation" "\$INSTDIR"/);
+  // The installer is 32-bit: the scripts run in the 64-bit PowerShell (Sysnative) on a 64-bit Windows, and the log is named.
+  assert.match(nsh, /!macro coopPowerShell OUT[\s\S]*\$\{RunningX64\}[\s\S]*\$WINDIR\\Sysnative\\WindowsPowerShell\\v1\.0\\powershell\.exe/);
+  assert.doesNotMatch(nsh, /nsExec::ExecToLog '"\$SYSDIR/);
+  assert.match(nsh, /MessageBox[^\n]*%ProgramData%\\coop\\logs\\machine-install\.log/);
   // F3: what the installer says.
   assert.match(nsh, /!macro customWelcomePage[\s\S]*MUI_WELCOMEPAGE_TEXT "coop installs once for every account on this computer\.\$\\r\$\\n\$\\r\$\\nEach Windows account keeps its own client's sessions, memory and backups under its user folder\.\$\\r\$\\n\$\\r\$\\nUpdates install themselves overnight\./);
   assert.match(nsh, /!macro customFinishPage[\s\S]*MUI_PAGE_FINISH/);

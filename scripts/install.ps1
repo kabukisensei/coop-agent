@@ -355,6 +355,30 @@ $keepLink = (Test-CoopBundledRuntime) -and (Test-CoopForeignLauncherLink -Launch
 $machineLink = (Test-CoopBundledRuntime) -and (Test-CoopMachineInstall)
 if ($machineLink) {
   Coop-Ok "``coop`` in every account's terminal is this machine's install ($(Join-Path (Get-CoopPackageRoot) 'bin\coop.cmd')); nothing to link for this account"
+  # What this account's older per-user package left behind once the machine
+  # install removed it (scripts\machine-install.ps1 sweeps every profile's
+  # files, but only this account can clear its own registry hive): a link that
+  # still calls into %LOCALAPPDATA%\Programs\coop and the Add/Remove entry.
+  if ($existing -and ($existing -match '(?i)\\Programs\\coop\\') -and -not (Get-CoopLinkedLauncherTarget -LauncherDir $LOCALBIN)) {
+    try { Remove-Item -LiteralPath $launcher -Force -ErrorAction Stop; Coop-Ok "removed this account's link to its older coop ($launcher); the machine's coop serves it now" }
+    catch { Coop-Warn "could not remove $launcher`: $($_.Exception.Message)" }
+  }
+  foreach ($hive in @('Software\Microsoft\Windows\CurrentVersion\Uninstall\com.cooptimize.coop', 'Software\com.cooptimize.coop')) {
+    try {
+      $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($hive, $false)
+      if (-not $key) { continue }
+      $where = [string]$key.GetValue('InstallLocation', '')
+      if (-not $where) {
+        $cmd = [string]$key.GetValue('UninstallString', '')
+        if ($cmd -match '^\s*"?([^"]+)\\Uninstall coop\.exe"?') { $where = $Matches[1] }
+      }
+      $key.Close()
+      if ($where -and -not (Test-Path -LiteralPath (Join-Path $where 'Uninstall coop.exe') -PathType Leaf)) {
+        [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($hive, $false)
+        Coop-Ok "cleared this account's Add/Remove entry for its older coop ($where is gone)"
+      }
+    } catch { Coop-Info "could not check HKCU\$hive`: $($_.Exception.Message)" }
+  }
 } elseif ($keepLink) {
   $linkedRoot = Split-Path -Parent (Split-Path -Parent (Get-CoopLinkedLauncherTarget -LauncherDir $LOCALBIN))
   Coop-Info "``coop`` in your terminal stays the install at $linkedRoot; the window uses its own bundled copy"

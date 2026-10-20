@@ -6,13 +6,20 @@
 # runs it elevated from customInstall with the install dir (<app>, normally
 # %ProgramFiles%\coop) and from customUnInstall with -Remove. It
 #   1. writes the machine shim <app>\bin\coop.cmd: a developer clone linked at
-#      %LOCALAPPDATA%\coop\bin\coop.cmd wins for that account, else the
-#      package's own resources\coop\bin\coop.cmd runs;
+#      %LOCALAPPDATA%\coop\bin\coop.cmd wins for that account (a link into an
+#      older per-account window package does not), else the package's own
+#      resources\coop\bin\coop.cmd runs;
 #   2. puts <app>\bin on the MACHINE PATH (HKLM), so `coop` works in every
 #      account's new terminal;
 #   3. writes resources\runtime\machine-install.json beside coop-runtime.json,
 #      the marker lib/common.ps1's Test-CoopMachineInstall reads;
-#   4. creates %ProgramData%\coop\updates and \logs for the update task;
+#   4. creates %ProgramData%\coop\updates and \logs for the update task, and
+#      %ProgramData%\coop\standards writable by every account (F2: the
+#      standards live once on this machine);
+#   4b. removes every account's older per-account window package
+#      (%LOCALAPPDATA%\Programs\coop): its own uninstaller, then the "coop"
+#      shortcuts and the `coop` link that pointed into it, so no account keeps
+#      an old icon; ~\.coop is never touched;
 #   5. registers the scheduled task "coop update" (SYSTEM, highest; daily at
 #      03:00 repeating every hour for a day, and two minutes after any user's
 #      logon; starts when missed, only with a network, 30 minutes at most, one
@@ -33,7 +40,15 @@ param(
 )
 
 $script:MachineInstallRc = 0
-function Write-MachineInstallLine([string]$Mark, [string]$Text) { Write-Host "  $Mark $Text" }
+# Every line also goes to <machine dir>\logs\machine-install.log (the installer
+# keeps no log of its own), so a VM check can read what each step did.
+$script:MachineInstallLog = ''
+function Write-MachineInstallLine([string]$Mark, [string]$Text) {
+  Write-Host "  $Mark $Text"
+  if ($script:MachineInstallLog) {
+    try { [System.IO.File]::AppendAllText($script:MachineInstallLog, ("{0:yyyy-MM-ddTHH:mm:ssZ} {1} {2}`r`n" -f [DateTime]::UtcNow, $Mark, $Text), (New-Object System.Text.UTF8Encoding $false)) } catch { }
+  }
+}
 function Coop-MachineOk([string]$m) { Write-MachineInstallLine '+' $m }
 function Coop-MachineInfo([string]$m) { Write-MachineInstallLine '-' $m }
 function Coop-MachineFail([string]$m) { Write-MachineInstallLine 'x' $m; $script:MachineInstallRc = 1 }
@@ -50,11 +65,14 @@ function Get-CoopMachineShimBody([string]$InstallDir) {
     '@echo off',
     'rem coop.cmd - the coop command for every account on this machine (coop-agent scripts\machine-install.ps1).',
     'rem A developer clone this account linked (coop install) wins; else the installed coop runs.',
-    'if exist "%LOCALAPPDATA%\coop\bin\coop.cmd" goto account',
-    ('call "' + $target + '" %*'),
-    'exit /b %ERRORLEVEL%',
-    ':account',
+    'if not exist "%LOCALAPPDATA%\coop\bin\coop.cmd" goto machine',
+    'rem A link into an older per-account window package is not a clone: the machine install wins.',
+    'findstr /I /C:"\Programs\coop\" "%LOCALAPPDATA%\coop\bin\coop.cmd" >nul 2>nul',
+    'if not errorlevel 1 goto machine',
     'call "%LOCALAPPDATA%\coop\bin\coop.cmd" %*',
+    'exit /b %ERRORLEVEL%',
+    ':machine',
+    ('call "' + $target + '" %*'),
     'exit /b %ERRORLEVEL%'
   ) -join "`r`n") + "`r`n"
 }
@@ -156,17 +174,43 @@ function Get-CoopUpdateTaskXml([string]$InstallDir, [string]$MachineDir, [string
 # Does the registered task's XML (schtasks /Query /XML) already run this script
 # as SYSTEM? Then it stays as it is: re-registering while the task itself runs
 # the installer (the self-update) is not needed.
+# schtasks /Query /XML writes the quotes in Arguments back escaped (&quot;, seen
+# doubly escaped too) and may re-wrap the text, so both sides are read as XML
+# text, decoded until stable and trimmed before they are compared.
+function Get-CoopTaskXmlText([string]$Xml, [string]$Tag) {
+  $m = [regex]::Match($Xml, "<$Tag>(.*?)</$Tag>", [System.Text.RegularExpressions.RegexOptions]::Singleline)
+  if (-not $m.Success) { return $null }
+  $text = $m.Groups[1].Value
+  for ($i = 0; $i -lt 3; $i++) {
+    $decoded = [System.Net.WebUtility]::HtmlDecode($text)
+    if ($decoded -eq $text) { break }
+    $text = $decoded
+  }
+  return (($text -replace '\s+', ' ').Trim())
+}
 function Test-CoopUpdateTaskCurrent([string]$ExistingXml, [string]$WantedXml) {
   if (-not $ExistingXml -or -not $WantedXml) { return $false }
   foreach ($tag in @('Command', 'Arguments', 'UserId')) {
-    $m = [regex]::Match($WantedXml, "<$tag>(.*?)</$tag>")
-    if (-not $m.Success) { return $false }
-    if ($ExistingXml.IndexOf($m.Value, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) { return $false }
+    $want = Get-CoopTaskXmlText $WantedXml $tag
+    $have = Get-CoopTaskXmlText $ExistingXml $tag
+    if ($null -eq $want -or $null -eq $have) { return $false }
+    if (-not [string]::Equals($want, $have, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
   }
   return $true
 }
 
 # --- Windows parts --------------------------------------------------------------
+# A launcher link body (%LOCALAPPDATA%\coop\bin\coop.cmd) that calls into a
+# window package rather than a developer clone.
+function Test-CoopLinkPointsIntoPackage([string]$Body) {
+  return ([string]$Body -match '(?i)\\Programs\\coop\\')
+}
+# The user profiles under <SystemDrive>\Users that may hold a per-account
+# package: every folder but Public and Default*.
+function Get-CoopProfileDirs([string]$UsersRoot) {
+  if (-not $UsersRoot -or -not (Test-Path -LiteralPath $UsersRoot -PathType Container)) { return @() }
+  return @(Get-ChildItem -LiteralPath $UsersRoot -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -notmatch '^(Public|Default|Default User|All Users)$' } | ForEach-Object { $_.FullName })
+}
 function Test-CoopElevated {
   try {
     $id = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -207,6 +251,7 @@ function Register-CoopUpdateTask([string]$Name, [string]$Xml, [string]$WorkDir) 
   $out = & schtasks.exe /Create /TN $Name /XML $file /F 2>&1
   $rc = $LASTEXITCODE
   Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
+  Coop-MachineInfo "schtasks /Create exited $rc`: $(($out | ForEach-Object { [string]$_ }) -join ' ')"
   if ($rc -ne 0) { throw "schtasks /Create exited $rc`: $(($out | ForEach-Object { [string]$_ }) -join ' ')" }
   Coop-MachineOk "scheduled task `"$Name`": daily at 03:00 (hourly retries) and at logon, as SYSTEM, runs scripts\auto-update.ps1"
 }
@@ -223,6 +268,8 @@ function Invoke-CoopMachineInstall {
   if ($env:OS -ne 'Windows_NT') { Coop-MachineFail 'the machine install step runs on Windows only'; return }
   if (-not (Test-CoopElevated)) { Write-MachineInstallLine 'x' 'this step needs an administrator (the installer runs it elevated)'; $script:MachineInstallRc = 2; return }
   $machine = if ($MachineDir) { $MachineDir } elseif ($env:COOP_MACHINE_DIR) { [string]$env:COOP_MACHINE_DIR } else { Join-Path $env:ProgramData 'coop' }
+  try { New-Item -ItemType Directory -Force -Path (Join-Path $machine 'logs') | Out-Null; $script:MachineInstallLog = Join-Path $machine 'logs\machine-install.log' } catch { $script:MachineInstallLog = '' }
+  Coop-MachineInfo "machine-install.ps1 $(if ($Remove) { '-Remove ' })-InstallDir $dir (PowerShell $($PSVersionTable.PSVersion), $(if ([Environment]::Is64BitProcess) { '64-bit' } else { '32-bit' }))"
   $binDir = Join-Path $dir 'bin'
   $shim = Join-Path $binDir 'coop.cmd'
   $marker = Join-Path $dir 'resources\runtime\machine-install.json'
@@ -260,13 +307,66 @@ function Invoke-CoopMachineInstall {
     [System.IO.File]::WriteAllText($marker, (Get-CoopMachineInstallMarkerJson $dir $version $TaskName), (New-Object System.Text.UTF8Encoding $false))
     Coop-MachineOk "marked this machine's install: $marker"
   } catch { Coop-MachineFail "could not write $marker`: $($_.Exception.Message)" }
-  # 4. %ProgramData%\coop
+  # 4. %ProgramData%\coop: the update state and log, and the standards folder
+  #    every account may refresh (BUILTIN\Users, S-1-5-32-545, gets Modify).
   try {
-    foreach ($sub in @('updates', 'logs')) { New-Item -ItemType Directory -Force -Path (Join-Path $machine $sub) | Out-Null }
+    foreach ($sub in @('updates', 'logs', 'standards')) { New-Item -ItemType Directory -Force -Path (Join-Path $machine $sub) | Out-Null }
     Coop-MachineOk "update state and log: $machine"
   } catch { Coop-MachineFail "could not create $machine`: $($_.Exception.Message)" }
+  try {
+    $standards = Join-Path $machine 'standards'
+    $aclOut = & icacls.exe $standards /grant '*S-1-5-32-545:(OI)(CI)M' /Q 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "icacls exited $LASTEXITCODE`: $(($aclOut | ForEach-Object { [string]$_ }) -join ' ')" }
+    Coop-MachineOk "standards folder for every account: $standards"
+  } catch { Coop-MachineFail "could not open the standards folder to every account: $($_.Exception.Message)" }
+  # 4b. older per-account packages, in every profile
+  Remove-CoopPerUserPackages (Join-Path $env:SystemDrive 'Users')
   # 5. the task
-  try { Register-CoopUpdateTask $TaskName (Get-CoopUpdateTaskXml $dir $machine $psExe $TaskName) $machine } catch { Coop-MachineFail "could not register the scheduled task: $($_.Exception.Message)" }
+  try {
+    Register-CoopUpdateTask $TaskName (Get-CoopUpdateTaskXml $dir $machine $psExe $TaskName) $machine
+    if (-not (Get-CoopRegisteredTaskXml $TaskName)) { throw "schtasks reported success but `"$TaskName`" is not registered" }
+  } catch { Coop-MachineFail "could not register the scheduled task: $($_.Exception.Message)" }
+}
+
+# Remove an older per-account window package from every profile under $UsersRoot:
+# run its own uninstaller silently (it removes the files), then the "coop"
+# shortcuts and the `coop` link that pointed into it (that account's data under
+# ~\.coop stays). A stale Add/Remove entry in that account's registry hive is
+# cleared by the account's own first launch (scripts/install.ps1, machine mode).
+function Remove-CoopPerUserPackages([string]$UsersRoot) {
+  $ws = $null
+  foreach ($profile in (Get-CoopProfileDirs $UsersRoot)) {
+    $pkg = Join-Path $profile 'AppData\Local\Programs\coop'
+    $unins = Join-Path $pkg 'Uninstall coop.exe'
+    $hadPackage = Test-Path -LiteralPath $pkg -PathType Container
+    if ($hadPackage) {
+      Coop-MachineInfo "removing the older per-account coop of $(Split-Path -Leaf $profile): $pkg (its data under the user folder stays)"
+      if (Test-Path -LiteralPath $unins -PathType Leaf) {
+        try {
+          $p = Start-Process -FilePath $unins -ArgumentList @('/S', '/currentuser', ('_?=' + $pkg)) -Wait -PassThru -ErrorAction Stop
+          Coop-MachineInfo "its uninstaller exited $($p.ExitCode)"
+        } catch { Coop-MachineInfo "its uninstaller could not run: $($_.Exception.Message)" }
+      }
+      try { if (Test-Path -LiteralPath $pkg) { Remove-Item -LiteralPath $pkg -Recurse -Force -ErrorAction Stop }; Coop-MachineOk "removed $pkg" } catch { Coop-MachineFail "could not remove $pkg`: $($_.Exception.Message)" }
+    }
+    # The link and shortcuts that pointed into a package (gone now, or earlier).
+    $link = Join-Path $profile 'AppData\Local\coop\bin\coop.cmd'
+    if (Test-Path -LiteralPath $link -PathType Leaf) {
+      $body = ''
+      try { $body = [System.IO.File]::ReadAllText($link) } catch { $body = '' }
+      if (Test-CoopLinkPointsIntoPackage $body) {
+        try { Remove-Item -LiteralPath $link -Force -ErrorAction Stop; Coop-MachineOk "removed the account link $link (the machine shim serves this account)" } catch { Coop-MachineFail "could not remove $link`: $($_.Exception.Message)" }
+      }
+    }
+    foreach ($lnk in @((Join-Path $profile 'Desktop\coop.lnk'), (Join-Path $profile 'AppData\Roaming\Microsoft\Windows\Start Menu\Programs\coop.lnk'))) {
+      if (-not (Test-Path -LiteralPath $lnk -PathType Leaf)) { continue }
+      $target = ''
+      try { if (-not $ws) { $ws = New-Object -ComObject WScript.Shell }; $target = [string]$ws.CreateShortcut($lnk).TargetPath } catch { $target = '' }
+      if ($target -and (Test-CoopLinkPointsIntoPackage $target)) {
+        try { Remove-Item -LiteralPath $lnk -Force -ErrorAction Stop; Coop-MachineOk "removed the old icon $lnk" } catch { Coop-MachineFail "could not remove $lnk`: $($_.Exception.Message)" }
+      }
+    }
+  }
 }
 
 # Dot-sourced (the tests) nothing runs; invoked, the step runs and the exit code
