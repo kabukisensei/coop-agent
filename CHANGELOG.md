@@ -112,6 +112,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   hints, since a stale pin is not their problem. Found on the dev VM's pre-tag
   check of v0.37.0 (2026-10-20).
 
+- **A launch that opens no window is never silent.** The window writes a
+  launch log, `<profile>\desktop\launch.log` (this client): one line when it
+  starts coop's setup console, the console's whole transcript, and one line
+  when that console exits with its code and whether a window opened. A console
+  that exits without a window, with any code, now gets a message box naming
+  the code and the log (before, a non-zero exit quit without a word).
+
 ### Added
 
 - **`coop folders`**: a read-only command printing the three places coop uses

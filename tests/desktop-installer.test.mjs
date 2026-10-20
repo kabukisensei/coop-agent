@@ -89,7 +89,7 @@ await check("packagedRuntime: the marker names Node, Pi and the extension tree; 
 });
 
 await check("bootstrapProcess: a console running `coop desktop --app <exe>`, paths only in the environment", () => {
-  const proc = bootstrapProcess({ coop: "C:\\Users\\me\\AppData\\Local\\coop\\bin\\coop.cmd", app: "C:\\Users\\me\\AppData\\Local\\Programs\\coop\\coop.exe", cwd: "C:\\work\\repo", env: { X: "1" }, systemRoot: "C:\\Windows" });
+  const proc = bootstrapProcess({ coop: "C:\\Users\\me\\AppData\\Local\\coop\\bin\\coop.cmd", app: "C:\\Users\\me\\AppData\\Local\\Programs\\coop\\coop.exe", cwd: "C:\\work\\repo", log: "C:\\Users\\me\\.coop\\desktop\\launch.log", env: { X: "1", COOP_BOOT_LOG: "stale" }, systemRoot: "C:\\Windows" });
   assert.equal(proc.command, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
   assert.equal(proc.options.windowsHide, false);
   assert.equal(proc.options.stdio, "ignore");
@@ -100,6 +100,11 @@ await check("bootstrapProcess: a console running `coop desktop --app <exe>`, pat
   const script = decode(proc.args[proc.args.length - 1]);
   assert.match(script, /desktop --app \$env:COOP_BOOT_APP/);
   assert.match(script, /Read-Host/);
+  // The console's transcript goes to the launch log named in the environment (a silent launch leaves it behind), bracketing coop desktop.
+  assert.equal(proc.options.env.COOP_BOOT_LOG, "C:\\Users\\me\\.coop\\desktop\\launch.log");
+  assert.match(script, /Start-Transcript -LiteralPath \$env:COOP_BOOT_LOG -Append[\s\S]*desktop --app[\s\S]*Stop-Transcript/);
+  assert.equal(bootstrapProcess({ coop: "C:\\c.cmd", app: "C:\\a.exe", cwd: "C:\\w", env: { COOP_BOOT_LOG: "stale" }, systemRoot: "C:\\Windows" }).options.env.COOP_BOOT_LOG, undefined, "no log: no stale COOP_BOOT_LOG reaches the console");
+  assert.throws(() => bootstrapProcess({ coop: "C:\\c.cmd", app: "C:\\a.exe", cwd: "C:\\w", log: "launch.log", systemRoot: "C:\\Windows" }), /log is not an absolute path/);
   assert.doesNotMatch(script, /coop\.exe|C:\\/);
   assert.throws(() => bootstrapProcess({ coop: "coop", app: "C:\\a.exe", cwd: "C:\\w", systemRoot: "C:\\Windows" }), /coop is not an absolute path/);
   assert.throws(() => bootstrapProcess({ coop: "C:\\c.cmd", app: "C:\\a.exe", cwd: "C:\\w\n", systemRoot: "C:\\Windows" }), /cwd/);

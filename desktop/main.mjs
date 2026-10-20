@@ -8,7 +8,7 @@
 // allowlist (lib/rpc-commands.mjs) before it reaches Pi.
 import { app, BrowserWindow, WebContentsView, ipcMain, protocol, session, dialog, shell, clipboard, nativeTheme, Menu, Notification, screen } from "electron";
 import { readFile } from "node:fs/promises";
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { hostname, userInfo } from "node:os";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -1391,29 +1391,52 @@ async function bootstrap() {
     folder = await pickProject();
     if (!folder) { picker.awaitingSpec = false; app.quit(); return; }
   }
+  // The launch log (this client: <profile>\desktop\launch.log): one line from
+  // this process at each step, and the setup console's whole transcript in
+  // between, so a launch that opened no window is never silent (D1k; the dev
+  // VM, 2026-10-20: a second account's coop.exe exited 0 with no window and no
+  // output). Cut to a fresh file past 1 MB.
+  const launchLog = join(profileDir(process.env), "desktop", "launch.log");
+  const logLine = (text) => {
+    try {
+      mkdirSync(dirname(launchLog), { recursive: true });
+      if (existsSync(launchLog) && statSync(launchLog).size > 1048576) renameSync(launchLog, `${launchLog}.1`);
+      appendFileSync(launchLog, `${new Date().toISOString()} coop.exe ${app.getVersion()} [${process.pid}]: ${text}\r\n`);
+    } catch { /* best effort */ }
+  };
+  const seeLog = `\n\nThe launch log: ${launchLog}`;
   let proc;
   try {
-    proc = bootstrapProcess({ coop, app: process.execPath, cwd: folder, env: process.env });
+    proc = bootstrapProcess({ coop, app: process.execPath, cwd: folder, log: launchLog, env: process.env });
   } catch (error) {
-    dialog.showErrorBox("coop", `coop could not start its window: ${error.message}`);
+    logLine(`could not build the setup console command: ${error.message}`);
+    dialog.showErrorBox("coop", `coop could not start its window: ${error.message}${seeLog}`);
     app.quit();
     return;
   }
+  logLine(`starting coop's setup console (coop desktop) in ${folder}; its transcript follows`);
+  const startedAt = Date.now();
   const child = spawn(proc.command, proc.args, proc.options);
   booting = true;
   child.on("error", (error) => {
     booting = false;
-    dialog.showErrorBox("coop", `coop could not start its window: ${error.message}`);
+    logLine(`the setup console could not start: ${error.message}`);
+    dialog.showErrorBox("coop", `coop could not start its window: ${error.message}${seeLog}`);
     app.quit();
   });
   child.on("exit", (code) => {
     booting = false;
+    const seconds = Math.round((Date.now() - startedAt) / 1000);
+    logLine(`the setup console exited with code ${code} after ${seconds}s; windows open: ${frames.size}`);
     // The console showed coop's own message on a failure (and waited for
-    // Enter); on success the window is open by now. A clean exit with no
-    // window is never silent (D1k: a shortcut that "never opens").
+    // Enter); on success the window is open by now. An exit with no window,
+    // clean or not, is never silent (D1k: a shortcut that "never opens"): the
+    // box names the code and the log.
     setTimeout(() => {
       if (frames.size || (picker.win && !picker.win.isDestroyed())) return;
-      if (code === 0) dialog.showErrorBox("coop", "coop finished starting but no window opened.\n\nStart coop again from its shortcut. If it happens again, run coop doctor in a terminal and send its output to your coop admin.");
+      logLine(`no window opened after the setup console's exit (code ${code}); quitting`);
+      if (code === 0) dialog.showErrorBox("coop", `coop finished starting but no window opened.\n\nStart coop again from its shortcut. If it happens again, run coop doctor in a terminal and send its output and the launch log to your coop admin.${seeLog}`);
+      else dialog.showErrorBox("coop", `coop could not start: its setup console exited with code ${code}.\n\nStart coop again from its shortcut. If it happens again, send the launch log to your coop admin.${seeLog}`);
       app.quit();
     }, 5000);
   });

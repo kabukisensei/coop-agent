@@ -47,11 +47,15 @@ export function findCoop(env = process.env, exists = existsSync, resourcesPath =
 
 // Fixed text: paths travel in environment variables, never in a command line.
 // The console shows coop's launch checks (as the "coop (window)" shortcut does)
-// and stays open on a failure so the message can be read.
+// and stays open on a failure so the message can be read. Everything it shows
+// is also transcribed to the launch log (COOP_BOOT_LOG, <profile>\desktop\launch.log),
+// so a console that closed, or never appeared, leaves what it said behind.
 const SCRIPT = [
+  "if ($env:COOP_BOOT_LOG) { try { Start-Transcript -LiteralPath $env:COOP_BOOT_LOG -Append -Force | Out-Null } catch { } }",
   "Set-Location -LiteralPath $env:COOP_BOOT_CWD",
   "& $env:COOP_BOOT_COOP desktop --app $env:COOP_BOOT_APP",
   "$code = $LASTEXITCODE",
+  "if ($env:COOP_BOOT_LOG) { try { Stop-Transcript | Out-Null } catch { } }",
   "if ($code) { Read-Host 'Press Enter to close' }",
   "exit $code",
 ].join("; ");
@@ -65,16 +69,19 @@ function checkPath(name, value) {
  * window on a folder. Windows only; the caller spawns it and waits for its
  * exit (a new console appears because the packaged app has none).
  */
-export function bootstrapProcess({ coop, app, cwd, env = process.env, systemRoot = env.SystemRoot }) {
+export function bootstrapProcess({ coop, app, cwd, log = "", env = process.env, systemRoot = env.SystemRoot }) {
   checkPath("coop", coop);
   checkPath("app", app);
   checkPath("cwd", cwd);
   checkPath("SystemRoot", systemRoot);
+  if (log) checkPath("log", log);
   const powershell = win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const bootEnv = { ...env, COOP_BOOT_COOP: coop, COOP_BOOT_APP: app, COOP_BOOT_CWD: cwd };
+  if (log) bootEnv.COOP_BOOT_LOG = log; else delete bootEnv.COOP_BOOT_LOG;
   return {
     command: powershell,
     args: ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(SCRIPT, "utf16le").toString("base64")],
-    options: { cwd, env: { ...env, COOP_BOOT_COOP: coop, COOP_BOOT_APP: app, COOP_BOOT_CWD: cwd }, windowsHide: false, shell: false, stdio: "ignore" },
+    options: { cwd, env: bootEnv, windowsHide: false, shell: false, stdio: "ignore" },
   };
 }
 
