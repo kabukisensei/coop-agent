@@ -3,7 +3,7 @@ import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const dist = process.env.COOP_TEST_DIST;
@@ -772,6 +772,7 @@ await t("editing through /setup-project writes a backup and keeps custom setting
   const original = `profile:\n  organization: 'Cooptimize'\n  client: 'Contoso'\n  default_branch: 'main'\nrepositories:\n  app:\n    description: 'App'\n    role: 'generic'\n    local_path: '.'\n    remote_name: 'origin'\n    default_branch: 'main'\ncustom_section:\n  keep: 'yes'\ntools:\n  fabric_cli:\n    enabled: false\n  tabular_editor_cli:\n    enabled: false\n`;
   writeFileSync(contract, original);
   const confirms = [false, false, false, false, true]; // edit repo, add repo, Fabric, TE, write
+  const notes = [];
   const ctx = {
     cwd: root,
     hasUI: true,
@@ -779,12 +780,20 @@ await t("editing through /setup-project writes a backup and keeps custom setting
     ui: {
       input: async (_label, def) => def,
       confirm: async () => confirms.shift() ?? false,
-      notify: () => {},
+      notify: (message) => notes.push(String(message)),
     },
   };
   assert.equal(await runProjectWizard({}, ctx), true);
-  assert.ok(existsSync(`${contract}.bak`));
-  assert.equal(readFileSync(`${contract}.bak`, "utf8"), original);
+  // F2: the backup goes to this client's backups folder (<profile dir>/backups/<repository>/.coop/project.yml.<timestamp>.bak),
+  // never beside the project file, and the notice names it as "Backup (this client): <path>".
+  assert.equal(existsSync(`${contract}.bak`), false, "nothing is written inside the repository");
+  const note = notes.find((m) => m.includes("Backup (this client): "));
+  assert.ok(note, `a backup notice: ${notes.join("\n")}`);
+  const backup = note.slice(note.indexOf("Backup (this client): ") + "Backup (this client): ".length).trim();
+  const { backupDirFor } = await import("../lib/paths.mjs");
+  assert.equal(dirname(backup), join(backupDirFor(contract), ".coop"));
+  assert.match(basename(backup), /^project\.yml\.\d{8}_\d{6}\.bak$/);
+  assert.equal(readFileSync(backup, "utf8"), original);
   assert.match(readFileSync(contract, "utf8"), /custom_section:\n  keep: 'yes'/);
 });
 

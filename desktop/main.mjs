@@ -25,7 +25,7 @@ import { resolveAsset, isAppUrl, CSP, APP_ORIGIN } from "./lib/serve.mjs";
 import { readBranch } from "./lib/git.mjs";
 import { listFiles, rankFiles } from "./lib/files.mjs";
 import { fitToScreen, loadSettings, saveSettings, THEMES } from "./lib/settings.mjs";
-import { changeRepos, defaultChangeRepo, listChanges, fileDiff } from "./lib/changes.mjs";
+import { changeRepos, defaultChangeRepo, listChanges, listDrafts, fileDiff } from "./lib/changes.mjs";
 import { readStandards, readSnapshot, readNote } from "./lib/standards-view.mjs";
 import { getTeamProject, loadProject, previewProject, saveProject, shareProject, teamStatus } from "./lib/project-form.mjs";
 import { DocsSetupRun, AnswerError, docsLocation, listDocsPages, pickedPathAnswer, readDocsPage, runDocsBuild } from "./lib/docs-setup.mjs";
@@ -42,7 +42,7 @@ import { DeviceStore } from "./lib/companion-devices.mjs";
 import { createCompanionServer, DEFAULT_PORT } from "./lib/companion-server.mjs";
 import { tailnetOrigin } from "./lib/companion-tailscale.mjs";
 import { createPushSender, loadVapid } from "./lib/companion-push.mjs";
-import { profileDir } from "../lib/paths.mjs";
+import { draftsDirFor, folderPlaces, profileDir } from "../lib/paths.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RENDERER = join(HERE, "renderer");
@@ -867,14 +867,28 @@ handle("coop:changes", async (state, want) => {
   state.changeDir = repo ? repo.dir : state.spec.cwd;
   const result = repo ? await listChanges(repo.dir) : { repo: false, files: [], truncated: false };
   state.changes = result.files;
-  return { success: true, data: { ...result, repos: repos.map(({ id, label, rel }) => ({ id, label, rel })), current: repo ? repo.id : null } };
+  // F2: the drafts coop wrote for this repository in this client's drafts folder.
+  state.draftsDir = draftsDirFor(repo ? repo.dir : state.spec.cwd, toolEnv(state));
+  state.drafts = listDrafts(state.draftsDir);
+  return { success: true, data: { ...result, drafts: state.drafts, draftsDir: state.draftsDir, repos: repos.map(({ id, label, rel }) => ({ id, label, rel })), current: repo ? repo.id : null } };
 });
 
 handle("coop:change-diff", async (state, path) => {
+  // A draft ("draft:<path>") is read from the drafts folder as a new file.
+  if (typeof path === "string" && path.startsWith("draft:")) {
+    const draft = (state.drafts || []).find((file) => file.path === path.slice(6));
+    if (!draft) return { success: false, error: "that draft is not in the list; refresh it" };
+    return { success: true, data: await fileDiff(state.draftsDir, { status: "new", path: draft.path }) };
+  }
   const entry = state.changes.find((file) => file.path === path);
   if (!entry) return { success: false, error: "that file is not in the list of changes; refresh it" };
   return { success: true, data: await fileDiff(state.changeDir || state.spec.cwd, entry) };
 });
+
+// F2: the three places coop keeps its files for this folder (the Project pane
+// shows them): this machine, this client, the repository, plus the standards,
+// backups and drafts folders, from lib/paths.mjs alone.
+handle("coop:folders", (state) => ({ success: true, data: folderPlaces(state.spec.cwd, toolEnv(state)) }));
 
 handle("coop:standards", async (state) => {
   const result = await readStandards({ node: state.spec.node, repoRoot: repoRootFor(state.spec), cwd: state.spec.cwd, env: toolEnv(state) });

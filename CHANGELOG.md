@@ -5,6 +5,40 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **File tiers (master plan row F2, Aaron's decision of 2026-10-20).** coop's
+  folder model is three fixed places, named the same way everywhere coop speaks:
+  **this machine** (`%ProgramData%\coop`: the program, the standards, your name
+  and preferences), **this client** (`%USERPROFILE%\.coop`, one Windows user is
+  one client: sessions, memory, backups, drafts) and **the repository**
+  (`<repo>\.coop`: the team's project file, client skills and prompts). No
+  options; task logs stay in the repository.
+  - *Standards on this machine.* The standards root is `%ProgramData%\coop\standards`
+    when that folder exists and is writable (`coop sync` creates it when it can,
+    without a prompt), else this client's `~/.coop/standards` as before;
+    `canonical\` and `snapshots\` live under it and `COOP_STANDARDS_ROOT` still
+    names the canonical checkout. New helpers in all three languages
+    (`standardsLocation` / `Get-CoopStandardsLocation` / `standards_location`).
+    The first launch that reads the machine copy prints one line; `coop doctor`
+    names the path and the place.
+  - *Backups in this client.* Backups go to `~/.coop/backups/<repository>/<path>.<timestamp>.bak`,
+    never inside the repository. The launcher sets `COOP_BACKUP_DIR`; `backupDirFor`
+    / `backupPathFor` in `lib/paths.mjs` put the project file's own backup there
+    too (`/setup-project`, `/project-get`, the window's Project form), named
+    `Backup (this client): <path>`. The contract's `backup.root` is no longer read
+    (`timestamp_format` and `naming_pattern` still are); the `coop init` templates
+    and the bundled `.coop/project.yml` drop it. The guardrails never ask for a
+    write under this client's `backups` or `drafts` folder.
+  - *Drafts in this client.* A file written for review that edits nothing in the
+    repository goes to `~/.coop/drafts/<repository>/` (`COOP_DRAFTS_DIR`), named
+    `Draft (this client): <path>`; the window's Changes pane lists them under
+    Drafts (newest first, opened as a new file).
+  - `coop doctor` gains a Folders section (this machine, this client, the
+    repository, plus the standards, backups and drafts rows; a repository without
+    a project file warns `/setup-project creates one`), and the window's Project
+    pane shows the same rows from a new `coop:folders` RPC.
+
 ## [0.37.0] — 2026-10-20
 
 ### Removed

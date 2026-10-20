@@ -163,6 +163,9 @@ esac
 export HOME USERPROFILE
 unset COOP_DIR COOP_AGENT_DIR PI_CODING_AGENT_DIR \
       COOP_STANDARDS_ROOT COOP_STANDARDS_STATE COOP_STANDARDS_SNAPSHOT_ROOT
+# F2: the machine folder is a sandbox too (`coop sync` creates <machine dir>/standards
+# when it can, which on a root box would be the real /etc/coop).
+export COOP_MACHINE_DIR="$TMP/machine"
 
 echo "→ Revision 9 standards registry/resolver and automatic application tests"
 node "$ROOT/tests/standards-rev9.test.mjs"

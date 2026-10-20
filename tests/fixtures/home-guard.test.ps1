@@ -46,7 +46,7 @@ function Invoke-Fleet([string]$Script, [string]$OutFile, [string[]]$ScriptArgs =
 
 $saved = Save-Env @('PATH', 'HOME', 'USERPROFILE', 'LOCALAPPDATA', 'APPDATA', 'COOP_DIR', 'PIPX_HOME', 'PIPX_BIN_DIR', 'PI_CODING_AGENT_DIR', 'COOP_AGENT_DIR',
            'COOP_NO_ONBOARD', 'COOP_NO_MODEL_LOGIN', 'MARKER', 'COOP_TEST_STUB_PATH', 'COOP_FABRIC_PYTHON', 'COOP_RELEASE_MANIFEST', 'COOP_SKIP_AZ',
-           'COOP_AZ_BIN', 'NO_COLOR', 'COOP_STANDARDS_ROOT', 'COOP_STANDARDS_STATE', 'COOP_STANDARDS_SNAPSHOT_ROOT',
+           'COOP_AZ_BIN', 'NO_COLOR', 'COOP_STANDARDS_ROOT', 'COOP_STANDARDS_STATE', 'COOP_STANDARDS_SNAPSHOT_ROOT', 'COOP_MACHINE_DIR',
            'PYTHONPATH', 'PYTHONHOME')
 $priorPath = $env:PATH
 try {
@@ -150,6 +150,8 @@ sys.exit(0)
   $env:HOME = $sandboxHome; $env:USERPROFILE = $sandboxHome
   $env:LOCALAPPDATA = Join-Path $sandboxHome 'AppData\Local'; $env:APPDATA = Join-Path $sandboxHome 'AppData\Roaming'
   $env:COOP_DIR = Join-Path $t 'coop-dir'
+  # F2: sync creates <machine dir>\standards when it can; the machine folder is a sandbox too.
+  $env:COOP_MACHINE_DIR = Join-Path $t 'machine'
   $env:PIPX_HOME = Join-Path $t 'pipx-home'; $env:PIPX_BIN_DIR = Join-Path $t 'pipx-bin'
   $env:PI_CODING_AGENT_DIR = $agent; $env:COOP_AGENT_DIR = $agent
   $env:COOP_RELEASE_MANIFEST = Join-Path $root 'config\release-manifest.json'

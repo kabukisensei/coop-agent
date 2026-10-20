@@ -762,6 +762,10 @@ if (-not (Get-CoopResourceTiers | Where-Object { $_.Tier -eq 'client' })) {
 }
 
 D-Head 'Standards'
+# F2: where the standards live and which tier holds them (this machine when
+# <machine dir>\standards is writable by this process, else this client).
+$standardsLoc = Get-CoopStandardsLocation
+D-Ok "standards folder ($(Get-CoopTierLabel $standardsLoc.Tier)): $($standardsLoc.Root)"
 if (Test-Have 'node') {
   $standardsCli = Join-Path $env:COOP_ROOT 'lib\standards-cli.mjs'
   # The canonical-sync row comes first. Doctor never refreshes, so a last-known-good
@@ -907,6 +911,23 @@ if ($proj) {
 } else {
   D-Warn 'no .coop/project.yml found' "run /setup-project inside coop at the client's Git root (or coop init there), then commit the file with the repository"
 }
+
+# F2: the three places coop keeps its files, named the way coop speaks of them
+# (this machine, this client, the repository), plus where this folder's
+# repository backs up and drafts. The client is named from the project file.
+D-Head 'Folders'
+$folderClient = if ($proj) { Get-CoopYamlValue $proj 'profile.client' '' } else { '' }
+$folderClient = ([string]$folderClient).Trim()
+if ($folderClient -match '^(TODO|null)') { $folderClient = '' }
+$clientWord = if ($folderClient) { "this client ($folderClient)" } else { 'this client' }
+D-Ok "this machine: $(Get-CoopMachineProfileDir): the program, the standards, your name and preferences"
+D-Ok "${clientWord}: $(Get-CoopProfileDir): sessions, memory, backups, drafts"
+$repoCoop = Get-CoopRepositoryCoopDir
+if (Test-Path -LiteralPath (Join-Path $repoCoop 'project.yml') -PathType Leaf) { D-Ok "the repository: ${repoCoop}: the team's project file, client skills and prompts" }
+else { D-Warn "the repository: ${repoCoop}: no project file yet" '/setup-project creates one' }
+D-Ok "standards ($(Get-CoopTierLabel $standardsLoc.Tier)): $($standardsLoc.Root)"
+D-Ok "backups (this client): $(Get-CoopBackupDir)"
+D-Ok "drafts (this client): $(Get-CoopDraftsDir)"
 
 D-Head 'coop-agent repository'
 if ((Test-CoopGitCheckout $script:CoopRoot) -and (Test-Have 'git')) {

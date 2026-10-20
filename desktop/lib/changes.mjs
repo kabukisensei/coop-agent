@@ -9,6 +9,18 @@ import { lstat, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join, relative, resolve } from "node:path";
 import { childRepositories, findGitRoot, projectYamlScalar, proposeContractRoot, repositoryNames } from "../../lib/project-contract.mjs";
+import { listDraftFiles } from "../../lib/paths.mjs";
+
+/**
+ * The drafts coop wrote for a repository (F2): the files in its drafts folder
+ * (`<profile dir>/drafts/<repository>`), newest first, as
+ * [{ path, name, mtimeMs, size }] with `path` relative to that folder. Read
+ * only; [] when the folder does not exist yet.
+ */
+export function listDrafts(draftsDir) {
+  if (!draftsDir) return [];
+  return listDraftFiles(draftsDir);
+}
 
 // fsmonitor would run a configured hook; no-optional-locks keeps git from
 // refreshing the index file. Output stays plain and paths unquoted.
