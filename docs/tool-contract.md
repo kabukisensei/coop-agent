@@ -727,7 +727,15 @@ For Lakehouse targets, `itemId` is the `sqlEndpointProperties.id`, not the
 Lakehouse item ID.
 
 The managed entry uses direct Streamable HTTP with `auth: false`, an exact COOP-owned
-`requestHeadersCommand`, and a 60-second request timeout. Immediately before Pi starts,
+`requestHeadersCommand`, and a per-request timeout of five minutes by default: the
+contract's `mcp.fabric_sqlendpoint.request_timeout_ms` overrides it (whole
+milliseconds from 1000 to 3600000; an invalid value runs on the default and doctor
+warns). The generator re-reads it on every `coop sync` and launch, so the setting
+survives regeneration, while a hand edit of the generated entry does not. A session
+reads the folder's config generated at its launch, so a changed contract value takes
+effect at the next launch, not in a session already open. `coop doctor` prints the timeout in force
+and whether the entry still matches the contract; the header helper's own 10 s limit
+is fixed. Immediately before Pi starts,
 Coop still obtains a Fabric token from the existing Azure CLI login for the session
 identity guardrail. That launch token is minted for the client tenant when one is
 configured: the tenant chain the launch sign-in uses (the project's
@@ -804,7 +812,8 @@ and aggregate JSON materialization. The launcher resolves the selected interpret
 a short subprocess and then starts that Python executable directly, so cancellation
 targets the query process. SQL and tokens are
 never placed in argv, config, disk, logs, or diagnostics. The exact fallback tool resolves the
-same read scope as MCP (client, tenant, principal, environment, target, 60 seconds),
+same read scope as MCP (client, tenant, principal, environment, target) with its own
+fixed 60-second bound (the MCP timeout setting does not apply to it),
 and a plain read runs without a prompt on any environment. With a contract
 `sql_targets:` section the guardrails resolve that scope from the trusted contract
 snapshot (row SQ3; `docs/guardrails-reference.md`): the default entry, or the ready

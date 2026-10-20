@@ -26,6 +26,7 @@ from warehouse_mcp import (  # noqa: E402
     integration_enabled,
     load_project,
     machine_sqlendpoint_enabled,
+    project_sql_request_timeout,
     project_sqlendpoint_enabled,
     project_target,
 )
@@ -96,7 +97,10 @@ def direct_http_server(url: str) -> dict[str, Any]:
     }
 
 
-def fabric_sqlendpoint_server(url: str) -> dict[str, Any]:
+def fabric_sqlendpoint_server(url: str, request_timeout_ms: int) -> dict[str, Any]:
+    """The managed Warehouse SQL entry. `request_timeout_ms` is the contract's
+    validated per-request timeout (warehouse_mcp.project_sql_request_timeout);
+    the header helper's own 10 s limit is fixed."""
     return {
         "url": url,
         "auth": False,
@@ -105,7 +109,7 @@ def fabric_sqlendpoint_server(url: str) -> dict[str, Any]:
             "args": [str(LIB_DIR / "fabric_request_headers.mjs"), url],
             "timeoutMs": 10000,
         },
-        "requestTimeoutMs": 60000,
+        "requestTimeoutMs": request_timeout_ms,
         "lifecycle": "lazy",
     }
 
@@ -250,7 +254,18 @@ def desired_servers(
         # endpoint. Omitting the managed entry lets Doctor report target_invalid
         # from the project contract without exposing an unintended broad scope.
         if target.scope != "invalid":
-            sql_entry = fabric_sqlendpoint_server(target.url)
+            # The contract's timeout is re-read on every regeneration (sync and
+            # each launch), so a configured value survives; URL entries are
+            # replaced wholesale, so a hand edit of mcp-adapter.json does not.
+            timeout_ms, timeout_state = project_sql_request_timeout(project or {})
+            if timeout_state == "invalid":
+                print(
+                    "mcp config: .coop/project.yml mcp.fabric_sqlendpoint.request_timeout_ms "
+                    "must be a whole number of milliseconds from 1000 to 3600000; "
+                    f"using the default {timeout_ms}",
+                    file=sys.stderr,
+                )
+            sql_entry = fabric_sqlendpoint_server(target.url, timeout_ms)
             metadata = grant_target_metadata(project or {})
             metadata["environment"] = target_environment(
                 project or {}, target, metadata["environment"]

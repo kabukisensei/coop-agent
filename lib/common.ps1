@@ -1598,8 +1598,11 @@ function Update-CoopManagedMcpConfig {
   } finally {
     $ErrorActionPreference = $previousEap
   }
-  if ($rc -eq 0) { return 'ok' }
+  # The generator's stderr is shown either way unless -Quiet: on success it is a
+  # note worth reading (an invalid contract timeout running on the default,
+  # 2026-10-20), on failure the reason.
   if (-not $Quiet) { foreach ($line in $out) { Write-Host ([string]$line) } }
+  if ($rc -eq 0) { return 'ok' }
   return 'failed'
 }
 

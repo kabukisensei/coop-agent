@@ -1841,7 +1841,10 @@ await t("decideLiveRead: allow-read for a resolved sql-read scope on any environ
 await t("forged header command, URL, timeout, and auth cannot reuse a grant", async () => {
   const mutations = [
     (entry) => { entry.auth = "bearer"; },
-    (entry) => { entry.requestTimeoutMs = 59999; },
+    (entry) => { entry.requestTimeoutMs = 999; },
+    (entry) => { entry.requestTimeoutMs = 3_600_001; },
+    (entry) => { entry.requestTimeoutMs = 60000.5; },
+    (entry) => { entry.requestTimeoutMs = "60000"; },
     (entry) => { entry.requestHeadersCommand.command = "nodejs"; },
     (entry) => { entry.requestHeadersCommand.args[0] = join(ROOT, "lib", "other.mjs"); },
     (entry) => { entry.requestHeadersCommand.args[1] += "?forged=1"; },
@@ -1863,6 +1866,29 @@ await t("forged header command, URL, timeout, and auth cannot reuse a grant", as
     assert.equal(blocked(await handle(sqlRead(), liveCtx)), true);
   }
   writeManagedTarget();
+});
+
+await t("the entry's configured request timeout is the read scope's time limit", async () => {
+  // The contract's mcp.fabric_sqlendpoint.request_timeout_ms lands in the
+  // generated entry; the scope carries it (five minutes by default, and the
+  // 60000 an earlier release generated still resolves).
+  const deps = { agentDir: AUDIT_DIR, readText: (p) => readFileSync(p, "utf8"), token: () => launchToken() };
+  for (const timeout of [300000, 60000, 3_600_000]) {
+    const config = targetConfig({ environment: "dev" });
+    config.mcpServers["fabric-sqlendpoint"].requestTimeoutMs = timeout;
+    writeFileSync(join(AUDIT_DIR, "mcp-adapter.json"), JSON.stringify(config));
+    const scope = cg.resolveLiveReadScope(sqlRead(), deps);
+    assert.equal(scope?.timeoutMs, timeout, `scope carries ${timeout}`);
+    assert.equal(scope?.operationClass, "sql-read");
+  }
+  // A grant approved for a shorter timeout does not cover a longer one.
+  const approved = cg.resolveLiveReadScope(sqlRead(), deps);
+  const grant = { scope: { ...approved, timeoutMs: 60000 }, grantedAt: Date.now() };
+  assert.equal(cg.liveReadGrantMatches(grant, { ...approved, timeoutMs: 60000 }), true);
+  assert.equal(cg.liveReadGrantMatches(grant, { ...approved, timeoutMs: 300000 }), false);
+  writeManagedTarget();
+  process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+  await handleSessionStart({ reason: "new" }, liveCtx);
 });
 
 await t("mutation, transaction, cross-db, and unsupported SQL stay per-call (plain reads run)", async () => {

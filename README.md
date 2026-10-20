@@ -450,7 +450,10 @@ decision, never raw SQL or arguments.
 
 **Warehouse targeting and auth.** Set machine enablement with
 `integrations.fabric_sql_endpoint`; an absent canonical flag inherits the legacy Fabric
-setting. A project may disable it with `mcp.fabric_sqlendpoint.enabled: false`. Complete
+setting. A project may disable it with `mcp.fabric_sqlendpoint.enabled: false`, and set
+the per-request timeout with `mcp.fabric_sqlendpoint.request_timeout_ms` (five minutes
+by default; whole milliseconds from 1000 to 3600000; `coop sync` and every launch re-read
+it, and `coop doctor` shows it). Complete
 Warehouse IDs create an item-scoped URL; Lakehouse projects must use
 `sqlEndpointProperties.id`, not the Lakehouse item ID. With no explicit target Coop uses
 the global endpoint. A malformed explicit target fails closed and emits no entry. Runtime

@@ -1875,7 +1875,19 @@ export type LiveReadGrant = { scope: LiveReadScope; grantedAt: number };
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const FORBIDDEN_RESOLVED_TEXT = /(?:\bTODO\b|\bBearer\s+|(?:password|pwd|accountkey|access[_-]?token)\s*=|(?:jdbc|odbc):|Server\s*=.*;)/i;
 const SAFE_DISPLAY_TEXT = /^[A-Za-z0-9][A-Za-z0-9 ._@&'()+-]{0,159}$/;
-const PINNED_MCP_REQUEST_TIMEOUT_MS = 60_000;
+// The managed Warehouse entry's per-request timeout is the contract's
+// `mcp.fabric_sqlendpoint.request_timeout_ms` (lib/warehouse_mcp.py: five
+// minutes by default, one second to one hour, whole milliseconds; 60000 from an
+// earlier release is still valid). The scope carries the entry's own value, so a
+// session grant covers reads up to the timeout it was approved for.
+const MIN_MCP_REQUEST_TIMEOUT_MS = 1_000;
+const MAX_MCP_REQUEST_TIMEOUT_MS = 3_600_000;
+function validMcpRequestTimeoutMs(value: any): value is number {
+  return Number.isInteger(value) && value >= MIN_MCP_REQUEST_TIMEOUT_MS && value <= MAX_MCP_REQUEST_TIMEOUT_MS;
+}
+// The native fallback read (lib/sql_query.py, its own fixed QUERY_TIMEOUT) is a
+// separate route with a separate bound; it does not follow the MCP setting.
+const FALLBACK_READ_TIMEOUT_MS = 60_000;
 
 function strictResolvedText(value: any, max = 160): string | null {
   if (typeof value !== "string") return null;
@@ -2025,7 +2037,7 @@ export function resolveLiveReadScope(event: any, deps: LiveReadResolverDeps): Li
     && headerCommand.args[1] === expectedUrl
     && headerCommand.timeoutMs === 10000;
   if (!exactEntry || entry.url !== expectedUrl || entry.auth !== false || entry.lifecycle !== "lazy"
-      || entry.requestTimeoutMs !== PINNED_MCP_REQUEST_TIMEOUT_MS || !exactHeaderCommand
+      || !validMcpRequestTimeoutMs(entry.requestTimeoutMs) || !exactHeaderCommand
   ) return null;
   let resultLimit = boundedSelectLimit(callSqlText(event)) || plainReadLimit(event);
   if (!resultLimit) return null;
@@ -2040,7 +2052,7 @@ export function resolveLiveReadScope(event: any, deps: LiveReadResolverDeps): Li
     targets: [`${workspaceId}/${itemId}/${itemName}`],
     operationClass: "sql-read",
     resultLimit,
-    timeoutMs: PINNED_MCP_REQUEST_TIMEOUT_MS,
+    timeoutMs: entry.requestTimeoutMs,
   };
 }
 
@@ -2072,7 +2084,7 @@ function contractLiveReadScope(event: any, contract: ContractSqlScope, deps: Liv
     targets: [discovered ? `${target.workspaceId}/${endpointId}/${database}` : `${target.kind}/${target.server}/${database}`],
     operationClass: "sql-read",
     resultLimit,
-    timeoutMs: PINNED_MCP_REQUEST_TIMEOUT_MS,
+    timeoutMs: FALLBACK_READ_TIMEOUT_MS,
     label: `COOP contract SQL target (${target.kind}, ${target.environment})`,
   };
 }
