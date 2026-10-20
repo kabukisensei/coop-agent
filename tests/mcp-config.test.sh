@@ -26,7 +26,8 @@ sql=s['fabric-sqlendpoint']
 assert sql['url']=='https://api.fabric.microsoft.com/v1/mcp/dataPlane/sqlEndpoint'
 assert sql['auth'] is False
 assert sql['requestHeadersCommand']=={'command':'node','args':[str(__import__('pathlib').Path(sys.argv[2]).parent.parent/'lib'/'fabric_request_headers.mjs'),sql['url']],'timeoutMs':10000}
-assert sql['requestTimeoutMs']==60000
+# Five-minute default per-request timeout (the fixed 60 s timed out real Warehouse reads).
+assert sql['requestTimeoutMs']==300000
 assert sql['lifecycle']=='lazy'
 assert set(sql)=={'url','auth','requestHeadersCommand','requestTimeoutMs','lifecycle','_coop_target'}
 assert '_coop_runtime' not in sql
@@ -104,7 +105,71 @@ assert s['_coop_target']['client']=='Contoso'
 assert s['_coop_target']['tenant_id']=='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 assert s['_coop_target']['environment']=='production'
 assert s['_coop_target']['item_name']=='DW'
+assert s['requestTimeoutMs']==300000
 assert '_coop_runtime' not in s
+PY
+# The contract's mcp.fabric_sqlendpoint.request_timeout_ms sets the entry's
+# timeout, and regeneration re-reads it instead of overwriting it; a hand edit
+# of the generated entry does not survive (URL entries are replaced wholesale).
+"$PY" - "$d/project/.coop/project.yml" <<'PY'
+import sys
+p=sys.argv[1]; s=open(p).read()
+open(p,'w').write(s + "mcp:\n  fabric_sqlendpoint:\n    enabled: true\n    request_timeout_ms: 600000\n")
+PY
+"$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --project-cwd "$d/project" --output "$d/item-mcp.json" || exit 1
+"$PY" - "$d/item-mcp.json" <<'PY'
+import json,sys
+m=json.load(open(sys.argv[1])); s=m['mcpServers']['fabric-sqlendpoint']
+assert s['requestTimeoutMs']==600000, s['requestTimeoutMs']
+assert s['requestHeadersCommand']['timeoutMs']==10000
+s['requestTimeoutMs']=1; json.dump(m,open(sys.argv[1],'w'))
+PY
+"$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --project-cwd "$d/project" --output "$d/item-mcp.json" || exit 1
+"$PY" - "$d/item-mcp.json" <<'PY'
+import json,sys
+assert json.load(open(sys.argv[1]))['mcpServers']['fabric-sqlendpoint']['requestTimeoutMs']==600000
+PY
+# Doctor reports the configured timeout as the entry's.
+"$PY" "$ROOT/lib/warehouse_mcp.py" doctor-json "$d/item-mcp.json" --project "$d/project/.coop/project.yml" --tools-json '{"tools":[{"name":"executeSQL"}]}' > "$d/sql-timeout.json" || exit 1
+"$PY" - "$d/sql-timeout.json" <<'PY'
+import json,sys
+v=json.load(open(sys.argv[1]))
+assert v['state']=='registered', v['state']
+assert v['request_timeout_ms']==600000 and v['request_timeout_state']=='configured', v
+PY
+# An invalid value (a string, a float, out of range, a bool) falls back to the
+# default with a stderr note, never an unusable entry or a failed sync.
+for bad in '"5m"' '0' '999' '3600001' '60000.5' 'true'; do
+  "$PY" - "$d/project/.coop/project.yml" "$bad" <<'PY'
+import re,sys
+p=sys.argv[1]; s=open(p).read()
+open(p,'w').write(re.sub(r"request_timeout_ms: .*", "request_timeout_ms: "+sys.argv[2], s))
+PY
+  "$PY" "$ROOT/lib/mcp_config.py" --config "$d/config" --project-cwd "$d/project" --output "$d/item-mcp.json" 2> "$d/timeout-err.txt" || exit 1
+  grep -q "request_timeout_ms must be a whole number" "$d/timeout-err.txt" || { echo "no invalid-timeout note for $bad"; exit 1; }
+  "$PY" - "$d/item-mcp.json" "$bad" <<'PY'
+import json,sys
+assert json.load(open(sys.argv[1]))['mcpServers']['fabric-sqlendpoint']['requestTimeoutMs']==300000, sys.argv[2]
+PY
+done
+"$PY" "$ROOT/lib/warehouse_mcp.py" doctor-json "$d/item-mcp.json" --project "$d/project/.coop/project.yml" --tools-json '{"tools":[{"name":"executeSQL"}]}' > "$d/sql-timeout.json" || exit 1
+"$PY" - "$d/sql-timeout.json" <<'PY'
+import json,sys
+v=json.load(open(sys.argv[1]))
+assert v['state']=='registered' and v['request_timeout_ms']==300000 and v['request_timeout_state']=='invalid', v
+PY
+# A 60000 entry from an earlier release stays registered (doctor says the
+# contract's value differs, so the next sync or launch rewrites it).
+"$PY" - "$d/item-mcp.json" <<'PY'
+import json,sys
+m=json.load(open(sys.argv[1])); m['mcpServers']['fabric-sqlendpoint']['requestTimeoutMs']=60000; json.dump(m,open(sys.argv[1],'w'))
+PY
+cp "$d/item-project.yml" "$d/project/.coop/project.yml"
+"$PY" "$ROOT/lib/warehouse_mcp.py" doctor-json "$d/item-mcp.json" --project "$d/project/.coop/project.yml" --tools-json '{"tools":[{"name":"executeSQL"}]}' > "$d/sql-timeout.json" || exit 1
+"$PY" - "$d/sql-timeout.json" <<'PY'
+import json,sys
+v=json.load(open(sys.argv[1]))
+assert v['state']=='registered' and v['request_timeout_ms']==60000 and v['request_timeout_state']=='stale', v
 PY
 # Lakehouse targets use sqlEndpointProperties.id, not the Lakehouse item id.
 cat > "$d/project/.coop/project.yml" <<'YAML'

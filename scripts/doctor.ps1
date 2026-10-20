@@ -663,6 +663,9 @@ if ($mcpFound) {
     $sqlProbe = 'not_probed'
     $sqlUsable = $false
     $sqlRegistered = $false
+    $sqlTimeoutMs = 0
+    $sqlTimeoutState = ''
+    $sqlTimeoutExpectedMs = 0
     if ($sqlJson) {
       try {
         $sqlDoc = $sqlJson | ConvertFrom-Json
@@ -675,6 +678,11 @@ if ($mcpFound) {
         if ($sqlDoc.tenant -is [string] -and $azTenant.Rc -eq 0 -and $sqlDoc.tenant -ceq $azTenant.Tenant) { $sqlTenant = $azTenant.Tenant }
         if ($sqlDoc.probe_state -is [string] -and $sqlDoc.probe_state) { $sqlProbe = [string]$sqlDoc.probe_state }
         if ($sqlDoc.usable -eq $true) { $sqlUsable = $true }
+        # The entry's per-request timeout (the contract's
+        # mcp.fabric_sqlendpoint.request_timeout_ms, five minutes by default).
+        if ($sqlDoc.request_timeout_ms -is [long] -or $sqlDoc.request_timeout_ms -is [int]) { $sqlTimeoutMs = [long]$sqlDoc.request_timeout_ms }
+        if ($sqlDoc.request_timeout_state -is [string]) { $sqlTimeoutState = [string]$sqlDoc.request_timeout_state }
+        if ($sqlDoc.request_timeout_expected_ms -is [long] -or $sqlDoc.request_timeout_expected_ms -is [int]) { $sqlTimeoutExpectedMs = [long]$sqlDoc.request_timeout_expected_ms }
       } catch { $sqlState = 'unavailable' }
     }
     $sqlFor = if ($sqlTenant) { "$sqlScope target, tenant $sqlTenant" } else { "$sqlScope target" }
@@ -690,7 +698,10 @@ if ($mcpFound) {
     if ($azureSqlOnly -and -not $sqlRegistered) { $sqlState = 'optional_azure_sql' }
     switch ($sqlState) {
       'optional_azure_sql'    { D-Ok '  • fabric-sqlendpoint not configured (Azure SQL client; the Warehouse MCP is optional here)' }
-      'registered'            { D-Ok "  • fabric-sqlendpoint registered ($sqlFor; direct HTTP, Azure CLI bearer token; $sqlHow)" }
+      'registered'            {
+        $sqlTimeoutNote = if ($sqlTimeoutMs -gt 0) { "; request timeout $([math]::Round($sqlTimeoutMs / 1000)) s" } else { '' }
+        D-Ok "  • fabric-sqlendpoint registered ($sqlFor; direct HTTP, Azure CLI bearer token$sqlTimeoutNote; $sqlHow)"
+      }
       'auth_required'         { D-Warn "  • fabric-sqlendpoint auth_required ($sqlFor)" 'sign in with Azure CLI/tenant access; doctor never triggers login' }
       'azure_cli_unavailable' { D-Warn "  • fabric-sqlendpoint azure_cli_unavailable ($sqlFor)" 'install/repair Azure CLI and ensure az is on PATH; this is not an authentication diagnosis' }
       'token_launch_failed'   { D-Warn "  • fabric-sqlendpoint token_launch_failed ($sqlFor)" 'Azure CLI was found but could not be launched; this is not an authentication diagnosis' }
@@ -702,6 +713,11 @@ if ($mcpFound) {
       'unavailable'   { D-Warn "  • fabric-sqlendpoint unavailable$sqlTail" 'run: coop sync; if already configured, retry when network/auth is available' }
       default         { D-Warn "  • fabric-sqlendpoint $sqlState$sqlTail" 'run: coop sync' }
     }
+    # The contract's request timeout: an unusable value runs on the default; an
+    # entry generated before the contract changed is rewritten by the next sync
+    # or launch.
+    if ($sqlTimeoutState -eq 'invalid') { D-Warn '  • fabric-sqlendpoint request timeout: .coop/project.yml mcp.fabric_sqlendpoint.request_timeout_ms is not a whole number of milliseconds from 1000 to 3600000' "the default $([math]::Round($sqlTimeoutExpectedMs / 1000)) s is used until it is fixed" }
+    elseif ($sqlTimeoutState -eq 'stale' -and $sqlRegistered) { D-Warn "  • fabric-sqlendpoint request timeout $([math]::Round($sqlTimeoutMs / 1000)) s differs from the contract's $([math]::Round($sqlTimeoutExpectedMs / 1000)) s" 'run: coop sync (every launch also regenerates it)' }
   } else {
     D-Warn '  fabric-sqlendpoint status unavailable' 'Python is required'
   }
@@ -865,6 +881,13 @@ if ($proj) {
     if ([string]::IsNullOrWhiteSpace($tenant) -or $tenant.Trim().StartsWith('todo', [System.StringComparison]::OrdinalIgnoreCase)) { D-Warn 'Fabric tools enabled but fabric.tenant_id is empty' 'set it in .coop/project.yml' }
     elseif ($azTenant.Rc -eq 2) { D-Warn 'Fabric tools enabled but fabric.tenant_id is not a GUID or domain name' 'fix it in .coop/project.yml' }
   }
+
+  # A Warehouse target without profile.client: the guardrails resolve a read
+  # scope only with a client, so every Warehouse read asks and a headless
+  # session is blocked (dev VM, 2026-10-20).
+  $sqlItemId = Get-CoopYamlValue $proj 'fabric.default_sql_endpoint.item_id' ''
+  $clientName = Get-CoopYamlValue $proj 'profile.client' ''
+  if (-not [string]::IsNullOrWhiteSpace($sqlItemId) -and [string]::IsNullOrWhiteSpace($clientName)) { D-Warn 'Warehouse target set but profile.client is empty' 'set profile.client in .coop/project.yml; without it Warehouse reads ask every time and headless sessions are blocked' }
 
   if (Test-CoopToolEnabled $proj 'tabular_editor_cli') {
     $tePath = Get-CoopYamlValue $proj 'tools.tabular_editor_cli.executable_path' ''

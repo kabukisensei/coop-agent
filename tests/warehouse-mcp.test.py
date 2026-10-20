@@ -96,6 +96,22 @@ for forbidden in (
     candidate = entry()
     candidate.update(forbidden)
     assert wmcp.sqlendpoint_config_status(candidate) == "unavailable"
+# The request timeout is configurable: any whole number of milliseconds from one
+# second to one hour is registered (60000 from an earlier release included);
+# anything else is not a timeout and the entry is unavailable.
+for ok in (1000, 60000, 300000, 3_600_000):
+    candidate = entry()
+    candidate["requestTimeoutMs"] = ok
+    assert wmcp.sqlendpoint_config_status(candidate) == "registered", ok
+for bad in (0, 999, 3_600_001, -60000, 60000.0, "60000", True, None):
+    candidate = entry()
+    candidate["requestTimeoutMs"] = bad
+    assert wmcp.sqlendpoint_config_status(candidate) == "unavailable", bad
+assert wmcp.project_sql_request_timeout({}) == (300000, "default")
+assert wmcp.project_sql_request_timeout({"mcp": {"fabric_sqlendpoint": {"request_timeout_ms": 120000}}}) == (120000, "configured")
+assert wmcp.project_sql_request_timeout({"mcp": {"fabric-sqlendpoint": {"request_timeout_ms": 60000}}}) == (60000, "configured")
+assert wmcp.project_sql_request_timeout({"mcp": {"fabric_sqlendpoint": {"request_timeout_ms": "5m"}}}) == (300000, "invalid")
+assert wmcp.project_sql_request_timeout({"mcp": {"fabric_sqlendpoint": {"request_timeout_ms": 3_600_001}}}) == (300000, "invalid")
 # Another coop install's copy of the same helper (the terminal install and the
 # window package share one mcp-adapter.json) is accepted when byte-identical;
 # a different file of the same name, or another name, is not.
