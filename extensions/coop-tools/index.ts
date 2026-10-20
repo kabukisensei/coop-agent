@@ -44,6 +44,17 @@ import {
   sourceStatus,
 } from "../../lib/standards.mjs";
 import { agentDir as coopAgentDir, configPath as coopConfigPath } from "../../lib/paths.mjs";
+import {
+  NOT_INSTALLED_TEXT as SQL_SOURCE_NOT_INSTALLED,
+  NOT_SET_UP_TEXT as SQL_SOURCE_NOT_SET_UP,
+  NO_USER_TEXT as SQL_SOURCE_NO_USER,
+  SQLSC_BIN,
+  agentIdentity,
+  findSqlscConfig,
+  sqlSourceArgs,
+  sqlSourceInput,
+  sqlSourceText,
+} from "../../lib/sqlsc.mjs";
 import { effectiveProfile } from "../../lib/user-profile.mjs";
 // The /setup-project contract writer and the /setup-docs wizard driver live in
 // lib/ so the coop window's forms run the same code (master plan D1b2).
@@ -204,6 +215,18 @@ const CATALOG_SNAPSHOT_PARAMS = Type.Object({
 const SCHEMA_COMPARE_PARAMS = Type.Object({
   source: Type.Optional(Type.String({ description: "Promote from: dev, test, prod, snapshot or repo[:<name>[/<sub>]] (a contract repositories entry's .sql files). Default: the contract's default entry." })),
   target: Type.Optional(Type.String({ description: "Promote to: dev, test, prod or repo[:<name>[/<sub>]]. Default: prod." })),
+});
+
+const SQL_SOURCE_PARAMS = Type.Object({
+  command: Type.Optional(Type.Union(
+    ["status", "diff", "locks", "checkout", "release", "script", "get_latest", "migrations"].map((c) => Type.Literal(c)),
+    { description: "status (default), diff, locks, checkout, release (coop's own), script (dev to files), get_latest (files to dev), migrations." },
+  )),
+  objects: Type.Optional(Type.Array(Type.String(), { description: "Names like dbo.Customer; needed for checkout and release." })),
+  note: Type.Optional(Type.String({ description: "checkout: the task, shown to the team." })),
+  type: Type.Optional(Type.Union(["schema", "table", "view", "function", "procedure", "trigger"].map((c) => Type.Literal(c)), { description: "checkout of a new object." })),
+  apply: Type.Optional(Type.Boolean({ description: "get_latest: run it (asks); default is a dry run." })),
+  environment: Type.Optional(Type.Union([Type.Literal("dev"), Type.Literal("test"), Type.Literal("prod")], { description: "Reads only; writes go to dev." })),
 });
 
 const FABRIC_SQL_QUERY_PARAMS = Type.Object({
@@ -2486,6 +2509,53 @@ export default function coopTools(pi: ExtensionAPI) {
         )
         : `schema_compare unavailable: ${String(details?.state || "internal_error")}${details?.side ? ` (side: ${details.side})` : ""}.${details?.state === "contract_changed" ? ` ${CONTRACT_CHANGED_HINT}` : ""}${details?.state === "snapshot_missing" ? " No committed catalog snapshot exists; run catalog_snapshot (command=\"snapshot\") first or compare a live entry." : ""}${details?.state === "target_invalid" ? " That side is not a ready sql_targets entry in .coop/project.yml." : ""}${details?.state === "repo_missing" ? " No repositories entry with role sql or mixed and a local_path matches; name one as repo:<name>." : ""}${details?.state === "repo_ambiguous" ? " Several sql or mixed repositories exist; name one as repo:<name>." : ""}${details?.state === "repo_unavailable" ? " That repository folder (or its sql_root/subfolder) does not exist on this machine." : ""}`;
       return { content: [{ type: "text" as const, text }], details };
+    },
+  });
+
+  pi.registerTool({
+    name: "sql_source",
+    label: "SQL source control",
+    description: "Git source control for SQL objects (coop-sqlsc) where the SQL repo has sqlsc.yml. coop checks out as coop-agent:<user>, changes dev and writes the files; it never commits, the user checks in.",
+    promptSnippet: "SQL source control: checkout, status, script, get_latest",
+    promptGuidelines: [
+      "Under SQL source control, sql_source checkout BEFORE changing an object (stop if someone else has it); after a live dev change run script, after a file edit run get_latest (dry run, then apply); objects changed in the repo or both are a teammate's, never overwrite. Then the user checks in. Not set up or not installed: carry on as usual.",
+    ],
+    parameters: SQL_SOURCE_PARAMS,
+    executionMode: "sequential",
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      const input = sqlSourceInput(params);
+      if ("error" in input) {
+        return { content: [{ type: "text" as const, text: `sql_source: ${input.error}.` }], details: { state: "input_invalid", error: input.error } };
+      }
+      const config = findSqlscConfig(ctx.cwd, findProjectContract(ctx.cwd));
+      if (!config) return { content: [{ type: "text" as const, text: SQL_SOURCE_NOT_SET_UP }], details: { state: "not_set_up" } };
+      let email = "";
+      try {
+        const res = await pi.exec("git", ["-C", dirname(config), "config", "--get", "user.email"], { cwd: dirname(config), signal });
+        if (res.code === 0) email = res.stdout.trim();
+      } catch { /* no git: no identity */ }
+      const agent = agentIdentity(email);
+      if (!agent) return { content: [{ type: "text" as const, text: SQL_SOURCE_NO_USER }], details: { state: "no_user", config } };
+      let res;
+      try {
+        res = await pi.exec(SQLSC_BIN, sqlSourceArgs(input, config, agent), { cwd: dirname(config), signal });
+      } catch (e: any) {
+        return { content: [{ type: "text" as const, text: SQL_SOURCE_NOT_INSTALLED }], details: { state: "not_installed", error: errMsg(e) } };
+      }
+      let out: any = null;
+      try { out = JSON.parse(res.stdout); } catch { /* not JSON */ }
+      if (!out && (res.code === 127 || /not recognized|not found|ENOENT/i.test(res.stderr))) {
+        return { content: [{ type: "text" as const, text: SQL_SOURCE_NOT_INSTALLED }], details: { state: "not_installed" } };
+      }
+      if (!out) {
+        const text = `sql_source ${input.command} failed (exit ${res.code}): ${(res.stderr || res.stdout).trim().slice(0, 300)}`;
+        return { content: [{ type: "text" as const, text }], details: { state: "failed", exitCode: res.code } };
+      }
+      const { head, lines } = sqlSourceText(input, out);
+      return {
+        content: [{ type: "text" as const, text: modelText(head, lines, "run sql_source with fewer objects") }],
+        details: { state: out.ok === false ? "refused" : "ok", command: input.command, config, user: agent, result: out },
+      };
     },
   });
 

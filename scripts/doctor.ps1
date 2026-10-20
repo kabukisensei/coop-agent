@@ -411,6 +411,11 @@ function Check-PipxTool([string]$Bin) {
 }
 Check-PipxTool 'coop-data-doc'
 Check-PipxTool 'coop-schema-compare'
+# coop-sql-source-control (SQ12) is not on PyPI yet, so it is not pinned: people
+# install its release wheel, and the sql_source tool says so when it is missing.
+# A machine without it is fine (coop works as before), so a missing copy is not a warning.
+if (Test-Have 'coop-sqlsc') { Check 'coop-sqlsc' 'optional' '' @('coop-sqlsc', '--version') }
+else { D-Ok 'coop-sqlsc not installed (optional: SQL source control; pipx install its release wheel)' }
 
 D-Head 'Fabric / semantic-model tooling'
 

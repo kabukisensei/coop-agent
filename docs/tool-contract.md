@@ -546,6 +546,50 @@ of a large estate.
 
 ---
 
+### `sql_source` (SQL source control through coop-sql-source-control)
+
+Git source control for the client's SQL objects (master plan row SQ12, Aaron's
+ask of 2026-10-20: SQL at clients has no source control, Fabric's Git integration
+is unreliable, and coop must keep working directly in dev without stepping on
+developers who work in SSMS). It drives the standalone `coop-sqlsc` CLI
+([coop-sql-source-control](https://github.com/kabukisensei/coop-sql-source-control)):
+every object is a file, `status` says which side changed since the last sync,
+and checkouts in a shared lock table say who is editing what. The tool runs
+only where an `sqlsc.yml` exists, found walking up from the working folder or
+in the contract's only `sql`/`mixed` repository (its `local_path`); without one
+it returns `not_set_up`, and without the CLI `not_installed`, and coop works as
+it always has.
+
+| `command` | What runs | Writes |
+| --- | --- | --- |
+| `status` (default) | `sqlsc status`: differences, which side changed, who has each object | nothing |
+| `diff` | `sqlsc diff [objects]` | nothing |
+| `locks` | `sqlsc locks` | nothing |
+| `migrations` | `sqlsc migrations` | nothing |
+| `checkout` | `sqlsc checkout objects --as coop-agent:<user> [-m note] [--type]` | the lock table |
+| `release` | `sqlsc unlock objects --as coop-agent:<user>` (coop's own only, never `--force`) | the lock table |
+| `script` | `sqlsc script -t dev [objects]`: dev's changed objects into the repo files | repo files |
+| `get_latest` | `sqlsc get-latest -t dev --dry-run [objects]`; with `apply=true` it runs | the dev database |
+
+`environment` (dev, test, prod) is accepted on the reads only; every write goes
+to sqlsc's `dev` target (inside a coop project, the contract's `sql_targets` dev
+entry). There is no commit, check-in, deploy, drop or force verb.
+
+coop checks out as `coop-agent:<the person's git user.email>`. A teammate's
+checkout comes back as a conflict naming them, and coop stops. sqlsc counts a
+checkout held by `coop-agent:<user>` as that user's own (coop-sql-source-control
+#26), so the person reviews coop's change and checks it in from the SSMS window
+or `sqlsc checkin`, which commits and releases it. sqlsc's sync record keeps
+work a developer made in dev safe: `get_latest` leaves objects changed in the
+database since the last sync alone and lists them under `kept`.
+
+The guardrails allow every command except `get_latest` with `apply=true`, which
+asks (once per session if the user chooses) like any DDL on dev and is blocked
+headlessly; `sqlsc commit` and `sqlsc checkin` from the shell are hard-blocked
+(see `docs/guardrails-reference.md`). The CLI is not pinned in
+`config/release-manifest.json` until it is published to PyPI; `coop doctor`
+reports it as optional.
+
 ## Microsoft Fabric CLI (`fab`) and the Python Fabric collision
 
 `coop fabric [args]` (alias `coop fab`) is a pure pass-through in `bin/coop.ps1`:

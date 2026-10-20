@@ -5,6 +5,22 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **SQL source control for client SQL (`sql_source`, master plan SQ12).** Where
+  a client SQL repository has an `sqlsc.yml`, the new native tool drives the
+  `coop-sqlsc` CLI ([coop-sql-source-control](https://github.com/kabukisensei/coop-sql-source-control)):
+  `status`, `diff`, `locks`, `migrations`, `checkout`/`release` as
+  `coop-agent:<user>`, `script` (dev's changes into the files) and `get_latest`
+  (the files onto dev; a dry run unless `apply=true`, which asks). coop checks
+  an object out before changing it and stops when a developer has it; it never
+  commits, and the person checks coop's change in from the SSMS window or
+  `sqlsc checkin`. The guardrails hard-block `sqlsc commit` and `sqlsc checkin`
+  from the shell (they commit inside sqlsc, out of the git gate's sight) and ask
+  before `get-latest`, `deploy`, `unlock --force`, the edit guard and `--as`
+  another person. Without `sqlsc.yml` or the CLI, coop works as before; `coop
+  doctor` lists the CLI as optional. New `tests/sqlsc.test.mjs` (gate lane).
+
 ### Fixed
 
 - **`coop release` on a Mac without PowerShell 7 no longer stops at the test

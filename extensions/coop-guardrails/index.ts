@@ -1306,6 +1306,7 @@ const SQL_IMPACT_TOOL = "sql_impact";
 const CATALOG_SNAPSHOT_TOOL = "catalog_snapshot";
 const SCHEMA_COMPARE_TOOL = "schema_compare";
 const SCHEMA_COMPARE_SIDES = new Set(["dev", "test", "prod"]);
+const SQL_SOURCE_TOOL = "sql_source";
 // `repo`, `repo:<name>` or `repo:<name>/<subfolder>`: the .sql files of one contract
 // repositories entry, read with no connection (lib/schema_compare.py, SQ10).
 const SCHEMA_COMPARE_REPO = /^repo(?::[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_. -]+)*)?$/;
@@ -2426,6 +2427,53 @@ function dangerLabel(cmd: string): string | null {
   return null;
 }
 
+/** coop-sql-source-control from the shell (SQ12). `sqlsc commit` and `sqlsc
+ *  checkin` make a git commit inside sqlsc, where the commit gate above never
+ *  sees it, so they are hard-blocked: coop never commits SQL source, a person
+ *  checks in. Changes to a database (`get-latest`, `deploy`), taking someone
+ *  else's checkout (`unlock --force`), the edit guard, and acting as another
+ *  person (`--as` that is not coop's own `coop-agent:` name) ask. Reads
+ *  (`status`, `diff`, `locks`, `history`, `migrations`), `--dry-run` /
+ *  `--output` scripts and coop's own checkouts pass. */
+export interface SqlscShellRisk { hard: boolean; label: string; sessionKey: string | null }
+const SQLSC_PROGRAMS = new Set(["sqlsc", "coop-sqlsc"]);
+const SQLSC_GLOBAL_VALUE_FLAGS = new Set(["--config", "-t", "--target"]);
+export function sqlscShellRisk(cmd: string): SqlscShellRisk | null {
+  for (const { segment } of splitShellSegments(cmd)) {
+    const word = resolveCommandWord(segment);
+    if (!word || !SQLSC_PROGRAMS.has(word.name)) continue;
+    const toks = tokenizeArgs(segment.slice(word.charOffset)).map((t) => t.replace(/^['"]|['"]$/g, "")).slice(1);
+    let i = 0;
+    while (i < toks.length && toks[i].startsWith("-")) i += SQLSC_GLOBAL_VALUE_FLAGS.has(toks[i]) ? 2 : 1;
+    const sub = (toks[i] || "").toLowerCase();
+    const rest = toks.slice(i + 1);
+    const has = (...flags: string[]) => rest.some((t) => flags.some((f) => t === f || t.startsWith(`${f}=`) || (f.length === 2 && !f.startsWith("--") && t.startsWith(f) && t.length > 2)));
+    if (sub === "commit") return { hard: true, label: "sqlsc commit", sessionKey: null };
+    if (sub === "checkin" && !has("--no-commit")) return { hard: true, label: "sqlsc checkin", sessionKey: null };
+    if (sub === "get-latest" && !has("--dry-run", "--output", "-o")) return { hard: false, label: "sqlsc get-latest (changes the database)", sessionKey: "sqlsc:get-latest" };
+    if (sub === "deploy" && !has("--output", "-o")) return { hard: false, label: "sqlsc deploy (releases to a database)", sessionKey: null };
+    if (sub === "unlock" && has("--force")) return { hard: false, label: "sqlsc unlock --force (takes someone else's checkout)", sessionKey: null };
+    if (sub === "guard" && ["install", "remove"].includes((rest[0] || "").toLowerCase())) return { hard: false, label: `sqlsc guard ${rest[0].toLowerCase()}`, sessionKey: null };
+    const asAt = toks.findIndex((t) => t === "--as" || t.startsWith("--as="));
+    if (asAt >= 0) {
+      const who = toks[asAt].startsWith("--as=") ? toks[asAt].slice(5) : toks[asAt + 1] || "";
+      if (!who.toLowerCase().startsWith("coop-agent:")) return { hard: false, label: "sqlsc --as another person", sessionKey: null };
+    }
+  }
+  return null;
+}
+
+/** The sql_source tool (SQ12): every command runs, except that get_latest with
+ *  apply=true changes the dev database and asks first (once per session if the
+ *  user says so), like any DDL on dev. */
+export function decideSqlSource(event: any): { action: "allow" | "ask"; reason: string } {
+  const input = event?.input ?? {};
+  if (input && typeof input === "object" && input.command === "get_latest" && input.apply === true) {
+    return { action: "ask", reason: "get_latest applies the repo's SQL files to the dev database" };
+  }
+  return { action: "allow", reason: "reads, coop's own checkouts, or repo files" };
+}
+
 /** Fabric CLI subcommands that create, change, or delete tenant state. `ls`, `get`,
  *  `exists`, `export` (writes local files), `open` and `auth` are reads or local. */
 const FAB_WRITE_SUBCOMMANDS = new Set([
@@ -3130,6 +3178,31 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       if (tool !== "bash") {
         // 0b'. sql_impact (SQ4): catalog metadata for one object on the executor's
         // dev/test target runs without a prompt; anything else asks or is blocked.
+        // 0b''. sql_source (SQ12): coop never commits through it (the tool has no
+        // commit verb); applying the repo to dev is a dev DDL write and asks.
+        if (tool === SQL_SOURCE_TOOL) {
+          const decision = decideSqlSource(event);
+          if (decision.action === "allow") return;
+          const key = "sql_source:get_latest:dev";
+          if (editApprovals.has(key)) {
+            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-sql-source", decision: "allowed", label: "sql_source get_latest", detail: "session-approval" });
+            return;
+          }
+          if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
+            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-sql-source", decision: "blocked-headless", label: "sql_source get_latest", detail: "dev" });
+            return { block: true, reason: "coop guardrails: blocked sql_source get_latest; applying SQL to the dev database needs approval, which is unavailable in headless mode." };
+          }
+          const choice = await askEditApproval(
+            ctx,
+            "coop guardrails",
+            `SQL source control: apply the repo's SQL files to the dev database (sqlsc get-latest).\nObjects a teammate changed in dev are kept; prod is never touched. Run it?`,
+            key,
+          );
+          if (choice === "session") editApprovals.add(key);
+          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-sql-source", decision: choice === "declined" ? "declined" : "allowed", label: "sql_source get_latest", detail: choice === "session" ? "session-approval-granted" : "dev" });
+          if (choice === "declined") return { block: true, reason: "coop guardrails: blocked sql_source get_latest (you declined)." };
+          return;
+        }
         if (tool === SQL_IMPACT_TOOL || tool === CATALOG_SNAPSHOT_TOOL || tool === SCHEMA_COMPARE_TOOL) {
           const deps = { ...liveReadDeps, contract: () => ensureSessionGovernance(ctx.cwd).sqlContract };
           const impact = tool === SQL_IMPACT_TOOL ? decideSqlImpact(event, deps)
@@ -3405,6 +3478,31 @@ export default function coopGuardrails(pi: ExtensionAPI) {
           const ok = await ctx.ui.confirm("coop guardrails", `Can't verify what this commit would include:\n  ${git.segment.slice(0, 200)}${why}\nProceed?`);
           audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: ok ? "allowed" : "declined", label: "unverifiable git commit", detail: "unverifiable git commit" });
           if (!ok) return { block: true, reason: "coop guardrails: blocked an unverifiable commit (you declined)." };
+        }
+      }
+
+      // 1d. coop-sql-source-control (SQ12): its commit verbs commit inside sqlsc,
+      // out of the git gate's sight, so they are hard-blocked; database changes ask.
+      const sqlsc = sqlscShellRisk(cmd);
+      if (sqlsc?.hard) {
+        audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: "blocked", label: sqlsc.label, detail: sqlsc.label });
+        return { block: true, reason: `coop guardrails: never commit source. ${sqlsc.label} makes a git commit; leave it to the user (Check in in the SSMS window, or sqlsc checkin in their own terminal). Use the sql_source tool for checkouts and scripting.` };
+      }
+      if (sqlsc) {
+        if (PRODUCTION_WORD.test(cmd) || namesContractProduction(commandValues(cmd), ensureSessionGovernance(ctx.cwd).productionNames)) {
+          const refused = await permitProductionWrite(ctx, "danger-confirm", "bash", `${sqlsc.label}: ${cmd.slice(0, 200)}`);
+          if (refused) return refused;
+        } else if (sqlsc.sessionKey && editApprovals.has(sqlsc.sessionKey)) {
+          audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "allowed", label: sqlsc.label, detail: "session-approval" });
+        } else {
+          if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
+            audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "blocked-headless", label: sqlsc.label, detail: sqlsc.label });
+            return { block: true, reason: `coop guardrails: blocked ${sqlsc.label}; approval is unavailable in headless mode.` };
+          }
+          const choice = await askEditApproval(ctx, "coop guardrails", `SQL source control from the shell (${sqlsc.label}):\n  ${cmd.slice(0, 200)}\nRun it?`, sqlsc.sessionKey);
+          if (choice === "session" && sqlsc.sessionKey) editApprovals.add(sqlsc.sessionKey);
+          audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: choice === "declined" ? "declined" : "allowed", label: sqlsc.label, detail: choice === "session" ? "session-approval-granted" : sqlsc.label });
+          if (choice === "declined") return { block: true, reason: `coop guardrails: blocked ${sqlsc.label} (you declined).` };
         }
       }
 

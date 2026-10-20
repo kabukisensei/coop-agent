@@ -708,7 +708,7 @@ coop installs two standalone pipx tools (`coop-data-doc`, and `coop-schema-compa
 the schema compare as a command people and CI run on their own: a side is a live
 database, a `fabric://<workspace>/<warehouse>` name, a snapshot folder or a repo
 folder, and the snapshot layout is the one `coop catalog snapshot` writes) and
-exposes five native LLM tools: `data_doc`,
+exposes six native LLM tools: `data_doc`,
 `sql_impact` (live catalog impact trace of one SQL object on the contract's dev/test
 `sql_targets` entry), `catalog_snapshot` (the committed dev catalog snapshot: one file
 per table, view, procedure and function under the contract's snapshot folder, read
@@ -718,11 +718,16 @@ entry, the committed snapshot or a contract repository's `.sql` files read as
 code, in any pairing: a sorted diff of schemas, tables and columns, views,
 procedures and functions, and an ordered promotion script with every
 destructive statement commented out, written under `.coop/schema-compare/`; `coop
-schema compare` is the terminal form; nothing is ever applied) and the optional,
+schema compare` is the terminal form; nothing is ever applied), `sql_source` (SQL
+source control through `coop-sqlsc` where the client SQL repository has an
+`sqlsc.yml`: coop checks objects out as `coop-agent:<user>` before changing them,
+writes dev's changes into the files or applies the files to dev, and never
+commits; the user checks in) and the optional,
 config-driven `bpa_review` (Tabular Editor BPA, the deterministic model check).
 `sql_impact`, `schema_compare` and `bpa_review` are read-only on every target;
 `catalog_snapshot` reads the dev/test catalog read-only and writes only its snapshot
-folder; `data_doc build` writes generated documentation. SQL and DAX standards need no tool:
+folder; `sql_source` writes its lock table, repo files and, with approval, the dev
+database; `data_doc build` writes generated documentation. SQL and DAX standards need no tool:
 they are applied while coop writes and self-checked before it presents a change.
 While coop edits SQL it holds the session's lineage context: the downstream of each
 object, filled once from the committed catalog snapshot, the built docs and
