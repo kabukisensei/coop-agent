@@ -23,7 +23,7 @@ export function menuTemplate({ run, setTheme, theme, themes, menuBar, toggleMenu
         ...(tabs ? [tabItem("New tab", tabs.add, "CmdOrCtrl+N"), { label: "New window", click: () => tabs.newWindow() }] : []),
         action("New session", "new", "CmdOrCtrl+Shift+N"),
         action("Sessions...", "resume", "CmdOrCtrl+Shift+R"),
-        action("Switch project...", "switch"),
+        action("Switch client...", "switch"),
         action("Open folder in a new window...", "folder"),
         { type: "separator" },
         action("Open in terminal", "terminal"),

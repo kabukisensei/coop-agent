@@ -45,6 +45,8 @@ export function parseSpec(raw) {
     loginPresent: spec.loginPresent !== false,
     // Launch warnings coop printed in the console the window replaced.
     notices: Array.isArray(spec.notices) ? spec.notices.filter((n) => typeof n === "string" && n.trim()).slice(0, 8).map((n) => n.slice(0, 500)) : [],
+    // Where coop is (F1): "Client: <client> · folder <root> · project file <path>".
+    clientLine: typeof spec.clientLine === "string" ? spec.clientLine.trim().slice(0, 500) : "",
   };
 }
 

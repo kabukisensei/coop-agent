@@ -10,7 +10,7 @@
 import assert from "node:assert/strict";
 import { runInNewContext } from "node:vm";
 import { EventEmitter } from "node:events";
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
@@ -21,7 +21,8 @@ import { SpecError, parseSpec, piArgv, piEnv, freshSessionSpec, launchSessionPat
 import { CommandError, IMAGE_LIMITS, buildCommand, buildUiResponse } from "../desktop/lib/rpc-commands.mjs";
 import { CSP, isAppUrl, resolveAsset } from "../desktop/lib/serve.mjs";
 import { THEMES, fitToScreen, loadSettings, saveSettings } from "../desktop/lib/settings.mjs";
-import { MAX_PROJECTS, describeProject, forgetProject, projectEntries, rememberProject, startFolder, teamWord, windowTitle } from "../desktop/lib/projects.mjs";
+import { describeProject, startFolder, teamWord, windowTitle } from "../desktop/lib/projects.mjs";
+import { clientRecord, clientRootFor, contractClientName, saveClientRecord } from "../lib/client-folder.mjs";
 import { isSessionPath, listSessions, sessionFolderName } from "../desktop/lib/sessions.mjs";
 import { readBranch } from "../desktop/lib/git.mjs";
 import { consoleProcess } from "../desktop/lib/terminal.mjs";
@@ -115,6 +116,8 @@ await check("spec: a coop desktop spec parses, notices are cleaned", () => {
   assert.equal(spec.loginPresent, false);
   assert.deepEqual(spec.notices, ["Azure sign-in expired", "x".repeat(500)]);
   assert.equal(parseSpec(JSON.stringify({ ...goodSpec, loginPresent: undefined, notices: undefined })).loginPresent, true);
+  assert.equal(spec.clientLine, "", "no client line in an older spec");
+  assert.equal(parseSpec(JSON.stringify({ ...goodSpec, clientLine: " Client: Contoso · folder C:\\work · project file C:\\work\\coop\\.coop\\project.yml " })).clientLine, "Client: Contoso · folder C:\\work · project file C:\\work\\coop\\.coop\\project.yml", "the launcher's client line (F1) travels with the spec");
 });
 
 await check("spec: refuses a missing, foreign or unsafe spec", () => {
@@ -473,7 +476,7 @@ await check("menu: the template runs window actions, themes are radios, notifica
   file.find((item) => item.label === "New tab").click();
   file.find((item) => item.label === "New window").click();
   assert.deepEqual(tabbed, ["close", "add", "window"]);
-  assert.ok(ran.includes("new") && ran.includes("hotkeys") && ran.includes("start") && ran.includes("pane") && ran.includes("switch"), "File > Switch project runs the picker action (D1m)");
+  assert.ok(ran.includes("new") && ran.includes("hotkeys") && ran.includes("start") && ran.includes("pane") && ran.includes("switch"), "File > Switch client runs the question action (F1)");
   assert.equal(notificationFor({ type: "agent_end" }, { folder: "work" }), "coop finished in work.");
   assert.equal(notificationFor({ type: "extension_ui_request", method: "confirm", title: "coop guardrails" }), "coop is waiting for your answer: coop guardrails");
   assert.equal(notificationFor({ type: "extension_ui_request", method: "setStatus" }), "");
@@ -593,12 +596,13 @@ await check("settings: unknown values fall back, the four themes and auto are ke
   assert.deepEqual(THEMES, ["auto", "modern-dark", "modern-light", "retro-dark", "retro-light"]);
   const file = join(temp, "settings", "window.json");
   assert.equal(loadSettings(file).theme, "auto");
-  assert.deepEqual(saveSettings(file, { theme: "retro-light", width: 99999, height: 900, maximized: "yes", extra: 1 }), { theme: "retro-light", width: 1280, height: 900, maximized: false, lastFolder: "", notify: true, menuBar: true, projects: [], openNextTime: "", phoneAccess: false, companionOrigin: "" });
+  assert.deepEqual(saveSettings(file, { theme: "retro-light", width: 99999, height: 900, maximized: "yes", extra: 1 }), { theme: "retro-light", width: 1280, height: 900, maximized: false, lastFolder: "", notify: true, menuBar: true, phoneAccess: false, companionOrigin: "" });
   assert.equal(loadSettings(file).theme, "retro-light");
   assert.equal(saveSettings(file, { phoneAccess: true }).phoneAccess, true, "phone access (pair once) is kept across restarts");
   assert.equal(saveSettings(file, { phoneAccess: "yes" }).phoneAccess, false);
-  assert.deepEqual(saveSettings(file, { projects: ["C:\\work\\a", 7, "bad\nname", "C:\\work\\b"], openNextTime: "C:\\work\\a" }).projects, ["C:\\work\\a", "C:\\work\\b"]);
-  assert.equal(loadSettings(file).openNextTime, "C:\\work\\a");
+  // The picker's old list and "open next time" (D1m) are dropped on read: the client folder record decides (F1).
+  const legacy = saveSettings(file, { projects: ["C:\\work\\a"], openNextTime: "C:\\work\\a", lastFolder: "C:\\work\\a" });
+  assert.ok(!("projects" in legacy) && !("openNextTime" in legacy) && legacy.lastFolder === "C:\\work\\a", "an old settings file still loads, without the picker's fields");
   writeFileSync(file, "{not json");
   assert.equal(loadSettings(file).theme, "auto");
   // The window fits a small screen (MC4 on a VM display): never larger than the work area, never under the minimums.
@@ -607,20 +611,67 @@ await check("settings: unknown values fall back, the four themes and auto are ke
   assert.deepEqual(fitToScreen({ width: 1000, height: 700 }, undefined), { width: 1000, height: 700 });
 });
 
-await check("D1m projects: the picker's list, the folder the icon opens, the team word and the title", () => {
-  let settings = { projects: [], openNextTime: "" };
-  settings = rememberProject(settings, "C:\\work\\contoso-analytics", "win32");
-  settings = rememberProject(settings, "C:\\work\\fabrikam", "win32");
-  settings = rememberProject(settings, "c:\\WORK\\contoso-analytics", "win32");
-  assert.deepEqual(settings.projects, ["c:\\WORK\\contoso-analytics", "C:\\work\\fabrikam"], "newest first, one entry per folder whatever the case on Windows");
-  for (let i = 0; i < 20; i += 1) settings = rememberProject(settings, `/work/p${i}`, "linux");
-  assert.equal(settings.projects.length, MAX_PROJECTS);
-  settings = rememberProject({ projects: ["/a", "/b"], openNextTime: "/b" }, "/c", "linux");
-  assert.equal(startFolder(settings, () => true), "/b");
-  assert.equal(startFolder(settings, () => false), "", "a folder that is gone asks again");
-  assert.equal(startFolder({ projects: [], openNextTime: "" }, () => true), "");
-  settings = forgetProject(settings, "/b", "linux");
-  assert.deepEqual([settings.projects, settings.openNextTime], [["/c", "/a"], ""], "forgetting the default clears it");
+await check("F1 client folder: the root rule, the record and its carry-over, the folder the icon opens, the title", () => {
+  // The same layout as tests/fixtures/client-folder.test.ps1 (Get-CoopClientRootFor): a
+  // client folder with a home repository beside two others, a lone repository, and a
+  // user folder with a repository two levels down.
+  const root = join(temp, "client-folder");
+  const client = join(root, "client");
+  const home = join(client, "contoso-coop", ".coop", "project.yml");
+  mkdirSync(join(client, "contoso-coop", ".coop"), { recursive: true });
+  mkdirSync(join(client, "contoso-coop", "src"), { recursive: true });
+  mkdirSync(join(client, "analytics", ".git"), { recursive: true });
+  mkdirSync(join(client, "analytics", "src"), { recursive: true });
+  mkdirSync(join(client, "reports", ".git"), { recursive: true });
+  writeFileSync(home, "profile:\n  client: 'Contoso Retail'\nrepositories:\n  analytics:\n    local_path: '../analytics'\n  reports:\n    local_path: \"../reports\"\n");
+  const solo = join(root, "solo");
+  const acme = join(solo, "acme", ".coop", "project.yml");
+  mkdirSync(join(solo, "acme", ".coop"), { recursive: true });
+  mkdirSync(join(solo, "acme", ".git"), { recursive: true });
+  mkdirSync(join(solo, "acme", "src"), { recursive: true });
+  writeFileSync(acme, "profile:\n  client: \"Acme\"   # the client\nrepositories:\n  self:\n    local_path: '.'\n");
+  const user = join(root, "user");
+  const fabric = join(user, "devops", "fabric", ".coop", "project.yml");
+  mkdirSync(join(user, "devops", "fabric", ".coop"), { recursive: true });
+  mkdirSync(join(user, "devops", "fabric", ".git"), { recursive: true });
+  writeFileSync(fabric, "profile:\n  client: Fabrikam\n");
+  // Found at or above the launch folder: the repository, or its parent when the file lists siblings.
+  assert.equal(clientRootFor(home, join(client, "contoso-coop", "src")), client, "home repository opened directly: the client folder is its parent");
+  assert.equal(clientRootFor(acme, join(solo, "acme", "src")), join(solo, "acme"), "a lone repository is the client folder");
+  assert.equal(clientRootFor(acme, join(solo, "acme")), join(solo, "acme"));
+  // Found in the home repository beside the launch folder's repository: that parent.
+  assert.equal(clientRootFor(home, join(client, "analytics", "src")), client, "a sibling repository: the folder holding both");
+  // Found in a repository inside the launch folder: the launch folder.
+  assert.equal(clientRootFor(acme, solo), solo, "found one level down: the launch folder");
+  assert.equal(clientRootFor(fabric, user), user, "found two levels down: the launch folder");
+  // No launch folder (an old record carried over): the siblings rule alone.
+  assert.equal(clientRootFor(home), client);
+  assert.equal(clientRootFor(acme), join(solo, "acme"));
+  assert.equal(clientRootFor(fabric), join(user, "devops", "fabric"));
+  assert.deepEqual([contractClientName(home), contractClientName(acme), contractClientName(fabric), contractClientName(join(root, "none.yml"))], ["Contoso Retail", "Acme", "Fabrikam", ""]);
+
+  // The record: client.json first; only the old home-project.json carries over in memory.
+  const profile = join(root, "profile");
+  const env = { COOP_DIR: profile };
+  assert.deepEqual(clientRecord(env), { client: "", root: "", project_file: "", carried: false, exists: false }, "nothing recorded");
+  mkdirSync(join(profile, ".coop"), { recursive: true });
+  writeFileSync(join(profile, ".coop", "home-project.json"), JSON.stringify({ schema_version: 1, project_file: home }));
+  assert.deepEqual(clientRecord(env), { client: "Contoso Retail", root: client, project_file: home, carried: true, exists: true }, "the old record is carried over with the root the rule gives");
+  assert.ok(!existsSync(join(profile, ".coop", "client.json")), "reading writes nothing");
+  const written = saveClientRecord({ client: "Contoso Retail", root: client, project_file: home }, env);
+  assert.deepEqual(written, { schema_version: 1, client: "Contoso Retail", root: client, project_file: home });
+  assert.deepEqual(JSON.parse(readFileSync(join(profile, ".coop", "client.json"), "utf8")), written);
+  assert.deepEqual(clientRecord(env), { client: "Contoso Retail", root: client, project_file: home, carried: false, exists: true }, "client.json wins over the old file");
+  saveClientRecord({ root: join(root, "plain") }, env);
+  assert.deepEqual(clientRecord(env), { client: "", root: join(root, "plain"), project_file: "", carried: false, exists: true }, "a folder without a project file is still a record");
+  assert.throws(() => saveClientRecord({ client: "x", root: "" }, env), /client folder is required/);
+
+  // The folder the icon opens: the record's root while it exists, else ask.
+  assert.equal(startFolder({ root: client, exists: true }, () => true), client);
+  assert.equal(startFolder({ root: client, exists: true }, () => false), "", "a folder that is gone asks again");
+  assert.equal(startFolder({ root: "", exists: false }, () => true), "");
+  assert.equal(startFolder({ root: "bad\nname", exists: true }, () => true), "");
+
   assert.equal(teamWord({ state: "not-shared" }), "Not shared yet");
   assert.equal(teamWord({ state: "no-remote", localExists: true }), "Not shared yet");
   assert.equal(teamWord({ state: "no-remote", localExists: false }), "");
@@ -628,32 +679,30 @@ await check("D1m projects: the picker's list, the folder the icon opens, the tea
   assert.equal(teamWord({ state: "shared" }), "");
   assert.equal(teamWord(null), "");
 
-  const root = join(temp, "picker");
-  const home = join(root, "contoso-coop");
-  const analytics = join(root, "contoso-analytics");
-  mkdirSync(join(home, ".coop"), { recursive: true });
-  mkdirSync(analytics, { recursive: true });
-  writeFileSync(join(home, ".coop", "project.yml"), "profile:\n  client: 'Contoso Retail'\nrepositories:\n  analytics:\n    local_path: '../contoso-analytics'\n");
+  const analytics = join(client, "analytics");
+  const homeRepo = join(client, "contoso-coop");
   const readers = {
-    contractFor: (folder) => (folder === analytics || folder === home ? join(home, ".coop", "project.yml") : null),
+    contractFor: (folder) => (folder === analytics || folder === homeRepo ? home : null),
     branch: (folder) => (folder === analytics ? "main" : ""),
-    team: (dir) => ({ state: dir === home ? "not-shared" : "shared", localExists: true }),
+    team: (dir) => ({ state: dir === homeRepo ? "not-shared" : "shared", localExists: true }),
   };
   const fromSource = describeProject(analytics, readers);
-  assert.deepEqual(fromSource, { path: analytics, name: "contoso-analytics", exists: true, contract: join(home, ".coop", "project.yml"), root: home, client: "Contoso Retail", home: true, branch: "main", team: "Not shared yet" }, "a source repository shows the client from the home repository beside it");
-  const fromHome = describeProject(home, readers);
+  assert.deepEqual(fromSource, { path: analytics, name: "analytics", exists: true, contract: home, root: homeRepo, client: "Contoso Retail", home: true, branch: "main", team: "Not shared yet" }, "a source repository shows the client from the home repository beside it");
+  const fromHome = describeProject(homeRepo, readers);
   assert.deepEqual([fromHome.client, fromHome.home, fromHome.branch], ["Contoso Retail", false, ""]);
-  const plain = describeProject(join(root, "plain"), readers);
-  assert.equal(plain.exists, false);
-  mkdirSync(join(root, "plain"));
-  assert.deepEqual([describeProject(join(root, "plain"), readers).client, describeProject(join(root, "plain"), readers).contract], ["", ""], "a folder with no project file is listed without a client");
-  const entries = projectEntries({ projects: [analytics, join(root, "gone"), home] }, readers);
-  assert.deepEqual(entries.map((entry) => entry.name), ["contoso-analytics", "contoso-coop"], "a folder that is gone is dropped");
-  assert.equal(windowTitle(fromSource), "coop - Contoso Retail · contoso-analytics");
+  assert.equal(describeProject(join(root, "gone"), readers).exists, false);
+  mkdirSync(join(root, "plain"), { recursive: true });
+  assert.deepEqual([describeProject(join(root, "plain"), readers).client, describeProject(join(root, "plain"), readers).contract], ["", ""], "a folder with no project file is described without a client");
+  assert.equal(windowTitle(fromSource), "coop - Contoso Retail · analytics");
   assert.equal(windowTitle(describeProject(join(root, "plain"), readers)), "coop - plain");
-  assert.equal(resolveAsset(join(ROOT, "desktop", "renderer"), "coop://app/picker.html").type, "text/html; charset=utf-8", "the picker page is served like the main one");
+  assert.equal(resolveAsset(join(ROOT, "desktop", "renderer"), "coop://app/picker.html").type, "text/html; charset=utf-8", "the question's page is served like the main one");
+  const page = readFileSync(join(ROOT, "desktop", "renderer", "picker.html"), "utf8");
+  assert.ok(page.includes("Where is this client's code?") && page.includes("Choose folder...") && !page.includes("openNextTime"), "one question, one button, no list and no checkbox");
   const preload = readFileSync(join(ROOT, "desktop", "preload.cjs"), "utf8");
-  for (const name of ["switchProject", "pickerList", "pickerOpen", "pickerBrowse", "pickerForget", "pickerCancel", "pickerTheme"]) assert.ok(preload.includes(`${name}:`), `preload exposes ${name}`);
+  for (const name of ["switchProject", "pickerInfo", "pickerChoose", "pickerCancel", "pickerTheme"]) assert.ok(preload.includes(`${name}:`), `preload exposes ${name}`);
+  for (const name of ["pickerList", "pickerOpen", "pickerBrowse", "pickerForget"]) assert.ok(!preload.includes(`${name}:`), `preload no longer exposes ${name}`);
+  const menu = menuTemplate({ run() {}, setTheme() {}, theme: "auto", themes: THEMES, menuBar: true, toggleMenuBar() {}, openExternal() {}, about() {} });
+  assert.ok(menu[0].submenu.some((item) => item.label === "Switch client...") && !menu[0].submenu.some((item) => item.label === "Switch project..."), "File > Switch client");
 });
 
 await check("sessions: Pi's folder naming, listing and the switch guard", () => {

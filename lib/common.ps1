@@ -1298,6 +1298,9 @@ function Coop-Warn {
   Coop-Emit "$($script:C_OLIVE)!$($script:C_RST) $text"
   if ($null -ne $script:CoopWarnSink) { [void]$script:CoopWarnSink.Add($text) }
 }
+# A launch note the window shows too (the client folder record, F1): printed like
+# Coop-Info and collected with the warnings for `coop desktop`.
+function Coop-Notice { param([string]$m) Coop-Info $m; if ($null -ne $script:CoopWarnSink) { [void]$script:CoopWarnSink.Add($m) } }
 function Coop-Err  { param([string]$m) Coop-Emit "$($script:C_RED)$($script:G_CROSS)$($script:C_RST) $m" }
 function Coop-Die  { param([string]$m) Coop-Err $m; exit 1 }
 function Coop-Head { param([string]$m) Coop-Emit "`n$($script:C_BOLD)$($script:C_NAVY)$m$($script:C_RST)" }
@@ -3463,12 +3466,23 @@ function Find-CoopChildContract {
   return ''
 }
 
-# The client's one project file, remembered per Windows user (one Windows user
-# per client): <profile dir>\home-project.json names the .coop\project.yml in the
-# client home repository. A launch that finds a project file records it when none
-# is recorded yet (Save-CoopHomeProjectFile); `coop project home <folder>` sets it.
-# From then on a launch from any folder without a project file above it uses it,
-# so the shortcut finds the file wherever it opens (Aaron, 2026-10-08).
+# The client folder (master plan F1; Aaron, 2026-10-20). coop's folder model is
+# three places, named the same way everywhere coop speaks: this machine
+# (%ProgramData%\coop), this client (%USERPROFILE%\.coop: one Windows user is one
+# client) and the repository (<repo>\.coop). One client is one folder, the client
+# folder, holding all of its repositories (the home repository with the team's
+# project file, the sql repository, the powerbi repository...): parts of one
+# codebase, listed under `repositories` in the home repository's
+# .coop\project.yml. coop always opens in the client folder, finds the one
+# project file from there and edits in whichever repository the task names.
+# The record is <profile dir>\client.json:
+#   { schema_version: 1, client: <profile.client or ''>, root: <client folder>, project_file: <...\.coop\project.yml or ''> }
+# It replaces home-project.json (2026-10-08), which stays on disk, harmless: a
+# profile with only the old file carries it over once, at the next launch
+# (Register-CoopHomeProjectFile), and says so in one line. The window's one
+# question and `coop project home <folder>` set the record; a terminal launch
+# that finds a project file records it when nothing is recorded yet.
+function Get-CoopClientRecordPath { return (Join-Path (Get-CoopProfileDir) 'client.json') }
 function Get-CoopHomeProjectRecordPath { return (Join-Path (Get-CoopProfileDir) 'home-project.json') }
 
 # True when $Path is a client project file coop may remember: an existing
@@ -3485,36 +3499,111 @@ function Test-CoopHomeProjectCandidate {
   return $true
 }
 
+# The client a project file names (`profile.client`; a line scan like
+# Get-CoopContractLocalPaths, so no Python is needed at launch), quotes
+# stripped, or ''.
+function Get-CoopContractClientName {
+  param([string]$File)
+  if (-not $File -or -not (Test-Path -LiteralPath $File -PathType Leaf)) { return '' }
+  $inProfile = $false
+  foreach ($line in (Get-Content -LiteralPath $File -ErrorAction SilentlyContinue)) {
+    if ($line -match '^\S') { $inProfile = ($line -match '^profile:\s*(#.*)?$'); continue }
+    if (-not $inProfile) { continue }
+    if ($line -match '^\s+client:\s*(.+?)\s*$') {
+      $value = $Matches[1].Trim()
+      if ($value -match '^"([^"]*)"') { $value = $Matches[1] }
+      elseif ($value -match "^'([^']*)'") { $value = $Matches[1] }
+      elseif ($value -match '^(.*?)\s+#.*$') { $value = $Matches[1].Trim() }
+      if (-not $value -or $value -match '^TODO') { return '' }
+      return $value
+    }
+  }
+  return ''
+}
+
+# Where the client folder is for a project file: the one rule, mirrored by
+# clientRootFor in lib/client-folder.mjs. $StartDir is the launch folder whose
+# search found the file ('' when carrying an old record over, or when the user
+# chose the folder):
+#   - found at or above the launch folder: the repository, or its parent when
+#     the file's `repositories` list points to siblings (a local_path starting '..');
+#   - found in the home repository beside the launch folder's repository: that parent;
+#   - found in a repository inside the launch folder: the launch folder.
+function Get-CoopClientRootFor {
+  param([string]$ProjectFile, [string]$StartDir = '')
+  $repo = [System.IO.Path]::GetFullPath((Split-Path -Parent (Split-Path -Parent $ProjectFile))).TrimEnd('\', '/')
+  $parent = Split-Path -Parent $repo
+  if (-not $parent) { $parent = $repo }
+  $sepChar = [string][System.IO.Path]::DirectorySeparatorChar
+  if ($StartDir) {
+    $start = [System.IO.Path]::GetFullPath($StartDir).TrimEnd('\', '/')
+    $startInRepo = [string]::Equals($start, $repo, [System.StringComparison]::OrdinalIgnoreCase) -or $start.StartsWith($repo + $sepChar, [System.StringComparison]::OrdinalIgnoreCase)
+    if (-not $startInRepo) {
+      if ($repo.StartsWith($start + $sepChar, [System.StringComparison]::OrdinalIgnoreCase)) { return $start }
+      return $parent
+    }
+  }
+  foreach ($rel in (Get-CoopContractLocalPaths $ProjectFile)) {
+    if ($rel -match '^\.\.([\\/]|$)') { return $parent }
+  }
+  return $repo
+}
+
+# The client record: @{ Client; Root; ProjectFile; Carried; Exists }. Reads
+# client.json; with only the old home-project.json it carries that over in
+# memory (Carried = $true; the launch writes it) with the root the rule gives
+# without a launch folder. Exists is $false when neither file is there.
+function Get-CoopClientRecord {
+  $empty = @{ Client = ''; Root = ''; ProjectFile = ''; Carried = $false; Exists = $false }
+  $record = Get-CoopClientRecordPath
+  if (Test-Path -LiteralPath $record -PathType Leaf) {
+    try {
+      $doc = Get-Content -LiteralPath $record -Raw | ConvertFrom-Json
+      return @{ Client = [string]$doc.client; Root = [string]$doc.root; ProjectFile = [string]$doc.project_file; Carried = $false; Exists = $true }
+    } catch { return $empty }
+  }
+  $old = Get-CoopHomeProjectRecordPath
+  if (-not (Test-Path -LiteralPath $old -PathType Leaf)) { return $empty }
+  try { $file = [string]((Get-Content -LiteralPath $old -Raw | ConvertFrom-Json).project_file) } catch { return $empty }
+  if (-not $file) { return $empty }
+  return @{ Client = (Get-CoopContractClientName $file); Root = (Get-CoopClientRootFor $file); ProjectFile = $file; Carried = $true; Exists = $true }
+}
+
+# Write client.json. Returns $true when written.
+function Save-CoopClientRecord {
+  param([string]$ProjectFile, [string]$Root, [string]$Client = '')
+  if (-not $Root) { return $false }
+  $record = Get-CoopClientRecordPath
+  try {
+    $dir = Split-Path -Parent $record
+    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    $file = if ($ProjectFile) { [System.IO.Path]::GetFullPath($ProjectFile) } else { '' }
+    $json = ([ordered]@{ schema_version = 1; client = [string]$Client; root = [System.IO.Path]::GetFullPath($Root); project_file = $file } | ConvertTo-Json -Compress)
+    [System.IO.File]::WriteAllText($record, $json + "`n", (New-Object System.Text.UTF8Encoding $false))
+    return $true
+  } catch { return $false }
+}
+
 # The remembered project file, or '' when none is recorded or it is gone.
 function Get-CoopHomeProjectFile {
-  $record = Get-CoopHomeProjectRecordPath
-  if (-not (Test-Path -LiteralPath $record -PathType Leaf)) { return '' }
-  try {
-    $value = [string]((Get-Content -LiteralPath $record -Raw | ConvertFrom-Json).project_file)
-  } catch { return '' }
+  $value = (Get-CoopClientRecord).ProjectFile
   if (Test-CoopHomeProjectCandidate $value) { return [System.IO.Path]::GetFullPath($value) }
   return ''
 }
 
 # The recorded path even when its file is gone (for the notes), or ''.
-function Get-CoopHomeProjectRecorded {
-  $record = Get-CoopHomeProjectRecordPath
-  if (-not (Test-Path -LiteralPath $record -PathType Leaf)) { return '' }
-  try { return [string]((Get-Content -LiteralPath $record -Raw | ConvertFrom-Json).project_file) } catch { return '' }
-}
+function Get-CoopHomeProjectRecorded { return [string](Get-CoopClientRecord).ProjectFile }
 
-# Remember $Path as this Windows user's project file. Returns $true when written.
+# Remember $Path as this Windows user's project file, with the client folder the
+# rule gives for $StartDir, or $Root when the user chose the folder. Returns the
+# client folder recorded, or ''.
 function Save-CoopHomeProjectFile {
-  param([string]$Path)
-  if (-not (Test-CoopHomeProjectCandidate $Path)) { return $false }
-  $record = Get-CoopHomeProjectRecordPath
-  try {
-    $dir = Split-Path -Parent $record
-    if (-not (Test-Path -LiteralPath $dir -PathType Container)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
-    $json = ([ordered]@{ schema_version = 1; project_file = [System.IO.Path]::GetFullPath($Path) } | ConvertTo-Json -Compress)
-    [System.IO.File]::WriteAllText($record, $json + "`n", (New-Object System.Text.UTF8Encoding $false))
-    return $true
-  } catch { return $false }
+  param([string]$Path, [string]$StartDir = '', [string]$Root = '')
+  if (-not (Test-CoopHomeProjectCandidate $Path)) { return '' }
+  $full = [System.IO.Path]::GetFullPath($Path)
+  if (-not $Root) { $Root = Get-CoopClientRootFor $full $StartDir }
+  if (Save-CoopClientRecord -ProjectFile $full -Root $Root -Client (Get-CoopContractClientName $full)) { return [System.IO.Path]::GetFullPath($Root) }
+  return ''
 }
 
 # The project file a search from $StartDir finds, without the remembered one: the
@@ -3541,32 +3630,60 @@ function Find-CoopLaunchContract {
   return (Find-CoopSearchedContract $StartDir)
 }
 
-# Record the project file this launch found when none is recorded yet, so later
-# launches from anywhere use it. Returns the path recorded, or ''.
+# At launch: carry an old home-project.json over to client.json once; else, with
+# no project file recorded yet (nothing, or a folder chosen without one), record
+# the one this launch's search finds (a chosen folder stays the root). Returns
+# the client folder this launch recorded, or '' when the record is unchanged.
 function Register-CoopHomeProjectFile {
   param([string]$StartDir = (Get-Location).Path)
-  if (Get-CoopHomeProjectFile) { return '' }
+  $record = Get-CoopClientRecord
+  if ($record.Carried) {
+    if (Save-CoopClientRecord -ProjectFile $record.ProjectFile -Root $record.Root -Client $record.Client) { return [System.IO.Path]::GetFullPath($record.Root) }
+    return ''
+  }
+  if ($record.Exists -and (Test-CoopHomeProjectCandidate $record.ProjectFile)) { return '' }
   $found = Find-CoopSearchedContract $StartDir
-  if ($found -and (Save-CoopHomeProjectFile $found)) { return [System.IO.Path]::GetFullPath($found) }
-  return ''
+  if (-not $found) { return '' }
+  if ($record.Exists -and $record.Root -and (Test-Path -LiteralPath $record.Root -PathType Container)) {
+    if (Save-CoopClientRecord -ProjectFile $found -Root $record.Root -Client (Get-CoopContractClientName $found)) { return [System.IO.Path]::GetFullPath($record.Root) }
+    return ''
+  }
+  return (Save-CoopHomeProjectFile -Path $found -StartDir $StartDir)
+}
+
+# The one line a launch prints when it records (or carries over) the client folder.
+function Get-CoopClientRecordedLine {
+  param([string]$Root)
+  return "coop now opens this client's folder every time: $Root   (File > Switch client, or: coop project home <folder>, changes it)"
+}
+
+# The one line every launch prints saying where coop is (console, and the
+# window's welcome): `Client: <client> · folder <root> · project file <path>`,
+# or `Client: not set yet · folder <cwd>` before a client is recorded. F2/F3
+# and doctor reuse it.
+function Get-CoopClientLine {
+  param([string]$StartDir = (Get-Location).Path)
+  $record = Get-CoopClientRecord
+  if (-not $record.Exists -or -not $record.Root) { return "Client: not set yet · folder $StartDir" }
+  $name = if ($record.Client) { $record.Client } else { 'unnamed' }
+  $file = if ($record.ProjectFile) { $record.ProjectFile } else { 'none yet' }
+  return "Client: $name · folder $($record.Root) · project file $file"
 }
 
 # The "coop" and "coop (terminal)" shortcuts start in the user folder (their
 # WorkingDirectory is $HOME; bin\coop-desktop.ps1 sets COOP_SHORTCUT). Pi keeps
 # saved sessions per folder, so a shortcut launch that stayed there listed the
-# user folder's old sessions, not the project's (2026-10-08). When coop remembers
-# this Windows user's project file, a shortcut launch opens its repository
-# instead. Returns the folder entered, or ''.
+# user folder's old sessions, not the client's (2026-10-08). When coop has this
+# Windows user's client folder recorded, a shortcut launch opens it instead.
+# Returns the folder entered, or ''.
 function Enter-CoopShortcutFolder {
   $here = [System.IO.Path]::GetFullPath((Get-Location).ProviderPath).TrimEnd('\', '/')
   $userHome = [System.IO.Path]::GetFullPath($HOME).TrimEnd('\', '/')
   if (-not [string]::Equals($here, $userHome, [System.StringComparison]::OrdinalIgnoreCase)) { return '' }
-  $file = Get-CoopHomeProjectFile
-  if (-not $file) { return '' }
-  $repo = Split-Path -Parent (Split-Path -Parent $file)
-  if (-not (Test-Path -LiteralPath $repo -PathType Container)) { return '' }
-  Set-Location -LiteralPath $repo
-  return $repo
+  $root = (Get-CoopClientRecord).Root
+  if (-not $root -or -not (Test-Path -LiteralPath $root -PathType Container)) { return '' }
+  Set-Location -LiteralPath $root
+  return [System.IO.Path]::GetFullPath($root)
 }
 
 # Warn when $StartDir is in no repository and several repositories inside it have

@@ -444,6 +444,8 @@ function renderEmpty({ fresh = false } = {}) {
     wordmark(),
     el("p", { class: "tagline", text: "worker-owned analytics engineering" }),
     el("p", { class: "tagline dim", text: "Microsoft Fabric \u00b7 Power BI \u00b7 D365 \u00b7 SQL \u00b7 DAX" }),
+    // Where coop is (F1): the launcher's one line, the same the console prints.
+    app.info && app.info.clientLine ? el("p", { class: "tagline dim client-line", text: app.info.clientLine }) : null,
     app.vibe ? vibeLine() : null,
     app.setup.length ? setupCard() : null,
     el("p", { class: "lead", text: ready
@@ -1317,8 +1319,8 @@ function hotkeys() {
 
 async function switchProject() {
   const result = await coop.switchProject();
-  if (result.success) toast("Opening that project in a new coop window. A console shows coop's launch checks first, then the window opens.", "info");
-  else if (!result.cancelled) toast(result.error || "Could not open the project.", "warning");
+  if (result.success) toast("Opening that client's folder in a new coop window. A console shows coop's launch checks first, then the window opens.", "info");
+  else if (!result.cancelled) toast(result.error || "Could not open the client's folder.", "warning");
 }
 
 async function openFolder() {
@@ -1348,7 +1350,7 @@ const ACTIONS = {
   window: { label: "New window on this folder", run: () => coop.newWindow() },
   terminal: { label: "Open in terminal", run: (arg, name) => openTerminal(name ? `Run /${name}${arg ? ` ${arg}` : ""} there.` : "") },
   theme: { label: "Theme", run: () => chooseTheme() },
-  switch: { label: "Switch project", run: () => switchProject() },
+  switch: { label: "Switch client", run: () => switchProject() },
   folder: { label: "Open a folder in a new window", run: () => openFolder() },
   start: { label: "Start menu: common tasks", run: () => sendPrompt("/start") },
   changes: { label: "Changes since the last commit", keys: "Ctrl+Shift+D", pane: true, run: () => openPane("changes") },
