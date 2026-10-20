@@ -5,6 +5,43 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **The client folder (master plan F1; Aaron, 2026-10-20).** coop's folder
+  model is three places, named the same way everywhere coop speaks: this
+  machine (`%ProgramData%\coop`), this client (`%USERPROFILE%\.coop`, one
+  Windows user is one client) and the repository (`<repo>\.coop`). One client
+  is one folder holding all of its repositories; coop always opens in that
+  client folder, finds the one project file from there and edits in whichever
+  repository the task names. The record is `~/.coop/client.json`
+  (`client`, `root`, `project_file`), read by the launcher
+  (`Get-CoopClientRecord`, `lib/common.ps1`) and the window
+  (`lib/client-folder.mjs`); it replaces `home-project.json`, which is carried
+  over once at the next launch (with one line saying so) and left in place.
+  One rule says where the root is (`Get-CoopClientRootFor` / `clientRootFor`,
+  tested on the same fixtures): the folder the user chose, else the repository
+  when the file is found above the launch folder and lists no siblings, its
+  parent when it does, the launch folder when the file is in a repository
+  inside it. The shortcuts open the client folder; `coop project home <folder>`
+  records the folder given as the root and `coop project home` prints the
+  three fields; every launch prints `Client: <client> · folder <root> ·
+  project file <path>` (`Get-CoopClientLine`), and the window shows it on its
+  welcome.
+- **The window asks one question, once.** The project picker (the list of
+  folders opened before, Browse, Forget and "open this one next time") is
+  replaced by "Where is this client's code?" with one button, Choose folder...:
+  the choice is recorded in `client.json` and the window opens there; a folder
+  without a project file still opens, and the set-up notices offer
+  `/setup-project`. File > Switch project is now File > Switch client (the
+  same question, a new window on the chosen folder). The window settings'
+  `projects` list and `openNextTime` are no longer read or written.
+
+### Added
+
+- **`coop folders`**: a read-only command printing the three places coop uses
+  (this machine, this client, the repository) with their real paths and what
+  each holds; other rows build on it.
+
 ## [0.37.0] — 2026-10-20
 
 ### Removed

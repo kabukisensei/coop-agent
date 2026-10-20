@@ -4,8 +4,8 @@
 // clean runner: install this build, then open the Desktop "coop" shortcut the
 // way a double-click does (ShellExecute on the .lnk) and require a real
 // window, twice:
-//   1. a fresh profile: the shortcut shows the project picker window;
-//   2. with a folder set to open next time: the shortcut runs the whole chain
+//   1. a fresh profile: the shortcut asks where the client's code is (the client folder question);
+//   2. with a client folder recorded (~/.coop/client.json, F1): the shortcut runs the whole chain
 //      (the exe, its setup console, the bundled coop.ps1 first-launch setup,
 //      the spec hand-over) and the coop window opens on that folder; setup
 //      records this version as done;
@@ -23,7 +23,7 @@ import {
 } from "./verify-installer.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const PICKER_TITLE = "coop - open a project";
+const PICKER_TITLE = "coop - client folder";
 const SETUP_TIMEOUT_MS = 20 * 60 * 1000;
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
@@ -101,19 +101,16 @@ async function main(argv) {
     if (!existsSync(paths.desktopShortcut)) throw new Error(`no Desktop shortcut: ${paths.desktopShortcut}`);
     step("installed", paths.installDir);
 
-    // 1. Fresh profile: the shortcut opens the project picker.
+    // 1. Fresh profile: the shortcut asks where the client's code is.
     await openShortcut(paths.desktopShortcut, env);
-    const picker = await waitFor("the project picker window", 120000, async () => (await coopWindows()).find((w) => w.title === PICKER_TITLE));
-    step("the Desktop shortcut opens a window (the project picker)", `${picker.seconds}s`);
+    const picker = await waitFor("the client folder question window", 120000, async () => (await coopWindows()).find((w) => w.title === PICKER_TITLE));
+    step("the Desktop shortcut opens a window (the client folder question)", `${picker.seconds}s`);
     await stopCoop();
 
-    // 2. A folder to open next time: the whole chain, first-launch setup included.
-    const dataRoot = join(process.env.USERPROFILE, ".coop", "desktop", "data");
-    const dirs = existsSync(dataRoot) ? readdirSync(dataRoot, { withFileTypes: true }).filter((d) => d.isDirectory()) : [];
-    if (dirs.length !== 1) throw new Error(`expected the picker run to create one window data folder under ${dataRoot}, found ${dirs.length}`);
-    const settingsFile = join(dataRoot, dirs[0].name, "settings.json");
-    const settings = existsSync(settingsFile) ? JSON.parse(readFileSync(settingsFile, "utf8") || "{}") : {};
-    writeFileSync(settingsFile, JSON.stringify({ ...settings, openNextTime: work }, null, 2));
+    // 2. A client folder recorded (what the question writes): the whole chain, first-launch setup included.
+    const clientRecord = join(process.env.USERPROFILE, ".coop", "client.json");
+    mkdirSync(dirname(clientRecord), { recursive: true });
+    writeFileSync(clientRecord, JSON.stringify({ schema_version: 1, client: "", root: work, project_file: "" }) + "\n");
     await openShortcut(paths.desktopShortcut, env);
     // The window's title names the folder ("coop - coop-launch-work"), so an error box titled "coop" never passes.
     const opened = await waitFor("the coop window on the folder (first-launch setup runs first)", SETUP_TIMEOUT_MS, async () => (await coopWindows()).find((w) => w.title && w.title.endsWith(win32.basename(work))));

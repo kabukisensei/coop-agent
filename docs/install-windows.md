@@ -194,11 +194,12 @@ with the VC++ runtime it needs. It is a large download and works offline.
 3. Click **Next** and **Install**. No administrator password is asked; it
    installs for your user only, under `%LOCALAPPDATA%\Programs\coop`.
 4. Double-click the new **coop** icon on your Desktop or Start Menu. It asks
-   which project to open: the folders you opened before, each with its client
-   and branch, or **Browse** to one of the client's repositories (or the client
-   home repository beside them) so the team's `.coop/project.yml` is found.
-   Tick **Open this one next time** and the icon opens straight on it from then
-   on (File > Switch project changes it). The first time, a console runs the same
+   once, **Where is this client's code?**: click **Choose folder...** and pick
+   the folder that holds the client's repositories (the home repository with the
+   team's `.coop/project.yml` and the others beside it). coop records it in
+   `~/.coop/client.json`, finds the project file inside it and opens there every
+   time from then on (File > Switch client changes it). One Windows account is
+   one client: its sessions, memory and backups stay in that account. The first time, a console runs the same
    checklist as `coop install` (prerequisites from the package, the coop tools
    from the package, the ODBC driver, then the Azure and OpenAI sign-ins): follow
    what it prints, then start the window again if it stopped.

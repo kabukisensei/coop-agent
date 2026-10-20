@@ -15,12 +15,13 @@
 #      write): `coop sync` and a launch from that folder use the repository's
 #      project file. With two repositories that each have one, nothing is
 #      guessed: the entry stays global (no_project_file) and the launch warns.
-#   E. The remembered project file (one per Windows user, Aaron 2026-10-08): the
-#      first launch that finds one records it in <profile>\home-project.json; later
-#      launches from any folder without one above use it, so several repositories
-#      no longer need a guess; `coop project home [<folder>]` shows or sets it.
-#   F. A shortcut launch (COOP_SHORTCUT) from the user folder opens the remembered
-#      project file's repository, so Pi lists that folder's saved sessions.
+#   E. The client folder record (one per Windows user, Aaron 2026-10-08 and F1,
+#      2026-10-20): the first launch that finds a project file records it in
+#      <profile>\client.json (client, root, project_file); later launches from
+#      any folder without one above use it, so several repositories no longer
+#      need a guess; `coop project home [<folder>]` shows or sets it.
+#   F. A shortcut launch (COOP_SHORTCUT) from the user folder opens the recorded
+#      client folder, so Pi lists that folder's saved sessions.
 #   C. Several coops at once (2026-10-06): each launch also writes its folder's
 #      own copy (<agent dir>\mcp\<key>.json) and hands Pi that path
 #      (--mcp-config, COOP_MCP_CONFIG); a later launch from another folder
@@ -162,9 +163,10 @@ sys.exit(0)
   # A second coop from the home folder: the shared file goes global, the project's copy stays.
   # (The project launch above remembered its file for every launch; forget it so
   # the home folder has no project file, as on a fresh profile.)
-  $homeRecord = Join-Path $sandboxHome '.coop\home-project.json'
-  if ((Test-Path -LiteralPath $homeRecord) -and ((Get-Content -LiteralPath $homeRecord -Raw | ConvertFrom-Json).project_file -eq [System.IO.Path]::GetFullPath((Join-Path $project '.coop\project.yml')))) { Ok 'the first launch that found a project file remembered it (home-project.json)' }
-  else { Ko "home-project.json after the project launch: $(if (Test-Path -LiteralPath $homeRecord) { Get-Content -LiteralPath $homeRecord -Raw } else { 'missing' })" }
+  $homeRecord = Join-Path $sandboxHome '.coop\client.json'
+  $homeDoc = if (Test-Path -LiteralPath $homeRecord) { Get-Content -LiteralPath $homeRecord -Raw | ConvertFrom-Json } else { $null }
+  if ($homeDoc -and $homeDoc.project_file -eq [System.IO.Path]::GetFullPath((Join-Path $project '.coop\project.yml')) -and $homeDoc.root -eq [System.IO.Path]::GetFullPath($project)) { Ok 'the first launch that found a project file recorded it (client.json: the repository is the client folder)' }
+  else { Ko "client.json after the project launch: $(if (Test-Path -LiteralPath $homeRecord) { Get-Content -LiteralPath $homeRecord -Raw } else { 'missing' })" }
   Remove-Item -LiteralPath $homeRecord -Force -ErrorAction SilentlyContinue
   $r = Invoke-Redirected (Join-Path $root 'bin\coop.ps1') $sandboxHome
   $all = $r.Out + $r.Err
@@ -232,7 +234,8 @@ sys.exit(0)
   $homeScript = Join-Path $t 'project-home.ps1'
   [System.IO.File]::WriteAllText($homeScript, "& '$((Join-Path $root 'bin\coop.ps1'))' project home '$clientRepo'`nexit `$LASTEXITCODE`n", $utf8)
   $r = Invoke-Redirected $homeScript $userDir
-  if ($r.Rc -eq 0 -and (Test-Path -LiteralPath $homeRecord) -and (Get-Content -LiteralPath $homeRecord -Raw) -match 'fabric') { Ok 'coop project home <folder> records that folder''s project file' }
+  $homeDoc = if (Test-Path -LiteralPath $homeRecord) { Get-Content -LiteralPath $homeRecord -Raw | ConvertFrom-Json } else { $null }
+  if ($r.Rc -eq 0 -and $homeDoc -and $homeDoc.project_file -eq [System.IO.Path]::GetFullPath((Join-Path $clientRepo '.coop\project.yml')) -and $homeDoc.root -eq [System.IO.Path]::GetFullPath($clientRepo)) { Ok 'coop project home <folder> records that folder as the client folder, with its project file' }
   else { Ko "coop project home: rc=$($r.Rc)" ($r.Out + $r.Err) }
   [System.IO.File]::WriteAllText($homeScript, "& '$((Join-Path $root 'bin\coop.ps1'))' project home '$elsewhere'`nexit `$LASTEXITCODE`n", $utf8)
   $r = Invoke-Redirected $homeScript $userDir
@@ -258,30 +261,31 @@ sys.exit(0)
   $seenCwd = if (Test-Path -LiteralPath $piCwd) { (Get-Content -LiteralPath $piCwd -Raw).Trim() } else { '' }
   if ($r.Rc -eq 0 -and $seenCwd -and ([System.IO.Path]::GetFullPath($seenCwd) -eq [System.IO.Path]::GetFullPath($elsewhere))) { Ok 'a shortcut launch from another folder stays in that folder' }
   else { Ko "shortcut launch elsewhere: rc=$($r.Rc) pi cwd=$seenCwd" ($r.Out + $r.Err) }
-  # A fresh profile has nothing remembered: the very first shortcut launch from a
-  # user folder holding one client repository records it and opens that repository
-  # (VM check 2026-10-08: it stayed in the user folder until the second launch).
+  # A fresh profile has nothing recorded: the very first shortcut launch from a
+  # user folder holding one client repository records it (F1: found inside the
+  # launch folder, so the user folder is the client folder) and opens there.
   $freshHome = Join-Path $t 'fresh-home'
   $freshRepo = Join-Path $freshHome 'acme'
   New-Item -ItemType Directory -Force -Path (Join-Path $freshHome '.coop'), (Join-Path $freshRepo '.git'), (Join-Path $freshRepo '.coop') | Out-Null
   Copy-Item -LiteralPath (Join-Path $sandboxHome '.coop\user.json') -Destination (Join-Path $freshHome '.coop\user.json')
   Copy-Item -LiteralPath (Join-Path $sandboxHome '.coop\config') -Destination (Join-Path $freshHome '.coop\config')
   Copy-Item -LiteralPath (Join-Path $project '.coop\project.yml') -Destination (Join-Path $freshRepo '.coop\project.yml')
-  $freshRecord = Join-Path $freshHome '.coop\home-project.json'
+  $freshRecord = Join-Path $freshHome '.coop\client.json'
   $env:HOME = $freshHome; $env:USERPROFILE = $freshHome; $env:COOP_SHORTCUT = '1'
   try { $r = Invoke-Redirected (Join-Path $root 'bin\coop.ps1') $freshHome }
   finally { Remove-Item Env:COOP_SHORTCUT -ErrorAction SilentlyContinue; $env:HOME = $sandboxHome; $env:USERPROFILE = $sandboxHome }
   $seenCwd = if (Test-Path -LiteralPath $piCwd) { (Get-Content -LiteralPath $piCwd -Raw).Trim() } else { '' }
   $recordedFresh = if (Test-Path -LiteralPath $freshRecord) { (Get-Content -LiteralPath $freshRecord -Raw | ConvertFrom-Json).project_file } else { '' }
-  if ($r.Rc -eq 0 -and $seenCwd -and ([System.IO.Path]::GetFullPath($seenCwd) -eq [System.IO.Path]::GetFullPath($freshRepo)) -and $recordedFresh -eq [System.IO.Path]::GetFullPath((Join-Path $freshRepo '.coop\project.yml')) -and ($r.Out + $r.Err) -match 'coop will use this project file wherever it opens') { Ok 'the first shortcut launch on a fresh profile records the one project file and opens its repository' }
-  else { Ko "first shortcut launch, fresh profile: rc=$($r.Rc) pi cwd=$seenCwd record=$recordedFresh" ($r.Out + $r.Err) }
+  $recordedRoot = if (Test-Path -LiteralPath $freshRecord) { (Get-Content -LiteralPath $freshRecord -Raw | ConvertFrom-Json).root } else { '' }
+  if ($r.Rc -eq 0 -and $seenCwd -and ([System.IO.Path]::GetFullPath($seenCwd) -eq [System.IO.Path]::GetFullPath($freshHome)) -and $recordedFresh -eq [System.IO.Path]::GetFullPath((Join-Path $freshRepo '.coop\project.yml')) -and $recordedRoot -eq [System.IO.Path]::GetFullPath($freshHome) -and ($r.Out + $r.Err) -match "coop now opens this client's folder every time" -and ($r.Out + $r.Err) -match 'Client: .* folder .* project file ') { Ok 'the first shortcut launch on a fresh profile records the one project file, the user folder as the client folder, opens there and says so' }
+  else { Ko "first shortcut launch, fresh profile: rc=$($r.Rc) pi cwd=$seenCwd record=$recordedFresh root=$recordedRoot" ($r.Out + $r.Err) }
   # The remembered file is gone and nothing else is found: blank target, a clear warning.
   Remove-Item -LiteralPath (Join-Path $clientRepo '.coop\project.yml') -Force
   Remove-Item -LiteralPath (Join-Path $otherRepo '.coop\project.yml') -Force
   $r = Invoke-Redirected (Join-Path $root 'bin\coop.ps1') $userDir
   $all = $r.Out + $r.Err
   $entry = Read-Entry $configPath
-  if ($r.Rc -eq 0 -and $entry.url -eq $globalUrl -and $all -match 'the remembered project file is gone') { Ok 'a remembered file that is gone: blank target and a warning saying what to do' }
+  if ($r.Rc -eq 0 -and $entry.url -eq $globalUrl -and $all -match 'the recorded project file is gone') { Ok 'a recorded file that is gone: blank target and a warning saying what to do' }
   else { Ko "gone: rc=$($r.Rc) url=$($entry.url)" $all }
 } catch {
   Ko "fixture error: $($_.Exception.Message)" ($_.ScriptStackTrace)

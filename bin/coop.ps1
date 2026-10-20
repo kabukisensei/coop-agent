@@ -72,16 +72,16 @@ if (-not (Test-CoopNoIsolate)) {
   New-Item -ItemType Directory -Force -Path $coopAgentDir -ErrorAction SilentlyContinue | Out-Null
 }
 
-# Started from a shortcut (bin\coop-desktop.ps1): open the client's home
-# repository rather than the user folder the shortcut starts in, so the window
-# and Pi list the project's saved sessions. Read once; Pi never inherits it.
-# A fresh profile has nothing remembered yet: record the one project file the
-# user folder finds first (Initialize-CoopLaunch would, but only after the move),
-# so the very first shortcut launch opens the repository too.
+# Started from a shortcut (bin\coop-desktop.ps1): open the client folder rather
+# than the user folder the shortcut starts in, so the window and Pi list the
+# client's saved sessions (F1). Read once; Pi never inherits it. A fresh profile
+# has nothing recorded yet: record what the user folder finds first
+# (Initialize-CoopLaunch would, but only after the move), and carry an old
+# home-project.json over, so the very first shortcut launch opens the client folder too.
 if ($env:COOP_SHORTCUT) {
   Remove-Item Env:COOP_SHORTCUT -ErrorAction SilentlyContinue
   $recorded = Register-CoopHomeProjectFile (Get-Location).Path
-  if ($recorded) { Coop-Info "coop will use this project file wherever it opens: $recorded   (change it with: coop project home <folder>)" }
+  if ($recorded) { Coop-Notice (Get-CoopClientRecordedLine $recorded) }
   $null = Enter-CoopShortcutFolder
 }
 
@@ -258,19 +258,26 @@ function Invoke-CoopSchema {
 # (master plan C1). `share` is the one Git write coop performs on its own: it
 # stages and commits .coop/project.yml alone and pushes the current branch, after
 # the yes `coop init` or the user gave; everything runs in lib/project-share.mjs.
-# `coop project home [<folder>]`: show, or set, this Windows user's project file
-# (the client's one .coop\project.yml, which every launch from any folder uses
-# when none is above the folder). <folder> is the client home repository, or any
-# folder inside it.
+# `coop project home [<folder>]`: show, or set, this Windows user's client folder
+# record (~/.coop/client.json, F1): the client, the client folder coop opens in
+# every time, and the one .coop\project.yml, which every launch from any folder
+# uses when none is above the folder. <folder> is the client folder: it becomes
+# the root as given, and the project file is the one found in or above it.
 function Invoke-CoopProjectHome {
   param([string[]]$Rest = @())
   if ($Rest.Count -gt 1) { Coop-Die 'usage: coop project home [<folder>]' }
   if ($Rest.Count -eq 0) {
-    $current = Get-CoopHomeProjectFile
-    if ($current) { Coop-Ok "project file for every launch: $current"; return 0 }
-    $recorded = Get-CoopHomeProjectRecorded
-    if ($recorded) { Coop-Warn "the remembered project file is gone: $recorded. Set it: coop project home <folder>"; return 1 }
-    Coop-Info 'no project file remembered yet: the next launch that finds one remembers it, or run: coop project home <folder>'
+    $record = Get-CoopClientRecord
+    if (-not $record.Exists) {
+      Coop-Info 'no client folder recorded yet: the next launch that finds a project file records it, or run: coop project home <folder>'
+      return 0
+    }
+    $name = if ($record.Client) { $record.Client } else { 'unnamed' }
+    $file = if ($record.ProjectFile) { $record.ProjectFile } else { 'none yet' }
+    Coop-Say "client:        $name"
+    Coop-Say "folder:        $($record.Root)"
+    Coop-Say "project file:  $file"
+    if ($record.ProjectFile -and -not (Test-CoopHomeProjectCandidate $record.ProjectFile)) { Coop-Warn "the recorded project file is gone: $($record.ProjectFile). Set it: coop project home <folder>"; return 1 }
     return 0
   }
   $folder = $Rest[0]
@@ -278,10 +285,27 @@ function Invoke-CoopProjectHome {
   $folder = (Resolve-Path -LiteralPath $folder).ProviderPath
   $found = Find-CoopContractAbove $folder
   if (-not $found) { $found = Find-CoopChildContract $folder }
-  if (-not $found -or -not (Save-CoopHomeProjectFile $found)) { Coop-Die "no client project file (.coop\project.yml) in or above $folder. Open the client's home repository folder." }
-  Coop-Ok "coop will use this project file wherever it opens: $([System.IO.Path]::GetFullPath($found))"
+  if (-not $found) { Coop-Die "no client project file (.coop\project.yml) in or above $folder. Choose the folder that holds the client's repositories." }
+  $root = Save-CoopHomeProjectFile -Path $found -Root $folder
+  if (-not $root) { Coop-Die "could not write the client folder record: $(Get-CoopClientRecordPath)" }
+  Coop-Ok (Get-CoopClientRecordedLine $root)
+  Coop-Info "project file: $([System.IO.Path]::GetFullPath($found))"
   Coop-Info 'Restart coop (or open a new window) to use it.'
   return 0
+}
+
+# `coop folders`: the three places coop uses, read-only (F1). Other rows build on it.
+function Invoke-CoopFolders {
+  $record = Get-CoopClientRecord
+  $file = if ($record.ProjectFile) { $record.ProjectFile } else { Find-CoopLaunchContract (Get-Location).Path }
+  $repoDir = if ($file) { Split-Path -Parent ([System.IO.Path]::GetFullPath($file)) } else { 'not set yet' }
+  $rows = @(
+    @('this machine', (Get-CoopMachineProfileDir), 'the program, the standards, your name and preferences'),
+    @('this client', (Get-CoopProfileDir), 'sessions, memory, backups, drafts, the client folder record (client.json)'),
+    @('the repository', $repoDir, 'the team''s project file, client skills and prompts'))
+  $width = 0
+  foreach ($row in $rows) { if ($row[1].Length -gt $width) { $width = $row[1].Length } }
+  foreach ($row in $rows) { Write-Host ('{0,-15}{1}  {2}' -f $row[0], $row[1].PadRight($width), $row[2]) }
 }
 
 function Invoke-CoopProject {
@@ -490,7 +514,8 @@ $(Coop-Bold)Authoring$(Coop-Rst)
                             The team's .coop/project.yml: compare with origin, get it, or share it
                             (share commits that one file and pushes; --force on a non-default branch)
   coop project home [folder]
-                            Show or set this Windows user's project file, used wherever coop opens
+                            Show or set this Windows user's client folder (and its project file), where coop opens every time
+  coop folders              Show the three places coop uses: this machine, this client, the repository
   coop new-skill <name>     Scaffold skills/<name>/SKILL.md (shipped tier)
                             (--client: .coop/skills beside the contract; --personal: ~/.coop/skills)
   coop new-prompt <name>    Scaffold prompts/<name>.md (shipped tier; --client / --personal as above)
@@ -880,13 +905,15 @@ function Initialize-CoopLaunch {
   # (`coop update`, the window's first launch). Fail-soft: the token helper
   # below reports whatever the config still says.
   $script:CoopMcpConfig = ''
-  # The client's one project file (one Windows user per client): the first launch
-  # that finds it remembers it, so later launches from any folder use it.
+  # The client folder (one Windows user per client, F1): the first launch that
+  # finds a project file records it, an old home-project.json is carried over
+  # once, and every launch says where it is.
   $recorded = Register-CoopHomeProjectFile (Get-Location).Path
-  if ($recorded) { Coop-Info "coop will use this project file wherever it opens: $recorded   (change it with: coop project home <folder>)" }
+  if ($recorded) { Coop-Notice (Get-CoopClientRecordedLine $recorded) }
+  Coop-Info (Get-CoopClientLine (Get-Location).Path)
   $remembered = Get-CoopHomeProjectRecorded
   if ($remembered -and -not (Get-CoopHomeProjectFile) -and -not (Find-CoopSearchedContract (Get-Location).Path)) {
-    Coop-Warn "the remembered project file is gone: $remembered. Open coop in the client's home repository, or run: coop project home <folder>. Until then the Warehouse target is blank and writes are refused."
+    Coop-Warn "the recorded project file is gone: $remembered. Open coop in the client's folder, or run: coop project home <folder>. Until then the Warehouse target is blank and writes are refused."
   }
   # The window shows this as a notice (its console closes); the terminal prints it
   # just before Pi starts (Invoke-CoopPiProcess).
@@ -1079,6 +1106,7 @@ function Invoke-CoopDesktop {
     env          = $envMap
     loginPresent = [bool](Test-CoopPiLoginPresent)
     notices      = @($script:CoopWarnSink | Select-Object -First 8)
+    clientLine   = (Get-CoopClientLine $cwd)
   }
   $script:CoopWarnSink = $null
   $json = $spec | ConvertTo-Json -Depth 6 -Compress
@@ -1827,6 +1855,7 @@ switch -CaseSensitive ($cmd) {
   'unlock-prod' { Invoke-CoopUnlockProd $rest; break }
   'init' { Invoke-CoopInit $rest; break }
   'project' { $projectRc = Invoke-CoopProject $rest; exit $projectRc }
+  'folders' { Invoke-CoopFolders; break }
   'new-skill' { New-CoopSkill $rest; break }
   'new-prompt' { New-CoopPrompt $rest; break }
   'release' { Invoke-CoopRelease $rest; break }
