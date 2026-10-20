@@ -18,6 +18,38 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   engine for a terminal or a CI pipeline (`compare`, `snapshot`, `diff` over live
   databases, `fabric://<workspace>/<warehouse>` names, snapshot folders and repo
   folders), and either tool's snapshot folder is a side for the other.
+### Changed
+
+- **`coop/auto` picks the newest model of each family by itself.** The tiers
+  were lists of exact ids (`gpt-5.6-sol` first for plan, `gpt-5.6-luna` for
+  build), so a new release sat unused until someone edited the list; today's
+  catalog already holds `gpt-6.1-sol` and `gpt-6-luna`. Each tier now maps to a
+  family (`plan`: sol; `standard`: terra, else sol; `build`: luna, else terra)
+  and resolves to the newest version the signed-in account can use, read from
+  the catalog the first time a session routes and kept for the rest of that
+  session, so a release never moves a running session. `/router` shows the
+  version each tier resolved to and whether it was pinned; `COOP_ROUTER_MODELS`
+  still pins exact ids. Aaron, 2026-10-19: "it needs to be flexible enough when
+  the new version of models comes out to auto go to them".
+- **`coop/auto` sends short prompts at medium thinking to the build model.**
+  The dev VM's blind quality test (2026-10-19: 100 tasks, 440 sessions, two
+  independent graders) scored the build model (`luna`) above the standard model
+  (`terra`) on edits (5.85 against 5.17 of 6, 97% against 87% of edits passing
+  the repo's tests) and level with it on lookups, at a tenth of the cost, and
+  every refusal in the run (the model asked for approval and changed nothing)
+  came from the standard model. The old rule started a medium-thinking edit on
+  the standard model and only handed over after the first edit, so it inherited
+  those refusals and most of that cost. A prompt of at most 400 characters at
+  medium thinking now starts on the build model, as one at low thinking already
+  did; the standard model keeps longer medium prompts, and briefs at high
+  thinking stay on the plan model (the same test put `sol` well ahead of
+  `terra` there).
+- **`coop/auto` no longer hands a turn to the build model on the agent log
+  write.** The contract asks for a daily log entry (`docs/agent/logs/daily/`)
+  at the start of a turn, and that write counted as the first successful edit,
+  so 3 of 40 read-only design briefs in the same test finished on the build
+  model. Writes under `docs/agent/logs/` now count neither as the handoff nor
+  as a failed edit.
 
 ### Fixed
 

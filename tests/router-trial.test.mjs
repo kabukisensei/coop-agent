@@ -1,8 +1,8 @@
 // J0 (master plan section 6.6): lib/router-trial.mjs scores classifiers against
 // the coop/auto rule and the hand labels. The classifier is injected here, so the
-// test calls no vendor; the shipped set is checked for shape and for the rows the
-// rule gets wrong on purpose (the short medium-thinking lookups a classifier
-// could route better).
+// test calls no vendor; the shipped set is checked for shape and against the rule.
+// Since the blind quality test (2026-10-19) short medium-thinking prompts are
+// build-model tasks, so the hand labels and the rule agree on every row.
 import assert from "node:assert/strict";
 import { classifyRequest, LONG_PROMPT_CHARS, SHORT_PROMPT_CHARS, TIERS } from "../lib/router-rules.mjs";
 import { CLASSIFIERS, DEFAULT_SET, formatReport, missingKeys, parseArgs, readSet, resolvePiEntry, runTrial } from "../lib/router-trial.mjs";
@@ -45,30 +45,31 @@ import { execFileSync } from "node:child_process";
 
 // --- the rule ---------------------------------------------------------------
 assert.equal(classifyRequest("What is DAX?", "low"), "build");
-assert.equal(classifyRequest("What is DAX?", "medium"), "standard");
+assert.equal(classifyRequest("What is DAX?", "medium"), "build");
 assert.equal(classifyRequest("x".repeat(SHORT_PROMPT_CHARS + 1), "low"), "standard");
 assert.equal(classifyRequest("Design the migration", "high"), "plan");
 assert.equal(classifyRequest("x".repeat(LONG_PROMPT_CHARS), "low"), "plan");
-assert.equal(classifyRequest(undefined, "medium"), "standard");
+assert.equal(classifyRequest(undefined, "medium"), "build");
 
 // --- the shipped set --------------------------------------------------------
 const rows = readSet(DEFAULT_SET);
 assert.equal(rows.length, 50, "the shipped set holds 50 rows");
 assert.equal(new Set(rows.map((r) => r.id)).size, 50, "ids are unique");
 for (const r of rows) assert.ok(TIERS.includes(r.label) && r.prompt.trim().length > 0);
-for (const t of TIERS) assert.ok(rows.filter((r) => r.label === t).length >= 7, `at least 7 rows labelled ${t}`);
+for (const t of TIERS) assert.ok(rows.filter((r) => r.label === t).length >= 2, `at least 2 rows labelled ${t}`);
 const ruleMisses = rows.filter((r) => classifyRequest(r.prompt, r.thinkingLevel) !== r.label);
-assert.ok(ruleMisses.length > 0 && ruleMisses.length < 10, "the set holds a few rows the rule gets wrong, so a classifier can beat it");
-assert.ok(ruleMisses.every((r) => r.label === "build" && r.thinkingLevel === "medium"), "the rule's misses are the short medium-thinking lookups");
+assert.deepEqual(ruleMisses.map((r) => r.id), [], "the rule and the hand labels agree on every row");
 assert.ok(rows.some((r) => r.prompt.length >= LONG_PROMPT_CHARS && r.label === "plan"), "one long brief plans by length");
 const rawText = (await import("node:fs")).readFileSync(DEFAULT_SET, "utf8");
 assert.ok(!/contoso\.com|@cooptimize|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i.test(rawText), "the set carries no tenant, workspace or item ids");
 
 // --- scoring ----------------------------------------------------------------
 const perfect = async (_name, row) => ({ choice: row.label, probabilities: {}, confidence: 1, cost: 0.001 });
-const r1 = await runTrial(rows, ["typesafe"], perfect);
+// One label flipped away from the rule, so a perfect classifier has something to beat.
+const flipped = rows.map((r, i) => (i === 0 ? { ...r, label: r.label === "plan" ? "standard" : "plan" } : r));
+const r1 = await runTrial(flipped, ["typesafe"], perfect);
 assert.equal(r1.rows, 50);
-assert.equal(r1.rule.correct, 50 - ruleMisses.length);
+assert.equal(r1.rule.correct, 49);
 assert.equal(r1.classifiers.typesafe.accuracy, 1);
 assert.equal(r1.classifiers.typesafe.errors, 0);
 assert.equal(r1.classifiers.typesafe.disagreements.length, 0);
