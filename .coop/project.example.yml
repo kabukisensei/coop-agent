@@ -190,6 +190,9 @@ mcp:
     purpose: "Always-current Microsoft documentation lookups"
   fabric_sqlendpoint:
     enabled: true
+    # Per-request timeout for the managed Warehouse SQL MCP, in whole
+    # milliseconds (1000 to 3600000). Five minutes when absent.
+    # request_timeout_ms: 300000
 
 # --- Persistent memory (pi-hermes-memory) ------------------------------------
 memory:

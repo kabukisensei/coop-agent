@@ -80,6 +80,16 @@ COMPATIBLE_SQL_TOOLS = {
     "fabric_sqlendpoint_execute_query",
 }
 MCP_PROTOCOL_VERSION = "2024-11-05"
+# The managed entry's per-request timeout (pi-mcp-adapter `requestTimeoutMs`,
+# which it passes through unchanged when finite and positive). Five minutes by
+# default: Warehouse reads of any size ran into the earlier fixed 60 s. The
+# contract's `mcp.fabric_sqlendpoint.request_timeout_ms` overrides it between
+# one second and one hour; every other value is invalid, and an invalid value
+# falls back to the default (the generator and doctor both say so). 60000 is
+# still a valid value, so an entry an earlier release generated stays registered.
+DEFAULT_SQL_REQUEST_TIMEOUT_MS = 300_000
+MIN_SQL_REQUEST_TIMEOUT_MS = 1_000
+MAX_SQL_REQUEST_TIMEOUT_MS = 3_600_000
 
 
 class _RejectRedirects(urllib.request.HTTPRedirectHandler):
@@ -268,6 +278,38 @@ def project_sqlendpoint_enabled(project: dict[str, Any]) -> bool:
         if enabled is False:
             return False
     return True
+
+
+def valid_sql_request_timeout_ms(value: Any) -> bool:
+    """True for a whole number of milliseconds within the allowed timeout range.
+
+    Booleans, floats, strings and anything non-finite are not timeouts, so the
+    generated entry and the guardrails' runtime check agree on one rule.
+    """
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and MIN_SQL_REQUEST_TIMEOUT_MS <= value <= MAX_SQL_REQUEST_TIMEOUT_MS
+    )
+
+
+def project_sql_request_timeout(project: dict[str, Any]) -> tuple[int, str]:
+    """The contract's Warehouse MCP request timeout: (milliseconds, state).
+
+    State is 'default' (key absent), 'configured' (a valid override) or
+    'invalid' (set but unusable: the default is used and doctor warns). Both
+    spellings of the server name work, as for `enabled`.
+    """
+    mcp = project.get("mcp") if isinstance(project, dict) else None
+    if not isinstance(mcp, dict):
+        return DEFAULT_SQL_REQUEST_TIMEOUT_MS, "default"
+    entry = mcp.get("fabric_sqlendpoint", mcp.get("fabric-sqlendpoint", {}))
+    if not isinstance(entry, dict) or "request_timeout_ms" not in entry:
+        return DEFAULT_SQL_REQUEST_TIMEOUT_MS, "default"
+    value = entry.get("request_timeout_ms")
+    if valid_sql_request_timeout_ms(value):
+        return int(value), "configured"
+    return DEFAULT_SQL_REQUEST_TIMEOUT_MS, "invalid"
 
 
 def integration_enabled(config: Any, name: str, default: bool = True) -> bool:
@@ -500,7 +542,7 @@ def sqlendpoint_config_status(entry: Any) -> str:
     }
     if (
         entry.get("auth") is not False
-        or entry.get("requestTimeoutMs") != 60000
+        or not valid_sql_request_timeout_ms(entry.get("requestTimeoutMs"))
         or entry.get("lifecycle") != "lazy"
         or not isinstance(header, dict)
         or set(header) != {"command", "args", "timeoutMs"}
@@ -1105,6 +1147,14 @@ def doctor_status(
         probe_state = "ok"
     else:
         probe_state = state
+    # The request timeout the entry carries and whether it is the contract's:
+    # 'stale' means the contract changed since the entry was generated (a
+    # `coop sync` or the next launch rewrites it), 'invalid' that the contract's
+    # own value is unusable and the default stands in for it.
+    expected_timeout, timeout_state = project_sql_request_timeout(project or {})
+    entry_timeout = entry.get("requestTimeoutMs") if isinstance(entry, dict) else None
+    if timeout_state != "invalid" and registered and entry_timeout != expected_timeout:
+        timeout_state = "stale"
     return {
         "server": MANAGED_SQL_SERVER,
         "state": state,
@@ -1112,6 +1162,9 @@ def doctor_status(
         "probe_state": probe_state,
         "usable": probe_state == "ok",
         "registered": registered,
+        "request_timeout_ms": entry_timeout if valid_sql_request_timeout_ms(entry_timeout) else None,
+        "request_timeout_expected_ms": expected_timeout,
+        "request_timeout_state": timeout_state,
         "compatible_tools": sorted(COMPATIBLE_SQL_TOOLS),
         "target": target.__dict__,
         "registered_target": actual_target.__dict__ if actual_target else None,

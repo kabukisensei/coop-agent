@@ -7,6 +7,23 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **Warehouse SQL MCP reads no longer time out at a fixed 60 seconds.** The
+  generated `fabric-sqlendpoint` entry pinned `requestTimeoutMs` to 60000 and
+  both `coop doctor` and the guardrails refused any other value, so a longer
+  read (a coop session hit it on 2026-10-20) failed and a hand edit of
+  `mcp-adapter.json` was overwritten on the next launch. The timeout is now five
+  minutes by default and configurable in the contract:
+  `mcp.fabric_sqlendpoint.request_timeout_ms` (whole milliseconds from 1000 to
+  3600000). The generator re-reads it on every `coop sync` and launch, so it
+  survives regeneration; an invalid value runs on the default with a note, and
+  doctor warns about it or about an entry that no longer matches the contract.
+  Doctor and the guardrails accept any value in range, so an entry an earlier
+  release generated with 60000 stays registered; the guardrails' read scope
+  carries the entry's timeout, and a session grant covers reads up to the
+  timeout it was approved for. Identity, target, production and
+  mutation-approval checks are unchanged, and the native `fabric_sql_query`
+  fallback keeps its own separate bound. The terminal and the window share the
+  one generator, so both get it. `coop doctor` prints the timeout in force.
 - **`coop release` on a Mac without PowerShell 7 no longer stops at the test
   gate.** Since the guardrails change of 2026-10-07 `tests/run.sh` refuses to
   start without `pwsh` (its coop.ps1 tests cannot self-skip), so the gate died
