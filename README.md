@@ -219,7 +219,8 @@ shows anything still missing.
 | **Windows double-click launchers**: **coop** and **coop (terminal)** | created on the Start Menu and Desktop; `coop update` repairs older shortcuts. **coop** is the front door (master plan D1m): it opens the window once the window runtime is installed (your first `coop desktop`, or the window package) and the terminal until then; **coop (terminal)** always opens the terminal. Once coop has this client's folder recorded (`~/.coop/client.json`: the window's one question, the first launch that finds a project file, or `coop project home <folder>`), both start in the client folder rather than your user folder, so saved sessions (kept per folder) stay in one list. The window asks once, "Where is this client's code?", and opens there every launch from then on; File > Switch client changes it. Purely additive: `coop` in any terminal is unchanged. An isolated install (`USERPROFILE` redirected at a sandbox folder) keeps its shortcuts inside that profile and leaves your user PATH alone |
 
 **The coop window package (master plan D1c, D1d).** Every release carries an
-unsigned, per-user Windows installer of the window with coop inside: the
+unsigned Windows installer of the window with coop inside, installed once for
+every account on this machine (master plan F3): the
 pinned Node, Pi and extension tree (`resources\runtime`) and a snapshot of
 this repository (`resources\coop`), so a teammate needs the one download and
 no terminal install, Node or Pi; the first launch runs `coop install` in its
@@ -229,10 +230,14 @@ seeds the extension tree from the bundle. It is the installer of the window
 download it from the [newest release](https://github.com/kabukisensei/coop-agent/releases/latest),
 see `docs/install-windows.md` step 6). CI builds the same installer on every PR
 (the `coop-window-installer` artifact of the `installer (Windows)` job).
-It installs under `%LOCALAPPDATA%\Programs\coop` with no administrator prompt,
-adds a **coop** shortcut to the Start Menu and Desktop and an Add/Remove
-Programs entry, and keeps the window's data (`~/.coop/desktop/data`) on
-uninstall. SmartScreen shows "unknown publisher" once (one click; signing is
+It installs under `%ProgramFiles%\coop` after one administrator prompt, adds
+a **coop** shortcut to the Start Menu and Desktop of every account and an
+Add/Remove Programs entry named **coop**, puts `coop` on every account's PATH
+(the shim `%ProgramFiles%\coop\bin\coop.cmd`, written by
+`scripts/machine-install.ps1`; an account's own terminal install still wins),
+registers the "coop update" scheduled task and keeps each account's client
+(`~/.coop`, including the window's data under `~/.coop/desktop/data`) on
+uninstall; the uninstaller removes the shim, the PATH entry and the task. SmartScreen shows "unknown publisher" once (one click; signing is
 D1f, optional). Its shortcut asks where the client's code is the first time (then opens the
 recorded client folder without asking), then runs the bundled
 `coop desktop --app <its exe>` in a console, so the window gets the same launch
@@ -248,15 +253,27 @@ Windows administrator prompt). It stops with the exact lines to fix only when
 that does not work; `coop sync`
 then copies the bundled
 extension tree into `~/.coop/agent` instead of downloading it. `coop doctor`
-names the bundled versions on its coop window row. On a machine that already
+names the bundled versions on its coop window row. In an account that already
 has the terminal coop, the package shares `~/.coop` (settings, sign-ins,
 sessions) and leaves the `coop` command and the "coop" shortcut with that
 install (`Test-CoopForeignLauncherLink`); the two should stay at the same
-release, since they share one extension lock. Without a terminal install, the
-first launch writes the `coop` command and the "coop" shortcut for the package,
-and uninstalling the window removes them again (`scripts/window-uninstall.ps1`,
-run by the uninstaller; a terminal install's own stay). Updates with D1e; until then
-install the newer exe over the old one. Build it yourself with `npm ci` in
+release, since they share one extension lock. On a machine install
+(`Test-CoopMachineInstall`: the marker `resources\runtime\machine-install.json`,
+or a package under `%ProgramFiles%`) the first launch writes no per-account
+`coop` link or shortcuts, since the shim and the all-users shortcuts already
+exist; an older per-user package (`%LOCALAPPDATA%\Programs\coop`) wrote them
+itself, and the installer removes that package before it installs for the
+machine. Updates install themselves: the "coop update" scheduled task (SYSTEM,
+daily at 03:00 and hourly until it succeeds, at logon, only with a network)
+runs `scripts/auto-update.ps1`, which reads the newest release on GitHub,
+downloads the installer whose SHA-256 the release's verified report names,
+waits while any coop window or terminal from the package is open, installs it
+silently and writes `%ProgramData%\coop\update-state.json` and
+`%ProgramData%\coop\logs\update.log`. The next launch in each account prints
+one line about an update that installed since that account's last launch (the
+window shows it in its notices); `coop update` on a machine install only reports
+the task's state, and `coop doctor`'s install row says which install this is
+(this machine, this account only, or a developer clone). Build it yourself with `npm ci` in
 `desktop/installer` and `node desktop/scripts/build-installer.mjs` on Windows
 (it downloads the pinned Node zip, checks its SHA-256, drops the zip's
 `npm.ps1` and `npx.ps1` so PowerShell's `& npm` reaches `npm.cmd`, stages Pi,
@@ -299,7 +316,7 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop` | Launch the branded Pi agent (skills, prompts, theme, guardrails, splash) |
 | `coop desktop [folder]` | Open coop in a window on a folder (default: the current one): the same Pi, arguments, guardrails and approvals as `coop`, drawn as a modern UI with four themes (Modern and Retro, dark and light). The first run installs the window's runtime (Electron and pdf.js, about 150 MB to download and 400 MB on disk, pinned in the release manifest, into `~/.coop/desktop`) and makes the **coop** shortcut open the window (**coop (terminal)** keeps the terminal); `coop sync` keeps it current. The window names the client from the project file in its title and header, and File > Switch client asks for another client folder in a new window. Anything only the terminal can show opens the same session in a terminal. A side pane (Ctrl+\\) shows the changes since the last commit (in a folder that holds several repositories, a picker chooses the folder's own, one directly inside it, or one the project file lists), the standards coop applies together with the team knowledge clones (`cooptimize/incremental-bi` and the TeamAI team share `cooptimize/coop-team-knowledge`, one note at a time), a form for `.coop/project.yml` and the docs setup with Build; the sidebar and panes resize by dragging. The paperclip, Ctrl+V or drag and drop attach images, text files, Word, Excel, PowerPoint and PDF files (documents are read to Markdown and referenced by path, so coop reads them through its guarded read tool). The thinking and tool calls between coop's replies fold into one expandable line (Ctrl+O keeps them open); nothing leaves the session log. Master plan D1b and D1b2; the parity checklist is `desktop/PARITY.md`. `--app <exe>` opens the window in the installed **coop window package** instead of the runtime tree (the package passes it itself; see below) |
 | `coop doctor [--fix] [--json] [--publish]` | Check dependencies/configuration; optionally apply safe fixes, emit JSON, or publish a fleet snapshot to `fleet.publish_dir` |
-| `coop update [--check] [--edge] [--yes] [--no-fabric]` | Move coop-agent to the newest release tag (never backwards), converge tools to that release's manifest, and run Doctor. `--edge` is the maintainer channel: head of `main` plus latest upstream; `--check` fetches origin, then reports what the update would do and changes nothing; `--pi-latest` is a deprecated alias of `--edge` |
+| `coop update [--check] [--edge] [--yes] [--no-fabric]` | Move coop-agent to the newest release tag (never backwards), converge tools to that release's manifest, and run Doctor. `--edge` is the maintainer channel: head of `main` plus latest upstream; `--check` fetches origin, then reports what the update would do and changes nothing; `--pi-latest` is a deprecated alias of `--edge`. On the window package installed for this machine it changes nothing: it prints "This coop updates itself (this machine): last checked <time>, installed <version>" (`--check` lists the update task's state; `--edge` is refused, exit 1) |
 | `coop support [--json] [--incident] [--export PATH]` | Offline Support Center: sanitized diagnostics, incident timeline, preview/export, and standards status; works without Pi/model availability |
 | `coop onboard [--edit|--config-only|--reset|--json]` | Configure profile and managed integrations without launching the agent |
 | `coop onboard --machine [--reset|--json]` | Write the machine-level profile (your name and communication preference) once per machine, from an elevated terminal: on a VM with one Windows user per client, every user without a profile of its own starts from it, and a per-user profile wins field by field. It never holds a client, tenant, workspace or contract |
@@ -982,6 +999,15 @@ coop sync            # refresh governed MCP/catalog/team-knowledge/assets non-de
 coop doctor          # re-check dependencies and configuration
 coop support --incident  # export a sanitized escalation bundle
 ```
+
+**Updates on a machine install.** The window package installed for this machine
+updates itself: the "coop update" scheduled task runs as SYSTEM overnight (and
+hourly until it succeeds, and at logon) and installs the newest GitHub release
+once no coop from the package is open. Nothing in any account's `~/.coop` is
+touched. `coop update` there only reports the last check and the installed
+version; the install row of `coop doctor` warns when the last run failed and
+names `%ProgramData%\coop\logs\update.log`. A dry run for a check:
+`powershell -File "%ProgramFiles%\coop\resources\coop\scripts\auto-update.ps1" -DryRun`.
 
 `coop update` keeps Pi, its extensions, standalone tools, and a Git-backed Coop repo
 current, then runs Doctor. On Windows, a running Coop/Pi process causes the Pi update to be

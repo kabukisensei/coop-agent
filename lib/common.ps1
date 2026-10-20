@@ -224,6 +224,154 @@ function Get-CoopBundledNpmRoot {
   return (Join-Path $prefix 'lib/node_modules')
 }
 
+# --- One install per machine (master plan F3; Aaron 2026-10-20) ---------------
+# The coop window package installs once per machine (electron-builder's NSIS
+# per-machine installer under %ProgramFiles%\coop, one administrator prompt) and
+# every Windows account shares it; each account's data stays in its own
+# %USERPROFILE%\.coop. scripts\machine-install.ps1, run elevated by the installer,
+# writes runtime\machine-install.json beside coop-runtime.json (the marker the
+# helpers below read), the machine shim <app>\bin\coop.cmd on the machine PATH
+# and the "coop update" scheduled task, which runs scripts\auto-update.ps1 as
+# SYSTEM and keeps %ProgramData%\coop\update-state.json. Vocabulary everywhere
+# coop speaks: "this machine" (%ProgramData%\coop and the program under
+# %ProgramFiles%\coop), "this client" (%USERPROFILE%\.coop), "the repository"
+# (<repo>\.coop).
+function Get-CoopBundledRuntimeDir {
+  if ($script:CoopBundledRuntime) { return $script:CoopBundledRuntime }
+  if ($env:COOP_BUNDLED_RUNTIME) { return [string]$env:COOP_BUNDLED_RUNTIME }
+  return (Join-Path (Split-Path -Parent $script:CoopRoot) 'runtime')
+}
+function Get-CoopMachineInstallMarker { return (Join-Path (Get-CoopBundledRuntimeDir) 'machine-install.json') }
+# The marker's content (schema_version 1: install_dir, version, installed_at), or
+# $null when this coop is not a machine install or the marker is unreadable.
+function Get-CoopMachineInstallInfo {
+  $marker = Get-CoopMachineInstallMarker
+  if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) { return $null }
+  try {
+    $info = Get-Content -LiteralPath $marker -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    if ($info -and $info.schema_version -eq 1) { return $info }
+  } catch { }
+  return $null
+}
+# The package root <app> (two levels above the snapshot <app>\resources\coop).
+function Get-CoopPackageRoot { return (Split-Path -Parent (Split-Path -Parent $script:CoopRoot)) }
+function Test-CoopUnderProgramFiles([string]$Path) {
+  if (-not $Path) { return $false }
+  foreach ($name in @('ProgramFiles', 'ProgramW6432', 'ProgramFiles(x86)')) {
+    $pf = [Environment]::GetEnvironmentVariable($name)
+    if ($pf -and (Test-CoopPathInside -Path $Path -Root $pf)) { return $true }
+  }
+  return $false
+}
+# This coop is the machine install: the marker is there, or the checkout sits
+# under %ProgramFiles% (an installer that could not write the marker).
+function Test-CoopMachineInstall {
+  if ($null -ne (Get-CoopMachineInstallInfo)) { return $true }
+  return (Test-CoopUnderProgramFiles $script:CoopRoot)
+}
+# Where coop is installed: 'machine' (this machine), 'account' (the per-user
+# window package: this account only), 'clone' (a git checkout, a developer's) or
+# 'copy' (a zip or shared-drive copy).
+function Get-CoopInstallKind {
+  if (Test-CoopMachineInstall) { return 'machine' }
+  if (Test-CoopBundledRuntime) { return 'account' }
+  if (Test-CoopGitCheckout $script:CoopRoot) { return 'clone' }
+  return 'copy'
+}
+# The update task's state (scripts\auto-update.ps1): %ProgramData%\coop\update-state.json.
+function Get-CoopUpdateStateFile { return (Join-Path (Get-CoopMachineProfileDir) 'update-state.json') }
+function Get-CoopUpdateState {
+  $file = Get-CoopUpdateStateFile
+  if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return $null }
+  try {
+    $state = Get-Content -LiteralPath $file -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    if ($state -and $state.schema_version -eq 1) { return $state }
+  } catch { }
+  return $null
+}
+# Is $Candidate a newer x.y.z than $Than? $false when either is not a version.
+function Test-CoopVersionNewer([string]$Candidate, [string]$Than) {
+  try { return ([version]$Candidate -gt [version]$Than) } catch { return $false }
+}
+# A time from the state file as "yyyy-MM-dd HH:mm" (pwsh 7's ConvertFrom-Json
+# hands a DateTime, Windows PowerShell 5.1 the ISO string), or $Default.
+function Format-CoopUpdateTime($Value, [string]$Default = 'never') {
+  if ($null -eq $Value -or [string]$Value -eq '') { return $Default }
+  try { return ([datetime]$Value).ToString('yyyy-MM-dd HH:mm') } catch { return [string]$Value }
+}
+# The doctor row for where coop is installed. @{ Level ('ok'|'warn'); Message; Hint }.
+function Get-CoopInstallDoctorRow {
+  $kind = Get-CoopInstallKind
+  $ver = [string]$script:CoopVersion
+  if ($kind -eq 'machine') {
+    $state = Get-CoopUpdateState
+    $detail = 'updates itself (no run yet)'
+    if ($state) {
+      $last = Format-CoopUpdateTime $state.last_run
+      $installed = if ($state.installed_version) { [string]$state.installed_version } else { $ver }
+      $detail = "updates itself (last run $last, installed $installed, result: $($state.last_result))"
+    }
+    $msg = "install: this machine ($(Get-CoopPackageRoot)), version $ver, $detail"
+    if ($state -and ([string]$state.last_result).StartsWith('failed')) {
+      return @{ Level = 'warn'; Message = $msg; Hint = "see $(Join-Path (Get-CoopMachineProfileDir) 'logs\update.log'); the task retries within the hour" }
+    }
+    return @{ Level = 'ok'; Message = $msg; Hint = '' }
+  }
+  if ($kind -eq 'account') {
+    return @{ Level = 'ok'; Message = "install: this account only ($(Get-CoopPackageRoot)), version $ver; the installer from https://github.com/kabukisensei/coop-agent/releases/latest, run once by an administrator, installs coop for every account on this machine and keeps it updated"; Hint = '' }
+  }
+  if ($kind -eq 'clone') {
+    return @{ Level = 'ok'; Message = "install: developer clone ($($script:CoopRoot)), version $ver; coop update moves it to the newest release"; Hint = '' }
+  }
+  return @{ Level = 'ok'; Message = "install: a copy of coop-agent ($($script:CoopRoot)), version $ver"; Hint = '' }
+}
+# What `coop update` says on a machine install: the update task does the work.
+function Get-CoopMachineUpdateSummary {
+  $state = Get-CoopUpdateState
+  $checked = if ($state) { Format-CoopUpdateTime $state.last_run 'not yet' } else { 'not yet' }
+  $installed = if ($state -and $state.installed_version) { [string]$state.installed_version } else { [string]$script:CoopVersion }
+  return "This coop updates itself (this machine): last checked $checked, installed $installed"
+}
+# The per-account marker of the version this account last launched.
+function Get-CoopLastSeenVersionFile { return (Join-Path (Get-CoopProfileDir) 'last-seen-version') }
+# The launch lines about updates, pure: the installed version changed since this
+# account's last launch, and an update waiting for coop to close. @() otherwise.
+function Get-CoopUpdateLines {
+  param([string]$Installed, [string]$LastSeen, $State, [string]$ReleaseUrl = '')
+  $lines = @()
+  if ($LastSeen -and $Installed -and ($LastSeen -ne $Installed)) {
+    $url = if ($ReleaseUrl) { $ReleaseUrl } else { "https://github.com/kabukisensei/coop-agent/releases/tag/v$Installed" }
+    $lines += "coop updated to v$Installed (this machine): $url. Your client's sessions and settings are unchanged."
+  }
+  if ($State -and $State.pending_version -and (([string]$State.last_result) -like 'waiting*') -and (Test-CoopVersionNewer ([string]$State.pending_version) $Installed)) {
+    $lines += "An update to v$($State.pending_version) is ready; it installs within the hour after coop closes."
+  }
+  return @($lines)
+}
+# On a machine install: the console lines (and the window's notices, through the
+# warn sink) about an update that installed since this account's last launch, or
+# one waiting; then the per-account marker moves to this version. Fail-soft and
+# silent on the account's very first launch (nothing to compare with).
+function Write-CoopUpdateLines {
+  if (-not (Test-CoopMachineInstall)) { return }
+  try {
+    $file = Get-CoopLastSeenVersionFile
+    $seen = ''
+    if (Test-Path -LiteralPath $file -PathType Leaf) { $seen = ([System.IO.File]::ReadAllText($file)).Trim() }
+    $state = Get-CoopUpdateState
+    $url = ''
+    if ($state -and ([string]$state.installed_version -eq [string]$script:CoopVersion) -and $state.release_url) { $url = [string]$state.release_url }
+    foreach ($line in (Get-CoopUpdateLines -Installed ([string]$script:CoopVersion) -LastSeen $seen -State $state -ReleaseUrl $url)) {
+      Coop-Info $line
+      if ($null -ne $script:CoopWarnSink) { [void]$script:CoopWarnSink.Add($line) }
+    }
+    if ($seen -ne [string]$script:CoopVersion) {
+      New-Item -ItemType Directory -Force -Path (Split-Path -Parent $file) | Out-Null
+      [System.IO.File]::WriteAllText($file, [string]$script:CoopVersion)
+    }
+  } catch { }
+}
+
 function Coop-ManifestGet([string]$Key, [string]$Default = '') {
   try {
     $m = Get-Content -LiteralPath $script:CoopReleaseManifest -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
