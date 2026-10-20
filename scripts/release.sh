@@ -163,13 +163,21 @@ coop_release_ci_verdict() {
     repo="$(coop_release_github_repo)"
     [ -n "$repo" ] || { printf 'unreachable %s\n' "origin is not a github.com remote"; return 0; }
     local path="repos/$repo/commits/$sha/check-runs?per_page=100"
+    # gh first (a signed-in gh carries the user's rate limit); a gh that is not
+    # signed in refuses even public reads, so fall through to plain curl, which
+    # reads a public repo without any login.
+    local err=""
+    json=""
     if have gh; then
-      json="$(gh api "$path" 2>&1)" || { printf 'unreachable %s\n' "gh api failed: ${json%%$'\n'*}"; return 0; }
-    elif have curl; then
-      json="$(curl -fsS -H 'Accept: application/vnd.github+json' "https://api.github.com/$path" 2>&1)" \
-        || { printf 'unreachable %s\n' "curl failed: ${json%%$'\n'*}"; return 0; }
-    else
-      printf 'unreachable %s\n' "neither gh nor curl is installed"; return 0
+      json="$(gh api "$path" 2>/dev/null)" || json=""
+    fi
+    if [ -z "$json" ]; then
+      if have curl; then
+        json="$(curl -fsS -H 'Accept: application/vnd.github+json' "https://api.github.com/$path" 2>&1)" \
+          || { err="${json%%$'\n'*}"; printf 'unreachable %s\n' "curl failed: ${err:-no response}"; return 0; }
+      else
+        printf 'unreachable %s\n' "neither a signed-in gh nor curl can read GitHub here"; return 0
+      fi
     fi
   fi
   local py=python3; have python3 || py=python
