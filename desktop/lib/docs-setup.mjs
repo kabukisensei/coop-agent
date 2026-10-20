@@ -13,6 +13,7 @@ import {
   DATADOC_CONFIG,
   DEFAULT_OUTPUT_DIR,
   driveJsonlSetup,
+  linkCatalogDependencies,
   findDataDocConfig,
   isHomeFolder,
   parseExisting,
@@ -141,6 +142,14 @@ export class DocsSetupRun {
       onChild: (child) => { this.child = child; },
     });
     this.child = null;
+    if (ok) {
+      // an sqlsc scripts folder with Dependencies.json: check lineage against it
+      const configPath = findDataDocConfig(this.cwd, this.env);
+      const linked = configPath
+        ? await linkCatalogDependencies({ executable, configPath, env: this.env, ...(this.execFileImpl ? { execFileImpl: this.execFileImpl } : {}) }).catch((e) => `Dependency list not linked: ${e.message}`)
+        : "";
+      if (linked) this.send({ type: "notice", level: "info", message: linked });
+    }
     return done(ok, ok && outcome.notRunnable !== undefined ? { notRunnable: true, message: MESSAGES.notRunnable(outcome.notRunnable) } : {});
   }
 

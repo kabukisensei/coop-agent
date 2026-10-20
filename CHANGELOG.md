@@ -5,6 +5,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **Lineage docs over a coop-sql-source-control repository** (master plan row
+  SQ13). `/setup-docs` and the window's docs form point coop-data-doc at an
+  sqlsc repository's scripts folder (sqlsc.yml's `folder`), from the contract's
+  SQL repository or the folder coop is opened in, and on a first run check its
+  object folders (Tables, Views, Stored Procedures, Functions, Triggers) and
+  leave `Data/`, `Migrations/` and `Security/` unchecked. When the folder holds
+  the database's own dependency list (`Dependencies.json`, from
+  `sqlsc dependencies`), setup adds it to coop-data-doc's `catalog_dependencies`
+  through coop-data-doc's `config-set`, so the build warns about each reference
+  its parse missed; a coop-data-doc without that key is told to update instead.
+
 ### Fixed
 
 - **Warehouse SQL MCP reads no longer time out at a fixed 60 seconds.** The

@@ -97,6 +97,7 @@ import {
   DEFAULT_OUTPUT_DIR,
   dataDocPrefillFromProject,
   driveJsonlSetup,
+  linkCatalogDependencies,
   expandHomePath,
   findDataDocConfig,
   isHomeFolder,
@@ -1231,6 +1232,12 @@ async function runQuickSetup(pi: ExtensionAPI, ctx: any, prefill: DataDocSetupPr
   const outcome: JsonlSetupOutcome = {};
   const ok = await runJsonlSetup(pi, ctx, { ...dataDocPrefillFromProject(dirname(findDataDocConfig(ctx.cwd) || join(ctx.cwd, DATADOC_CONFIG))), ...prefill }, outcome);
   if (ok) {
+    // an sqlsc scripts folder with Dependencies.json: check lineage against it
+    try {
+      const configPath = findDataDocConfig(ctx.cwd);
+      const linked = configPath ? await linkCatalogDependencies({ executable: resolveDataDocExecutable(), configPath }) : "";
+      if (linked) notify(ctx, linked, "info");
+    } catch (e: any) { notify(ctx, `Dependency list not linked: ${errMsg(e)}`, "warning"); }
     try { await offerDataDocsCi(ctx); } catch (e: any) { notify(ctx, `Lineage docs CI not offered: ${errMsg(e)}`, "warning"); }
   }
   if (ok && outcome.notRunnable !== undefined) {
