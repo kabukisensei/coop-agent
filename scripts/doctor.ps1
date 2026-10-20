@@ -177,7 +177,7 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
 
   if (-not $meta -and -not $cli) {
     if ($Dist -eq 'ms-fabric-cli' -and $azureSqlOnly) { D-Ok "$Dist not installed (Azure SQL client; the Fabric CLI is optional here; manifest: $expected)" }
-    else { D-Warn "$Dist not installed (manifest: $expected)" "pipx install $Dist==$expected" }
+    else { D-Warn "$Dist not installed (manifest: $expected)" "coop update   (or: pipx install $Dist==$expected)" }
     return
   }
   # Executable ownership FIRST: a foreign $Exe earlier on PATH (a `pip install`
@@ -253,10 +253,14 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
     $status = Coop-ManifestStatus $meta $expected
     switch ($status) {
       'ok'                { D-Ok "$Dist $meta matches manifest ($expected)" }
-      'missing'           { D-Warn "$Dist not installed or version unknown (manifest: $expected)" "pipx install $Dist==$expected" }
-      'older'             { D-Warn "$Dist $meta is older than manifest ($expected)" "pipx install $Dist==$expected" }
-      'newer-than-tested' { D-Warn "$Dist $meta is newer than manifest ($expected)" "pipx install $Dist==$expected" }
-      'wrong-version'     { D-Warn "$Dist $meta differs from manifest ($expected)" "pipx install $Dist==$expected" }
+      # The product answer is `coop update`, which converges every pin (the Pi
+      # row above says the same); the pipx line stays for a machine without coop
+      # on PATH. The ownership cases above keep their pipx hints: they are about
+      # a foreign copy, not a stale pin.
+      'missing'           { D-Warn "$Dist not installed or version unknown (manifest: $expected)" "coop update   (or: pipx install $Dist==$expected)" }
+      'older'             { D-Warn "$Dist $meta is older than manifest ($expected)" "coop update   (or: pipx install $Dist==$expected)" }
+      'newer-than-tested' { D-Warn "$Dist $meta is newer than manifest ($expected)" "coop update   (pins it back; or: pipx install $Dist==$expected)" }
+      'wrong-version'     { D-Warn "$Dist $meta differs from manifest ($expected)" "coop update   (or: pipx install $Dist==$expected)" }
     }
   }
   if (-not $pyver) {
