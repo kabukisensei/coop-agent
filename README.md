@@ -94,7 +94,7 @@ project file's `repositories`.
 | Place | Folder | Holds |
 | --- | --- | --- |
 | **this machine** | `%ProgramData%\coop` (`/etc/coop` elsewhere) | the program's shared files, the standards, your name and preferences |
-| **this client** | `%USERPROFILE%\.coop` | sessions, memory, backups, drafts |
+| **this client** | `%USERPROFILE%\.coop` | sessions, memory, backups, drafts, the client folder record (`client.json`) |
 | **the repository** | `<repo>\.coop` | the team's project file, client skills and prompts |
 
 - **Standards** live once on this machine, `%ProgramData%\coop\standards`
@@ -644,12 +644,9 @@ second one), then share it with
 own, after your yes and only for that file. Use `coop init --template` only when
 you intentionally want the full legacy template.
 
-coop keeps its files in three places, named the same way everywhere it speaks:
-**this machine** (`%ProgramData%\coop`: the program, the standards, your name and
-preferences), **this client** (`%USERPROFILE%\.coop`: sessions, memory, backups,
-drafts and the client folder record; one Windows user is one client) and **the
-repository** (`<repo>\.coop`: the team's project file, client skills and prompts).
-`coop folders` prints the three with their real paths.
+coop keeps its files in three places (this machine, this client, the
+repository; see "Three places" under Isolation above), and `coop folders` prints
+the three with their real paths.
 
 One client is one folder, the client folder, which holds all of its repositories
 (the home repository with the project file, the sql repository, the powerbi
