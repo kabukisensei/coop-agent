@@ -48,6 +48,8 @@ jobs:
         shell: pwsh
         env:
           COOP_INSTALLER_TEST: '1'
+          # F3: the auto-update dry run asks api.github.com; a token keeps a shared runner address off the unauthenticated rate limit.
+          GH_TOKEN: ${{ github.token }}
         run: node desktop/scripts/verify-installer.mjs --output "$env:RUNNER_TEMP\installer-acceptance.json"
       - uses: actions/upload-artifact@v4
         if: always()

@@ -350,7 +350,12 @@ $existing = if (Test-Path -LiteralPath $launcher -PathType Leaf) {
 # The coop window package (master plan D1d) running this from its snapshot leaves
 # a terminal install's `coop` command alone: that install keeps `coop update`.
 $keepLink = (Test-CoopBundledRuntime) -and (Test-CoopForeignLauncherLink -LauncherDir $LOCALBIN)
-if ($keepLink) {
+# The machine install (F3) already serves `coop` to every account through its
+# shim on the machine PATH; this account links nothing of its own.
+$machineLink = (Test-CoopBundledRuntime) -and (Test-CoopMachineInstall)
+if ($machineLink) {
+  Coop-Ok "``coop`` in every account's terminal is this machine's install ($(Join-Path (Get-CoopPackageRoot) 'bin\coop.cmd')); nothing to link for this account"
+} elseif ($keepLink) {
   $linkedRoot = Split-Path -Parent (Split-Path -Parent (Get-CoopLinkedLauncherTarget -LauncherDir $LOCALBIN))
   Coop-Info "``coop`` in your terminal stays the install at $linkedRoot; the window uses its own bundled copy"
 } elseif ($existing -ne $launcherBody) {
@@ -364,7 +369,7 @@ if ($keepLink) {
 } else {
   Coop-Ok 'coop already linked'
 }
-if (($env:PATH -split ';') -notcontains $LOCALBIN) {
+if (-not $machineLink -and (($env:PATH -split ';') -notcontains $LOCALBIN)) {
   if (Test-CoopProfileRedirected) {
     # An isolated install (HOME / USERPROFILE redirected at a sandbox) must not
     # touch the real account's persistent PATH in the registry: the sandbox is on
@@ -413,7 +418,10 @@ if (($env:PATH -split ';') -notcontains $LOCALBIN) {
 # shortcuts too. An isolated install (redirected profile) gets its shortcuts inside
 # the sandbox profile, never on the real Desktop / Start Menu.
 try {
-  if ((Test-CoopBundledRuntime) -and (Test-CoopForeignTerminalShortcut)) {
+  if ($machineLink) {
+    # The per-machine installer wrote "coop" in the all-users Start Menu and Desktop (F3).
+    Coop-Ok 'the "coop" shortcuts are this machine''s install''s (Start Menu and Desktop, every account)'
+  } elseif ((Test-CoopBundledRuntime) -and (Test-CoopForeignTerminalShortcut)) {
     Coop-Info 'the "coop" double-click launcher stays with your terminal install'
   } elseif (Set-CoopDesktopShortcuts) {
     $where = if (Test-CoopProfileRedirected) { "in the isolated profile $(Get-CoopProfileInUse)" } else { 'Start Menu + Desktop' }

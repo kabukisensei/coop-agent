@@ -37,6 +37,34 @@ foreach ($a in $args) {
   }
 }
 
+# --- A machine install updates itself (F3) -----------------------------------
+# The coop installed once for every account on this machine (the window package
+# under %ProgramFiles%\coop) is moved by its "coop update" scheduled task
+# (scripts\auto-update.ps1 as SYSTEM), never by hand: `coop update` reports the
+# task's state and changes nothing. --edge is for developer clones.
+if (Test-CoopMachineInstall) {
+  if ($EDGE) {
+    Coop-Err 'coop update --edge is for developer clones: this coop is this machine''s install, which updates itself from the newest release'
+    exit 1
+  }
+  if ($CHECK) {
+    $machineState = Get-CoopUpdateState
+    Write-Output ('  {0,-32} {1}' -f 'install', "this machine ($(Get-CoopPackageRoot)), version $($script:CoopVersion)")
+    if ($machineState) {
+      Write-Output ('  {0,-32} {1}' -f 'update task last run', (Format-CoopUpdateTime $machineState.last_run))
+      Write-Output ('  {0,-32} {1}' -f 'update task result', [string]$machineState.last_result)
+      Write-Output ('  {0,-32} {1}' -f 'installed by the task', [string]$machineState.installed_version)
+      if ($machineState.pending_version) { Write-Output ('  {0,-32} {1}' -f 'waiting to install', [string]$machineState.pending_version) }
+      if ($machineState.release_url) { Write-Output ('  {0,-32} {1}' -f 'release', [string]$machineState.release_url) }
+    } else {
+      Write-Output ('  {0,-32} {1}' -f 'update task', "has not run yet (state: $(Get-CoopUpdateStateFile))")
+    }
+    exit 0
+  }
+  Coop-Info (Get-CoopMachineUpdateSummary)
+  exit 0
+}
+
 # What update converges: the release manifest through Get-CoopFleetPlan (the
 # same plan install, sync and uninstall read). Fabric CLI is included unless
 # --no-fabric (matching `coop install --no-fabric`), so a fabric-less machine

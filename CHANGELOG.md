@@ -5,6 +5,43 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **One install per machine (master plan F3).** The coop window installer now
+  installs once for every account on the computer, under `%ProgramFiles%\coop`,
+  after one administrator prompt (electron-builder `perMachine`,
+  `allowElevation`; the Add/Remove Programs entry is **coop**). An older
+  per-user package under `%LOCALAPPDATA%\Programs\coop` is removed by the new
+  installer before it installs; every account's client under `~/.coop` is never
+  touched, by install or uninstall. `scripts/machine-install.ps1` (run by the
+  installer, `-Remove` by the uninstaller) writes the `coop` shim
+  `%ProgramFiles%\coop\bin\coop.cmd` for every account's terminal (an
+  account's own terminal install still wins), adds it to the machine PATH,
+  writes the marker `resources\runtime\machine-install.json` and registers the
+  "coop update" scheduled task. On a machine install the bundled first launch no
+  longer writes a per-account `coop` link or shortcuts (`Test-CoopMachineInstall`
+  in `lib/common.ps1`), and `coop doctor` has an install row: this machine, this
+  account only, or developer clone.
+- **Updates install themselves on a machine install.** The "coop update" task
+  (SYSTEM, highest privileges, daily at 03:00 repeating hourly for a day, at
+  logon, start when missed, only with a network, 30 minute limit) runs the new
+  standalone `scripts/auto-update.ps1`: newest GitHub release, the exe whose
+  SHA-256 the release's verified report names, waits while a coop from the
+  package is open, `/S /allusers /D=`, state in
+  `%ProgramData%\coop\update-state.json`, log in
+  `%ProgramData%\coop\logs\update.log` (under 1 MB); `-DryRun` or
+  `COOP_AUTO_UPDATE_DRY_RUN=1` changes nothing. Each account's next launch
+  prints one line about an update that installed since its last launch, or one
+  waiting (`Write-CoopUpdateLines`; the window shows it in its notices). On a
+  machine install `coop update` prints "This coop updates itself (this
+  machine): last checked <time>, installed <version>" and exits 0, `--check`
+  lists the task's state and `--edge` is refused (exit 1). `scripts/bootstrap.ps1`
+  now needs an administrator PowerShell and runs the installer with
+  `/S /allusers`. The `installer (Windows)` CI job proves the per-machine
+  install, the shim, PATH entry, task and the dry run, and `verify-upgrade.mjs`
+  proves the per-user to per-machine upgrade; the new `machine-install`
+  PowerShell fixture covers every pure part.
+
 ## [0.37.0] — 2026-10-20
 
 ### Removed

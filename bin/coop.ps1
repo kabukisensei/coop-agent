@@ -891,6 +891,8 @@ function Initialize-CoopLaunch {
   # The window shows this as a notice (its console closes); the terminal prints it
   # just before Pi starts (Invoke-CoopPiProcess).
   if ($Window) { Write-CoopSeveralContractsWarning (Get-Location).Path }
+  # F3: on a machine install, the lines about an update that installed since this account's last launch, or one waiting (console and the window's notices).
+  Write-CoopUpdateLines
   $mcpState = Update-CoopManagedMcpConfig -Quiet
   if ($mcpState -eq 'failed') {
     Coop-Warn 'could not refresh the MCP config for this folder; run: coop sync   (from this folder)'

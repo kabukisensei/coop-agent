@@ -909,6 +909,10 @@ if ($proj) {
 }
 
 D-Head 'coop-agent repository'
+# Where this coop is installed (F3): this machine (the shared package, which
+# updates itself), this account only (the per-user package) or a developer clone.
+$installRow = Get-CoopInstallDoctorRow
+if ($installRow.Level -ceq 'ok') { D-Ok $installRow.Message } else { D-Warn $installRow.Message $installRow.Hint }
 if ((Test-CoopGitCheckout $script:CoopRoot) -and (Test-Have 'git')) {
   # Staleness nudge: refresh origin at most once/day (bounded wait; silent offline),
   # then compare against the release `coop update` would move to — local + instant.

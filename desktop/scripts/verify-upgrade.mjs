@@ -1,21 +1,29 @@
 #!/usr/bin/env node
-// Upgrade acceptance for the coop window package (master plan D1k; Aaron
+// Upgrade acceptance for the coop window package (master plan D1k, F3; Aaron
 // 2026-10-07: the one installer must work for people who already have coop,
-// and its shortcut must open the window). Two cases on a clean runner, after
-// desktop/scripts/verify-installer.mjs has installed and removed the new build:
+// and its shortcut must open the window; Aaron 2026-10-20: one install per
+// machine). Two cases on a clean runner, after desktop/scripts/verify-installer.mjs
+// has installed and removed the new build:
 //
-//   A. window over window: the previous release's installer, then this build
-//      over it. One Add/Remove entry at the new version, the new payload, the
-//      "coop" shortcuts open the new coop.exe, the profile's window data and
-//      agent settings kept, the package's own `coop` link and "coop (terminal)"
-//      kept (an upgrade is not an uninstall), and the next launch re-runs setup.
-//   B. window over a terminal install: a `coop` link and "coop"/"coop
+//   A. this machine over this account: the previous release's installer as a
+//      per-user install (/S /currentuser, what releases before F3 were), with
+//      the `coop` link and "coop (terminal)" its first launch wrote, then this
+//      build for every account (/S /allusers). One Add/Remove entry, in HKLM,
+//      at the new version; the per-user package gone with its link and
+//      shortcuts (its own uninstaller ran, completely); "coop" for every
+//      account opens the new coop.exe; the profile's window data and agent
+//      settings kept; the next launch re-runs setup; the machine shim, PATH
+//      entry and update task there. Installing this build over itself keeps
+//      them; a real uninstall removes them.
+//   B. this machine over a terminal install: a `coop` link and "coop"/"coop
 //      (terminal)" shortcuts that start this checkout (the runner's terminal
-//      coop), then this build. "coop" now opens the window; the terminal
-//      link and "coop (terminal)" are the terminal install's still; the
-//      package's first launch leaves them alone; a terminal `coop update`
-//      (its shortcut repair) keeps "coop" on the window; the uninstall keeps
-//      the terminal install's link and shortcut.
+//      coop), then this build. The all-users "coop" opens the window; the
+//      account's link and shortcuts stay the terminal install's; the package
+//      knows it is the machine install and would link nothing for the
+//      account; the machine shim runs the account's link (a developer clone
+//      wins); a terminal `coop update` (its shortcut repair) leaves the
+//      all-users shortcuts alone; the uninstall keeps the terminal install's
+//      link and shortcuts.
 //
 // Like verify-installer.mjs it MUTATES the machine, so it runs only on a
 // disposable GitHub-hosted Windows runner with COOP_INSTALLER_TEST=1.
@@ -26,23 +34,14 @@
 // installer-acceptance.json (the exe's SHA-256 must match that report).
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { dirname, join, resolve, win32 } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  INSTALL_TIMEOUT_MS, UNINSTALL_TIMEOUT_MS, assertDisposableInstallerHost, nsisInvocation, packagePaths,
-  registryEntries, runOwned, sha256, writeTerminalShortcut,
+  INSTALL_TIMEOUT_MS, UNINSTALL_TIMEOUT_MS, UPDATE_TASK, assertDisposableInstallerHost, machinePath, nsisInvocation, packagePaths, pathHasEntry,
+  ps, registryEntries, runOwned, scheduledTaskXml, sha256, writeTerminalShortcut,
 } from "./verify-installer.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-
-function powershellExe() {
-  return win32.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-}
-
-/** Run Windows PowerShell 5.1 with a command; paths travel in the environment. */
-async function ps(command, env = {}) {
-  return (await runOwned(powershellExe(), ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command], { windowsHide: true, env: { ...process.env, ...env } }, 180000)).trim();
-}
 
 /** A shortcut's target and arguments. */
 async function shortcut(file) {
@@ -53,21 +52,21 @@ async function shortcut(file) {
 
 /** Call a lib/common.ps1 function from a coop root and return its output. */
 async function coopCall(coopRoot, expression) {
-  return ps(". (Join-Path $env:COOP_CALL_ROOT 'lib\\common.ps1'); " + expression, { COOP_CALL_ROOT: coopRoot });
+  return ps(". (Join-Path $env:COOP_CALL_ROOT 'lib\\common.ps1'); " + expression, { COOP_CALL_ROOT: coopRoot }, 180000);
 }
 
 function same(a, b) { return String(a || "").toLowerCase() === String(b || "").toLowerCase(); }
 
-async function install(exe, dir) {
-  const call = nsisInvocation(exe, dir);
+async function install(exe, dir, mode) {
+  const call = nsisInvocation(exe, dir, { mode });
   const started = Date.now();
   await runOwned(call.command, call.args, call.options, INSTALL_TIMEOUT_MS);
   return Math.round((Date.now() - started) / 1000);
 }
 
-async function uninstall(paths) {
+async function uninstall(paths, mode) {
   if (!existsSync(paths.uninstaller)) return;
-  const call = nsisInvocation(paths.uninstaller, paths.installDir, { uninstall: true });
+  const call = nsisInvocation(paths.uninstaller, paths.installDir, { uninstall: true, mode });
   await runOwned(call.command, call.args, call.options, UNINSTALL_TIMEOUT_MS);
   for (let waited = 0; existsSync(paths.uninstaller) && waited < 30; waited++) await new Promise((done) => setTimeout(done, 1000));
 }
@@ -95,128 +94,149 @@ async function main(argv) {
   const prevReport = JSON.parse(readFileSync(join(previousDir, "installer-acceptance.json"), "utf8"));
   if (!same(prevReport.installerSha256, sha256(previous))) throw new Error(`the previous installer's SHA-256 is not the one its release's acceptance report names`);
   const version = readFileSync(join(ROOT, "VERSION"), "utf8").trim();
-  const paths = packagePaths();
-  const gitDir = join(paths.runtime, "git");
+  const machine = packagePaths();
+  const user = packagePaths(process.env, "user");
   const settingsFile = join(process.env.USERPROFILE, ".coop", "agent", "settings.json");
   const report = { ok: false, previous: { installer: previous.split(/[\\/]/).pop(), version: prevReport.version }, current: { installer: current.split(/[\\/]/).pop(), version }, steps: [] };
   const step = (name, note) => { report.steps.push({ name, note }); console.log(`  ✓ ${name}${note ? `: ${note}` : ""}`); };
 
-  if ((await registryEntries()).length) throw new Error("coop (window) is already registered on this runner");
-  if (existsSync(paths.installDir)) throw new Error(`${paths.installDir} already exists on this runner`);
-  const ownLink = `@call "${join(paths.installDir, "resources", "coop", "bin", "coop.cmd")}" %*\r\n`;
-  const ownTerminal = join(paths.installDir, "resources", "coop", "bin", "coop-desktop.ps1");
+  if ((await registryEntries()).length) throw new Error("coop is already registered on this runner");
+  for (const dir of [machine.installDir, user.installDir]) {
+    if (existsSync(dir)) throw new Error(`${dir} already exists on this runner`);
+  }
+  if (await scheduledTaskXml()) throw new Error(`the scheduled task "${UPDATE_TASK}" already exists on this runner`);
+  const prevLink = `@call "${join(user.installDir, "resources", "coop", "bin", "coop.cmd")}" %*\r\n`;
+  const prevTerminal = join(user.installDir, "resources", "coop", "bin", "coop-desktop.ps1");
   const checkoutLink = `@echo off\r\ncall "${join(ROOT, "bin", "coop.cmd")}" %*\r\n`;
   const checkoutTerminal = join(ROOT, "bin", "coop-desktop.ps1");
   const cleanup = () => {
-    for (const file of [paths.launcherLink, paths.terminalShortcut, paths.startMenuTerminalShortcut, paths.desktopShortcut, paths.startMenuShortcut]) rmSync(file, { force: true });
+    for (const file of [machine.launcherLink, machine.terminalShortcut, machine.startMenuTerminalShortcut, machine.userDesktopShortcut, machine.userStartMenuShortcut, machine.updateState]) rmSync(file, { force: true });
   };
 
   // Profile data a teammate has: the window's data and the agent settings.
-  mkdirSync(paths.profileData, { recursive: true });
-  const sentinelFile = join(paths.profileData, "upgrade-acceptance-sentinel.txt");
+  mkdirSync(machine.profileData, { recursive: true });
+  const sentinelFile = join(machine.profileData, "upgrade-acceptance-sentinel.txt");
   const sentinel = randomBytes(16).toString("hex");
   writeFileSync(sentinelFile, sentinel);
   mkdirSync(dirname(settingsFile), { recursive: true });
   const settingsBefore = existsSync(settingsFile) ? readFileSync(settingsFile, "utf8") : `{"upgradeAcceptance":"${sentinel}"}\n`;
   writeFileSync(settingsFile, settingsBefore);
 
-  let installed = false;
+  let installed = "";
   try {
-    // --- A. window over window ------------------------------------------------
-    let seconds = await install(previous, paths.installDir);
-    installed = true;
-    // runtime\git marks this build's payload. Releases from v0.34.0 carry it
-    // too, so remove the previous install's copy: the upgrade must lay it down.
-    const previousHadGit = existsSync(gitDir);
-    if (previousHadGit) rmSync(gitDir, { recursive: true, force: true });
-    if (existsSync(gitDir)) throw new Error("could not remove the previous release's runtime\\git: this check cannot tell the payloads apart");
+    // --- A. this machine over this account ---------------------------------------
+    let seconds = await install(previous, user.installDir, "currentuser");
+    installed = "user";
+    const prevEntries = await registryEntries();
+    if (prevEntries.length !== 1 || prevEntries[0].Hive !== "HKCU") throw new Error(`the previous release did not install for this account: ${JSON.stringify(prevEntries)}`);
     // What the previous package's first launch wrote: its own link and "coop (terminal)".
-    mkdirSync(dirname(paths.launcherLink), { recursive: true });
-    writeFileSync(paths.launcherLink, ownLink);
-    await writeTerminalShortcut(paths.terminalShortcut, ownTerminal);
-    step("A. the previous release installed, with its first-launch link and shortcut", `${report.previous.installer} (${seconds}s)${previousHadGit ? "; its runtime\\git removed so the upgrade must restore it" : ""}`);
+    mkdirSync(dirname(user.launcherLink), { recursive: true });
+    writeFileSync(user.launcherLink, prevLink);
+    await writeTerminalShortcut(user.terminalShortcut, prevTerminal);
+    step("A. the previous release installed for this account (HKCU), with its first-launch link and shortcut", `${report.previous.installer} ${prevEntries[0].DisplayVersion} (${seconds}s)`);
 
-    seconds = await install(current, paths.installDir);
+    seconds = await install(current, machine.installDir, "allusers");
+    installed = "machine";
     const entries = await registryEntries();
-    if (entries.length !== 1 || entries[0].DisplayVersion !== version) throw new Error(`after the upgrade Add/Remove shows ${JSON.stringify(entries)}`);
-    if (!existsSync(gitDir) || !existsSync(paths.exe)) throw new Error("the upgrade did not lay down this build's payload (no runtime\\git or coop.exe)");
-    step("A. this build installed over it: one Add/Remove entry, the new payload", `${entries[0].DisplayName} ${entries[0].DisplayVersion} (${seconds}s)`);
+    if (entries.length !== 1 || entries[0].Hive !== "HKLM" || entries[0].DisplayVersion !== version) throw new Error(`after the upgrade Add/Remove shows ${JSON.stringify(entries)}`);
+    if (!existsSync(machine.exe) || !existsSync(machine.runtime)) throw new Error("the upgrade did not lay down this build's payload (no coop.exe or runtime)");
+    if (existsSync(user.exe) || existsSync(user.uninstaller)) throw new Error(`the account's older package is still at ${user.installDir}`);
+    step("A. this build installed for every account: one Add/Remove entry (HKLM), the account's package removed", `${entries[0].DisplayName} ${entries[0].DisplayVersion} (${seconds}s)`);
 
-    for (const file of [paths.desktopShortcut, paths.startMenuShortcut]) {
+    if (existsSync(user.launcherLink) || existsSync(user.terminalShortcut)) throw new Error("the older package's `coop` link or \"coop (terminal)\" survived its removal");
+    for (const file of [user.desktopShortcut, user.startMenuShortcut]) {
+      if (existsSync(file)) throw new Error(`the older package's shortcut survived: ${file}`);
+    }
+    step("A. the older package's link and shortcuts for this account are gone (its own uninstaller ran)");
+
+    for (const file of [machine.desktopShortcut, machine.startMenuShortcut]) {
       if (!existsSync(file)) throw new Error(`after the upgrade the shortcut is missing: ${file}`);
       const sc = await shortcut(file);
-      if (!same(sc.target, paths.exe)) throw new Error(`after the upgrade ${file} starts ${sc.target}, not ${paths.exe}`);
+      if (!same(sc.target, machine.exe)) throw new Error(`after the upgrade ${file} starts ${sc.target}, not ${machine.exe}`);
     }
-    step("A. \"coop\" on the Desktop and in the Start Menu opens the new window", paths.exe);
+    step("A. \"coop\" on the Desktop and in the Start Menu of every account opens the new window", machine.exe);
 
     if (readFileSync(sentinelFile, "utf8") !== sentinel || readFileSync(settingsFile, "utf8") !== settingsBefore) throw new Error("the upgrade changed the profile's window data or agent settings");
-    if (existsSync(paths.electronAppData)) throw new Error(`${paths.electronAppData} appeared during the upgrade`);
+    if (existsSync(machine.electronAppData)) throw new Error(`${machine.electronAppData} appeared during the upgrade`);
     step("A. the profile's window data and agent settings kept");
 
-    // The new uninstaller keeps them on an upgrade; an older one (<= this
-    // change) removed them, and the re-run setup below writes them back.
-    const linkKept = existsSync(paths.launcherLink) && existsSync(paths.terminalShortcut);
-    const doctor = JSON.parse((await runOwned(paths.exe, ["--doctor"], { windowsHide: true, cwd: paths.installDir }, 60000)).trim().split(/\r?\n/).filter(Boolean).pop());
+    const doctor = JSON.parse((await runOwned(machine.exe, ["--doctor"], { windowsHide: true, cwd: machine.installDir }, 60000)).trim().split(/\r?\n/).filter(Boolean).pop());
     if (doctor.version !== version) throw new Error(`after the upgrade coop.exe --doctor reports ${doctor.version}`);
-    const pending = await coopCall(join(paths.installDir, "resources", "coop"), "[Console]::Out.Write([string](Test-CoopBundledSetupPending))");
+    const snapshot = join(machine.installDir, "resources", "coop");
+    const pending = await coopCall(snapshot, "[Console]::Out.Write([string](Test-CoopBundledSetupPending))");
     if (!pending.endsWith("True")) throw new Error(`after the upgrade the next launch would not finish setup (Test-CoopBundledSetupPending: ${pending})`);
-    step("A. the next launch finishes setup for the new version", linkKept ? "the `coop` link and \"coop (terminal)\" also survived the upgrade" : "the previous uninstaller removed the `coop` link and \"coop (terminal)\"; setup writes them back");
+    step("A. the next launch finishes setup for the new version");
 
-    // A later upgrade over this build keeps them: this build's uninstaller skips its cleanup with --updated.
-    writeFileSync(paths.launcherLink, ownLink);
-    await writeTerminalShortcut(paths.terminalShortcut, ownTerminal);
-    seconds = await install(current, paths.installDir);
-    if (!existsSync(paths.launcherLink) || !existsSync(paths.terminalShortcut)) throw new Error("reinstalling over this build removed the package's `coop` link or \"coop (terminal)\" shortcut");
-    step("A. installing over this build keeps the `coop` link and \"coop (terminal)\"", `${seconds}s`);
+    if (!existsSync(machine.machineShim) || !existsSync(machine.machineMarker) || !(await scheduledTaskXml()) || !pathHasEntry(await machinePath(), machine.machineBin)) throw new Error("the machine shim, marker, PATH entry or update task is missing after the upgrade");
+    step("A. the coop command for every account and the update task are there");
 
-    await uninstall(paths);
-    installed = false;
-    if (existsSync(paths.launcherLink) || existsSync(paths.terminalShortcut)) throw new Error("a real uninstall left the package's link or \"coop (terminal)\"");
-    step("A. a real uninstall still removes them");
+    // Installing this build over itself (what the update task does with a newer
+    // one): the uninstaller runs with --updated and keeps the machine pieces.
+    seconds = await install(current, machine.installDir, "allusers");
+    const again = await registryEntries();
+    if (again.length !== 1 || again[0].Hive !== "HKLM") throw new Error(`installing over this build left ${JSON.stringify(again)}`);
+    if (!existsSync(machine.machineShim) || !existsSync(machine.machineMarker) || !(await scheduledTaskXml()) || !pathHasEntry(await machinePath(), machine.machineBin)) throw new Error("installing over this build removed the machine shim, marker, PATH entry or update task");
+    step("A. installing over this build keeps the shim, the marker, the PATH entry and the update task", `${seconds}s`);
+
+    await uninstall(machine, "allusers");
+    installed = "";
+    if (existsSync(machine.machineShim) || (await scheduledTaskXml()) || pathHasEntry(await machinePath(), machine.machineBin)) throw new Error("a real uninstall left the machine shim, the PATH entry or the update task");
+    if ((await registryEntries()).length) throw new Error("a real uninstall left an Add/Remove entry");
+    step("A. a real uninstall removes them");
     cleanup();
 
-    // --- B. window over a terminal install -------------------------------------
+    // --- B. this machine over a terminal install ------------------------------------
     // This checkout is the runner's terminal coop: its link and both shortcuts.
-    mkdirSync(dirname(paths.launcherLink), { recursive: true });
-    writeFileSync(paths.launcherLink, checkoutLink);
+    mkdirSync(dirname(user.launcherLink), { recursive: true });
+    writeFileSync(user.launcherLink, checkoutLink);
     await coopCall(ROOT, "[void](Set-CoopDesktopShortcuts)");
-    for (const file of [paths.desktopShortcut, paths.terminalShortcut]) {
+    for (const file of [user.desktopShortcut, user.terminalShortcut]) {
       if (!existsSync(file)) throw new Error(`the terminal install wrote no ${file}`);
     }
+    const termMainBefore = await shortcut(user.desktopShortcut);
     step("B. a terminal install's `coop` link and \"coop\"/\"coop (terminal)\" shortcuts");
 
-    seconds = await install(current, paths.installDir);
-    installed = true;
-    for (const file of [paths.desktopShortcut, paths.startMenuShortcut]) {
+    seconds = await install(current, machine.installDir, "allusers");
+    installed = "machine";
+    for (const file of [machine.desktopShortcut, machine.startMenuShortcut]) {
       const sc = await shortcut(file);
-      if (!same(sc.target, paths.exe)) throw new Error(`after installing the window ${file} starts ${sc.target} ${sc.args}, not the window`);
+      if (!same(sc.target, machine.exe)) throw new Error(`after installing the window ${file} starts ${sc.target} ${sc.args}, not the window`);
     }
-    step("B. this build installed: \"coop\" now opens the window", `${seconds}s`);
+    step("B. this build installed: \"coop\" for every account opens the window", `${seconds}s`);
 
-    if (readFileSync(paths.launcherLink, "utf8") !== checkoutLink) throw new Error("installing the window changed the terminal install's `coop` link");
-    const term = await shortcut(paths.terminalShortcut);
+    if (readFileSync(user.launcherLink, "utf8") !== checkoutLink) throw new Error("installing the window changed the terminal install's `coop` link");
+    const term = await shortcut(user.terminalShortcut);
     if (!term.args.toLowerCase().includes(checkoutTerminal.toLowerCase())) throw new Error(`installing the window changed "coop (terminal)": ${term.args}`);
-    const snapshot = join(paths.installDir, "resources", "coop");
-    const foreign = await coopCall(snapshot, "[Console]::Out.Write([string](Test-CoopForeignLauncherLink) + ',' + [string](Test-CoopForeignTerminalShortcut))");
-    if (!foreign.endsWith("True,True")) throw new Error(`the package's first launch would take over the terminal install (foreign link, shortcut: ${foreign})`);
-    step("B. the terminal `coop` and \"coop (terminal)\" stay the terminal install's; the first launch leaves them");
+    const termMain = await shortcut(user.desktopShortcut);
+    if (!same(termMain.target, termMainBefore.target) || termMain.args !== termMainBefore.args) throw new Error(`installing the window changed the account's own "coop": ${termMain.target} ${termMain.args}`);
+    const foreign = await coopCall(snapshot, "[Console]::Out.Write([string](Test-CoopForeignLauncherLink) + ',' + [string](Test-CoopMachineInstall) + ',' + (Get-CoopInstallKind))");
+    if (!foreign.endsWith("True,True,machine")) throw new Error(`the package does not see the terminal install and the machine install (foreign link, machine, kind: ${foreign})`);
+    step("B. the account's `coop`, \"coop\" and \"coop (terminal)\" stay the terminal install's; the package knows it is this machine's install");
 
-    // The terminal's own shortcut repair (`coop update`, `coop install`) keeps "coop" on the window.
+    // The machine shim prefers the account's link: a stub link proves which ran.
+    writeFileSync(user.launcherLink, "@echo off\r\necho LINK-WINS %*\r\n");
+    const shimOut = await runOwned(process.env.ComSpec || "cmd.exe", ["/d", "/c", `"${machine.machineShim}" version`], { windowsHide: true, windowsVerbatimArguments: true }, 60000);
+    writeFileSync(user.launcherLink, checkoutLink);
+    if (!shimOut.includes("LINK-WINS version")) throw new Error(`the machine shim did not run the account's link: ${shimOut.trim().slice(-200)}`);
+    step("B. the machine shim runs the account's own `coop` link first (a developer clone wins)");
+
+    // The terminal's own shortcut repair (`coop update`, `coop install`) leaves the all-users shortcuts alone.
     await coopCall(ROOT, "[void](Set-CoopDesktopShortcuts -OnlyIfPresent)");
-    const after = await shortcut(paths.desktopShortcut);
-    if (!same(after.target, paths.exe)) throw new Error(`a terminal shortcut repair took "coop" back: ${after.target} ${after.args}`);
-    step("B. a terminal `coop update` keeps \"coop\" on the window");
+    const after = await shortcut(machine.desktopShortcut);
+    if (!same(after.target, machine.exe)) throw new Error(`a terminal shortcut repair changed the all-users "coop": ${after.target} ${after.args}`);
+    step("B. a terminal `coop update` leaves \"coop\" for every account on the window");
 
-    await uninstall(paths);
-    installed = false;
-    if (!existsSync(paths.launcherLink) || readFileSync(paths.launcherLink, "utf8") !== checkoutLink) throw new Error("uninstalling the window removed the terminal install's `coop` link");
-    if (!existsSync(paths.terminalShortcut)) throw new Error("uninstalling the window removed the terminal install's \"coop (terminal)\"");
+    await uninstall(machine, "allusers");
+    installed = "";
+    if (!existsSync(user.launcherLink) || readFileSync(user.launcherLink, "utf8") !== checkoutLink) throw new Error("uninstalling the window removed the terminal install's `coop` link");
+    if (!existsSync(user.terminalShortcut) || !existsSync(user.desktopShortcut)) throw new Error("uninstalling the window removed the terminal install's shortcuts");
     if (readFileSync(sentinelFile, "utf8") !== sentinel || readFileSync(settingsFile, "utf8") !== settingsBefore) throw new Error("the profile's window data or agent settings changed");
-    step("B. uninstalling the window keeps the terminal install's link and \"coop (terminal)\"");
+    step("B. uninstalling the window keeps the terminal install's link and shortcuts");
     report.ok = true;
   } catch (error) {
     report.error = error.message;
-    if (installed) { try { await uninstall(paths); report.cleanup = "uninstalled"; } catch (cleanupError) { report.cleanup = cleanupError.message; } }
+    if (installed === "machine") { try { await uninstall(machine, "allusers"); report.cleanup = "uninstalled"; } catch (cleanupError) { report.cleanup = cleanupError.message; } }
+    if (installed === "user") { try { await uninstall(user, "currentuser"); report.cleanup = "uninstalled"; } catch (cleanupError) { report.cleanup = cleanupError.message; } }
     throw error;
   } finally {
     cleanup();
