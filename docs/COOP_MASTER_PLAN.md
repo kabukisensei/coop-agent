@@ -2195,11 +2195,22 @@ left alone. He chose (decision card, 2026-10-20) that **a person commits**:
 coop never commits SQL source, which keeps guardrail rule 1 as it is.
 
 **What it builds on.** [coop-sql-source-control](https://github.com/kabukisensei/coop-sql-source-control)
-(`sqlsc`, v1.0.0) scripts every object to its own file, tells which side changed
+(`sqlsc`, v1.0.1) scripts every object to its own file, tells which side changed
 since the last sync, applies the repo to a database (`get-latest`) and keeps
 checkouts in a shared lock table; an SSMS 21/22 window drives the same CLI. Its
-#26 makes a checkout held by `coop-agent:<user>` that user's own, so their Check
-in commits and releases coop's work.
+#26, released in v1.0.1, makes a checkout held by `coop-agent:<user>` that
+user's own, so their Check in commits and releases coop's work.
+
+**Why this shape.** Checkouts live in the database (`sqlsc.ObjectLock`), so coop
+and developers in SSMS see the same locks and nobody overwrites another's
+change; that is how it avoids conflicts without changing the SSMS flow.
+Only the person who checks in needs sqlsc (CLI or the SSMS add-in); coop needs
+only the CLI, never the add-in, and teammates who do not use it are unaffected.
+The DDL edit guard that blocks direct edits to a checked-out object runs on SQL
+Server, Azure SQL and Fabric SQL database only: Fabric Warehouse and Lakehouse
+SQL endpoints have no DDL triggers, so there checkouts are advisory and
+`status`/`diff` catch the drift. The Git history of the client's SQL repo
+becomes the record of what coop and the team changed and why.
 
 **Fix.** A native `sql_source` tool (`lib/sqlsc.mjs`, `extensions/coop-tools`):
 `status`, `diff`, `locks`, `migrations`, `checkout`/`release` (as
@@ -2215,12 +2226,16 @@ of the git gate's sight) and ask before `get-latest`, `deploy`, `unlock --force`
 `guard install|remove` and `--as` another person. Developers keep working in
 SSMS; sqlsc keeps objects they changed in dev out of coop's `get_latest`.
 
-**Not done here.** The CLI is not pinned in `config/release-manifest.json`:
-coop installs Python tools from PyPI and coop-sql-source-control is a private
-repository that is not published there; until Aaron decides how it is
-distributed, people install its release wheel and `coop doctor` lists it as
-optional. coop committing with approval (through `agent_allowed_to_commit`) is
-a later row if Aaron asks for it.
+**Decisions (Aaron, 2026-10-20).** A person commits; coop never does. The
+install is **manual for now**: Aaron trials it first ("manual for now so I can
+test it out and then make it included by default later after verifying I like
+it"), so the CLI is not pinned in `config/release-manifest.json` (coop installs
+Python tools from PyPI, and coop-sql-source-control is private and not published
+there), people install the v1.0.1 release wheel with `pipx install`, and
+`coop doctor` lists it as optional. Making it a default install is a later row,
+on Aaron's word after his trial. coop committing with the person's approval
+(through `agent_allowed_to_commit` and an approval prompt) can be added later,
+per client, as its own row; Aaron confirmed that is the intended path.
 
 **Gate.** `tests/sqlsc.test.mjs` in the gate lane: the argv never carries a
 commit, check-in, deploy or force; a teammate's checkout stops coop; a missing
@@ -2281,7 +2296,7 @@ tags. A stale row is never a reason to re-do work: check the PR list first.
 | 32 | SQ10 | Deterministic schema compare between environments, the snapshot and the repo with an ordered promotion script, nothing applied (section 12.6) | asked by Aaron 2026-10-12 21:07 and 2026-10-13; SQ2, SQ9 | section 12.6 gate | merged ([#385](https://github.com/kabukisensei/coop-agent/pull/385), 2026-10-12; repo sides [#386](https://github.com/kabukisensei/coop-agent/pull/386), 2026-10-13); unreleased; VM check on the dev Warehouse pending; the standalone `coop-schema-compare` lives in its own repository, `kabukisensei/coop-schema-compare`, with its first tag and PyPI release still Aaron's, after which coop pins it |
 | 33 | SQ11 | coop applies the SQ10 promotion script itself under the write rules, statement by statement (section 12.6) | Aaron 2026-10-13 ("eventually I want to let coop do it"); SQ10 | the script runs on a dev target under the dev rules and on prod under the production write rules, destructive block untouched, every statement audited | not started; Aaron starts it |
 | 34 | U3 | Pi's own dependency tree pinned at install: `config/pi-lock.json` applied by `coop install`, `coop update` and the window package build; doctor drift row; the Pi matrix applies it (section 6.6) | started 2026-10-13 on Aaron's expectation (11:57, relayed by the coordinator) after pi-codemode 1.2.0 broke fresh Pi 1.1.0 installs | the same Pi tree on every machine of a release; a later upstream publish cannot change a fresh install | merged ([#388](https://github.com/kabukisensei/coop-agent/pull/388), 2026-10-13), unreleased; Windows CI proved apply and check on a real `npm ci`; VM check (runbook `review-fixes-vm-check`, section J) pending |
-| 35 | SQ12 | SQL source control at clients through coop-sql-source-control: the `sql_source` tool, coop checks out as `coop-agent:<user>` and never commits, the person checks in; `sqlsc commit`/`checkin` hard-blocked from the shell (section 12.7) | Aaron 2026-10-20 ("go", after choosing that a person commits) | section 12.7 gate | in review (PR) |
+| 35 | SQ12 | SQL source control at clients through coop-sql-source-control: the `sql_source` tool, coop checks out as `coop-agent:<user>` and never commits, the person checks in; `sqlsc commit`/`checkin` hard-blocked from the shell; sqlsc is a manual install (v1.0.1 wheel) until Aaron makes it a default after his trial (section 12.7) | Aaron 2026-10-20 ("go", after choosing that a person commits) | section 12.7 gate | in review (PR) |
 
 Phase 0 rows can each be released as a patch. Later phases are minor versions.
 Rows become `agent:ready` only when Aaron says so. On September 28 he marked the
