@@ -36,13 +36,18 @@ PY="$(command -v python3 2>/dev/null || command -v python 2>/dev/null)"
 if "$PY" - "$ROOT/config/release-manifest.json" <<'PY'
 import json, sys
 m = json.load(open(sys.argv[1]))
-need = {"python_tools": ["ms-fabric-cli", "coop-data-doc", "coop-schema-compare", "fabric-cicd", "pyodbc"]}
+need = {"python_tools": ["ms-fabric-cli", "coop-data-doc", "coop-schema-compare", "coop-sql-source-control", "fabric-cicd", "pyodbc"]}
 missing = [f"{k}.{p}" for k, ps in need.items() for p in ps if not m.get(k, {}).get(p)]
 assert m.get("pi", {}).get("version"), "pi.version"
 assert not missing, missing
 for section in ("extensions", "npm_tools", "mcp_servers", "python_tools"):
     for name, ver in m.get(section, {}).items():
         assert isinstance(ver, str) and ver[:1].isdigit() and not any(c in ver for c in "^~*<> "), f"{section}.{name}={ver!r} is not an exact version"
+# A tool that is not on PyPI (SQ12) names its release asset, hash and token variable, at the pin.
+for name, src in m.get("python_tool_sources", {}).items():
+    pin = m["python_tools"][name]
+    assert src["asset"].startswith(name.replace("-", "_") + "-" + pin + "-") and src["asset"].endswith(".whl"), f"python_tool_sources.{name}.asset is not the {pin} wheel"
+    assert len(src["sha256"]) == 64 and src["tag"] == "v" + pin and src["token_env"], f"python_tool_sources.{name} is incomplete"
 PY
 then ok "the manifest pins Pi and every tool doctor --fix repairs, all to exact versions"
 else ko "the manifest is missing a pin or holds a range"; fi

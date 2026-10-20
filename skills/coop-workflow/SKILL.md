@@ -72,11 +72,13 @@ partial, or connected project without requiring the user to edit YAML.
    and work from its `deploy.sql`: the destructive statements there are commented
    out and stay the user's decision, and every statement that runs against the
    target goes through the usual write approvals. When the client SQL repository
-   is under source control (`sql_source` does not answer "not set up"), check the
-   object out with `sql_source` (`command="checkout"`, the task as `note`) before
-   changing it, live or in its file, and stop if someone else has it; after the
-   change, `script` (a live dev change into the files) or `get_latest` (the files
-   onto dev, dry run first), then ask the user to check it in. If local
+   is under source control (`sql_source` does not answer "off" or "not set up"),
+   check the object out with `sql_source` (`command="checkout"`, the task as
+   `note`) before changing it, live or in its file, and stop if someone else has
+   it; after the change, `script` (a live dev change into the files; it stops
+   when the object also changed in the files) or `get_latest` (the files onto
+   dev, dry run first), show the diff, then `commit` with a message that says
+   what changed and why (the user approves it; never push). If local
    source is missing or partial, use read-only dev/test live
    metadata/schema/code to fill gaps. Mark each fact's provenance (repo or live
    environment) and report drift. Use **Microsoft Learn** for current Microsoft docs.

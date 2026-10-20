@@ -174,6 +174,8 @@ COOP_TEST_DIST="$TMP" node "$ROOT/tests/bpa-review.test.mjs"
 
 echo "→ data-doc config reader and contract review-scope tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/review-scope.test.mjs"
+echo "→ lineage docs over a coop-sql-source-control repo"
+node "$ROOT/tests/sqlsc-datadoc.test.mjs"
 echo "→ coop-guardrails enforcement tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/guardrails.test.mjs"
 echo "→ start-here menu tests"

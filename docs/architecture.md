@@ -94,7 +94,8 @@ for the Node tools and extensions; no script builds these paths inline.
      from the repo's `.sql` files by `lib/sql_source.py`, a sorted diff and an
      ordered promotion script under `.coop/schema-compare/`, applied by nobody
      but a person) and `sql_source` (`lib/sqlsc.mjs`: the `coop-sqlsc` CLI for
-     SQL source control, checkouts as `coop-agent:<user>`, no commit verb), which shell out and return
+     SQL source control, off until `/sql-source on`; checkouts as `coop-agent:<user>`,
+     commits with approval, never a push), which shell out and return
      JSON the model reasons over. SQL/DAX/semantic-model standards need no tool: at launch
      `lib/standards.mjs` resolves the active coop-standards wiki articles and the
      extension feeds them into every such task, and the agent self-checks its diff

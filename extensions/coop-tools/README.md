@@ -8,9 +8,10 @@ the governed `fabric_sql_query` fallback, `sql_impact` (the read-only live catal
 trace of one object), `catalog_snapshot` (the committed dev catalog) and
 `schema_compare` (the read-only diff of two schemas, live environments or the
 repo's `.sql` files, with an ordered promotion script that is never run by coop)
-and `sql_source` (SQL source control through `coop-sqlsc`: checkouts, status,
-writing dev's changes into the repo files and applying the files to dev; coop
-never commits, the user checks in):
+and `sql_source` (SQL source control through `coop-sqlsc`, once the user runs
+`/sql-source on`: checkouts, status, writing dev's changes into the repo files,
+applying the files to dev, committing the scripted files with the user's approval
+and releasing a commit to dev or test; never a push or production):
 
 ```sh
 pi -e extensions/coop-tools

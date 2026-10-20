@@ -48,11 +48,17 @@ import {
   NOT_INSTALLED_TEXT as SQL_SOURCE_NOT_INSTALLED,
   NOT_SET_UP_TEXT as SQL_SOURCE_NOT_SET_UP,
   NO_USER_TEXT as SQL_SOURCE_NO_USER,
+  OFF_TEXT as SQL_SOURCE_OFF,
   SQLSC_BIN,
   agentIdentity,
   findSqlscConfig,
+  setSqlSourceEnabled,
+  scriptConflictText,
+  scriptConflicts,
   sqlSourceArgs,
+  sqlSourceEnabled,
   sqlSourceInput,
+  sqlSourceSwitchText,
   sqlSourceText,
 } from "../../lib/sqlsc.mjs";
 import { effectiveProfile } from "../../lib/user-profile.mjs";
@@ -108,6 +114,7 @@ import {
   DEFAULT_OUTPUT_DIR,
   dataDocPrefillFromProject,
   driveJsonlSetup,
+  linkCatalogDependencies,
   expandHomePath,
   findDataDocConfig,
   isHomeFolder,
@@ -219,14 +226,16 @@ const SCHEMA_COMPARE_PARAMS = Type.Object({
 
 const SQL_SOURCE_PARAMS = Type.Object({
   command: Type.Optional(Type.Union(
-    ["status", "diff", "locks", "checkout", "release", "script", "get_latest", "migrations"].map((c) => Type.Literal(c)),
-    { description: "status (default), diff, locks, checkout, release (coop's own), script (dev to files), get_latest (files to dev), migrations." },
+    ["status", "diff", "checkout", "release", "script", "get_latest", "commit", "deploy"].map((c) => Type.Literal(c)),
+    { description: "status (default), diff, checkout, release (coop's own), script (dev to files), get_latest (files to dev), commit (the scripted files; asks), deploy (a commit to dev or test)." },
   )),
   objects: Type.Optional(Type.Array(Type.String(), { description: "Names like dbo.Customer; needed for checkout and release." })),
   note: Type.Optional(Type.String({ description: "checkout: the task, shown to the team." })),
   type: Type.Optional(Type.Union(["schema", "table", "view", "function", "procedure", "trigger"].map((c) => Type.Literal(c)), { description: "checkout of a new object." })),
-  apply: Type.Optional(Type.Boolean({ description: "get_latest: run it (asks); default is a dry run." })),
-  environment: Type.Optional(Type.Union([Type.Literal("dev"), Type.Literal("test"), Type.Literal("prod")], { description: "Reads only; writes go to dev." })),
+  apply: Type.Optional(Type.Boolean({ description: "get_latest, deploy: run it (asks); default is a dry run." })),
+  environment: Type.Optional(Type.Union([Type.Literal("dev"), Type.Literal("test"), Type.Literal("prod")], { description: "Reads: any. deploy: dev or test. Other writes go to dev." })),
+  ref: Type.Optional(Type.String({ description: "deploy: the commit, branch or tag to release (default HEAD)." })),
+  message: Type.Optional(Type.String({ description: "commit: what changed and why, one line." })),
 });
 
 const FABRIC_SQL_QUERY_PARAMS = Type.Object({
@@ -1254,6 +1263,12 @@ async function runQuickSetup(pi: ExtensionAPI, ctx: any, prefill: DataDocSetupPr
   const outcome: JsonlSetupOutcome = {};
   const ok = await runJsonlSetup(pi, ctx, { ...dataDocPrefillFromProject(dirname(findDataDocConfig(ctx.cwd) || join(ctx.cwd, DATADOC_CONFIG))), ...prefill }, outcome);
   if (ok) {
+    // an sqlsc scripts folder with Dependencies.json: check lineage against it
+    try {
+      const configPath = findDataDocConfig(ctx.cwd);
+      const linked = configPath ? await linkCatalogDependencies({ executable: resolveDataDocExecutable(), configPath }) : "";
+      if (linked) notify(ctx, linked, "info");
+    } catch (e: any) { notify(ctx, `Dependency list not linked: ${errMsg(e)}`, "warning"); }
     try { await offerDataDocsCi(ctx); } catch (e: any) { notify(ctx, `Lineage docs CI not offered: ${errMsg(e)}`, "warning"); }
   }
   if (ok && outcome.notRunnable !== undefined) {
@@ -2512,13 +2527,16 @@ export default function coopTools(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
+  // Registered only while the user's switch is on (/sql-source on, then /new or
+  // a restart): off, the tool and its guidance cost no model context at all.
+  if (sqlSourceEnabled()) pi.registerTool({
     name: "sql_source",
     label: "SQL source control",
-    description: "Git source control for SQL objects (coop-sqlsc) where the SQL repo has sqlsc.yml. coop checks out as coop-agent:<user>, changes dev and writes the files; it never commits, the user checks in.",
+    // Metadata kept short: every string here is fixed context (scripts/check-context-budget.ps1).
+    description: "SQL source control (coop-sqlsc) where the SQL repo has sqlsc.yml: checkout, status, script dev to files, get_latest files to dev, commit (asks; never pushes).",
     promptSnippet: "SQL source control: checkout, status, script, get_latest",
     promptGuidelines: [
-      "Under SQL source control, sql_source checkout BEFORE changing an object (stop if someone else has it); after a live dev change run script, after a file edit run get_latest (dry run, then apply); objects changed in the repo or both are a teammate's, never overwrite. Then the user checks in. Not set up or not installed: carry on as usual.",
+      "Under SQL source control: sql_source checkout before changing an object (stop if someone else has it); script after a live dev change, get_latest after a file edit, then commit with a message. Off, not set up or not installed: carry on as usual.",
     ],
     parameters: SQL_SOURCE_PARAMS,
     executionMode: "sequential",
@@ -2527,6 +2545,8 @@ export default function coopTools(pi: ExtensionAPI) {
       if ("error" in input) {
         return { content: [{ type: "text" as const, text: `sql_source: ${input.error}.` }], details: { state: "input_invalid", error: input.error } };
       }
+      // Switched off since this session started (/sql-source off): say so.
+      if (!sqlSourceEnabled()) return { content: [{ type: "text" as const, text: SQL_SOURCE_OFF }], details: { state: "off" } };
       const config = findSqlscConfig(ctx.cwd, findProjectContract(ctx.cwd));
       if (!config) return { content: [{ type: "text" as const, text: SQL_SOURCE_NOT_SET_UP }], details: { state: "not_set_up" } };
       let email = "";
@@ -2538,6 +2558,18 @@ export default function coopTools(pi: ExtensionAPI) {
       if (!agent) return { content: [{ type: "text" as const, text: SQL_SOURCE_NO_USER }], details: { state: "no_user", config } };
       let res;
       try {
+        // Nothing lost between SSMS and the files: before scripting, read status
+        // and refuse objects changed on both sides (lib/sqlsc.mjs scriptConflicts).
+        if (input.command === "script") {
+          const status = await pi.exec(SQLSC_BIN, sqlSourceArgs({ ...input, command: "status", objects: [], environment: "" }, config, agent), { cwd: dirname(config), signal });
+          let statusOut: any = null;
+          try { statusOut = JSON.parse(status.stdout); } catch { /* not JSON: the script call below reports it */ }
+          const conflicts = statusOut && statusOut.ok !== false ? scriptConflicts(statusOut, input.objects) : [];
+          if (conflicts.length) {
+            const { head, lines } = scriptConflictText(conflicts);
+            return { content: [{ type: "text" as const, text: modelText(head, lines, "name fewer objects") }], details: { state: "conflict", command: input.command, config, user: agent, conflicts } };
+          }
+        }
         res = await pi.exec(SQLSC_BIN, sqlSourceArgs(input, config, agent), { cwd: dirname(config), signal });
       } catch (e: any) {
         return { content: [{ type: "text" as const, text: SQL_SOURCE_NOT_INSTALLED }], details: { state: "not_installed", error: errMsg(e) } };
@@ -3282,6 +3314,31 @@ export default function coopTools(pi: ExtensionAPI) {
         pi.sendMessage({ customType: "coop-lineage-context", content: `Lineage context (this session):\n${text}`, display: true });
       } catch (e: any) {
         notify(ctx, `Lineage context unavailable: ${errMsg(e)}`, "warning");
+      }
+    },
+  });
+
+  // The per-user switch for SQL source control (SQ12): `/sql-source on|off`,
+  // plain `/sql-source` shows the state. Remembered in ~/.coop/config for this
+  // Windows user; the shell guardrails for sqlsc hold whether it is on or off.
+  pi.registerCommand("sql-source", {
+    description: "SQL source control (sqlsc) for this Windows user: /sql-source on | off | (show)",
+    handler: async (args: string, ctx: ExtensionContext) => {
+      const want = String(args || "").trim().toLowerCase();
+      try {
+        if (want === "on" || want === "off") {
+          const on = setSqlSourceEnabled(want === "on");
+          notify(ctx, `${sqlSourceSwitchText(on)} (saved for this Windows user; the sql_source tool loads at the next /new or restart)`, "info");
+          if (on) notify(ctx, "First time in a repository: ask coop for sql_source status. When the files are behind the dev database, coop scripts the whole database into them and commits that as the baseline (you approve the commit); from then on every dev change coop makes is scripted and committed in the same task.", "info");
+          return;
+        }
+        if (want && want !== "status") {
+          notify(ctx, "Usage: /sql-source on | /sql-source off | /sql-source (shows the state)", "warning");
+          return;
+        }
+        notify(ctx, sqlSourceSwitchText(sqlSourceEnabled()), "info");
+      } catch (e: any) {
+        notify(ctx, `Could not change the SQL source control switch: ${errMsg(e)}`, "error");
       }
     },
   });

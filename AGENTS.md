@@ -27,9 +27,8 @@ Editor BPA, the deterministic model check, when configured), `sql_impact`
 (read-only live catalog trace of one SQL object; call it before editing a live SQL
 object, then `data_doc lineage` for the same object) and `schema_compare` (read-only
 diff of two schemas, live or in the repo, with an ordered promotion script; nothing
-applied), `sql_source` (SQL source control where the SQL repo has `sqlsc.yml`:
-check out before editing; the user checks in),
-plus the Microsoft Fabric CLI (`fab` = ms-fabric-cli) and `fabric_cicd` (a validate-only
+applied) and `sql_source` (SQL source control once the user turns it on: check
+out, script, commit with approval), plus the Microsoft Fabric CLI (`fab` = ms-fabric-cli) and `fabric_cicd` (a validate-only
 Python **library**, not a CLI — `import fabric_cicd` in deployment scripts), and
 read-only Fabric / Power BI / Microsoft Learn MCP servers. Persistent memory is provided
 by pi-hermes-memory.
@@ -39,37 +38,32 @@ coop-standards wiki articles are fed into every such task. Before presenting SQL
 DAX, or model changes, coop **self-checks** its own diff against the same articles.
 The standards are the rule: coop fixes what does not meet them and deviates only on
 a user-granted exception or a stated reason, named in the summary. There is no
-separate rule engine: the former `sql_review` / `dax_review` tools and `coop review`
-were retired in ST1. Offline or on a first run, the wiki's articles come from the
-copy shipped with coop (`config/standards-bundle/`), and coop says so.
+separate rule engine (the former review tools were retired in ST1). Offline or on a
+first run, the articles come from the copy shipped with coop, and coop says so.
 
 `data_doc` wraps `coop-data-doc` with commands `scan` (default; builds the lineage
-graph, read-only), `build` (also writes Markdown docs + portal, indexed by
-`manifest.json`), `check` (CI staleness gate), `lineage` (ONE object's
-upstream/downstream + relationships from the built graph), and `impact` (every
-downstream object that changed source files feed). **Lineage policy:**
-BEFORE analyzing or changing any SQL object, DAX measure, or semantic model, look up
-its lineage (`data_doc` with `command="lineage"`, `object="<name>"`) so you know its
-up/downstream impact — don't re-derive it by hand. coop **auto-detects** built docs at
-session start (a `before_agent_start` hook injects an agent-visible, human-hidden note
-when they exist) and **degrades gracefully** when they're absent: lineage is an aid, not
-a gate, so proceed without it and, if useful, suggest `/setup-docs`.
+graph, read-only), `build` (also writes Markdown docs + portal), `check` (CI
+staleness gate), `lineage` (ONE object's upstream/downstream + relationships) and
+`impact` (every downstream object that changed source files feed). **Lineage
+policy:** BEFORE analyzing or changing any SQL object, DAX measure, or semantic
+model, look up its lineage (`data_doc` with `command="lineage"`, `object="<name>"`)
+so you know its up/downstream impact — don't re-derive it by hand. coop
+**auto-detects** built docs at session start (a hidden note when they exist) and
+**degrades gracefully** when they're absent: lineage is an aid, not a gate, so
+proceed without it and, if useful, suggest `/setup-docs`.
 
-Official Microsoft skills (`skills/_microsoft/`) are **subordinate**: a Microsoft
-skill loads only if allow-listed in `microsoft_skills.allow[]` and it does not
-conflict with a Cooptimize skill — yours always win.
+Official Microsoft skills (`skills/_microsoft/`) are **subordinate**: one loads only
+if allow-listed in `microsoft_skills.allow[]` and no Cooptimize skill conflicts.
 
-The in-agent `/setup-docs` command (and a `setup-docs` skill) runs a native wizard to
-create or rebuild lineage docs for the current folder without leaving the session;
-`coop-data-doc.yml` and the built docs are committable, source is never touched.
-The in-agent `/setup-project` command and the `/start` menu's project item create
-or edit `.coop/project.yml`, the one committed team file at the client's Git root
-(startup never opens the wizard). Contract edits preserve unowned fields and require `/new` or a
-restart before the guardrails use the new trusted snapshot.
+`/setup-docs` (and the `setup-docs` skill) creates or rebuilds lineage docs for the
+current folder in-session; `coop-data-doc.yml` and the built docs are committable,
+source is never touched. `/setup-project` (also from `/start`) creates or edits
+`.coop/project.yml`, the one committed team file at the client's Git root; contract
+edits preserve unowned fields and need `/new` or a restart before the guardrails use
+the new snapshot.
 
-For setup and commands — including `coop install`'s automatic `PATH` linking
-(it adds `~/.local/bin` / `%LOCALAPPDATA%\coop\bin` and prompts you to open a new
-terminal) and `coop doctor`'s dependency checks — see `README.md`. For how coop calls
+For setup and commands, including `coop install`'s `PATH` linking and
+`coop doctor`'s dependency checks, see `README.md`. For how coop calls
 the standalone tools, see `docs/tool-contract.md`. To add custom skills/prompts/tools,
 see `docs/extending.md`.
 
@@ -103,11 +97,9 @@ branches; they are reference material. The simplification retired the bash
 product path, the parity check and the test modes; what remains is one PowerShell
 implementation with its BOM and test obligations.
 
-`experimental/windows-terminal` is a provisional source branch, **not an installed
-or proven-isolated beta**. Do not run the existing installer/updater from that
-branch as a beta setup; the beta channel (B1) is skipped (revision 3.8). The
-roadmap pause applies to the roadmap, not unrelated explicitly requested
-maintenance.
+`experimental/windows-terminal` is a provisional source branch, **not a beta**:
+never run its installer/updater as a beta setup (B1 is skipped, revision 3.8). The
+roadmap pause applies to the roadmap, not explicitly requested maintenance.
 
 **Working a plan row:** follow the master plan's section 14 (one row, one issue,
 one branch named `<id>/<short-name>`, one PR titled with the ID; update the row's
@@ -128,11 +120,10 @@ start the next phase on your own).
 
 ### Environment (prerequisites for the checks)
 
-- Required: `git`, `bash` (the test harness and the release script are bash dev
-  tooling), `python3` (no PyYAML), Node.js + `npx` (the test suite bundles the
-  extensions with esbuild), and `pwsh` (PowerShell 7 — available on Linux and
-  macOS): coop itself is PowerShell, so `tests/run.ps1` and every test that drives
-  `bin/coop.ps1` or `lib/common.ps1` need it.
+- Required: `git`, `bash` (dev tooling), `python3` (no PyYAML), Node.js + `npx`
+  (the test suite bundles the extensions with esbuild), and `pwsh` (PowerShell 7,
+  available on Linux and macOS): coop itself is PowerShell, so `tests/run.ps1` and
+  every test that drives `bin/coop.ps1` or `lib/common.ps1` need it.
 - Optional: `shellcheck` (CI runs it — run locally when installed:
   `shellcheck -S warning -e SC1091 bin/coop scripts/*.sh tests/*.sh`).
 

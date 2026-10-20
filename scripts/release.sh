@@ -84,7 +84,7 @@ coop_release_check_pins() {
   local tool pin rel mismatch=0
   # The pipx-published Coop tools the manifest pins (coop-data-doc and, since
   # SQ10, coop-schema-compare; the reviewers left in ST1).
-  local pin_tools="coop-data-doc coop-schema-compare"
+  local pin_tools="coop-data-doc coop-schema-compare coop-sql-source-control"
   # shellcheck disable=SC2086
   for tool in $pin_tools; do
     # Both files keep a one-`"key": "value"`-per-line layout (the manifest is

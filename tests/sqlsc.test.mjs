@@ -3,13 +3,16 @@
 // guardrails: sqlsc's commit verbs are hard-blocked from the shell, database
 // changes ask, and the tool's get_latest apply asks.
 import { strict as assert } from "node:assert";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const AUDIT_DIR = mkdtempSync(join(tmpdir(), "coop-sqlsrc-audit-"));
 process.env.PI_CODING_AGENT_DIR = AUDIT_DIR;
+// The per-user switch lives in <COOP_DIR>/.coop/config: a fresh one per run.
+const USER_DIR = mkdtempSync(join(tmpdir(), "coop-sqlsrc-user-"));
+process.env.COOP_DIR = USER_DIR;
 
 const lib = await import(new URL("../lib/sqlsc.mjs", import.meta.url).href);
 const dist = process.env.COOP_TEST_DIST;
@@ -24,15 +27,83 @@ await t("input defaults to status and rejects unknown commands and flags in the 
   assert.equal(lib.sqlSourceInput({}).command, "status");
   assert.ok(lib.sqlSourceInput({ command: "commit" }).error);
   assert.ok(lib.sqlSourceInput({ command: "checkin" }).error);
-  assert.ok(lib.sqlSourceInput({ command: "deploy" }).error);
+  assert.ok(lib.sqlSourceInput({ command: "deploy" }).error, "deploy needs dev or test");
+  assert.ok(lib.sqlSourceInput({ command: "deploy", environment: "prod" }).error, "production is a person's release");
+  assert.ok(lib.sqlSourceInput({ command: "deploy", environment: "test", objects: ["dbo.v"] }).error, "a deploy takes no objects");
+  assert.ok(lib.sqlSourceInput({ command: "deploy", environment: "test", ref: "--allow-drops" }).error, "a ref is never an option");
+  assert.equal(lib.sqlSourceInput({ command: "deploy", environment: "test" }).ref, "HEAD");
+  assert.ok(lib.sqlSourceInput({ command: "status", ref: "v1" }).error, "ref is deploy only");
   assert.ok(lib.sqlSourceInput({ command: "checkout" }).error, "checkout needs objects");
-  assert.ok(lib.sqlSourceInput({ command: "status", apply: true }).error, "apply is get_latest only");
+  assert.ok(lib.sqlSourceInput({ command: "status", apply: true }).error, "apply is get_latest/deploy only");
   assert.ok(lib.sqlSourceInput({ command: "script", environment: "prod" }).error, "writes never take an environment");
   assert.ok(lib.sqlSourceInput({ command: "diff", objects: ["--force"] }).error, "an option is not an object name");
   assert.equal(lib.sqlSourceInput({ command: "diff", environment: "prod" }).environment, "prod");
 });
 
-await t("argv: coop acts as coop-agent:<person>, writes only to dev, never commits or forces", async () => {
+await t("the per-user switch: off by default, /sql-source on writes ~/.coop/config and keeps other keys", async () => {
+  const file = join(USER_DIR, ".coop", "config");
+  assert.equal(lib.sqlSourceEnabled(file), false, "no config: off");
+  mkdirSync(join(USER_DIR, ".coop"), { recursive: true });
+  writeFileSync(file, JSON.stringify({ client: { platform: "fabric" } }));
+  assert.equal(lib.sqlSourceEnabled(file), false, "no key: off");
+  assert.equal(lib.setSqlSourceEnabled(true, file, new Date("2026-10-20T22:00:00Z")), true);
+  assert.equal(lib.sqlSourceEnabled(file), true);
+  const raw = JSON.parse(readFileSync(file, "utf8"));
+  assert.equal(raw.client.platform, "fabric", "other keys stay");
+  assert.equal(raw.sql_source_control.changed_at, "2026-10-20T22:00:00.000Z");
+  assert.equal(lib.setSqlSourceEnabled(false, file), false);
+  assert.equal(lib.sqlSourceEnabled(file), false);
+  writeFileSync(file, "{not json");
+  assert.equal(lib.sqlSourceEnabled(file), false, "unreadable: off");
+  assert.equal(lib.setSqlSourceEnabled(true, file), true, "unreadable is replaced");
+  assert.match(lib.sqlSourceSwitchText(true), /ON for this Windows user/);
+  assert.match(lib.sqlSourceSwitchText(false), /OFF for this Windows user/);
+});
+
+await t("a write is classified by the project file, never by the target's name alone", async () => {
+  const entries = { dev: { kind: "azure_sql", server: "contoso-dev.database.windows.net", database: "Sales" }, test: { kind: "fabric_warehouse", server: "", database: "WH_Test" } };
+  const none = () => false;
+  const dev = { name: "dev", kind: "azure_sql", server: "contoso-dev.database.windows.net", database: "sales", protected: false, source: "coop project.yml" };
+  assert.equal(lib.classifySqlscWrite({ environment: "dev", targets: [dev], entries, namesProduction: none }).ok, true);
+  assert.match(lib.classifySqlscWrite({ environment: "prod", targets: [dev], entries, namesProduction: none }).reason, /person/);
+  assert.match(lib.classifySqlscWrite({ environment: "dev", targets: [], entries, namesProduction: none }).reason, /no target named dev/);
+  assert.match(lib.classifySqlscWrite({ environment: "dev", targets: [{ ...dev, protected: true }], entries, namesProduction: none }).reason, /protected/);
+  assert.match(lib.classifySqlscWrite({ environment: "dev", targets: [{ ...dev, server: "contoso-prod.database.windows.net" }], entries, namesProduction: none }).reason, /named like production/);
+  assert.match(lib.classifySqlscWrite({ environment: "dev", targets: [{ ...dev, server: "contoso-live.database.windows.net" }], entries, namesProduction: none }).reason, /named like production/);
+  assert.match(lib.classifySqlscWrite({ environment: "dev", targets: [dev], entries, namesProduction: () => true }).reason, /production server or database in the project file/);
+  assert.match(lib.classifySqlscWrite({ environment: "dev", targets: [dev], entries: {}, namesProduction: none }).reason, /unlabelled/);
+  assert.match(lib.classifySqlscWrite({ environment: "dev", targets: [{ ...dev, server: "other.database.windows.net" }], entries, namesProduction: none }).reason, /conflicting/);
+  assert.match(lib.classifySqlscWrite({ environment: "dev", targets: [{ ...dev, database: "Other" }], entries, namesProduction: none }).reason, /conflicting/);
+  const test = { name: "test", kind: "fabric_warehouse", server: "abc.datawarehouse.fabric.microsoft.com", database: "WH_Test", protected: false, source: "coop project.yml" };
+  assert.equal(lib.classifySqlscWrite({ environment: "test", targets: [test], entries, namesProduction: none }).ok, true, "a Fabric target taken from the contract's ids");
+  assert.match(lib.classifySqlscWrite({ environment: "test", targets: [{ ...test, source: "coop project.yml + sqlsc.yml" }], entries, namesProduction: none }).reason, /sqlsc\.yml/, "an sqlsc.yml override of a Fabric target is not vouched for");
+  assert.match(lib.classifySqlscWrite({ environment: "test", targets: [{ name: "test", problem: "no database" }], entries, namesProduction: none }).reason, /not ready/);
+});
+
+await t("commit: needs a one-line message; script refuses objects changed on both sides", async () => {
+  assert.match(lib.sqlSourceInput({ command: "commit" }).error, /needs a message/);
+  assert.match(lib.sqlSourceInput({ command: "commit", message: "--amend" }).error, /dash/);
+  assert.match(lib.sqlSourceInput({ command: "status", message: "x" }).error, /only for commit/);
+  assert.equal(lib.sqlSourceInput({ command: "commit", message: " add\n Region  column " }).message, "add Region column");
+  const status = { ok: true, changes: [
+    { action: "changed", origin: "both", type: "view", object: "[dbo].[v]" },
+    { action: "changed", origin: "database", type: "procedure", object: "[dbo].[p]" },
+    { action: "new", origin: "unknown", type: "table", object: "[dbo].[t]" },
+  ] };
+  assert.deepEqual(lib.scriptConflicts(status).map((c) => c.object), ["[dbo].[v]"]);
+  assert.deepEqual(lib.scriptConflicts(status, ["dbo.p"]), [], "an object named by the user that changed in dev only scripts");
+  assert.equal(lib.scriptConflicts(status, ["dbo.V"]).length, 1);
+  assert.equal(lib.scriptConflicts({ ok: true, changes: [] }).length, 0);
+  const text = lib.scriptConflictText(lib.scriptConflicts(status));
+  assert.match(text.head, /STOP.*both sides.*which side wins/);
+  const root = mkdtempSync(join(tmpdir(), "coop-sqlsrc-folder-"));
+  writeFileSync(join(root, "sqlsc.yml"), "folder: 'sql\\objects'\ntarget: dev\n");
+  assert.equal(lib.sqlscFolder(join(root, "sqlsc.yml")), "sql/objects");
+  writeFileSync(join(root, "sqlsc.yml"), "target: dev\n");
+  assert.equal(lib.sqlscFolder(join(root, "sqlsc.yml")), "database");
+});
+
+await t("argv: coop acts as coop-agent:<person>, writes only to dev, never pushes or forces", async () => {
   const agent = lib.agentIdentity("ada@example.com");
   assert.equal(agent, "coop-agent:ada@example.com");
   const args = (p) => lib.sqlSourceArgs(lib.sqlSourceInput(p), "/r/sqlsc.yml", agent);
@@ -42,9 +113,13 @@ await t("argv: coop acts as coop-agent:<person>, writes only to dev, never commi
   assert.deepEqual(args({ command: "get_latest" }), ["--json", "--config", "/r/sqlsc.yml", "get-latest", "--target", "dev", "--dry-run"]);
   assert.deepEqual(args({ command: "get_latest", apply: true }), ["--json", "--config", "/r/sqlsc.yml", "get-latest", "--target", "dev"]);
   assert.deepEqual(args({ command: "script" }), ["--json", "--config", "/r/sqlsc.yml", "script", "--target", "dev"]);
-  for (const p of [{ command: "status" }, { command: "checkout", objects: ["x"] }, { command: "get_latest", apply: true }, { command: "release", objects: ["x"] }]) {
+  assert.deepEqual(args({ command: "deploy", environment: "test", ref: "v1.4" }), ["--json", "--config", "/r/sqlsc.yml", "deploy", "--target", "test", "--ref", "v1.4", "--dry-run"]);
+  assert.deepEqual(args({ command: "deploy", environment: "dev", apply: true }), ["--json", "--config", "/r/sqlsc.yml", "deploy", "--target", "dev", "--ref", "HEAD"]);
+  assert.deepEqual(args({ command: "commit", message: "add Region", objects: ["dbo.v"] }), ["--json", "--config", "/r/sqlsc.yml", "commit", "--target", "dev", "--as", agent, "--message", "add Region", "--", "dbo.v"]);
+  for (const p of [{ command: "status" }, { command: "checkout", objects: ["x"] }, { command: "get_latest", apply: true }, { command: "release", objects: ["x"] }, { command: "deploy", environment: "test", apply: true }, { command: "commit", message: "m" }]) {
     const a = args(p);
-    for (const word of ["commit", "checkin", "deploy", "--force", "--allow-drops", "--push"]) assert.ok(!a.includes(word), `${p.command} has no ${word}`);
+    for (const word of ["checkin", "--force", "--allow-drops", "--push", "--confirm", "prod"]) assert.ok(!a.includes(word), `${p.command} has no ${word}`);
+    if (p.command !== "commit") assert.ok(!a.includes("commit"), `${p.command} has no commit`);
   }
 });
 
@@ -65,8 +140,12 @@ await t("text: a clash says stop and who has it; a checkout says the person chec
   assert.match(clash.head, /STOP/);
   assert.match(clash.lines[0], /bob@example\.com/);
   const got = lib.sqlSourceText({ command: "checkout" }, { ok: true, user: "coop-agent:ada@example.com", checked_out: [{ object: "[dbo].[v]" }], conflicts: [] });
-  assert.match(got.head, /checks it in/);
-  assert.match(got.head, /never commits/);
+  assert.match(got.head, /commit with a message/);
+  assert.match(got.head, /user approves/);
+  const committed = lib.sqlSourceText({ command: "commit" }, { ok: true, command: "commit", commit: "abc123def4567890", pushed: null, files: [{ action: "changed", path: "dbo/Views/v.sql" }], skipped: [{ object: "[dbo].[t]", locked_by: "bob@example.com" }], held_back: [] });
+  assert.match(committed.head, /committed 1 file\(s\) as abc123def456 .*not pushed/);
+  assert.match(committed.lines[1], /left \[dbo\]\.\[t\]: checked out by bob/);
+  assert.match(lib.sqlSourceText({ command: "commit" }, { ok: true, commit: null, files: [] }).head, /nothing committed/);
   const err = lib.sqlSourceText({ command: "status" }, { ok: false, error: { kind: "connect", message: "cannot reach dev" } });
   assert.match(err.head, /failed \(connect\): cannot reach dev/);
 });
@@ -89,13 +168,24 @@ if (tools) {
       return { code: 1, stdout: "", stderr: "" };
     },
   };
+  lib.setSqlSourceEnabled(false);
   tools.default(pi);
-  const tool = registered.get("sql_source");
+  let tool = registered.get("sql_source");
   const repo = mkdtempSync(join(tmpdir(), "coop-sqlsrc-tool-"));
   const run = (params, cwd = repo) => tool.execute("id", params, undefined, undefined, { cwd });
 
-  await t("the tool is registered and says when source control is not set up", async () => {
-    assert.ok(tool, "sql_source is registered");
+  await t("the tool is not even registered while the switch is off; on, it says when source control is not set up", async () => {
+    assert.equal(tool, undefined, "off (the default): no sql_source tool, no fixed context");
+    lib.setSqlSourceEnabled(true);
+    tools.default(pi);
+    tool = registered.get("sql_source");
+    assert.ok(tool, "on: sql_source is registered");
+    lib.setSqlSourceEnabled(false);
+    const off = await run({ command: "status" });
+    assert.equal(off.details.state, "off", "switched off mid-session: the loaded tool says so");
+    assert.match(off.content[0].text, /\/sql-source on/);
+    assert.equal(execs.length, 0, "off: nothing runs");
+    lib.setSqlSourceEnabled(true);
     const r = await run({ command: "status" });
     assert.equal(r.details.state, "not_set_up");
     assert.match(r.content[0].text, /not set up/);
@@ -118,52 +208,173 @@ if (tools) {
     assert.equal(r.details.state, "not_installed");
     assert.match(r.content[0].text, /not installed/);
   });
+
+  await t("script reads status first and stops on an object changed on both sides; commit never pushes", async () => {
+    sqlsc = (args) => args.includes("status")
+      ? { code: 0, stderr: "", stdout: JSON.stringify({ ok: true, command: "status", changes: [{ action: "changed", origin: "both", type: "view", object: "[dbo].[v]" }, { action: "changed", origin: "database", type: "view", object: "[dbo].[w]" }] }) }
+      : { code: 0, stderr: "", stdout: JSON.stringify({ ok: true, command: "script", target: { name: "dev", kind: "azure_sql", database: "Sales" }, files: [{ action: "changed", path: "dbo/Views/w.sql" }] }) };
+    execs.length = 0;
+    const stop = await run({ command: "script" });
+    assert.equal(stop.details.state, "conflict");
+    assert.match(stop.content[0].text, /STOP[\s\S]*\[dbo\]\.\[v\]/);
+    assert.ok(!execs.some((e) => e[0] === "coop-sqlsc" && e.includes("script")), "nothing was written");
+    const one = await run({ command: "script", objects: ["dbo.w"] });
+    assert.equal(one.details.state, "ok");
+    assert.match(one.content[0].text, /wrote 1 file\(s\)[\s\S]*commit with a message/);
+    sqlsc = () => ({ code: 0, stderr: "", stdout: JSON.stringify({ ok: true, command: "commit", commit: "abc123def456789", pushed: null, files: [{ action: "changed", path: "dbo/Views/w.sql" }], skipped: [], held_back: [] }) });
+    const c = await run({ command: "commit", message: "add Region to w" });
+    const call = execs.findLast((e) => e[0] === "coop-sqlsc");
+    assert.ok(call.includes("commit") && call.includes("--message") && !call.includes("--push") && !call.includes("--force"));
+    assert.match(c.content[0].text, /committed 1 file\(s\) as abc123def456/);
+  });
+
+  await t("deploy: a dry run shows the script and names the person for production", async () => {
+    sqlsc = () => ({ code: 0, stderr: "", stdout: JSON.stringify({ ok: true, command: "deploy", target: { name: "test", kind: "azure_sql", database: "Sales" }, commit: "abc123def456789", steps: [{ action: "alter", type: "view", object: "[dbo].[v]" }], script: "ALTER VIEW dbo.v AS SELECT 1;", applied: false }) });
+    const r = await run({ command: "deploy", environment: "test", ref: "v1.4" });
+    const call = execs.findLast((e) => e[0] === "coop-sqlsc");
+    assert.ok(call.includes("--dry-run") && call.includes("test") && !call.includes("--confirm"));
+    assert.match(r.content[0].text, /dry run.*v1\.4.*Production is released by a person/);
+    assert.match(r.content[0].text, /ALTER VIEW/);
+    const bad = await run({ command: "deploy", environment: "prod", apply: true });
+    assert.equal(bad.details.state, "input_invalid");
+  });
+
+  await t("the /sql-source command turns the switch on and off for this Windows user", async () => {
+    const commands = new Map();
+    const notices = [];
+    const pi2 = { ...pi, registerCommand: (name, cmd) => commands.set(name, cmd), registerTool: () => {} };
+    tools.default(pi2);
+    const cmd = commands.get("sql-source");
+    assert.ok(cmd, "/sql-source is registered");
+    const ctx = { cwd: repo, ui: { notify: (m) => notices.push(m) } };
+    await cmd.handler("off", ctx);
+    assert.equal(lib.sqlSourceEnabled(), false);
+    await cmd.handler("on", ctx);
+    assert.equal(lib.sqlSourceEnabled(), true);
+    await cmd.handler("", ctx);
+    assert.match(notices.at(-1), /ON for this Windows user/);
+    await cmd.handler("maybe", ctx);
+    assert.match(notices.at(-1), /Usage/);
+  });
 }
 
 // --- guardrails --------------------------------------------------------------------
 if (guards) {
   const { sqlscShellRisk, decideSqlSource } = guards;
-  await t("shell: sqlsc commit and checkin are hard-blocked; reads and coop's own checkouts pass", async () => {
-    for (const cmd of ["sqlsc commit -m x", "coop-sqlsc --json checkin", "sqlsc --config a/sqlsc.yml checkin dbo.v -m done", "cd sql && sqlsc commit --push", "coop-sqlsc.exe commit"]) {
+  await t("shell: sqlsc commit, checkin and any write without -t dev|test are hard-blocked; reads and coop's own checkouts pass", async () => {
+    for (const cmd of ["sqlsc commit -m x", "coop-sqlsc --json checkin", "sqlsc --config a/sqlsc.yml checkin dbo.v -m done", "cd sql && sqlsc commit --push", "coop-sqlsc.exe commit",
+      "sqlsc deploy --ref v1", "sqlsc deploy -t prod --ref v1 --confirm prod", "sqlsc deploy -t gold", "sqlsc get-latest", "sqlsc get-latest -t prod", "sqlsc --target live get-latest"]) {
       assert.equal(sqlscShellRisk(cmd)?.hard, true, cmd);
     }
-    for (const cmd of ["sqlsc status", "coop-sqlsc --json diff dbo.v", "sqlsc locks", "sqlsc checkin --no-commit", "sqlsc get-latest --dry-run", "sqlsc deploy -t prod --ref v1 -o r.sql", "sqlsc checkout dbo.v --as coop-agent:ada@example.com", "echo sqlsc commit", "sqlsc history -t prod"]) {
+    for (const cmd of ["sqlsc status", "coop-sqlsc --json diff dbo.v", "sqlsc locks", "sqlsc checkin --no-commit", "sqlsc get-latest --dry-run", "sqlsc deploy -t prod --ref v1 -o r.sql", "sqlsc deploy --dry-run", "sqlsc checkout dbo.v --as coop-agent:ada@example.com", "echo sqlsc commit", "sqlsc history -t prod"]) {
       assert.equal(sqlscShellRisk(cmd), null, cmd);
     }
   });
-  await t("shell: database changes, forced unlocks, the guard and acting as someone else ask", async () => {
-    for (const cmd of ["sqlsc get-latest", "sqlsc deploy -t test --ref v1", "sqlsc unlock dbo.v --force", "sqlsc guard install", "sqlsc checkout dbo.v --as bob@example.com"]) {
+  await t("shell: dev/test writes are classified then ask; forced unlocks, the guard and acting as someone else ask", async () => {
+    for (const cmd of ["sqlsc get-latest -t dev", "sqlsc -t test get-latest", "sqlsc deploy -t test --ref v1", "sqlsc --config x/sqlsc.yml deploy --target=dev", "sqlsc unlock dbo.v --force", "sqlsc guard install", "sqlsc checkout dbo.v --as bob@example.com"]) {
       const risk = sqlscShellRisk(cmd);
       assert.ok(risk && !risk.hard, cmd);
     }
-    assert.equal(sqlscShellRisk("sqlsc get-latest").sessionKey, "sqlsc:get-latest");
+    assert.deepEqual(sqlscShellRisk("sqlsc get-latest -t dev").write, { verb: "get-latest", target: "dev", config: "" });
+    assert.deepEqual(sqlscShellRisk("sqlsc --config x/sqlsc.yml deploy --target=test --ref v2").write, { verb: "deploy", target: "test", config: "x/sqlsc.yml" });
+    assert.equal(sqlscShellRisk("sqlsc get-latest -t dev").sessionKey, "sqlsc:get-latest:dev");
     assert.equal(sqlscShellRisk("sqlsc deploy -t test").sessionKey, null, "a release asks every time");
   });
-  await t("tool: only get_latest with apply asks", async () => {
+  await t("tool: get_latest and deploy with apply ask; commit asks every time", async () => {
     assert.equal(decideSqlSource({ input: { command: "get_latest", apply: true } }).action, "ask");
-    for (const input of [{ command: "get_latest" }, { command: "checkout", objects: ["x"] }, { command: "script" }, {}]) {
+    assert.deepEqual(decideSqlSource({ input: { command: "commit", message: "m" } }).write, { verb: "commit", environment: "repo" });
+    assert.deepEqual(decideSqlSource({ input: { command: "deploy", environment: "test", apply: true } }).write, { verb: "deploy", environment: "test" });
+    for (const input of [{ command: "get_latest" }, { command: "deploy", environment: "test" }, { command: "checkout", objects: ["x"] }, { command: "script" }, {}]) {
       assert.equal(decideSqlSource({ input }).action, "allow", JSON.stringify(input));
     }
   });
 
-  // The real handler: a hard block names the user's way to check in.
+  // The real handler over a client folder: a contract naming the dev target and
+  // an sqlsc.yml; a stubbed coop-sqlsc answers `targets`.
+  const client = mkdtempSync(join(tmpdir(), "coop-sqlsrc-client-"));
+  mkdirSync(join(client, ".coop"));
+  writeFileSync(join(client, ".coop", "project.yml"), `profile:
+  client: 'Contoso'
+sql_targets:
+  default_environment: dev
+  dev:
+    kind: azure_sql
+    server: contoso-dev.database.windows.net
+    database: Sales
+  prod:
+    kind: azure_sql
+    server: contoso-prod.database.windows.net
+    database: Sales
+`);
+  writeFileSync(join(client, "sqlsc.yml"), "folder: database\ntarget: dev\n");
+  let targets = [
+    { name: "dev", kind: "azure_sql", server: "contoso-dev.database.windows.net", database: "Sales", protected: false, source: "coop project.yml" },
+    { name: "test", kind: "azure_sql", server: "contoso-prod.database.windows.net", database: "Sales", protected: false, source: "sqlsc.yml" },
+  ];
   const handlers = {};
-  guards.default({ on: (ev, h) => (handlers[ev] = h), registerCommand: () => {}, exec: async () => ({ stdout: "", code: 0, stderr: "" }) });
+  guards.default({
+    on: (ev, h) => (handlers[ev] = h),
+    registerCommand: () => {},
+    exec: async (bin, args) => (bin === "coop-sqlsc" && args.includes("targets") ? { stdout: JSON.stringify({ ok: true, targets }), code: 0, stderr: "" } : { stdout: "", code: 0, stderr: "" }),
+  });
+  guards.resetSessionGovernance();
   let confirms = 0;
-  const ctx = { cwd: "/tmp/no-such-repo-sqlsrc", hasUI: true, ui: { confirm: async () => { confirms++; return false; }, notify: () => {} } };
-  await t("handler: sqlsc commit is blocked without asking; get-latest asks; the tool's apply asks", async () => {
+  const ctx = { cwd: client, hasUI: true, ui: { confirm: async () => { confirms++; return false; }, notify: () => {} } };
+  await t("handler: commits and unnamed writes are blocked without asking; a vouched-for dev write asks", async () => {
     const commit = await handlers.tool_call({ toolName: "bash", input: { command: "sqlsc commit -m wip" } }, ctx);
     assert.ok(commit?.block && /never commit source/.test(commit.reason) && /Check in/.test(commit.reason));
-    assert.equal(confirms, 0);
-    const apply = await handlers.tool_call({ toolName: "bash", input: { command: "sqlsc get-latest" } }, ctx);
-    assert.ok(apply?.block, "declined");
-    assert.equal(confirms, 1);
+    const deploy = await handlers.tool_call({ toolName: "bash", input: { command: "sqlsc deploy --ref v1" } }, ctx);
+    assert.ok(deploy?.block && /-t dev or -t test/.test(deploy.reason) && /--output/.test(deploy.reason));
+    const prod = await handlers.tool_call({ toolName: "bash", input: { command: "sqlsc deploy -t prod --ref v1 --confirm prod" } }, ctx);
+    assert.ok(prod?.block, "a production release is a person's");
+    assert.equal(confirms, 0, "blocked, never asked");
+    const apply = await handlers.tool_call({ toolName: "bash", input: { command: "sqlsc get-latest -t dev" } }, ctx);
+    assert.ok(apply?.block && /declined/.test(apply.reason));
+    assert.equal(confirms, 1, "dev matched the project file: asked");
     const tool = await handlers.tool_call({ toolName: "sql_source", input: { command: "get_latest", apply: true } }, ctx);
-    assert.ok(tool?.block, "declined");
+    assert.ok(tool?.block && /declined/.test(tool.reason));
     assert.equal(confirms, 2);
     assert.equal(await handlers.tool_call({ toolName: "sql_source", input: { command: "status" } }, ctx), undefined);
-    const headless = await handlers.tool_call({ toolName: "sql_source", input: { command: "get_latest", apply: true } }, { cwd: ctx.cwd, hasUI: false });
+    assert.equal(await handlers.tool_call({ toolName: "sql_source", input: { command: "deploy", environment: "test" } }, ctx), undefined, "a dry run passes");
+    const headless = await handlers.tool_call({ toolName: "sql_source", input: { command: "get_latest", apply: true } }, { cwd: client, hasUI: false });
     assert.ok(headless?.block && /headless/.test(headless.reason));
+  });
+  await t("handler: a target the project file does not vouch for is blocked, whatever its name", async () => {
+    // sqlsc.yml's "test" points at the production server.
+    const shell = await handlers.tool_call({ toolName: "bash", input: { command: "sqlsc deploy -t test --ref v1" } }, ctx);
+    assert.ok(shell?.block && /production/.test(shell.reason), shell?.reason);
+    const tool = await handlers.tool_call({ toolName: "sql_source", input: { command: "deploy", environment: "test", ref: "v1", apply: true } }, ctx);
+    assert.ok(tool?.block && /production/.test(tool.reason), tool?.reason);
+    // The contract has no test entry at all: unlabelled counts as production.
+    targets = [{ name: "test", kind: "azure_sql", server: "contoso-test.database.windows.net", database: "Sales", protected: false, source: "sqlsc.yml" }];
+    const unlabelled = await handlers.tool_call({ toolName: "sql_source", input: { command: "deploy", environment: "test", apply: true } }, ctx);
+    assert.ok(unlabelled?.block && /unlabelled/.test(unlabelled.reason), unlabelled?.reason);
+    // sqlsc not answering: fail closed.
+    targets = null;
+    const silent = await handlers.tool_call({ toolName: "sql_source", input: { command: "get_latest", apply: true } }, ctx);
+    assert.ok(silent?.block && /no target named dev/.test(silent.reason), silent?.reason);
+    assert.equal(confirms, 2, "none of these asked");
+  });
+  await t("handler: a commit asks only where the project file lets coop commit the sqlsc folder, and the shell form points to the tool", async () => {
+    const shell = await handlers.tool_call({ toolName: "bash", input: { command: "sqlsc commit -m wip" } }, ctx);
+    assert.ok(shell?.block && /sql_source tool \(command commit/.test(shell.reason), shell?.reason);
+    const refused = await handlers.tool_call({ toolName: "sql_source", input: { command: "commit", message: "add Region" } }, ctx);
+    assert.ok(refused?.block && /agent_allowed_to_commit/.test(refused.reason) && /database\/\*\*/.test(refused.reason), refused?.reason);
+    assert.equal(confirms, 2, "not asked: the project file does not allow it");
+    writeFileSync(join(client, ".coop", "project.yml"), `${readFileSync(join(client, ".coop", "project.yml"), "utf8")}repositories:
+  warehouse:
+    role: sql
+    local_path: .
+    agent_allowed_to_commit:
+      - "database/**"
+`);
+    guards.resetSessionGovernance();
+    const asked = await handlers.tool_call({ toolName: "sql_source", input: { command: "commit", message: "add Region" } }, ctx);
+    assert.ok(asked?.block && /declined/.test(asked.reason), asked?.reason);
+    assert.equal(confirms, 3, "asked once the folder is allowed");
+    const headless = await handlers.tool_call({ toolName: "sql_source", input: { command: "commit", message: "add Region" } }, { cwd: client, hasUI: false });
+    assert.ok(headless?.block && /headless/.test(headless.reason));
+    assert.equal(await handlers.before_agent_start?.(), undefined, "no unscripted dev write: no note");
   });
 }
 

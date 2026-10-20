@@ -30,7 +30,7 @@ try {
   if ((Coop-ManifestGet -Key 'pi.version') -ceq '1.2.0') { Ok 'Coop-ManifestGet pi.version' } else { Ko "Coop-ManifestGet pi.version (got '$(Coop-ManifestGet -Key 'pi.version')')" }
   if ((Coop-ManifestGet -Key 'node.min') -ceq '22.19.0') { Ok 'Coop-ManifestGet node.min' } else { Ko 'Coop-ManifestGet node.min' }
   if ((Coop-ManifestGet -Key 'extensions.pi-mcp-adapter') -ceq '5.1.0') { Ok 'Coop-ManifestGet extensions.pi-mcp-adapter' } else { Ko 'Coop-ManifestGet extensions.pi-mcp-adapter' }
-  if ((Coop-ManifestGet -Key 'python_tools.coop-data-doc') -ceq '1.3.4') { Ok 'Coop-ManifestGet python_tools.coop-data-doc' } else { Ko 'Coop-ManifestGet python_tools.coop-data-doc' }
+  if ((Coop-ManifestGet -Key 'python_tools.coop-data-doc') -ceq '1.4.0') { Ok 'Coop-ManifestGet python_tools.coop-data-doc' } else { Ko 'Coop-ManifestGet python_tools.coop-data-doc' }
   if ((Coop-ManifestGet -Key 'missing.key') -eq '') { Ok 'Coop-ManifestGet missing key returns empty' } else { Ko 'missing key should return empty' }
   if ((Coop-ManifestExtensionSpec 'pi-mcp-adapter') -ceq 'npm:pi-mcp-adapter@5.1.0') { Ok 'literal extension spec: pi-mcp-adapter' } else { Ko 'extension spec mismatch' }
   if ((Coop-ManifestExtensionSpec '@juicesharp/rpiv-ask-user-question') -ceq 'npm:@juicesharp/rpiv-ask-user-question@2.12.0') { Ok 'literal scoped extension spec' } else { Ko 'scoped extension spec mismatch' }
@@ -119,7 +119,7 @@ for key in ('pi','pi_extensions','coop_extensions','python_tools','fabric_cli','
   if ((Compare-Object $planNpm $wantNpm).Count -eq 0 -and @($plan.NpmTools | Where-Object { $_.Spec -ne "$($_.Name)@$($_.Pin)" }).Count -eq 0) { Ok 'Get-CoopFleetPlan lists every manifest npm tool at its pin (Desktop Bridge on Windows only)' } else { Ko "plan npm tools: $($planNpm -join ', ')" }
   if ($plan.PiSpec -ceq "$($manifest.pi.package)@$($manifest.pi.version)") { Ok 'Get-CoopFleetPlan pins Pi to the manifest' } else { Ko "plan pi spec: $($plan.PiSpec)" }
   $edge = Get-CoopFleetPlan -Edge -NoFabric
-  if ($edge.PiSpec -ceq $manifest.pi.package -and $null -eq $edge.Fabric -and @($edge.PythonTools | Where-Object { $_.Spec -ne $_.Name }).Count -eq 0 -and @($edge.NpmTools | Where-Object { $_.Spec -ne $_.Name }).Count -eq 0 -and @($edge.Extensions | Where-Object { $_.Spec -ne "npm:$($_.Name)@$($_.Pin)" }).Count -eq 0) { Ok '-Edge drops the Pi and tool pins, keeps the extensions pinned; -NoFabric drops the Fabric CLI' } else { Ko "edge plan: pi=$($edge.PiSpec) fabric=$($edge.Fabric)" }
+  if ($edge.PiSpec -ceq $manifest.pi.package -and $null -eq $edge.Fabric -and @($edge.PythonTools | Where-Object { -not $_.Source -and $_.Spec -ne $_.Name }).Count -eq 0 -and @($edge.PythonTools | Where-Object { $_.Source -and $_.Spec -ne "$($_.Name)==$($_.Pin)" }).Count -eq 0 -and @($edge.NpmTools | Where-Object { $_.Spec -ne $_.Name }).Count -eq 0 -and @($edge.Extensions | Where-Object { $_.Spec -ne "npm:$($_.Name)@$($_.Pin)" }).Count -eq 0) { Ok '-Edge drops the Pi and tool pins (a tool that is not on PyPI keeps its release pin), keeps the extensions pinned; -NoFabric drops the Fabric CLI' } else { Ko "edge plan: pi=$($edge.PiSpec) fabric=$($edge.Fabric)" }
 
   # --- status classifier ---------------------------------------------------------
   $cases = @(
