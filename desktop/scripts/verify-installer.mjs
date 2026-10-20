@@ -117,6 +117,8 @@ export function packagePaths(env = process.env, mode = "machine") {
     autoUpdate: join(installDir, "resources", "coop", "scripts", "auto-update.ps1"),
     machineDir,
     updateState: join(machineDir, "update-state.json"),
+    // What a dry run writes instead (never the live state, which every launch reads).
+    dryRunState: join(machineDir, "update-state.dry-run.json"),
     updateLog: join(machineDir, "logs", "update.log"),
     // Electron's default appData folder for the product; the window keeps its
     // data under the coop profile instead, so this must never appear.
@@ -224,7 +226,7 @@ async function main(argv) {
   for (const dir of [paths.installDir, userPaths.installDir, paths.electronAppData]) {
     if (existsSync(dir)) throw new Error(`${dir} already exists on this runner`);
   }
-  for (const file of [paths.launcherLink, paths.terminalShortcut, paths.startMenuTerminalShortcut, paths.updateState]) {
+  for (const file of [paths.launcherLink, paths.terminalShortcut, paths.startMenuTerminalShortcut, paths.updateState, paths.dryRunState]) {
     if (existsSync(file)) throw new Error(`${file} already exists on this runner`);
   }
   if (pathHasEntry(await machinePath(), paths.machineBin)) throw new Error(`${paths.machineBin} is already on this runner's machine PATH`);
@@ -291,12 +293,13 @@ async function main(argv) {
     // The update task's script, as a dry run: it checks github.com, installs
     // nothing and records the state every account's launch reads.
     const dryOut = await runOwned(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", paths.autoUpdate, "-DryRun"], { windowsHide: true, cwd: paths.machineDir }, 180000);
-    if (!existsSync(paths.updateState)) throw new Error(`auto-update.ps1 -DryRun wrote no ${paths.updateState}: ${dryOut.trim().slice(-300)}`);
-    const state = JSON.parse(readFileSync(paths.updateState, "utf8"));
+    if (!existsSync(paths.dryRunState)) throw new Error(`auto-update.ps1 -DryRun wrote no ${paths.dryRunState}: ${dryOut.trim().slice(-300)}`);
+    if (existsSync(paths.updateState)) throw new Error(`auto-update.ps1 -DryRun wrote the live ${paths.updateState} (every launch would announce its result)`);
+    const state = JSON.parse(readFileSync(paths.dryRunState, "utf8"));
     if (state.schema_version !== 1 || state.installed_version !== version || !state.last_run) throw new Error(`the update state is wrong: ${JSON.stringify(state)}`);
     if (!/^(up to date|dry run: would install v\d|waiting: coop is open)/.test(String(state.last_result))) throw new Error(`auto-update.ps1 -DryRun recorded: ${state.last_result}`);
     if (!existsSync(paths.updateLog)) throw new Error(`auto-update.ps1 wrote no ${paths.updateLog}`);
-    step("auto-update.ps1 dry run records the update state and log", { note: `${state.last_result} (newest ${state.latest_version})`, updateState: state });
+    step("auto-update.ps1 dry run records its own state file (not the live one) and the log", { note: `${state.last_result} (newest ${state.latest_version})`, updateState: state });
 
     const doctorOut = await runOwned(paths.exe, ["--doctor"], { windowsHide: true, cwd: paths.installDir }, 60000);
     const doctorLine = doctorOut.trim().split(/\r?\n/).filter(Boolean).pop() || "";
@@ -436,6 +439,7 @@ async function main(argv) {
     throw error;
   } finally {
     rmSync(paths.updateState, { force: true });
+    rmSync(paths.dryRunState, { force: true });
     if (output) writeFileSync(output, JSON.stringify(report, null, 2) + "\n");
   }
   console.log(JSON.stringify({ ok: report.ok, installer: report.installer, sha256: report.installerSha256, version }));

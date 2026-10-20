@@ -483,6 +483,7 @@ await check("verify-installer: the package's paths follow electron-builder's per
   assert.equal(paths.machineMarker, join("C:\\Program Files", "coop", "resources", "runtime", "machine-install.json"));
   assert.equal(paths.autoUpdate, join("C:\\Program Files", "coop", "resources", "coop", "scripts", "auto-update.ps1"));
   assert.equal(paths.updateState, join("C:\\ProgramData", "coop", "update-state.json"));
+  assert.equal(paths.dryRunState, join("C:\\ProgramData", "coop", "update-state.dry-run.json"));
   assert.equal(paths.updateLog, join("C:\\ProgramData", "coop", "logs", "update.log"));
   assert.equal(UPDATE_TASK, "coop update");
   // D1d: the runtime and the snapshot beside the asar.
