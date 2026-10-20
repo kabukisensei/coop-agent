@@ -5,6 +5,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **`coop release` on a Mac without PowerShell 7 no longer stops at the test
+  gate.** Since the guardrails change of 2026-10-07 `tests/run.sh` refuses to
+  start without `pwsh` (its coop.ps1 tests cannot self-skip), so the gate died
+  with "pwsh (PowerShell 7) is required" and the only way on was `--no-check`
+  (v0.37.0 was cut that way). Now, when `pwsh` is missing or does not start,
+  `scripts/release.sh` reads GitHub's check runs for the exact commit being
+  tagged and continues only when every one is complete and green, naming CI as
+  the release's test evidence; a run still in progress, a red check, no runs,
+  or an unreachable GitHub still stop the release, and `--no-check` stays the
+  explicit opt-out. New `tests/release-gate.test.sh` (gate lane).
+
 ## [0.37.0] — 2026-10-20
 
 ### Removed

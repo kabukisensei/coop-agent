@@ -8,9 +8,11 @@
 # Bumps VERSION, config/release-manifest.json and every extensions/*/package.json,
 # rolls CHANGELOG.md's [Unreleased] into a dated [X.Y.Z] heading, commits, tags
 # vX.Y.Z and pushes main + the tag in one atomic push. Gates first: extensions
-# transpile, the full test lanes (bash tests/run.sh and, when pwsh is on PATH,
-# tests/run.ps1 and scripts/check-bom.ps1), and the manifest's coop-tool pins
-# against the sibling coop-website's versions.json. Requires a clean tree on an attached main
+# transpile, the full test lanes (bash tests/run.sh, tests/run.ps1 and
+# scripts/check-bom.ps1 — all three need pwsh, so on a host without a working
+# PowerShell 7 the gate checks instead that GitHub CI is green on the exact
+# commit being tagged), and the manifest's coop-tool pins against the sibling
+# coop-website's versions.json. Requires a clean tree on an attached main
 # that equals origin/main. Runbook: RELEASE.md.
 #
 # This is the one maintainer command that stays in bash after master plan S1
@@ -106,6 +108,93 @@ coop_release_check_pins() {
     coop_die "the coop-tool pins in config/release-manifest.json disagree with coop-website/versions.json — update the manifest (see RELEASE.md), or re-run with --no-check."
   fi
   coop_ok "coop-tool pins match coop-website/versions.json"
+}
+
+# --- Release gate: a working pwsh, or CI green on the commit being tagged ------
+# coop is PowerShell (master plan S1), so every local suite needs pwsh:
+# tests/run.sh refuses to start without it (its coop.ps1 / common.ps1 tests
+# cannot self-skip), and tests/run.ps1 and scripts/check-bom.ps1 are PowerShell.
+# A Mac without PowerShell 7 (or with Homebrew's formula missing its .NET
+# runtime) used to stop here with nothing to do but --no-check. Now such a host
+# verifies the same thing another way: GitHub CI on the exact commit (HEAD ==
+# origin/main, checked earlier) must be complete and green. CI runs every
+# suite on Linux, Windows PowerShell 5.1 and pwsh 7, so it is stronger evidence
+# than one Mac; it only has to exist for this commit. Still running, red, no
+# runs, or GitHub unreachable fail closed (--no-check stays the explicit opt-out).
+coop_release_pwsh_ready() {
+  # Sets COOP_RELEASE_PWSH_WHY on failure.
+  COOP_RELEASE_PWSH_WHY=""
+  if ! have pwsh; then COOP_RELEASE_PWSH_WHY="pwsh (PowerShell 7) is not on PATH"; return 1; fi
+  local probe
+  if ! probe="$(pwsh -NoLogo -NoProfile -Command 'exit 0' 2>&1)"; then
+    COOP_RELEASE_PWSH_WHY="pwsh is on PATH but does not start (${probe%%$'\n'*})"; return 1
+  fi
+  return 0
+}
+
+# Prints the GitHub "owner/repo" of origin, or nothing.
+coop_release_github_repo() {
+  local url
+  url="$(git -C "$COOP_ROOT" remote get-url origin 2>/dev/null || true)"
+  case "$url" in
+    https://github.com/*) url="${url#https://github.com/}" ;;
+    git@github.com:*)     url="${url#git@github.com:}" ;;
+    ssh://git@github.com/*) url="${url#ssh://git@github.com/}" ;;
+    *) return 0 ;;
+  esac
+  url="${url%/}"; url="${url%.git}"
+  printf '%s' "$url"
+}
+
+# coop_release_ci_verdict <sha>: prints one line —
+#   green <n>          every check run on the commit completed successfully
+#   running <names>    at least one check run is queued or in progress
+#   red <names>        at least one completed check run did not succeed
+#   none               GitHub knows no check runs for the commit
+#   unreachable <why>  the API could not be read (no gh/curl, offline, bad JSON)
+# COOP_RELEASE_CHECKS_JSON=<file> reads a saved check-runs response instead
+# (tests). gh is preferred (it carries the user's login); curl works for the
+# public repo without one.
+coop_release_ci_verdict() {
+  local sha="$1" repo json
+  if [ -n "${COOP_RELEASE_CHECKS_JSON:-}" ]; then
+    json="$(cat "$COOP_RELEASE_CHECKS_JSON" 2>/dev/null)" || { printf 'unreachable %s\n' "cannot read $COOP_RELEASE_CHECKS_JSON"; return 0; }
+  else
+    repo="$(coop_release_github_repo)"
+    [ -n "$repo" ] || { printf 'unreachable %s\n' "origin is not a github.com remote"; return 0; }
+    local path="repos/$repo/commits/$sha/check-runs?per_page=100"
+    if have gh; then
+      json="$(gh api "$path" 2>&1)" || { printf 'unreachable %s\n' "gh api failed: ${json%%$'\n'*}"; return 0; }
+    elif have curl; then
+      json="$(curl -fsS -H 'Accept: application/vnd.github+json' "https://api.github.com/$path" 2>&1)" \
+        || { printf 'unreachable %s\n' "curl failed: ${json%%$'\n'*}"; return 0; }
+    else
+      printf 'unreachable %s\n' "neither gh nor curl is installed"; return 0
+    fi
+  fi
+  local py=python3; have python3 || py=python
+  printf '%s' "$json" | "$py" -I -c '
+import json, sys
+try:
+    runs = json.load(sys.stdin).get("check_runs", [])
+except Exception as e:
+    print("unreachable the check-runs response is not JSON (%s)" % e); sys.exit(0)
+if not runs:
+    print("none"); sys.exit(0)
+red, running = [], []
+for r in runs:
+    name = r.get("name") or "?"
+    if r.get("status") != "completed":
+        running.append(name)
+    elif r.get("conclusion") not in ("success", "skipped", "neutral"):
+        red.append("%s (%s)" % (name, r.get("conclusion")))
+if red:
+    print("red " + ", ".join(red))
+elif running:
+    print("running " + ", ".join(running))
+else:
+    print("green %d" % len(runs))
+' 2>/dev/null || printf 'unreachable %s\n' "$py could not parse the check-runs response"
 }
 
 # --- Release gate: an attached main that equals origin/main (#105) ------------
@@ -223,13 +312,31 @@ EOF
     fi
 
     # A release tags exactly the (clean) working tree, so gate on the full Node
-    # suite, the PowerShell suite when pwsh is installed, and the .ps1 BOM check
-    # — the transpile above only proves the extensions compile. These run on the
+    # suite, the PowerShell suite and the .ps1 BOM check (or, without a working
+    # pwsh, on CI being green for this commit) — the transpile above only proves
+    # the extensions compile. These run on the
     # already-clean tree, so they test precisely what will ship.
     # COOP_TEST_EXTENDED=1 runs BOTH test lanes (gate + extended), so a release
     # keeps the full coverage that CI splits between ci.yml (gate, every PR) and
     # extended.yml (nightly). See docs/ci.md. Mirrors bin/coop.ps1.
-    if [ -f "$COOP_ROOT/tests/run.sh" ]; then
+    local pwsh_ready=1
+    coop_release_pwsh_ready || pwsh_ready=0
+    if [ "$pwsh_ready" = "0" ]; then
+      # No local suite can run without PowerShell (see coop_release_pwsh_ready),
+      # so the evidence is GitHub CI on this exact commit instead.
+      local head_sha verdict
+      head_sha="$(git -C "$COOP_ROOT" rev-parse HEAD)"
+      coop_warn "$COOP_RELEASE_PWSH_WHY — the local test suites need PowerShell (tests/run.sh, tests/run.ps1, scripts/check-bom.ps1), so the gate checks GitHub CI on ${head_sha:0:7} instead. To test locally: brew install --cask powershell."
+      verdict="$(coop_release_ci_verdict "$head_sha")"
+      case "$verdict" in
+        green*)   coop_ok "CI is green on ${head_sha:0:7} (${verdict#green } check runs: every suite on Linux, pwsh 7 and Windows PowerShell 5.1) — CI is this release's test evidence" ;;
+        running*) coop_die "CI is still running on ${head_sha:0:7} (${verdict#running }) — wait for it to finish, then re-run coop release; or re-run with --no-check." ;;
+        red*)     coop_die "CI is red on ${head_sha:0:7}: ${verdict#red } — fix main first (or install pwsh and run the suites here), or re-run with --no-check." ;;
+        none)     coop_die "GitHub has no CI runs for ${head_sha:0:7} — push main and wait for ci.yml, or install pwsh (brew install --cask powershell) and run the suites here, or re-run with --no-check." ;;
+        *)        coop_die "could not read CI for ${head_sha:0:7} (${verdict#unreachable }) — install pwsh (brew install --cask powershell) and run the suites here, or check CI on GitHub and re-run with --no-check." ;;
+      esac
+    fi
+    if [ "$pwsh_ready" = "1" ] && [ -f "$COOP_ROOT/tests/run.sh" ]; then
       if have node; then
         local test_log; test_log="$(mktemp)" || coop_die "mktemp failed."
         if COOP_TEST_EXTENDED=1 bash "$COOP_ROOT/tests/run.sh" >"$test_log" 2>&1; then
@@ -243,32 +350,23 @@ EOF
       fi
     fi
     # The PowerShell suite is the product's own test lane (coop runs in
-    # PowerShell). pwsh is optional on a Mac, so a missing pwsh warns rather than
-    # fails: native Windows CI is the evidence for Windows PowerShell 5.1.
-    if [ -f "$COOP_ROOT/tests/run.ps1" ]; then
-      if have pwsh; then
-        local ps_log; ps_log="$(mktemp)" || coop_die "mktemp failed."
-        if pwsh -NoLogo -NoProfile -File "$COOP_ROOT/tests/run.ps1" >"$ps_log" 2>&1; then
-          coop_ok "PowerShell tests pass (tests/run.ps1)"; rm -f "$ps_log"
-        else
-          cat "$ps_log" >&2; rm -f "$ps_log"
-          coop_die "PowerShell tests failed (pwsh -File tests/run.ps1) — fix them, or re-run with --no-check."
-        fi
+    # PowerShell); without a working pwsh the CI check above stood in for it.
+    if [ "$pwsh_ready" = "1" ] && [ -f "$COOP_ROOT/tests/run.ps1" ]; then
+      local ps_log; ps_log="$(mktemp)" || coop_die "mktemp failed."
+      if pwsh -NoLogo -NoProfile -File "$COOP_ROOT/tests/run.ps1" >"$ps_log" 2>&1; then
+        coop_ok "PowerShell tests pass (tests/run.ps1)"; rm -f "$ps_log"
       else
-        coop_warn "pwsh not found — skipping tests/run.ps1 (CI runs it on Windows and Linux)."
+        cat "$ps_log" >&2; rm -f "$ps_log"
+        coop_die "PowerShell tests failed (pwsh -File tests/run.ps1) — fix them, or re-run with --no-check."
       fi
     fi
     # The .ps1 encoding gate is PowerShell (scripts/check-bom.ps1); like
-    # tests/run.ps1 above, a missing pwsh warns rather than fails.
-    if [ -f "$COOP_ROOT/scripts/check-bom.ps1" ]; then
-      if have pwsh; then
-        if pwsh -NoLogo -NoProfile -File "$COOP_ROOT/scripts/check-bom.ps1" >/dev/null 2>&1; then
-          coop_ok "BOM check passes (scripts/check-bom.ps1)"
-        else
-          coop_die "BOM check failed (pwsh -NoProfile -File scripts/check-bom.ps1) — fix it, or re-run with --no-check."
-        fi
+    # tests/run.ps1 above, the CI check stands in for it without pwsh.
+    if [ "$pwsh_ready" = "1" ] && [ -f "$COOP_ROOT/scripts/check-bom.ps1" ]; then
+      if pwsh -NoLogo -NoProfile -File "$COOP_ROOT/scripts/check-bom.ps1" >/dev/null 2>&1; then
+        coop_ok "BOM check passes (scripts/check-bom.ps1)"
       else
-        coop_warn "pwsh not found — skipping scripts/check-bom.ps1 (tests/run.ps1 runs it in CI)."
+        coop_die "BOM check failed (pwsh -NoProfile -File scripts/check-bom.ps1) — fix it, or re-run with --no-check."
       fi
     fi
 
@@ -350,4 +448,7 @@ EOF
   fi
 }
 
-coop_release "$@"
+# Sourceable for tests (tests/release-gate.test.sh): run only when executed.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  coop_release "$@"
+fi
