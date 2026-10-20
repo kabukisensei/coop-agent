@@ -156,9 +156,15 @@ stop it before anything changes); runs the pre-tag gate — esbuild-checks every
 `extensions/*/index.ts`, then `COOP_TEST_EXTENDED=1 bash tests/run.sh` (both
 test lanes, gate and extended, so a release keeps the full suite that CI splits
 between `ci.yml` and the nightly `extended.yml`; see `docs/ci.md`),
-`pwsh -File tests/run.ps1` and `pwsh -File scripts/check-bom.ps1` when `pwsh`
-is installed (a missing `pwsh` warns; native Windows CI is the evidence for
-Windows PowerShell 5.1), then verifies the coop-data-doc `python_tools` pin
+`pwsh -File tests/run.ps1` and `pwsh -File scripts/check-bom.ps1`. All three
+need PowerShell 7 (coop is PowerShell, so `tests/run.sh` refuses to start
+without `pwsh`); on a host with no working `pwsh`, such as a Mac without
+`brew install --cask powershell`, the gate instead reads GitHub's check runs
+for the exact commit being tagged and continues only when they are all
+complete and green (still running, red, none, or GitHub unreachable stop the
+release; `--no-check` remains the explicit opt-out). CI runs every suite on
+Linux, pwsh 7 and Windows PowerShell 5.1, so it is the evidence in that case.
+The gate then verifies the coop-data-doc `python_tools` pin
 in `config/release-manifest.json` matches the sibling
 `../coop-website/versions.json` (`coop_release_check_pins`; a mismatch aborts
 with the fix named, a **missing sibling checkout warns and asks** so an

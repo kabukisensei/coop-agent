@@ -281,7 +281,10 @@ The run scripts are the list; this page does not repeat it.
 - `coop release` runs both lanes. Its pre-tag gate (`scripts/release.sh`, and
   `bin/coop.ps1` on Windows) runs `COOP_TEST_EXTENDED=1 bash tests/run.sh`,
   `tests/run.ps1` and `scripts/check-bom.ps1`, so every release keeps the full
-  suite's coverage. See `RELEASE.md`.
+  suite's coverage. On a host without a working `pwsh` none of the three can
+  run, so the gate checks that GitHub's check runs for the commit being tagged
+  are all complete and green instead (`tests/release-gate.test.sh` covers the
+  verdict reader). See `RELEASE.md`.
 
 The Windows terminal-workstation acceptance workflow runs `tests\run.ps1` with
 `COOP_TEST_EXTENDED=1`, so its behavioral-suite receipt covers both lanes.
