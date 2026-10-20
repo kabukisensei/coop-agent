@@ -46,10 +46,13 @@ export function findCoop(env = process.env, exists = existsSync, resourcesPath =
 }
 
 // Fixed text: paths travel in environment variables, never in a command line.
-// The console shows coop's launch checks (as the "coop (window)" shortcut does)
-// and stays open on a failure so the message can be read. Everything it shows
-// is also transcribed to the launch log (COOP_BOOT_LOG, <profile>\desktop\launch.log),
-// so a console that closed, or never appeared, leaves what it said behind.
+// The console shows coop's launch checks (as the "coop (window)" shortcut does).
+// Its stdin is NUL (the window has no console of its own to hand it), so the
+// Read-Host below cannot hold it open on a failure: what it said survives in
+// the launch log (COOP_BOOT_LOG, <profile>\desktop\launch.log) instead. coop's
+// own lines go there from lib/common.ps1 (Coop-Emit mirrors every line to that
+// file, because they are written to stderr, which a transcript never sees), and
+// the transcript adds PowerShell's own errors; coop.exe shows the tail in its box.
 const SCRIPT = [
   "if ($env:COOP_BOOT_LOG) { try { Start-Transcript -LiteralPath $env:COOP_BOOT_LOG -Append -Force | Out-Null } catch { } }",
   "Set-Location -LiteralPath $env:COOP_BOOT_CWD",
@@ -59,6 +62,20 @@ const SCRIPT = [
   "if ($code) { Read-Host 'Press Enter to close' }",
   "exit $code",
 ].join("; ");
+
+/**
+ * What the setup console said, for the error box: the lines of the launch log
+ * since coop.exe last started a console, without coop.exe's own lines and the
+ * transcript's header and footer, the last `max` of them.
+ */
+export function consoleTail(logText, max = 8) {
+  const lines = String(logText || "").split(/\r?\n/);
+  let start = 0;
+  lines.forEach((line, i) => { if (/ coop\.exe .*: starting coop's setup console/.test(line)) start = i + 1; });
+  const noise = /^(\*{5,}|Windows PowerShell transcript (start|end)|Start time:|End time:|Username:|RunAs User:|Configuration Name:|Machine:|Host Application:|Process ID:|PSVersion:|PSEdition:|PSCompatibleVersions:|BuildVersion:|CLRVersion:|WSManStackVersion:|PSRemotingProtocolVersion:|SerializationVersion:|Transcript started|Command start time:|PS>)/;
+  const said = lines.slice(start).map((l) => l.trimEnd()).filter((l) => l && !/^\d{4}-\d\d-\d\dT[^ ]+ coop\.exe /.test(l) && !noise.test(l));
+  return said.slice(-max);
+}
 
 function checkPath(name, value) {
   if (typeof value !== "string" || !win32.isAbsolute(value) || /[\0\r\n]/.test(value)) throw new Error(`${name} is not an absolute path`);

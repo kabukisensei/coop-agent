@@ -21,7 +21,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { bootstrapProcess, bundledCoop, doctorReport, findCoop, folderArgument, launcherPath, packagedPaths, packagedRuntime } from "../desktop/lib/bootstrap.mjs";
+import { bootstrapProcess, bundledCoop, consoleTail, doctorReport, findCoop, folderArgument, launcherPath, packagedPaths, packagedRuntime } from "../desktop/lib/bootstrap.mjs";
 import { consoleProcess } from "../desktop/lib/terminal.mjs";
 import { APP_ID, taskbarDetails } from "../desktop/lib/app-identity.mjs";
 import { loadSettings, saveSettings } from "../desktop/lib/settings.mjs";
@@ -105,6 +105,18 @@ await check("bootstrapProcess: a console running `coop desktop --app <exe>`, pat
   assert.match(script, /Start-Transcript -LiteralPath \$env:COOP_BOOT_LOG -Append[\s\S]*desktop --app[\s\S]*Stop-Transcript/);
   assert.equal(bootstrapProcess({ coop: "C:\\c.cmd", app: "C:\\a.exe", cwd: "C:\\w", env: { COOP_BOOT_LOG: "stale" }, systemRoot: "C:\\Windows" }).options.env.COOP_BOOT_LOG, undefined, "no log: no stale COOP_BOOT_LOG reaches the console");
   assert.throws(() => bootstrapProcess({ coop: "C:\\c.cmd", app: "C:\\a.exe", cwd: "C:\\w", log: "launch.log", systemRoot: "C:\\Windows" }), /log is not an absolute path/);
+  // The error box shows what the console said: coop's lines since this launch's console started, not coop.exe's lines or the transcript's header.
+  const log = [
+    "2026-10-20T19:00:00.000Z coop.exe 0.37.0 [1]: starting coop's setup console (coop desktop) in C:\\dev\\a; its transcript follows",
+    "old line from an earlier launch",
+    "2026-10-20T20:04:56.000Z coop.exe 0.37.0 [2]: starting coop's setup console (coop desktop) in C:\\dev\\a; its transcript follows",
+    "**********************", "Windows PowerShell transcript start", "Start time: 20261020130459", "Username: VM\\coopuser2", "RunAs User: VM\\coopuser2", "PSVersion: 5.1.26100.1", "**********************",
+    "", "First launch of the coop window: setting up this computer", "  - everything comes from this package", "  x setup did not finish: do what the lines above say",
+    "PS>TerminatingError(): \"The pipeline has been stopped.\"", "2026-10-20T20:07:08.000Z coop.exe 0.37.0 [2]: the setup console exited with code 1 after 131s; windows open: 0",
+  ].join("\r\n");
+  assert.deepEqual(consoleTail(log), ["First launch of the coop window: setting up this computer", "  - everything comes from this package", "  x setup did not finish: do what the lines above say"]);
+  assert.deepEqual(consoleTail(log, 1), ["  x setup did not finish: do what the lines above say"]);
+  assert.deepEqual(consoleTail(""), []);
   assert.doesNotMatch(script, /coop\.exe|C:\\/);
   assert.throws(() => bootstrapProcess({ coop: "coop", app: "C:\\a.exe", cwd: "C:\\w", systemRoot: "C:\\Windows" }), /coop is not an absolute path/);
   assert.throws(() => bootstrapProcess({ coop: "C:\\c.cmd", app: "C:\\a.exe", cwd: "C:\\w\n", systemRoot: "C:\\Windows" }), /cwd/);

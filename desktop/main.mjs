@@ -8,7 +8,7 @@
 // allowlist (lib/rpc-commands.mjs) before it reaches Pi.
 import { app, BrowserWindow, WebContentsView, ipcMain, protocol, session, dialog, shell, clipboard, nativeTheme, Menu, Notification, screen } from "electron";
 import { readFile } from "node:fs/promises";
-import { appendFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import { hostname, userInfo } from "node:os";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -32,7 +32,7 @@ import { DocsSetupRun, AnswerError, docsLocation, listDocsPages, pickedPathAnswe
 import { attach, forget, pruneStore, saveUpload, findPdfjs, AttachError, LIMITS as ATTACH_LIMITS } from "./lib/attachments.mjs";
 import { loadSplash } from "./lib/splash.mjs";
 import { vibesDir, loadVibes, vibeSets, userName, fillVibe, pickVibe } from "./lib/vibes.mjs";
-import { bootstrapProcess, doctorReport, findCoop, folderArgument, packagedPaths } from "./lib/bootstrap.mjs";
+import { bootstrapProcess, consoleTail, doctorReport, findCoop, folderArgument, packagedPaths } from "./lib/bootstrap.mjs";
 import { describeProject, startFolder, windowTitle } from "./lib/projects.mjs";
 import { clientRecord, contractClientName, saveClientRecord } from "../lib/client-folder.mjs";
 import { searchProjectContract } from "../lib/standards.mjs";
@@ -1435,8 +1435,13 @@ async function bootstrap() {
     setTimeout(() => {
       if (frames.size || (picker.win && !picker.win.isDestroyed())) return;
       logLine(`no window opened after the setup console's exit (code ${code}); quitting`);
-      if (code === 0) dialog.showErrorBox("coop", `coop finished starting but no window opened.\n\nStart coop again from its shortcut. If it happens again, run coop doctor in a terminal and send its output and the launch log to your coop admin.${seeLog}`);
-      else dialog.showErrorBox("coop", `coop could not start: its setup console exited with code ${code}.\n\nStart coop again from its shortcut. If it happens again, send the launch log to your coop admin.${seeLog}`);
+      // The console's own last lines (coop's message names the step that
+      // failed), because the console closed with them.
+      let said = "";
+      try { said = consoleTail(readFileSync(launchLog, "utf8")).join("\n"); } catch { said = ""; }
+      const saidBlock = said ? `\n\nThe setup console said:\n${said}` : "";
+      if (code === 0) dialog.showErrorBox("coop", `coop finished starting but no window opened.${saidBlock}\n\nStart coop again from its shortcut. If it happens again, run coop doctor in a terminal and send its output and the launch log to your coop admin.${seeLog}`);
+      else dialog.showErrorBox("coop", `coop could not start: its setup console exited with code ${code}.${saidBlock}\n\nStart coop again from its shortcut. If it happens again, send the launch log to your coop admin.${seeLog}`);
       app.quit();
     }, 5000);
   });

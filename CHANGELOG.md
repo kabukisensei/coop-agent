@@ -114,10 +114,26 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 - **A launch that opens no window is never silent.** The window writes a
   launch log, `<profile>\desktop\launch.log` (this client): one line when it
-  starts coop's setup console, the console's whole transcript, and one line
-  when that console exits with its code and whether a window opened. A console
-  that exits without a window, with any code, now gets a message box naming
-  the code and the log (before, a non-zero exit quit without a word).
+  starts coop's setup console, every line that console prints (coop's own
+  lines are mirrored there, since the console's stdin is NUL and it closes at
+  once on a failure), PowerShell's transcript, and one line when that console
+  exits with its code and whether a window opened. A console that exits
+  without a window, with any code, now gets a message box with the console's
+  last lines, the code and the log (before, a non-zero exit quit without a
+  word).
+
+- **A first launch never asks for an administrator (F3).** The ODBC Driver 18
+  for SQL Server, with its VC++ runtime, is installed by the installer's own
+  elevated step for every account when the machine has no Driver 18 or newer
+  (`scripts/machine-install.ps1`, logged in `machine-install.log`), so the
+  window's first launch in any account, a standard user's included, installs
+  nothing that needs an administrator. Before, that launch raised the Windows
+  administrator prompt for the driver, which a standard user's console could
+  not answer: on the dev VM (2026-10-20) a second account's first launch hung
+  on it for two minutes with nothing printed, then quit. If the driver is still
+  missing, the first launch and `coop doctor` on a machine install say so as a
+  warning naming the administrator's step (run the installer again) and go on;
+  live SQL waits, everything else works.
 
 ### Added
 

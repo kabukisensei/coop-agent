@@ -23,9 +23,9 @@ irm https://raw.githubusercontent.com/kabukisensei/coop-agent/main/scripts/boots
 ```
 
 The installer carries everything coop needs, so nothing else is downloaded and
-winget is not used: see step 6. The first launch asks Windows for administrator
-permission once, for the SQL driver. Paste the same line again to repair a
-half-finished setup. Set `COOP_BOOTSTRAP_NO_LAUNCH=1` first to install without
+winget is not used: see step 6. The installer asks Windows for an administrator
+once and installs for every account, the SQL driver included; no first launch
+asks again. Paste the same line again to repair a half-finished setup. Set `COOP_BOOTSTRAP_NO_LAUNCH=1` first to install without
 opening the window.
 
 Steps 1 to 5 are the terminal-only setup from a Git clone, for maintainers or
@@ -181,10 +181,10 @@ sign-ins under its user folder (`%USERPROFILE%\.coop`).
 
 - **New to coop:** download and run the window installer below; that is the
   whole install. Nothing from step 1 is needed and nothing is fetched from the
-  internet. The first launch in each account asks Windows for administrator
-  permission once, to install the ODBC driver for live SQL; choosing **Yes**
-  accepts Microsoft's license for the driver. Choose **No** and everything else
-  still works; the next launch asks again.
+  internet. The installer's one administrator prompt covers everything,
+  including the ODBC Driver 18 for live SQL (installing it accepts Microsoft's
+  license for the driver); the first launch in each account, a standard
+  user's too, never asks for an administrator.
 - **Already have coop:** run `coop update` in PowerShell, then run the same
   installer. Your sessions, memory, settings and sign-ins stay where they are,
   and `coop` in the terminal keeps working as before. The update comes first
@@ -208,11 +208,14 @@ sign-ins under its user folder (`%USERPROFILE%\.coop`).
    team's `.coop/project.yml` and the others beside it). coop records it in
    `~/.coop/client.json`, finds the project file inside it and opens there every
    time from then on (File > Switch client changes it). One Windows account is
-   one client: its sessions, memory and backups stay in that account. The first time, a console runs the same
-   checklist as `coop install` (prerequisites from the package, the coop tools
-   from the package, the ODBC driver, then the Azure and OpenAI sign-ins): follow
-   what it prints, then start the window again if it stopped.
-   After that the console only shows coop's launch checks and closes on its own.
+   one client: its sessions, memory and backups stay in that account. The first
+   time, a console runs the same checklist as `coop install` (prerequisites from
+   the package, the coop tools from the package, then the Azure and OpenAI
+   sign-ins), with nothing that needs an administrator: follow what it prints,
+   then start the window again if it stopped. If no window opens, a message
+   shows the console's last lines and names the launch log
+   (`%USERPROFILE%\.coop\desktop\launch.log`). After that the console only
+   shows coop's launch checks and closes on its own.
 
 With the terminal coop from steps 1 to 5 as well, the window shares your
 `~/.coop` settings, sign-ins and sessions, leaves your `coop` command and the

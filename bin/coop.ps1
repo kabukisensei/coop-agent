@@ -1067,12 +1067,13 @@ function Invoke-CoopDesktop {
   if (-not $printSpec -and (Test-CoopBundledSetupPending)) {
     Coop-Head 'First launch of the coop window: setting up this computer'
     # The installer is the user's "yes" (D1k): the package carries Git, Python,
-    # the Azure CLI, every coop tool and the ODBC driver, so this installs from
-    # the package with no network, and Windows asks for administrator permission
-    # once for the driver (this console has no keyboard for a question). An older
-    # package without them falls back to winget for a missing prerequisite.
+    # the Azure CLI and every coop tool, so this installs from the package with
+    # no network; the ODBC driver is the installer's own, elevated, step (F3), so
+    # nothing here asks for an administrator (this console has no keyboard, and
+    # a standard user could not answer). An older package without them falls
+    # back to winget for a missing prerequisite.
     if ($script:CoopBundledOdbc) {
-      Coop-Info 'everything comes from this package; Windows asks for administrator permission once, for the SQL driver. The window opens once setup finishes'
+      Coop-Info 'everything comes from this package and nothing here needs an administrator (the installer already set up this computer). The window opens once setup finishes'
     } else {
       Coop-Info 'anything still missing is installed below with winget (Windows may ask for permission); the window opens once setup finishes'
     }

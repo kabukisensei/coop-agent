@@ -171,8 +171,9 @@ cd coop-agent
 
 Or, with nothing installed yet, one line in Windows PowerShell downloads and
 runs the coop window installer, which carries everything above (Git, Python with
-pipx and the coop tools, the Azure CLI, ODBC 18) and needs no winget; its first
-launch asks for administrator permission once, for the ODBC driver
+pipx and the coop tools, the Azure CLI, ODBC 18) and needs no winget; the
+installer asks for an administrator once and installs for every account,
+the ODBC driver included, so no first launch asks again
 (`scripts/bootstrap.ps1`; details in `docs/install-windows.md`):
 
 ```powershell

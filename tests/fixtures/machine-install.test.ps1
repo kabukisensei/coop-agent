@@ -48,6 +48,22 @@ try {
   elseif (@(Get-CoopProfileDirs (Join-Path $t 'nowhere')).Count -ne 0) { Ko 'Get-CoopProfileDirs invents profiles under a missing folder' }
   else { Ok 'the per-account sweep visits every profile but Public and Default*' }
 
+  # 4c: the ODBC installers from coop-runtime.json, and the registered-driver test.
+  $pkg = Join-Path $t 'pkg'
+  $rtDir = Join-Path $pkg 'resources\runtime'
+  New-Item -ItemType Directory -Force -Path (Join-Path $rtDir 'installers') | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $rtDir 'coop-runtime.json'), '{"schema":1,"node":{"dir":"node"},"npm":{"prefix":"npm"},"odbc":{"version":"18.6.2.1","dir":"installers","msi":"msodbcsql.msi","vcRedist":"VC_redist.x64.exe"}}')
+  if ($null -ne (Get-CoopBundledOdbcInstallers $pkg)) { Ko 'Get-CoopBundledOdbcInstallers names installers that are not on disk' }
+  else {
+    foreach ($f in @('msodbcsql.msi', 'VC_redist.x64.exe')) { [System.IO.File]::WriteAllText((Join-Path (Join-Path $rtDir 'installers') $f), 'x') }
+    $odbc = Get-CoopBundledOdbcInstallers $pkg
+    if (-not $odbc -or $odbc.Version -ne '18.6.2.1' -or $odbc.Msi -ne (Join-Path $rtDir 'installers\msodbcsql.msi') -or $odbc.VcRedist -ne (Join-Path $rtDir 'installers\VC_redist.x64.exe')) { Ko "Get-CoopBundledOdbcInstallers: $($odbc | Out-String)" }
+    elseif ($null -ne (Get-CoopBundledOdbcInstallers (Join-Path $t 'nowhere'))) { Ko 'Get-CoopBundledOdbcInstallers invents installers without a marker' }
+    elseif (-not (Test-CoopOdbcDriverNames @('SQL Server', 'ODBC Driver 18 for SQL Server')) -or -not (Test-CoopOdbcDriverNames @('ODBC Driver 19 for SQL Server'))) { Ko 'Test-CoopOdbcDriverNames misses Driver 18 or newer' }
+    elseif ((Test-CoopOdbcDriverNames @('SQL Server', 'ODBC Driver 17 for SQL Server')) -or (Test-CoopOdbcDriverNames @())) { Ko 'Test-CoopOdbcDriverNames accepts Driver 17 or nothing' }
+    else { Ok 'the machine install finds the package''s ODBC MSI and VC++ runtime from coop-runtime.json and installs them only when no Driver 18+ is registered' }
+  }
+
   $path = 'C:\Windows;C:\Windows\System32;%SystemRoot%\x'
   $with = Add-CoopPathEntry $path 'C:\Program Files\coop\bin'
   if ($with -ne ($path + ';C:\Program Files\coop\bin')) { Ko "Add-CoopPathEntry: $with" }

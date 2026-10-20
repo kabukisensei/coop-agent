@@ -794,6 +794,16 @@ function Install-CoopBundledOdbc {
   return 'ok'
 }
 
+# Is this process elevated (a member of the Administrators group with the token
+# to match)? False off Windows.
+function Test-CoopProcessElevated {
+  if ($env:OS -ne 'Windows_NT') { return $false }
+  try {
+    $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+    return (New-Object Security.Principal.WindowsPrincipal $id).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+  } catch { return $false }
+}
+
 function Ensure-CoopFabricOdbcDriver([bool]$AllowPrereqs = $true, [bool]$Auto = $false) {
   $status = Get-CoopFabricSqlRuntimeStatus
   if ($status.state -eq 'ready') { return $true }
@@ -804,15 +814,24 @@ function Ensure-CoopFabricOdbcDriver([bool]$AllowPrereqs = $true, [bool]$Auto = 
   }
   if (-not $AllowPrereqs) { Coop-Warn 'ODBC Driver 18+ is missing (--no-prereqs)' 'install Microsoft.msodbcsql.18, then run: coop doctor'; return $false }
   if ($script:CoopBundledOdbc) {
-    # The window's first launch (--prereqs auto) needs no keyboard question: the
-    # Windows administrator prompt is the ask, and the docs name the license.
-    if (-not $Auto -and -not (Coop-Confirm 'Install Microsoft ODBC Driver 18 for SQL Server from the coop window package and accept its license?')) {
+    # The window's first launch (--prereqs auto) never asks Windows for an
+    # administrator: the driver is a machine prerequisite the installer put on
+    # this computer (scripts/machine-install.ps1, F3), and a standard user's
+    # console has no one to answer the prompt (the dev VM, 2026-10-20: it hung
+    # there with nothing printed). Live SQL waits; everything else works.
+    if ($Auto) {
+      Coop-Warn 'ODBC Driver 18 for SQL Server is not installed on this computer: live SQL waits until it is; everything else works' 'ask whoever installed coop to run the coop installer again (it installs the driver for every account), or an administrator runs: coop install --yes'
+      return $true
+    }
+    # At a keyboard: the Windows administrator prompt is the ask, and the docs
+    # name the license.
+    if (-not (Coop-Confirm 'Install Microsoft ODBC Driver 18 for SQL Server from the coop window package and accept its license?')) {
       Coop-Warn 'ODBC Driver 18+ is required for live SQL; license was not accepted' 're-run with --yes, or start the coop window again'
       return $false
     }
     Coop-Info "installing ODBC Driver $($script:CoopBundledOdbc.Version) for SQL Server from the coop window package: Windows asks for administrator permission once, and installing it accepts Microsoft's license for the driver"
     $result = Install-CoopBundledOdbc
-    if ($result -eq 'declined') { Coop-Warn 'ODBC Driver 18 was not installed: the administrator prompt was declined' 'live SQL needs it; start the coop window again and choose Yes, or ask whoever manages this machine'; return $false }
+    if ($result -eq 'declined') { Coop-Warn 'ODBC Driver 18 was not installed: the administrator prompt was declined' 'live SQL needs it; run coop install --yes again and choose Yes, or ask whoever installed coop to run the coop installer again (it installs the driver for every account)'; return $false }
     if ($result -ne 'ok') { Coop-Warn 'ODBC Driver 18 installation failed' 'start the coop window again, or install Microsoft ODBC Driver 18 for SQL Server yourself, then run: coop doctor'; return $false }
     $after = Get-CoopFabricSqlRuntimeStatus
     if ($after.state -ne 'ready') { Coop-Warn 'ODBC Driver 18 installation completed but the selected Fabric runtime cannot see it' 'open a new terminal, then run: coop doctor'; return $false }
@@ -1404,6 +1423,12 @@ function Coop-ProgEnd {
 # doctor/sync/dispatcher) this is a plain WriteLine, exactly as before.
 function Coop-Emit {
   param([string]$Line)
+  # The window's launch log (COOP_BOOT_LOG, set by coop.exe for its setup
+  # console): every line also lands there, colours stripped, because the
+  # console's stderr is not a transcript's and the console may close at once.
+  if ($env:COOP_BOOT_LOG) {
+    try { [System.IO.File]::AppendAllText($env:COOP_BOOT_LOG, (($Line -replace "$([char]27)\[[0-9;?]*[A-Za-z]", '') + "`r`n")) } catch { }
+  }
   # Non-TTY branch. The [Console]::Error contract is load-bearing: callers and
   # fixtures replace it via [Console]::SetError($writer) to capture output, so
   # emission MUST go through [Console]::Error. But on Windows PowerShell 5.1 in

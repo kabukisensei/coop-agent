@@ -20,6 +20,11 @@
 #      (%LOCALAPPDATA%\Programs\coop): its own uninstaller, then the "coop"
 #      shortcuts and the `coop` link that pointed into it, so no account keeps
 #      an old icon; ~\.coop is never touched;
+#   4c. installs the package's ODBC Driver 18 for SQL Server (with its VC++
+#      runtime) when no Driver 18+ is registered on the machine: the one
+#      machine prerequisite, done here, already elevated, so no account's first
+#      launch asks for an administrator (the dev VM, 2026-10-20: a standard
+#      user's first launch hung on that prompt);
 #   5. registers the scheduled task "coop update" (SYSTEM, highest; daily at
 #      03:00 repeating every hour for a day, and two minutes after any user's
 #      logon; starts when missed, only with a network, 30 minutes at most, one
@@ -106,6 +111,30 @@ function Get-CoopMachineInstallMarkerJson([string]$InstallDir, [string]$Version,
     task           = $TaskName
   }
   return ($marker | ConvertTo-Json)
+}
+# The package's ODBC installers, from resources\runtime\coop-runtime.json (the
+# D1k entries lib/common.ps1 reads as $script:CoopBundledOdbc; this script loads
+# no common.ps1). $null for a package without them or files that are not there.
+function Get-CoopBundledOdbcInstallers([string]$InstallDir) {
+  $marker = Join-Path $InstallDir 'resources\runtime\coop-runtime.json'
+  if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) { return $null }
+  $info = $null
+  try { $info = Get-Content -LiteralPath $marker -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop } catch { return $null }
+  if (-not $info -or -not $info.odbc -or -not $info.odbc.dir -or -not $info.odbc.msi -or -not $info.odbc.vcRedist) { return $null }
+  $odbcDir = Join-Path (Join-Path $InstallDir 'resources\runtime') ([string]$info.odbc.dir)
+  $msi = Join-Path $odbcDir ([string]$info.odbc.msi)
+  $vc = Join-Path $odbcDir ([string]$info.odbc.vcRedist)
+  if (-not (Test-Path -LiteralPath $msi -PathType Leaf) -or -not (Test-Path -LiteralPath $vc -PathType Leaf)) { return $null }
+  return [pscustomobject]@{ Version = [string]$info.odbc.version; Msi = $msi; VcRedist = $vc }
+}
+# Is an ODBC Driver 18 or newer for SQL Server among the registered driver names
+# (HKLM:\SOFTWARE\ODBC\ODBCINST.INI\ODBC Drivers, what pyodbc.drivers() lists)?
+function Test-CoopOdbcDriverNames([string[]]$Names) {
+  foreach ($n in @($Names)) {
+    $m = [regex]::Match([string]$n, '^ODBC Driver (\d+) for SQL Server$')
+    if ($m.Success -and [int]$m.Groups[1].Value -ge 18) { return $true }
+  }
+  return $false
 }
 function ConvertTo-CoopXmlText([string]$Text) { return [System.Security.SecurityElement]::Escape($Text) }
 # The "coop update" task as Task Scheduler XML (schtasks /Create /XML): SYSTEM,
@@ -236,6 +265,25 @@ function Set-CoopMachinePathEntry([string]$Entry, [bool]$Present) {
   } catch { }
   return $true
 }
+function Test-CoopOdbcDriver18Installed {
+  $names = @()
+  try {
+    $key = Get-Item -LiteralPath 'HKLM:\SOFTWARE\ODBC\ODBCINST.INI\ODBC Drivers' -ErrorAction Stop
+    $names = @($key.GetValueNames())
+  } catch { $names = @() }
+  return (Test-CoopOdbcDriverNames $names)
+}
+# The VC++ runtime, then the driver MSI with Microsoft's license accepted (the
+# installer's own "Install" is the yes; the docs name the license), quietly, in
+# this elevated process. msiexec 0 and 3010 (restart later) are success; the
+# runtime's own code is ignored (1638: a newer one is already there).
+function Install-CoopMachineOdbc($Installers) {
+  $vc = Start-Process -FilePath $Installers.VcRedist -ArgumentList @('/install', '/quiet', '/norestart') -Wait -PassThru -WindowStyle Hidden -ErrorAction Stop
+  Coop-MachineInfo "VC++ runtime installer exited $($vc.ExitCode)"
+  $msi = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/i', ('"' + $Installers.Msi + '"'), '/quiet', '/norestart', 'IACCEPTMSODBCSQLLICENSETERMS=YES') -Wait -PassThru -WindowStyle Hidden -ErrorAction Stop
+  if (@(0, 3010) -notcontains $msi.ExitCode) { throw "msiexec exited $($msi.ExitCode)" }
+  if (-not (Test-CoopOdbcDriver18Installed)) { throw 'msiexec succeeded but no ODBC Driver 18+ for SQL Server is registered' }
+}
 function Get-CoopRegisteredTaskXml([string]$Name) {
   try {
     $out = & schtasks.exe /Query /TN $Name /XML 2>$null
@@ -321,6 +369,20 @@ function Invoke-CoopMachineInstall {
   } catch { Coop-MachineFail "could not open the standards folder to every account: $($_.Exception.Message)" }
   # 4b. older per-account packages, in every profile
   Remove-CoopPerUserPackages (Join-Path $env:SystemDrive 'Users')
+  # 4c. the ODBC driver for every account: the one machine prerequisite, so no
+  #     account's first launch needs an administrator.
+  try {
+    if (Test-CoopOdbcDriver18Installed) { Coop-MachineOk 'ODBC Driver 18+ for SQL Server is installed on this machine' }
+    else {
+      $odbc = Get-CoopBundledOdbcInstallers $dir
+      if (-not $odbc) { Coop-MachineInfo 'this package carries no ODBC driver installer; live SQL needs Microsoft ODBC Driver 18 for SQL Server installed by an administrator' }
+      else {
+        Coop-MachineInfo "installing ODBC Driver $($odbc.Version) for SQL Server with its VC++ runtime for every account (accepts Microsoft's license for the driver)"
+        Install-CoopMachineOdbc $odbc
+        Coop-MachineOk "ODBC Driver $($odbc.Version) for SQL Server installed for every account"
+      }
+    }
+  } catch { Coop-MachineFail "could not install the ODBC driver: $($_.Exception.Message) (live SQL needs Microsoft ODBC Driver 18 for SQL Server; an administrator can install it and run the installer again)" }
   # 5. the task
   try {
     Register-CoopUpdateTask $TaskName (Get-CoopUpdateTaskXml $dir $machine $psExe $TaskName) $machine

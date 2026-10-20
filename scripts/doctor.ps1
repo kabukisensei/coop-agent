@@ -495,7 +495,13 @@ switch ($sqlRuntime.state) {
   'pyodbc_missing'   { D-Bad 'Fabric SQL fallback: pyodbc missing from selected runtime' 'coop sync' }
   'pyodbc_wrong'     { D-Bad "Fabric SQL fallback: pyodbc $($sqlRuntime.version) differs from manifest ($(Coop-ManifestGet 'python_tools.pyodbc'))" 'coop sync' }
   'pyodbc_unloadable'{ D-Bad 'Fabric SQL fallback: pyodbc is installed but unloadable' 'coop sync; repair the ms-fabric-cli environment if it persists' }
-  'driver_missing'   { D-Bad 'Fabric SQL fallback: ODBC Driver 18+ for SQL Server is missing' 'coop install --yes, or install Microsoft.msodbcsql.18 manually' }
+  'driver_missing'   {
+    # On this machine's install the driver is the installer's job (F3), not
+    # something a standard user can fix: a warning with the admin's step, never
+    # a failure that keeps the window closed.
+    if (Test-CoopMachineInstall) { D-Warn 'Fabric SQL fallback: ODBC Driver 18+ for SQL Server is not installed on this computer (live SQL waits until it is)' 'ask whoever installed coop to run the coop installer again (it installs the driver for every account), or an administrator runs: coop install --yes' }
+    else { D-Bad 'Fabric SQL fallback: ODBC Driver 18+ for SQL Server is missing' 'coop install --yes, or install Microsoft.msodbcsql.18 manually' }
+  }
   default            { D-Bad 'Fabric SQL fallback: selected Fabric Python runtime is unavailable' 'coop install' }
 }
 }
