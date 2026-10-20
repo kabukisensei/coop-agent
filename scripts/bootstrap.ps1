@@ -25,8 +25,8 @@
 #                     "coop update" task); `coop update` is not needed.
 #   4. first launch   opens the coop window, which sets up this account from
 #                     the package (the Python tools, the sign-ins) and asks
-#                     Windows for administrator permission once, for the SQL
-#                     driver
+#                     for nothing: the installer's one administrator prompt
+#                     already covered everything, the SQL driver included
 # Running it again repairs a half-finished setup: an installed window at the
 # same version is kept and simply opened.
 #
@@ -164,7 +164,7 @@ function Invoke-CoopBootstrap {
   Coop-BootstrapInfo '2. download its coop window installer, SHA-256 checked'
   Coop-BootstrapInfo '3. install it once for every account on this computer (this machine; needs an administrator PowerShell); updates then install themselves'
   if ($noLaunch) { Coop-BootstrapInfo '4. first launch: skipped (COOP_BOOTSTRAP_NO_LAUNCH=1); open "coop" from the Desktop to finish setup' }
-  else { Coop-BootstrapInfo '4. open the coop window: its first launch sets up this account from the package (Windows asks for administrator permission once, for the SQL driver)' }
+  else { Coop-BootstrapInfo '4. open the coop window: its first launch sets up this account from the package and asks for nothing (the installer''s one administrator prompt covered the SQL driver too)' }
   if ($env:COOP_BOOTSTRAP_DRY_RUN -eq '1') { Coop-BootstrapOk 'dry run (COOP_BOOTSTRAP_DRY_RUN=1): nothing was changed'; $script:CoopBootstrapRc = 0; return }
   if ($env:OS -ne 'Windows_NT') {
     Coop-BootstrapFail 'this bootstrap runs on Windows only. On macOS or Linux: git clone the repository, then run ./bin/coop install'

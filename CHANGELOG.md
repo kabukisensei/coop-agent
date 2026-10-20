@@ -184,8 +184,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   profile is written with the Windows account's name and the default settings,
   the console says so with the way to change it (`coop onboard`), and the
   window's set-up card repeats it once at the next launch. A `coop install`
-  at a keyboard still asks. (`onboard.py onboard --name <name>` is the
-  default answer it uses.)
+  at a keyboard still asks. (`onboard.py onboard --name <name> --no-sign-in`
+  is what it runs: the name is the default answer, and `--no-sign-in` keeps
+  that launch from starting an Azure device-code sign-in, which with no one at
+  the keyboard would wait in the hidden setup console forever and keep the
+  window from opening; the console says the sign-in comes later, from
+  `coop onboard --config-only`.)
 - **The package's tools install from a folder with a space in its path.** pip
   splits `PIP_FIND_LINKS` on whitespace, so under `C:\Program Files\coop` (the
   machine install) the wheel folder arrived as two ignored locations and every
