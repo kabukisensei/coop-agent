@@ -882,6 +882,13 @@ if ($proj) {
     elseif ($azTenant.Rc -eq 2) { D-Warn 'Fabric tools enabled but fabric.tenant_id is not a GUID or domain name' 'fix it in .coop/project.yml' }
   }
 
+  # A Warehouse target without profile.client: the guardrails resolve a read
+  # scope only with a client, so every Warehouse read asks and a headless
+  # session is blocked (dev VM, 2026-10-20).
+  $sqlItemId = Get-CoopYamlValue $proj 'fabric.default_sql_endpoint.item_id' ''
+  $clientName = Get-CoopYamlValue $proj 'profile.client' ''
+  if (-not [string]::IsNullOrWhiteSpace($sqlItemId) -and [string]::IsNullOrWhiteSpace($clientName)) { D-Warn 'Warehouse target set but profile.client is empty' 'set profile.client in .coop/project.yml; without it Warehouse reads ask every time and headless sessions are blocked' }
+
   if (Test-CoopToolEnabled $proj 'tabular_editor_cli') {
     $tePath = Get-CoopYamlValue $proj 'tools.tabular_editor_cli.executable_path' ''
     if ([string]::IsNullOrWhiteSpace($tePath) -or $tePath.StartsWith('TODO')) { D-Warn 'Tabular Editor enabled but executable_path not set' 'set tools.tabular_editor_cli.executable_path in .coop/project.yml' }
