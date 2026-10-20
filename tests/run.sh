@@ -237,6 +237,9 @@ COOP_TEST_DIST="$TMP" node "$ROOT/tests/powerline.test.mjs"
 echo "→ vibes & feature-discovery tips contract tests"
 node "$ROOT/tests/vibes.test.mjs"
 
+echo "→ release gate without PowerShell: CI verdict reader, pwsh probe, origin parser (scripts/release.sh)"
+bash "$ROOT/tests/release-gate.test.sh"
+
 echo "→ Git Bash forwarder: bin/coop forwards to coop.ps1 (launch-spec) and release.sh"
 # bin/coop carries no logic (master plan S1): it execs pwsh/powershell on
 # bin/coop.ps1. Driving launch-spec through it proves the forwarder and the

@@ -1933,6 +1933,10 @@ switch -CaseSensitive ($cmd) {
     break
   }
   { $_ -ceq 'help' -or $_ -ceq '--help' -or $_ -ceq '-h' } { Show-Usage; break }
+  # A retired command answers with where it went instead of falling through to
+  # Pi, which would read the word as a message and open a session (a scripted
+  # `coop router-trial` hung on the dev VM's pre-tag check of v0.37.0).
+  'router-trial' { Coop-Die 'coop router-trial was removed in v0.37.0 (the Jev classifier trial, master plan J0: no token saving over the rule). coop/auto routes by its rule alone; nothing to run. See CHANGELOG 0.37.0.' }
   default {
     # Unknown flags (-*) or unknown subcommand: pass straight to pi (files/messages).
     Invoke-LaunchPi -PassArgs $argList
