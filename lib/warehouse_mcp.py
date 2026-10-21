@@ -1020,10 +1020,11 @@ def _mcp_post(
         failed("unreachable")
         return {}, "unavailable", session_id
 
-    # Streamable HTTP notifications have no JSON-RPC response. Microsoft's
-    # endpoint may acknowledge notifications/initialized with 202 or 204 and
-    # an empty body; request messages still fail closed on missing/invalid JSON.
-    if allow_empty_notification and not raw.strip() and status_code in (202, 204):
+    # Streamable HTTP notifications have no JSON-RPC response: any 2xx
+    # acknowledges one (Microsoft's endpoint answers notifications/initialized
+    # with 200, 202 or 204). Request messages still fail closed on
+    # missing/invalid JSON.
+    if allow_empty_notification and isinstance(status_code, int) and 200 <= status_code < 300:
         return {}, "ok", returned_session
 
     # Streamable HTTP requests may return JSON directly or SSE `data:` records.

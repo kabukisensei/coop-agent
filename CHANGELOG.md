@@ -21,7 +21,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `exclude` (leave these out), applied to both sides before the diff, and
   `coop schema compare` takes `--schema` / `--exclude-schema`; `sql_source init`
   passes the same lists to `sqlsc init`, which records them in `sqlsc.yml`
-  (coop-sql-source-control 1.0.2).
+  (coop-sql-source-control 1.0.2). Compare always leaves out the `sqlsc`
+  schema, where SQL source control keeps its locks, unless `schemas` names it.
 - **Pins:** coop-sql-source-control 1.0.1 → 1.0.2 (the schema filter, `commit`
   takes `sqlsc.yml`, `.gitattributes` and `.gitignore` along while they are new,
   text output on a cp1252 console no longer crashes; from its GitHub release,
@@ -237,7 +238,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   sends the negotiated `MCP-Protocol-Version` on later requests. When the probe
   still fails, the row names the first failing step (for example
   `initialize: HTTP 400` or `tools/list: JSON-RPC error -32602`), never a token
-  or server text.
+  or server text. Any 2xx answer acknowledges `notifications/initialized`, which
+  gets no JSON-RPC reply.
 - **A package upgrade brings every account the new tool pins (F3, B6).** The
   window's per-account setup (the first launch's install) ran once per package
   version, so a package with new pins under the same version (one build

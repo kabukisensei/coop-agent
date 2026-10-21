@@ -68,6 +68,7 @@ MAX_CHANGES_IN_RESULT = 200
 # A schema filter (`schemas` keeps only those, `exclude` drops those; names match
 # case-insensitively) applies to both sides before the diff (Aaron, 2026-10-21).
 MAX_FILTER_SCHEMAS = 50
+SQLSC_SCHEMA = "sqlsc"
 FILTER_SCHEMA = re.compile(r"^[^\[\]\x00-\x1f;'\"-][^\[\]\x00-\x1f;'\"]{0,127}$")
 MODULE_KINDS = ("function", "view", "procedure")
 # Kinds that cannot alter a column in place: the script renders a rebuild note.
@@ -784,9 +785,14 @@ def compare(payload: Any, *, cwd: Path | None = None, now: datetime | None = Non
     if error is not None or target_catalog is None:
         return error or sql_query.result("connection_failed", side=target)
 
-    if keep or drop:
-        filter_schemas(source_catalog, keep, drop)
-        filter_schemas(target_catalog, keep, drop)
+    # SQL source control keeps its locks in its own schema: never offer it as
+    # a change unless the person names it in `schemas`.
+    bookkeeping = SQLSC_SCHEMA not in {k.lower() for k in keep} and any(
+        s.lower() == SQLSC_SCHEMA for c in (source_catalog, target_catalog) for s in c.schemas
+    )
+    if keep or drop or bookkeeping:
+        filter_schemas(source_catalog, keep, drop + ([SQLSC_SCHEMA] if bookkeeping else []))
+        filter_schemas(target_catalog, keep, drop + ([SQLSC_SCHEMA] if bookkeeping else []))
     changes = diff(source_catalog, target_catalog)
     taken_at = (now or datetime.now(timezone.utc)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     notes: list[str] = []
@@ -794,6 +800,8 @@ def compare(payload: Any, *, cwd: Path | None = None, now: datetime | None = Non
         notes.append(f"only schemas {', '.join(keep)} compared")
     if drop:
         notes.append(f"schemas {', '.join(drop)} left out")
+    if bookkeeping:
+        notes.append("schema sqlsc (SQL source control's locks) left out")
     for label, catalog in (("source", source_catalog), ("target", target_catalog)):
         for item in catalog.notes:
             notes.append(f"{label}: {item}")

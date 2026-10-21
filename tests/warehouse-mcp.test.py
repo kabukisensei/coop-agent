@@ -807,6 +807,19 @@ try:
         )
         assert request_state == "unavailable"
 
+    # A notification gets no JSON-RPC answer: any 2xx acknowledges it (the
+    # dev VM's endpoint answered notifications/initialized with 200, 2026-10-21).
+    for body, status in ((b"", 200), (b"event: message\n\n", 200), (b"", 202), (b"", 204)):
+        wmcp._http_open = lambda *_a, **_k: FakeResponse(body, status=status)
+        _, note_state, _ = wmcp._mcp_post(
+            wmcp.GLOBAL_SQL_ENDPOINT_URL,
+            "secret-fixture-token",
+            {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+            timeout=1,
+            allow_empty_notification=True,
+        )
+        assert note_state == "ok", (body, status)
+
     wmcp._http_open = lambda *_a, **_k: FakeResponse(
         b'{"jsonrpc":"2.0","id":10,"result":{"tools":[]}}'
     )

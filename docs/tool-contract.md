@@ -491,7 +491,9 @@ same object, is not a change. Everything else
 (constraints, indexes, permissions, row data) is out of scope and the report says so.
 A schema filter applies to both sides before the diff: `schemas` (a list) keeps
 only those schemas, `exclude` leaves those out (up to 50 plain names each,
-matched case-insensitively), and `notes` names the filter.
+matched case-insensitively), and `notes` names the filter. The `sqlsc` schema
+(SQL source control's locks) is always left out, with a note, unless `schemas`
+names it.
 
 The result carries both sides' summaries (environment, kind, database, object
 counts; the snapshot side adds `taken_at`), `counts` (`total`, `add`, `alter`,
