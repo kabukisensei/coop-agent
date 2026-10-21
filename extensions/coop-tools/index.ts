@@ -51,6 +51,7 @@ import {
   OFF_TEXT as SQL_SOURCE_OFF,
   SQLSC_BIN,
   agentIdentity,
+  commitLine,
   commitReleaseLines,
   committedObjects,
   findSqlscConfig,
@@ -64,6 +65,7 @@ import {
   sqlSourceInput,
   sqlSourceSwitchText,
   sqlSourceText,
+  sqlscInitRoot,
 } from "../../lib/sqlsc.mjs";
 import { effectiveProfile } from "../../lib/user-profile.mjs";
 // The /setup-project contract writer and the /setup-docs wizard driver live in
@@ -232,8 +234,8 @@ const SCHEMA_COMPARE_PARAMS = Type.Object({
 
 const SQL_SOURCE_PARAMS = Type.Object({
   command: Type.Optional(Type.Union(
-    ["status", "diff", "checkout", "release", "script", "get_latest", "commit", "deploy"].map((c) => Type.Literal(c)),
-    { description: "status (default), diff, checkout, release (coop's own), script (dev to files), get_latest (files to dev), commit (the scripted files; asks), deploy (a commit to dev or test)." },
+    ["status", "diff", "checkout", "release", "script", "get_latest", "commit", "deploy", "init"].map((c) => Type.Literal(c)),
+    { description: "status (default), diff, checkout, release (coop's own), script (dev to files), get_latest (files to dev), commit (asks), deploy (to dev or test), init (set up; asks)." },
   )),
   objects: Type.Optional(Type.Array(Type.String(), { description: "Names like dbo.Customer; needed for checkout and release." })),
   note: Type.Optional(Type.String({ description: "checkout: the task, shown to the team." })),
@@ -242,6 +244,8 @@ const SQL_SOURCE_PARAMS = Type.Object({
   environment: Type.Optional(Type.Union([Type.Literal("dev"), Type.Literal("test"), Type.Literal("prod")], { description: "Reads: any. deploy: dev or test. Other writes go to dev." })),
   ref: Type.Optional(Type.String({ description: "deploy: the commit, branch or tag to release (default HEAD)." })),
   message: Type.Optional(Type.String({ description: "commit: what changed and why, one line." })),
+  schemas: Type.Optional(Type.Array(Type.String(), { description: "init: only these schemas." })),
+  exclude: Type.Optional(Type.Array(Type.String(), { description: "init: leave these out." })),
 });
 
 const FABRIC_SQL_QUERY_PARAMS = Type.Object({
@@ -2429,6 +2433,8 @@ export function createCodexAuthRecovery(deps: CodexAuthRecoveryDeps = defaultCod
 }
 
 export default function coopTools(pi: ExtensionAPI) {
+  // The first sql_source status of a session names a missing commit line once.
+  let commitHintShown = false;
   pi.registerTool({
     name: "sql_impact",
     label: "SQL impact (live catalog trace)",
@@ -2541,7 +2547,7 @@ export default function coopTools(pi: ExtensionAPI) {
     name: "sql_source",
     label: "SQL source control",
     // Metadata kept short: every string here is fixed context (scripts/check-context-budget.ps1).
-    description: "SQL source control (coop-sqlsc) where the SQL repo has sqlsc.yml: checkout, status, script dev to files, get_latest files to dev, commit (asks; never pushes).",
+    description: "SQL source control (coop-sqlsc): checkout, status, script dev to files, get_latest files to dev, commit (asks; never pushes), init.",
     promptSnippet: "SQL source control: checkout, status, script, get_latest",
     promptGuidelines: [
       "Under SQL source control: sql_source checkout before changing an object (stop if someone else has it); script after a live dev change, get_latest after a file edit, then commit with a message. Off, not set up or not installed: carry on as usual.",
@@ -2555,7 +2561,36 @@ export default function coopTools(pi: ExtensionAPI) {
       }
       // Switched off since this session started (/sql-source off): say so.
       if (!sqlSourceEnabled()) return { content: [{ type: "text" as const, text: SQL_SOURCE_OFF }], details: { state: "off" } };
-      const config = findSqlscConfig(ctx.cwd, findProjectContract(ctx.cwd));
+      const contract = findProjectContract(ctx.cwd);
+      const config = findSqlscConfig(ctx.cwd, contract);
+      // Setting up (Aaron, 2026-10-21): git init when needed, then sqlsc init;
+      // the guardrails asked once before this runs.
+      if (input.command === "init") {
+        if (config) return { content: [{ type: "text" as const, text: `sql_source init: already set up (${config}); run sql_source status.` }], details: { state: "already_set_up", config } };
+        const where = sqlscInitRoot(ctx.cwd, contract);
+        if ("error" in where) return { content: [{ type: "text" as const, text: `sql_source init: ${where.error}.` }], details: { state: "no_repository" } };
+        const file = join(where.root, "sqlsc.yml");
+        const notes: string[] = [];
+        let res;
+        try {
+          if (!existsSync(join(where.root, ".git"))) {
+            const git = await pi.exec("git", ["init", where.root], { cwd: where.root, signal });
+            if (git.code !== 0) return { content: [{ type: "text" as const, text: `sql_source init: git init failed: ${(git.stderr || git.stdout).trim().slice(0, 200)}` }], details: { state: "failed" } };
+            notes.push(`- git init: ${where.root} is a new git repository (no remote yet: a person adds it and pushes)`);
+          }
+          res = await pi.exec(SQLSC_BIN, sqlSourceArgs(input, file, ""), { cwd: where.root, signal });
+        } catch (e: any) {
+          return { content: [{ type: "text" as const, text: SQL_SOURCE_NOT_INSTALLED }], details: { state: "not_installed", error: errMsg(e) } };
+        }
+        let out: any = null;
+        try { out = JSON.parse(res.stdout); } catch { /* not JSON */ }
+        if (!out) return { content: [{ type: "text" as const, text: `sql_source init failed (exit ${res.code}): ${(res.stderr || res.stdout).trim().slice(0, 300)}` }], details: { state: "failed", exitCode: res.code } };
+        const { head, lines } = sqlSourceText(input, out);
+        lines.push(...notes);
+        const allowed = commitLine(file, contract);
+        if (out.ok !== false && !allowed.covered) lines.push(`- before the baseline commit the project file needs ${allowed.line} (the user adds it with /setup-project or by hand, then /new)`);
+        return { content: [{ type: "text" as const, text: modelText(head, lines, "") }], details: { state: out.ok === false ? "refused" : "ok", command: "init", config: file, result: out } };
+      }
       if (!config) return { content: [{ type: "text" as const, text: SQL_SOURCE_NOT_SET_UP }], details: { state: "not_set_up" } };
       let email = "";
       try {
@@ -2603,6 +2638,13 @@ export default function coopTools(pi: ExtensionAPI) {
       }
       const { head, lines } = sqlSourceText(input, out);
       if (pullNote) lines.push(`- ${pullNote}`);
+      // The first status of a session names the project-file line coop's
+      // commits need when it is missing (Aaron, 2026-10-21).
+      if (input.command === "status" && !commitHintShown && out.ok !== false) {
+        commitHintShown = true;
+        const allowed = commitLine(config, contract);
+        if (!allowed.covered) lines.push(`- coop can commit these files only once the project file has ${allowed.line} (the user adds it with /setup-project or by hand, then /new)`);
+      }
       // A commit releases coop's own checkouts of what it committed, like a
       // person's Check in (Aaron, 2026-10-21); sqlsc refuses anyone else's.
       const committed = input.command === "commit" ? committedObjects(out) : [];
@@ -3359,7 +3401,13 @@ export default function coopTools(pi: ExtensionAPI) {
         if (want === "on" || want === "off") {
           const on = setSqlSourceEnabled(want === "on");
           notify(ctx, `${sqlSourceSwitchText(on)} (saved for this Windows user; the sql_source tool loads at the next /new or restart)`, "info");
-          if (on) notify(ctx, "First time in a repository: ask coop for sql_source status. When the files are behind the dev database, coop scripts the whole database into them and commits that as the baseline (you approve the commit); from then on every dev change coop makes is scripted and committed in the same task.", "info");
+          if (on) {
+            const contract = findProjectContract(ctx.cwd);
+            const config = findSqlscConfig(ctx.cwd, contract);
+            const allowed = config ? commitLine(config, contract) : { line: 'agent_allowed_to_commit: ["database/**"] under repositories.<name> in .coop/project.yml', covered: false };
+            notify(ctx, `First time in a repository: ask coop for sql_source status${config ? "" : " (no sqlsc.yml yet: ask coop to set it up with sql_source init; you approve it)"}. When the files are behind the dev database, coop scripts the whole database into them and commits that as the baseline (you approve the commit); from then on every dev change coop makes is scripted and committed in the same task.`, "info");
+            if (!allowed.covered) notify(ctx, `coop commits SQL files only where the project file allows it: add ${allowed.line} (/setup-project or by hand), then /new.`, "info");
+          }
           return;
         }
         if (want && want !== "status") {

@@ -37,7 +37,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { DEPLOY_ENVIRONMENTS, SQLSC_BIN, checkUpstream, classifySqlscWrite, findSqlscConfig, sqlSourceEnabled, sqlscFolder } from "../../lib/sqlsc.mjs";
+import { DEPLOY_ENVIRONMENTS, SQLSC_BIN, checkUpstream, classifySqlscWrite, findSqlscConfig, sqlSourceEnabled, sqlscFolder, sqlscInitRoot } from "../../lib/sqlsc.mjs";
 import { findProjectContract } from "../../lib/standards.mjs";
 import { appendFileSync, existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, parse, resolve } from "node:path";
@@ -2572,9 +2572,13 @@ export async function resolveSqlscWrite(
  *  session if the user says so, a deploy every time), like any DDL on dev.
  *  commit (the scripted files, Aaron 2026-10-20 "commit is fine") asks every
  *  time and only where the project file's agent_allowed_to_commit covers the
- *  sqlsc folder; it is never pushed. */
-export function decideSqlSource(event: any): { action: "allow" | "ask"; reason: string; write?: { verb: "get_latest" | "deploy" | "commit"; environment: string } } {
+ *  sqlsc folder; it is never pushed. init (git init when needed, sqlsc.yml)
+ *  asks once (Aaron, 2026-10-21). */
+export function decideSqlSource(event: any): { action: "allow" | "ask"; reason: string; write?: { verb: "get_latest" | "deploy" | "commit" | "init"; environment: string } } {
   const input = event?.input ?? {};
+  if (input && typeof input === "object" && input.command === "init") {
+    return { action: "ask", reason: "init sets the SQL repository up (git init when needed, sqlsc.yml)", write: { verb: "init", environment: "repo" } };
+  }
   if (input && typeof input === "object" && input.command === "commit") {
     return { action: "ask", reason: "commit records the scripted SQL files in the repository's history", write: { verb: "commit", environment: "repo" } };
   }
@@ -3348,6 +3352,21 @@ export default function coopGuardrails(pi: ExtensionAPI) {
           if (decision.action === "allow" || !decision.write) return;
           const verb = decision.write.verb;
           const label = `sql_source ${verb}`;
+          if (verb === "init") {
+            const contract = findProjectContract(ctx.cwd);
+            const where = findSqlscConfig(ctx.cwd, contract) ? null : sqlscInitRoot(ctx.cwd, contract);
+            // Already set up, or nowhere to set up: the tool says so without changing anything.
+            if (!where || "error" in where) return;
+            if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
+              audit({ cwd: ctx.cwd, kind: "commit-block", tool: "governed-sql-source", decision: "blocked-headless", label, detail: where.root });
+              return { block: true, reason: `coop guardrails: blocked ${label}; setting a repository up needs the user's approval, which is unavailable in headless mode.` };
+            }
+            const git = existsSync(join(where.root, ".git")) ? "" : "git init (a new repository), then ";
+            const choice = await askEditApproval(ctx, "coop guardrails", `SQL source control: set up ${where.root}: ${git}sqlsc init (writes sqlsc.yml, .gitattributes and .gitignore; the dev target comes from the project file). Nothing is committed or pushed. Set it up?`, null);
+            audit({ cwd: ctx.cwd, kind: "commit-block", tool: "governed-sql-source", decision: choice === "declined" ? "declined" : "allowed", label, detail: where.root });
+            if (choice === "declined") return { block: true, reason: `coop guardrails: blocked ${label} (you declined).` };
+            return;
+          }
           if (verb === "commit") {
             const cfg = findSqlscConfig(ctx.cwd, findProjectContract(ctx.cwd));
             const refusal = cfg ? sqlscCommitRefusal(cfg, ensureSessionGovernance(ctx.cwd)) : "no sqlsc.yml here or in the project's SQL repository";

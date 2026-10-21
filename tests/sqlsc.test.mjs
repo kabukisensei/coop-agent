@@ -158,6 +158,30 @@ await t("text: a clash says stop and who has it; a checkout says the person chec
   assert.match(err.head, /failed \(connect\): cannot reach dev/);
 });
 
+await t("init: a schema filter only for init; it sets up the project's SQL repository and names the commit line", async () => {
+  const init = lib.sqlSourceInput({ command: "init", schemas: ["sales", " Finance "], exclude: ["staging"] });
+  assert.deepEqual([init.schemas, init.exclude], [["sales", "Finance"], ["staging"]]);
+  assert.deepEqual(lib.sqlSourceArgs(init, "/r/sqlsc.yml", ""), ["--json", "--config", "/r/sqlsc.yml", "init", "--schema", "sales", "--schema", "Finance", "--exclude-schema", "staging"]);
+  assert.deepEqual(lib.sqlSourceArgs(lib.sqlSourceInput({ command: "init" }), "/r/sqlsc.yml", ""), ["--json", "--config", "/r/sqlsc.yml", "init"], "no filter: sqlsc 1.0.1 flags only");
+  assert.match(lib.sqlSourceInput({ command: "status", schemas: ["sales"] }).error, /only for init/);
+  assert.match(lib.sqlSourceInput({ command: "init", schemas: ["[x]; drop"] }).error, /schema names/);
+  assert.match(lib.sqlSourceInput({ command: "init", objects: ["dbo.v"] }).error, /no objects/);
+  assert.match(lib.sqlSourceText({ command: "init" }, { ok: true, command: "init", config: "/r/sqlsc.yml", folder: "database", target: "dev" }).head, /wrote \/r\/sqlsc\.yml.*status.*script the whole dev database.*"baseline from dev"/);
+  const root = mkdtempSync(join(tmpdir(), "coop-sqlsrc-init-"));
+  mkdirSync(join(root, ".coop"));
+  mkdirSync(join(root, "sql"));
+  const contract = join(root, ".coop", "project.yml");
+  writeFileSync(contract, "repositories:\n  warehouse:\n    role: sql\n    local_path: sql\n");
+  assert.deepEqual(lib.sqlscInitRoot(join(root, "elsewhere"), contract), { root: join(root, "sql"), name: "warehouse" });
+  assert.match(lib.sqlscInitRoot(mkdtempSync(join(tmpdir(), "coop-sqlsrc-nogit-")), null).error, /no SQL repository here/);
+  writeFileSync(join(root, "sql", "sqlsc.yml"), "folder: database\n");
+  assert.deepEqual(lib.commitLine(join(root, "sql", "sqlsc.yml"), contract), { line: 'agent_allowed_to_commit: ["database/**"] under repositories.warehouse in .coop/project.yml', covered: false });
+  writeFileSync(contract, "repositories:\n  warehouse:\n    role: sql\n    local_path: sql\n    agent_allowed_to_commit:\n      - \"database/**\"\n");
+  assert.equal(lib.commitLine(join(root, "sql", "sqlsc.yml"), contract).covered, true);
+  writeFileSync(contract, "repositories:\n  warehouse:\n    role: sql\n    local_path: sql\n    agent_allowed_to_commit: [\"docs/**\"]\n");
+  assert.equal(lib.commitLine(join(root, "sql", "sqlsc.yml"), contract).covered, false, "docs/** does not cover database/");
+});
+
 // --- the tool, over a stubbed coop-sqlsc -------------------------------------------
 if (tools) {
   const registered = new Map();
@@ -253,6 +277,31 @@ if (tools) {
     assert.equal(bad.details.state, "input_invalid");
   });
 
+  await t("init: git init when needed, then sqlsc init in the project's SQL repository; the first status names the missing commit line once", async () => {
+    const home = mkdtempSync(join(tmpdir(), "coop-sqlsrc-home-"));
+    mkdirSync(join(home, ".coop"));
+    mkdirSync(join(home, "sql"));
+    writeFileSync(join(home, ".coop", "project.yml"), "repositories:\n  warehouse:\n    role: sql\n    local_path: sql\n");
+    tools.default(pi);
+    const fresh = registered.get("sql_source");
+    const go = (params) => fresh.execute("id", params, undefined, undefined, { cwd: home });
+    sqlsc = (args) => args.includes("init")
+      ? { code: 0, stderr: "", stdout: JSON.stringify({ ok: true, command: "init", config: join(home, "sql", "sqlsc.yml"), folder: "database", target: "dev" }) }
+      : { code: 0, stderr: "", stdout: JSON.stringify({ ok: true, command: "status", target: { name: "dev", kind: "azure_sql", database: "Sales" }, changes: [], sides: {} }) };
+    execs.length = 0;
+    const r = await go({ command: "init", schemas: ["sales"] });
+    assert.equal(r.details.state, "ok", r.content[0].text);
+    assert.deepEqual(execs[0], ["git", "init", join(home, "sql")], "not a repository yet: git init first");
+    assert.deepEqual(execs[1], ["coop-sqlsc", "--json", "--config", join(home, "sql", "sqlsc.yml"), "init", "--schema", "sales"]);
+    assert.match(r.content[0].text, /baseline from dev[\s\S]*new git repository[\s\S]*agent_allowed_to_commit: \["database\/\*\*"\] under repositories\.warehouse/);
+    writeFileSync(join(home, "sql", "sqlsc.yml"), "folder: database\n");
+    assert.equal((await go({ command: "init" })).details.state, "already_set_up");
+    const first = await go({ command: "status" });
+    assert.match(first.content[0].text, /coop can commit these files only once the project file has agent_allowed_to_commit/);
+    const second = await go({ command: "status" });
+    assert.doesNotMatch(second.content[0].text, /agent_allowed_to_commit/, "once per session");
+  });
+
   await t("the /sql-source command turns the switch on and off for this Windows user", async () => {
     const commands = new Map();
     const notices = [];
@@ -298,6 +347,7 @@ if (guards) {
     assert.equal(decideSqlSource({ input: { command: "get_latest", apply: true } }).action, "ask");
     assert.deepEqual(decideSqlSource({ input: { command: "commit", message: "m" } }).write, { verb: "commit", environment: "repo" });
     assert.deepEqual(decideSqlSource({ input: { command: "deploy", environment: "test", apply: true } }).write, { verb: "deploy", environment: "test" });
+    assert.deepEqual(decideSqlSource({ input: { command: "init" } }).write, { verb: "init", environment: "repo" });
     for (const input of [{ command: "get_latest" }, { command: "deploy", environment: "test" }, { command: "checkout", objects: ["x"] }, { command: "script" }, {}]) {
       assert.equal(decideSqlSource({ input }).action, "allow", JSON.stringify(input));
     }
@@ -389,6 +439,17 @@ sql_targets:
     const headless = await handlers.tool_call({ toolName: "sql_source", input: { command: "commit", message: "add Region" } }, { cwd: client, hasUI: false });
     assert.ok(headless?.block && /headless/.test(headless.reason));
     assert.equal(await handlers.before_agent_start?.(), undefined, "no unscripted dev write: no note");
+  });
+  await t("handler: init asks once where there is something to set up, and is blocked headlessly", async () => {
+    assert.equal(await handlers.tool_call({ toolName: "sql_source", input: { command: "init" } }, ctx), undefined, "already set up: the tool says so, nothing to ask");
+    const fresh = mkdtempSync(join(tmpdir(), "coop-sqlsrc-fresh-"));
+    mkdirSync(join(fresh, ".git"));
+    const before = confirms;
+    const asked = await handlers.tool_call({ toolName: "sql_source", input: { command: "init" } }, { ...ctx, cwd: fresh });
+    assert.ok(asked?.block && /declined/.test(asked.reason), asked?.reason);
+    assert.equal(confirms, before + 1);
+    const headless = await handlers.tool_call({ toolName: "sql_source", input: { command: "init" } }, { cwd: fresh, hasUI: false });
+    assert.ok(headless?.block && /headless/.test(headless.reason));
   });
 }
 
