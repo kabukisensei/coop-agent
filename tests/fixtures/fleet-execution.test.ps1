@@ -341,7 +341,7 @@ try {
   else { Ok 'normal install leaves a pipx tool that already matches its pin alone' }
 
   # --- 5. --edge on an EXISTING machine attempts upstream latest -------------------
-  $m4 = New-Machine 'edge' -HonestPi $false -PipxList @('package coop-data-doc 1.4.0', 'package coop-schema-compare 0.1.1', 'package coop-sql-source-control 1.0.1', 'package ms-fabric-cli 1.7.0')
+  $m4 = New-Machine 'edge' -HonestPi $false -PipxList @('package coop-data-doc 1.4.0', 'package coop-schema-compare 0.1.2', 'package coop-sql-source-control 1.0.2', 'package ms-fabric-cli 1.7.0')
   $out = Invoke-Fleet 'install.ps1' @('--edge')
   if (-not (Test-CallLiteral $m4 'NPM install -g @earendil-works/pi-coding-agent')) { Ko 'edge install did not attempt a Pi upstream update' (Get-Calls $m4) }
   else { Ok 'install --edge attempts a Pi upstream update' }
@@ -359,7 +359,7 @@ try {
   # --- 6. Fabric failed convergence must NOT read as success -------------------------
   # pipx refuses the --force install of ms-fabric-cli==pin while an OLD fab binary
   # stays on PATH: the unit must fail, not report "ready".
-  $m5 = New-Machine 'fabric-fail' -HonestPi $false -PipxList @('package coop-data-doc 1.4.0', 'package coop-schema-compare 0.1.1', 'package coop-sql-source-control 1.0.1', 'package ms-fabric-cli 1.5.0') -FabVersion '1.5.0'
+  $m5 = New-Machine 'fabric-fail' -HonestPi $false -PipxList @('package coop-data-doc 1.4.0', 'package coop-schema-compare 0.1.2', 'package coop-sql-source-control 1.0.2', 'package ms-fabric-cli 1.5.0') -FabVersion '1.5.0'
   $env:PIPX_FAIL_MATCH = 'ms-fabric-cli==1.7.0'
   $out = Invoke-Fleet 'install.ps1'
   if ($rc -eq 0 -or -not $out.Contains('install/sync step(s) failed')) { Ko "failed Fabric convergence returned install success (rc=$rc)" $out }
@@ -369,7 +369,7 @@ try {
   Remove-Item Env:\PIPX_FAIL_MATCH -ErrorAction SilentlyContinue
 
   # --- 7. NORMAL-mode skip when everything already matches --------------------------
-  $m3 = New-Machine 'match' -HonestPi $false -PipxList @('package coop-data-doc 1.4.0', 'package coop-schema-compare 0.1.1', 'package coop-sql-source-control 1.0.1', 'package ms-fabric-cli 1.7.0')
+  $m3 = New-Machine 'match' -HonestPi $false -PipxList @('package coop-data-doc 1.4.0', 'package coop-schema-compare 0.1.2', 'package coop-sql-source-control 1.0.2', 'package ms-fabric-cli 1.7.0')
   $out = Invoke-Fleet 'install.ps1'
   if (Test-Call $m3 '^NPM install -g @earendil-works/pi-coding-agent@') { Ko 'Pi was reinstalled although it matched the manifest' (Get-Calls $m3) }
   elseif (Test-CallLiteral $m3 'PIPX install --force coop-data-doc==') { Ko 'coop-data-doc was reinstalled although it matched the manifest' (Get-Calls $m3) }

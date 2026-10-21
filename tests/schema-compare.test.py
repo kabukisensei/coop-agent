@@ -354,6 +354,39 @@ with tempfile.TemporaryDirectory() as tmp:
         back = sc.compare({"source": "prod", "target": "dev"}, cwd=repo, now=NOW)
     assert back["state"] == "ok" and opened == ["prod", "dev"] and back["path"].endswith("prod-to-dev")
 
+    # a schema filter applies to both sides before the diff, case-insensitively
+    some = sorted({c["schema"] for c in out["changes"]})
+    assert len(some) >= 2, some
+    with mock.patch.object(sq, "open_connection", side_effect=fake_open):
+        only = sc.compare({"schemas": [some[0].upper()]}, cwd=repo, now=NOW)
+        without = sc.compare({"exclude": [some[0]]}, cwd=repo, now=NOW)
+    assert only["state"] == "ok" and only["changes"] and {c["schema"] for c in only["changes"]} == {some[0]}, only["changes"]
+    assert f"only schemas {some[0].upper()} compared" in only["notes"]
+    assert without["state"] == "ok" and some[0] not in {c["schema"] for c in without["changes"]}
+    assert without["counts"]["total"] + only["counts"]["total"] == out["counts"]["total"]
+    for bad in ({"schemas": "dbo"}, {"exclude": ["[x]"]}, {"schemas": ["-x"]}, {"exclude": ["a"] * 51}):
+        assert sc.compare(bad, cwd=repo)["state"] == "input_invalid", bad
+
+    # SQL source control's own schema (its locks) is never offered as a change
+    # unless the person names it in `schemas` (dev VM, 2026-10-21)
+    def sides(with_sqlsc):
+        def read(side, **_k):
+            cat = sc.Catalog()
+            if with_sqlsc and side == "dev":
+                cat.schemas.add("sqlsc")
+                cat.modules[("sqlsc", "ObjectLock")] = ("view", "select 1")
+            return cat, {"environment": side}, None
+        return read
+    with mock.patch.object(sc, "_read_side", side_effect=sides(True)):
+        quiet = sc.compare({"exclude": ["sqlsc_lt"]}, cwd=repo, now=NOW)
+        named = sc.compare({"schemas": ["SQLSC"]}, cwd=repo, now=NOW)
+    assert quiet["state"] == "ok" and quiet["counts"]["total"] == 0, quiet["counts"]
+    assert "schema sqlsc (SQL source control's locks) left out" in quiet["notes"]
+    assert named["state"] == "ok" and {c["schema"] for c in named["changes"]} == {"sqlsc"}, named["changes"]
+    with mock.patch.object(sc, "_read_side", side_effect=sides(False)):
+        plain = sc.compare({}, cwd=repo, now=NOW)
+    assert not any("sqlsc" in n for n in plain["notes"])
+
     # a side the executor refuses is reported with the side's name, before the other side is read
     def refuse(*, cwd=None, environment=None):
         if environment == "prod":

@@ -65,6 +65,11 @@ REPO_ROLES = ("sql", "mixed")
 DEFAULT_TARGET = "prod"
 MAX_SCHEMAS = 1000
 MAX_CHANGES_IN_RESULT = 200
+# A schema filter (`schemas` keeps only those, `exclude` drops those; names match
+# case-insensitively) applies to both sides before the diff (Aaron, 2026-10-21).
+MAX_FILTER_SCHEMAS = 50
+SQLSC_SCHEMA = "sqlsc"
+FILTER_SCHEMA = re.compile(r"^[^\[\]\x00-\x1f;'\"-][^\[\]\x00-\x1f;'\"]{0,127}$")
 MODULE_KINDS = ("function", "view", "procedure")
 # Kinds that cannot alter a column in place: the script renders a rebuild note.
 REBUILD_KINDS = ("fabric_warehouse", "fabric_lakehouse")
@@ -727,8 +732,36 @@ def _read_side(side: str, *, cwd: Path | None, project: dict[str, Any], project_
     return catalog, target.summary(), None
 
 
+def schema_filter(value: Any) -> list[str] | None:
+    """A validated schema list (empty when absent), or None when malformed."""
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > MAX_FILTER_SCHEMAS:
+        return None
+    names = [v.strip() for v in value if isinstance(v, str)]
+    if len(names) != len(value) or not all(FILTER_SCHEMA.match(n) for n in names):
+        return None
+    return names
+
+
+def filter_schemas(catalog: Catalog, keep: list[str], drop: list[str]) -> None:
+    """Drop every schema (and the objects in it) the filter leaves out."""
+    keep_set, drop_set = {k.lower() for k in keep}, {d.lower() for d in drop}
+
+    def wanted(schema: str) -> bool:
+        name = schema.lower()
+        return (not keep_set or name in keep_set) and name not in drop_set
+
+    catalog.schemas = {s for s in catalog.schemas if wanted(s)}
+    catalog.tables = {k: v for k, v in catalog.tables.items() if wanted(k[0])}
+    catalog.modules = {k: v for k, v in catalog.modules.items() if wanted(k[0])}
+
+
 def compare(payload: Any, *, cwd: Path | None = None, now: datetime | None = None) -> dict[str, Any]:
-    if not isinstance(payload, dict) or set(payload) - {"source", "target"}:
+    if not isinstance(payload, dict) or set(payload) - {"source", "target", "schemas", "exclude"}:
+        return sql_query.result("input_invalid")
+    keep, drop = schema_filter(payload.get("schemas")), schema_filter(payload.get("exclude"))
+    if keep is None or drop is None:
         return sql_query.result("input_invalid")
     project_path = wmcp.find_project_yml(cwd or Path.cwd())
     if not project_path:
@@ -752,9 +785,23 @@ def compare(payload: Any, *, cwd: Path | None = None, now: datetime | None = Non
     if error is not None or target_catalog is None:
         return error or sql_query.result("connection_failed", side=target)
 
+    # SQL source control keeps its locks in its own schema: never offer it as
+    # a change unless the person names it in `schemas`.
+    bookkeeping = SQLSC_SCHEMA not in {k.lower() for k in keep} and any(
+        s.lower() == SQLSC_SCHEMA for c in (source_catalog, target_catalog) for s in c.schemas
+    )
+    if keep or drop or bookkeeping:
+        filter_schemas(source_catalog, keep, drop + ([SQLSC_SCHEMA] if bookkeeping else []))
+        filter_schemas(target_catalog, keep, drop + ([SQLSC_SCHEMA] if bookkeeping else []))
     changes = diff(source_catalog, target_catalog)
     taken_at = (now or datetime.now(timezone.utc)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     notes: list[str] = []
+    if keep:
+        notes.append(f"only schemas {', '.join(keep)} compared")
+    if drop:
+        notes.append(f"schemas {', '.join(drop)} left out")
+    if bookkeeping:
+        notes.append("schema sqlsc (SQL source control's locks) left out")
     for label, catalog in (("source", source_catalog), ("target", target_catalog)):
         for item in catalog.notes:
             notes.append(f"{label}: {item}")
@@ -818,6 +865,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="schema_compare", description=__doc__.splitlines()[0])
     parser.add_argument("--source", help="side to promote from: dev, test, prod, snapshot or repo[:<name>[/<subfolder>]] (default: the contract's default dev/test entry)")
     parser.add_argument("--target", help=f"side to promote to: dev, test, prod or repo[:<name>[/<subfolder>]] (default: {DEFAULT_TARGET})")
+    parser.add_argument("--schema", action="append", help="compare only this schema (repeatable)")
+    parser.add_argument("--exclude-schema", action="append", help="leave this schema out (repeatable)")
     parser.add_argument("--stdin", action="store_true", help="read {\"source\": ..., \"target\": ...} from stdin (the tool contract)")
     parser.add_argument("--cli", action="store_true", help="never read stdin: the sides come from the flags or their defaults (bin/coop.ps1)")
     args = parser.parse_args(argv)
@@ -836,6 +885,10 @@ def main(argv: list[str] | None = None) -> int:
             payload["source"] = args.source
         if args.target:
             payload["target"] = args.target
+        if args.schema:
+            payload["schemas"] = args.schema
+        if args.exclude_schema:
+            payload["exclude"] = args.exclude_schema
     try:
         output = execute(payload)
     except Exception:

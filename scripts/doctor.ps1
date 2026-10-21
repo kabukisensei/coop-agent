@@ -692,6 +692,7 @@ if ($mcpFound) {
     $sqlScope = 'unknown'
     $sqlTenant = ''
     $sqlProbe = 'not_probed'
+    $sqlProbeDetail = ''
     $sqlUsable = $false
     $sqlRegistered = $false
     $sqlTimeoutMs = 0
@@ -708,6 +709,9 @@ if ($mcpFound) {
         # above), so a value that chain rejects is never printed.
         if ($sqlDoc.tenant -is [string] -and $azTenant.Rc -eq 0 -and $sqlDoc.tenant -ceq $azTenant.Tenant) { $sqlTenant = $azTenant.Tenant }
         if ($sqlDoc.probe_state -is [string] -and $sqlDoc.probe_state) { $sqlProbe = [string]$sqlDoc.probe_state }
+        # The first failing probe step (#409): an HTTP status, a JSON-RPC error
+        # code or no answer; never a token or server text.
+        if ($sqlDoc.probe_detail -is [string] -and $sqlDoc.probe_detail) { $sqlProbeDetail = " ($([string]$sqlDoc.probe_detail))" }
         if ($sqlDoc.usable -eq $true) { $sqlUsable = $true }
         # The entry's per-request timeout (the contract's
         # mcp.fabric_sqlendpoint.request_timeout_ms, five minutes by default).
@@ -741,7 +745,7 @@ if ($mcpFound) {
       'token_output_invalid'  { D-Warn "  • fabric-sqlendpoint token_output_invalid ($sqlFor)" 'Azure CLI returned no usable accessToken JSON; verify the Fabric token command output' }
       'tool_missing'          { D-Warn "  • fabric-sqlendpoint tool_missing ($sqlFor)" 'managed MCP did not advertise executeSQL/execute_query' }
       'target_invalid'{ D-Warn "  • fabric-sqlendpoint target_invalid$sqlTail" 'run: coop sync after fixing fabric.default_sql_endpoint / registered URL' }
-      'unavailable'   { D-Warn "  • fabric-sqlendpoint unavailable$sqlTail" 'run: coop sync; if already configured, retry when network/auth is available' }
+      'unavailable'   { D-Warn "  • fabric-sqlendpoint unavailable$sqlTail$sqlProbeDetail" 'run: coop sync; if already configured, retry when network/auth is available' }
       default         { D-Warn "  • fabric-sqlendpoint $sqlState$sqlTail" 'run: coop sync' }
     }
     # The contract's request timeout: an unusable value runs on the default; an

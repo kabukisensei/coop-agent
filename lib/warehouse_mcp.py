@@ -79,7 +79,10 @@ COMPATIBLE_SQL_TOOLS = {
     "fabric-sqlendpoint-execute_query",
     "fabric_sqlendpoint_execute_query",
 }
-MCP_PROTOCOL_VERSION = "2024-11-05"
+# The protocol doctor's probe asks for, as pi-mcp-adapter does (issue #409: the
+# 2024-11-05 handshake left a working entry "unavailable"). After initialize,
+# follow-up requests carry the version the server chose in MCP-Protocol-Version.
+MCP_PROTOCOL_VERSION = "2025-06-18"
 # The managed entry's per-request timeout (pi-mcp-adapter `requestTimeoutMs`,
 # which it passes through unchanged when finite and positive). Five minutes by
 # default: Warehouse reads of any size ran into the earlier fixed 60 s. The
@@ -969,8 +972,20 @@ def _mcp_post(
     timeout: int,
     session_id: str = "",
     allow_empty_notification: bool = False,
+    protocol_version: str = "",
+    detail: list[str] | None = None,
 ) -> tuple[dict[str, Any], str, str]:
-    """POST one streamable-HTTP MCP message without starting an OAuth client."""
+    """POST one streamable-HTTP MCP message without starting an OAuth client.
+
+    `detail`, when given, receives why an `unavailable` answer failed (HTTP
+    status, JSON-RPC error code, no answer, unreachable): never a token, body
+    or server text."""
+    step = str(message.get("method", "request"))
+
+    def failed(why: str) -> None:
+        if detail is not None:
+            detail.append(f"{step}: {why}")
+
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json, text/event-stream",
@@ -978,6 +993,8 @@ def _mcp_post(
     }
     if session_id:
         headers["Mcp-Session-Id"] = session_id
+    if protocol_version:
+        headers["MCP-Protocol-Version"] = protocol_version
     req = urllib.request.Request(
         url,
         data=json.dumps(message, separators=(",", ":")).encode("utf-8"),
@@ -994,14 +1011,20 @@ def _mcp_post(
             return {}, "auth_required", session_id
         if exc.code == 404:
             return {}, "target_invalid", session_id
+        failed(f"HTTP {int(exc.code)}")
         return {}, "unavailable", session_id
-    except (urllib.error.URLError, TimeoutError, UnicodeDecodeError):
+    except UnicodeDecodeError:
+        failed("answer is not UTF-8")
+        return {}, "unavailable", session_id
+    except (urllib.error.URLError, TimeoutError):
+        failed("unreachable")
         return {}, "unavailable", session_id
 
-    # Streamable HTTP notifications have no JSON-RPC response. Microsoft's
-    # endpoint may acknowledge notifications/initialized with 202 or 204 and
-    # an empty body; request messages still fail closed on missing/invalid JSON.
-    if allow_empty_notification and not raw.strip() and status_code in (202, 204):
+    # Streamable HTTP notifications have no JSON-RPC response: any 2xx
+    # acknowledges one (Microsoft's endpoint answers notifications/initialized
+    # with 200, 202 or 204). Request messages still fail closed on
+    # missing/invalid JSON.
+    if allow_empty_notification and isinstance(status_code, int) and 200 <= status_code < 300:
         return {}, "ok", returned_session
 
     # Streamable HTTP requests may return JSON directly or SSE `data:` records.
@@ -1009,6 +1032,7 @@ def _mcp_post(
     candidates.extend(
         line[5:].strip() for line in raw.splitlines() if line.startswith("data:")
     )
+    rpc_error = ""
     for candidate in reversed(candidates):
         try:
             value = json.loads(candidate)
@@ -1021,12 +1045,16 @@ def _mcp_post(
                 or value.get("id") != expected_id
                 or "error" in value
             ):
+                error = value.get("error")
+                if isinstance(error, dict) and isinstance(error.get("code"), int) and value.get("id") == expected_id:
+                    rpc_error = f"JSON-RPC error {error['code']}"
                 continue
             return value, "ok", returned_session
+    failed(rpc_error or f"no JSON-RPC answer (HTTP {status_code})")
     return {}, "unavailable", returned_session
 
 
-def mcp_tools_list(url: str, token: str, timeout: int = 8) -> tuple[list[Any], str]:
+def mcp_tools_list(url: str, token: str, timeout: int = 8, detail: list[str] | None = None) -> tuple[list[Any], str]:
     """Initialize and discover tools directly with an existing Azure token.
 
     Doctor intentionally speaks to the endpoint itself rather than through the
@@ -1044,9 +1072,11 @@ def mcp_tools_list(url: str, token: str, timeout: int = 8) -> tuple[list[Any], s
             "clientInfo": {"name": "coop-doctor", "version": "0"},
         },
     }
-    response, state, session = _mcp_post(url, token, init, timeout=timeout)
+    response, state, session = _mcp_post(url, token, init, timeout=timeout, detail=detail)
     if state != "ok" or not isinstance(response.get("result"), dict):
         return [], state if state != "ok" else "unavailable"
+    chosen = response["result"].get("protocolVersion")
+    version = chosen if isinstance(chosen, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", chosen) else MCP_PROTOCOL_VERSION
     initialized = {
         "jsonrpc": "2.0",
         "method": "notifications/initialized",
@@ -1059,12 +1089,14 @@ def mcp_tools_list(url: str, token: str, timeout: int = 8) -> tuple[list[Any], s
         timeout=timeout,
         session_id=session,
         allow_empty_notification=True,
+        protocol_version=version,
+        detail=detail,
     )
     if state != "ok":
         return [], state
     listed = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
     response, state, _ = _mcp_post(
-        url, token, listed, timeout=timeout, session_id=session
+        url, token, listed, timeout=timeout, session_id=session, protocol_version=version, detail=detail
     )
     if state != "ok":
         return [], state
@@ -1103,6 +1135,7 @@ def doctor_status(
     elif state == "registered" and not same_target(actual_target, target):
         state = "target_invalid"
     config_state = state
+    probe_detail: list[str] = []
     probed = state == "registered" and probe
     if probed:
         # The probe mints for the client tenant, like the launch; no tenant keeps
@@ -1137,7 +1170,7 @@ def doctor_status(
         and isinstance(entry, dict)
         and actual_target is not None
     ):
-        tools, tool_state = mcp_tools_list(actual_target.url, token)
+        tools, tool_state = mcp_tools_list(actual_target.url, token, detail=probe_detail)
         state = tool_state if tool_state != "ok" else classify_tools(tools)
     elif state == "registered" and tools is not None:
         state = classify_tools(tools)
@@ -1161,6 +1194,8 @@ def doctor_status(
         "config_state": config_state,
         "probe_state": probe_state,
         "usable": probe_state == "ok",
+        # The first step that failed, when the probe says unavailable (#409).
+        "probe_detail": probe_detail[0] if probe_detail and probe_state == "unavailable" else "",
         "registered": registered,
         "request_timeout_ms": entry_timeout if valid_sql_request_timeout_ms(entry_timeout) else None,
         "request_timeout_expected_ms": expected_timeout,

@@ -7,6 +7,27 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- **coop sets SQL source control up (`sql_source init`, master plan SQ14).**
+  In a client SQL repository without `sqlsc.yml`, `sql_source init` runs
+  `git init` when the folder is not a repository yet, then `sqlsc init` (its dev
+  target comes from the project file), after one approval; nothing is committed
+  or pushed. The result names the next steps (status, script the whole dev
+  database, the "baseline from dev" commit) and, when it is missing, the
+  project-file line coop's commits need
+  (`agent_allowed_to_commit: ["database/**"]` under `repositories.<name>`).
+  `/sql-source on` and the first `sql_source status` of a session name the
+  same line when it is missing.
+- **Schema filters (SQ14).** `schema_compare` takes `schemas` (only these) and
+  `exclude` (leave these out), applied to both sides before the diff, and
+  `coop schema compare` takes `--schema` / `--exclude-schema`; `sql_source init`
+  passes the same lists to `sqlsc init`, which records them in `sqlsc.yml`
+  (coop-sql-source-control 1.0.2). Compare always leaves out the `sqlsc`
+  schema, where SQL source control keeps its locks, unless `schemas` names it.
+- **Pins:** coop-sql-source-control 1.0.1 → 1.0.2 (the schema filter, `commit`
+  takes `sqlsc.yml`, `.gitattributes` and `.gitignore` along while they are new,
+  text output on a cp1252 console no longer crashes; from its GitHub release,
+  hash-checked) and coop-schema-compare 0.1.1 → 0.1.2 (`--schema` /
+  `--exclude-schema`, from PyPI).
 - **SQL source control for client SQL (`sql_source`, master plan SQ12).** coop
   now ships `coop-sqlsc` ([coop-sql-source-control](https://github.com/kabukisensei/coop-sql-source-control)
   1.0.1, pinned in the release manifest and bundled in the window package from
@@ -211,6 +232,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **`coop doctor` no longer reports a working Warehouse MCP entry as
+  unavailable (#409).** Its probe of `fabric-sqlendpoint` initialized with the
+  2024-11-05 protocol; it now asks for 2025-06-18, as the MCP adapter does, and
+  sends the negotiated `MCP-Protocol-Version` on later requests. When the probe
+  still fails, the row names the first failing step (for example
+  `initialize: HTTP 400` or `tools/list: JSON-RPC error -32602`), never a token
+  or server text. Any 2xx answer acknowledges `notifications/initialized`, which
+  gets no JSON-RPC reply.
 - **A package upgrade brings every account the new tool pins (F3, B6).** The
   window's per-account setup (the first launch's install) ran once per package
   version, so a package with new pins under the same version (one build
@@ -221,7 +250,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   release manifest, so any change to the pins re-runs that account's setup at
   the next launch, and `coop update` on a machine install runs the same setup
   for the account at hand (`scripts\install.ps1 --prereqs auto`) after its one
-  line about the update task.
+  line about the update task. A terminal launch, which never runs that setup,
+  warns "new tool pins for this coop: run coop update" while it is pending.
 - **Warehouse SQL MCP reads no longer time out at a fixed 60 seconds.** The
   generated `fabric-sqlendpoint` entry pinned `requestTimeoutMs` to 60000 and
   both `coop doctor` and the guardrails refused any other value, so a longer

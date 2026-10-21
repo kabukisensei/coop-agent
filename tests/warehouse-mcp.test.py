@@ -622,7 +622,7 @@ assert (
 probe_calls = []
 
 
-def fake_global_list(url, token, timeout=8):
+def fake_global_list(url, token, timeout=8, detail=None):
     probe_calls.append((url, token, timeout))
     return ([{"name": "executeSQL"}], "ok")
 
@@ -648,11 +648,11 @@ calls = []
 try:
     wmcp.az_access_token = lambda timeout=8: ("secret-fixture-token", "ok")
 
-    def fake_get(url, token, timeout=8):
+    def fake_get(url, token, timeout=8, detail=None):
         calls.append(("rest", url, token))
         return ({"type": "Warehouse"}, "ok")
 
-    def fake_list(url, token, timeout=8):
+    def fake_list(url, token, timeout=8, detail=None):
         calls.append(("tools", url, token))
         return ([{"name": "executeSQL"}], "ok")
 
@@ -669,7 +669,7 @@ try:
 
     calls.clear()
 
-    def fake_lakehouse_get(url, token, timeout=8):
+    def fake_lakehouse_get(url, token, timeout=8, detail=None):
         calls.append(("rest", url, token))
         return (
             {
@@ -696,7 +696,7 @@ try:
     assert wmcp.doctor_status(cfg, project={}, probe=True)["state"] == "auth_required"
 
     wmcp.az_access_token = lambda timeout=8: ("secret-fixture-token", "ok")
-    wmcp.fabric_get_json = lambda url, token, timeout=8: ({}, "target_invalid")
+    wmcp.fabric_get_json = lambda url, token, timeout=8, detail=None: ({}, "target_invalid")
     assert (
         wmcp.doctor_status(
             managed_config(item_url),
@@ -707,7 +707,7 @@ try:
     )
 
     wmcp.fabric_get_json = fake_get
-    wmcp.mcp_tools_list = lambda url, token, timeout=8: (
+    wmcp.mcp_tools_list = lambda url, token, timeout=8, detail=None: (
         [{"name": "listSchemas"}],
         "ok",
     )
@@ -720,7 +720,7 @@ try:
         == "tool_missing"
     )
 
-    wmcp.mcp_tools_list = lambda url, token, timeout=8: ([], "unavailable")
+    wmcp.mcp_tools_list = lambda url, token, timeout=8, detail=None: ([], "unavailable")
     assert wmcp.doctor_status(cfg, project={}, probe=True)["state"] == "unavailable"
 finally:
     wmcp.az_access_token, wmcp.fabric_get_json, wmcp.mcp_tools_list = (
@@ -807,6 +807,19 @@ try:
         )
         assert request_state == "unavailable"
 
+    # A notification gets no JSON-RPC answer: any 2xx acknowledges it (the
+    # dev VM's endpoint answered notifications/initialized with 200, 2026-10-21).
+    for body, status in ((b"", 200), (b"event: message\n\n", 200), (b"", 202), (b"", 204)):
+        wmcp._http_open = lambda *_a, **_k: FakeResponse(body, status=status)
+        _, note_state, _ = wmcp._mcp_post(
+            wmcp.GLOBAL_SQL_ENDPOINT_URL,
+            "secret-fixture-token",
+            {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+            timeout=1,
+            allow_empty_notification=True,
+        )
+        assert note_state == "ok", (body, status)
+
     wmcp._http_open = lambda *_a, **_k: FakeResponse(
         b'{"jsonrpc":"2.0","id":10,"result":{"tools":[]}}'
     )
@@ -817,6 +830,50 @@ try:
         timeout=1,
     )
     assert mismatched_state == "unavailable"
+
+    # Issue #409: the probe speaks the adapter's protocol. A stub that refuses
+    # the old 2024-11-05 handshake answers the current one, follow-ups carry the
+    # negotiated MCP-Protocol-Version, and a failure names its first step.
+    seen = []
+
+    def current_only(request, *_args, **_kwargs):
+        body = json.loads(request.data)
+        seen.append((body.get("method"), request.get_header("Mcp-protocol-version")))
+        if body.get("method") == "initialize":
+            if body["params"]["protocolVersion"] < "2025-06-18":
+                return FakeResponse(json.dumps({"jsonrpc": "2.0", "id": 1, "error": {"code": -32602, "message": "secret server text"}}).encode())
+            return FakeResponse(json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2025-06-18"}}).encode())
+        if body.get("method") == "notifications/initialized":
+            return FakeResponse(b"", status=202)
+        return FakeResponse(json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"tools": [{"name": "execute_query"}]}}).encode())
+
+    wmcp._http_open = current_only
+    tools, state = wmcp.mcp_tools_list(wmcp.GLOBAL_SQL_ENDPOINT_URL, "secret-fixture-token", timeout=1)
+    assert state == "ok" and wmcp.classify_tools(tools) == "registered"
+    assert seen == [("initialize", None), ("notifications/initialized", "2025-06-18"), ("tools/list", "2025-06-18")], seen
+
+    old = wmcp.MCP_PROTOCOL_VERSION
+    wmcp.MCP_PROTOCOL_VERSION = "2024-11-05"
+    detail = []
+    try:
+        tools, state = wmcp.mcp_tools_list(wmcp.GLOBAL_SQL_ENDPOINT_URL, "secret-fixture-token", timeout=1, detail=detail)
+    finally:
+        wmcp.MCP_PROTOCOL_VERSION = old
+    assert (tools, state, detail) == ([], "unavailable", ["initialize: JSON-RPC error -32602"]), detail
+
+    def http_400(*_a, **_k):
+        raise wmcp.urllib.error.HTTPError(wmcp.GLOBAL_SQL_ENDPOINT_URL, 400, "Bad Request", {}, None)
+
+    wmcp._http_open = http_400
+    detail = []
+    assert wmcp.mcp_tools_list(wmcp.GLOBAL_SQL_ENDPOINT_URL, "secret-fixture-token", timeout=1, detail=detail) == ([], "unavailable")
+    assert detail == ["initialize: HTTP 400"]
+    with (
+        mock.patch.object(wmcp, "az_access_token", return_value=("secret-fixture-token", "ok")),
+    ):
+        failing = wmcp.doctor_status(cfg, project={}, probe=True)
+    assert (failing["state"], failing["probe_state"], failing["probe_detail"]) == ("unavailable", "unavailable", "initialize: HTTP 400"), failing
+    assert "secret" not in json.dumps(failing)
 
     for status in (202, 204):
         wmcp._http_open = lambda *_a, **_k: FakeResponse(b"", status=status)
@@ -1123,7 +1180,7 @@ with tempfile.TemporaryDirectory() as tmp:
     # The doctor probe mints for the tenant it is given, through the real helper.
     probe_tokens = []
 
-    def capture_list(url, token, timeout=8):
+    def capture_list(url, token, timeout=8, detail=None):
         probe_tokens.append(token)
         return ([{"name": "executeSQL"}], "ok")
 

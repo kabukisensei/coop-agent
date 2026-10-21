@@ -489,6 +489,11 @@ runs of whitespace folded, and a leading comment banner, `OR ALTER` and a traili
 `;` ignored, so a reformatted module, or a file beside the catalog's copy of the
 same object, is not a change. Everything else
 (constraints, indexes, permissions, row data) is out of scope and the report says so.
+A schema filter applies to both sides before the diff: `schemas` (a list) keeps
+only those schemas, `exclude` leaves those out (up to 50 plain names each,
+matched case-insensitively), and `notes` names the filter. The `sqlsc` schema
+(SQL source control's locks) is always left out, with a note, unless `schemas`
+names it.
 
 The result carries both sides' summaries (environment, kind, database, object
 counts; the snapshot side adds `taken_at`), `counts` (`total`, `add`, `alter`,
@@ -529,7 +534,8 @@ twice is blocked outright. A repo side touches no target: it reads files the
 contract already names. The tool applies nothing:
 running the script against a target is the user's act through the write rules in
 `docs/guardrails-reference.md`, one statement at a time. `coop schema compare
-[--source ...] [--target ...]` is the terminal form of the same helper and prints
+[--source ...] [--target ...] [--schema <name>]... [--exclude-schema <name>]...`
+is the terminal form of the same helper and prints
 the counts and the two paths.
 
 Why coop has its own compare rather than wrapping a Microsoft tool: Fabric
@@ -578,6 +584,7 @@ two schemas, `sql_impact` the live dependency trace and `data_doc` the lineage.
 | `script` | `sqlsc status` first; then `sqlsc script -t dev [objects]`: dev's changed objects into the repo files. Refused (`conflict`) for any object changed on both sides since the last sync | repo files |
 | `get_latest` | `sqlsc get-latest -t dev --dry-run [objects]`; with `apply=true` it runs (asks). sqlsc keeps objects the database changed (`kept`) | the dev database |
 | `commit` | the guardrails `git fetch` the branch's upstream before asking (a fetch failure or a branch that cannot fast-forward blocks the commit before any prompt; no upstream: the commit stays local, said in the prompt), the tool runs `git pull --ff-only` after the approval (`behind` if it fails), then `sqlsc commit -t dev --as coop-agent:<user> -m <message> [objects]` (asks every time; never `--push` or `--force`). sqlsc leaves objects a teammate has checked out or the repo changed (`skipped`, `held_back`). After a commit, `sqlsc unlock --as coop-agent:<user>` for the committed objects releases coop's own checkouts, like a person's Check in (a teammate's stay) | the repository's history (one commit on the current branch, not pushed) and the lock table |
+| `init` | where no `sqlsc.yml` exists: `git init` when the folder is not a repository, then `sqlsc init [--schema <name>]... [--exclude-schema <name>]...` in the project's only SQL repository (or the git repository holding the folder); asks once, blocked headlessly, audited. The result names the next steps and, when missing, the project-file line commits need (`agent_allowed_to_commit: ["database/**"]` under `repositories.<name>`), which the first `status` of a session and `/sql-source on` name too | the repository folder (`sqlsc.yml`, `.gitattributes`, `.gitignore`) |
 | `deploy` | `sqlsc deploy -t <dev\|test> --ref <ref> --dry-run`; with `apply=true` it runs (asks every time). Never `--allow-drops` or `--confirm` | the dev or test database, and `sqlsc.Deployment` there |
 
 `environment` (dev, test, prod) is accepted on `status` and `diff` and, as dev or
