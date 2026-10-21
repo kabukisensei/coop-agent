@@ -482,8 +482,10 @@ function Get-CoopFleetPlan {
   foreach ($name in @(Coop-ManifestKeys 'python_tools')) {
     if ($script:CoopFabricRuntimeLibraries -contains $name) { continue }
     $pin = [string](Coop-ManifestObjectGet 'python_tools' $name)
-    $spec = if (-not $Edge -and $pin) { "${name}==${pin}" } else { [string]$name }
-    $row = [pscustomobject]@{ Name = [string]$name; Pin = $pin; Spec = $spec }
+    # A tool that is not on PyPI (python_tool_sources) has no "latest": its pin is the release.
+    $source = Get-CoopPythonToolSource $name
+    $spec = if ((-not $Edge -or $source) -and $pin) { "${name}==${pin}" } else { [string]$name }
+    $row = [pscustomobject]@{ Name = [string]$name; Pin = $pin; Spec = $spec; Source = $(if ($source) { "$($source.Repo) $($source.Tag)" } else { '' }) }
     if ($name -eq $script:CoopFabricCliPackage) { if (-not $NoFabric) { $fabric = $row } }
     else { $pythonTools += $row }
   }
@@ -3328,6 +3330,79 @@ function Get-CoopPipxToolVersion([string]$Package, [string]$ListText = '') {
   if ($m.Success) { return $m.Groups[1].Value } else { return '' }
 }
 
+# --- Python tools that are not on PyPI (manifest python_tool_sources, SQ12) ---
+# coop-sql-source-control is a GitHub release, not a PyPI package: the window
+# package carries its wheel (desktop/scripts/build-installer.mjs fetches it and
+# checks its SHA-256), so a packaged install reads it offline like every other
+# tool. A terminal install from a checkout has no wheel folder: coop fetches the
+# release asset itself (anonymously from the public download URL, or through the
+# API with the token named by token_env when that variable is set, for a private
+# repository), checks the hash, and installs that file; when it cannot, it skips
+# the tool and says so (coop works as before; sql_source reports "not installed").
+function Get-CoopPythonToolSource([string]$Package) {
+  $repo = Coop-ManifestGet -Key "python_tool_sources.$Package.github_release"
+  if (-not $repo) { return $null }
+  return [pscustomobject]@{
+    Package  = $Package
+    Repo     = [string]$repo
+    Tag      = [string](Coop-ManifestGet -Key "python_tool_sources.$Package.tag")
+    Asset    = [string](Coop-ManifestGet -Key "python_tool_sources.$Package.asset")
+    Sha256   = ([string](Coop-ManifestGet -Key "python_tool_sources.$Package.sha256")).ToLowerInvariant()
+    TokenEnv = [string](Coop-ManifestGet -Key "python_tool_sources.$Package.token_env")
+  }
+}
+# Is a wheel of $Package at exactly $Pin in the package's wheel folder? (PEP 427: `-`/`.` read as `_`.)
+function Test-CoopBundledWheel([string]$Package, [string]$Pin) {
+  $wheels = [string]$env:COOP_BUNDLED_WHEELS
+  if (-not $wheels -or -not $Pin -or -not (Test-Path -LiteralPath $wheels -PathType Container)) { return $false }
+  $normal = ($Package.ToLowerInvariant() -replace '[-_.]+', '_')
+  foreach ($f in @(Get-ChildItem -LiteralPath $wheels -Filter '*.whl' -File -ErrorAction SilentlyContinue)) {
+    $parts = $f.Name -split '-'
+    if ($parts.Count -ge 5 -and (($parts[0].ToLowerInvariant() -replace '[-_.]+', '_') -eq $normal) -and $parts[1] -eq $Pin) { return $true }
+  }
+  return $false
+}
+# The release wheel of a sourced tool as a local file: the bundled folder's copy
+# ('bundled'), else a hash-checked download into <profile>\wheels (the path),
+# else '' (no network, a private release without the token, a wrong hash:
+# nothing is installed).
+function Get-CoopSourcedWheel($Source, [string]$Pin) {
+  if (Test-CoopBundledWheel $Source.Package $Pin) { return 'bundled' }
+  if (-not $Source.Asset -or $Source.Sha256.Length -ne 64) { return '' }
+  $dir = Join-Path (Get-CoopProfileDir) 'wheels'
+  $file = Join-Path $dir $Source.Asset
+  if ((Test-Path -LiteralPath $file -PathType Leaf) -and ((Get-CoopFileSha256 $file).ToLowerInvariant() -eq $Source.Sha256)) { return $file }
+  $token = ''
+  if ($Source.TokenEnv) { $token = [string][Environment]::GetEnvironmentVariable($Source.TokenEnv) }
+  $headers = @{ 'X-GitHub-Api-Version' = '2022-11-28'; 'User-Agent' = 'coop-agent' }
+  try {
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $tmp = "$file.part"
+    if ($token) {
+      $headers['Authorization'] = "Bearer $token"
+      $release = Invoke-RestMethod -Uri ("https://api.github.com/repos/{0}/releases/tags/{1}" -f $Source.Repo, [uri]::EscapeDataString($Source.Tag)) -Headers ($headers + @{ Accept = 'application/vnd.github+json' }) -ErrorAction Stop
+      $asset = @($release.assets | Where-Object { $_.name -eq $Source.Asset }) | Select-Object -First 1
+      if (-not $asset -or -not $asset.url) { Coop-Warn "the $($Source.Repo) release $($Source.Tag) has no asset $($Source.Asset)"; return '' }
+      Invoke-WebRequest -Uri $asset.url -Headers ($headers + @{ Accept = 'application/octet-stream' }) -OutFile $tmp -UseBasicParsing -ErrorAction Stop
+    } else {
+      $url = "https://github.com/{0}/releases/download/{1}/{2}" -f $Source.Repo, [uri]::EscapeDataString($Source.Tag), [uri]::EscapeDataString($Source.Asset)
+      Invoke-WebRequest -Uri $url -Headers $headers -OutFile $tmp -UseBasicParsing -ErrorAction Stop
+    }
+  } catch {
+    $hint = if ($token) { $_.Exception.Message } else { "$($_.Exception.Message) (a private repository needs a token in $($Source.TokenEnv))" }
+    Coop-Warn "could not fetch $($Source.Asset) from the $($Source.Repo) release $($Source.Tag)" $hint
+    return ''
+  }
+  $sum = (Get-CoopFileSha256 $tmp).ToLowerInvariant()
+  if ($sum -ne $Source.Sha256) {
+    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    Coop-Warn "$($Source.Asset): SHA-256 $sum does not match the manifest's $($Source.Sha256); not installed"
+    return ''
+  }
+  Move-Item -LiteralPath $tmp -Destination $file -Force
+  return $file
+}
+
 # pipx tool: probe `pipx list`; skip at the pin; drifted (or a matching package
 # that must be rebuilt on pipx's standalone Python, $FetchPython set) ->
 # `pipx install --force <spec>`; missing -> `pipx install <spec>`; -Force ->
@@ -3339,7 +3414,19 @@ function Get-CoopPipxToolVersion([string]$Package, [string]$ListText = '') {
 function Invoke-CoopPipxConverge {
   param([string]$Package, [string]$Pin, [bool]$Edge = $false, [bool]$Force = $false, [string]$Python = '', [string]$FetchPython = '')
   if (-not (Test-CoopPipxAvailable)) { return (Coop-UnitResult $false "skipping $Package (pipx missing)") }
+  $source = Get-CoopPythonToolSource $Package
+  if ($source) { $Edge = $false }   # not on PyPI: the pinned release is the only version
   $spec = if (-not $Edge -and $Pin) { "${Package}==${Pin}" } else { $Package }
+  if ($source -and $Pin) {
+    $present = Get-CoopPipxToolVersion $Package
+    if ($present -eq $Pin -and -not $Force -and -not $FetchPython) { return (Coop-UnitResult $true "$Package $present matches manifest") }
+    $wheel = Get-CoopSourcedWheel $source $Pin
+    if (-not $wheel) {
+      if ($present) { return (Coop-UnitResult $true "$Package $present present; its release wheel is not at hand, so it stays (the coop window package carries $Pin)") }
+      return (Coop-UnitResult $true "$Package skipped: its release wheel could not be fetched; the coop window package carries it")
+    }
+    if ($wheel -ne 'bundled') { $spec = $wheel }   # pip installs the file; its dependencies come from the index
+  }
   function New-PipxInstallArgs([bool]$WithForce) {
     $a = @('install')
     if ($WithForce) { $a += '--force' }

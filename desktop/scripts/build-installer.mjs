@@ -47,7 +47,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -217,6 +217,75 @@ export function pythonToolSpecs(manifest) {
   return Object.entries(manifest.python_tools || {}).map(([name, version]) => `${name}==${version}`);
 }
 
+/**
+ * Python tools that are not on PyPI (manifest `python_tool_sources`): each names
+ * a GitHub release asset (a wheel), its SHA-256 and the environment variable
+ * that may hold a token able to read that repository (SQ12: coop-sql-source-control;
+ * a public repository needs none, a private one does). The pin in `python_tools`
+ * stays the one version of record; the source says where the build gets the wheel.
+ */
+export function pythonToolSources(manifest) {
+  const out = [];
+  for (const [name, src] of Object.entries(manifest.python_tool_sources || {})) {
+    const version = manifest.python_tools?.[name];
+    if (!version) throw new Error(`python_tool_sources.${name} has no python_tools pin`);
+    if (!/^[\w.-]+\/[\w.-]+$/.test(String(src.github_release || ""))) throw new Error(`python_tool_sources.${name}.github_release must be owner/repo`);
+    if (!/^v?\d/.test(String(src.tag || ""))) throw new Error(`python_tool_sources.${name}.tag must be a release tag`);
+    if (!/^[\w.+-]+\.whl$/.test(String(src.asset || "")) || !hasWheel([src.asset], name, version)) throw new Error(`python_tool_sources.${name}.asset must be the ${name} ${version} wheel`);
+    if (!/^[0-9a-f]{64}$/.test(String(src.sha256 || ""))) throw new Error(`python_tool_sources.${name}.sha256 must be a SHA-256`);
+    if (!/^[A-Z][A-Z0-9_]*$/.test(String(src.token_env || ""))) throw new Error(`python_tool_sources.${name}.token_env must name an environment variable`);
+    out.push({ name, version, repo: src.github_release, tag: src.tag, file: src.asset, sha256: src.sha256, tokenEnv: src.token_env });
+  }
+  return out;
+}
+
+/** The public download URL of a sourced wheel (no token: a public repository). */
+export function sourcedWheelUrl(source) {
+  return `https://github.com/${source.repo}/releases/download/${encodeURIComponent(source.tag)}/${encodeURIComponent(source.file)}`;
+}
+
+/**
+ * Download one sourced wheel into the cache and check it against the
+ * manifest's SHA-256; the cached path. Anonymously from the release's public
+ * download URL, like every other bundled download; with a token in the
+ * source's variable, through the GitHub API instead (a private release asset
+ * needs the token and `Accept: application/octet-stream`). Fails closed: an
+ * HTTP error (a private release without the token reads as 404), a missing
+ * asset or a wrong hash stops the build, so a package never ships without the
+ * tool or with a wheel nobody pinned.
+ */
+export async function fetchSourcedWheel(source, cacheDir, { env = process.env, fetchImpl = fetch } = {}) {
+  const cached = join(cacheDir, source.file);
+  if (existsSync(cached) && sha256File(cached) === source.sha256) return cached;
+  const token = env[source.tokenEnv];
+  const headers = { "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "coop-agent build-installer" };
+  let body;
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+    const release = await fetchImpl(`https://api.github.com/repos/${source.repo}/releases/tags/${encodeURIComponent(source.tag)}`, { headers: { ...headers, Accept: "application/vnd.github+json" } });
+    if (!release.ok) throw new Error(`${source.repo} release ${source.tag}: HTTP ${release.status}`);
+    const assets = (await release.json()).assets || [];
+    const asset = assets.find((a) => a && a.name === source.file);
+    if (!asset || !asset.url) throw new Error(`${source.repo} release ${source.tag} has no asset ${source.file}`);
+    console.log(`downloading ${source.file} from the ${source.repo} release ${source.tag} (with ${source.tokenEnv})`);
+    body = await fetchImpl(asset.url, { headers: { ...headers, Accept: "application/octet-stream" } });
+  } else {
+    const url = sourcedWheelUrl(source);
+    console.log(`downloading ${url}`);
+    body = await fetchImpl(url, { headers });
+    if (!body.ok) throw new Error(`${url}: HTTP ${body.status}${body.status === 404 ? ` (a private repository needs a token in ${source.tokenEnv})` : ""}`);
+  }
+  if (!body.ok) throw new Error(`${source.file}: HTTP ${body.status}`);
+  mkdirSync(cacheDir, { recursive: true });
+  writeFileSync(cached, Buffer.from(await body.arrayBuffer()));
+  const sum = sha256File(cached);
+  if (sum !== source.sha256) {
+    rmSync(cached, { force: true });
+    throw new Error(`${source.file}: SHA-256 ${sum} does not match the manifest's ${source.sha256}`);
+  }
+  return cached;
+}
+
 /** Does the wheel folder hold a wheel of <name> at exactly <version>? (PEP 427 names: `-`/`.` become `_`.) */
 export function hasWheel(files, name, version) {
   const normal = name.toLowerCase().replace(/[-_.]+/g, "_");
@@ -317,9 +386,12 @@ export async function stageBundledTools({ manifest, runtimeDir, cacheDir }) {
  * bundled Python (its launchers dropped for PIPX_SHIM), then `pip wheel` of
  * pip, setuptools, wheel, pipx and every manifest Python tool with all their
  * dependencies, so the first launch's pipx installs read only this folder.
- * Runs the bundled Windows Python, so on Windows only.
+ * Wheels that are not on PyPI (`sourcedWheels`, from fetchSourcedWheel) are
+ * copied in first and found through --find-links, so pip resolves their
+ * dependencies from PyPI like any other tool's. Runs the bundled Windows
+ * Python, so on Windows only.
  */
-export function stagePythonTools({ manifest, runtimeDir }) {
+export function stagePythonTools({ manifest, runtimeDir, sourcedWheels = [] }) {
   const pythonDir = join(runtimeDir, "python");
   const python = join(pythonDir, "python.exe");
   const quiet = ["--disable-pip-version-check", "--no-cache-dir"];
@@ -330,7 +402,8 @@ export function stagePythonTools({ manifest, runtimeDir }) {
   writeFileSync(join(scripts, "pipx.cmd"), PIPX_SHIM);
   const wheels = join(runtimeDir, "python-wheels");
   mkdirSync(wheels, { recursive: true });
-  run(python, ["-m", "pip", "wheel", ...quiet, "--wheel-dir", wheels, "pip", "setuptools", "wheel", "pipx", ...pythonToolSpecs(manifest)], runtimeDir);
+  for (const file of sourcedWheels) cpSync(file, join(wheels, basename(file)));
+  run(python, ["-m", "pip", "wheel", ...quiet, "--wheel-dir", wheels, "--find-links", wheels, "pip", "setuptools", "wheel", "pipx", ...pythonToolSpecs(manifest)], runtimeDir);
   const files = readdirSync(wheels);
   for (const [name, version] of Object.entries(manifest.python_tools || {})) {
     if (!hasWheel(files, name, version)) throw new Error(`the wheel folder has no ${name} ${version}`);
@@ -468,7 +541,9 @@ export async function stageRuntime({ root = ROOT, runtimeDir = RUNTIME, cacheDir
   const prunedTree = pruneTree(join(extensions, "node_modules"));
 
   await stageBundledTools({ manifest, runtimeDir, cacheDir });
-  stagePythonTools({ manifest, runtimeDir });
+  const sourcedWheels = [];
+  for (const source of pythonToolSources(manifest)) sourcedWheels.push(await fetchSourcedWheel(source, cacheDir));
+  stagePythonTools({ manifest, runtimeDir, sourcedWheels });
   const longest = longestPath(runtimeDir);
   console.log(`staged the extension tree (${Object.keys(manifest.extensions || {}).length} extension(s) from config/extensions-lock.json; ${prunedTree.files} declaration/map file(s) and ${prunedTree.dirs} dist-types folder(s) pruned; longest path ${longest.length} chars: ${longest.path})`);
 
