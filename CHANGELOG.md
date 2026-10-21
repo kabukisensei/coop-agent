@@ -5,6 +5,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Tool pins:** coop-data-doc 1.4.1 (cached builds keep column lineage),
+  coop-schema-compare 0.1.3 (the review fixes below, in the standalone CLI)
+  and coop-sql-source-control 1.0.3 (its review fixes: a drop meeting an edit
+  is a conflict, no migration replay when the history cannot be read, check-in
+  keeps what it holds back, the deployment record inside the release
+  transaction).
+
 ### Fixed
 
 - **`sql_source script` stops when its status check fails (#414).** The status
