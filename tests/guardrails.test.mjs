@@ -1633,6 +1633,7 @@ await t("schema_compare (SQ10): two catalog reads run on every pair without a pr
   assert.equal(blocked(await handle(call({ source: "repo", target: "prod" }), liveCtx)), false, "the repo's .sql files as the source");
   assert.equal(blocked(await handle(call({ source: "repo:sql/warehouse", target: "repo:sql-main" }), liveCtx)), false, "repo against repo");
   assert.equal(blocked(await handle(call({ source: "dev", target: "repo:sql" }), liveCtx)), false, "live against the repo");
+  assert.equal(blocked(await handle(call({ source: "dev", schemas: ["sales"], exclude: ["staging"] }), liveCtx)), false, "a schema filter");
   assert.equal(confirmCount, 0);
   const rows = readAudit().filter((x) => x.tool === "governed-schema-compare");
   assert.deepEqual(rows.map((x) => [x.decision, x.label, x.detail]), [
@@ -1644,16 +1645,18 @@ await t("schema_compare (SQ10): two catalog reads run on every pair without a pr
     ["allowed", "live schema compare", "repo->prod"],
     ["allowed", "live schema compare", "repo:sql/warehouse->repo:sql-main"],
     ["allowed", "live schema compare", "dev->repo:sql"],
+    ["allowed", "live schema compare", "dev->prod"],
   ]);
   for (const input of [
     { source: "dev", target: "dev" }, { target: "snapshot" }, { source: "lord" }, { source: "dev", target: "prod", apply: true },
     { source: "dev", server: "x" }, { source: ["dev"] }, "dev", { source: "prod", target: "prod" },
     { source: "repo:../other" }, { source: "repo:sql/../../etc" }, { source: "repo:" }, { source: "repo:sql", target: "repo:sql" }, { source: "C:/repo" },
+    { schemas: "sales" }, { exclude: ["[x]; DROP"] }, { schemas: ["-x"] },
   ]) {
     assert.equal(blocked(await handle(call(input), liveCtx)), true, JSON.stringify(input));
   }
   assert.equal(confirmCount, 0, "forged shapes are blocked, never prompted");
-  assert.equal(readAudit().filter((x) => x.tool === "governed-schema-compare" && x.decision === "blocked").length, 13);
+  assert.equal(readAudit().filter((x) => x.tool === "governed-schema-compare" && x.decision === "blocked").length, 16);
   removeContract();
   writeManagedTarget();
   await handleSessionStart({ reason: "new" }, liveCtx);

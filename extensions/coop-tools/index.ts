@@ -224,8 +224,10 @@ const CATALOG_SNAPSHOT_PARAMS = Type.Object({
 });
 
 const SCHEMA_COMPARE_PARAMS = Type.Object({
-  source: Type.Optional(Type.String({ description: "Promote from: dev, test, prod, snapshot or repo[:<name>[/<sub>]] (a contract repositories entry's .sql files). Default: the contract's default entry." })),
-  target: Type.Optional(Type.String({ description: "Promote to: dev, test, prod or repo[:<name>[/<sub>]]. Default: prod." })),
+  source: Type.Optional(Type.String({ description: "From: dev, test, prod, snapshot or repo[:<name>[/<sub>]] (a repositories entry's .sql files). Default: the contract's default." })),
+  target: Type.Optional(Type.String({ description: "To: dev, test, prod or repo[:<name>[/<sub>]]. Default: prod." })),
+  schemas: Type.Optional(Type.Array(Type.String(), { description: "Only these schemas." })),
+  exclude: Type.Optional(Type.Array(Type.String(), { description: "Leave these schemas out." })),
 });
 
 const SQL_SOURCE_PARAMS = Type.Object({
@@ -2495,7 +2497,7 @@ export default function coopTools(pi: ExtensionAPI) {
   pi.registerTool({
     name: "schema_compare",
     label: "Schema compare",
-    description: "Read-only compare of two schemas (sql_targets entries, the snapshot or a repo of .sql files) with an ordered promotion script: schemas, tables, columns, views, procedures, functions. Writes report.md and deploy.sql under .coop/schema-compare, never runs them.",
+    description: "Read-only compare of two schemas (sql_targets entries, the snapshot or a repo's .sql files) with an ordered promotion script. Writes report.md and deploy.sql under .coop/schema-compare, never runs them.",
     promptSnippet: "Compare dev, prod or repo schemas; ordered promotion script, nothing applied",
     promptGuidelines: [
       "To move SQL changes between environments, call schema_compare first and work from its deploy.sql; its commented-out destructive statements stay a person's call.",
@@ -2503,9 +2505,11 @@ export default function coopTools(pi: ExtensionAPI) {
     parameters: SCHEMA_COMPARE_PARAMS,
     executionMode: "sequential",
     async execute(_id, params, signal, _onUpdate, ctx) {
-      const input: Record<string, string> = {};
+      const input: Record<string, unknown> = {};
       if (typeof params?.source === "string") input.source = params.source;
       if (typeof params?.target === "string") input.target = params.target;
+      if (Array.isArray(params?.schemas)) input.schemas = params.schemas;
+      if (Array.isArray(params?.exclude)) input.exclude = params.exclude;
       const details = await runFabricSqlHelper(input, signal, ctx.cwd, "schema_compare.py");
       const lines: string[] = [];
       for (const c of Array.isArray(details?.changes) ? details.changes : []) {

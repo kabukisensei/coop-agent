@@ -354,6 +354,19 @@ with tempfile.TemporaryDirectory() as tmp:
         back = sc.compare({"source": "prod", "target": "dev"}, cwd=repo, now=NOW)
     assert back["state"] == "ok" and opened == ["prod", "dev"] and back["path"].endswith("prod-to-dev")
 
+    # a schema filter applies to both sides before the diff, case-insensitively
+    some = sorted({c["schema"] for c in out["changes"]})
+    assert len(some) >= 2, some
+    with mock.patch.object(sq, "open_connection", side_effect=fake_open):
+        only = sc.compare({"schemas": [some[0].upper()]}, cwd=repo, now=NOW)
+        without = sc.compare({"exclude": [some[0]]}, cwd=repo, now=NOW)
+    assert only["state"] == "ok" and only["changes"] and {c["schema"] for c in only["changes"]} == {some[0]}, only["changes"]
+    assert f"only schemas {some[0].upper()} compared" in only["notes"]
+    assert without["state"] == "ok" and some[0] not in {c["schema"] for c in without["changes"]}
+    assert without["counts"]["total"] + only["counts"]["total"] == out["counts"]["total"]
+    for bad in ({"schemas": "dbo"}, {"exclude": ["[x]"]}, {"schemas": ["-x"]}, {"exclude": ["a"] * 51}):
+        assert sc.compare(bad, cwd=repo)["state"] == "input_invalid", bad
+
     # a side the executor refuses is reported with the side's name, before the other side is read
     def refuse(*, cwd=None, environment=None):
         if environment == "prod":

@@ -207,7 +207,7 @@ function Invoke-CoopSchema {
   if (-not $py) { $py = Get-CoopPython }
   if (-not $py) { Coop-Die 'python3 is required for coop schema' }
   $null = Set-CoopProjectYmlEnv
-  $usage = 'usage: coop schema compare [--source dev|test|prod|snapshot|repo[:<name>[/<subfolder>]]] [--target dev|test|prod|repo[:<name>[/<subfolder>]]]   (default: the contract''s default entry against prod; a repo side is the .sql files of a contract repositories entry; writes report.md and deploy.sql, applies nothing)'
+  $usage = 'usage: coop schema compare [--source dev|test|prod|snapshot|repo[:<name>[/<subfolder>]]] [--target dev|test|prod|repo[:<name>[/<subfolder>]]] [--schema <name>]... [--exclude-schema <name>]...   (default: the contract''s default entry against prod; a repo side is the .sql files of a contract repositories entry; writes report.md and deploy.sql, applies nothing)'
   $cmd = ''
   if ($Rest -and $Rest.Count -ge 1) { $cmd = $Rest[0] }
   if ($cmd -ne 'compare') { Coop-Die $usage }
@@ -215,8 +215,15 @@ function Invoke-CoopSchema {
   $i = 1
   while ($i -lt $Rest.Count) {
     $flag = $Rest[$i]
-    if ($flag -notin @('--source', '--target') -or ($i + 1) -ge $Rest.Count) { Coop-Die $usage }
+    if ($flag -notin @('--source', '--target', '--schema', '--exclude-schema') -or ($i + 1) -ge $Rest.Count) { Coop-Die $usage }
     $value = $Rest[$i + 1]
+    # A schema filter (repeatable): plain names, checked again by the helper.
+    if ($flag -in @('--schema', '--exclude-schema')) {
+      if ($value -notmatch '^[^\[\];''"-][^\[\];''"]{0,127}$') { Coop-Die $usage }
+      $helperArgs += @($flag, $value)
+      $i += 2
+      continue
+    }
     $allowed = @('dev', 'test', 'prod')
     if ($flag -eq '--source') { $allowed += 'snapshot' }
     $isRepo = ($value -match '^repo(:[A-Za-z0-9_.-]+(/[A-Za-z0-9_. -]+)*)?$') -and ($value -notmatch '\.\.')

@@ -489,6 +489,9 @@ runs of whitespace folded, and a leading comment banner, `OR ALTER` and a traili
 `;` ignored, so a reformatted module, or a file beside the catalog's copy of the
 same object, is not a change. Everything else
 (constraints, indexes, permissions, row data) is out of scope and the report says so.
+A schema filter applies to both sides before the diff: `schemas` (a list) keeps
+only those schemas, `exclude` leaves those out (up to 50 plain names each,
+matched case-insensitively), and `notes` names the filter.
 
 The result carries both sides' summaries (environment, kind, database, object
 counts; the snapshot side adds `taken_at`), `counts` (`total`, `add`, `alter`,
@@ -529,7 +532,8 @@ twice is blocked outright. A repo side touches no target: it reads files the
 contract already names. The tool applies nothing:
 running the script against a target is the user's act through the write rules in
 `docs/guardrails-reference.md`, one statement at a time. `coop schema compare
-[--source ...] [--target ...]` is the terminal form of the same helper and prints
+[--source ...] [--target ...] [--schema <name>]... [--exclude-schema <name>]...`
+is the terminal form of the same helper and prints
 the counts and the two paths.
 
 Why coop has its own compare rather than wrapping a Microsoft tool: Fabric
