@@ -268,6 +268,13 @@ try {
   Write-CoopUpdateStateFile $stateFile (New-CoopUpdateState 'up to date' '0.37.0' '' '0.37.0' 'https://github.com/kabukisensei/coop-agent/releases/tag/v0.37.0')
   foreach ($d in @('bin', 'lib', 'config')) { Copy-Item -LiteralPath (Join-Path $root $d) -Destination (Join-Path $snapshot $d) -Recurse -Force }
   Copy-Item -LiteralPath (Join-Path $root 'scripts\update.ps1') -Destination (Join-Path $snapshot 'scripts\update.ps1')
+  # A stand-in for scripts\install.ps1: records its arguments (B6: coop update runs it for this account).
+  # The package's runtime marker (a bare node dir and npm prefix): the child update.ps1 then
+  # sees the bundled runtime, as the real package does, and records the setup marker.
+  New-Item -ItemType Directory -Force -Path (Join-Path $runtime 'node'), (Join-Path $runtime 'npm') | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $runtime 'coop-runtime.json'), '{"schema":1,"node":{"dir":"node"},"npm":{"prefix":"npm"}}', $utf8)
+  $installArgsFile = Join-Path $t 'install-args.txt'
+  [System.IO.File]::WriteAllText((Join-Path $snapshot 'scripts\install.ps1'), ("[System.IO.File]::WriteAllText('" + $installArgsFile.Replace("'", "''") + "', (`$args -join ' '))`nexit 0`n"), $utf8)
   $env:NO_COLOR = '1'
   function Invoke-Update([string[]]$UpdArgs) {
     $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
@@ -277,9 +284,13 @@ try {
     return ($lines -join "`n")
   }
   $out = Invoke-Update @()
+  $installArgs = if (Test-Path -LiteralPath $installArgsFile) { ([System.IO.File]::ReadAllText($installArgsFile)).Trim() } else { '' }
+  $setupMarker = Join-Path $home2 '.coop\desktop\window-setup-version'
   if ($updRc -ne 0 -or $out -notmatch 'This coop updates itself \(this machine\): last checked .*, installed 0\.37\.0') { Ko "coop update on a machine install (rc=$updRc)" $out }
-  elseif ($out -match '1/6|Doctor|repository') { Ko 'coop update on a machine install started the fleet update' $out }
-  else { Ok 'coop update on a machine install says the task does it and exits 0' }
+  elseif ($out -cmatch '1/6|Doctor|repository') { Ko 'coop update on a machine install started the fleet update' $out }
+  elseif ($installArgs -ne '--prereqs auto' -or $out -notmatch "Bringing this account's tools to this package's pins") { Ko "coop update on a machine install did not run this account's setup (install.ps1 args: '$installArgs')" $out }
+  elseif (-not (Test-Path -LiteralPath $setupMarker) -or ([System.IO.File]::ReadAllText($setupMarker)).Trim() -notmatch '^0\.37\.0\+[0-9a-f]{16}$') { Ko "coop update did not record the setup marker at $setupMarker" $out }
+  else { Ok 'coop update on a machine install says the task moves coop, runs install.ps1 --prereqs auto for this account and records the setup marker (B6)' }
   $out = Invoke-Update @('--check')
   if ($updRc -ne 0 -or $out -notmatch 'install\s+this machine \(' -or $out -notmatch 'update task result\s+up to date' -or $out -notmatch 'installed by the task\s+0\.37\.0') { Ko "coop update --check on a machine install (rc=$updRc)" $out }
   else { Ok 'coop update --check on a machine install reports the state file' }

@@ -173,6 +173,16 @@ try {
   $script:CoopVersion = '99.0.0'
   if (Test-CoopBundledSetupPending) { Ok 'a newer package version runs its setup once more (an upgrade, D1k)' } else { Ko 'an upgraded package must re-run its setup' }
   $script:CoopVersion = $savedVersion
+  # B6: the same version with other tool pins (a build installed over another) is pending again.
+  $savedManifest = $script:CoopReleaseManifest
+  $otherManifest = Join-Path $t 'other-manifest.json'
+  [System.IO.File]::WriteAllText($otherManifest, ([System.IO.File]::ReadAllText($savedManifest) + "`n"), $utf8)
+  $script:CoopReleaseManifest = $otherManifest
+  if (Test-CoopBundledSetupPending) { Ok 'a package with a changed release manifest runs its setup once more, same version or not (B6)' } else { Ko 'a changed manifest must re-run the setup' }
+  $script:CoopReleaseManifest = $savedManifest
+  if (-not (Test-CoopBundledSetupPending)) { Ok 'the recorded manifest is not pending' } else { Ko 'pending again with the recorded manifest' }
+  $marker = Get-CoopBundledSetupMarker
+  if (([System.IO.File]::ReadAllText($marker)).Trim() -match '^\d+\.\d+\.\d+\+[0-9a-f]{16}$') { Ok 'the marker records the version and the manifest hash' } else { Ko "marker: $([System.IO.File]::ReadAllText($marker))" }
   if ((Restore-CoopBundledExtensions -AgentDir $agent) -eq $false) { Ok 'a converged tree is left alone' } else { Ko 'second seed must be a no-op' }
 
   # A bundle built for another lock never seeds.
