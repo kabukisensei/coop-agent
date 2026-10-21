@@ -282,7 +282,8 @@ if (tools) {
     mkdirSync(join(home, ".coop"));
     mkdirSync(join(home, "sql"));
     writeFileSync(join(home, ".coop", "project.yml"), "repositories:\n  warehouse:\n    role: sql\n    local_path: sql\n");
-    tools.default(pi);
+    const starts = [];
+    tools.default({ ...pi, on: (event, fn) => { if (event === "session_start") starts.push(fn); } });
     const fresh = registered.get("sql_source");
     const go = (params) => fresh.execute("id", params, undefined, undefined, { cwd: home });
     sqlsc = (args) => args.includes("init")
@@ -300,6 +301,10 @@ if (tools) {
     assert.match(first.content[0].text, /coop can commit these files only once the project file has agent_allowed_to_commit/);
     const second = await go({ command: "status" });
     assert.doesNotMatch(second.content[0].text, /agent_allowed_to_commit/, "once per session");
+    // A new session in the same process (/new, the window) names it again.
+    for (const fn of starts) { try { await fn({}, { cwd: home, hasUI: false, ui: { notify: () => {}, setStatus: () => {} }, sessionManager: { getSessionId: () => "s2", getSessionFile: () => "" } }); } catch { /* other session_start work needs more of Pi */ } }
+    const third = await go({ command: "status" });
+    assert.match(third.content[0].text, /coop can commit these files only once/, "session_start forgets the shown hint");
   });
 
   await t("the /sql-source command turns the switch on and off for this Windows user", async () => {

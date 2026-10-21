@@ -2433,8 +2433,10 @@ export function createCodexAuthRecovery(deps: CodexAuthRecoveryDeps = defaultCod
 }
 
 export default function coopTools(pi: ExtensionAPI) {
-  // The first sql_source status of a session names a missing commit line once.
-  let commitHintShown = false;
+  // The first sql_source status of a session names a missing commit line once
+  // per repository; session_start forgets them (one Pi process can carry
+  // several sessions and folders: the dev VM, 2026-10-21, never saw it).
+  const commitHintShown = new Set<string>();
   pi.registerTool({
     name: "sql_impact",
     label: "SQL impact (live catalog trace)",
@@ -2640,8 +2642,8 @@ export default function coopTools(pi: ExtensionAPI) {
       if (pullNote) lines.push(`- ${pullNote}`);
       // The first status of a session names the project-file line coop's
       // commits need when it is missing (Aaron, 2026-10-21).
-      if (input.command === "status" && !commitHintShown && out.ok !== false) {
-        commitHintShown = true;
+      if (input.command === "status" && !commitHintShown.has(config) && out.ok !== false) {
+        commitHintShown.add(config);
         const allowed = commitLine(config, contract);
         if (!allowed.covered) lines.push(`- coop can commit these files only once the project file has ${allowed.line} (the user adds it with /setup-project or by hand, then /new)`);
       }
@@ -2953,6 +2955,7 @@ export default function coopTools(pi: ExtensionAPI) {
     // The contract native SQL runs against is the one this session starts with
     // (#284); /new, /resume and /fork re-read it here.
     noteContractSnapshot(ctx.cwd);
+    commitHintShown.clear();
     // The lineage context is per session (SQ8): a session switch starts empty, and
     // the files of Pi processes that are gone leave with it.
     clearLineageContext();
