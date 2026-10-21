@@ -207,21 +207,30 @@ function Test-CoopForeignTerminalShortcut {
 # over an older window: its uninstaller removed the `coop` link and "coop
 # (terminal)" shortcut, and new tool pins need installing even when the
 # extension lock is unchanged), so `coop desktop` runs the install first (D1d, D1k).
+# The marker holds the package version AND a hash of its release manifest: a
+# package whose tool pins changed under the same version (a build installed over
+# another, the dev VM 2026-10-20: coop-data-doc stayed at the old pin and the new
+# tool never arrived) re-runs the setup for this account too (B6).
 function Get-CoopBundledSetupMarker { return (Join-Path (Get-CoopProfileDir) 'desktop\window-setup-version') }
+function Get-CoopBundledSetupStamp {
+  $manifestSha = Get-CoopFileSha256 $script:CoopReleaseManifest
+  if (-not $manifestSha) { return [string]$script:CoopVersion }
+  return ([string]$script:CoopVersion + '+' + $manifestSha.Substring(0, 16).ToLower())
+}
 function Test-CoopBundledSetupPending {
   if (-not $script:CoopBundledRuntime) { return $false }
   if (Test-CoopExtensionsLockPending -AgentDir (Get-CoopPiAgentDir) -PiVersion (Get-CoopPiVersion)) { return $true }
   $marker = Get-CoopBundledSetupMarker
   $done = ''
   if (Test-Path -LiteralPath $marker -PathType Leaf) { try { $done = ([System.IO.File]::ReadAllText($marker)).Trim() } catch { $done = '' } }
-  return ($done -ne [string]$script:CoopVersion)
+  return ($done -ne (Get-CoopBundledSetupStamp))
 }
-# Record that this package version finished its setup on this profile.
+# Record that this package (version and manifest) finished its setup on this profile.
 function Set-CoopBundledSetupDone {
   if (-not $script:CoopBundledRuntime) { return }
   $marker = Get-CoopBundledSetupMarker
   New-Item -ItemType Directory -Force -Path (Split-Path -Parent $marker) | Out-Null
-  [System.IO.File]::WriteAllText($marker, [string]$script:CoopVersion)
+  [System.IO.File]::WriteAllText($marker, (Get-CoopBundledSetupStamp))
 }
 # npm's global package root inside the bundled prefix (npm's own layout:
 # <prefix>\node_modules on Windows, <prefix>/lib/node_modules elsewhere).

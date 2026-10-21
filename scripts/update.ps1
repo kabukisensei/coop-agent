@@ -41,7 +41,9 @@ foreach ($a in $args) {
 # The coop installed once for every account on this machine (the window package
 # under %ProgramFiles%\coop) is moved by its "coop update" scheduled task
 # (scripts\auto-update.ps1 as SYSTEM), never by hand: `coop update` reports the
-# task's state and changes nothing. --edge is for developer clones.
+# task's state, then brings THIS account's tools to the package's pins (the same
+# per-account setup the window's first launch runs; doctor's "coop update" remedy
+# for an old or missing tool, B6). --edge is for developer clones.
 if (Test-CoopMachineInstall) {
   if ($EDGE) {
     Coop-Err 'coop update --edge is for developer clones: this coop is this machine''s install, which updates itself from the newest release'
@@ -62,7 +64,11 @@ if (Test-CoopMachineInstall) {
     exit 0
   }
   Coop-Info (Get-CoopMachineUpdateSummary)
-  exit 0
+  Coop-Info "Bringing this account's tools to this package's pins (version $($script:CoopVersion))"
+  $accountRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\install.ps1') @('--prereqs', 'auto')
+  if ($accountRc -eq 0) { Set-CoopBundledSetupDone }
+  else { Coop-Warn "this account's setup did not finish (the lines above say which tool); run: coop doctor" }
+  exit $accountRc
 }
 
 # What update converges: the release manifest through Get-CoopFleetPlan (the
