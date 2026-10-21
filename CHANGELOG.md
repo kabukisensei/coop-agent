@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.38.0] — 2026-10-21
+
 ### Added
 
 - **coop sets SQL source control up (`sql_source init`, master plan SQ14).**
