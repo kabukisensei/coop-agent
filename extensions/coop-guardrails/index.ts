@@ -2465,7 +2465,9 @@ function dangerLabel(cmd: string): string | null {
  *  other target, is hard-blocked, and a named one is resolved through
  *  `sqlsc targets --json` and classified by the project file before it asks
  *  (classifySqlscWrite: unlabelled or conflicting counts as production, which a
- *  person releases). Taking someone else's checkout (`unlock --force`), the
+ *  person releases). `get-latest --force` (the repo's version over a database
+ *  change) is hard-blocked too: the person runs it. Taking someone else's
+ *  checkout (`unlock --force`), the
  *  edit guard, and acting as another person (`--as` that is not coop's own
  *  `coop-agent:` name) ask. Reads (`status`, `diff`, `locks`, `history`,
  *  `migrations`), `--dry-run` / `--output` scripts and coop's own checkouts
@@ -2506,6 +2508,9 @@ export function sqlscShellRisk(cmd: string): SqlscShellRisk | null {
       const target = valueOf("--target", "-t");
       const config = valueOf("--config");
       const verb = sub as "get-latest" | "deploy";
+      // Forcing the repo's version over a database change is the person's
+      // choice, made in their own terminal (Aaron, 2026-10-21).
+      if (verb === "get-latest" && has("--force")) return { hard: true, label: "sqlsc get-latest --force (overwrites a database change; the user runs it)", sessionKey: null };
       if (!DEPLOY_ENVIRONMENTS.has(target)) {
         return { hard: true, label: `sqlsc ${verb}${target ? ` -t ${target}` : " (no target named)"}`, sessionKey: null };
       }

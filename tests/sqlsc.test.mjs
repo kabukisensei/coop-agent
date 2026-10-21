@@ -95,7 +95,15 @@ await t("commit: needs a one-line message; script refuses objects changed on bot
   assert.equal(lib.scriptConflicts(status, ["dbo.V"]).length, 1);
   assert.equal(lib.scriptConflicts({ ok: true, changes: [] }).length, 0);
   const text = lib.scriptConflictText(lib.scriptConflicts(status));
-  assert.match(text.head, /STOP.*both sides.*which side wins/);
+  assert.match(text.head, /STOP.*both sides.*cannot apply either side/);
+  assert.match(text.head, /sqlsc get-latest -t dev --force <object>` keeps the file's version.*sqlsc script -t dev <object>` keeps the database's/);
+  assert.doesNotMatch(text.head, /get_latest \(apply\) keeps/, "get_latest never forces, so it cannot keep the file's version");
+  assert.match(lib.sqlSourceText({ command: "get_latest" }, { ok: true, steps: [], kept: [{ object: "[dbo].[v]", reason: "changed in the database and in the repo" }] }).lines[0], /kept \[dbo\]\.\[v\].*coop never forces/);
+  assert.deepEqual(lib.committedObjects({ commit: "abc", files: [{ object: "[dbo].[v]" }, { path: "x.sql" }] }), ["[dbo].[v]"]);
+  assert.deepEqual(lib.committedObjects({ commit: null, files: [{ object: "[dbo].[v]" }] }), [], "nothing committed, nothing released");
+  assert.deepEqual(lib.commitReleaseLines(["[dbo].[v]", "[dbo].[w]"], { ok: false, released: [{ object: "[dbo].[v]" }], refused: [{ object: "[dbo].[w]", locked_by: "bob@example.com" }] }),
+    ["- released coop's checkout of [dbo].[v]", "- [dbo].[w] stays checked out by bob@example.com"]);
+  assert.match(lib.commitReleaseLines(["[dbo].[v]"], null)[0], /checkout of \[dbo\]\.\[v\] stays.*sql_source release/);
   const root = mkdtempSync(join(tmpdir(), "coop-sqlsrc-folder-"));
   writeFileSync(join(root, "sqlsc.yml"), "folder: 'sql\\objects'\ntarget: dev\n");
   assert.equal(lib.sqlscFolder(join(root, "sqlsc.yml")), "sql/objects");
@@ -221,11 +229,17 @@ if (tools) {
     const one = await run({ command: "script", objects: ["dbo.w"] });
     assert.equal(one.details.state, "ok");
     assert.match(one.content[0].text, /wrote 1 file\(s\)[\s\S]*commit with a message/);
-    sqlsc = () => ({ code: 0, stderr: "", stdout: JSON.stringify({ ok: true, command: "commit", commit: "abc123def456789", pushed: null, files: [{ action: "changed", path: "dbo/Views/w.sql" }], skipped: [], held_back: [] }) });
+    sqlsc = (args) => args.includes("unlock")
+      ? { code: 0, stderr: "", stdout: JSON.stringify({ ok: true, command: "unlock", released: [{ object: "[dbo].[w]" }], refused: [], not_checked_out: [] }) }
+      : { code: 0, stderr: "", stdout: JSON.stringify({ ok: true, command: "commit", commit: "abc123def456789", pushed: null, files: [{ action: "changed", object: "[dbo].[w]", path: "dbo/Views/w.sql" }], skipped: [], held_back: [] }) };
+    execs.length = 0;
     const c = await run({ command: "commit", message: "add Region to w" });
-    const call = execs.findLast((e) => e[0] === "coop-sqlsc");
-    assert.ok(call.includes("commit") && call.includes("--message") && !call.includes("--push") && !call.includes("--force"));
-    assert.match(c.content[0].text, /committed 1 file\(s\) as abc123def456/);
+    const calls = execs.filter((e) => e[0] === "coop-sqlsc");
+    const call = calls.find((e) => e.includes("commit"));
+    assert.ok(call.includes("--message") && !call.includes("--push") && !call.includes("--force"));
+    const unlock = calls.find((e) => e.includes("unlock"));
+    assert.ok(unlock && unlock.includes("coop-agent:ada@example.com") && unlock.at(-1) === "[dbo].[w]" && !unlock.includes("--force"), "the commit releases coop's own checkout of what it committed");
+    assert.match(c.content[0].text, /committed 1 file\(s\) as abc123def456[\s\S]*released coop's checkout of \[dbo\]\.\[w\]/);
   });
 
   await t("deploy: a dry run shows the script and names the person for production", async () => {
@@ -263,7 +277,7 @@ if (guards) {
   const { sqlscShellRisk, decideSqlSource } = guards;
   await t("shell: sqlsc commit, checkin and any write without -t dev|test are hard-blocked; reads and coop's own checkouts pass", async () => {
     for (const cmd of ["sqlsc commit -m x", "coop-sqlsc --json checkin", "sqlsc --config a/sqlsc.yml checkin dbo.v -m done", "cd sql && sqlsc commit --push", "coop-sqlsc.exe commit",
-      "sqlsc deploy --ref v1", "sqlsc deploy -t prod --ref v1 --confirm prod", "sqlsc deploy -t gold", "sqlsc get-latest", "sqlsc get-latest -t prod", "sqlsc --target live get-latest"]) {
+      "sqlsc deploy --ref v1", "sqlsc deploy -t prod --ref v1 --confirm prod", "sqlsc deploy -t gold", "sqlsc get-latest", "sqlsc get-latest -t prod", "sqlsc --target live get-latest", "sqlsc get-latest -t dev --force dbo.v"]) {
       assert.equal(sqlscShellRisk(cmd)?.hard, true, cmd);
     }
     for (const cmd of ["sqlsc status", "coop-sqlsc --json diff dbo.v", "sqlsc locks", "sqlsc checkin --no-commit", "sqlsc get-latest --dry-run", "sqlsc deploy -t prod --ref v1 -o r.sql", "sqlsc deploy --dry-run", "sqlsc checkout dbo.v --as coop-agent:ada@example.com", "echo sqlsc commit", "sqlsc history -t prod"]) {

@@ -76,7 +76,8 @@ partial, or connected project without requiring the user to edit YAML.
    check the object out with `sql_source` (`command="checkout"`, the task as
    `note`) before changing it, live or in its file, and stop if someone else has
    it; after the change, `script` (a live dev change into the files; it stops
-   when the object also changed in the files) or `get_latest` (the files onto
+   when the object also changed in the files: the user settles that one in
+   their own terminal) or `get_latest` (the files onto
    dev, dry run first), show the diff, then `commit` with a message that says
    what changed and why (the user approves it; never push). If local
    source is missing or partial, use read-only dev/test live

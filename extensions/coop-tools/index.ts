@@ -51,6 +51,8 @@ import {
   OFF_TEXT as SQL_SOURCE_OFF,
   SQLSC_BIN,
   agentIdentity,
+  commitReleaseLines,
+  committedObjects,
   findSqlscConfig,
   pullBeforeCommit,
   pullRefusalText,
@@ -2597,6 +2599,17 @@ export default function coopTools(pi: ExtensionAPI) {
       }
       const { head, lines } = sqlSourceText(input, out);
       if (pullNote) lines.push(`- ${pullNote}`);
+      // A commit releases coop's own checkouts of what it committed, like a
+      // person's Check in (Aaron, 2026-10-21); sqlsc refuses anyone else's.
+      const committed = input.command === "commit" ? committedObjects(out) : [];
+      if (committed.length) {
+        let released: any = null;
+        try {
+          const rel = await pi.exec(SQLSC_BIN, sqlSourceArgs({ ...input, command: "release", objects: committed, environment: "" }, config, agent), { cwd: dirname(config), signal });
+          released = JSON.parse(rel.stdout);
+        } catch { /* no answer: the line below says the checkout stays */ }
+        lines.push(...commitReleaseLines(committed, released));
+      }
       return {
         content: [{ type: "text" as const, text: modelText(head, lines, "run sql_source with fewer objects") }],
         details: { state: out.ok === false ? "refused" : "ok", command: input.command, config, user: agent, result: out },

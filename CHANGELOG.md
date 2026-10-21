@@ -20,13 +20,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `apply=true`, which asks), `commit` (pulls the branch first, fast-forward only, then the scripted files, one
   approval per commit, only where the project file's `agent_allowed_to_commit`
   covers the sqlsc folder; never pushed; guardrails rule 4 and the `coop-workflow`
-  skill name it as the one approved way to commit SQL source) and `deploy` (one commit to dev or test; a dry run
+  skill name it as the one approved way to commit SQL source; it then releases
+  coop's own checkouts of the committed objects, like a person's Check in) and `deploy` (one commit to dev or test; a dry run
   unless `apply=true`, which asks every time). Every database write is classified
   by the project file first: the target's real server and database must be the
   contract's dev or test entry, never protected or named like production, and
   unlabelled or conflicting counts as production, a person's. Nothing is lost
   between SSMS and the files: `script` stops on an object changed on both sides
-  since the last sync, sqlsc keeps database-side changes out of `get_latest`,
+  since the last sync and names the person's own `sqlsc` command for each side
+  (coop applies neither), sqlsc keeps database-side changes out of `get_latest`,
   coop never forces, and an approved dev write that is not yet scripted is
   carried as a note into the next turn until `script` and `commit` have run.
   From the shell, `sqlsc commit`/`checkin` stay hard-blocked, `get-latest` and
