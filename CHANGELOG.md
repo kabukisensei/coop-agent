@@ -22,6 +22,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `coop schema compare` takes `--schema` / `--exclude-schema`; `sql_source init`
   passes the same lists to `sqlsc init`, which records them in `sqlsc.yml`
   (coop-sql-source-control 1.0.2).
+- **Pins:** coop-sql-source-control 1.0.1 → 1.0.2 (the schema filter, `commit`
+  takes `sqlsc.yml`, `.gitattributes` and `.gitignore` along while they are new,
+  text output on a cp1252 console no longer crashes; from its GitHub release,
+  hash-checked) and coop-schema-compare 0.1.1 → 0.1.2 (`--schema` /
+  `--exclude-schema`, from PyPI).
 - **SQL source control for client SQL (`sql_source`, master plan SQ12).** coop
   now ships `coop-sqlsc` ([coop-sql-source-control](https://github.com/kabukisensei/coop-sql-source-control)
   1.0.1, pinned in the release manifest and bundled in the window package from
