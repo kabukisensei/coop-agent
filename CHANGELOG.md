@@ -211,6 +211,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **A package upgrade brings every account the new tool pins (F3, B6).** The
+  window's per-account setup (the first launch's install) ran once per package
+  version, so a package with new pins under the same version (one build
+  installed over another on the dev VM, 2026-10-20) left the account's tools at
+  the old pins, and `coop update` on a machine install only reported the update
+  task and changed nothing, although `coop doctor` names it as the remedy. The
+  setup marker now records the package version together with a hash of its
+  release manifest, so any change to the pins re-runs that account's setup at
+  the next launch, and `coop update` on a machine install runs the same setup
+  for the account at hand (`scripts\install.ps1 --prereqs auto`) after its one
+  line about the update task.
 - **Warehouse SQL MCP reads no longer time out at a fixed 60 seconds.** The
   generated `fabric-sqlendpoint` entry pinned `requestTimeoutMs` to 60000 and
   both `coop doctor` and the guardrails refused any other value, so a longer

@@ -115,9 +115,10 @@ async function main(argv) {
     // The window's title names the folder ("coop - coop-launch-work"), so an error box titled "coop" never passes.
     const opened = await waitFor("the coop window on the folder (first-launch setup runs first)", SETUP_TIMEOUT_MS, async () => (await coopWindows()).find((w) => w.title && w.title.endsWith(win32.basename(work))));
     step("the Desktop shortcut runs the first-launch setup and opens the coop window", `"${opened.value.title}" after ${opened.seconds}s`);
+    // The marker is "<version>+<manifest hash>" (B6: new tool pins re-run the setup); older packages wrote the version alone.
     const done = existsSync(marker) ? readFileSync(marker, "utf8").trim() : "";
-    if (done !== version) throw new Error(`setup did not record this version as done (${marker}: "${done}")`);
-    step("setup recorded this version, so the next start skips it", version);
+    if (done !== version && !done.startsWith(`${version}+`)) throw new Error(`setup did not record this version as done (${marker}: "${done}")`);
+    step("setup recorded this version, so the next start skips it", done);
 
     // 3. Clicked again while open: the same window comes forward, no second one.
     const before = await coopWindows();
