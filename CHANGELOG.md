@@ -5,6 +5,54 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **SQL source control for client SQL (`sql_source`, master plan SQ12).** coop
+  now ships `coop-sqlsc` ([coop-sql-source-control](https://github.com/kabukisensei/coop-sql-source-control)
+  1.0.1, pinned in the release manifest and bundled in the window package from
+  its GitHub release with a hash check), switched off for every Windows
+  user until `/sql-source on` inside coop (`/sql-source off`, `/sql-source` shows
+  the state; remembered in `~/.coop/config`; off, the tool is not registered and
+  costs no model context). Where a client SQL repository has an `sqlsc.yml`, the
+  native tool drives the CLI: `status`, `diff`, `checkout`/`release` as
+  `coop-agent:<user>`, `script` (dev's
+  changes into the files), `get_latest` (the files onto dev; a dry run unless
+  `apply=true`, which asks), `commit` (pulls the branch first, fast-forward only, then the scripted files, one
+  approval per commit, only where the project file's `agent_allowed_to_commit`
+  covers the sqlsc folder; never pushed; guardrails rule 4 and the `coop-workflow`
+  skill name it as the one approved way to commit SQL source; it then releases
+  coop's own checkouts of the committed objects, like a person's Check in) and `deploy` (one commit to dev or test; a dry run
+  unless `apply=true`, which asks every time). Every database write is classified
+  by the project file first: the target's real server and database must be the
+  contract's dev or test entry, never protected or named like production, and
+  unlabelled or conflicting counts as production, a person's. Nothing is lost
+  between SSMS and the files: `script` stops on an object changed on both sides
+  since the last sync and names the person's own `sqlsc` command for each side
+  (coop applies neither), sqlsc keeps database-side changes out of `get_latest`,
+  coop never forces, and an approved dev write that is not yet scripted is
+  carried as a note into the next turn until `script` and `commit` have run.
+  From the shell, `sqlsc commit`/`checkin` stay hard-blocked, `get-latest` and
+  `deploy` must name `-t dev` or `-t test` and are classified the same way, and
+  `unlock --force`, the edit guard and `--as` another person ask. `coop doctor`
+  shows the tool's row and the switch. New `tests/sqlsc.test.mjs` (gate lane)
+  and sourced-wheel tests in `tests/desktop-installer.test.mjs`.
+- **coop-data-doc 1.4.0** is the pinned companion (`catalog_dependencies`,
+  `config-set --from-json -`, used by the sqlsc lineage setup of row SQ13).
+- **Lineage docs over a coop-sql-source-control repository** (master plan row
+  SQ13). `/setup-docs` and the window's docs form point coop-data-doc at an
+  sqlsc repository's scripts folder (sqlsc.yml's `folder`), from the contract's
+  SQL repository or the folder coop is opened in, and on a first run check its
+  object folders (Tables, Views, Stored Procedures, Functions, Triggers) and
+  leave `Data/`, `Migrations/` and `Security/` unchecked. When the folder holds
+  the database's own dependency list (`Dependencies.json`, from
+  `sqlsc dependencies`), setup adds it to coop-data-doc's `catalog_dependencies`
+  through coop-data-doc's `config-set`, so the build warns about each reference
+  its parse missed; a coop-data-doc without that key is told to update instead.
+
+- **`coop folders`**: a read-only command printing the three places coop uses
+  (this machine, this client, the repository) with their real paths and what
+  each holds; other rows build on it.
+
 ### Changed
 
 - **The client folder (master plan F1; Aaron, 2026-10-20).** coop's folder
@@ -160,12 +208,6 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   <tool>" lines now end with pipx's or pip's error line (or its last
   line), so a standard user's first launch on a machine install names the
   path or package that failed instead of leaving it to a verbose re-run.
-
-### Added
-
-- **`coop folders`**: a read-only command printing the three places coop uses
-  (this machine, this client, the repository) with their real paths and what
-  each holds; other rows build on it.
 
 ### Fixed
 
