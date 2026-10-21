@@ -98,6 +98,24 @@ await t("commit: needs a one-line message; script refuses objects changed on bot
   assert.match(text.head, /STOP.*both sides.*cannot apply either side/);
   assert.match(text.head, /sqlsc get-latest -t dev --force <object>` keeps the file's version.*sqlsc script -t dev <object>` keeps the database's/);
   assert.doesNotMatch(text.head, /get_latest \(apply\) keeps/, "get_latest never forces, so it cannot keep the file's version");
+  // #414: a failed, refused, killed or malformed status never lets script run.
+  const ok = { code: 0, stdout: JSON.stringify({ ok: true, changes: [] }) };
+  assert.equal(lib.scriptPreflight(ok).ok, true);
+  for (const [res, why] of [
+    [{ code: 1, stdout: JSON.stringify({ ok: false, error: { kind: "connect", message: "transient failure" } }) }, /exited 1: transient failure/],
+    [{ code: 1, stdout: JSON.stringify({ ok: true, changes: [] }) }, /exited 1/],
+    [{ code: 0, stdout: "Traceback" }, /did not answer with JSON/],
+    [{ code: 0, stdout: JSON.stringify({ ok: false, error: { kind: "connect", message: "x" } }) }, /did not succeed: x/],
+    [{ code: 0, stdout: JSON.stringify({ command: "status", changes: [] }) }, /did not succeed/],
+    [{ code: 0, stdout: JSON.stringify({ ok: true }) }, /no list of changes/],
+    [{ code: 0, stdout: "[]" }, /did not answer with JSON/],
+    [{ code: null, killed: true, stdout: "" }, /stopped/],
+  ]) {
+    const pre = lib.scriptPreflight(res);
+    assert.equal(pre.ok, false, JSON.stringify(res));
+    assert.match(pre.reason, why);
+  }
+  assert.match(lib.scriptPreflightText("status exited 1"), /STOP.*did not complete \(status exited 1\).*did not script anything/);
   assert.match(lib.sqlSourceText({ command: "get_latest" }, { ok: true, steps: [], kept: [{ object: "[dbo].[v]", reason: "changed in the database and in the repo" }] }).lines[0], /kept \[dbo\]\.\[v\].*coop never forces/);
   assert.deepEqual(lib.committedObjects({ commit: "abc", files: [{ object: "[dbo].[v]" }, { path: "x.sql" }] }), ["[dbo].[v]"]);
   assert.deepEqual(lib.committedObjects({ commit: null, files: [{ object: "[dbo].[v]" }] }), [], "nothing committed, nothing released");
@@ -264,6 +282,38 @@ if (tools) {
     const unlock = calls.find((e) => e.includes("unlock"));
     assert.ok(unlock && unlock.includes("coop-agent:ada@example.com") && unlock.at(-1) === "[dbo].[w]" && !unlock.includes("--force"), "the commit releases coop's own checkout of what it committed");
     assert.match(c.content[0].text, /committed 1 file\(s\) as abc123def456[\s\S]*released coop's checkout of \[dbo\]\.\[w\]/);
+  });
+
+  await t("script stops when its status preflight fails, and the repository file stays as it was (#414)", async () => {
+    const file = join(repo, "dbo.v.sql");
+    writeFileSync(file, "-- the repo's edit\nCREATE VIEW dbo.v AS SELECT 2 AS n\n");
+    const before = readFileSync(file, "utf8");
+    const scriptOk = { code: 0, stderr: "", stdout: JSON.stringify({ ok: true, command: "script", files: [{ action: "changed", path: "dbo.v.sql" }] }) };
+    for (const status of [
+      { code: 1, stderr: "", stdout: JSON.stringify({ ok: false, error: { kind: "connect", message: "transient failure" } }) },
+      { code: 1, stderr: "boom", stdout: "not json" },
+      { code: 0, stderr: "", stdout: JSON.stringify({ ok: true, command: "status" }) },
+      { code: null, killed: true, stderr: "", stdout: "" },
+    ]) {
+      sqlsc = (args) => {
+        if (args.includes("status")) return status;
+        writeFileSync(file, "CREATE VIEW dbo.v AS SELECT 1 AS n\n");
+        return scriptOk;
+      };
+      execs.length = 0;
+      const r = await run({ command: "script" });
+      assert.equal(r.details.state, "preflight_failed", JSON.stringify(status));
+      assert.match(r.content[0].text, /STOP[\s\S]*did not script anything/);
+      assert.ok(!execs.some((e) => e[0] === "coop-sqlsc" && e.includes("script")), "script never ran");
+      assert.equal(readFileSync(file, "utf8"), before, "the repository's bytes are kept");
+    }
+    const aborted = new AbortController();
+    aborted.abort();
+    sqlsc = (args) => (args.includes("status") ? { code: 0, stderr: "", stdout: JSON.stringify({ ok: true, changes: [] }) } : scriptOk);
+    execs.length = 0;
+    const cancelled = await tool.execute("id", { command: "script" }, aborted.signal, undefined, { cwd: repo });
+    assert.equal(cancelled.details.state, "preflight_failed");
+    assert.ok(!execs.some((e) => e[0] === "coop-sqlsc" && e.includes("script")), "a cancelled preflight never scripts");
   });
 
   await t("deploy: a dry run shows the script and names the person for production", async () => {

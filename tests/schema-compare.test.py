@@ -293,7 +293,7 @@ with tempfile.TemporaryDirectory() as tmp:
     }
     for rel, content in files.items():
         (folder / rel).write_text(content, encoding="utf-8")
-    (folder / "manifest.json").write_text(json.dumps({"coop_catalog_snapshot": True, "taken_at": "2026-10-10T00:00:00Z", "target": summary, "files": sorted(files) + ["../escape.sql"]}), encoding="utf-8")
+    (folder / "manifest.json").write_text(json.dumps({"coop_catalog_snapshot": True, "taken_at": "2026-10-10T00:00:00Z", "target": summary, "files": sorted(files)}), encoding="utf-8")
     snap, state = sc.read_snapshot(folder)
     assert state == "ok"
     assert [c.render() for c in snap.tables[("dbo", "Orders")]] == ["[OrderId] int NOT NULL", "[Amount] decimal(18, 2) NULL", "[Region] nvarchar(50) NULL"]
@@ -303,6 +303,91 @@ with tempfile.TemporaryDirectory() as tmp:
     assert snap.schemas == {"dbo", "fin"}
     assert sc.diff(snap, dev)[0]["kind"] in ("schema", "table", "view"), "a snapshot compares like a live side"
     assert sc.read_snapshot(Path(tmp) / "nowhere") == (None, "snapshot_missing")
+    # #417: a listed file outside the folder, missing, headerless or undecodable fails closed.
+    manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+    (folder / "manifest.json").write_text(json.dumps({**manifest, "files": manifest["files"] + ["../escape.sql"]}), encoding="utf-8")
+    assert sc.read_snapshot(folder) == (None, "snapshot_incomplete")
+    (folder / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    saved = (folder / "dbo/Orders.sql").read_bytes()
+    (folder / "dbo/Orders.sql").unlink()
+    assert sc.read_snapshot(folder) == (None, "snapshot_incomplete"), "a missing table file is no drop"
+    (folder / "dbo/Orders.sql").write_text("CREATE TABLE dbo.Orders (id int NOT NULL)\n", encoding="utf-8")
+    assert sc.read_snapshot(folder) == (None, "snapshot_incomplete")
+    (folder / "dbo/Orders.sql").write_bytes(b"\xff\xfe\x00bad")
+    assert sc.read_snapshot(folder) == (None, "snapshot_incomplete")
+    (folder / "dbo/Orders.sql").write_bytes(saved)
+    # The writer's cut lists, unavailable reads and skipped objects come back.
+    (folder / "manifest.json").write_text(json.dumps({**manifest, "files": [f for f in manifest["files"] if f != "dbo/Orders.sql"], "truncated": {"objects": True, "columns": False}, "unavailable": ["definitions"], "skipped": ["dbo.hidden (view: definition not readable)", "dbo.bad name"]}), encoding="utf-8")
+    snap, state = sc.read_snapshot(folder)
+    assert state == "ok" and snap.truncated == ["objects"] and snap.unavailable == ["definitions"], (snap.truncated, snap.unavailable)
+    assert snap.modules[("dbo", "hidden")] == ("view", "") and snap.skipped == {"dbo.bad name"}
+    whole = sc.Catalog()
+    whole.schemas = {"dbo"}
+    whole.tables[("dbo", "Orders")] = [sc.Column("id", "int", False, 1)]
+    whole.tables[("dbo", "bad name")] = [sc.Column("id", "int", False, 1)]
+    cut = [(c["name"], c["action"]) for c in sc.diff(snap, whole)]
+    assert ("Orders", "unknown") in cut and not [c for c in cut if c[1] == "drop"], cut
+    snap.truncated = []
+    assert ("bad name", "unknown") in [(c["name"], c["action"]) for c in sc.diff(snap, whole)]
+    assert ("Orders", "drop") in [(c["name"], c["action"]) for c in sc.diff(snap, whole)], "a whole side still proves a removal"
+
+# --- review findings 2026-10-21 (#415, #416, #418, #419) --------------------------------
+# #415: whitespace inside literals and quoted names is a change; outside it is not.
+for a, b in (("'a  b'", "'a b'"), ("'a\tb'", "'a b'"), ("'a\n\nb'", "'a\nb'"), ("N'it''s  x'", "N'it''s x'"), ("1 AS [a  b]", "1 AS [a b]"), ('1 AS "a  b"', '1 AS "a b"')):
+    assert sc.normalize_definition("CREATE VIEW dbo.v AS SELECT " + a) != sc.normalize_definition("CREATE VIEW dbo.v AS SELECT " + b), a
+assert sc.normalize_definition("-- banner\nCREATE OR ALTER VIEW dbo.v AS\n\n    SELECT  'a  b' AS v ,\t1 AS w;\n") == sc.normalize_definition("CREATE VIEW dbo.v AS\r\nSELECT 'a  b' AS v , 1 AS w")
+assert sc.normalize_definition("ALTER VIEW dbo.v AS SELECT 1") == sc.normalize_definition("CREATE VIEW dbo.v AS SELECT 1")
+lit_src, lit_tgt = sc.Catalog(), sc.Catalog()
+lit_src.modules[("dbo", "v")] = ("view", "CREATE VIEW dbo.v AS SELECT 'a  b' AS value")
+lit_tgt.modules[("dbo", "v")] = ("view", "CREATE VIEW dbo.v AS SELECT 'a b' AS value")
+assert [(c["name"], c["action"]) for c in sc.diff(lit_src, lit_tgt)] == [("v", "alter")]
+# #416: CREATE OR ALTER after a banner; never inside a comment or string.
+for given, expected in {
+    "-- maintained view\nCREATE VIEW dbo.v AS SELECT 2 AS n": "-- maintained view\nCREATE OR ALTER VIEW dbo.v AS SELECT 2 AS n",
+    "/* a /* nested */ b */\ncreate procedure dbo.p AS SELECT 1": "/* a /* nested */ b */\nCREATE OR ALTER procedure dbo.p AS SELECT 1",
+    "\ufeff-- x\nCREATE FUNCTION dbo.f() RETURNS int AS BEGIN RETURN 1 END": "\ufeff-- x\nCREATE OR ALTER FUNCTION dbo.f() RETURNS int AS BEGIN RETURN 1 END",
+    "CREATE OR ALTER VIEW dbo.v AS SELECT 'CREATE VIEW' AS s": "CREATE OR ALTER VIEW dbo.v AS SELECT 'CREATE VIEW' AS s",
+    "-- CREATE VIEW\nALTER PROC dbo.p AS SELECT 1": "-- CREATE VIEW\nCREATE OR ALTER PROC dbo.p AS SELECT 1",
+}.items():
+    assert sc._create_or_alter(given) == expected, given
+banner_src, banner_tgt = sc.Catalog(), sc.Catalog()
+banner_src.modules[("dbo", "v")] = ("view", "-- maintained view\nCREATE VIEW dbo.v AS SELECT 2 AS n")
+banner_tgt.modules[("dbo", "v")] = ("view", "CREATE VIEW dbo.v AS SELECT 1 AS n")
+banner_script, _, _ = sc.render_script(banner_src, sc.diff(banner_src, banner_tgt), source_name="s", target_name="t", target_kind="azure_sql", taken_at="x")
+assert "-- maintained view\nCREATE OR ALTER VIEW dbo.v AS SELECT 2 AS n;" in banner_script
+# #418: comments and string literals order nothing; a real cycle goes to a person.
+for z in ("CREATE VIEW dbo.z AS SELECT 'dbo.a' AS label", "CREATE VIEW dbo.z AS SELECT N'it''s dbo.a' AS label", "-- like dbo.a\nCREATE VIEW dbo.z AS SELECT 1 AS label", "CREATE VIEW dbo.z AS /* [dbo].[a] */ SELECT 1 AS label"):
+    dep_src = sc.Catalog()
+    dep_src.modules = {("dbo", "a"): ("view", "CREATE VIEW dbo.a AS SELECT label FROM dbo.z"), ("dbo", "z"): ("view", z)}
+    dep_script, runnable, manual = sc.render_script(dep_src, sc.diff(dep_src, sc.Catalog()), source_name="s", target_name="t", target_kind="azure_sql", taken_at="x")
+    assert dep_script.index("VIEW dbo.z") < dep_script.index("VIEW dbo.a") and (runnable, manual) == (2, 0), z
+cyc = sc.Catalog()
+cyc.modules = {
+    ("dbo", "a"): ("view", "CREATE VIEW dbo.a AS SELECT * FROM dbo.b"),
+    ("dbo", "b"): ("view", "CREATE VIEW dbo.b AS SELECT * FROM dbo.a"),
+    ("dbo", "c"): ("view", "CREATE VIEW dbo.c AS SELECT * FROM dbo.a"),
+    ("dbo", "d"): ("view", "CREATE VIEW dbo.d AS SELECT 1 AS x"),
+}
+assert sc._cycles(list(cyc.modules), {k: v[1] for k, v in cyc.modules.items()}) == {("dbo", "a"), ("dbo", "b")}
+cyc_script, runnable, manual = sc.render_script(cyc, sc.diff(cyc, sc.Catalog()), source_name="s", target_name="t", target_kind="azure_sql", taken_at="x")
+cyc_live = cyc_script.split("DESTRUCTIVE OR MANUAL")[0]
+assert "CREATE OR ALTER VIEW dbo.d" in cyc_live and not any(f"VIEW dbo.{n} " in cyc_live for n in "abc")
+assert "-- view dbo.a: circular reference: names dbo.b" in cyc_script and "-- view dbo.c: run after the rebuild: follows view dbo.a below" in cyc_script
+assert (runnable, manual) == (1, 3)
+# #419: dbo is never created or dropped; user schemas still are.
+with_dbo = sc.Catalog()
+with_dbo.schemas = {"dbo"}
+with_dbo.tables[("dbo", "Orders")] = [sc.Column("id", "int", False, 1)]
+dbo_only = sc.Catalog()
+dbo_only.schemas = {"DBO"}
+assert [(c["kind"], c["action"]) for c in sc.diff(with_dbo, sc.Catalog())] == [("table", "add")]
+assert [(c["kind"], c["action"]) for c in sc.diff(sc.Catalog(), with_dbo)] == [("table", "drop")]
+assert sc.diff(dbo_only, sc.Catalog()) == [] and sc.diff(sc.Catalog(), dbo_only) == []
+dbo_script, _, _ = sc.render_script(with_dbo, sc.diff(with_dbo, sc.Catalog()), source_name="s", target_name="t", target_kind="azure_sql", taken_at="x")
+assert "CREATE SCHEMA" not in dbo_script
+staging = sc.Catalog()
+staging.schemas = {"dbo", "staging"}
+assert [(c["schema"], c["action"]) for c in sc.diff(staging, sc.Catalog())] == [("staging", "add")]
 
 # --- compare(): input shape before any connection; identical sides rejected ---------
 with mock.patch.object(sq, "open_connection", side_effect=AssertionError("no connection for bad input")):
@@ -333,7 +418,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
     with mock.patch.object(sq, "open_connection", side_effect=fake_open):
         out = sc.compare({}, cwd=repo, now=NOW)
-    assert out["state"] == "ok", out
+    assert out["state"] == "ok" and out["complete"] is True, out
     assert opened == ["dev", "prod"], "the default pair is the contract's default entry against prod, each read once"
     assert all(c.closed for c in connections.values())
     assert out["path"] == ".coop/schema-compare/dev-to-prod"

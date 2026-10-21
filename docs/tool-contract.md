@@ -500,7 +500,9 @@ counts; the snapshot side adds `taken_at`), `counts` (`total`, `add`, `alter`,
 `drop`, `destructive`), the first 200 `changes` (kind, schema, name, action
 `add`/`alter`/`drop`/`replace`/`unknown`, detail, `destructive`), the script's
 statement counts, `notes` (an unreadable `sys.sql_modules` or a capped list on
-either side, named by side) and `path`: the folder
+either side, named by side), `complete` (false when a side was not read whole: a
+list cut at the cap or objects the snapshot skipped; an object such a side may
+hold is an `unknown` change, never an add or a drop) and `path`: the folder
 `.coop/schema-compare/<source>-to-<target>/` beside the contract, holding
 `report.md` (the same table for people) and `deploy.sql`. The result line tells the
 model that the list is the whole diff (report.md repeats it, so it is not read)
@@ -509,8 +511,13 @@ result. The script is ordered to
 run top to bottom: new schemas, new tables, in-place column additions, then
 functions, views and procedures as `CREATE OR ALTER` in one dependency order across
 kinds (a function that reads a view follows the view; `schema.name` references
-resolve exactly, a bare name only when one changed object has it; ties by kind
-then name). Every removal
+resolve exactly, a bare name only when one changed object has it, and comments
+and string literals name nothing; ties by kind then name; objects that name each
+other in a circle go to the manual section). Definitions compare with
+whitespace folded outside string literals and quoted names, a leading comment
+banner dropped and `CREATE`, `CREATE OR ALTER` and `ALTER` alike; the script
+turns the first `CREATE` after any banner into `CREATE OR ALTER`. `dbo`,
+`guest`, `sys` and `INFORMATION_SCHEMA` are never created or dropped. Every removal
 and every change that can lose data (a dropped or retyped column, a `NOT NULL`
 column added to an existing table, a name whose kind differs between the sides)
 lands last, commented out under a DESTRUCTIVE banner, so nothing lossy runs
@@ -521,7 +528,9 @@ function or procedure that names a column the rebuild adds follows that note in
 the manual section, with everything that depends on it, instead of failing in the
 live part. A failed side
 is reported with its own state and `side` (`target_invalid` when the entry is not
-ready, `snapshot_missing` when no snapshot exists), and `output_unwritable` when
+ready, `snapshot_missing` when no snapshot exists, `snapshot_incomplete` when a
+file its manifest lists is missing, unreadable, outside the folder or without its
+header), and `output_unwritable` when
 the folder cannot be written. No server name, driver text, credential or exception
 text appears in the result or the files.
 
