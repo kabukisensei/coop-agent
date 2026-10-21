@@ -247,6 +247,7 @@ function Invoke-CoopSchema {
     Coop-Ok "schema compare $($info.source.environment) -> $($info.target.environment): $($c.total) difference(s) ($($c.add) add, $($c.alter) alter, $($c.drop) drop, $($c.destructive) destructive)"
     Coop-Info "report: $($info.path)/report.md; script: $($info.path)/deploy.sql ($($info.script.statements) statement(s) to run, $($info.script.destructive) destructive or manual, commented out)"
     foreach ($n in @($info.notes)) { if ($n) { Coop-Warn "$n" } }
+    if ($info.complete -eq $false) { Coop-Warn 'partial: a side was not read whole; no difference listed does not mean none exists' }
     Coop-Info 'nothing was applied; read the script before running any of it against the target'
     exit 0
   }
@@ -255,6 +256,7 @@ function Invoke-CoopSchema {
     'pyodbc_unavailable' { ' - pyodbc is missing in the Fabric Python (coop doctor)' }
     'target_invalid' { " - side $($info.side) is not a ready sql_targets entry in .coop/project.yml" }
     'snapshot_missing' { ' - no committed catalog snapshot; run: coop catalog snapshot' }
+    'snapshot_incomplete' { ' - the catalog snapshot is damaged (a listed file is missing or unreadable); run: coop catalog snapshot' }
     'input_invalid' { ' - source and target must be different sides' }
     default { '' }
   }

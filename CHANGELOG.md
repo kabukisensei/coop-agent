@@ -5,6 +5,26 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **`sql_source script` stops when its status check fails (#414).** The status
+  read that protects objects changed on both sides must exit 0 and answer
+  `ok: true` with a list of changes; a failed, refused, cancelled, killed or
+  unreadable status now stops with `preflight_failed` and nothing is scripted,
+  where before it read as "no conflicts" and the script ran.
+- **Schema compare review fixes (#415-#419), the same as coop-schema-compare
+  0.1.3.** Whitespace inside a string literal or quoted name is a change again
+  (#415). A module with a leading comment banner gets `CREATE OR ALTER` in
+  `deploy.sql` instead of a plain `CREATE` (#416). A catalog snapshot whose
+  manifest lists a missing, unreadable, out-of-folder or headerless file fails
+  as `snapshot_incomplete` instead of reading as drops; the manifest's cut
+  lists, unavailable reads and skipped objects come back, an object such a side
+  may hold is an `unknown` change, and the result carries `complete` (#417).
+  Comments and string literals no longer order modules, and a real circular
+  reference goes to the manual section instead of an alphabetical guess (#418).
+  `dbo`, `guest`, `sys` and `INFORMATION_SCHEMA` are never created or dropped
+  (#419).
+
 ## [0.38.0] — 2026-10-21
 
 ### Added

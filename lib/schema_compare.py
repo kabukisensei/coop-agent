@@ -90,8 +90,12 @@ MODULES_SQL = snapshot_lib.MODULES_SQL
 _IDENT = r"[A-Za-z_][A-Za-z0-9_@#$]{0,127}"
 _SNAPSHOT_HEADER = re.compile(r"^-- coop catalog snapshot: (table|view|procedure|function) (\S+)\.(\S+)$")
 _SNAPSHOT_COLUMN = re.compile(r"^\s{4}\[(.+?)\] (.+?) (NULL|NOT NULL)$")
-_CREATE_HEAD = re.compile(r"^(\s*)CREATE\s+(OR\s+ALTER\s+)?(VIEW|PROC(?:EDURE)?|FUNCTION)\b", re.IGNORECASE)
-_OR_ALTER = re.compile(r"^(\s*CREATE\s+)OR\s+ALTER\s+", re.IGNORECASE)
+MODULE_WORDS = ("VIEW", "PROC", "PROCEDURE", "FUNCTION")
+# A database's own schemas: they exist in every database and cannot be created or
+# dropped, so a compare never offers them as a change (objects in them still compare).
+INTRINSIC_SCHEMAS = {"dbo", "guest", "sys", "information_schema"}
+_SKIPPED = re.compile(r"^(.+?)(?: \((table|view|procedure|function): definition not readable\))?$")
+MAX_SKIPPED = 200
 
 
 # --- catalog model -----------------------------------------------------------------
@@ -120,6 +124,8 @@ class Catalog:
         self.truncated: list[str] = []
         self.unavailable: list[str] = []
         self.notes: list[str] = []
+        # `schema.name` (lower case) of objects a snapshot skipped: present, but unread.
+        self.skipped: set[str] = set()
 
     def kinds(self) -> dict[tuple[str, str], str]:
         out = {key: "table" for key in self.tables}
@@ -143,18 +149,98 @@ def _plain(key: tuple[str, str]) -> str:
     return f"{key[0]}.{key[1]}"
 
 
+def _segments(sql: str) -> list[tuple[str, str]]:
+    """The text as (kind, text) runs: `ws`, `comment` (line or nested block),
+    `string` ('...' with '' escapes), `ident` ([...] with ]] escapes, "..." with ""
+    escapes) and `code` (everything else). Joined back, the runs are the text."""
+    out: list[tuple[str, str]] = []
+    i, n = 0, len(sql)
+    while i < n:
+        ch = sql[i]
+        if ch.isspace() or ch == "\ufeff":  # a byte-order mark reads as whitespace
+            end = i
+            while end < n and (sql[end].isspace() or sql[end] == "\ufeff"):
+                end += 1
+            out.append(("ws", sql[i:end]))
+        elif sql.startswith("--", i):
+            end = sql.find("\n", i)
+            end = n if end < 0 else end
+            out.append(("comment", sql[i:end]))
+        elif sql.startswith("/*", i):
+            depth, end = 1, i + 2
+            while end < n and depth:
+                if sql.startswith("/*", end):
+                    depth, end = depth + 1, end + 2
+                elif sql.startswith("*/", end):
+                    depth, end = depth - 1, end + 2
+                else:
+                    end += 1
+            out.append(("comment", sql[i:end]))
+        elif ch in "'[\"":
+            close = "]" if ch == "[" else ch
+            end = i + 1
+            while end < n:
+                if sql[end] == close:
+                    if end + 1 < n and sql[end + 1] == close:
+                        end += 2
+                        continue
+                    end += 1
+                    break
+                end += 1
+            out.append(("string" if ch == "'" else "ident", sql[i:end]))
+        else:
+            end = i + 1
+            while end < n and not (sql[end].isspace() or sql[end] == "\ufeff" or sql[end] in "'[\"" or sql.startswith("--", end) or sql.startswith("/*", end)):
+                end += 1
+            out.append(("code", sql[i:end]))
+        i = end
+    return out
+
+
+def _code_only(sql: str) -> str:
+    """The text with comments and string literals blanked: what names objects."""
+    return "".join(" " if kind in ("comment", "string") else text for kind, text in _segments(sql))
+
+
+def _words(runs: list[tuple[str, str]], start: int, count: int) -> list[tuple[int, str]]:
+    """The next `count` code or identifier runs from `start`, skipping whitespace and comments."""
+    out: list[tuple[int, str]] = []
+    for index in range(start, len(runs)):
+        if runs[index][0] in ("ws", "comment"):
+            continue
+        out.append((index, runs[index][1]))
+        if len(out) == count:
+            break
+    return out
+
+
 def normalize_definition(definition: str) -> str:
-    """Line endings and runs of whitespace folded, blank lines, a leading comment
-    banner, `OR ALTER` and a trailing `;` dropped: a definition reformatted by an
-    editor or kept in a repo file is not a change, a changed token is."""
-    text = definition.replace("\r\n", "\n").replace("\r", "\n").strip()
-    lines = [re.sub(r"[ \t]+", " ", line.rstrip()) for line in text.split("\n") if line.strip()]
-    while lines and lines[0].lstrip().startswith("--"):
-        lines.pop(0)
-    if lines:
-        lines[0] = _OR_ALTER.sub(r"\1", lines[0], count=1)
-        lines[-1] = lines[-1].rstrip(";").rstrip()
-    return "\n".join(line for line in lines if line.strip())
+    """Whitespace outside string literals and quoted names folded (a line break
+    stays a line break, blank lines go), a leading comment banner, `OR ALTER` (or
+    a leading `ALTER`) and trailing `;` dropped: a definition reformatted by an
+    editor or kept in a repo file is not a change; a changed token, string literal
+    or quoted name is."""
+    runs = _segments(definition.replace("\r\n", "\n").replace("\r", "\n").lstrip("\ufeff"))
+    while runs and runs[0][0] in ("ws", "comment"):
+        runs.pop(0)
+    head = _words(runs, 0, 3)
+    words = [w.upper() for _, w in head]
+    if words[:3] == ["CREATE", "OR", "ALTER"]:
+        runs = runs[: head[0][0] + 1] + runs[head[2][0] + 1 :]
+    elif words[:1] == ["ALTER"] and len(words) > 1 and words[1] in MODULE_WORDS:
+        runs = [("code", "create" if head[0][1].islower() else "CREATE")] + runs[1:]
+    out: list[str] = []
+    for kind, text in runs:
+        if kind == "ws":
+            out.append("\n" if "\n" in text else " ")
+        elif kind == "comment":
+            out.append("\n".join(re.sub(r"[ \t]+", " ", line).rstrip() for line in text.split("\n")))
+        else:
+            out.append(text)
+    body = "".join(out).strip()
+    while body.endswith(";"):
+        body = body[:-1].rstrip()
+    return body
 
 
 # --- live side ---------------------------------------------------------------------
@@ -226,33 +312,46 @@ def read_live(cursor: Any) -> Catalog:
 
 
 def read_snapshot(folder: Path) -> tuple[Catalog | None, str]:
-    """The committed snapshot as a Catalog, or (None, state)."""
+    """The committed snapshot as a Catalog, or (None, state). Every file the
+    manifest lists must be there, inside the folder, under its snapshot header:
+    a missing or damaged one fails as `snapshot_incomplete` rather than reading
+    as an object the side does not have. What the writer recorded as cut,
+    unavailable or skipped comes back on the Catalog."""
     manifest = snapshot_lib.read_manifest(folder)
     if manifest is None:
         return None, "snapshot_missing"
     catalog = Catalog()
+    truncated = manifest.get("truncated")
+    if isinstance(truncated, dict):
+        catalog.truncated = sorted(str(k) for k, v in truncated.items() if v is True)
+    catalog.unavailable = [v for v in (manifest.get("unavailable") or []) if isinstance(v, str)]
+    skipped = [v for v in (manifest.get("skipped") or []) if isinstance(v, str)]
+    if len(skipped) >= MAX_SKIPPED:
+        catalog.truncated.append("skipped objects")
     root = folder.resolve()
-    for rel in manifest.get("files") or []:
+    files = manifest.get("files") or []
+    if not isinstance(files, list):
+        return None, "snapshot_incomplete"
+    for rel in files:
         if not isinstance(rel, str) or not rel.endswith(".sql") or ".." in rel or os.path.isabs(rel):
-            continue
+            return None, "snapshot_incomplete"
         path = (folder / rel).resolve()
         if root not in path.parents:
-            continue
+            return None, "snapshot_incomplete"
         try:
-            text = path.read_text(encoding="utf-8-sig")
-        except OSError:
-            continue
-        lines = text.replace("\r\n", "\n").split("\n")
+            content = path.read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeDecodeError):
+            return None, "snapshot_incomplete"
+        lines = content.replace("\r\n", "\n").split("\n")
         head = _SNAPSHOT_HEADER.match(lines[0] if lines else "")
         if not head:
-            continue
+            return None, "snapshot_incomplete"
         kind, schema, name = head.group(1), head.group(2), head.group(3)
         body_start = 0
         for index, line in enumerate(lines):
             if not line.startswith("--") and line.strip():
                 body_start = index
                 break
-        body = "\n".join(lines[body_start:])
         key = (schema, name)
         catalog.schemas.add(schema)
         if kind == "table":
@@ -262,11 +361,21 @@ def read_snapshot(folder: Path) -> tuple[Catalog | None, str]:
                 if col:
                     cols.append(Column(col.group(1).replace("]]", "]"), col.group(2), col.group(3) == "NULL", len(cols) + 1))
             catalog.tables[key] = cols
+        elif any(line.startswith("-- definition not readable") for line in lines[1 : body_start + 1]):
+            catalog.modules[key] = (kind, "")
         else:
-            if any(line.startswith("-- definition not readable") for line in lines[1:body_start + 1]):
-                catalog.modules[key] = (kind, "")
-            else:
-                catalog.modules[key] = (kind, body)
+            catalog.modules[key] = (kind, "\n".join(lines[body_start:]))
+    for item in skipped:
+        # A module whose definition was not readable is there, definition unknown;
+        # a name unsafe as a file name is there, kind unknown.
+        match = _SKIPPED.match(item)
+        name_text, kind = (match.group(1), match.group(2)) if match else (item, None)
+        schema, dot, name = name_text.partition(".")
+        if kind and kind != "table" and dot and (schema, name) not in catalog.modules:
+            catalog.schemas.add(schema)
+            catalog.modules[(schema, name)] = (kind, "")
+        else:
+            catalog.skipped.add(name_text.lower())
     return catalog, "ok"
 
 
@@ -376,14 +485,25 @@ def diff(source: Catalog, target: Catalog) -> list[dict[str, Any]]:
     what the target needs to match the source."""
     changes: list[dict[str, Any]] = []
     src_kinds, tgt_kinds = source.kinds(), target.kinds()
-    for schema in sorted(source.schemas - target.schemas, key=str.lower):
-        changes.append(_change("schema", (schema, ""), "add"))
-    for schema in sorted(target.schemas - source.schemas, key=str.lower):
-        changes.append(_change("schema", (schema, ""), "drop", destructive=True))
+    src_schemas = {s for s in source.schemas if s.lower() not in INTRINSIC_SCHEMAS}
+    tgt_schemas = {s for s in target.schemas if s.lower() not in INTRINSIC_SCHEMAS}
+    # A side whose list was cut, or that skipped objects, cannot prove an absence.
+    if "schemas" not in target.truncated:
+        for schema in sorted(src_schemas - tgt_schemas, key=str.lower):
+            changes.append(_change("schema", (schema, ""), "add"))
+    if "schemas" not in source.truncated:
+        for schema in sorted(tgt_schemas - src_schemas, key=str.lower):
+            changes.append(_change("schema", (schema, ""), "drop", destructive=True))
     for key in sorted(set(src_kinds) | set(tgt_kinds), key=lambda k: (k[0].lower(), k[1].lower())):
         src_kind, tgt_kind = src_kinds.get(key), tgt_kinds.get(key)
         if src_kind and tgt_kind and src_kind != tgt_kind:
             changes.append(_change(src_kind, key, "replace", f"a {tgt_kind} on the target, a {src_kind} on the source", destructive=True))
+            continue
+        missing_from = target if src_kind and not tgt_kind else source if tgt_kind and not src_kind else None
+        if missing_from is not None and ("objects" in missing_from.truncated or f"{key[0]}.{key[1]}".lower() in missing_from.skipped):
+            side = "target" if missing_from is target else "source"
+            why = "its object list was cut at the compare cap" if "objects" in missing_from.truncated else "its snapshot skipped this object"
+            changes.append(_change(src_kind or tgt_kind or "", key, "unknown", f"not read on the {side} ({why}); compare by hand"))
             continue
         if src_kind and not tgt_kind:
             if src_kind == "table":
@@ -413,14 +533,15 @@ def diff(source: Catalog, target: Catalog) -> list[dict[str, Any]]:
 
 
 def _mentions(definition: str, names: set[str]) -> set[str]:
-    lowered = definition.lower()
+    lowered = _code_only(definition).lower()
     return {name for name in names if re.search(r"\b" + re.escape(name.lower()) + r"\b", lowered)}
 
 
 def _references(definition: str, keys: list[tuple[str, str]]) -> set[tuple[str, str]]:
     """The objects among `keys` a definition names: `schema.name` (brackets or not)
-    resolves exactly; a bare name resolves only when one object in the set has it."""
-    lowered = definition.lower()
+    resolves exactly; a bare name resolves only when one object in the set has it.
+    Comments and string literals name nothing."""
+    lowered = _code_only(definition).lower()
     out: set[tuple[str, str]] = set()
     counts: dict[str, int] = {}
     for key in keys:
@@ -438,22 +559,49 @@ def _references(definition: str, keys: list[tuple[str, str]]) -> set[tuple[str, 
 def _ordered(keys: list[tuple[str, str]], definitions: dict[tuple[str, str], str], kinds: dict[tuple[str, str], str] | None = None) -> list[tuple[str, str]]:
     """Topological order by the objects each definition names, across kinds (a
     function over a view follows the view); ties by kind order then name, a cycle
-    broken by that same order."""
+    placed by that same order (`cycles` names its members)."""
+    return _order(keys, definitions, kinds)[0]
+
+
+def _cycles(keys: list[tuple[str, str]], definitions: dict[tuple[str, str], str]) -> set[tuple[str, str]]:
+    """The objects that name each other round in a circle: no order is right for them."""
+    return _order(keys, definitions, None)[1]
+
+
+def _order(keys: list[tuple[str, str]], definitions: dict[tuple[str, str], str], kinds: dict[tuple[str, str], str] | None) -> tuple[list[tuple[str, str]], set[tuple[str, str]]]:
     rank = {kind: i for i, kind in enumerate(MODULE_KINDS)}
-    order = lambda k: (rank.get((kinds or {}).get(k, ""), len(rank)), k[0].lower(), k[1].lower())
+
+    def order(k: tuple[str, str]) -> tuple[int, str, str]:
+        return (rank.get((kinds or {}).get(k, ""), len(rank)), k[0].lower(), k[1].lower())
+
     pending = sorted(keys, key=order)
     deps = {k: _references(definitions.get(k, ""), pending) - {k} for k in pending}
     out: list[tuple[str, str]] = []
     placed: set[tuple[str, str]] = set()
+    circular: set[tuple[str, str]] = set()
     while pending:
         ready = [k for k in pending if deps[k] <= placed]
         if not ready:
-            ready = [pending[0]]  # a cycle: break it by kind and name order
+            # Stuck: the objects that reach themselves are the cycle; whatever only
+            # waits on them is ready once they are placed.
+            ready = [k for k in pending if k in _reachable(k, deps, placed)]
+            circular.update(ready)
         for k in ready:
             out.append(k)
             placed.add(k)
             pending.remove(k)
-    return out
+    return out, circular
+
+
+def _reachable(start: tuple[str, str], deps: dict[tuple[str, str], set[tuple[str, str]]], placed: set[tuple[str, str]]) -> set[tuple[str, str]]:
+    seen: set[tuple[str, str]] = set()
+    stack = [d for d in deps[start] if d not in placed]
+    while stack:
+        k = stack.pop()
+        if k not in seen:
+            seen.add(k)
+            stack.extend(d for d in deps[k] if d not in placed)
+    return seen
 
 
 def _rebuilt_columns(changes: list[dict[str, Any]]) -> dict[tuple[str, str], set[str]]:
@@ -476,11 +624,14 @@ def _terminated(text: str) -> str:
 
 
 def _create_or_alter(definition: str) -> str:
-    text = definition.strip()
-    match = _CREATE_HEAD.match(text)
-    if match and not match.group(2):
-        text = text[: match.start()] + f"{match.group(1)}CREATE OR ALTER {match.group(3)}" + text[match.end():]
-    return text
+    """The definition with its leading `CREATE` (or `ALTER`) as `CREATE OR ALTER`,
+    after any comment banner; comments, strings and the body are left as written."""
+    runs = _segments(definition.strip())
+    head = _words(runs, 0, 3)
+    words = [w.upper() for _, w in head]
+    if len(words) > 1 and words[0] in ("CREATE", "ALTER") and words[1] in MODULE_WORDS:
+        runs[head[0][0]] = ("code", "CREATE OR ALTER")
+    return "".join(text for _, text in runs)
 
 
 def _drop_word(kind: str) -> str:
@@ -535,11 +686,19 @@ def render_script(
     # the rebuild notes, with everything that depends on it.
     rebuilt = _rebuilt_columns(changes) if rebuild else {}
     deferred: dict[tuple[str, str], str] = {}
-    for key in _ordered(keys, definitions, kinds):
+    order, circular = _order(keys, definitions, kinds)
+    for key in order:
         kind = kinds.get(key, "")
         definition = definitions.get(key, "")
         if not definition:
             destructive.append(f"-- {kind} {_plain(key)}: definition not readable on the source; write it by hand")
+            continue
+        if key in circular:
+            # Objects that name each other have no right order: a person runs them.
+            others = sorted(_references(definition, sorted(circular)) - {key})
+            reason = f"names {', '.join(_plain(o) for o in others)}, and those references lead back to it; run these in an order that works"
+            deferred[key] = reason
+            destructive.append(f"-- {kind} {_plain(key)}: circular reference: {reason}\n{_terminated(_create_or_alter(definition))}")
             continue
         waits_on = [dep for dep in _references(definition, list(deferred)) if dep != key]
         rebuilt_tables = [t for t in _references(definition, list(rebuilt)) if _mentions(definition, rebuilt[t])]
@@ -809,6 +968,8 @@ def compare(payload: Any, *, cwd: Path | None = None, now: datetime | None = Non
             notes.append(f"{label}: unavailable {item}")
         for item in catalog.truncated:
             notes.append(f"{label}: the {item} list is larger than the compare cap; the compare is partial")
+        if catalog.skipped:
+            notes.append(f"{label}: the snapshot skipped {len(catalog.skipped)} object(s) (names unsafe as file names); they compare as unknown")
     script, to_run, destructive = render_script(
         source_catalog, changes, source_name=source, target_name=target, target_kind=target_summary.get("kind", ""), taken_at=taken_at
     )
@@ -828,6 +989,8 @@ def compare(payload: Any, *, cwd: Path | None = None, now: datetime | None = Non
         taken_at=taken_at,
         path=rel,
         counts=summarize(changes),
+        # False when a side was not read whole: no difference listed does not mean none exists.
+        complete=not any(c.truncated or c.skipped for c in (source_catalog, target_catalog)),
         changes=changes[:MAX_CHANGES_IN_RESULT],
         changes_truncated=len(changes) > MAX_CHANGES_IN_RESULT,
         script={"statements": to_run, "destructive": destructive},

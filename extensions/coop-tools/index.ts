@@ -60,6 +60,8 @@ import {
   setSqlSourceEnabled,
   scriptConflictText,
   scriptConflicts,
+  scriptPreflight,
+  scriptPreflightText,
   sqlSourceArgs,
   sqlSourceEnabled,
   sqlSourceInput,
@@ -2526,6 +2528,7 @@ export default function coopTools(pi: ExtensionAPI) {
       }
       if (details?.changes_truncated) lines.push("- more changes in report.md");
       for (const note of Array.isArray(details?.notes) ? details.notes : []) lines.push(`- note: ${String(note)}`);
+      if (details?.complete === false) lines.push("- partial: a side was not read whole, so a missing difference proves nothing; unknown changes are compared by hand");
       const side = (s: any) => `${s?.environment ?? "?"} ${s?.kind ?? ""} ${s?.database ?? ""}`.trim();
       // The list below is the whole diff: report.md repeats it for people, and
       // deploy.sql is read only when promoting, so a compare costs one tool result.
@@ -2538,7 +2541,7 @@ export default function coopTools(pi: ExtensionAPI) {
           lines,
           "see report.md",
         )
-        : `schema_compare unavailable: ${String(details?.state || "internal_error")}${details?.side ? ` (side: ${details.side})` : ""}.${details?.state === "contract_changed" ? ` ${CONTRACT_CHANGED_HINT}` : ""}${details?.state === "snapshot_missing" ? " No committed catalog snapshot exists; run catalog_snapshot (command=\"snapshot\") first or compare a live entry." : ""}${details?.state === "target_invalid" ? " That side is not a ready sql_targets entry in .coop/project.yml." : ""}${details?.state === "repo_missing" ? " No repositories entry with role sql or mixed and a local_path matches; name one as repo:<name>." : ""}${details?.state === "repo_ambiguous" ? " Several sql or mixed repositories exist; name one as repo:<name>." : ""}${details?.state === "repo_unavailable" ? " That repository folder (or its sql_root/subfolder) does not exist on this machine." : ""}`;
+        : `schema_compare unavailable: ${String(details?.state || "internal_error")}${details?.side ? ` (side: ${details.side})` : ""}.${details?.state === "contract_changed" ? ` ${CONTRACT_CHANGED_HINT}` : ""}${details?.state === "snapshot_missing" ? " No committed catalog snapshot exists; run catalog_snapshot (command=\"snapshot\") first or compare a live entry." : ""}${details?.state === "snapshot_incomplete" ? " The committed snapshot is damaged (a file its manifest lists is missing or unreadable); take it again with catalog_snapshot (command=\"snapshot\")." : ""}${details?.state === "target_invalid" ? " That side is not a ready sql_targets entry in .coop/project.yml." : ""}${details?.state === "repo_missing" ? " No repositories entry with role sql or mixed and a local_path matches; name one as repo:<name>." : ""}${details?.state === "repo_ambiguous" ? " Several sql or mixed repositories exist; name one as repo:<name>." : ""}${details?.state === "repo_unavailable" ? " That repository folder (or its sql_root/subfolder) does not exist on this machine." : ""}`;
       return { content: [{ type: "text" as const, text }], details };
     },
   });
@@ -2608,9 +2611,12 @@ export default function coopTools(pi: ExtensionAPI) {
         // and refuse objects changed on both sides (lib/sqlsc.mjs scriptConflicts).
         if (input.command === "script") {
           const status = await pi.exec(SQLSC_BIN, sqlSourceArgs({ ...input, command: "status", objects: [], environment: "" }, config, agent), { cwd: dirname(config), signal });
-          let statusOut: any = null;
-          try { statusOut = JSON.parse(status.stdout); } catch { /* not JSON: the script call below reports it */ }
-          const conflicts = statusOut && statusOut.ok !== false ? scriptConflicts(statusOut, input.objects) : [];
+          // A failed or unreadable status proves nothing: stop before writing (#414).
+          const preflight = signal?.aborted ? { ok: false as const, reason: "cancelled" } : scriptPreflight(status);
+          if (!preflight.ok) {
+            return { content: [{ type: "text" as const, text: scriptPreflightText(preflight.reason) }], details: { state: "preflight_failed", command: input.command, config, user: agent, reason: preflight.reason, exitCode: status.code } };
+          }
+          const conflicts = scriptConflicts(preflight.out, input.objects);
           if (conflicts.length) {
             const { head, lines } = scriptConflictText(conflicts);
             return { content: [{ type: "text" as const, text: modelText(head, lines, "name fewer objects") }], details: { state: "conflict", command: input.command, config, user: agent, conflicts } };
