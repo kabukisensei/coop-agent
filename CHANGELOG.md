@@ -250,7 +250,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   release manifest, so any change to the pins re-runs that account's setup at
   the next launch, and `coop update` on a machine install runs the same setup
   for the account at hand (`scripts\install.ps1 --prereqs auto`) after its one
-  line about the update task.
+  line about the update task. A terminal launch, which never runs that setup,
+  warns "new tool pins for this coop: run coop update" while it is pending.
 - **Warehouse SQL MCP reads no longer time out at a fixed 60 seconds.** The
   generated `fabric-sqlendpoint` entry pinned `requestTimeoutMs` to 60000 and
   both `coop doctor` and the guardrails refused any other value, so a longer

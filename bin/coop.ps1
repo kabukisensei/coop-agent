@@ -909,6 +909,13 @@ function Initialize-CoopLaunch {
   # Guard against launching into a known-broken extension load (agent/extension skew).
   Invoke-CoopLaunchPreflight
 
+  # A terminal launch never runs the account's setup (it takes minutes); the
+  # window's first launch or `coop update` does. Say so when this package's
+  # pins have not reached this account yet (B6; Aaron 2026-10-21).
+  if (-not $Window -and (Test-CoopBundledSetupPending)) {
+    Coop-Warn 'new tool pins for this coop: run coop update'
+  }
+
   # Point the managed Warehouse MCP entry at THIS folder's project: the shared
   # config keeps one target, and the last `coop sync` may have run elsewhere
   # (`coop update`, the window's first launch). Fail-soft: the token helper
