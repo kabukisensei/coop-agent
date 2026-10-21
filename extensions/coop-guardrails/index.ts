@@ -3875,7 +3875,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         `coop-guardrails: ${enabled() ? "ON" : "OFF (COOP_NO_GUARDRAILS=1)"}`,
         `coop update policy: ${showUpstreamUpdates() ? "UPSTREAM NOTICES ENABLED (maintainer mode)" : "ON — Pi self-update prompts suppressed; use coop update"}`,
         "Enforced on the agent's tool calls (your own shell is never intercepted):",
-        "  • never commit source — blocks `git commit` (incl. -a/-am, `git -C`, `git commit <path>`, and `cd <dir> && git commit`) of anything outside docs/logs/site; merge / cherry-pick / revert / am / commit-tree take the same gate",
+        "  • never commit source — blocks `git commit` (incl. -a/-am, `git -C`, `git commit <path>`, and `cd <dir> && git commit`) of anything outside docs/logs/site; merge / cherry-pick / revert / am / commit-tree take the same gate (sql_source commit is the approved path under SQL source control: it asks per commit)",
         "  • destructive commands — confirms rm -rf / git push --force (incl. +refspec) or --delete / reset --hard / git clean -f / branch -D / stash drop·clear / checkout -- / restore / find -delete / az … delete / DROP·TRUNCATE",
         "  • secret files — confirms read/edit/write AND bash access (cat .env etc.) of .env / keys / credentials; printing the environment, `az account get-access-token`, `az login|logout`, `az account clear|set` ask too",
         "  • live data — metadata and plain SQL reads run on every target, production included; reads coop cannot classify ask once",

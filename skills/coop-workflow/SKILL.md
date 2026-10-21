@@ -18,7 +18,7 @@ documentation reads handled by the `coop-data-doc` tool.
   edits, review, authorized validation, restoration, diff, and passing check.
 - **Back up** before edits; make the **smallest safe change**.
 - **Review** with the tools; **document and log** the work.
-- **Never commit source** — docs/logs/site only, after approval.
+- **Never commit source** — docs/logs/site only, after approval (`sql_source commit` is the one approved SQL path).
 - **Start with what exists.** No local repo, SQL-only, Power-BI-only, partial, and
   full estates are all valid. Use the available source and make coverage gaps explicit.
 - **Explain your choices** (why this approach/pattern/trade-off), but keep it terse
@@ -125,7 +125,10 @@ partial, or connected project without requiring the user to edit YAML.
     model, report, Python, or notebook source** — make the edit, show the diff,
     and let the user commit. Use the `git-helper` skill (or `/pr-description`) to
     draft a Conventional-Commits message and PR description from the diff so the
-    human's commit is one paste — drafts only, it never commits.
+    human's commit is one paste — drafts only, it never commits. One exception:
+    under SQL source control (`/sql-source on`), `sql_source commit` is the
+    approved way to commit the scripted SQL files; it asks per commit and never
+    pushes.
 
 ## Slice by default
 
