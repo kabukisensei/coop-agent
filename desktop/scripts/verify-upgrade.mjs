@@ -5,8 +5,8 @@
 // machine). Two cases on a clean runner, after desktop/scripts/verify-installer.mjs
 // has installed and removed the new build:
 //
-//   A. this machine over this account: the previous release's installer as a
-//      per-user install (/S /currentuser, what releases before F3 were), with
+//   A. this machine over the previous release. Before F3 (v0.38.0) that was a
+//      per-user install (/S /currentuser), with
 //      the `coop` link and "coop (terminal)" its first launch wrote, then this
 //      build for every account (/S /allusers). One Add/Remove entry, in HKLM,
 //      at the new version; the per-user package gone with its link and
@@ -15,6 +15,9 @@
 //      settings kept; the next launch re-runs setup; the machine shim, PATH
 //      entry and update task there. Installing this build over itself keeps
 //      them; a real uninstall removes them.
+//      From v0.38.0 the previous release is a machine install itself: A installs
+//      it for every account, then this build over it (one HKLM entry, at this
+//      version), and checks the rest the same way.
 //   B. this machine over a terminal install: a `coop` link and "coop"/"coop
 //      (terminal)" shortcuts that start this checkout (the runner's terminal
 //      coop), then this build. The all-users "coop" opens the window; the
@@ -71,6 +74,16 @@ async function uninstall(paths, mode) {
   for (let waited = 0; existsSync(paths.uninstaller) && waited < 30; waited++) await new Promise((done) => setTimeout(done, 1000));
 }
 
+/** Whether dotted version a is at least b (numeric parts; "" or junk is older). */
+export function atLeastVersion(a, b) {
+  const pa = String(a || "").split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = String(b).split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
+  }
+  return true;
+}
+
 function oneExe(dir) {
   const found = readdirSync(dir).filter((name) => /^coop-window-.*\.exe$/i.test(name));
   if (found.length !== 1) throw new Error(`expected one coop-window-*.exe in ${dir}, found ${found.length}`);
@@ -94,6 +107,7 @@ async function main(argv) {
   const prevReport = JSON.parse(readFileSync(join(previousDir, "installer-acceptance.json"), "utf8"));
   if (!same(prevReport.installerSha256, sha256(previous))) throw new Error(`the previous installer's SHA-256 is not the one its release's acceptance report names`);
   const version = readFileSync(join(ROOT, "VERSION"), "utf8").trim();
+  const prevMachine = atLeastVersion(prevReport.version, "0.38.0");
   const machine = packagePaths();
   const user = packagePaths(process.env, "user");
   const settingsFile = join(process.env.USERPROFILE, ".coop", "agent", "settings.json");
@@ -124,30 +138,45 @@ async function main(argv) {
 
   let installed = "";
   try {
-    // --- A. this machine over this account ---------------------------------------
-    let seconds = await install(previous, user.installDir, "currentuser");
-    installed = "user";
-    const prevEntries = await registryEntries();
-    if (prevEntries.length !== 1 || prevEntries[0].Hive !== "HKCU") throw new Error(`the previous release did not install for this account: ${JSON.stringify(prevEntries)}`);
-    // What the previous package's first launch wrote: its own link and "coop (terminal)".
-    mkdirSync(dirname(user.launcherLink), { recursive: true });
-    writeFileSync(user.launcherLink, prevLink);
-    await writeTerminalShortcut(user.terminalShortcut, prevTerminal);
-    step("A. the previous release installed for this account (HKCU), with its first-launch link and shortcut", `${report.previous.installer} ${prevEntries[0].DisplayVersion} (${seconds}s)`);
+    // --- A. this machine over the previous release ------------------------------
+    // Releases before F3 (v0.38.0) installed per user; from v0.38.0 on, the
+    // previous release is itself a machine install, so A upgrades it in place.
+    let seconds;
+    if (!prevMachine) {
+      seconds = await install(previous, user.installDir, "currentuser");
+      installed = "user";
+      const prevEntries = await registryEntries();
+      if (prevEntries.length !== 1 || prevEntries[0].Hive !== "HKCU") throw new Error(`the previous release did not install for this account: ${JSON.stringify(prevEntries)}`);
+      // What the previous package's first launch wrote: its own link and "coop (terminal)".
+      mkdirSync(dirname(user.launcherLink), { recursive: true });
+      writeFileSync(user.launcherLink, prevLink);
+      await writeTerminalShortcut(user.terminalShortcut, prevTerminal);
+      step("A. the previous release installed for this account (HKCU), with its first-launch link and shortcut", `${report.previous.installer} ${prevEntries[0].DisplayVersion} (${seconds}s)`);
+    } else {
+      seconds = await install(previous, machine.installDir, "allusers");
+      installed = "machine";
+      const prevEntries = await registryEntries();
+      if (prevEntries.length !== 1 || prevEntries[0].Hive !== "HKLM") throw new Error(`the previous release did not install for every account: ${JSON.stringify(prevEntries)}`);
+      step("A. the previous release installed for every account (HKLM)", `${report.previous.installer} ${prevEntries[0].DisplayVersion} (${seconds}s)`);
+    }
 
     seconds = await install(current, machine.installDir, "allusers");
     installed = "machine";
     const entries = await registryEntries();
     if (entries.length !== 1 || entries[0].Hive !== "HKLM" || entries[0].DisplayVersion !== version) throw new Error(`after the upgrade Add/Remove shows ${JSON.stringify(entries)}`);
     if (!existsSync(machine.exe) || !existsSync(machine.runtime)) throw new Error("the upgrade did not lay down this build's payload (no coop.exe or runtime)");
-    if (existsSync(user.exe) || existsSync(user.uninstaller)) throw new Error(`the account's older package is still at ${user.installDir}`);
-    step("A. this build installed for every account: one Add/Remove entry (HKLM), the account's package removed", `${entries[0].DisplayName} ${entries[0].DisplayVersion} (${seconds}s)`);
+    if (!prevMachine) {
+      if (existsSync(user.exe) || existsSync(user.uninstaller)) throw new Error(`the account's older package is still at ${user.installDir}`);
+      step("A. this build installed for every account: one Add/Remove entry (HKLM), the account's package removed", `${entries[0].DisplayName} ${entries[0].DisplayVersion} (${seconds}s)`);
 
-    if (existsSync(user.launcherLink) || existsSync(user.terminalShortcut)) throw new Error("the older package's `coop` link or \"coop (terminal)\" survived its removal");
-    for (const file of [user.desktopShortcut, user.startMenuShortcut]) {
-      if (existsSync(file)) throw new Error(`the older package's shortcut survived: ${file}`);
+      if (existsSync(user.launcherLink) || existsSync(user.terminalShortcut)) throw new Error("the older package's `coop` link or \"coop (terminal)\" survived its removal");
+      for (const file of [user.desktopShortcut, user.startMenuShortcut]) {
+        if (existsSync(file)) throw new Error(`the older package's shortcut survived: ${file}`);
+      }
+      step("A. the older package's link and shortcuts for this account are gone (its own uninstaller ran)");
+    } else {
+      step("A. this build installed over the previous machine install: one Add/Remove entry (HKLM) at this version", `${entries[0].DisplayName} ${entries[0].DisplayVersion} (${seconds}s)`);
     }
-    step("A. the older package's link and shortcuts for this account are gone (its own uninstaller ran)");
 
     for (const file of [machine.desktopShortcut, machine.startMenuShortcut]) {
       if (!existsSync(file)) throw new Error(`after the upgrade the shortcut is missing: ${file}`);

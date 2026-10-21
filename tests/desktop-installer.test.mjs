@@ -19,7 +19,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { bootstrapProcess, bundledCoop, consoleTail, doctorReport, findCoop, folderArgument, launcherPath, packagedPaths, packagedRuntime } from "../desktop/lib/bootstrap.mjs";
 import { consoleProcess } from "../desktop/lib/terminal.mjs";
@@ -618,6 +618,18 @@ await check("ci.yml: the upgrade acceptance installs the latest release, then th
   const launch = readFileSync(join(ROOT, "desktop", "scripts", "verify-launch.mjs"), "utf8");
   const pickerTitle = /const PICKER_TITLE = "([^"]+)"/.exec(launch)[1];
   assert.match(readFileSync(join(ROOT, "desktop", "renderer", "picker.html"), "utf8"), new RegExp(`<title>${pickerTitle}</title>`), "picker.html carries the title the launch check waits for");
+});
+
+await check("verify-upgrade.mjs: from v0.38.0 the previous release is a machine install, so case A upgrades it in place", async () => {
+  const { atLeastVersion } = await import(pathToFileURL(join(ROOT, "desktop", "scripts", "verify-upgrade.mjs")).href);
+  assert.equal(atLeastVersion("0.37.0", "0.38.0"), false, "a per-user release installs for this account first");
+  assert.equal(atLeastVersion("0.38.0", "0.38.0"), true);
+  assert.equal(atLeastVersion("0.38.1", "0.38.0"), true);
+  assert.equal(atLeastVersion("1.0.0", "0.38.0"), true);
+  assert.equal(atLeastVersion("", "0.38.0"), false);
+  const upgrade = readFileSync(join(ROOT, "desktop", "scripts", "verify-upgrade.mjs"), "utf8");
+  assert.match(upgrade, /if \(!prevMachine\) \{\s+seconds = await install\(previous, user\.installDir, "currentuser"\)/);
+  assert.match(upgrade, /seconds = await install\(previous, machine\.installDir, "allusers"\)/);
 });
 
 await check("release.yml: the tag build runs the acceptance on the release bytes and publishes only a verified exe (#277)", () => {
