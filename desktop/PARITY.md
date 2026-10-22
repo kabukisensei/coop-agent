@@ -112,7 +112,7 @@ Pi 1.2.0, `docs/keybindings.md`: every action id, with the window's key.
 | `app.model.select` | rpc | Ctrl+L. |
 | `app.model.cycleForward` | rpc | Ctrl+P (`cycle_model`). |
 | `app.model.cycleBackward` | rpc | Ctrl+L picks any model; Pi's RPC cycles forward only. |
-| `app.models.save` | window | Every model picked with Ctrl+L or Ctrl+P is remembered for new sessions (coop-router, `coop-model.json`); scoped model lists are in the terminal's `/scoped-models`. |
+| `app.models.save` | terminal | Saving scoped model lists is in the terminal's `/scoped-models`; a model picked with Ctrl+L or Ctrl+P is remembered for new sessions anyway (coop-router, `coop-model.json`). |
 | `app.thinking.cycle` | rpc | Shift+Tab. |
 | `app.thinking.save` | terminal | Saving the default level is in the terminal's `/settings`. |
 | `app.thinking.toggle` | window | Ctrl+T shows or hides thinking. |
