@@ -232,6 +232,8 @@ const SCHEMA_COMPARE_PARAMS = Type.Object({
   target: Type.Optional(Type.String({ description: "To: dev, test, prod or repo[:<name>[/<sub>]]. Default: prod." })),
   schemas: Type.Optional(Type.Array(Type.String(), { description: "Only these schemas." })),
   exclude: Type.Optional(Type.Array(Type.String(), { description: "Leave these schemas out." })),
+  rebuild: Type.Optional(Type.Array(Type.String(), { description: "Schemas whose changed tables are dropped and recreated." })),
+  commented: Type.Optional(Type.Boolean({ description: "Comment destructive statements out." })),
 });
 
 const SQL_SOURCE_PARAMS = Type.Object({
@@ -2546,7 +2548,7 @@ export default function coopTools(pi: ExtensionAPI) {
     description: "Read-only compare of two schemas (sql_targets entries, the snapshot or a repo's .sql files) with an ordered promotion script. Writes report.md and deploy.sql under .coop/schema-compare, never runs them.",
     promptSnippet: "Compare dev, prod or repo schemas; ordered promotion script, nothing applied",
     promptGuidelines: [
-      "To move SQL changes between environments, call schema_compare first and work from its deploy.sql; its commented-out destructive statements stay a person's call.",
+      "To move SQL changes between environments, call schema_compare first; deploy.sql is the person's to run. Pass only the choices the user names for this run: the project file holds the client's defaults.",
     ],
     parameters: SCHEMA_COMPARE_PARAMS,
     executionMode: "sequential",
@@ -2556,6 +2558,8 @@ export default function coopTools(pi: ExtensionAPI) {
       if (typeof params?.target === "string") input.target = params.target;
       if (Array.isArray(params?.schemas)) input.schemas = params.schemas;
       if (Array.isArray(params?.exclude)) input.exclude = params.exclude;
+      if (Array.isArray(params?.rebuild)) input.rebuild = params.rebuild;
+      if (typeof params?.commented === "boolean") input.commented = params.commented;
       const details = await runFabricSqlHelper(input, signal, ctx.cwd, "schema_compare.py");
       const lines: string[] = [];
       for (const c of Array.isArray(details?.changes) ? details.changes : []) {
@@ -2563,6 +2567,7 @@ export default function coopTools(pi: ExtensionAPI) {
         lines.push(`- ${c.kind} ${name}: ${c.action}${c.destructive ? " (destructive)" : ""}${c.detail ? `, ${c.detail}` : ""}`);
       }
       if (details?.changes_truncated) lines.push("- more changes in report.md");
+      for (const choice of Array.isArray(details?.choices) ? details.choices : []) lines.push(`- choice: ${String(choice)}`);
       for (const note of Array.isArray(details?.notes) ? details.notes : []) lines.push(`- note: ${String(note)}`);
       if (details?.complete === false) lines.push("- partial: a side was not read whole, so a missing difference proves nothing; unknown changes are compared by hand");
       const side = (s: any) => `${s?.environment ?? "?"} ${s?.kind ?? ""} ${s?.database ?? ""}`.trim();
@@ -2573,11 +2578,11 @@ export default function coopTools(pi: ExtensionAPI) {
         : `Every change is listed below; ${details?.path}/report.md repeats this table for people, so do not read it. The script, ${details?.path}/deploy.sql, is for promoting: open it only when the user wants to promote.`;
       const text = details?.ok
         ? modelText(
-          `schema_compare: ${side(details.source)} -> ${side(details.target)}: ${details.counts?.total ?? 0} difference(s) (${details.counts?.add ?? 0} add, ${details.counts?.alter ?? 0} alter, ${details.counts?.drop ?? 0} drop, ${details.counts?.destructive ?? 0} destructive). Script: ${details.script?.statements ?? 0} statement(s) to run, ${details.script?.destructive ?? 0} commented out. ${where} Nothing was applied; a run against the target goes through the governed write path, one statement at a time, after the user has read the script.`,
+          `schema_compare: ${side(details.source)} -> ${side(details.target)}: ${details.counts?.total ?? 0} difference(s) (${details.counts?.add ?? 0} add, ${details.counts?.alter ?? 0} alter, ${details.counts?.drop ?? 0} drop, ${details.counts?.destructive ?? 0} destructive). Script: ${details.script?.statements ?? 0} statement(s) to run, ${details.script?.commented ?? 0} commented out, ${details.script?.destructive ?? 0} destructive object(s). ${where} Nothing was applied; a run against the target goes through the governed write path, one statement at a time, after the user has read the script.`,
           lines,
           "see report.md",
         )
-        : `schema_compare unavailable: ${String(details?.state || "internal_error")}${details?.side ? ` (side: ${details.side})` : ""}.${details?.state === "contract_changed" ? ` ${CONTRACT_CHANGED_HINT}` : ""}${details?.state === "snapshot_missing" ? " No committed catalog snapshot exists; run catalog_snapshot (command=\"snapshot\") first or compare a live entry." : ""}${details?.state === "snapshot_incomplete" ? " The committed snapshot is damaged (a file its manifest lists is missing or unreadable); take it again with catalog_snapshot (command=\"snapshot\")." : ""}${details?.state === "target_invalid" ? " That side is not a ready sql_targets entry in .coop/project.yml." : ""}${details?.state === "repo_missing" ? " No repositories entry with role sql or mixed and a local_path matches; name one as repo:<name>." : ""}${details?.state === "repo_ambiguous" ? " Several sql or mixed repositories exist; name one as repo:<name>." : ""}${details?.state === "repo_unavailable" ? " That repository folder (or its sql_root/subfolder) does not exist on this machine." : ""}`;
+        : `schema_compare unavailable: ${String(details?.state || "internal_error")}${details?.side ? ` (side: ${details.side})` : ""}.${details?.state === "contract_changed" ? ` ${CONTRACT_CHANGED_HINT}` : ""}${details?.state === "snapshot_missing" ? " No committed catalog snapshot exists; run catalog_snapshot (command=\"snapshot\") first or compare a live entry." : ""}${details?.state === "snapshot_incomplete" ? " The committed snapshot is damaged (a file its manifest lists is missing or unreadable); take it again with catalog_snapshot (command=\"snapshot\")." : ""}${details?.state === "target_invalid" ? " That side is not a ready sql_targets entry in .coop/project.yml." : ""}${details?.state === "repo_missing" ? " No repositories entry with role sql or mixed and a local_path matches; name one as repo:<name>." : ""}${details?.state === "repo_ambiguous" ? " Several sql or mixed repositories exist; name one as repo:<name>." : ""}${details?.state === "repo_unavailable" ? " That repository folder (or its sql_root/subfolder) does not exist on this machine." : ""}${details?.state === "setting_invalid" ? ` ${details.setting} in .coop/project.yml is not valid.` : ""}`;
       return { content: [{ type: "text" as const, text }], details };
     },
   });

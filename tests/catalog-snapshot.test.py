@@ -93,6 +93,7 @@ ANSWERS = {
         ("dbo", "Orders", "Placed", "datetime2", None, None, None, 7, "NO", 5),
         ("dbo", "vw_NoDefinition", "Total", "money", None, 19, 4, None, "YES", 1),
     ],
+    cs.IDENTITY_SQL: [("dbo", "Orders", "OrderId")],
     cs.MODULES_SQL: [
         ("dbo", "vw_Sales", "CREATE VIEW dbo.vw_Sales AS SELECT OrderId, Amount FROM dbo.Orders"),
         ("dbo", "usp_Refresh", "CREATE PROCEDURE dbo.usp_Refresh AS SELECT 1"),
@@ -140,11 +141,11 @@ with tempfile.TemporaryDirectory() as tmp:
     assert out["objects"] == {"tables": 1, "views": 2, "procedures": 1, "functions": 1}, out
     assert out["files"] == 5 and out["skipped"] == 1 and out["path"] == ".coop/catalog/dev", out
     assert connection.closed
-    assert cursor.calls == [cs.OBJECTS_SQL, cs.COLUMNS_SQL, cs.MODULES_SQL]
+    assert cursor.calls == [cs.OBJECTS_SQL, cs.COLUMNS_SQL, cs.MODULES_SQL, cs.IDENTITY_SQL]
     folder = root / ".coop" / "catalog" / "dev"
     table_sql = (folder / "dbo" / "Orders.sql").read_text(encoding="utf-8")
     assert "CREATE TABLE [dbo].[Orders] (" in table_sql, table_sql
-    assert "[OrderId] int NOT NULL" in table_sql and "[Customer] nvarchar(100) NULL" in table_sql, table_sql
+    assert "[OrderId] int IDENTITY NOT NULL" in table_sql and "IDENTITY(" not in table_sql and "[Customer] nvarchar(100) NULL" in table_sql, table_sql
     assert "[Notes] nvarchar(max) NULL" in table_sql and "[Amount] decimal(18, 2) NOT NULL" in table_sql and "[Placed] datetime2(7) NOT NULL" in table_sql, table_sql
     assert "taken 2026-10-05T22:00:00Z" in table_sql and "Never deploy from this file" in table_sql
     view_sql = (folder / "dbo" / "vw_Sales.sql").read_text(encoding="utf-8")
@@ -158,6 +159,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert manifest["target"] == {"environment": "dev", "kind": "azure_sql", "database": "ContosoDW"}
     assert manifest["files"] == ["dbo/Orders.sql", "dbo/usp_Refresh.sql", "dbo/vw_NoDefinition.sql", "dbo/vw_Sales.sql", "fin/fn_Rate.sql"], manifest["files"]
     assert manifest["skipped"] == ["dbo.bad;name"]
+    assert manifest["identity_columns"] is True, "a compare can tell this snapshot records identity"
     readme = (folder / "README.md").read_text(encoding="utf-8")
     assert "never a deployment artifact" in readme
     # No host, no connection string, no token anywhere in the folder.
@@ -196,6 +198,12 @@ with tempfile.TemporaryDirectory() as tmp:
         out = cs.snapshot(cwd=root, now=NOW)
     assert out["ok"] and out["objects"]["tables"] == 1 and out["objects"]["procedures"] == 0, out
     assert out["unavailable"] and "sys.sql_modules" in out["unavailable"][0], out
+    # Identity columns unreadable: the tables still land, unmarked, and the manifest says so.
+    with mock.patch.object(sq, "open_connection", return_value=(FakeConnection(FakeCursor(ANSWERS, failing=[cs.IDENTITY_SQL])), target(), "d", None)):
+        out = cs.snapshot(cwd=root, now=NOW)
+    assert out["ok"] and any("sys.identity_columns" in u for u in out["unavailable"]), out
+    assert json.loads((folder / "manifest.json").read_text(encoding="utf-8"))["identity_columns"] is False
+    assert "[OrderId] int NOT NULL" in (folder / "dbo" / "Orders.sql").read_text(encoding="utf-8")
     assert AZ_HOST not in json.dumps(out)
 
     # Never production, even if a connection resolved one; executor errors pass through.

@@ -5,6 +5,22 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **Schema compare choices per client and per run.** The project file's new
+  optional `schema_compare:` section holds a client's defaults:
+  `exclude_schemas`, `schemas`, `rebuild_tables_in` (changed tables in those
+  schemas are written as `DROP TABLE IF EXISTS` + `CREATE TABLE`, even where an
+  `ALTER` would do) and `destructive` (`runnable` or `commented`). A run names
+  its own with the tool's `schemas`, `exclude` (added to the file's list),
+  `rebuild` and `commented`, or `coop schema compare --rebuild-tables-in` and
+  `--destructive`. report.md, the script header and the result say which
+  choices were used and where each came from.
+- **One note per object in both files.** report.md has a section per object and
+  deploy.sql a note before each one: type, detected change, chosen action, the
+  column changes, identity kept, data loss and reload notes, from one shared
+  record, with object, statement and batch counts that agree.
+
 ### Changed
 
 - **New sessions start on the newest sol.** In the terminal, the window and
@@ -15,6 +31,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   the newest sol again goes back to following releases. A non-sol default
   saved in Pi earlier is kept, and `--model` at launch still wins. Routing is
   unchanged: `coop/auto` stays opt-in.
+- **Tool pin:** coop-schema-compare 0.1.5 (the same deploy script fixes in
+  the standalone CLI: identity, one change record per object, runnable
+  destructive statements, `--rebuild-tables-in`).
+- **Destructive statements in deploy.sql are active by default** (Aaron,
+  2026-10-22: the team reviews and runs the script itself), each object marked
+  DESTRUCTIVE. `destructive: commented` (or `commented: true` for one run)
+  writes them with `--` before every line, so removing two characters per
+  line gives the statement back exactly. coop still never runs the script.
+- **A rerun keeps a hand-edited deploy.sql** beside the new one as
+  `deploy.edited-<time>.sql` instead of overwriting it.
 
 ### Fixed
 
@@ -24,6 +50,21 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   "Connecting to coop" with what to check until its script takes over, and the
   phone's saved copy answers an offline load with a "Can't reach coop" page
   instead of an empty one (cache `coop-companion-v7`).
+- **Schema compare keeps identity columns.** The live read, the catalog
+  snapshot and repo files now record identity columns, the script writes them
+  as `bigint IDENTITY` (no seed or increment, as Fabric Warehouse takes them),
+  never adds identity to another column, and an identity-only difference is a
+  reported change instead of a match. A snapshot taken before this release does
+  not record identity: identity is then not compared, with a note.
+- **Schema compare notes stay out of saved views and procedures.** Every note
+  is its own GO batch, so a deploy no longer stores coop's comments in a
+  module's definition; the module's own comments stay with it.
+- **Fabric Warehouse table changes use ALTER where Fabric allows it.** Adding a
+  nullable column and dropping a column are written as `ALTER TABLE`; only a
+  change Fabric cannot make in place (type, nullability, identity, order) gets
+  a rebuild note, which now names that change instead of a blanket claim.
+- **A renamed module's stale declaration is named in the notes** of both files
+  when the script writes it under its catalog name.
 
 ## [0.38.2] — 2026-10-22
 

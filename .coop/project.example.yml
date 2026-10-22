@@ -123,8 +123,13 @@ sql_targets:
 # sql_targets entry above, this snapshot, or `repo[:<name>[/<subfolder>]]` (the
 # .sql files of a repositories entry with role sql or mixed, under its sql_root),
 # and writes a sorted diff and an ordered promotion script under
-# .coop/schema-compare/<source>-to-<target>/; nothing is applied, and every DROP
-# or lossy change is commented out there.
+# .coop/schema-compare/<source>-to-<target>/; nothing is applied. Per-client
+# defaults (each optional; a run can name its own):
+# schema_compare:
+#   exclude_schemas: [test, staging]   # schemas never compared
+#   schemas: []                        # compare only these (empty: all)
+#   rebuild_tables_in: [dim, fact]     # changed tables there: DROP + CREATE, empty
+#   destructive: runnable              # or commented: DROPs written commented out
 
 power_bi:
   default_workspace_name: "TODO: dev semantic-model workspace name"

@@ -1634,6 +1634,7 @@ await t("schema_compare (SQ10): two catalog reads run on every pair without a pr
   assert.equal(blocked(await handle(call({ source: "repo:sql/warehouse", target: "repo:sql-main" }), liveCtx)), false, "repo against repo");
   assert.equal(blocked(await handle(call({ source: "dev", target: "repo:sql" }), liveCtx)), false, "live against the repo");
   assert.equal(blocked(await handle(call({ source: "dev", schemas: ["sales"], exclude: ["staging"] }), liveCtx)), false, "a schema filter");
+  assert.equal(blocked(await handle(call({ source: "dev", rebuild: ["dim", "fact"], commented: true }), liveCtx)), false, "the run's script choices: still two reads");
   assert.equal(confirmCount, 0);
   const rows = readAudit().filter((x) => x.tool === "governed-schema-compare");
   assert.deepEqual(rows.map((x) => [x.decision, x.label, x.detail]), [
@@ -1646,17 +1647,19 @@ await t("schema_compare (SQ10): two catalog reads run on every pair without a pr
     ["allowed", "live schema compare", "repo:sql/warehouse->repo:sql-main"],
     ["allowed", "live schema compare", "dev->repo:sql"],
     ["allowed", "live schema compare", "dev->prod"],
+    ["allowed", "live schema compare", "dev->prod"],
   ]);
   for (const input of [
     { source: "dev", target: "dev" }, { target: "snapshot" }, { source: "lord" }, { source: "dev", target: "prod", apply: true },
     { source: "dev", server: "x" }, { source: ["dev"] }, "dev", { source: "prod", target: "prod" },
     { source: "repo:../other" }, { source: "repo:sql/../../etc" }, { source: "repo:" }, { source: "repo:sql", target: "repo:sql" }, { source: "C:/repo" },
     { schemas: "sales" }, { exclude: ["[x]; DROP"] }, { schemas: ["-x"] },
+    { rebuild: "dim" }, { rebuild: ["dim; DROP"] }, { commented: "no" }, { source: "dev", execute: true },
   ]) {
     assert.equal(blocked(await handle(call(input), liveCtx)), true, JSON.stringify(input));
   }
   assert.equal(confirmCount, 0, "forged shapes are blocked, never prompted");
-  assert.equal(readAudit().filter((x) => x.tool === "governed-schema-compare" && x.decision === "blocked").length, 16);
+  assert.equal(readAudit().filter((x) => x.tool === "governed-schema-compare" && x.decision === "blocked").length, 20);
   removeContract();
   writeManagedTarget();
   await handleSessionStart({ reason: "new" }, liveCtx);

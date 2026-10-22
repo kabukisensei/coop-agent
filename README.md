@@ -786,9 +786,10 @@ before coop writes SQL and used by coop-data-doc as a SQL source when the client
 none), `schema_compare` (the deterministic compare of two schemas, each a `sql_targets`
 entry, the committed snapshot or a contract repository's `.sql` files read as
 code, in any pairing: a sorted diff of schemas, tables and columns, views,
-procedures and functions, and an ordered promotion script with every
-destructive statement commented out, written under `.coop/schema-compare/`; `coop
-schema compare` is the terminal form; nothing is ever applied), `sql_source` (SQL
+procedures and functions, and an ordered promotion script with a note per
+object, destructive statements marked (commented out on request, or per client
+in `schema_compare:` of the project file), written under `.coop/schema-compare/`;
+`coop schema compare` is the terminal form; nothing is ever applied), `sql_source` (SQL
 source control through `coop-sqlsc` where the client SQL repository has an
 `sqlsc.yml` and the user has run `/sql-source on`: coop checks objects out as
 `coop-agent:<user>` before changing them, writes dev's changes into the files or

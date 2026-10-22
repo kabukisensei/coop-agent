@@ -69,8 +69,8 @@ partial, or connected project without requiring the user to edit YAML.
    line naming each downstream object, and `/impact` shows the detail. To move
    schema changes between environments (dev to prod) or between the repo's `.sql`
    files and a live target (`source="repo"`), call `schema_compare` first
-   and work from its `deploy.sql`: the destructive statements there are commented
-   out and stay the user's decision, and every statement that runs against the
+   and work from its `deploy.sql`: it is the user's to review and run, its
+   destructive statements are marked, and every statement that runs against the
    target goes through the usual write approvals. When the client SQL repository
    is under source control (`sql_source` does not answer "off" or "not set up"),
    check the object out with `sql_source` (`command="checkout"`, the task as

@@ -2149,19 +2149,23 @@ export function decideCatalogSnapshot(event: any, deps: LiveReadResolverDeps): S
  *  statement on either side. Both sides are plain metadata reads, so the call
  *  runs on every environment, production included, and is audited with the
  *  pair it compares. The sides come from the contract alone: a call carrying any
- *  field beyond `source` and `target`, or a value outside the fixed sets, is
- *  blocked outright. */
+ *  field beyond `source`, `target`, the schema lists and `commented`, or a value
+ *  outside the fixed sets, is blocked outright. */
 export function decideSchemaCompare(event: any): SqlImpactDecision {
   const input = event?.input ?? {};
-  const only = "accepts only the fields source, target, schemas and exclude";
+  const only = "accepts only the fields source, target, schemas, exclude, rebuild and commented";
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return { action: "block", environment: "", reason: only };
   }
   for (const key of Object.keys(input)) {
-    if (!["source", "target", "schemas", "exclude"].includes(key)) return { action: "block", environment: "", reason: only };
+    if (!["source", "target", "schemas", "exclude", "rebuild", "commented"].includes(key)) return { action: "block", environment: "", reason: only };
   }
-  // A schema filter is a list of plain schema names (lib/schema_compare.py checks the same).
-  for (const key of ["schemas", "exclude"]) {
+  // `commented` only changes how the written file shows destructive statements.
+  if (input.commented !== undefined && typeof input.commented !== "boolean") {
+    return { action: "block", environment: "", reason: "commented must be true or false" };
+  }
+  // A schema list is plain schema names (lib/schema_compare.py checks the same).
+  for (const key of ["schemas", "exclude", "rebuild"]) {
     const v = input[key];
     if (v !== undefined && (!Array.isArray(v) || v.length > 50 || v.some((n: unknown) => typeof n !== "string" || !/^[^\[\]\x00-\x1f;'"-][^\[\]\x00-\x1f;'"]{0,127}$/.test(n.trim())))) {
       return { action: "block", environment: "", reason: `${key} must be a list of at most 50 schema names` };

@@ -42,6 +42,7 @@ appears in a result or a file.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -85,11 +86,12 @@ SCHEMAS_SQL = (
 )
 OBJECTS_SQL = snapshot_lib.OBJECTS_SQL
 COLUMNS_SQL = snapshot_lib.COLUMNS_SQL
+IDENTITY_SQL = snapshot_lib.IDENTITY_SQL
 MODULES_SQL = snapshot_lib.MODULES_SQL
 
 _IDENT = r"[A-Za-z_][A-Za-z0-9_@#$]{0,127}"
 _SNAPSHOT_HEADER = re.compile(r"^-- coop catalog snapshot: (table|view|procedure|function) (\S+)\.(\S+)$")
-_SNAPSHOT_COLUMN = re.compile(r"^\s{4}\[(.+?)\] (.+?) (NULL|NOT NULL)$")
+_SNAPSHOT_COLUMN = re.compile(r"^\s{4}\[(.+?)\] (.+?)( IDENTITY)? (NULL|NOT NULL)$")
 MODULE_WORDS = ("VIEW", "PROC", "PROCEDURE", "FUNCTION")
 # A database's own schemas: they exist in every database and cannot be created or
 # dropped, so a compare never offers them as a change (objects in them still compare).
@@ -102,16 +104,20 @@ MAX_SKIPPED = 200
 
 
 class Column:
-    __slots__ = ("name", "type", "nullable", "position")
+    __slots__ = ("name", "type", "nullable", "position", "identity")
 
-    def __init__(self, name: str, type_text: str, nullable: bool, position: int) -> None:
+    def __init__(self, name: str, type_text: str, nullable: bool, position: int, identity: bool = False) -> None:
         self.name = name
         self.type = type_text
         self.nullable = nullable
         self.position = position
+        self.identity = identity
 
     def render(self) -> str:
-        return f"{_bracket(self.name)} {self.type} {'NULL' if self.nullable else 'NOT NULL'}"
+        # Bare IDENTITY: Fabric Warehouse takes no seed or increment (it manages
+        # them), and SQL Server reads a bare IDENTITY as IDENTITY(1,1).
+        identity = " IDENTITY" if self.identity else ""
+        return f"{_bracket(self.name)} {self.type}{identity} {'NULL' if self.nullable else 'NOT NULL'}"
 
 
 class Catalog:
@@ -128,6 +134,9 @@ class Catalog:
         self.skipped: set[str] = set()
         # Tables whose column list a repo side could not fully read: it proves no column absent.
         self.incomplete: set[tuple[str, str]] = set()
+        # False when this side could not say which columns are identity columns (an
+        # older snapshot, an unreadable catalog view): identity then compares as unknown.
+        self.identity_known = True
 
     def kinds(self) -> dict[tuple[str, str], str]:
         out = {key: "table" for key in self.tables}
@@ -286,6 +295,16 @@ def read_live(cursor: Any) -> Catalog:
         by_table.setdefault((_text(schema), _text(name)), []).append(
             Column(_text(col_name), type_text, _text(nullable).upper() != "NO", int(position) if isinstance(position, int) else len(by_table.get((_text(schema), _text(name)), [])) + 1)
         )
+    identity: set[tuple[str, str, str]] = set()
+    try:
+        identity_rows, _ = _rows(cursor, IDENTITY_SQL, snapshot_lib.MAX_COLUMNS)
+        identity = {(_text(r[0]), _text(r[1]), _text(r[2]).lower()) for r in identity_rows if len(r) >= 3}
+    except Exception:
+        catalog.identity_known = False
+        catalog.unavailable.append("identity columns (sys.identity_columns is not readable on this target; identity compares by hand)")
+    for (schema, name), cols in by_table.items():
+        for col in cols:
+            col.identity = (schema, name, col.name.lower()) in identity
     modules: dict[tuple[str, str], str] = {}
     try:
         module_rows, _ = _rows(cursor, MODULES_SQL, snapshot_lib.MAX_OBJECTS)
@@ -323,6 +342,7 @@ def read_snapshot(folder: Path) -> tuple[Catalog | None, str]:
     if manifest is None:
         return None, "snapshot_missing"
     catalog = Catalog()
+    catalog.identity_known = manifest.get("identity_columns") is True
     truncated = manifest.get("truncated")
     if isinstance(truncated, dict):
         catalog.truncated = sorted(str(k) for k, v in truncated.items() if v is True)
@@ -361,7 +381,7 @@ def read_snapshot(folder: Path) -> tuple[Catalog | None, str]:
             for line in lines[body_start:]:
                 col = _SNAPSHOT_COLUMN.match(line.rstrip(","))
                 if col:
-                    cols.append(Column(col.group(1).replace("]]", "]"), col.group(2), col.group(3) == "NULL", len(cols) + 1))
+                    cols.append(Column(col.group(1).replace("]]", "]"), col.group(2), col.group(4) == "NULL", len(cols) + 1, bool(col.group(3))))
             catalog.tables[key] = cols
         elif any(line.startswith("-- definition not readable") for line in lines[1 : body_start + 1]):
             catalog.modules[key] = (kind, "")
@@ -437,7 +457,8 @@ def read_repo(folder: Path) -> Catalog:
     catalog = Catalog()
     catalog.schemas = set(parsed.schemas)
     for key, columns in parsed.tables.items():
-        catalog.tables[key] = [Column(name, type_text, nullable, position) for position, (name, type_text, nullable) in enumerate(columns, 1)]
+        identity = parsed.identity.get(key, set())
+        catalog.tables[key] = [Column(name, type_text, nullable, position, name.lower() in identity) for position, (name, type_text, nullable) in enumerate(columns, 1)]
     catalog.modules = dict(parsed.modules)
     catalog.incomplete = set(parsed.incomplete)
     catalog.notes = sql_source.describe(parsed)
@@ -456,8 +477,10 @@ def _change(kind: str, key: tuple[str, str], action: str, detail: str = "", dest
     return item
 
 
-def compare_tables(source: list[Column], target: list[Column]) -> tuple[list[str], bool]:
-    """Column differences in words; True when applying them can lose data."""
+def compare_tables(source: list[Column], target: list[Column], identity: bool = True) -> tuple[list[str], bool]:
+    """Column differences in words; True when applying them can lose data.
+    `identity` False: one side could not say which columns are identity columns,
+    so identity is not compared (the caller notes that)."""
     src = {c.name.lower(): c for c in source}
     tgt = {c.name.lower(): c for c in target}
     details: list[str] = []
@@ -478,6 +501,10 @@ def compare_tables(source: list[Column], target: list[Column]) -> tuple[list[str
             details.append(f"change column {_bracket(a.name)} {'NULL' if b.nullable else 'NOT NULL'} -> {'NULL' if a.nullable else 'NOT NULL'}")
             if not a.nullable:
                 lossy = True
+        if identity and a.identity != b.identity:
+            # No engine turns identity on or off in place: a rebuild, a person's call.
+            details.append(f"change column {_bracket(a.name)} identity {'IDENTITY' if b.identity else 'none'} -> {'IDENTITY' if a.identity else 'none'}")
+            lossy = True
     if [c.name.lower() for c in source] != [c.name.lower() for c in target] and not (set(src) ^ set(tgt)):
         details.append("columns reordered")
     return details, lossy
@@ -523,7 +550,7 @@ def diff(source: Catalog, target: Catalog) -> list[dict[str, Any]]:
                 # A column the reader lost would show as a drop (or an add): never script that.
                 changes.append(_change("table", key, "unknown", f"a column could not be read on the {' and '.join(unread)} side; compare its columns by hand"))
                 continue
-            details, lossy = compare_tables(source.tables[key], target.tables[key])
+            details, lossy = compare_tables(source.tables[key], target.tables[key], source.identity_known and target.identity_known)
             if details:
                 changes.append(_change("table", key, "alter", "; ".join(details), destructive=lossy))
         else:
@@ -620,19 +647,6 @@ def _reachable(start: tuple[str, str], deps: dict[tuple[str, str], set[tuple[str
     return seen
 
 
-def _rebuilt_columns(changes: list[dict[str, Any]]) -> dict[tuple[str, str], set[str]]:
-    """Per altered table, the columns its detail adds: a module that names one
-    cannot bind until the table is rebuilt (a dropped or retyped column binds
-    either way)."""
-    out: dict[tuple[str, str], set[str]] = {}
-    for c in changes:
-        if c["kind"] == "table" and c["action"] == "alter":
-            names = {m.group(1).replace("]]", "]").lower() for m in re.finditer(r"add column \[(.+?)\] ", c.get("detail", ""))}
-            if names:
-                out[(c["schema"], c["name"])] = names
-    return out
-
-
 def _terminated(text: str) -> str:
     """One statement with exactly one trailing semicolon."""
     text = text.rstrip()
@@ -654,121 +668,282 @@ def _drop_word(kind: str) -> str:
     return {"view": "VIEW", "procedure": "PROCEDURE", "function": "FUNCTION", "table": "TABLE", "schema": "SCHEMA"}[kind]
 
 
-def render_script(
-    source: Catalog, changes: list[dict[str, Any]], *, source_name: str, target_name: str, target_kind: str, taken_at: str
-) -> tuple[str, int, int]:
-    """(script text, statements to run, destructive statements commented out)."""
-    rebuild = target_kind in REBUILD_KINDS
-    live: list[str] = []
-    destructive: list[str] = []
+# --- the change record: one entry per object, read by the script and the report ----
 
-    def go(lines: list[str], text: str) -> None:
-        lines.append(_terminated(text))
-        lines.append("GO")
-        lines.append("")
+# Script sections, in run order. A section with no object is left out.
+SECTIONS = (
+    (1, "New schemas"),
+    (2, "New tables"),
+    (3, "Table changes"),
+    (4, "Views, procedures and functions, in dependency order"),
+    (5, "After the manual table rebuilds above"),
+    (6, "Objects replaced by another kind"),
+    (7, "Removals"),
+    (8, "For a person: not scripted"),
+)
+KIND_WORDS = {"schema": "SCHEMA", "table": "TABLE", "view": "VIEW", "procedure": "PROCEDURE", "function": "FUNCTION"}
 
+
+def _record(kind: str, key: tuple[str, str], detected: str, action: str, section: int, *, changes: list[str] | None = None, notes: list[str] | None = None, statements: list[str] | None = None, destructive: bool = False, manual: bool = False, safe: int = 0) -> dict[str, Any]:
+    return {
+        "kind": kind,
+        "schema": key[0],
+        "name": key[1],
+        "object": key[0] if kind == "schema" else _plain(key),
+        "detected": detected,
+        "action": action,
+        "section": section,
+        "changes": list(changes or []),
+        "notes": list(notes or []),
+        # Statements, each one batch. A manual record's statements are a template
+        # for a person and always commented out; a destructive one's run unless
+        # the run asked for destructive statements commented out.
+        "statements": list(statements or []),
+        "destructive": destructive,
+        "manual": manual,
+        # How many leading statements keep every row (an ALTER that adds a nullable
+        # column beside one that drops another): those are never commented out.
+        "safe": safe if destructive else len(statements or []),
+    }
+
+
+def _identity_line(columns: list[Column]) -> str:
+    ids = [c for c in columns if c.identity]
+    if not ids:
+        return "Identity: none (no column becomes an identity column)."
+    names = ", ".join(f"{_bracket(c.name)} {c.type} IDENTITY" for c in ids)
+    return f"Identity: {names}, with no seed or increment (Fabric Warehouse manages them); no PRIMARY KEY constraint is added."
+
+
+def _table_steps(key: tuple[str, str], details: list[str], columns: list[Column], target_kind: str) -> tuple[list[str], list[str], list[str]]:
+    """(ALTERs that keep every row, ALTERs that can lose data, what no ALTER on
+    this target can do). Fabric Warehouse's ALTER TABLE adds a nullable column
+    and drops a column; it cannot change a column's type, nullability or identity
+    (ALTER COLUMN is a preview there and this script does not use it)."""
+    by_name = {c.name.lower(): c for c in columns}
+    fabric = target_kind == "fabric_warehouse"
+    keep: list[str] = []
+    lossy: list[str] = []
+    rebuild: list[str] = []
+    for detail in details:
+        add = re.match(r"^add column \[(.+?)\] ", detail)
+        drop = re.match(r"^drop column \[(.+)\]$", detail)
+        change = re.match(r"^change column \[(.+?)\] (type|NULL|NOT NULL)", detail)
+        if add:
+            col = by_name.get(add.group(1).replace("]]", "]").lower())
+            if col is None:
+                rebuild.append(detail)
+            elif col.nullable and not col.identity:
+                keep.append(f"ALTER TABLE {_qualified(key)} ADD {col.render()}")
+            elif fabric:
+                rebuild.append(f"add the {'identity' if col.identity else 'NOT NULL'} column {_bracket(col.name)}")
+            else:
+                # A NOT NULL column with no default fails on a table that holds rows.
+                lossy.append(f"ALTER TABLE {_qualified(key)} ADD {col.render()}")
+        elif drop:
+            lossy.append(f"ALTER TABLE {_qualified(key)} DROP COLUMN [{drop.group(1)}]")
+        elif change and not fabric:
+            col = by_name.get(change.group(1).replace("]]", "]").lower())
+            if col is None or col.identity:
+                rebuild.append(detail)
+            else:
+                lossy.append(f"ALTER TABLE {_qualified(key)} ALTER COLUMN {col.render()}")
+        else:
+            rebuild.append(detail)
+    return keep, lossy, rebuild
+
+
+def plan(source: Catalog, changes: list[dict[str, Any]], *, target_kind: str, rebuild_schemas: list[str] | tuple[str, ...] = ()) -> list[dict[str, Any]]:
+    """The change record: every difference as one object entry, in script order,
+    with its detected change, the chosen action, a factual summary, notes and
+    the statements. deploy.sql and report.md are both rendered from it."""
+    rebuild_set = {s.lower() for s in rebuild_schemas}
+    records: list[dict[str, Any]] = []
+    manual_rebuilds: dict[tuple[str, str], set[str]] = {}
     for c in changes:
         if c["kind"] == "schema" and c["action"] == "add":
-            go(live, f"CREATE SCHEMA {_bracket(c['schema'])}")
+            records.append(_record("schema", (c["schema"], ""), "add", "CREATE", 1, changes=["New on the target."], statements=[f"CREATE SCHEMA {_bracket(c['schema'])}"]))
     for c in changes:
         if c["kind"] == "table" and c["action"] == "add":
             key = (c["schema"], c["name"])
-            go(live, _render_table(source.tables[key], key))
+            cols = source.tables[key]
+            records.append(_record("table", key, "add", "CREATE", 2, changes=[f"New on the target: {len(cols)} column(s)."], notes=[_identity_line(cols)], statements=[_render_table(cols, key)]))
     for c in changes:
-        if c["kind"] == "table" and c["action"] == "alter":
-            key = (c["schema"], c["name"])
-            if rebuild:
-                block = [
-                    f"-- {_plain(key)}: {c['detail']}",
-                    f"-- A {target_kind.replace('_', ' ')} does not alter columns in place: rebuild the table (CREATE TABLE AS SELECT into a new name, check the row count, then rename) and keep its rows.",
-                    "-- Source shape:",
-                    _render_table(source.tables[key], key),
-                ]
-                destructive.append("\n".join(block))
-            else:
-                for detail in c["detail"].split("; "):
-                    statement, lossy = _alter_statement(key, detail, source.tables[key])
-                    if statement is None:
-                        continue
-                    if lossy:
-                        destructive.append(f"-- {_plain(key)}: {detail}\n{statement};")
-                    else:
-                        go(live, statement)
+        if c["kind"] != "table" or c["action"] != "alter":
+            continue
+        key = (c["schema"], c["name"])
+        cols = source.tables[key]
+        details = c["detail"].split("; ")
+        keep, lossy, rebuild = _table_steps(key, details, cols, target_kind)
+        added = {m.group(1).replace("]]", "]").lower() for d in details for m in [re.match(r"^add column \[(.+?)\] ", d)] if m}
+        if target_kind == "fabric_lakehouse":
+            manual_rebuilds[key] = added
+            records.append(_record("table", key, "alter", "MANUAL", 3, changes=details, manual=True, notes=[
+                "A Lakehouse SQL analytics endpoint cannot change a table with T-SQL: change the Delta table in the Lakehouse (a notebook or a pipeline), then compare again.",
+                _identity_line(cols),
+            ], statements=[_render_table(cols, key)]))
+        elif key[0].lower() in rebuild_set:
+            why = (
+                f"Rebuilt because schema {key[0]} is in rebuild_tables_in (the selected policy); "
+                + ("the target could not make every change in place either." if rebuild else "the target could ALTER it in place.")
+            )
+            notes = [why, _identity_line(cols), "DESTRUCTIVE: drops the table with its rows and permissions. The new table is empty: reload it, and rebuild what is keyed on it, before its consumers run."]
+            if any(col.identity for col in cols):
+                notes.append("Keeping the IDENTITY property does not keep the existing key values: rebuild the facts that hold them too.")
+            records.append(_record("table", key, "alter", "REBUILD (DROP + CREATE)", 3, changes=details, notes=notes, destructive=True, statements=[f"DROP TABLE IF EXISTS {_qualified(key)}", _render_table(cols, key)]))
+        elif rebuild:
+            manual_rebuilds[key] = added
+            where = "Fabric Warehouse cannot" if target_kind == "fabric_warehouse" else "No ALTER TABLE can"
+            records.append(_record("table", key, "alter", "MANUAL REBUILD", 3, changes=details, manual=True, notes=[
+                f"{where} {'; '.join(rebuild)} in place. Rebuild the table keeping its rows (CREATE TABLE AS SELECT into a new name, check the row count, then rename), "
+                "or name its schema in rebuild_tables_in to DROP + CREATE it empty. The statement below is the source shape, commented out.",
+                _identity_line(cols),
+            ], statements=[_render_table(cols, key)]))
+        else:
+            notes = ["DESTRUCTIVE: a dropped or changed column can lose data."] if lossy else []
+            records.append(_record("table", key, "alter", "ALTER", 3, changes=details, notes=notes, destructive=bool(lossy), statements=keep + lossy, safe=len(keep)))
     definitions = {key: _as_named(definition, key) if definition else definition for key, (_kind, definition) in source.modules.items()}
     kinds = {key: kind for key, (kind, _definition) in source.modules.items()}
-    keys = [(c["schema"], c["name"]) for c in changes if c["kind"] in MODULE_KINDS and c["action"] in ("add", "alter")]
-    # On a target that rebuilds tables by hand, a module that names a column the
-    # rebuild adds or changes cannot run until that rebuild: it goes below, after
-    # the rebuild notes, with everything that depends on it.
-    rebuilt = _rebuilt_columns(changes) if rebuild else {}
-    deferred: dict[tuple[str, str], str] = {}
+    by_key = {(c["schema"], c["name"]): c for c in changes if c["kind"] in MODULE_KINDS}
+    keys = [k for k, c in by_key.items() if c["action"] in ("add", "alter")]
+    deferred: set[tuple[str, str]] = set()
     order, circular = _order(keys, definitions, kinds)
     for key in order:
-        kind = kinds.get(key, "")
+        c = by_key[key]
+        kind = kinds.get(key, c["kind"])
         definition = definitions.get(key, "")
+        summary = ["New on the target."] if c["action"] == "add" else ["Definition differs; the source's definition replaces the target's."]
         if not definition:
-            destructive.append(f"-- {kind} {_plain(key)}: definition not readable on the source; write it by hand")
+            records.append(_record(kind, key, c["action"], "MANUAL", 8, changes=summary, manual=True, notes=["Definition not readable on the source: write it by hand."]))
             continue
+        notes: list[str] = []
+        stale = sql_source.with_identity(source.modules[key][1], key[0], key[1])[1]
+        if stale:
+            notes.append(f"Its stored definition declares {stale} (renamed after it was created); scripted under {_plain(key)}, body unchanged.")
+        section = 4
         if key in circular:
-            # Objects that name each other have no right order: a person runs them.
             others = sorted(_references(definition, sorted(circular)) - {key})
-            reason = f"names {', '.join(_plain(o) for o in others)}, and those references lead back to it; run these in an order that works"
-            deferred[key] = reason
-            destructive.append(f"-- {kind} {_plain(key)}: circular reference: {reason}\n{_terminated(_create_or_alter(definition))}")
-            continue
-        waits_on = [dep for dep in _references(definition, list(deferred)) if dep != key]
-        rebuilt_tables = [t for t in _references(definition, list(rebuilt)) if _mentions(definition, rebuilt[t])]
-        if waits_on or rebuilt_tables:
-            reason = "; ".join(
-                [f"names {', '.join(sorted(_mentions(definition, rebuilt[t])))} of {_plain(t)}, which the target has only after that table's rebuild above" for t in sorted(rebuilt_tables)]
-                + [f"follows {kind_word} {_plain(dep)} below" for dep in sorted(waits_on) for kind_word in [kinds.get(dep, "object")]]
-            )
-            deferred[key] = reason
-            destructive.append(f"-- {kind} {_plain(key)}: run after the rebuild: {reason}\n{_terminated(_create_or_alter(definition))}")
-            continue
-        go(live, _create_or_alter(definition))
+            notes.append(f"Circular reference: names {', '.join(_plain(o) for o in others)}, and those references lead back to it; run these in an order that works.")
+        waits_on = sorted(dep for dep in _references(definition, sorted(deferred)) if dep != key)
+        rebuilt_tables = sorted(t for t in _references(definition, list(manual_rebuilds)) if _mentions(definition, manual_rebuilds[t]))
+        if (waits_on or rebuilt_tables) and key not in circular:
+            section = 5
+            deferred.add(key)
+            notes += [f"Run after the manual rebuild of {_plain(t)}: names {', '.join(sorted(_mentions(definition, manual_rebuilds[t])))}, which the target has only after it." for t in rebuilt_tables]
+            notes += [f"Follows {kinds.get(dep, 'object')} {_plain(dep)} in this section." for dep in waits_on]
+        records.append(_record(kind, key, c["action"], "CREATE" if c["action"] == "add" else "CREATE OR ALTER", section, changes=summary, notes=notes, statements=[_create_or_alter(definition)]))
     for c in changes:
         if c["action"] == "replace":
-            # The target holds another kind under this name: drop it, then create
-            # the source's object, both by hand.
             key = (c["schema"], c["name"])
+            statements = [f"DROP {_drop_word(_target_kind_of(c))} {_qualified(key)}"]
+            notes = ["DESTRUCTIVE: drops the target's object" + (" and its rows" if _target_kind_of(c) == "table" else "") + " before creating the source's."]
+            manual = False
             if c["kind"] == "table":
-                create = _render_table(source.tables[key], key) + ";"
+                statements.append(_render_table(source.tables[key], key))
+            elif definitions.get(key):
+                statements.append(_create_or_alter(definitions[key]))
             else:
-                create = _terminated(_create_or_alter(definitions.get(key, ""))) if definitions.get(key) else f"-- {c['kind']} definition not readable on the source; write it by hand"
-            destructive.append(f"-- {_plain(key)}: {c['detail']}\nDROP {_drop_word(_target_kind_of(c))} {_qualified(key)};\nGO\n{create}")
-    for kind in ("procedure", "view", "function", "table"):
+                notes.append("The source's definition is not readable: write it by hand.")
+                manual = True
+            records.append(_record(c["kind"], key, "replace", "DROP + CREATE", 6, changes=[c["detail"]], notes=notes, statements=statements, destructive=True, manual=manual))
+    for kind in ("procedure", "view", "function", "table", "schema"):
         for c in changes:
             if c["kind"] == kind and c["action"] == "drop":
-                destructive.append(f"DROP {_drop_word(kind)} {_qualified((c['schema'], c['name']))};")
-    for c in changes:
-        if c["kind"] == "schema" and c["action"] == "drop":
-            destructive.append(f"DROP SCHEMA {_bracket(c['schema'])};")
+                key = (c["schema"], c["name"])
+                target_ref = _bracket(c["schema"]) if kind == "schema" else _qualified(key)
+                loses = " with its rows" if kind == "table" else ""
+                records.append(_record(kind, key, "drop", "DROP", 7, changes=["Only on the target."], notes=[f"DESTRUCTIVE: drops the {kind}{loses}."], statements=[f"DROP {_drop_word(kind)} {target_ref}"], destructive=True))
     for c in changes:
         if c["action"] == "unknown":
-            destructive.append(f"-- {c['kind']} {_plain((c['schema'], c['name']))}: {c['detail']}")
+            records.append(_record(c["kind"] or "object", (c["schema"], c["name"]), "unknown", "MANUAL", 8, changes=[c["detail"]], manual=True))
+    return sorted(records, key=lambda r: r["section"])
 
-    header = [
+
+def _commented(r: dict[str, Any], commented: bool, index: int) -> bool:
+    """True when the record's statement at `index` is written commented out."""
+    return bool(r["manual"] or (commented and index >= r["safe"]))
+
+
+def script_stats(records: list[dict[str, Any]], *, commented: bool = False) -> dict[str, int]:
+    """Counts the script header, the report and the tool result share. A note
+    batch holds only comments: it is never a statement."""
+    off = sum(1 for r in records for i in range(len(r["statements"])) if _commented(r, commented, i))
+    run = sum(len(r["statements"]) for r in records) - off
+    return {
+        "objects": len(records),
+        "statements": run,
+        "commented": off,
+        "destructive": sum(1 for r in records if r["destructive"]),
+        "manual": sum(1 for r in records if r["manual"]),
+        # Every object's note batch, every statement it runs, and the header's.
+        "batches": 1 + len(records) + run,
+    }
+
+
+def _note_lines(r: dict[str, Any]) -> list[str]:
+    kind = KIND_WORDS.get(r["kind"], r["kind"].upper())
+    lines = [f"Object: {r['object']}", f"Type: {kind} | Change: {r['detected'].upper()} | Action: {r['action']}"]
+    lines += [f"Changes: {item}" for item in r["changes"]]
+    lines += r["notes"]
+    return lines
+
+
+def render_deploy(records: list[dict[str, Any]], *, source_name: str, target_name: str, taken_at: str, commented: bool = False, choices: list[str] | tuple[str, ...] = ()) -> str:
+    """deploy.sql from the change record. Every object opens with a comment-only
+    note batch ended by GO, so a note never becomes part of a saved view or
+    procedure; the module's own leading comments stay with it, as written."""
+    stats = script_stats(records, commented=commented)
+    by_kind: dict[str, int] = {}
+    for r in records:
+        by_kind[r["kind"]] = by_kind.get(r["kind"], 0) + 1
+    kinds_text = ", ".join(f"{n} {k}{'s' if n != 1 else ''}" for k, n in sorted(by_kind.items()))
+    lines = [
         f"-- coop schema compare: {source_name} -> {target_name}, taken {taken_at}",
-        "-- Generated from the two catalogs, read-only. Review every statement; coop never runs this file itself.",
-        "-- Run it against the target through coop's governed write path or your own deployment tool, top to bottom.",
-        f"-- Statements: {sum(1 for line in live if line == 'GO')} to run, {len(destructive)} destructive or manual (commented out below).",
+        "-- Generated from the two catalogs, read-only. coop never runs this file: review it, then run it yourself,",
+        "-- top to bottom, with a tool that understands GO batches (SSMS, sqlcmd, VS Code).",
+        f"-- Objects: {stats['objects']}{f' ({kinds_text})' if kinds_text else ''}. Statements: {stats['statements']} to run, {stats['commented']} commented out.",
+        f"-- Destructive objects: {stats['destructive']}, each marked DESTRUCTIVE in its note; their statements are "
+        + ("commented out (remove the leading -- from each line to use one)." if commented else "active, not commented out."),
+    ]
+    if stats["manual"]:
+        lines.append(f"-- For a person: {stats['manual']} object(s) need a manual step; their templates are commented out (remove the leading -- from each line).")
+    lines += [f"-- Choice: {item}" for item in choices]
+    lines += [
+        "-- Each object's note is a batch of its own, so it never becomes part of a saved view or procedure.",
         "-- Out of scope: constraints, indexes, permissions, row data.",
+        "GO",
         "",
     ]
-    tail: list[str] = []
-    if destructive:
-        tail = [
-            "-- ======================================================================",
-            "-- DESTRUCTIVE OR MANUAL: each block below can lose data or needs a person.",
-            "-- Nothing here runs until you uncomment it on purpose.",
-            "-- ======================================================================",
-            "",
-        ]
-        for block in destructive:
-            tail.extend("-- " + line if not line.startswith("--") else line for line in block.split("\n"))
-            tail.append("")
-    return "\n".join(header + live + tail).rstrip() + "\n", sum(1 for line in live if line == "GO"), len(destructive)
+    number = 0
+    for section, title in SECTIONS:
+        group = [r for r in records if r["section"] == section]
+        if not group:
+            continue
+        number += 1
+        lines += ["-- " + "=" * 70, f"-- {number}. {title}", "-- " + "=" * 70, ""]
+        for r in group:
+            lines += [f"-- {line}" for line in _note_lines(r)]
+            lines.append("GO")
+            for index, statement in enumerate(r["statements"]):
+                off = _commented(r, commented, index)
+                text = _terminated(statement).split("\n")
+                # Off: every line gets exactly `--` in front, its own comments included,
+                # so taking those two characters away gives back the statement as written.
+                lines += ["--" + line for line in text] + ["--GO"] if off else text + ["GO"]
+            lines.append("")
+    if not records:
+        lines.append("-- The two sides match for every compared object: nothing to run.")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_script(
+    source: Catalog, changes: list[dict[str, Any]], *, source_name: str, target_name: str, target_kind: str, taken_at: str,
+    rebuild_schemas: list[str] | tuple[str, ...] = (), commented: bool = False, choices: list[str] | tuple[str, ...] = (),
+) -> tuple[str, dict[str, int]]:
+    """(deploy.sql text, script_stats) for the changes."""
+    records = plan(source, changes, target_kind=target_kind, rebuild_schemas=rebuild_schemas)
+    text = render_deploy(records, source_name=source_name, target_name=target_name, taken_at=taken_at, commented=commented, choices=choices)
+    return text, script_stats(records, commented=commented)
 
 
 def _target_kind_of(change: dict[str, Any]) -> str:
@@ -781,33 +956,19 @@ def _render_table(columns: list[Column], key: tuple[str, str]) -> str:
     return f"CREATE TABLE {_qualified(key)} (\n{body}\n)"
 
 
-def _alter_statement(key: tuple[str, str], detail: str, columns: list[Column]) -> tuple[str | None, bool]:
-    by_name = {c.name.lower(): c for c in columns}
-    add = re.match(r"^add column \[(.+?)\] ", detail)
-    if add:
-        col = by_name.get(add.group(1).replace("]]", "]").lower())
-        return (f"ALTER TABLE {_qualified(key)} ADD {col.render()}" if col else None), bool(col and not col.nullable)
-    drop = re.match(r"^drop column \[(.+?)\]$", detail)
-    if drop:
-        return f"ALTER TABLE {_qualified(key)} DROP COLUMN [{drop.group(1)}]", True
-    change = re.match(r"^change column \[(.+?)\] ", detail)
-    if change:
-        col = by_name.get(change.group(1).replace("]]", "]").lower())
-        return (f"ALTER TABLE {_qualified(key)} ALTER COLUMN {col.render()}" if col else None), True
-    return None, False
-
-
 # --- report ---------------------------------------------------------------------------
 
 
 def render_report(
-    changes: list[dict[str, Any]], *, source_name: str, target_name: str, taken_at: str, sides: dict[str, dict[str, Any]], notes: list[str]
+    changes: list[dict[str, Any]], *, source_name: str, target_name: str, taken_at: str, sides: dict[str, dict[str, Any]], notes: list[str],
+    records: list[dict[str, Any]] | None = None, commented: bool = False, choices: list[str] | tuple[str, ...] = (),
 ) -> str:
     counts = summarize(changes)
+    records = records or []
     lines = [
         f"# Schema compare: {source_name} -> {target_name}",
         "",
-        f"Taken {taken_at}. Direction: what `{target_name}` needs to match `{source_name}`. Read-only; nothing was changed on either side.",
+        f"Taken {taken_at}. Direction: what `{target_name}` needs to match `{source_name}`. Read-only; nothing was changed on either side, and no SQL was run.",
         "",
         "| Side | Environment | Kind | Database | Tables | Views | Procedures | Functions |",
         "| --- | --- | --- | --- | --- | --- | --- | --- |",
@@ -815,7 +976,16 @@ def render_report(
     for label in ("source", "target"):
         side = sides[label]
         lines.append(f"| {label} | {side.get('environment', '')} | {side.get('kind', '')} | {side.get('database', '')} | {side['tables']} | {side['views']} | {side['procedures']} | {side['functions']} |")
-    lines += ["", f"**{counts['total']} difference(s)**: {counts['add']} to add, {counts['alter']} to alter, {counts['drop']} to drop, {counts['destructive']} destructive or manual.", ""]
+    lines += ["", f"**{counts['total']} difference(s)**: {counts['add']} to add, {counts['alter']} to alter, {counts['drop']} to drop; {counts['destructive']} of them can lose data as detected.", ""]
+    if records:
+        stats = script_stats(records, commented=commented)
+        lines += [
+            f"Script: {stats['objects']} object(s), {stats['statements']} statement(s) to run, {stats['commented']} commented out, "
+            f"{stats['destructive']} destructive object(s) after the chosen actions, {stats['manual']} for a person; {stats['batches']} GO batches including the comment-only note batches.",
+            "",
+        ]
+    if choices:
+        lines += ["## Choices", ""] + [f"- {item}" for item in choices] + [""]
     if not changes:
         lines.append("The two sides match for every compared object.")
     else:
@@ -824,10 +994,18 @@ def render_report(
             name = c["schema"] if c["kind"] == "schema" else f"{c['schema']}.{c['name']}"
             flag = " (destructive)" if c.get("destructive") else ""
             lines.append(f"| {c['kind']} | `{name}` | {c['action']}{flag} | {c.get('detail', '')} |")
+    if records:
+        lines += ["", "## Objects", "", "In the order deploy.sql runs them; each has the same note there."]
+        for r in records:
+            lines += ["", f"### {r['object']} ({KIND_WORDS.get(r['kind'], r['kind'].upper())})", ""]
+            lines.append(f"- **Detected change:** {r['detected'].upper()}.")
+            lines.append(f"- **Deployment action:** {r['action']}" + (" (commented out in deploy.sql)." if any(_commented(r, commented, i) for i in range(len(r["statements"]))) else "."))
+            lines += [f"- Change: {item}" for item in r["changes"]]
+            lines += [f"- {'**' + note.split(':', 1)[0] + ':**' + note.split(':', 1)[1] if note.startswith('DESTRUCTIVE:') else note}" for note in r["notes"]]
     lines += ["", "Out of scope: constraints, indexes, permissions, row data."]
     if notes:
         lines += [""] + [f"- {note}" for note in notes]
-    lines += ["", "The ordered script is `deploy.sql` beside this file; destructive statements are commented out there."]
+    lines += ["", "The ordered script is `deploy.sql` beside this file. coop never runs it; a person reviews it and runs it."]
     return "\n".join(lines) + "\n"
 
 
@@ -932,17 +1110,92 @@ def filter_schemas(catalog: Catalog, keep: list[str], drop: list[str]) -> None:
     catalog.modules = {k: v for k, v in catalog.modules.items() if wanted(k[0])}
 
 
+DESTRUCTIVE_MODES = ("runnable", "commented")
+GENERATED_MARK = "-- coop generated: sha256 "
+
+
+def _settings(project: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+    """The client's `schema_compare:` section of .coop/project.yml, validated:
+    ({schemas, exclude, rebuild, commented}, "") or (None, the bad key)."""
+    section = project.get("schema_compare")
+    if section is None:
+        section = {}
+    if not isinstance(section, dict):
+        return None, "schema_compare"
+    out: dict[str, Any] = {}
+    for key, name in (("schemas", "schemas"), ("exclude", "exclude_schemas"), ("rebuild", "rebuild_tables_in")):
+        value = schema_filter(section.get(name))
+        if value is None:
+            return None, f"schema_compare.{name}"
+        out[key] = value
+    mode = section.get("destructive", "runnable")
+    if mode not in DESTRUCTIVE_MODES:
+        return None, "schema_compare.destructive"
+    out["commented"] = mode == "commented"
+    return out, ""
+
+
+def _choices(payload: dict[str, Any], saved: dict[str, Any]) -> tuple[list[str], list[str], list[str], bool, list[str]]:
+    """(keep, exclude, rebuild, commented, the choices in words with where each
+    came from). A run's `exclude` adds to the project file's; any other run value
+    replaces the file's for that run, and a schema the run names in `schemas` is
+    never left out by the file's exclude list."""
+    run_keep, run_drop = payload.get("schemas"), payload.get("exclude") or []
+    keep = run_keep if run_keep is not None else saved["schemas"]
+    named = {k.lower() for k in (run_keep or [])}
+    file_drop = [d for d in saved["exclude"] if d.lower() not in named]
+    drop = file_drop + [d for d in run_drop if d.lower() not in {f.lower() for f in file_drop}]
+    rebuild = payload.get("rebuild") if payload.get("rebuild") is not None else saved["rebuild"]
+    commented = payload["commented"] if isinstance(payload.get("commented"), bool) else saved["commented"]
+    words: list[str] = []
+    if keep:
+        words.append(f"only schemas {', '.join(keep)} compared ({'this run' if run_keep is not None else 'project file'})")
+    parts = ([f"{', '.join(file_drop)} (project file)"] if file_drop else []) + ([f"{', '.join(d for d in drop if d not in file_drop)} (this run)"] if len(drop) > len(file_drop) else [])
+    if parts:
+        words.append("schemas left out: " + "; ".join(parts))
+    if rebuild:
+        words.append(f"changed tables in schemas {', '.join(rebuild)} are rebuilt with DROP + CREATE ({'this run' if payload.get('rebuild') is not None else 'project file'}); other tables ALTER where the target allows it")
+    else:
+        words.append("changed tables: ALTER where the target allows it, a manual rebuild note where it does not (default)")
+    source = "this run" if isinstance(payload.get("commented"), bool) else "project file" if saved["commented"] else "default"
+    words.append(f"destructive statements: {'commented out' if commented else 'active, marked DESTRUCTIVE'} ({source})")
+    return keep, drop, rebuild, commented, words
+
+
+def _write_script(folder: Path, script: str, stamp: str) -> str:
+    """Write deploy.sql with a closing checksum line. A deploy.sql someone edited
+    since coop wrote it (its checksum no longer matches) is kept beside the new
+    one as deploy.edited-<stamp>.sql; the name kept is returned ("" when none)."""
+    digest = hashlib.sha256(script.encode("utf-8")).hexdigest()
+    text = script + GENERATED_MARK + digest + "\n"
+    path = folder / "deploy.sql"
+    kept = ""
+    if path.is_file():
+        old = path.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
+        body, _, last = old.rstrip("\n").rpartition("\n")
+        unedited = last.startswith(GENERATED_MARK) and hashlib.sha256((body + "\n").encode("utf-8")).hexdigest() == last[len(GENERATED_MARK):].strip()
+        if old != text and not unedited:
+            kept = f"deploy.edited-{stamp}.sql"
+            (folder / kept).write_text(old, encoding="utf-8", newline="\n")
+    path.write_text(text, encoding="utf-8", newline="\n")
+    return kept
+
+
 def compare(payload: Any, *, cwd: Path | None = None, now: datetime | None = None) -> dict[str, Any]:
-    if not isinstance(payload, dict) or set(payload) - {"source", "target", "schemas", "exclude"}:
+    if not isinstance(payload, dict) or set(payload) - {"source", "target", "schemas", "exclude", "rebuild", "commented"}:
         return sql_query.result("input_invalid")
-    keep, drop = schema_filter(payload.get("schemas")), schema_filter(payload.get("exclude"))
-    if keep is None or drop is None:
+    keep, drop, rebuild = schema_filter(payload.get("schemas")), schema_filter(payload.get("exclude")), schema_filter(payload.get("rebuild"))
+    if keep is None or drop is None or rebuild is None or not isinstance(payload.get("commented", False), bool):
         return sql_query.result("input_invalid")
     project_path = wmcp.find_project_yml(cwd or Path.cwd())
     if not project_path:
         return sql_query.result("project_unavailable")
     project = wmcp.load_project(project_path)
     project = project if isinstance(project, dict) else {}
+    saved, bad = _settings(project)
+    if saved is None:
+        return sql_query.result("setting_invalid", setting=bad)
+    keep, drop, rebuild, commented, choices = _choices(payload, saved)
     source = payload.get("source", snapshot_lib.default_environment(project))
     target = payload.get("target", DEFAULT_TARGET)
     if not (valid_side(source) and valid_side(target, target=True)) or source == target:
@@ -971,10 +1224,6 @@ def compare(payload: Any, *, cwd: Path | None = None, now: datetime | None = Non
     changes = diff(source_catalog, target_catalog)
     taken_at = (now or datetime.now(timezone.utc)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     notes: list[str] = []
-    if keep:
-        notes.append(f"only schemas {', '.join(keep)} compared")
-    if drop:
-        notes.append(f"schemas {', '.join(drop)} left out")
     if bookkeeping:
         notes.append("schema sqlsc (SQL source control's locks) left out")
     for label, catalog in (("source", source_catalog), ("target", target_catalog)):
@@ -986,16 +1235,20 @@ def compare(payload: Any, *, cwd: Path | None = None, now: datetime | None = Non
             notes.append(f"{label}: the {item} list is larger than the compare cap; the compare is partial")
         if catalog.skipped:
             notes.append(f"{label}: the snapshot skipped {len(catalog.skipped)} object(s) (names unsafe as file names); they compare as unknown")
-    script, to_run, destructive = render_script(
-        source_catalog, changes, source_name=source, target_name=target, target_kind=target_summary.get("kind", ""), taken_at=taken_at
-    )
+        if not catalog.identity_known and catalog.tables:
+            notes.append(f"{label}: identity columns were not recorded (a snapshot from before coop read them: take it again), so identity was not compared")
+    records = plan(source_catalog, changes, target_kind=target_summary.get("kind", ""), rebuild_schemas=rebuild)
+    script = render_deploy(records, source_name=source, target_name=target, taken_at=taken_at, commented=commented, choices=choices)
+    stats = script_stats(records, commented=commented)
     sides = {"source": _side_summary(source_catalog, source_summary), "target": _side_summary(target_catalog, target_summary)}
-    report = render_report(changes, source_name=source, target_name=target, taken_at=taken_at, sides=sides, notes=notes)
     folder, rel = resolve_output(project, Path(project_path), source, target)
     try:
         folder.mkdir(parents=True, exist_ok=True)
+        kept = _write_script(folder, script, re.sub(r"[^0-9TZ]", "", taken_at))
+        if kept:
+            notes.append(f"deploy.sql had been edited since coop wrote it: that copy is kept as {kept} beside the new one")
+        report = render_report(changes, source_name=source, target_name=target, taken_at=taken_at, sides=sides, notes=notes, records=records, commented=commented, choices=choices)
         (folder / "report.md").write_text(report, encoding="utf-8", newline="\n")
-        (folder / "deploy.sql").write_text(script, encoding="utf-8", newline="\n")
     except OSError:
         return sql_query.result("output_unwritable", path=rel)
     return sql_query.result(
@@ -1009,7 +1262,8 @@ def compare(payload: Any, *, cwd: Path | None = None, now: datetime | None = Non
         complete=not any(c.truncated or c.skipped for c in (source_catalog, target_catalog)),
         changes=changes[:MAX_CHANGES_IN_RESULT],
         changes_truncated=len(changes) > MAX_CHANGES_IN_RESULT,
-        script={"statements": to_run, "destructive": destructive},
+        script=stats,
+        choices=choices,
         notes=notes,
     )
 
@@ -1045,7 +1299,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source", help="side to promote from: dev, test, prod, snapshot or repo[:<name>[/<subfolder>]] (default: the contract's default dev/test entry)")
     parser.add_argument("--target", help=f"side to promote to: dev, test, prod or repo[:<name>[/<subfolder>]] (default: {DEFAULT_TARGET})")
     parser.add_argument("--schema", action="append", help="compare only this schema (repeatable)")
-    parser.add_argument("--exclude-schema", action="append", help="leave this schema out (repeatable)")
+    parser.add_argument("--exclude-schema", action="append", help="leave this schema out (repeatable; adds to the project file's exclude_schemas)")
+    parser.add_argument("--rebuild-tables-in", action="append", help="rebuild changed tables in this schema with DROP + CREATE (repeatable; replaces the project file's rebuild_tables_in)")
+    parser.add_argument("--destructive", choices=DESTRUCTIVE_MODES, help="runnable (default) or commented: whether DROP and other destructive statements are written active or commented out")
     parser.add_argument("--stdin", action="store_true", help="read {\"source\": ..., \"target\": ...} from stdin (the tool contract)")
     parser.add_argument("--cli", action="store_true", help="never read stdin: the sides come from the flags or their defaults (bin/coop.ps1)")
     args = parser.parse_args(argv)
@@ -1068,6 +1324,10 @@ def main(argv: list[str] | None = None) -> int:
             payload["schemas"] = args.schema
         if args.exclude_schema:
             payload["exclude"] = args.exclude_schema
+        if args.rebuild_tables_in:
+            payload["rebuild"] = args.rebuild_tables_in
+        if args.destructive:
+            payload["commented"] = args.destructive == "commented"
     try:
         output = execute(payload)
     except Exception:
