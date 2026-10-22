@@ -5,6 +5,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Tool pins:** coop-sql-source-control 1.0.4 (string literals keep their
+  whitespace when scripted and compared; a renamed module is scripted under its
+  current name, and deploy holds back a file that still declares another),
+  coop-schema-compare 0.1.4 (the bare `period` column and renamed-module fixes
+  below, in the standalone CLI) and coop-data-doc 1.4.2 (warns when an sqlsc
+  file's `CREATE` names another object than its file name).
+
 ### Fixed
 
 - **An older terminal install no longer shadows the machine install.** After
@@ -21,6 +30,23 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 - **"coop is still starting" says why.** The box shown while the first
   launch sets up the account's tools says it can take several minutes and
   that the PowerShell console on the taskbar shows each step.
+- **Schema compare reads a bare `period` column.** `period bigint NULL` was
+  taken for a `PERIOD FOR SYSTEM_TIME` clause and left out, so a repo-to-live
+  compare proposed dropping the real column. Only the full clause is skipped
+  now. A column item the reader cannot read makes that table compare as
+  "compare by hand" instead of producing a drop.
+- **Schema compare and renamed modules.** A view, procedure or function renamed
+  with `sp_rename` keeps its old name in `sys.sql_modules`. The compare now
+  reads each definition under its catalog name, so the old declared name is
+  neither an `alter` nor what `deploy.sql` creates. In an sqlsc repo (a
+  `sqlsc.yml` names the scripts folder), a file whose `CREATE` names another
+  object than its file name is read under the file's name, with a note, rather
+  than as an add of the old name and a drop of the current one.
+- **`bpa_review` reads the Tabular Editor CLI 0.7 findings envelope.** TE
+  0.7.1.2 prints `findings` (`code`, `ruleName`, `severity`, `object`,
+  `message`) where earlier previews printed `results`; coop rejected it as an
+  invalid report. Both shapes are read. The envelope's `summary` must match its
+  findings, and rule errors or cut-off JSON still fail the review.
 
 ## [0.38.1] — 2026-10-21
 
