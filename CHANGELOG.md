@@ -5,6 +5,23 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **An older terminal install no longer shadows the machine install.** After
+  the upgrade to the machine-wide window, an account's `coop` link into an
+  older `coop install` checkout kept `coop` in the terminal and that
+  install's "coop" shortcuts on the old release. The account's first launch
+  now removes such a link (a checkout at this version or newer is a
+  developer's and stays), removes the old "coop" and "coop (window)"
+  shortcuts it wrote, and points its "coop (terminal)" at the machine's coop.
+  The checkout itself stays.
+- **The window's first launch no longer downloads Electron.** The setup no
+  longer refreshes a window runtime tree an older terminal install left in
+  the profile; the package carries its own (a 150 MB download, for nothing).
+- **"coop is still starting" says why.** The box shown while the first
+  launch sets up the account's tools says it can take several minutes and
+  that the PowerShell console on the taskbar shows each step.
+
 ## [0.38.1] — 2026-10-21
 
 ### Changed
