@@ -338,9 +338,9 @@ await check("runtime: Git, Python, the Azure CLI, ODBC 18 and its VC++ runtime c
 await check("runtime: the wheel folder must hold every manifest Python tool at its pin; pipx runs through a .cmd", () => {
   const specs = pythonToolSpecs(MANIFEST);
   for (const [name, pin] of Object.entries(MANIFEST.python_tools)) assert.ok(specs.includes(`${name}==${pin}`), `${name}==${pin}`);
-  const files = ["coop_data_doc-1.4.2-py3-none-any.whl", "coop_schema_compare-0.1.4-py3-none-any.whl", "coop_sql_source_control-1.0.4-py3-none-any.whl", "ms_fabric_cli-1.7.0-py3-none-any.whl", "pyodbc-5.3.0-cp313-cp313-win_amd64.whl", "fabric_cicd-1.3.0-py3-none-any.whl"];
+  const files = ["coop_data_doc-1.4.2-py3-none-any.whl", "coop_schema_compare-0.1.5-py3-none-any.whl", "coop_sql_source_control-1.0.4-py3-none-any.whl", "ms_fabric_cli-1.7.0-py3-none-any.whl", "pyodbc-5.3.0-cp313-cp313-win_amd64.whl", "fabric_cicd-1.3.0-py3-none-any.whl"];
   assert.ok(hasWheel(files, "coop-data-doc", "1.4.2"));
-  assert.ok(hasWheel(files, "coop-schema-compare", "0.1.4"));
+  assert.ok(hasWheel(files, "coop-schema-compare", "0.1.5"));
   assert.ok(hasWheel(files, "coop-sql-source-control", "1.0.4"));
   assert.ok(hasWheel(files, "ms-fabric-cli", "1.7.0"));
   assert.ok(hasWheel(files, "pyodbc", "5.3.0"));

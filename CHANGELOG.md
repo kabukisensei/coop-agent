@@ -23,6 +23,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- **Tool pin:** coop-schema-compare 0.1.5 (the same deploy script fixes in
+  the standalone CLI: identity, one change record per object, runnable
+  destructive statements, `--rebuild-tables-in`).
 - **Destructive statements in deploy.sql are active by default** (Aaron,
   2026-10-22: the team reviews and runs the script itself), each object marked
   DESTRUCTIVE. `destructive: commented` (or `commented: true` for one run)
