@@ -11,6 +11,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import vm from "node:vm";
 import { CompanionHub, messageText, toolLabel } from "../desktop/lib/companion-hub.mjs";
 import { DeviceStore } from "../desktop/lib/companion-devices.mjs";
 import { createCompanionServer, readCookie } from "../desktop/lib/companion-server.mjs";
@@ -890,6 +891,31 @@ await check("page: every file the page names ships, from this origin only, with 
   const manifest = JSON.parse(readFileSync(join(pageDir, "manifest.webmanifest"), "utf8"));
   assert.equal(manifest.display, "standalone");
   for (const icon of manifest.icons) assert.ok(existsSync(join(pageDir, icon.src)));
+});
+
+await check("page: never blank before its script runs or when the phone cannot reach the computer", async () => {
+  // Aaron, 2026-10-22: a phone off the tailnet, holding an old copy of the page,
+  // showed nothing at all. The page says why until the script takes over...
+  const html = readFileSync(join(pageDir, "index.html"), "utf8");
+  assert.match(html, /<section id="gate" class="gate">/, "the gate is shown until the script decides");
+  assert.match(html, /<h1 id="gate-title">Connecting to coop<\/h1>/);
+  assert.match(html, /<p id="gate-text">[^<]*Tailscale[^<]*<\/p>/);
+  // ...and the service worker answers an offline page load with nothing saved
+  // with a message, not a network error.
+  const handlers = {};
+  const context = {
+    self: { addEventListener: (type, fn) => { handlers[type] = fn; }, location: { origin: "https://vm.tail.ts.net" } },
+    caches: { match: async () => undefined, open: async () => ({ put: async () => {} }) },
+    fetch: async () => { throw new TypeError("offline"); },
+    Response, URL,
+  };
+  vm.runInNewContext(readFileSync(join(pageDir, "sw.js"), "utf8"), context);
+  const respond = (request) => new Promise((resolve) => handlers.fetch({ request, respondWith: (p) => resolve(p) }));
+  const page = await respond({ method: "GET", mode: "navigate", url: "https://vm.tail.ts.net/" });
+  assert.equal(page.status, 503);
+  assert.match(await page.text(), /Can't reach coop[\s\S]*Tailscale/);
+  const script = await respond({ method: "GET", mode: "cors", url: "https://vm.tail.ts.net/app.js" });
+  assert.equal(script.type, "error", "a missing file is still a plain network error");
 });
 
 await check("page: four themes from the menu, Retro in the coop site's look (MC5), its font from this origin under its licence", () => {
