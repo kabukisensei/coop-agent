@@ -893,6 +893,42 @@ function parseBpaOutput(stdout: string, legacy: boolean): any {
 
   if (!legacy) {
     const report = JSON.parse(stdout);
+    // TE CLI 0.7.x: `findings` with `code`/`ruleName`/`severity`/`object`/`message` and a
+    // `summary` of counts. Earlier previews: `results` with `ruleId`/`severityLabel`/`objectName`.
+    if (report && Array.isArray(report.findings)) {
+      if (!Number.isInteger(report.violations) || report.violations !== report.findings.length ||
+          !Number.isInteger(report.ruleErrors) || report.ruleErrors < 0) {
+        throw new Error("TE returned an invalid BPA JSON report.");
+      }
+      for (const item of report.findings) {
+        const raw = String(item?.severity).toLowerCase();
+        const severity = raw === "information" ? "info" : raw;
+        if (!item || typeof item.code !== "string" || !item.code || typeof item.ruleName !== "string" ||
+            typeof item.object !== "string" || !["error", "warning", "info"].includes(severity)) {
+          throw new Error("TE returned an invalid BPA finding.");
+        }
+        const detail = typeof item.message === "string" ? item.message.trim() : "";
+        findings.push({
+          rule: item.code, severity, file: "", object: item.object,
+          message: detail && detail !== item.ruleName ? `${item.ruleName}: ${detail}` : item.ruleName,
+          ...(typeof item.objectPath === "string" && item.objectPath ? { objectPath: item.objectPath } : {}),
+          ...(typeof item.objectType === "string" && item.objectType ? { objectType: item.objectType } : {}),
+          ...(typeof item.category === "string" && item.category ? { category: item.category } : {}),
+          ...(typeof item.fixable === "boolean" ? { fixable: item.fixable } : {}),
+        });
+        (summary as any)[severity]++;
+      }
+      const counts = report.summary;
+      if (counts !== undefined) {
+        // The envelope's own counts must agree with its findings, or the report is not whole.
+        const expected = { errors: summary.error, warnings: summary.warning, info: summary.info, total: findings.length };
+        if (!counts || typeof counts !== "object" ||
+            Object.entries(expected).some(([k, v]) => counts[k] !== undefined && counts[k] !== v)) {
+          throw new Error("TE returned a BPA JSON report whose summary does not match its findings.");
+        }
+      }
+      return { findings, summary, ruleErrors: report.ruleErrors };
+    }
     if (!report || !Array.isArray(report.results) ||
         !Number.isInteger(report.violations) || report.violations !== report.results.length ||
         !Number.isInteger(report.ruleErrors) || report.ruleErrors < 0) {

@@ -194,7 +194,10 @@ built-in rules (and any model-embedded rules, following TE's defaults). A config
 path adds `--rules <absolute path>`. No fix or save flags are passed.
 
 JSON violations become structured findings with rule IDs, object names, model paths,
-and severity counts. Exit 1 with findings is advisory; invalid output, execution
+and severity counts. Both TE JSON shapes are read: the 0.7.x `findings` envelope
+(`code` is the rule ID; `ruleName` and `message` the message; `objectPath`,
+`objectType`, `category` and `fixable` are kept on the finding; its `summary`
+counts must match the findings) and the earlier `results` envelope. Exit 1 with findings is advisory; invalid output, execution
 failures, or rule evaluation errors are reported as incomplete/failed analysis.
 The text lists every finding as `- [severity] rule: message (object)`, errors
 first. Raw stdout/stderr and the invoked arguments remain in `details`. Missing TE

@@ -37,7 +37,16 @@ KINDS = {"VIEW": "view", "PROC": "procedure", "PROCEDURE": "procedure", "FUNCTIO
 LENGTH_TYPES = ("varchar", "nvarchar", "char", "nchar", "binary", "varbinary")
 PRECISION_TYPES = ("decimal", "numeric")
 TIME_TYPES = ("datetime2", "datetimeoffset", "time")
-CONSTRAINT_WORDS = ("CONSTRAINT", "PRIMARY", "UNIQUE", "FOREIGN", "CHECK", "INDEX", "PERIOD", "WITH")
+# Words that open a table constraint or option instead of a column. All are reserved
+# words, so a bare column can never be named one. PERIOD is not reserved: it opens a
+# clause only as `PERIOD FOR SYSTEM_TIME (...)` and is otherwise a column name.
+CONSTRAINT_WORDS = ("CONSTRAINT", "PRIMARY", "UNIQUE", "FOREIGN", "CHECK", "INDEX", "WITH")
+_PERIOD_CLAUSE = re.compile(r"^PERIOD\s+FOR\s+SYSTEM_TIME\b", re.IGNORECASE)
+# sqlsc's repo layout (coop-sql-source-control): one file per object, named
+# `<schema>.<name>.sql` with %XX escapes, under these folders of the scripts folder
+# that its sqlsc.yml names. In that layout the file name is the catalog name.
+SQLSC_CONFIG = "sqlsc.yml"
+SQLSC_FOLDERS = {"tables": "table", "views": "view", "stored procedures": "procedure", "functions": "function"}
 
 _GO = re.compile(r"^\s*GO(?:\s+\d+)?\s*;?\s*$", re.IGNORECASE | re.MULTILINE)
 _NAME_PART = r"(?:\[(?:[^\]]|\]\])+\]|\"(?:[^\"]|\"\")+\"|[A-Za-z_@#][A-Za-z0-9_@#$]*)"
@@ -197,13 +206,20 @@ def render_type(base: str, args: str | None, modifier: str | None) -> str:
     return t
 
 
-def parse_column(item: str) -> tuple[str, str, bool] | None:
-    """(name, rendered type, nullable) for a column item, None for a constraint."""
+def is_table_clause(item: str) -> bool:
+    """A constraint, index, option or period clause in a column list, not a column."""
     stripped = item.strip()
     if not stripped:
-        return None
+        return True
     head = stripped.split(None, 1)[0].upper().rstrip(",")
-    if head in CONSTRAINT_WORDS:
+    return head in CONSTRAINT_WORDS or bool(_PERIOD_CLAUSE.match(stripped))
+
+
+def parse_column(item: str) -> tuple[str, str, bool] | None:
+    """(name, rendered type, nullable) for a column item; None for a table clause
+    (is_table_clause) or an item this reader cannot read."""
+    stripped = item.strip()
+    if is_table_clause(stripped):
         return None
     match = _COLUMN.match(stripped)
     if not match:
@@ -233,6 +249,9 @@ class ParsedSource:
         self.files_without_objects = 0
         self.notes: list[str] = []
         self.truncated = False
+        # Tables with a column item the reader could not read: their column list is
+        # not complete, so it cannot prove a column absent.
+        self.incomplete: set[tuple[str, str]] = set()
 
 
 def sql_files(folder: Path) -> list[Path]:
@@ -245,8 +264,11 @@ def sql_files(folder: Path) -> list[Path]:
     return sorted(out, key=lambda p: p.as_posix().lower())
 
 
-def parse_batch(batch: str, parsed: ParsedSource) -> bool:
-    """Record the batch's first CREATE statement; True when one was found."""
+def parse_batch(batch: str, parsed: ParsedSource, file_key: tuple[str, str, str] | None = None, where: str = "") -> bool:
+    """Record the batch's first CREATE statement; True when one was found.
+    `file_key` is (kind, schema, name) when the file's name is the catalog name
+    (sqlsc's layout): a module whose CREATE names another object is read under the
+    file's name, its declared name rewritten, and a note says so."""
     plain = strip_comments(batch)
     head = _CREATE.match(plain.lstrip("﻿"))
     if not head:
@@ -260,6 +282,14 @@ def parse_batch(batch: str, parsed: ParsedSource) -> bool:
     schema, name = split_name(head.group(2))
     if not name:
         return False
+    if file_key and word != "TABLE" and file_key[0] == KINDS[word] and (schema.lower(), name) != (file_key[1].lower(), file_key[2]):
+        batch, stale = with_identity(batch, file_key[1], file_key[2])
+        if stale:
+            parsed.notes.append(
+                f"{where or 'a file'} declares {stale} but is sqlsc's file for {file_key[1]}.{file_key[2]} (renamed after it was scripted); "
+                f"read as {file_key[1]}.{file_key[2]}. Script it again with sqlsc to correct the file"
+            )
+            schema, name = file_key[1], file_key[2]
     key = (schema, name)
     if key in parsed.tables or key in parsed.modules:
         parsed.notes.append(f"{schema}.{name} is created in more than one file; the last one in path order counts")
@@ -272,6 +302,12 @@ def parse_batch(batch: str, parsed: ParsedSource) -> bool:
                 column = parse_column(item)
                 if column:
                     columns.append(column)
+                elif not is_table_clause(item):
+                    parsed.incomplete.add(key)
+                    parsed.notes.append(f"{schema}.{name}: a column item could not be read ({' '.join(item.split())[:80]}); its columns compare by hand")
+        else:
+            parsed.incomplete.add(key)
+            parsed.notes.append(f"{schema}.{name}: its column list could not be read; its columns compare by hand")
         parsed.modules.pop(key, None)
         parsed.tables[key] = columns
         return True
@@ -280,9 +316,92 @@ def parse_batch(batch: str, parsed: ParsedSource) -> bool:
     return True
 
 
+_DECLARATION = re.compile(rf"^(\s*(?:CREATE\s+(?:OR\s+ALTER\s+)?|ALTER\s+)(?:VIEW|PROC|PROCEDURE|FUNCTION)\s+){_NAME}", re.IGNORECASE)
+
+
+def with_identity(definition: str, schema: str, name: str) -> tuple[str, str | None]:
+    """The module definition declaring `schema`.`name`, and the name it declared
+    before when that differed (else None). Only the declared schema and name parts
+    that differ are rewritten (bracketed); comments, strings and the body stay as
+    written. sp_rename and ALTER SCHEMA ... TRANSFER leave a module's stored CREATE
+    naming the old object, so a catalog's own name is what a definition is compared
+    and scripted under. A schema compares case-insensitively, a name exactly."""
+    plain = strip_comments(definition).replace("\ufeff", " ")
+    match = _DECLARATION.match(plain)
+    if not match:
+        return definition, None
+    offset = match.start(2)
+    parts = list(re.finditer(_NAME_PART, match.group(2)))
+    name_part = parts[-1]
+    schema_part = parts[-2] if len(parts) > 1 else None
+    declared_name = unquote(name_part.group())
+    declared_schema = unquote(schema_part.group()) if schema_part else None
+    edits: list[tuple[int, int, str]] = []
+    if declared_name != name:
+        edits.append((offset + name_part.start(), offset + name_part.end(), "[" + name.replace("]", "]]") + "]"))
+    if schema_part is not None and declared_schema is not None and declared_schema.lower() != schema.lower():
+        edits.append((offset + schema_part.start(), offset + schema_part.end(), "[" + schema.replace("]", "]]") + "]"))
+    if not edits:
+        return definition, None
+    stale = (f"{declared_schema}." if declared_schema is not None else "") + declared_name
+    for start, end, text in sorted(edits, reverse=True):
+        definition = definition[:start] + text + definition[end:]
+    return definition, stale
+
+
+def _sqlsc_decode(part: str) -> str:
+    """sqlsc's file-name escape: %XX bytes (UTF-8) back to characters."""
+    try:
+        return re.sub(r"(?:%[0-9A-Fa-f]{2})+", lambda m: bytes.fromhex(m.group().replace("%", "")).decode("utf-8"), part)
+    except UnicodeDecodeError:
+        return part
+
+
+def sqlsc_script_dirs(folder: Path) -> set[Path]:
+    """The scripts folders of every sqlsc.yml at, above or (up to three levels)
+    below `folder`: where sqlsc's file-per-object layout is known to hold."""
+    found: set[Path] = set()
+    candidates = [d / SQLSC_CONFIG for d in (folder, *folder.parents)]
+    base_depth = len(folder.parts)
+    for root, dirs, files in os.walk(folder):
+        dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS and not d.startswith(".") and len(Path(root, d).parts) - base_depth <= 3)
+        if SQLSC_CONFIG in files:
+            candidates.append(Path(root) / SQLSC_CONFIG)
+    for config in candidates:
+        try:
+            if not config.is_file():
+                continue
+            text = config.read_text(encoding="utf-8-sig", errors="replace")
+        except OSError:
+            continue
+        match = re.search(r"^folder:\s*['\"]?([^'\"#\n]+?)['\"]?\s*(?:#.*)?$", text, re.MULTILINE)
+        try:
+            found.add((config.parent / (match.group(1).strip() if match else "database")).resolve())
+        except OSError:
+            continue
+    return found
+
+
+def sqlsc_file_key(path: Path, script_dirs: set[Path]) -> tuple[str, str, str] | None:
+    """(kind, schema, name) for a file in sqlsc's layout, None for any other file."""
+    kind = SQLSC_FOLDERS.get(path.parent.name.lower())
+    if kind is None or not path.name.lower().endswith(".sql"):
+        return None
+    try:
+        if path.parent.parent.resolve() not in script_dirs:
+            return None
+    except OSError:
+        return None
+    schema, dot, name = path.name[:-4].partition(".")
+    if not dot or not schema or not name:
+        return None
+    return kind, _sqlsc_decode(schema), _sqlsc_decode(name)
+
+
 def parse_folder(folder: Path) -> ParsedSource:
     parsed = ParsedSource()
     files = sql_files(folder)
+    script_dirs = sqlsc_script_dirs(folder)
     if len(files) > MAX_FILES:
         files = files[:MAX_FILES]
         parsed.truncated = True
@@ -296,8 +415,10 @@ def parse_folder(folder: Path) -> ParsedSource:
             continue
         parsed.files += 1
         found = False
+        file_key = sqlsc_file_key(path, script_dirs) if script_dirs else None
+        where = path.relative_to(folder).as_posix()
         for batch in split_batches(text.replace("\r\n", "\n").replace("\r", "\n")):
-            if parse_batch(batch, parsed):
+            if parse_batch(batch, parsed, file_key if not found else None, where):
                 found = True
         if not found:
             parsed.files_without_objects += 1

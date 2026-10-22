@@ -126,6 +126,8 @@ class Catalog:
         self.notes: list[str] = []
         # `schema.name` (lower case) of objects a snapshot skipped: present, but unread.
         self.skipped: set[str] = set()
+        # Tables whose column list a repo side could not fully read: it proves no column absent.
+        self.incomplete: set[tuple[str, str]] = set()
 
     def kinds(self) -> dict[tuple[str, str], str]:
         out = {key: "table" for key in self.tables}
@@ -437,6 +439,7 @@ def read_repo(folder: Path) -> Catalog:
     for key, columns in parsed.tables.items():
         catalog.tables[key] = [Column(name, type_text, nullable, position) for position, (name, type_text, nullable) in enumerate(columns, 1)]
     catalog.modules = dict(parsed.modules)
+    catalog.incomplete = set(parsed.incomplete)
     catalog.notes = sql_source.describe(parsed)
     return catalog
 
@@ -515,6 +518,11 @@ def diff(source: Catalog, target: Catalog) -> list[dict[str, Any]]:
             changes.append(_change(tgt_kind, key, "drop", destructive=True))
             continue
         if src_kind == "table":
+            unread = [side for side, cat in (("source", source), ("target", target)) if key in cat.incomplete]
+            if unread:
+                # A column the reader lost would show as a drop (or an add): never script that.
+                changes.append(_change("table", key, "unknown", f"a column could not be read on the {' and '.join(unread)} side; compare its columns by hand"))
+                continue
             details, lossy = compare_tables(source.tables[key], target.tables[key])
             if details:
                 changes.append(_change("table", key, "alter", "; ".join(details), destructive=lossy))
@@ -524,9 +532,17 @@ def diff(source: Catalog, target: Catalog) -> list[dict[str, Any]]:
                 if not src_def and not tgt_def:
                     continue
                 changes.append(_change(src_kind, key, "unknown", "definition not readable on one side; compare by hand"))
-            elif normalize_definition(src_def) != normalize_definition(tgt_def):
+            elif normalize_definition(_as_named(src_def, key)) != normalize_definition(_as_named(tgt_def, key)):
                 changes.append(_change(src_kind, key, "alter", "definition differs"))
     return changes
+
+
+def _as_named(definition: str, key: tuple[str, str]) -> str:
+    """The definition declaring the object it is filed under. A module renamed with
+    sp_rename (or moved with ALTER SCHEMA ... TRANSFER) keeps its old name in
+    sys.sql_modules; the catalog's name is the object, so the old declared name is
+    neither a difference nor what a script may create."""
+    return sql_source.with_identity(definition, key[0], key[1])[0]
 
 
 # --- script -----------------------------------------------------------------------------
@@ -678,7 +694,7 @@ def render_script(
                         destructive.append(f"-- {_plain(key)}: {detail}\n{statement};")
                     else:
                         go(live, statement)
-    definitions = {key: definition for key, (_kind, definition) in source.modules.items()}
+    definitions = {key: _as_named(definition, key) if definition else definition for key, (_kind, definition) in source.modules.items()}
     kinds = {key: kind for key, (kind, _definition) in source.modules.items()}
     keys = [(c["schema"], c["name"]) for c in changes if c["kind"] in MODULE_KINDS and c["action"] in ("add", "alter")]
     # On a target that rebuilds tables by hand, a module that names a column the

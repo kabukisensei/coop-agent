@@ -589,6 +589,80 @@ with tempfile.TemporaryDirectory() as tmp:
         assert to_repo["state"] == "ok" and to_repo["target"]["kind"] == "sql source"
         assert [(c["kind"], c["name"], c["action"]) for c in to_repo["changes"]] == [("view", "Swapped", "add")], to_repo["changes"]
 
+# --- a bare `period` column, unreadable columns (sqlsc capture bugs, 2026-10-22) ----------
+src = sc.sql_source
+assert src.parse_column("period bigint NULL") == ("period", "bigint", True), "PERIOD is not a reserved word"
+assert src.parse_column("[period] bigint NULL") == ("period", "bigint", True)
+assert src.parse_column("Period datetime2(3) NOT NULL") == ("Period", "datetime2(3)", False)
+assert src.parse_column("PERIOD FOR SYSTEM_TIME (ValidFrom, ValidTo)") is None
+assert src.parse_column("period  for\n system_time ([From],[To])") is None
+for clause in ("CONSTRAINT pk PRIMARY KEY (id)", "PRIMARY KEY (id)", "UNIQUE (id)", "CHECK (id > 0)", "INDEX ix (id)", "FOREIGN KEY (a) REFERENCES t (a)"):
+    assert src.parse_column(clause) is None and src.is_table_clause(clause), clause
+with tempfile.TemporaryDirectory() as tmp:
+    repo = Path(tmp)
+    (repo / "t.sql").write_text(
+        "CREATE TABLE dbo.Setup (\n    id int NOT NULL\n    ,period bigint NULL\n    ,ValidFrom datetime2 GENERATED ALWAYS AS ROW START NOT NULL\n"
+        "    ,ValidTo datetime2 GENERATED ALWAYS AS ROW END NOT NULL\n    ,PERIOD FOR SYSTEM_TIME (ValidFrom, ValidTo)\n);\n",
+        encoding="utf-8",
+    )
+    from_repo = sc.read_repo(repo)
+    assert [c.name for c in from_repo.tables[("dbo", "Setup")]] == ["id", "period", "ValidFrom", "ValidTo"]
+    live = sc.Catalog()
+    live.schemas = {"dbo"}
+    live.tables[("dbo", "Setup")] = [sc.Column("id", "int", False, 1), sc.Column("period", "bigint", True, 2), sc.Column("ValidFrom", "datetime2(7)", False, 3), sc.Column("ValidTo", "datetime2(7)", False, 4)]
+    assert sc.diff(from_repo, live) == [] and sc.diff(live, from_repo) == [], "the matching period column is no drop and no rebuild"
+    # A column item the reader cannot read: no drop is ever scripted from that loss.
+    (repo / "t.sql").write_text("CREATE TABLE dbo.Setup (\n    id int NOT NULL\n    ,period bigint NULL\n    ,9odd ???\n);\n", encoding="utf-8")
+    lossy = sc.read_repo(repo)
+    assert ("dbo", "Setup") in lossy.incomplete and any("could not be read" in n for n in lossy.notes)
+    lost = sc.diff(lossy, live)
+    assert [(c["name"], c["action"]) for c in lost] == [("Setup", "unknown")], lost
+    lost_script, lost_run, _ = sc.render_script(lossy, lost, source_name="repo", target_name="dev", target_kind="azure_sql", taken_at="x")
+    assert lost_run == 0 and "DROP" not in lost_script.replace("-- ", "").split("DESTRUCTIVE")[0]
+    assert sc.diff(live, lossy)[0]["action"] == "unknown", "an unread target side proves nothing either"
+
+# --- renamed modules: the catalog's name, not the stale CREATE (2026-10-22) ---------------
+assert src.with_identity("CREATE VIEW dbo.OriginalName AS SELECT 1 AS x", "dbo", "RenamedView") == ("CREATE VIEW dbo.[RenamedView] AS SELECT 1 AS x", "dbo.OriginalName")
+body = "-- etl.LoadOld\nCREATE OR ALTER PROCEDURE [etl].[LoadOld] AS\nEXEC etl.LoadOld; SELECT 'etl.LoadOld';"
+assert src.with_identity(body, "etl", "LoadOld_deprecated") == (body.replace("[etl].[LoadOld] AS", "[etl].[LoadOld_deprecated] AS"), "etl.LoadOld"), "only the declaration moves"
+assert src.with_identity("create view DBO.Same as select 1", "dbo", "Same") == ("create view DBO.Same as select 1", None)
+assert src.with_identity("ALTER VIEW dbo.Old AS SELECT 1", "archive", "Old")[0] == "ALTER VIEW [archive].Old AS SELECT 1", "a schema transfer"
+STALE = "CREATE VIEW dbo.OriginalName AS SELECT 1 AS LiteralValue;"
+stale_live = sc.Catalog()
+stale_live.schemas = {"dbo"}
+stale_live.modules[("dbo", "RenamedView")] = ("view", STALE)
+with tempfile.TemporaryDirectory() as tmp:
+    repo = Path(tmp)
+    (repo / "sqlsc.yml").write_text("version: 1\nfolder: database\n", encoding="utf-8")
+    (repo / "database" / "Views").mkdir(parents=True)
+    (repo / "database" / "Stored Procedures").mkdir(parents=True)
+    # A file scripted before sqlsc 1.0.4 keeps the stale CREATE; sqlsc's file name is the catalog name.
+    (repo / "database" / "Views" / "dbo.RenamedView.sql").write_text(STALE + "\nGO\n", encoding="utf-8")
+    (repo / "database" / "Stored Procedures" / "etl.Load%2Ev2.sql").write_text("CREATE PROCEDURE etl.LoadOld AS SELECT 1;\nGO\n", encoding="utf-8")
+    old_capture = sc.read_repo(repo / "database")
+    assert set(old_capture.modules) == {("dbo", "RenamedView"), ("etl", "Load.v2")}, old_capture.modules
+    assert any("declares dbo.OriginalName" in n and "dbo.RenamedView" in n for n in old_capture.notes), old_capture.notes
+    assert [c for c in sc.diff(old_capture, stale_live) if c["schema"] == "dbo"] == [], "no add of the old name, no drop of the current one"
+    # The corrected capture (sqlsc 1.0.4) against a catalog that still holds the stale CREATE: no change at all.
+    (repo / "database" / "Views" / "dbo.RenamedView.sql").write_text("CREATE VIEW dbo.[RenamedView] AS SELECT 1 AS LiteralValue;\nGO\n", encoding="utf-8")
+    fixed = sc.read_repo(repo / "database")
+    assert not any("OriginalName" in n for n in fixed.notes)
+    view_changes = [c for c in sc.diff(fixed, stale_live) if c["name"] == "RenamedView"]
+    assert view_changes == [], view_changes
+    # Live to repo: a script never creates the stale name.
+    moved = sc.Catalog()
+    moved.schemas = {"dbo"}
+    moved.modules[("dbo", "RenamedView")] = ("view", STALE.replace("SELECT 1", "SELECT 2"))
+    alter = sc.diff(moved, fixed)
+    assert [(c["name"], c["action"]) for c in alter if c["name"] == "RenamedView"] == [("RenamedView", "alter")]
+    out_script, _, _ = sc.render_script(moved, alter, source_name="dev", target_name="repo", target_kind="azure_sql", taken_at="x")
+    assert "CREATE OR ALTER VIEW dbo.[RenamedView] AS SELECT 2" in out_script and "OriginalName" not in out_script, out_script
+    # Without sqlsc.yml the file name means nothing: the CREATE decides, as before.
+    (repo / "sqlsc.yml").unlink()
+    (repo / "database" / "Views" / "dbo.RenamedView.sql").write_text(STALE + "\nGO\n", encoding="utf-8")
+    plain_repo = sc.read_repo(repo / "database")
+    assert ("dbo", "OriginalName") in plain_repo.modules and ("dbo", "RenamedView") not in plain_repo.modules
+
 # --- stdin contract ---------------------------------------------------------------------
 with mock.patch.object(sc, "execute", return_value=sq.result("ok", path="x")) as run:
     import io

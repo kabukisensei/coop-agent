@@ -91,6 +91,58 @@ try {
     assert.equal(override?.isError, undefined, "BPA hook must not alter other tools");
   }
 
+  // TE CLI 0.7.x findings envelope (the shape 0.7.1.2 prints).
+  contract(undefined);
+  const modern = (items = [], ruleErrors = 0, code = items.length ? 1 : 0, summary) => {
+    const count = (s) => items.filter((f) => f.severity === s).length;
+    return {
+      code, stderr: "Preview build: expires 2026-10-31. {not json",
+      stdout: JSON.stringify({
+        command: "bpa run",
+        summary: summary || { errors: count("error"), warnings: count("warning"), info: count("info"), total: items.length },
+        findings: items, rulesEvaluated: 33, violations: items.length, ruleErrors, ignoredRules: 0,
+      }),
+    };
+  };
+  const modernFinding = (severity, code = `CODE_${severity}`) => ({
+    severity, source: "bpa", code, message: "Fixture finding", object: "'Example'[Key]", objectType: "Column",
+    objectPath: "Example/Key", ruleName: "Fixture rule", category: "Performance", fixable: false,
+  });
+  response = modern();
+  result = await invoke();
+  assert.equal(result.isError, false, "zero findings is a clean review");
+  assert.deepEqual(result.details.report.summary, { error: 0, warning: 0, info: 0 });
+  response = modern([modernFinding("error", "TEST_RULE")]);
+  result = await invoke();
+  assert.equal(result.isError, false, "exit 1 with findings and no rule errors is an advisory result");
+  assert.deepEqual(result.details.report.summary, { error: 1, warning: 0, info: 0 });
+  assert.deepEqual(result.details.report.findings[0], {
+    rule: "TEST_RULE", severity: "error", file: join(root, "Finance.SemanticModel"), object: "'Example'[Key]",
+    message: "Fixture rule: Fixture finding", objectPath: "Example/Key", objectType: "Column", category: "Performance", fixable: false,
+  });
+  assert.match(result.content[0].text, /- \[error\] TEST_RULE: Fixture rule: Fixture finding \('Example'\[Key\]\)/);
+  response = modern([modernFinding("warning"), modernFinding("error"), modernFinding("info")]);
+  result = await invoke();
+  assert.deepEqual(result.details.report.summary, { error: 1, warning: 1, info: 1 });
+  assert.ok(result.content[0].text.indexOf("[error] CODE_error") < result.content[0].text.indexOf("[warning] CODE_warning"));
+  response = modern([modernFinding("warning")], 2);
+  result = await invoke();
+  assert.equal(result.isError, true, "rule errors leave the review incomplete");
+  assert.equal(result.details.report.ruleErrors, 2);
+  for (const bad of [
+    modern([modernFinding("error")], 0, 1, { errors: 0, warnings: 0, info: 0, total: 0 }), // summary disagrees
+    { code: 1, stderr: "", stdout: JSON.stringify({ findings: [modernFinding("error")], violations: 2, ruleErrors: 0 }) }, // count disagrees
+    { code: 1, stderr: "", stdout: JSON.stringify({ findings: [{ ...modernFinding("error"), code: undefined }], violations: 1, ruleErrors: 0 }) },
+    { code: 1, stderr: "", stdout: JSON.stringify({ findings: [modernFinding("fatal")], violations: 1, ruleErrors: 0 }) },
+    { code: 1, stderr: "", stdout: JSON.stringify({ findings: [], violations: 0 }) }, // no ruleErrors: partial
+    { code: 1, stderr: "", stdout: modern([modernFinding("error")]).stdout.slice(0, 80) }, // cut off
+  ]) {
+    response = bad;
+    result = await invoke();
+    assert.equal(result.isError, true, bad.stdout);
+    assert.equal(result.details.reportRejected, true);
+  }
+
   contract("rules/BPARules.json", "TabularEditor.exe");
   response = { code: 0, stdout: "Sales: [LEGACY_RULE] (Warning) Add a description", stderr: "" };
   result = await invoke();
