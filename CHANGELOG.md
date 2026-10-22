@@ -31,13 +31,6 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 - **A rerun keeps a hand-edited deploy.sql** beside the new one as
   `deploy.edited-<time>.sql` instead of overwriting it.
 
-- **Tool pins:** coop-sql-source-control 1.0.4 (string literals keep their
-  whitespace when scripted and compared; a renamed module is scripted under its
-  current name, and deploy holds back a file that still declares another),
-  coop-schema-compare 0.1.4 (the bare `period` column and renamed-module fixes
-  below, in the standalone CLI) and coop-data-doc 1.4.2 (warns when an sqlsc
-  file's `CREATE` names another object than its file name).
-
 ### Fixed
 
 - **Schema compare keeps identity columns.** The live read, the catalog
@@ -55,6 +48,20 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   a rebuild note, which now names that change instead of a blanket claim.
 - **A renamed module's stale declaration is named in the notes** of both files
   when the script writes it under its catalog name.
+
+## [0.38.2] — 2026-10-22
+
+### Changed
+
+- **Tool pins:** coop-sql-source-control 1.0.4 (string literals keep their
+  whitespace when scripted and compared; a renamed module is scripted under its
+  current name, and deploy holds back a file that still declares another),
+  coop-schema-compare 0.1.4 (the bare `period` column and renamed-module fixes
+  below, in the standalone CLI) and coop-data-doc 1.4.2 (warns when an sqlsc
+  file's `CREATE` names another object than its file name).
+
+### Fixed
+
 - **An older terminal install no longer shadows the machine install.** After
   the upgrade to the machine-wide window, an account's `coop` link into an
   older `coop install` checkout kept `coop` in the terminal and that
