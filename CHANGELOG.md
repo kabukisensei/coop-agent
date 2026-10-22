@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.38.1] — 2026-10-21
+
 ### Changed
 
 - **Tool pins:** coop-data-doc 1.4.1 (cached builds keep column lineage),
