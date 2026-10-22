@@ -41,6 +41,21 @@ and survives compaction. The footer (`coop-powerline`) shows the routed model be
 the selection (`auto → gpt-5.6-luna`); `/router` lists the model per tier and the
 session's phase.
 
+## The session default
+
+A new session (terminal, window or phone) starts on the newest `sol` the
+signed-in account can use, found as the plan tier finds it, so a new sol release
+becomes the default at the next start with no code change. Your own pick wins:
+every model you choose with `/model`, the window's Ctrl+L or Ctrl+P, or the
+phone's picker is written to `coop-model.json` in the agent dir, and new sessions
+start on it (`coop/auto` included). Choosing the newest sol again removes the
+file, so sessions follow the next release again. Pi's own saved default is kept
+when it is not a sol; a sol there is the one Pi's `/login` saved, so it moves to
+the newest. Launch flags (`--model`, `--models`, `--provider`) and a scoped
+`enabledModels` list win over all of it, a resumed or forked session keeps its
+own model, and `COOP_NO_ISOLATE` leaves the model to your personal Pi. Routing
+is unchanged: `coop/auto` stays opt-in.
+
 ## Files
 
 - `index.ts` — extension entry point; the rules are exported pure functions

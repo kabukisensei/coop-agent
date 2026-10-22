@@ -112,7 +112,7 @@ Pi 1.2.0, `docs/keybindings.md`: every action id, with the window's key.
 | `app.model.select` | rpc | Ctrl+L. |
 | `app.model.cycleForward` | rpc | Ctrl+P (`cycle_model`). |
 | `app.model.cycleBackward` | rpc | Ctrl+L picks any model; Pi's RPC cycles forward only. |
-| `app.models.save` | terminal | Saving default models is in the terminal's `/model` and `/settings`. |
+| `app.models.save` | terminal | Saving scoped model lists is in the terminal's `/scoped-models`; a model picked with Ctrl+L or Ctrl+P is remembered for new sessions anyway (coop-router, `coop-model.json`). |
 | `app.thinking.cycle` | rpc | Shift+Tab. |
 | `app.thinking.save` | terminal | Saving the default level is in the terminal's `/settings`. |
 | `app.thinking.toggle` | window | Ctrl+T shows or hides thinking. |
@@ -349,6 +349,6 @@ terminal capability with its phone status:
 | Capability | Status | Why |
 | --- | --- | --- |
 | `/login`, `/logout`, `/mcp-auth`, `/google-account` sign-in | not on a phone | Credentials are entered on the VM; the window also hands them to the terminal. |
-| `/scoped-models`, `/import`, `/share`, `/bug`, `/changelog`, `/memory-skills`, `/openai-settings`, `/pets`, `/llama`, tree label edits, session delete, saving default models and thinking | not on a phone | Terminal screens; the window opens them in a terminal on the VM too. `/share` and `/bug` upload a session, which the client-data rule keeps off client VMs anyway. |
+| `/scoped-models`, `/import`, `/share`, `/bug`, `/changelog`, `/memory-skills`, `/openai-settings`, `/pets`, `/llama`, tree label edits, session delete, saving the default thinking level | not on a phone | Terminal screens; the window opens them in a terminal on the VM too. `/share` and `/bug` upload a session, which the client-data rule keeps off client VMs anyway. |
 | `/quit`, `app.exit`, `app.suspend`, `coop -p` | not on a phone | Closing the window ends the phone's access with no way back from the phone; suspend and print mode are not sessions. |
 | Keyboard-only actions (cursor, selection, scrolling keys) | not on a phone | Touch does them natively; the gaps above cover every action that has an effect. |

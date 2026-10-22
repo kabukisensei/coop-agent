@@ -23,6 +23,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- **New sessions start on the newest sol.** In the terminal, the window and
+  on the phone, a new session starts on the newest `sol` model the OpenAI
+  Codex sign-in can use, so the next sol release becomes the default with no
+  coop update. A model you pick (`/model`, the window's or the phone's picker,
+  `coop/auto` included) is remembered and new sessions start on it; picking
+  the newest sol again goes back to following releases. A non-sol default
+  saved in Pi earlier is kept, and `--model` at launch still wins. Routing is
+  unchanged: `coop/auto` stays opt-in.
 - **Tool pin:** coop-schema-compare 0.1.5 (the same deploy script fixes in
   the standalone CLI: identity, one change record per object, runnable
   destructive statements, `--rebuild-tables-in`).
@@ -36,6 +44,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **The phone page is never blank.** A phone that could not reach the computer
+  (Tailscale off or disconnected) and still held the page saved from an earlier
+  version showed nothing at all, with no pairing form. The page now reads
+  "Connecting to coop" with what to check until its script takes over, and the
+  phone's saved copy answers an offline load with a "Can't reach coop" page
+  instead of an empty one (cache `coop-companion-v7`).
 - **Schema compare keeps identity columns.** The live read, the catalog
   snapshot and repo files now record identity columns, the script writes them
   as `bigint IDENTITY` (no seed or increment, as Fabric Warehouse takes them),

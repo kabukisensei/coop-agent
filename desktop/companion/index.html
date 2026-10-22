@@ -70,9 +70,11 @@
   </dialog>
 
   <main id="main">
-    <section id="gate" class="gate" hidden>
-      <h1 id="gate-title"></h1>
-      <p id="gate-text"></p>
+    <!-- Shown until the script runs: a phone that cannot reach the computer, or
+         holds an old copy of this page, reads why instead of a blank page. -->
+    <section id="gate" class="gate">
+      <h1 id="gate-title">Connecting to coop</h1>
+      <p id="gate-text">If this stays, the phone cannot reach the computer. Check that Tailscale is on and connected on the phone, then reload this page.</p>
       <form id="pair" class="pair" hidden>
         <label>Pairing code
           <input id="code" name="code" inputmode="text" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" maxlength="9" placeholder="ABCD-EFGH" required>
