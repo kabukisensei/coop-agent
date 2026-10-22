@@ -227,3 +227,65 @@ assert.match(notices.at(-1), /no request routed yet/);
 // Pi before 0.99 has no registerVirtualModel: the extension registers nothing and never throws.
 mod.default({ registerCommand: () => assert.fail("registered a command on an old Pi") });
 console.log("  ✓ registers coop/auto with /router, and stays quiet on a Pi without virtual models");
+
+// --- the session default: the newest sol unless the person picked (Aaron, 2026-10-22) ---
+{
+  const { sessionDefault, choiceToRemember, readChoice, writeChoice, registerSessionDefault, launchNamesModel, isSol, CHOICE_FILE } = mod;
+  const { mkdtempSync, existsSync: exists, readFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  // Pi's catalog holds the virtual coop/auto beside the Codex models.
+  const withAuto = (reg) => ({ ...reg, find: (p, id) => (p === "coop" && id === "auto" ? { provider: "coop", id: "auto" } : reg.find(p, id)) });
+  const cat = withAuto(today);
+  assert.equal(sessionDefault({ registry: cat }).model.id, "gpt-6.1-sol", "no pick: the newest sol");
+  assert.equal(sessionDefault({ registry: withAuto(catalog(["gpt-6.1-sol", "gpt-7-sol", "gpt-6-luna"])) }).model.id, "gpt-7-sol", "a new sol release is the default at the next start");
+  assert.equal(sessionDefault({ registry: cat, settings: { defaultProvider: "openai-codex", defaultModel: "gpt-6.1-sol" } }).model.id, "gpt-6.1-sol", "a sol Pi's /login saved is not a choice");
+  assert.equal(sessionDefault({ registry: withAuto(catalog(["gpt-6.1-sol", "gpt-7-sol"])), settings: { defaultProvider: "openai-codex", defaultModel: "gpt-6.1-sol" } }).model.id, "gpt-7-sol", "an older saved sol moves to the newest");
+  assert.equal(sessionDefault({ registry: cat, settings: { defaultProvider: "openai-codex", defaultModel: "gpt-6-luna" } }).model, undefined, "Pi's saved non-sol default is the person's");
+  assert.equal(sessionDefault({ registry: cat, settings: { defaultProvider: "coop", defaultModel: "auto" } }).model, undefined, "a saved coop/auto default keeps routing");
+  assert.equal(sessionDefault({ registry: cat, choice: { provider: "openai-codex", id: "gpt-6-luna" }, settings: { defaultProvider: "openai-codex", defaultModel: "gpt-5.5" } }).model.id, "gpt-6-luna", "the remembered pick wins over Pi's saved default");
+  assert.equal(sessionDefault({ registry: cat, choice: { provider: "coop", id: "auto" } }).model.id, "auto", "a remembered coop/auto starts on the router");
+  assert.equal(sessionDefault({ registry: cat, choice: { provider: "openai-codex", id: "gpt-4-gone" } }).model.id, "gpt-6.1-sol", "a pick the catalog lost falls back to the newest sol");
+  assert.equal(sessionDefault({ registry: withAuto(catalog(["gpt-6.1-sol", "gpt-6-luna"], false)), choice: { provider: "openai-codex", id: "gpt-6-luna" } }).model, undefined, "no Codex sign-in: Pi's own pick stands");
+  assert.equal(sessionDefault({ registry: cat, argv: ["node", "pi", "--model", "gpt-5.5"] }).model, undefined, "a launch flag wins");
+  assert.equal(sessionDefault({ registry: cat, settings: { enabledModels: ["openai-codex/gpt-5.5"] } }).model, undefined, "scoped models win");
+  assert.ok(launchNamesModel(["--models=a,b"]) && launchNamesModel(["--provider", "x"]) && !launchNamesModel(["--mode", "rpc", "--modelish"]));
+  assert.ok(isSol("openai-codex", "gpt-6.1-sol") && !isSol("openai-codex", "gpt-6-luna") && !isSol("other", "gpt-6.1-sol"));
+  assert.equal(choiceToRemember(codex("gpt-6.1-sol"), cat), undefined, "picking the newest sol follows the newest again");
+  assert.deepEqual(choiceToRemember(codex("gpt-6-sol"), cat), { provider: "openai-codex", id: "gpt-6-sol" }, "an older sol is a real pin");
+  assert.deepEqual(choiceToRemember({ provider: "coop", id: "auto" }, cat), { provider: "coop", id: "auto" });
+
+  const dir = mkdtempSync(join(tmpdir(), "coop-default-model-"));
+  const file = join(dir, CHOICE_FILE);
+  writeChoice(file, { provider: "openai-codex", id: "gpt-6-luna" });
+  assert.deepEqual(readChoice(file), { provider: "openai-codex", id: "gpt-6-luna" });
+  writeChoice(file, undefined);
+  assert.ok(!exists(file), "forgetting removes the file");
+  assert.equal(readChoice(join(dir, "missing.json")), undefined);
+
+  // Wired into Pi: the start sets the newest sol, the person's picks are remembered.
+  const piHooks = new Map(); const set = [];
+  const fakePi = { on: (name, fn) => piHooks.set(name, fn), setModel: async (m) => { set.push(m.id); await piHooks.get("model_select")({ source: "set", model: m, previousModel: codex("gpt-5.5") }, piCtx); return true; }, getSettings: () => ({}) };
+  const piCtx = { modelRegistry: cat, model: codex("gpt-5.5") };
+  const piEnv = { COOP_AGENT_DIR: dir };
+  registerSessionDefault(fakePi, piEnv, ["node", "pi"]);
+  await piHooks.get("session_start")({ reason: "startup" }, piCtx);
+  assert.deepEqual(set, ["gpt-6.1-sol"], "a new session starts on the newest sol");
+  assert.ok(!exists(file), "coop's own start is not remembered as a pick");
+  await piHooks.get("session_start")({ reason: "resume" }, piCtx);
+  assert.equal(set.length, 1, "a resumed session keeps its model");
+  await piHooks.get("model_select")({ source: "set", model: codex("gpt-6-luna"), previousModel: codex("gpt-6.1-sol") }, piCtx);
+  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), { provider: "openai-codex", id: "gpt-6-luna" }, "the person's pick is remembered");
+  await piHooks.get("model_select")({ source: "restore", model: codex("gpt-5.5"), previousModel: codex("gpt-6-luna") }, piCtx);
+  assert.equal(readChoice(file).id, "gpt-6-luna", "a restored session model is not a pick");
+  await piHooks.get("model_select")({ source: "set", model: codex("gpt-6.1-sol"), previousModel: undefined }, piCtx);
+  assert.equal(readChoice(file).id, "gpt-6-luna", "the model Pi selects after a first /login is not a pick");
+  await piHooks.get("session_start")({ reason: "new" }, piCtx);
+  assert.deepEqual(set, ["gpt-6.1-sol", "gpt-6-luna"], "/new starts on the remembered pick");
+  await piHooks.get("model_select")({ source: "set", model: codex("gpt-6.1-sol"), previousModel: codex("gpt-6-luna") }, piCtx);
+  assert.ok(!exists(file), "choosing the newest sol again follows the newest");
+  // COOP_NO_ISOLATE: the personal Pi keeps its own default.
+  const quiet = new Map();
+  registerSessionDefault({ on: (n, f) => quiet.set(n, f), setModel: async () => assert.fail("set a model on the personal Pi") }, { COOP_NO_ISOLATE: "1" });
+  assert.equal(quiet.size, 0);
+  console.log("  ✓ new sessions start on the newest sol; the person's pick wins and is remembered");
+}

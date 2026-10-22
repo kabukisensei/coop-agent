@@ -158,6 +158,9 @@ show all of it. Task logs stay in the repository.
      OpenAI Codex models coop already signs in to. Rules, never a classifier:
      a large model plans, a smaller one implements after the first edit and
      writes the summaries; the phase is router state on the session branch.
+     It also picks the session default: a new session starts on the newest
+     Codex `sol` unless the person picked another model, which is remembered
+     in `coop-model.json` in the agent dir.
      Opt in with `/model coop/auto`; the footer shows the routed model
      (`auto → gpt-5.6-luna`); `/router` shows the model per tier. No new
      vendor, nothing new leaves the machine.

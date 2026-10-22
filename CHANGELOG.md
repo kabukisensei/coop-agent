@@ -5,6 +5,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **New sessions start on the newest sol.** In the terminal, the window and
+  on the phone, a new session starts on the newest `sol` model the OpenAI
+  Codex sign-in can use, so the next sol release becomes the default with no
+  coop update. A model you pick (`/model`, the window's or the phone's picker,
+  `coop/auto` included) is remembered and new sessions start on it; picking
+  the newest sol again goes back to following releases. A non-sol default
+  saved in Pi earlier is kept, and `--model` at launch still wins. Routing is
+  unchanged: `coop/auto` stays opt-in.
+
 ### Fixed
 
 - **The phone page is never blank.** A phone that could not reach the computer

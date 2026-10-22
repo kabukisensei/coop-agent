@@ -29,6 +29,9 @@
 // forks and survives compaction. Opt in with `/model coop/auto`; the footer shows
 // the routed model beside the selection. Loaded only on Pi 1.x (bin/coop.ps1).
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { agentDir, noIsolate } from "../../lib/paths.mjs";
 // The classification rule lives in lib/router-rules.mjs, tested on its own
 // against the synthetic prompt sets (tests/router-rules.test.mjs).
 import { classifyRequest as classifyRule, LONG_PROMPT_CHARS as LONG, SHORT_PROMPT_CHARS as SHORT } from "../../lib/router-rules.mjs";
@@ -339,7 +342,120 @@ export function describeTiers(registry: Registry, env: NodeJS.ProcessEnv = proce
   });
 }
 
+// --- The session default: the newest sol (Aaron, 2026-10-22) -------------------
+// A new coop session (terminal, window or phone) starts on the newest `sol` the
+// signed-in account can use, found the way the plan tier finds it, so a new sol
+// release becomes the default at the next start with no code change. The person's
+// own pick wins and is remembered: every model they choose with /model, the
+// window's or the phone's picker is written to <agent dir>/coop-model.json and
+// new sessions start on it. Choosing the newest sol again clears the file, so the
+// session follows the next release again. Pi's own saved default is kept when it
+// is not a sol (a `/model` default saved before this rule, coop/auto included);
+// a sol there is what Pi's /login wrote, not a choice. Launch flags (--model,
+// --models, --provider) and a scoped `enabledModels` list win over all of it,
+// resumed and forked sessions keep their own model, and COOP_NO_ISOLATE (the
+// personal Pi) leaves the model to Pi.
+
+/** The family a new session starts on. */
+export const DEFAULT_FAMILY = "sol";
+/** The person's remembered pick, in the agent dir. */
+export const CHOICE_FILE = "coop-model.json";
+
+export interface ModelChoice { provider: string; id: string }
+
+/** The pick remembered in `file`, or undefined (absent, unreadable, wrong shape). */
+export function readChoice(file: string): ModelChoice | undefined {
+  try {
+    const data = JSON.parse(readFileSync(file, "utf8"));
+    if (data && typeof data.provider === "string" && data.provider && typeof data.id === "string" && data.id) return { provider: data.provider, id: data.id };
+  } catch { /* none remembered */ }
+  return undefined;
+}
+
+/** Remember a pick (undefined forgets it, back to the newest sol). Best effort. */
+export function writeChoice(file: string, choice: ModelChoice | undefined): void {
+  try {
+    if (!choice) { rmSync(file, { force: true }); return; }
+    mkdirSync(dirname(file), { recursive: true });
+    const tmp = `${file}.${process.pid}.tmp`;
+    writeFileSync(tmp, `${JSON.stringify({ provider: choice.provider, id: choice.id }, null, 2)}\n`, "utf8");
+    renameSync(tmp, file);
+  } catch { /* the pick still holds for this session */ }
+}
+
+/** True for a Codex sol model of any version. */
+export function isSol(provider: unknown, id: unknown): boolean {
+  return provider === PROVIDER && parseCodexModelId(String(id ?? ""))?.family === DEFAULT_FAMILY;
+}
+
+/** A Pi launch flag that names the model: the person chose it for this run. */
+export function launchNamesModel(argv: readonly string[]): boolean {
+  return argv.some((a) => /^--(model|models|provider)(=|$)/.test(String(a)));
+}
+
+export interface DefaultInput {
+  registry: Registry;
+  /** The pick remembered in coop-model.json. */
+  choice?: ModelChoice;
+  /** Pi's effective settings (pi.getSettings()). */
+  settings?: { defaultProvider?: string; defaultModel?: string; enabledModels?: string[] };
+  argv?: readonly string[];
+}
+
+/**
+ * The model a new session should start on, or undefined to leave Pi's pick
+ * alone, with the reason (for tests and the /router line). Pure: no Pi, no I/O.
+ */
+export function sessionDefault(input: DefaultInput): { model?: any; why: string } {
+  if (launchNamesModel(input.argv ?? [])) return { why: "a launch flag names the model" };
+  if (input.settings?.enabledModels?.length) return { why: "enabledModels scopes the models" };
+  const choice = input.choice;
+  if (choice) {
+    const model = input.registry.find(choice.provider, choice.id);
+    if (model && (choice.provider !== PROVIDER || usable(input.registry, model))) return { model, why: `your choice, ${choice.provider}/${choice.id}` };
+  } else {
+    const p = input.settings?.defaultProvider; const id = input.settings?.defaultModel;
+    if (p && id && !isSol(p, id)) return { why: `Pi's saved default, ${p}/${id}` };
+  }
+  const newest = newestInFamily(DEFAULT_FAMILY, input.registry);
+  return newest ? { model: newest, why: `the newest ${DEFAULT_FAMILY}` } : { why: `no ${DEFAULT_FAMILY} with an OpenAI Codex sign-in` };
+}
+
+/**
+ * What to remember when the person picks a model: undefined (forget, follow the
+ * newest sol) for the newest sol itself, else the pick.
+ */
+export function choiceToRemember(model: any, registry: Registry): ModelChoice | undefined {
+  const newest = newestInFamily(DEFAULT_FAMILY, registry);
+  if (newest && model?.provider === newest.provider && model?.id === newest.id) return undefined;
+  return { provider: String(model?.provider ?? ""), id: String(model?.id ?? "") };
+}
+
+/** Wire the session default and the remembered pick into Pi. */
+export function registerSessionDefault(pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env, argv: readonly string[] = process.argv): void {
+  const api = pi as any;
+  if (typeof api.on !== "function" || typeof api.setModel !== "function" || noIsolate(env)) return;
+  const file = join(agentDir(env), CHOICE_FILE);
+  let applying = false;
+  api.on("session_start", async (event: any, ctx: any) => {
+    if (event?.reason !== "startup" && event?.reason !== "new") return;
+    let settings: DefaultInput["settings"];
+    try { settings = typeof api.getSettings === "function" ? api.getSettings() : undefined; } catch { settings = undefined; }
+    const pick = sessionDefault({ registry: ctx?.modelRegistry as Registry, choice: readChoice(file), settings, argv });
+    if (!pick.model || (ctx?.model?.provider === pick.model.provider && ctx?.model?.id === pick.model.id)) return;
+    applying = true;
+    try { await api.setModel(pick.model); } catch { /* Pi keeps its own pick */ } finally { applying = false; }
+  });
+  api.on("model_select", async (event: any, ctx: any) => {
+    // Only the person's picks: not coop's own start, not a resumed session, not
+    // the model Pi selects after a first /login (it had none before).
+    if (applying || (event?.source !== "set" && event?.source !== "cycle") || !event?.previousModel || !event?.model) return;
+    writeChoice(file, choiceToRemember(event.model, ctx?.modelRegistry as Registry));
+  });
+}
+
 export default function coopRouter(pi: ExtensionAPI) {
+  registerSessionDefault(pi);
   if (typeof (pi as any).registerVirtualModel !== "function") return; // Pi before 0.99: no virtual models
   // The prompt the person typed, from Pi's before_agent_start (fired for every
   // user turn before the first route): the one text a `user` request classifies.
