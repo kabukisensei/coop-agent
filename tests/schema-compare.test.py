@@ -204,48 +204,69 @@ assert lossy is True
 reordered, lossy = sc.compare_tables([sc.Column("a", "int", False, 1), sc.Column("b", "int", True, 2)], [sc.Column("b", "int", True, 1), sc.Column("a", "int", False, 2)])
 assert reordered == ["columns reordered"] and lossy is False
 
-# --- script: ordered, Azure SQL alters in place, destructive commented out ----------
-script, to_run, destructive = sc.render_script(dev, changes, source_name="dev", target_name="prod", target_kind="azure_sql", taken_at="2026-10-12T21:00:00Z")
-live_part, _, tail = script.partition("-- DESTRUCTIVE OR MANUAL: each block below can lose data or needs a person.\n")
-order = [live_part.index(marker) for marker in (
-    "CREATE SCHEMA [stage]",
+# --- script: ordered, Azure SQL alters in place, destructive active and marked -----
+script, stats = sc.render_script(dev, changes, source_name="dev", target_name="prod", target_kind="azure_sql", taken_at="2026-10-12T21:00:00Z")
+order = [script.index(marker) for marker in (
+    "CREATE SCHEMA [stage];",
     "CREATE TABLE [dbo].[NewTable]",
-    "ALTER TABLE [dbo].[Orders] ADD [Region] nvarchar(50) NULL",
+    "ALTER TABLE [dbo].[Orders] ADD [Region] nvarchar(50) NULL;",
+    "ALTER TABLE [dbo].[Orders] DROP COLUMN [Obsolete];",
+    "ALTER TABLE [dbo].[Orders] ALTER COLUMN [Amount] decimal(18, 2) NULL;",
     "CREATE OR ALTER VIEW [dbo].[vw_Sales]",
     "CREATE OR ALTER VIEW [dbo].[vw_Top]",
+    "DROP TABLE [dbo].[Swapped];",
+    "DROP PROCEDURE [dbo].[usp_Old];",
+    "DROP TABLE [dbo].[Legacy];",
+    "DROP SCHEMA [old];",
 )]
 assert order == sorted(order), order
-assert "CREATE OR ALTER PROCEDURE" not in live_part, "an unchanged procedure is not re-created"
-assert "CREATE OR ALTER FUNCTION" not in live_part, "an unchanged function is not re-created"
-assert tail, "destructive block present"
-assert "-- ALTER TABLE [dbo].[Orders] DROP COLUMN [Obsolete];" in tail
-assert "-- ALTER TABLE [dbo].[Orders] ALTER COLUMN [Amount] decimal(18, 2) NULL;" in tail
-assert "-- DROP TABLE [dbo].[Legacy];" in tail
-assert "-- DROP PROCEDURE [dbo].[usp_Old];" in tail
-assert "-- DROP SCHEMA [old];" in tail and "[_rsc]" not in script
-assert "-- DROP TABLE [dbo].[Swapped];\n-- GO\n-- CREATE OR ALTER VIEW [dbo].[Swapped] AS SELECT 1 AS x;" in tail, "a kind swap drops the target's kind and creates the source's, by hand"
-assert tail.index("DROP PROCEDURE") < tail.index("DROP TABLE [dbo].[Legacy]") < tail.index("DROP SCHEMA")
-for line in tail.splitlines():
-    assert not line or line.startswith("--"), line
-assert to_run == live_part.count("\nGO\n") and destructive == 6, (to_run, destructive)
-assert f"-- Statements: {to_run} to run, {destructive} destructive" in script
-assert AZ_HOST not in script and PROD_HOST not in script
+assert "CREATE OR ALTER PROCEDURE" not in script, "an unchanged procedure is not re-created"
+assert "CREATE OR ALTER FUNCTION" not in script, "an unchanged function is not re-created"
+assert "\nDROP TABLE [dbo].[Swapped];\nGO\nCREATE OR ALTER VIEW [dbo].[Swapped] AS SELECT 1 AS x;\nGO\n" in script, "a kind swap drops the target's kind and creates the source's"
+assert "[_rsc]" not in script and AZ_HOST not in script and PROD_HOST not in script
+assert stats == {"objects": 9, "statements": 12, "commented": 0, "destructive": 5, "manual": 0, "batches": 22}, stats
+assert sum(1 for line in script.splitlines() if line == "GO") == stats["batches"], "every batch, notes included, ends with GO"
+assert "-- Objects: 9 (1 procedure, 2 schemas, 3 tables, 3 views). Statements: 12 to run, 0 commented out." in script, script[:900]
+# T05: every note batch ends before the statement it describes; nothing but notes in it
+for block in script.split("\nGO\n"):
+    lines = [line for line in block.strip().splitlines() if line.strip()]
+    assert all(line.startswith("--") for line in lines) or not any(line.startswith("-- Object:") for line in lines), block
+assert "-- Object: dbo.Orders\n-- Type: TABLE | Change: ALTER | Action: ALTER\n-- Changes: add column [Region] nvarchar(50) NULL\n" in script
+assert "-- DESTRUCTIVE: drops the table with its rows.\nGO\nDROP TABLE [dbo].[Legacy];" in script
+# commented: only what loses data is commented; the nullable ADD beside it still runs
+off_script, off = sc.render_script(dev, changes, source_name="dev", target_name="prod", target_kind="azure_sql", taken_at="2026-10-12T21:00:00Z", commented=True)
+assert off["statements"] == 5 and off["commented"] == 7, off
+assert "\nALTER TABLE [dbo].[Orders] ADD [Region] nvarchar(50) NULL;\nGO\n--ALTER TABLE [dbo].[Orders] DROP COLUMN [Obsolete];\n--GO\n" in off_script
+assert "\n--DROP SCHEMA [old];\n--GO" in off_script and "\nDROP " not in off_script
 
-# Fabric Warehouse: no in-place column change, the alter becomes a rebuild note
-wh_script, wh_run, wh_destructive = sc.render_script(dev, changes, source_name="dev", target_name="prod", target_kind="fabric_warehouse", taken_at="2026-10-12T21:00:00Z")
-assert "ALTER TABLE" not in wh_script
-assert "-- A fabric warehouse does not alter columns in place" in wh_script
-assert "-- CREATE TABLE [dbo].[Orders] (" in wh_script, "the source shape rides along, commented"
-# vw_Sales selects [Region], which prod gets only with the rebuild, so it and
-# vw_Top (which reads vw_Sales) move below the rebuild note instead of failing live
-wh_live, _, wh_tail = wh_script.partition("-- DESTRUCTIVE OR MANUAL: each block below can lose data or needs a person.\n")
-assert "CREATE OR ALTER VIEW [dbo].[vw_Sales]" not in wh_live and "CREATE OR ALTER VIEW [dbo].[vw_Top]" not in wh_live
-assert "-- view dbo.vw_Sales: run after the rebuild: names region of dbo.Orders, which the target has only after that table's rebuild above\n-- CREATE OR ALTER VIEW [dbo].[vw_Sales]" in wh_tail
-assert "-- view dbo.vw_Top: run after the rebuild: follows view dbo.vw_Sales below\n-- CREATE OR ALTER VIEW [dbo].[vw_Top]" in wh_tail
-assert wh_tail.index("-- CREATE TABLE [dbo].[Orders] (") < wh_tail.index("-- CREATE OR ALTER VIEW [dbo].[vw_Sales]") < wh_tail.index("-- CREATE OR ALTER VIEW [dbo].[vw_Top]")
-assert wh_run == to_run - 3 and wh_destructive == destructive + 1, (wh_run, wh_destructive)
-assert not [line for line in wh_script.splitlines() if line.rstrip().endswith(";;")], "deferred module lines end with one semicolon"
-assert "CREATE TABLE [dbo].[NewTable]" in wh_live and "CREATE SCHEMA [stage]" in wh_live
+# Fabric Warehouse: a nullable column is added in place and a column dropped in
+# place; a type change is what no ALTER does there, so the table is a manual
+# rebuild, and the views that name its new column follow it
+wh_script, wh = sc.render_script(dev, changes, source_name="dev", target_name="prod", target_kind="fabric_warehouse", taken_at="2026-10-12T21:00:00Z")
+assert "ALTER TABLE" not in wh_script, "one change no ALTER can make: the whole table is rebuilt"
+assert "Fabric Warehouse cannot change column [Amount] type decimal(18, 4) -> decimal(18, 2) in place." in wh_script
+assert "\n--CREATE TABLE [dbo].[Orders] (\n--    [OrderId] int NOT NULL,\n" in wh_script, "the source shape rides along, commented"
+assert wh_script.index("-- 4. After the manual table rebuilds above") < wh_script.index("CREATE OR ALTER VIEW [dbo].[vw_Sales]") < wh_script.index("CREATE OR ALTER VIEW [dbo].[vw_Top]")
+assert "-- Run after the manual rebuild of dbo.Orders: names region, which the target has only after it." in wh_script
+assert "-- Follows view dbo.vw_Sales in this section." in wh_script
+assert wh["manual"] == 1 and wh["statements"] == 9 and wh["commented"] == 1, wh
+assert not [line for line in wh_script.splitlines() if line.rstrip().endswith(";;")], "one semicolon per statement"
+add_only = sc.Catalog()
+add_only.tables[("dim", "Example")] = [sc.Column("PKExample", "bigint", False, 1, True), sc.Column("ManagerName", "varchar(513)", True, 2)]
+add_target = sc.Catalog()
+add_target.tables[("dim", "Example")] = [sc.Column("PKExample", "bigint", False, 1, True)]
+add_changes = sc.diff(add_only, add_target)
+# T07 / SC-04: the nullable ADD is a Fabric ALTER, not a rebuild note
+add_script, add_stats = sc.render_script(add_only, add_changes, source_name="dev", target_name="prod", target_kind="fabric_warehouse", taken_at="x")
+assert "\nALTER TABLE [dim].[Example] ADD [ManagerName] varchar(513) NULL;\nGO\n" in add_script and "cannot" not in add_script, add_script
+assert add_stats["destructive"] == 0
+# ...unless the selected policy rebuilds that schema's changed tables: DROP + CREATE, both active
+rb_script, rb = sc.render_script(add_only, add_changes, source_name="dev", target_name="prod", target_kind="fabric_warehouse", taken_at="x", rebuild_schemas=["DIM"])
+assert "-- Type: TABLE | Change: ALTER | Action: REBUILD (DROP + CREATE)\n" in rb_script
+assert "-- Rebuilt because schema dim is in rebuild_tables_in (the selected policy); the target could ALTER it in place." in rb_script
+assert "\nDROP TABLE IF EXISTS [dim].[Example];\nGO\nCREATE TABLE [dim].[Example] (\n    [PKExample] bigint IDENTITY NOT NULL,\n    [ManagerName] varchar(513) NULL\n);\nGO\n" in rb_script
+assert "Keeping the IDENTITY property does not keep the existing key values" in rb_script and "IDENTITY(" not in rb_script
+assert rb == {"objects": 1, "statements": 2, "commented": 0, "destructive": 1, "manual": 0, "batches": 4}, rb
 
 # a definition that already says CREATE OR ALTER is left alone; a PROC short form is handled
 assert sc._create_or_alter("create or alter view v as select 1") == "create or alter view v as select 1"
@@ -353,14 +374,14 @@ for given, expected in {
 banner_src, banner_tgt = sc.Catalog(), sc.Catalog()
 banner_src.modules[("dbo", "v")] = ("view", "-- maintained view\nCREATE VIEW dbo.v AS SELECT 2 AS n")
 banner_tgt.modules[("dbo", "v")] = ("view", "CREATE VIEW dbo.v AS SELECT 1 AS n")
-banner_script, _, _ = sc.render_script(banner_src, sc.diff(banner_src, banner_tgt), source_name="s", target_name="t", target_kind="azure_sql", taken_at="x")
-assert "-- maintained view\nCREATE OR ALTER VIEW dbo.v AS SELECT 2 AS n;" in banner_script
+banner_script, _ = sc.render_script(banner_src, sc.diff(banner_src, banner_tgt), source_name="s", target_name="t", target_kind="azure_sql", taken_at="x")
+assert "GO\n-- maintained view\nCREATE OR ALTER VIEW dbo.v AS SELECT 2 AS n;\nGO\n" in banner_script, "the module's own comment stays in its batch; coop's note does not"
 # #418: comments and string literals order nothing; a real cycle goes to a person.
 for z in ("CREATE VIEW dbo.z AS SELECT 'dbo.a' AS label", "CREATE VIEW dbo.z AS SELECT N'it''s dbo.a' AS label", "-- like dbo.a\nCREATE VIEW dbo.z AS SELECT 1 AS label", "CREATE VIEW dbo.z AS /* [dbo].[a] */ SELECT 1 AS label"):
     dep_src = sc.Catalog()
     dep_src.modules = {("dbo", "a"): ("view", "CREATE VIEW dbo.a AS SELECT label FROM dbo.z"), ("dbo", "z"): ("view", z)}
-    dep_script, runnable, manual = sc.render_script(dep_src, sc.diff(dep_src, sc.Catalog()), source_name="s", target_name="t", target_kind="azure_sql", taken_at="x")
-    assert dep_script.index("VIEW dbo.z") < dep_script.index("VIEW dbo.a") and (runnable, manual) == (2, 0), z
+    dep_script, dep = sc.render_script(dep_src, sc.diff(dep_src, sc.Catalog()), source_name="s", target_name="t", target_kind="azure_sql", taken_at="x")
+    assert dep_script.index("VIEW dbo.z") < dep_script.index("VIEW dbo.a") and (dep["statements"], dep["manual"]) == (2, 0), z
 cyc = sc.Catalog()
 cyc.modules = {
     ("dbo", "a"): ("view", "CREATE VIEW dbo.a AS SELECT * FROM dbo.b"),
@@ -369,11 +390,11 @@ cyc.modules = {
     ("dbo", "d"): ("view", "CREATE VIEW dbo.d AS SELECT 1 AS x"),
 }
 assert sc._cycles(list(cyc.modules), {k: v[1] for k, v in cyc.modules.items()}) == {("dbo", "a"), ("dbo", "b")}
-cyc_script, runnable, manual = sc.render_script(cyc, sc.diff(cyc, sc.Catalog()), source_name="s", target_name="t", target_kind="azure_sql", taken_at="x")
-cyc_live = cyc_script.split("DESTRUCTIVE OR MANUAL")[0]
-assert "CREATE OR ALTER VIEW dbo.d" in cyc_live and not any(f"VIEW dbo.{n} " in cyc_live for n in "abc")
-assert "-- view dbo.a: circular reference: names dbo.b" in cyc_script and "-- view dbo.c: run after the rebuild: follows view dbo.a below" in cyc_script
-assert (runnable, manual) == (1, 3)
+cyc_script, cyc_stats = sc.render_script(cyc, sc.diff(cyc, sc.Catalog()), source_name="s", target_name="t", target_kind="azure_sql", taken_at="x")
+assert "-- Circular reference: names dbo.b, and those references lead back to it; run these in an order that works." in cyc_script
+assert cyc_script.index("VIEW dbo.d") < cyc_script.index("VIEW dbo.c") and cyc_script.index("VIEW dbo.a") < cyc_script.index("VIEW dbo.c")
+assert "-- Follows view dbo.a in this section." not in cyc_script, "a cycle member is no deferral of its own"
+assert (cyc_stats["statements"], cyc_stats["manual"]) == (4, 0), cyc_stats
 # #419: dbo is never created or dropped; user schemas still are.
 with_dbo = sc.Catalog()
 with_dbo.schemas = {"dbo"}
@@ -383,7 +404,7 @@ dbo_only.schemas = {"DBO"}
 assert [(c["kind"], c["action"]) for c in sc.diff(with_dbo, sc.Catalog())] == [("table", "add")]
 assert [(c["kind"], c["action"]) for c in sc.diff(sc.Catalog(), with_dbo)] == [("table", "drop")]
 assert sc.diff(dbo_only, sc.Catalog()) == [] and sc.diff(sc.Catalog(), dbo_only) == []
-dbo_script, _, _ = sc.render_script(with_dbo, sc.diff(with_dbo, sc.Catalog()), source_name="s", target_name="t", target_kind="azure_sql", taken_at="x")
+dbo_script, _ = sc.render_script(with_dbo, sc.diff(with_dbo, sc.Catalog()), source_name="s", target_name="t", target_kind="azure_sql", taken_at="x")
 assert "CREATE SCHEMA" not in dbo_script
 staging = sc.Catalog()
 staging.schemas = {"dbo", "staging"}
@@ -423,14 +444,17 @@ with tempfile.TemporaryDirectory() as tmp:
     assert all(c.closed for c in connections.values())
     assert out["path"] == ".coop/schema-compare/dev-to-prod"
     assert out["counts"] == {"total": 9, "add": 3, "alter": 2, "drop": 3, "destructive": 5}, out["counts"]
-    assert out["script"] == {"statements": to_run, "destructive": destructive}
+    assert out["script"] == stats, out["script"]
+    assert out["choices"] == ["changed tables: ALTER where the target allows it, a manual rebuild note where it does not (default)", "destructive statements: active, marked DESTRUCTIVE (default)"], out["choices"]
     assert out["source"]["environment"] == "dev" and out["target"]["environment"] == "prod"
     assert out["changes"][0]["kind"] == "schema"
     text = json.dumps(out)
     assert AZ_HOST not in text and PROD_HOST not in text and "ODBC" not in text
     written = repo / ".coop" / "schema-compare" / "dev-to-prod"
     assert (written / "report.md").read_text(encoding="utf-8").startswith("# Schema compare: dev -> prod")
-    assert (written / "deploy.sql").read_text(encoding="utf-8") == script.replace("taken 2026-10-12T21:00:00Z", "taken 2026-10-12T21:00:00Z")
+    deployed = (written / "deploy.sql").read_text(encoding="utf-8")
+    assert deployed.splitlines()[-1].startswith(sc.GENERATED_MARK), deployed[-200:]
+    assert "\n".join(line for line in deployed.splitlines()[:-1] if not line.startswith("-- Choice: ")) + "\n" == script, "the same script, plus the run's choices and its checksum"
     assert PROD_HOST not in (written / "deploy.sql").read_text(encoding="utf-8")
 
     # prod -> dev is a plain pair of reads too (what dev lacks that prod has)
@@ -446,7 +470,7 @@ with tempfile.TemporaryDirectory() as tmp:
         only = sc.compare({"schemas": [some[0].upper()]}, cwd=repo, now=NOW)
         without = sc.compare({"exclude": [some[0]]}, cwd=repo, now=NOW)
     assert only["state"] == "ok" and only["changes"] and {c["schema"] for c in only["changes"]} == {some[0]}, only["changes"]
-    assert f"only schemas {some[0].upper()} compared" in only["notes"]
+    assert f"only schemas {some[0].upper()} compared (this run)" in only["choices"]
     assert without["state"] == "ok" and some[0] not in {c["schema"] for c in without["changes"]}
     assert without["counts"]["total"] + only["counts"]["total"] == out["counts"]["total"]
     for bad in ({"schemas": "dbo"}, {"exclude": ["[x]"]}, {"schemas": ["-x"]}, {"exclude": ["a"] * 51}):
@@ -617,8 +641,8 @@ with tempfile.TemporaryDirectory() as tmp:
     assert ("dbo", "Setup") in lossy.incomplete and any("could not be read" in n for n in lossy.notes)
     lost = sc.diff(lossy, live)
     assert [(c["name"], c["action"]) for c in lost] == [("Setup", "unknown")], lost
-    lost_script, lost_run, _ = sc.render_script(lossy, lost, source_name="repo", target_name="dev", target_kind="azure_sql", taken_at="x")
-    assert lost_run == 0 and "DROP" not in lost_script.replace("-- ", "").split("DESTRUCTIVE")[0]
+    lost_script, lost_stats = sc.render_script(lossy, lost, source_name="repo", target_name="dev", target_kind="azure_sql", taken_at="x")
+    assert lost_stats["statements"] == 0 and lost_stats["manual"] == 1 and "DROP" not in lost_script
     assert sc.diff(live, lossy)[0]["action"] == "unknown", "an unread target side proves nothing either"
 
 # --- renamed modules: the catalog's name, not the stale CREATE (2026-10-22) ---------------
@@ -655,13 +679,214 @@ with tempfile.TemporaryDirectory() as tmp:
     moved.modules[("dbo", "RenamedView")] = ("view", STALE.replace("SELECT 1", "SELECT 2"))
     alter = sc.diff(moved, fixed)
     assert [(c["name"], c["action"]) for c in alter if c["name"] == "RenamedView"] == [("RenamedView", "alter")]
-    out_script, _, _ = sc.render_script(moved, alter, source_name="dev", target_name="repo", target_kind="azure_sql", taken_at="x")
-    assert "CREATE OR ALTER VIEW dbo.[RenamedView] AS SELECT 2" in out_script and "OriginalName" not in out_script, out_script
+    out_script, _ = sc.render_script(moved, alter, source_name="dev", target_name="repo", target_kind="azure_sql", taken_at="x")
+    assert "CREATE OR ALTER VIEW dbo.[RenamedView] AS SELECT 2" in out_script, out_script
+    # T04: the mismatch is said out loud, in a note only; no statement names the stale object
+    assert "-- Its stored definition declares dbo.OriginalName (renamed after it was created); scripted under dbo.RenamedView, body unchanged.\nGO\n" in out_script
+    assert not [line for line in out_script.splitlines() if "OriginalName" in line and not line.startswith("-- ")]
     # Without sqlsc.yml the file name means nothing: the CREATE decides, as before.
     (repo / "sqlsc.yml").unlink()
     (repo / "database" / "Views" / "dbo.RenamedView.sql").write_text(STALE + "\nGO\n", encoding="utf-8")
     plain_repo = sc.read_repo(repo / "database")
     assert ("dbo", "OriginalName") in plain_repo.modules and ("dbo", "RenamedView") not in plain_repo.modules
+
+# --- deploy script fixes (handoff T01-T14, 2026-10-22; synthetic names only) ------------
+def table(*cols):
+    return [sc.Column(n, t, nl, i, ident) for i, (n, t, nl, ident) in enumerate(cols, 1)]
+
+
+# T01: identity survives the live read, the snapshot and a repo file, and renders as
+# Fabric takes it: BIGINT IDENTITY, no seed or increment.
+ID_LIVE = {
+    sc.OBJECTS_SQL: [("dim", "Example", "U"), ("dim", "Date", "U")],
+    sc.COLUMNS_SQL: [
+        ("dim", "Example", "PKExample", "bigint", None, 19, 0, None, "NO", 1),
+        ("dim", "Example", "Name", "varchar", 100, None, None, None, "YES", 2),
+        ("dim", "Date", "PKDate", "bigint", None, 19, 0, None, "NO", 1),
+    ],
+    sc.IDENTITY_SQL: [("dim", "Example", "PKExample")],
+}
+id_cursor = FakeCursor(ID_LIVE)
+id_live = sc.read_live(id_cursor)
+assert [c.render() for c in id_live.tables[("dim", "Example")]] == ["[PKExample] bigint IDENTITY NOT NULL", "[Name] varchar(100) NULL"]
+assert [c.render() for c in id_live.tables[("dim", "Date")]] == ["[PKDate] bigint NOT NULL"], "T02: a date key stays nonidentity"
+assert set(id_cursor.calls) <= {sc.SCHEMAS_SQL, sc.OBJECTS_SQL, sc.COLUMNS_SQL, sc.IDENTITY_SQL, sc.MODULES_SQL}, "T09: only the fixed catalog reads"
+shape = cs.render_table("dim", "Example", [("PKExample", "bigint", None, 19, 0, None, "NO"), ("Name", "varchar", 100, None, None, None, "YES")], {"pkexample"})
+assert "[PKExample] bigint IDENTITY NOT NULL" in shape and "IDENTITY(" not in shape
+with tempfile.TemporaryDirectory() as tmp:
+    folder = Path(tmp)
+    (folder / "dim").mkdir()
+    summary = {"environment": "dev", "kind": "fabric_warehouse", "database": "WH"}
+    (folder / "dim" / "Example.sql").write_text(cs._header(summary, "t", "dim", "Example", "table") + shape, encoding="utf-8")
+    base = {"coop_catalog_snapshot": True, "taken_at": "t", "target": summary, "files": ["dim/Example.sql"]}
+    (folder / "manifest.json").write_text(json.dumps({**base, "identity_columns": True}), encoding="utf-8")
+    snap, _ = sc.read_snapshot(folder)
+    assert snap.identity_known and [c.identity for c in snap.tables[("dim", "Example")]] == [True, False]
+    assert sc.diff(snap, id_live) == [] or all(c["name"] != "Example" for c in sc.diff(snap, id_live))
+    # an older snapshot never recorded identity: its silence is not "no identity" (T03)
+    (folder / "manifest.json").write_text(json.dumps(base), encoding="utf-8")
+    old, _ = sc.read_snapshot(folder)
+    old.tables[("dim", "Example")][0].identity = False
+    assert not old.identity_known and [c for c in sc.diff(old, id_live) if c["name"] == "Example"] == []
+    (folder / "repo.sql").write_text("CREATE TABLE dim.Example (PKExample BIGINT IDENTITY NOT NULL, Name varchar(100) NULL DEFAULT 'IDENTITY')\nGO\nCREATE TABLE dim.Other (Id int IDENTITY(1,1) NOT NULL, Note varchar(10) NULL)\n", encoding="utf-8")
+    (folder / "manifest.json").unlink()
+    from_files = sc.read_repo(folder)
+    assert [c.identity for c in from_files.tables[("dim", "Example")]] == [True, False], "a literal saying IDENTITY is no identity"
+    assert [c.identity for c in from_files.tables[("dim", "Other")]] == [True, False]
+# T03: identity-only drift is a reported, destructive change, never equal
+drift = sc.diff(sc.Catalog(), sc.Catalog())
+src_t, tgt_t = sc.Catalog(), sc.Catalog()
+src_t.tables[("dim", "Example")] = table(("PKExample", "bigint", False, True))
+tgt_t.tables[("dim", "Example")] = table(("PKExample", "bigint", False, False))
+drift = sc.diff(src_t, tgt_t)
+assert [(c["action"], c["detail"], c.get("destructive")) for c in drift] == [("alter", "change column [PKExample] identity none -> IDENTITY", True)], drift
+drift_script, drift_stats = sc.render_script(src_t, drift, source_name="dev", target_name="prod", target_kind="fabric_warehouse", taken_at="x")
+assert drift_stats["manual"] == 1 and "Fabric Warehouse cannot change column [PKExample] identity none -> IDENTITY in place" in drift_script
+sql_script, _ = sc.render_script(src_t, drift, source_name="dev", target_name="prod", target_kind="azure_sql", taken_at="x")
+assert "No ALTER TABLE can change column [PKExample] identity none -> IDENTITY in place." in sql_script and "ALTER COLUMN" not in sql_script, "identity is never altered in place"
+tgt_t.identity_known = False
+assert sc.diff(src_t, tgt_t) == []
+
+# T02 / T08: only the changed tables are rebuilt; a nonidentity fact stays nonidentity;
+# no PRIMARY KEY is ever written
+pol_src, pol_tgt = sc.Catalog(), sc.Catalog()
+pol_src.tables = {
+    ("dim", "Changed"): table(("PKChanged", "bigint", False, True), ("Added", "varchar(10)", True, False)),
+    ("dim", "Unchanged"): table(("PKUnchanged", "bigint", False, True)),
+    ("fact", "Changed"): table(("FKDate", "bigint", False, False), ("Amount", "decimal(18, 2)", True, False)),
+    ("dbo", "Changed"): table(("Id", "int", False, False), ("Added", "int", True, False)),
+}
+pol_tgt.tables = {
+    ("dim", "Changed"): table(("PKChanged", "bigint", False, True)),
+    ("dim", "Unchanged"): table(("PKUnchanged", "bigint", False, True)),
+    ("fact", "Changed"): table(("FKDate", "bigint", False, False)),
+    ("dbo", "Changed"): table(("Id", "int", False, False)),
+}
+pol_changes = sc.diff(pol_src, pol_tgt)
+records = sc.plan(pol_src, pol_changes, target_kind="fabric_warehouse", rebuild_schemas=["dim", "fact"])
+assert [(r["object"], r["action"]) for r in records] == [("dbo.Changed", "ALTER"), ("dim.Changed", "REBUILD (DROP + CREATE)"), ("fact.Changed", "REBUILD (DROP + CREATE)")], records
+pol_script = sc.render_deploy(records, source_name="dev", target_name="prod", taken_at="x")
+assert "Unchanged" not in pol_script and not [line for line in pol_script.splitlines() if "PRIMARY KEY" in line and not line.startswith("-- ")]
+assert "[FKDate] bigint NOT NULL" in pol_script and "-- Identity: none (no column becomes an identity column)." in pol_script
+assert "\nALTER TABLE [dbo].[Changed] ADD [Added] int NULL;\nGO\n" in pol_script, "a schema outside the policy still ALTERs"
+
+# T05 / T06: a module keeps its own comments, block header and literal whitespace; in
+# the commented form every line carries exactly `--`, so removing two characters per
+# line gives the statement back byte for byte
+MODULE = "-- original header\n/* existing source header */\nCREATE PROCEDURE reporting.Example AS\nBEGIN\n    -- original inline comment\n    SELECT 'first line  \nsecond line' AS Example;\nEND;"
+mod_src, mod_tgt = sc.Catalog(), sc.Catalog()
+mod_src.modules[("reporting", "Example")] = ("procedure", MODULE)
+mod_tgt.tables[("reporting", "Example")] = table(("x", "int", True, False))
+swap = sc.diff(mod_src, mod_tgt)
+active, _ = sc.render_script(mod_src, swap, source_name="dev", target_name="prod", target_kind="azure_sql", taken_at="x")
+expected = MODULE.replace("CREATE PROCEDURE", "CREATE OR ALTER PROCEDURE")
+assert "\nGO\n" + expected + "\nGO\n" in active, active
+quiet, _ = sc.render_script(mod_src, swap, source_name="dev", target_name="prod", target_kind="azure_sql", taken_at="x", commented=True)
+block = quiet.split("--DROP TABLE [reporting].[Example];\n--GO\n", 1)[1].split("\n--GO", 1)[0]
+assert "\n".join(line[2:] for line in block.split("\n")) == expected, block
+assert "----    -- original inline comment" not in block and "--    -- original inline comment" in block
+
+# T10: schema identity, not a name substring
+t10 = sc.Catalog()
+for schema, name in (("test", "Example"), ("staging", "Example"), ("snp", "Example"), ("dbo", "TestNamedProcedure"), ("reporting", "StagingSummary")):
+    t10.schemas.add(schema)
+    t10.modules[(schema, name)] = ("procedure", f"CREATE PROCEDURE {schema}.{name} AS SELECT 1")
+sc.filter_schemas(t10, [], ["test", "staging", "snp"])
+assert sorted(t10.modules) == [("dbo", "TestNamedProcedure"), ("reporting", "StagingSummary")]
+
+# T11 / T12: every object has the same section in report.md and note in deploy.sql;
+# nothing is EXECuted; the same input renders the same bytes
+t11 = sc.plan(pol_src, pol_changes, target_kind="fabric_warehouse", rebuild_schemas=["dim"])
+t11_sides = {k: sc._side_summary(sc.Catalog(), {"environment": k}) for k in ("source", "target")}
+t11_report = sc.render_report(pol_changes, source_name="dev", target_name="prod", taken_at="x", sides=t11_sides, notes=[], records=t11, choices=["c"])
+t11_script = sc.render_deploy(t11, source_name="dev", target_name="prod", taken_at="x", choices=["c"])
+for r in t11:
+    assert f"### {r['object']} (TABLE)" in t11_report and f"-- Object: {r['object']}\n" in t11_script
+    assert f"- **Deployment action:** {r['action']}" in t11_report and f"| Action: {r['action']}\n" in t11_script
+    for item in r["changes"]:
+        assert f"- Change: {item}" in t11_report and f"-- Changes: {item}" in t11_script
+assert "## Choices\n\n- c" in t11_report and "-- Choice: c" in t11_script
+assert "- **DESTRUCTIVE:** drops the table" in t11_report
+assert "EXEC" not in t11_script and t11_script == sc.render_deploy(t11, source_name="dev", target_name="prod", taken_at="x", choices=["c"])
+
+# T13: 2 rebuilt tables, 12 module upserts, 2 view drops, 1 schema drop
+t13_src, t13_tgt = sc.Catalog(), sc.Catalog()
+t13_src.schemas, t13_tgt.schemas = {"dim", "rpt"}, {"dim", "rpt", "gone"}
+for name in ("A", "B"):
+    t13_src.tables[("dim", name)] = table(("PK" + name, "bigint", False, True), ("New", "int", True, False))
+    t13_tgt.tables[("dim", name)] = table(("PK" + name, "bigint", False, True))
+for i in range(12):
+    t13_src.modules[("rpt", f"m{i:02}")] = ("view", f"CREATE VIEW rpt.m{i:02} AS SELECT {i} AS v")
+    if i < 10:
+        t13_tgt.modules[("rpt", f"m{i:02}")] = ("view", f"CREATE VIEW rpt.m{i:02} AS SELECT -1 AS v")
+for name in ("old1", "old2"):
+    t13_tgt.modules[("rpt", name)] = ("view", f"CREATE VIEW rpt.{name} AS SELECT 1 AS v")
+t13_changes = sc.diff(t13_src, t13_tgt)
+t13_text, t13 = sc.render_script(t13_src, t13_changes, source_name="dev", target_name="prod", target_kind="fabric_warehouse", taken_at="x", rebuild_schemas=["dim"])
+assert (t13["objects"], t13["statements"], t13["destructive"], t13["commented"]) == (17, 19, 5, 0), t13
+assert t13["batches"] == sum(1 for line in t13_text.splitlines() if line == "GO") == 1 + 17 + 19
+assert t13_text.count("-- Object: ") == 17
+
+# T14: a definition that cannot be read is a person's job, never invented SQL
+t14_src, t14_tgt = sc.Catalog(), sc.Catalog()
+t14_src.modules[("rpt", "Unread")] = ("view", "")
+t14_tgt.modules[("rpt", "Unread")] = ("view", "CREATE VIEW rpt.Unread AS SELECT 1 AS v")
+t14_changes = sc.diff(t14_src, t14_tgt)
+t14_text, t14 = sc.render_script(t14_src, t14_changes, source_name="dev", target_name="prod", target_kind="azure_sql", taken_at="x")
+assert t14["statements"] == 0 and t14["manual"] == 1 and "CREATE" not in t14_text.replace("-- coop schema compare", ""), t14_text
+
+# The client's defaults in .coop/project.yml, a run's own choices on top, and a
+# hand-edited deploy.sql kept beside a rerun's
+with tempfile.TemporaryDirectory() as tmp:
+    repo = Path(tmp) / "repo"
+    (repo / ".coop").mkdir(parents=True)
+    contract = CONTRACT + "schema_compare:\n  exclude_schemas: [test, staging]\n  rebuild_tables_in: [dim]\n  destructive: commented\n"
+    (repo / ".coop" / "project.yml").write_text(contract, encoding="utf-8")
+
+    def two(side, **_k):
+        cat = sc.Catalog()
+        for schema in ("dim", "test", "staging", "sales"):
+            cat.schemas.add(schema)
+            cat.modules[(schema, "v")] = ("view", f"CREATE VIEW {schema}.v AS SELECT {1 if side == 'dev' else 2} AS n")
+        if side == "prod":
+            cat.modules[("sales", "gone")] = ("view", "CREATE VIEW sales.gone AS SELECT 1 AS n")
+        return cat, {"environment": side, "kind": "fabric_warehouse"}, None
+
+    with mock.patch.object(sc, "_read_side", side_effect=two):
+        saved_run = sc.compare({}, cwd=repo, now=NOW)
+        assert saved_run["state"] == "ok", saved_run
+        assert {c["schema"] for c in saved_run["changes"]} == {"dim", "sales"}
+        assert saved_run["choices"] == [
+            "schemas left out: test, staging (project file)",
+            "changed tables in schemas dim are rebuilt with DROP + CREATE (project file); other tables ALTER where the target allows it",
+            "destructive statements: commented out (project file)",
+        ], saved_run["choices"]
+        assert saved_run["script"]["commented"] == 1, saved_run["script"]
+        folder = repo / ".coop" / "schema-compare" / "dev-to-prod"
+        first = (folder / "deploy.sql").read_text(encoding="utf-8")
+        assert "--DROP VIEW [sales].[gone];" in first
+        # identical rerun: nothing kept aside
+        sc.compare({}, cwd=repo, now=NOW)
+        assert sorted(p.name for p in folder.iterdir()) == ["deploy.sql", "report.md"]
+        # a person's edit survives a rerun that rewrites deploy.sql
+        (folder / "deploy.sql").write_text(first.replace("--DROP VIEW", "DROP VIEW"), encoding="utf-8")
+        run = sc.compare({"exclude": ["Sales"], "schemas": ["dim", "test", "sales"], "commented": False, "rebuild": []}, cwd=repo, now=NOW)
+        assert run["state"] == "ok" and {c["schema"] for c in run["changes"]} == {"dim", "test"}, run["changes"]
+        assert run["choices"] == [
+            "only schemas dim, test, sales compared (this run)",
+            "schemas left out: staging (project file); Sales (this run)",
+            "changed tables: ALTER where the target allows it, a manual rebuild note where it does not (default)",
+            "destructive statements: active, marked DESTRUCTIVE (this run)",
+        ], run["choices"]
+        kept = folder / "deploy.edited-20261012T210000Z.sql"
+        assert kept.read_text(encoding="utf-8") == first.replace("--DROP VIEW", "DROP VIEW")
+        assert any("kept as deploy.edited-20261012T210000Z.sql" in n for n in run["notes"])
+        assert "deploy.edited-20261012T210000Z.sql" in (folder / "report.md").read_text(encoding="utf-8")
+    for bad in ("schema_compare: [dim]\n", "schema_compare:\n  destructive: maybe\n", "schema_compare:\n  exclude_schemas: dim\n"):
+        (repo / ".coop" / "project.yml").write_text(CONTRACT + bad, encoding="utf-8")
+        assert sc.compare({}, cwd=repo)["state"] == "setting_invalid", bad
+    for bad in ({"commented": "yes"}, {"rebuild": "dim"}):
+        assert sc.compare(bad, cwd=repo)["state"] == "input_invalid", bad
 
 # --- stdin contract ---------------------------------------------------------------------
 with mock.patch.object(sc, "execute", return_value=sq.result("ok", path="x")) as run:
@@ -673,6 +898,8 @@ with mock.patch.object(sc, "execute", return_value=sq.result("ok", path="x")) as
     assert run.call_args.args[0] == {"source": "snapshot", "target": "test"}
     assert sc.main(["--source", "repo:sql/warehouse", "--target", "prod"]) == 0
     assert run.call_args.args[0] == {"source": "repo:sql/warehouse", "target": "prod"}
+    assert sc.main(["--cli", "--rebuild-tables-in", "dim", "--rebuild-tables-in", "fact", "--destructive", "commented"]) == 0
+    assert run.call_args.args[0] == {"rebuild": ["dim", "fact"], "commented": True}
     with mock.patch.object(sys, "stdin", io.StringIO('{"source": "dev"}')):
         assert sc.main(["--cli"]) == 0, "the terminal form never reads stdin"
     assert run.call_args.args[0] == {}

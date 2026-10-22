@@ -207,7 +207,7 @@ function Invoke-CoopSchema {
   if (-not $py) { $py = Get-CoopPython }
   if (-not $py) { Coop-Die 'python3 is required for coop schema' }
   $null = Set-CoopProjectYmlEnv
-  $usage = 'usage: coop schema compare [--source dev|test|prod|snapshot|repo[:<name>[/<subfolder>]]] [--target dev|test|prod|repo[:<name>[/<subfolder>]]] [--schema <name>]... [--exclude-schema <name>]...   (default: the contract''s default entry against prod; a repo side is the .sql files of a contract repositories entry; writes report.md and deploy.sql, applies nothing)'
+  $usage = 'usage: coop schema compare [--source dev|test|prod|snapshot|repo[:<name>[/<subfolder>]]] [--target dev|test|prod|repo[:<name>[/<subfolder>]]] [--schema <name>]... [--exclude-schema <name>]... [--rebuild-tables-in <schema>]... [--destructive runnable|commented]   (default: the contract''s default entry against prod, with the project file''s schema_compare choices; a repo side is the .sql files of a contract repositories entry; writes report.md and deploy.sql, applies nothing)'
   $cmd = ''
   if ($Rest -and $Rest.Count -ge 1) { $cmd = $Rest[0] }
   if ($cmd -ne 'compare') { Coop-Die $usage }
@@ -215,10 +215,16 @@ function Invoke-CoopSchema {
   $i = 1
   while ($i -lt $Rest.Count) {
     $flag = $Rest[$i]
-    if ($flag -notin @('--source', '--target', '--schema', '--exclude-schema') -or ($i + 1) -ge $Rest.Count) { Coop-Die $usage }
+    if ($flag -notin @('--source', '--target', '--schema', '--exclude-schema', '--rebuild-tables-in', '--destructive') -or ($i + 1) -ge $Rest.Count) { Coop-Die $usage }
     $value = $Rest[$i + 1]
-    # A schema filter (repeatable): plain names, checked again by the helper.
-    if ($flag -in @('--schema', '--exclude-schema')) {
+    if ($flag -eq '--destructive') {
+      if ($value -notin @('runnable', 'commented')) { Coop-Die $usage }
+      $helperArgs += @($flag, $value)
+      $i += 2
+      continue
+    }
+    # A schema list (repeatable): plain names, checked again by the helper.
+    if ($flag -in @('--schema', '--exclude-schema', '--rebuild-tables-in')) {
       if ($value -notmatch '^[^\[\];''"-][^\[\];''"]{0,127}$') { Coop-Die $usage }
       $helperArgs += @($flag, $value)
       $i += 2
@@ -245,10 +251,11 @@ function Invoke-CoopSchema {
   if ($state -eq 'ok') {
     $c = $info.counts
     Coop-Ok "schema compare $($info.source.environment) -> $($info.target.environment): $($c.total) difference(s) ($($c.add) add, $($c.alter) alter, $($c.drop) drop, $($c.destructive) destructive)"
-    Coop-Info "report: $($info.path)/report.md; script: $($info.path)/deploy.sql ($($info.script.statements) statement(s) to run, $($info.script.destructive) destructive or manual, commented out)"
+    Coop-Info "report: $($info.path)/report.md; script: $($info.path)/deploy.sql ($($info.script.objects) object(s), $($info.script.statements) statement(s) to run, $($info.script.commented) commented out, $($info.script.destructive) destructive)"
+    foreach ($ch in @($info.choices)) { if ($ch) { Coop-Info "choice: $ch" } }
     foreach ($n in @($info.notes)) { if ($n) { Coop-Warn "$n" } }
     if ($info.complete -eq $false) { Coop-Warn 'partial: a side was not read whole; no difference listed does not mean none exists' }
-    Coop-Info 'nothing was applied; read the script before running any of it against the target'
+    Coop-Info 'nothing was applied; read the script, destructive statements included, before running any of it against the target'
     exit 0
   }
   $hint = switch ($state) {
@@ -258,6 +265,7 @@ function Invoke-CoopSchema {
     'snapshot_missing' { ' - no committed catalog snapshot; run: coop catalog snapshot' }
     'snapshot_incomplete' { ' - the catalog snapshot is damaged (a listed file is missing or unreadable); run: coop catalog snapshot' }
     'input_invalid' { ' - source and target must be different sides' }
+    'setting_invalid' { " - $($info.setting) in .coop/project.yml must be a list of schema names (destructive: runnable or commented)" }
     default { '' }
   }
   Coop-Die "coop schema compare failed: $state$hint"

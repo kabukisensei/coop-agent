@@ -60,6 +60,16 @@ COLUMNS_SQL = (
     "CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE, DATETIME_PRECISION, IS_NULLABLE, ORDINAL_POSITION "
     "FROM INFORMATION_SCHEMA.COLUMNS ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION"
 )
+# Identity columns: INFORMATION_SCHEMA.COLUMNS does not say which column is one.
+# sys.identity_columns is the documented list on SQL Server and Fabric Warehouse
+# (where every identity column is BIGINT IDENTITY, its seed and increment NULL).
+IDENTITY_SQL = (
+    f"SELECT TOP ({MAX_COLUMNS + 1}) s.name, o.name, c.name FROM sys.identity_columns AS c "
+    "JOIN sys.objects AS o ON o.object_id = c.object_id "
+    "JOIN sys.schemas AS s ON s.schema_id = o.schema_id "
+    "WHERE o.type = 'U' AND o.is_ms_shipped = 0 "
+    "ORDER BY s.name, o.name, c.name"
+)
 MODULES_SQL = (
     f"SELECT TOP ({MAX_OBJECTS + 1}) s.name, o.name, m.definition FROM sys.sql_modules AS m "
     "JOIN sys.objects AS o ON o.object_id = m.object_id "
@@ -266,7 +276,9 @@ def _header(target: dict[str, str], taken_at: str, schema: str, name: str, kind:
     )
 
 
-def render_table(schema: str, name: str, columns: list[tuple[Any, ...]]) -> str:
+def render_table(schema: str, name: str, columns: list[tuple[Any, ...]], identity: set[str] | None = None) -> str:
+    """CREATE TABLE text; a column in `identity` (lower-case names) is written
+    `bigint IDENTITY`, the form Fabric Warehouse takes (no seed or increment)."""
     lines = []
     for col in columns:
         col_name, data_type, char_max, precision, scale, dt_precision, nullable = (list(col) + [None] * 7)[:7]
@@ -275,6 +287,8 @@ def render_table(schema: str, name: str, columns: list[tuple[Any, ...]]) -> str:
             continue
         type_text = render_type(_text(data_type) or "sql_variant", char_max, precision, scale, dt_precision)
         null_text = "NULL" if _text(nullable).upper() != "NO" else "NOT NULL"
+        if identity and col_name.lower() in identity:
+            type_text += " IDENTITY"
         lines.append(f"    {_bracket(col_name)} {type_text} {null_text}")
     body = ",\n".join(lines)
     return f"CREATE TABLE {_bracket(schema)}.{_bracket(name)} (\n{body}\n);\n"
@@ -360,6 +374,16 @@ def snapshot(*, cwd: Path | None = None, project_arg: str | None = None, now: da
                     modules[(_text(schema), _text(name))] = definition[:MAX_DEFINITION_CHARS]
         except Exception:
             unavailable.append("definitions (sys.sql_modules is not readable on this target)")
+        identity: dict[tuple[str, str], set[str]] | None = {}
+        try:
+            identity_rows, _ = _rows(cursor, IDENTITY_SQL, MAX_COLUMNS)
+            for row in identity_rows:
+                schema, name, column = (list(row) + [None] * 3)[:3]
+                if _text(schema) and _text(name) and _text(column):
+                    identity.setdefault((_text(schema), _text(name)), set()).add(_text(column).lower())
+        except Exception:
+            identity = None
+            unavailable.append("identity columns (sys.identity_columns is not readable on this target)")
     except Exception:
         return sql_query.result("query_failed")
     finally:
@@ -386,7 +410,7 @@ def snapshot(*, cwd: Path | None = None, project_arg: str | None = None, now: da
             continue
         key = (schema, name)
         if kind == "table":
-            body = render_table(schema, name, by_table.get(key, []))
+            body = render_table(schema, name, by_table.get(key, []), (identity or {}).get(key))
         else:
             definition = modules.get(key)
             if definition is None:
@@ -420,6 +444,9 @@ def snapshot(*, cwd: Path | None = None, project_arg: str | None = None, now: da
         "truncated": {"objects": objects_truncated, "columns": columns_truncated},
         "unavailable": unavailable,
         "skipped": skipped[:200],
+        # True when the table files mark identity columns: an older snapshot did
+        # not, and a compare must not read its silence as "no identity".
+        "identity_columns": identity is not None,
     }
     (folder / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
     (folder / "README.md").write_text(_readme(summary, environment), encoding="utf-8", newline="\n")

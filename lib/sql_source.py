@@ -13,9 +13,10 @@ goes into the notes so a mis-pointed folder is visible.
 Columns come from the table's column list: name, type and nullability, with the
 type rendered the way the live catalog renders it (`varchar(100)`,
 `decimal(18, 2)`, `datetime2(7)`; a length or precision the source leaves out
-gets the engine default, as the engine itself would store it). Constraints,
-indexes, computed-column expressions, defaults and identity clauses are out of
-scope, as on the live side. A module's definition is the batch text as written,
+gets the engine default, as the engine itself would store it), plus whether the
+column is an identity column (`IDENTITY` with or without a seed and increment).
+Constraints, indexes, computed-column expressions and defaults are out of scope,
+as on the live side. A module's definition is the batch text as written,
 so a repo compares against a live side with the same whitespace folding.
 
 The parser is deliberately small and deterministic: files are read in sorted
@@ -215,6 +216,15 @@ def is_table_clause(item: str) -> bool:
     return head in CONSTRAINT_WORDS or bool(_PERIOD_CLAUSE.match(stripped))
 
 
+_IDENTITY = re.compile(r"\bIDENTITY\b", re.IGNORECASE)
+
+
+def is_identity(item: str) -> bool:
+    """True when a column item declares an identity column (string literals,
+    such as a DEFAULT, do not count)."""
+    return bool(_IDENTITY.search(re.sub(r"'(?:[^']|'')*'", "''", item)))
+
+
 def parse_column(item: str) -> tuple[str, str, bool] | None:
     """(name, rendered type, nullable) for a column item; None for a table clause
     (is_table_clause) or an item this reader cannot read."""
@@ -252,6 +262,8 @@ class ParsedSource:
         # Tables with a column item the reader could not read: their column list is
         # not complete, so it cannot prove a column absent.
         self.incomplete: set[tuple[str, str]] = set()
+        # Per table, the identity columns (lower-case names).
+        self.identity: dict[tuple[str, str], set[str]] = {}
 
 
 def sql_files(folder: Path) -> list[Path]:
@@ -295,6 +307,7 @@ def parse_batch(batch: str, parsed: ParsedSource, file_key: tuple[str, str, str]
         parsed.notes.append(f"{schema}.{name} is created in more than one file; the last one in path order counts")
     parsed.schemas.add(schema)
     if word == "TABLE":
+        parsed.identity.pop(key, None)  # a later file's CREATE replaces an earlier one
         inner = column_list(plain, head.end())
         columns: list[tuple[str, str, bool]] = []
         if inner is not None:
@@ -302,6 +315,8 @@ def parse_batch(batch: str, parsed: ParsedSource, file_key: tuple[str, str, str]
                 column = parse_column(item)
                 if column:
                     columns.append(column)
+                    if is_identity(item):
+                        parsed.identity.setdefault(key, set()).add(column[0].lower())
                 elif not is_table_clause(item):
                     parsed.incomplete.add(key)
                     parsed.notes.append(f"{schema}.{name}: a column item could not be read ({' '.join(item.split())[:80]}); its columns compare by hand")
@@ -312,6 +327,7 @@ def parse_batch(batch: str, parsed: ParsedSource, file_key: tuple[str, str, str]
         parsed.tables[key] = columns
         return True
     parsed.tables.pop(key, None)
+    parsed.identity.pop(key, None)
     parsed.modules[key] = (KINDS[word], batch.strip())
     return True
 

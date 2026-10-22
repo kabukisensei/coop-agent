@@ -449,15 +449,30 @@ for people and CI; the native tool keeps the in-process path below. Each live si
 `sql_impact` (`open_connection(environment=...)`: the named ready `sql_targets`
 entry, same identity pinning, driver, encryption and timeouts; a read of production
 is a plain read), with the four fixed, parameter-free catalog queries the snapshot
-uses (`sys.schemas`, `sys.objects`, `INFORMATION_SCHEMA.COLUMNS`, `sys.sql_modules`).
+uses (`sys.schemas`, `sys.objects`, `INFORMATION_SCHEMA.COLUMNS`, `sys.sql_modules`,
+`sys.identity_columns`).
 System schemas and Fabric's internal underscore-prefixed schemas that hold no user
 object (`_rsc`) are left out, as the snapshot leaves them out.
-The tool accepts two optional fields:
+The tool accepts these optional fields:
 
 | Field | Values | Default |
 | --- | --- | --- |
 | `source` | `dev`, `test`, `prod`, `snapshot` (the committed catalog snapshot, read from its folder with no connection) or `repo[:<name>[/<subfolder>]]` | the contract's default dev/test entry |
 | `target` | `dev`, `test`, `prod` or `repo[:<name>[/<subfolder>]]` | `prod` |
+| `schemas` | schema names: compare only these | the project file's `schemas`, else all |
+| `exclude` | schema names to leave out; added to the project file's list | the project file's `exclude_schemas` |
+| `rebuild` | schemas whose changed tables are dropped and recreated (DROP + CREATE) | the project file's `rebuild_tables_in`, else none |
+| `commented` | `true` writes destructive statements commented out | the project file's `destructive`, else `false` |
+
+Per-client defaults live in the contract's optional `schema_compare:` section
+(`.coop/project.yml`): `schemas`, `exclude_schemas` and `rebuild_tables_in` (lists
+of up to 50 plain schema names) and `destructive` (`runnable`, the default, or
+`commented`). A run's `exclude` adds to the file's list; any other field a run
+passes replaces the file's value for that run, and a schema the run names in
+`schemas` is never left out by the file's exclude list. A malformed section is
+`setting_invalid` with the key named in `setting`. The result's `choices` (and
+report.md's Choices section and the script header) state the effective choices
+and where each came from (project file, this run, default).
 
 The same side on both ends, a value outside those forms, a repo side containing
 `..`, or any other field is `input_invalid` before anything connects. Any pairing
@@ -480,13 +495,16 @@ read this way. Table columns come from the column list with the type rendered
 the way the catalog renders it (`decimal(18, 2)`, `varchar(max)`; a length or
 precision the source leaves out gets the engine default, `varchar(1)`,
 `datetime2(7)`, as the engine would store it, so write them out for an exact
-compare); constraints, defaults, identity and computed-column expressions are out
-of scope as on the live side. The side's summary reads `environment: repo`,
+compare), and whether the column is an identity column (`IDENTITY`, with or
+without a seed and increment); constraints, defaults and computed-column
+expressions are out of scope as on the live side. The side's summary reads `environment: repo`,
 `kind: sql source`, `database: <name>[/<subfolder>]`; a repo target gets plain
 `ALTER TABLE` statements (there is no engine kind to rebuild for), and the
 output folder joins the side with hyphens (`repo-sql-to-prod`). The direction is "what the target needs
 to match the source". The compare covers schemas (user schemas, system ones
-dropped), tables (each column's name, rendered type, nullability and position),
+dropped), tables (each column's name, rendered type, nullability, identity and position;
+identity compares only when both sides record it: a catalog snapshot from before
+coop read `sys.identity_columns` does not, and a note says so),
 and views, procedures and functions by definition, compared with line endings and
 runs of whitespace folded, and a leading comment banner, `OR ALTER` and a trailing
 `;` ignored, so a reformatted module, or a file beside the catalog's copy of the
@@ -494,15 +512,17 @@ same object, is not a change. Everything else
 (constraints, indexes, permissions, row data) is out of scope and the report says so.
 A schema filter applies to both sides before the diff: `schemas` (a list) keeps
 only those schemas, `exclude` leaves those out (up to 50 plain names each,
-matched case-insensitively), and `notes` names the filter. The `sqlsc` schema
+matched case-insensitively, by schema name only: excluding `test` never drops
+`dbo.TestLoad`), and `choices` names the filter. The `sqlsc` schema
 (SQL source control's locks) is always left out, with a note, unless `schemas`
 names it.
 
 The result carries both sides' summaries (environment, kind, database, object
 counts; the snapshot side adds `taken_at`), `counts` (`total`, `add`, `alter`,
 `drop`, `destructive`), the first 200 `changes` (kind, schema, name, action
-`add`/`alter`/`drop`/`replace`/`unknown`, detail, `destructive`), the script's
-statement counts, `notes` (an unreadable `sys.sql_modules` or a capped list on
+`add`/`alter`/`drop`/`replace`/`unknown`, detail, `destructive`), `script`
+(`objects`, `statements` to run, `commented` out, `destructive` objects, `manual`
+objects, `batches` including the comment-only note batches), `choices`, `notes` (an unreadable `sys.sql_modules` or a capped list on
 either side, named by side), `complete` (false when a side was not read whole: a
 list cut at the cap or objects the snapshot skipped; an object such a side may
 hold is an `unknown` change, never an add or a drop) and `path`: the folder
@@ -510,28 +530,62 @@ hold is an `unknown` change, never an add or a drop) and `path`: the folder
 `report.md` (the same table for people) and `deploy.sql`. The result line tells the
 model that the list is the whole diff (report.md repeats it, so it is not read)
 and that `deploy.sql` is opened only to promote, so a compare costs one tool
-result. The script is ordered to
-run top to bottom: new schemas, new tables, in-place column additions, then
-functions, views and procedures as `CREATE OR ALTER` in one dependency order across
-kinds (a function that reads a view follows the view; `schema.name` references
-resolve exactly, a bare name only when one changed object has it, and comments
-and string literals name nothing; ties by kind then name; objects that name each
-other in a circle go to the manual section). Definitions compare with
-whitespace folded outside string literals and quoted names, a leading comment
-banner dropped and `CREATE`, `CREATE OR ALTER` and `ALTER` alike; the script
-turns the first `CREATE` after any banner into `CREATE OR ALTER`. `dbo`,
-`guest`, `sys` and `INFORMATION_SCHEMA` are never created or dropped. Every removal
-and every change that can lose data (a dropped or retyped column, a `NOT NULL`
-column added to an existing table, a name whose kind differs between the sides)
-lands last, commented out under a DESTRUCTIVE banner, so nothing lossy runs
-unless a person uncomments it. On a Fabric Warehouse or Lakehouse target a column
-change is rendered as a rebuild note with the source shape instead of
-`ALTER TABLE`, because those targets do not alter columns in place, and a view,
-function or procedure that names a column the rebuild adds follows that note in
-the manual section, with everything that depends on it, instead of failing in the
-live part. A failed side
+result.
+
+Both files are rendered from one change record: one entry per object with its
+detected change (`ADD`, `ALTER`, `DROP`, `REPLACE`, `UNKNOWN`), the chosen action
+(`CREATE`, `ALTER`, `CREATE OR ALTER`, `REBUILD (DROP + CREATE)`, `MANUAL REBUILD`,
+`DROP`, `MANUAL`), the factual changes (column adds, drops and type, nullability
+or identity changes; "definition differs" for a module, never an invented
+meaning), notes (identity kept, data loss, reload, a renamed module's stale
+declaration) and the statements. report.md gives each object a section; deploy.sql
+gives each object a comment-only note batch ended by `GO` before its statements,
+so a note never becomes part of a saved view or procedure, while the module's own
+leading comments stay with it as written. The script runs top to bottom with a
+GO-aware tool, in sections: new schemas, new tables, table changes, then
+functions, views and procedures as `CREATE OR ALTER` in one dependency order
+across kinds (a function that reads a view follows the view; `schema.name`
+references resolve exactly, a bare name only when one changed object has it, and
+comments and string literals name nothing; ties by kind then name; objects that
+name each other in a circle stay in place with a note), modules that wait on a
+manual table rebuild, objects replaced by another kind, removals (procedures,
+views, functions, tables, schemas) and what needs a person. Definitions compare
+with whitespace folded outside string literals and quoted names, a leading
+comment banner dropped and `CREATE`, `CREATE OR ALTER` and `ALTER` alike; the
+script turns the first `CREATE` after any banner into `CREATE OR ALTER`, and a
+module renamed with `sp_rename` (its stored `CREATE` still names the old object)
+is scripted under its catalog name, body unchanged, with a note. `dbo`, `guest`,
+`sys` and `INFORMATION_SCHEMA` are never created or dropped. No `EXEC` is written.
+
+Destructive statements (a removal, a dropped or retyped column, a `NOT NULL`
+column added to a table that may hold rows, a kind swap, a policy rebuild) are
+active by default, each object marked `DESTRUCTIVE` in its note and counted in
+the header and report (Aaron, 2026-10-22: the team reviews and runs the script
+itself). `commented` writes them with exactly `--` before every line, so removing
+those two characters gives the statement back byte for byte (comments and
+multi-line literals included); an `ALTER` that keeps every row stays active
+beside them. Table changes follow the target: Fabric Warehouse's `ALTER TABLE`
+adds a nullable column and drops a column, so those are written as `ALTER TABLE`;
+a type, nullability or identity change, a `NOT NULL` or identity column added, or
+a column reorder is a `MANUAL REBUILD` note with the source shape commented out
+(the preview `ALTER COLUMN` is not used). Azure SQL and SQL Server get `ALTER
+TABLE ... ADD`, `DROP COLUMN` and `ALTER COLUMN`; identity and column order are
+rebuild notes there too. A Lakehouse SQL analytics endpoint cannot change a table
+with T-SQL: its table changes are notes. A table in a `rebuild` schema is written
+as `DROP TABLE IF EXISTS` then the full `CREATE TABLE` when it changed (never when
+it did not), its note saying the policy chose it, that the new table is empty and
+that keeping the `IDENTITY` property does not keep key values. An identity column
+is written `bigint IDENTITY`, with no seed or increment (Fabric manages them; SQL
+Server reads it as `IDENTITY(1,1)`), and no `PRIMARY KEY` is ever added. A module
+that names a column a manual rebuild adds follows the rebuild in its own section.
+deploy.sql ends with a checksum line: a rerun that finds the file edited since
+coop wrote it keeps that copy as `deploy.edited-<taken_at>.sql` beside the new
+one and says so in `notes`.
+
+A failed side
 is reported with its own state and `side` (`target_invalid` when the entry is not
-ready, `snapshot_missing` when no snapshot exists, `snapshot_incomplete` when a
+ready, `snapshot_missing` when no snapshot exists, `setting_invalid` when the
+contract's `schema_compare:` section is malformed, `snapshot_incomplete` when a
 file its manifest lists is missing, unreadable, outside the folder or without its
 header), and `output_unwritable` when
 the folder cannot be written. No server name, driver text, credential or exception
@@ -546,9 +600,10 @@ twice is blocked outright. A repo side touches no target: it reads files the
 contract already names. The tool applies nothing:
 running the script against a target is the user's act through the write rules in
 `docs/guardrails-reference.md`, one statement at a time. `coop schema compare
-[--source ...] [--target ...] [--schema <name>]... [--exclude-schema <name>]...`
-is the terminal form of the same helper and prints
-the counts and the two paths.
+[--source ...] [--target ...] [--schema <name>]... [--exclude-schema <name>]...
+[--rebuild-tables-in <schema>]... [--destructive runnable|commented]` is the
+terminal form of the same helper and prints the counts, the choices and the two
+paths.
 
 Why coop has its own compare rather than wrapping a Microsoft tool: Fabric
 deployment pipelines and Git integration deploy a Warehouse through DacFx with no
