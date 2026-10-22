@@ -264,6 +264,29 @@ try {
   $script:CoopWarnSink = $null
   $script:CoopVersion = '0.37.0'
 
+  # An older terminal install this account linked (Aaron's client VM, 2026-10-22: the
+  # link kept `coop` and the icons on 0.35.0 over the machine's 0.38.1): retired when
+  # its checkout is older; a developer's checkout at this version or newer stays.
+  $clone = Join-Path $t 'old-clone'
+  $linkDir = Join-Path $t 'linkdir'
+  New-Item -ItemType Directory -Force -Path (Join-Path $clone 'bin'), $linkDir | Out-Null
+  $cloneCmd = Join-Path (Join-Path $clone 'bin') 'coop.cmd'
+  [System.IO.File]::WriteAllText($cloneCmd, "@echo off`r`n", $utf8)
+  [System.IO.File]::WriteAllText((Join-Path $linkDir 'coop.cmd'), "@echo off`r`ncall `"$cloneCmd`" %*`r`n")
+  $older = @()
+  foreach ($v in @('0.35.0', '0.37.0', '0.38.0')) {
+    [System.IO.File]::WriteAllText((Join-Path $clone 'VERSION'), "$v`n", $utf8)
+    $older += (Get-CoopOlderCloneRoot -LauncherDir $linkDir)
+  }
+  Remove-Item -LiteralPath (Join-Path $clone 'VERSION') -Force
+  $noVersion = Get-CoopOlderCloneRoot -LauncherDir $linkDir
+  if ((ConvertTo-CoopComparablePath $older[0]) -ne (ConvertTo-CoopComparablePath $clone)) { Ko "Get-CoopOlderCloneRoot misses a 0.35.0 checkout under a 0.37.0 install: '$($older[0])'" }
+  elseif ($older[1] -or $older[2]) { Ko "Get-CoopOlderCloneRoot retires a checkout at this version or newer: '$($older[1])' '$($older[2])'" }
+  elseif ($noVersion) { Ko 'Get-CoopOlderCloneRoot retires a checkout with no VERSION file' }
+  elseif (Get-CoopOlderCloneRoot -LauncherDir (Join-Path $t 'nowhere')) { Ko 'Get-CoopOlderCloneRoot invents a checkout with no link' }
+  else { Ok 'an account link to a checkout older than the machine install is an older terminal install (retired at first launch); a current or newer checkout is a developer''s and stays' }
+  if (@(Repair-CoopOlderCloneShortcuts '').Count -ne 0) { Ko 'Repair-CoopOlderCloneShortcuts changes something with no checkout' }
+
   # --- scripts/update.ps1 on a machine install -----------------------------------------------
   Write-CoopUpdateStateFile $stateFile (New-CoopUpdateState 'up to date' '0.37.0' '' '0.37.0' 'https://github.com/kabukisensei/coop-agent/releases/tag/v0.37.0')
   foreach ($d in @('bin', 'lib', 'config')) { Copy-Item -LiteralPath (Join-Path $root $d) -Destination (Join-Path $snapshot $d) -Recurse -Force }

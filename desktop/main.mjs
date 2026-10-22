@@ -1460,7 +1460,7 @@ function onShortcutAgain() {
     return;
   }
   if (booting) {
-    dialog.showMessageBox({ type: "info", title: "coop", message: "coop is still starting.", detail: "Its console window is setting things up; the coop window opens when it finishes." }).catch(() => {});
+    dialog.showMessageBox({ type: "info", title: "coop", message: "coop is still starting.", detail: "The first launch after an install or an update sets up coop's tools for your account, which can take several minutes. Its console window (PowerShell, on the taskbar) shows each step; the coop window opens when it finishes." }).catch(() => {});
     return;
   }
   bootstrap();

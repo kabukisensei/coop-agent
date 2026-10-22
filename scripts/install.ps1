@@ -363,6 +363,18 @@ if ($machineLink) {
     try { Remove-Item -LiteralPath $launcher -Force -ErrorAction Stop; Coop-Ok "removed this account's link to its older coop ($launcher); the machine's coop serves it now" }
     catch { Coop-Warn "could not remove $launcher`: $($_.Exception.Message)" }
   }
+  # This account's older terminal install (a checkout `coop install` linked,
+  # older than this release): its link and shortcuts would keep `coop` and the
+  # icons on the old release. The checkout itself stays; its own
+  # `bin\coop.cmd install` links it again.
+  $olderClone = Get-CoopOlderCloneRoot -LauncherDir $LOCALBIN
+  if ($olderClone) {
+    try {
+      Remove-Item -LiteralPath $launcher -Force -ErrorAction Stop
+      Coop-Ok "``coop`` now runs this machine's install: removed this account's link to the older coop at $olderClone (the folder stays; to use it again run: `"$(Join-Path $olderClone 'bin\coop.cmd')`" install)"
+    } catch { Coop-Warn "could not remove $launcher`: $($_.Exception.Message)" "remove it by hand so ``coop`` runs this machine's install" }
+    foreach ($line in @(Repair-CoopOlderCloneShortcuts $olderClone)) { if ($line -like 'could not *') { Coop-Warn $line } else { Coop-Ok $line } }
+  }
   foreach ($hive in @('Software\Microsoft\Windows\CurrentVersion\Uninstall\com.cooptimize.coop', 'Software\com.cooptimize.coop')) {
     try {
       $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($hive, $false)

@@ -115,7 +115,10 @@ if (Set-CoopTodoConfig) { Coop-Ok 'Todo panel key set to Alt+T (~/.config/rpiv-t
 # on this release's pin and lock and never installs one. A refresh that fails
 # (usually an open window holding electron.exe) is a warning, not a sync
 # failure: the window keeps running on the runtime it has.
-$desktopState = Get-CoopDesktopRuntimeState
+# The installed window package carries its own Electron, so it never refreshes
+# a runtime tree an older terminal install left in the profile (Aaron's client
+# VM, 2026-10-22: a 150 MB download in the first launch's setup, for nothing).
+$desktopState = if (Test-CoopBundledRuntime) { 'package' } else { Get-CoopDesktopRuntimeState }
 if ($desktopState -eq 'stale') {
   Coop-Head 'coop window'
   [void](Install-CoopDesktopRuntime)

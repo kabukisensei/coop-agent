@@ -201,6 +201,60 @@ function Test-CoopForeignTerminalShortcut {
   }
   return $false
 }
+# An older terminal install this account linked (`coop install` from a git
+# checkout, the way coop was installed before the window): the checkout's root
+# when %LOCALAPPDATA%\coop\bin\coop.cmd calls a checkout whose VERSION is older
+# than this coop's, else ''. The machine shim lets an account's link win (a
+# developer's clone), so after an upgrade to the machine install such a link
+# kept `coop` and its shortcuts on the old release (Aaron's client VM,
+# 2026-10-22: the pin opened 0.35.0 over the machine's 0.38.1). A checkout at
+# this version or newer is a developer's and stays.
+function Get-CoopOlderCloneRoot {
+  param([string]$LauncherDir = (Join-Path $env:LOCALAPPDATA 'coop\bin'))
+  $target = Get-CoopLinkedLauncherTarget -LauncherDir $LauncherDir
+  if (-not $target) { return '' }
+  $root = Split-Path -Parent (Split-Path -Parent $target)
+  if ((ConvertTo-CoopComparablePath $root) -eq (ConvertTo-CoopComparablePath $script:CoopRoot)) { return '' }
+  $verFile = Join-Path $root 'VERSION'
+  if (-not (Test-Path -LiteralPath $verFile -PathType Leaf)) { return '' }
+  $ver = ''
+  try { $ver = ([System.IO.File]::ReadAllText($verFile)).Trim() } catch { return '' }
+  if (Test-CoopVersionNewer $script:CoopVersion $ver) { return $root }
+  return ''
+}
+# The "coop" shortcuts this account's older terminal install wrote (Start Menu
+# and Desktop, a console running <checkout>\bin\coop-desktop.ps1): "coop" and
+# "coop (window)" go (the machine install's all-users "coop" opens the window),
+# "coop (terminal)" now runs this coop's terminal. Returns one line per change.
+function Repair-CoopOlderCloneShortcuts([string]$CloneRoot) {
+  $changed = @()
+  if ($env:OS -ne 'Windows_NT' -or -not $CloneRoot) { return $changed }
+  $desktopLauncher = Join-Path $script:CoopRoot 'bin\coop-desktop.ps1'
+  $icon = Join-Path $script:CoopRoot 'themes\coop.ico'
+  $ws = $null
+  foreach ($dir in (Get-CoopShortcutDirs)) {
+    if (-not $dir) { continue }
+    foreach ($name in @('coop.lnk', 'coop (window).lnk', 'coop (terminal).lnk')) {
+      $lnk = Join-Path $dir $name
+      if (-not (Test-Path -LiteralPath $lnk -PathType Leaf)) { continue }
+      try {
+        if (-not $ws) { $ws = New-Object -ComObject WScript.Shell }
+        $sc = $ws.CreateShortcut($lnk)
+        if (-not ([string]$sc.Arguments -match '-File\s+"([^"]+)"') -or -not (Test-CoopPathInside -Path $Matches[1] -Root $CloneRoot)) { continue }
+        if ($name -eq 'coop (terminal).lnk' -and (Test-Path -LiteralPath $desktopLauncher -PathType Leaf)) {
+          $sc.Arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$desktopLauncher`""
+          if (Test-Path -LiteralPath $icon -PathType Leaf) { $sc.IconLocation = "$icon,0" }
+          $sc.Save()
+          $changed += "the `"coop (terminal)`" shortcut now opens this machine's coop ($lnk)"
+        } else {
+          Remove-Item -LiteralPath $lnk -Force -ErrorAction Stop
+          $changed += "removed the older coop's shortcut $lnk"
+        }
+      } catch { $changed += "could not update $lnk`: $($_.Exception.Message)" }
+    }
+  }
+  return $changed
+}
 # The package's first launch on this profile: the agent dir does not carry this
 # release's extension lock yet (a fresh machine, or a profile an older coop set
 # up), or this package version has not finished its setup here yet (an upgrade
