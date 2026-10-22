@@ -16,6 +16,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **The phone page is never blank.** A phone that could not reach the computer
+  (Tailscale off or disconnected) and still held the page saved from an earlier
+  version showed nothing at all, with no pairing form. The page now reads
+  "Connecting to coop" with what to check until its script takes over, and the
+  phone's saved copy answers an offline load with a "Can't reach coop" page
+  instead of an empty one (cache `coop-companion-v7`).
+
 - **An older terminal install no longer shadows the machine install.** After
   the upgrade to the machine-wide window, an account's `coop` link into an
   older `coop install` checkout kept `coop` in the terminal and that

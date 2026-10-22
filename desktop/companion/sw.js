@@ -2,7 +2,7 @@
 // own files so the home-screen app opens quickly. It never stores anything
 // from /api: no message, question or credential is cached on the phone.
 // Notices (MC11) arrive empty and show one fixed line.
-const CACHE = "coop-companion-v6";
+const CACHE = "coop-companion-v7";
 const SHELL = ["./", "index.html", "style.css", "app.js", "shared/themes.css", "shared/dialogs.mjs", "shared/markdown.mjs", "shared/attach-note.mjs", "icon.svg", "manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
@@ -20,8 +20,15 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(fetch(event.request).then((response) => {
     if (response.ok) { const copy = response.clone(); caches.open(CACHE).then((cache) => cache.put(event.request, copy)); }
     return response;
-  }).catch(() => caches.match(event.request)));
+  }).catch(() => caches.match(event.request).then((cached) => cached || offline(event.request))));
 });
+
+// Offline with nothing saved: the page says why instead of staying blank.
+function offline(request) {
+  if (request.mode !== "navigate") return Response.error();
+  const text = "<!doctype html><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>coop</title><h1>Can't reach coop</h1><p>The phone cannot reach the computer. Check that Tailscale is on and connected on the phone, then reload this page.</p>";
+  return new Response(text, { status: 503, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+}
 
 self.addEventListener("push", (event) => {
   event.waitUntil(self.registration.showNotification("coop", { body: "coop is waiting for you.", tag: "coop", renotify: true, icon: "icon-180.png" }));
