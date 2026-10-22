@@ -5,6 +5,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Tool pins:** coop-sql-source-control 1.0.4 (string literals keep their
+  whitespace when scripted and compared; a renamed module is scripted under its
+  current name, and deploy holds back a file that still declares another),
+  coop-schema-compare 0.1.4 (the bare `period` column and renamed-module fixes
+  below, in the standalone CLI) and coop-data-doc 1.4.2 (warns when an sqlsc
+  file's `CREATE` names another object than its file name).
+
 ### Fixed
 
 - **An older terminal install no longer shadows the machine install.** After
