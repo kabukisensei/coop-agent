@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.38.3] — 2026-10-22
+
 ### Added
 
 - **Schema compare choices per client and per run.** The project file's new
