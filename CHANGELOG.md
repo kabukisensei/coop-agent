@@ -75,6 +75,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `function_operations` under the usual approval), naming the package and its
   license in the summary. A pointer in the skill body only: no new tool, no new
   MCP server, no fixed-context cost.
+- **Tool pins:** coop-sql-source-control 1.0.6 (`GO` inside a string literal,
+  quoted name or block comment is not a batch break; a file name over 255
+  characters is refused before any write; conflicted files stay checked out and
+  `get-latest` exits 1; an unreadable lock table refuses `commit` unless
+  `--force`), coop-schema-compare 0.1.6 (the #14, #15 and #16 fixes mirrored
+  above) and coop-data-doc 1.4.3 (two repositories sharing a relative path both
+  survive parallel parsing; retyped objects keep their column lineage; the column
+  trace unions every writer; `COOP_DATA_DOC_DISCOVERY_ROOTS` fences upward
+  config discovery).
 
 ## [0.38.4] — 2026-10-23
 

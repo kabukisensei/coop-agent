@@ -61,7 +61,7 @@ try {
 
   # Offline for exact pins only.
   $cases = @(
-    @{ Args = @('install', 'coop-data-doc==1.4.2'); Offline = $true; Name = 'install of a pin' },
+    @{ Args = @('install', 'coop-data-doc==1.4.3'); Offline = $true; Name = 'install of a pin' },
     @{ Args = @('install', '--force', '--python', 'C:\py\python.exe', 'ms-fabric-cli==1.7.0'); Offline = $true; Name = 'forced install with --python' },
     @{ Args = @('inject', 'ms-fabric-cli', 'pyodbc==5.3.0', '--force'); Offline = $true; Name = 'inject of a pin' },
     @{ Args = @('install', 'coop-data-doc'); Offline = $false; Name = 'unpinned (--edge) install' },
@@ -78,7 +78,7 @@ try {
     elseif (-not $back) { Ko "$($c.Name): the pip variables were not restored (PIP_NO_INDEX='$($env:PIP_NO_INDEX)', PIP_FIND_LINKS='$($env:PIP_FIND_LINKS)')" }
   }
   $env:COOP_PIP_ONLINE = '1'
-  $s = Use-CoopBundledWheels @('install', 'coop-data-doc==1.4.2')
+  $s = Use-CoopBundledWheels @('install', 'coop-data-doc==1.4.3')
   if ($null -ne $s -or $env:PIP_NO_INDEX) { Ko 'COOP_PIP_ONLINE=1 still went offline' }
   Restore-CoopBundledWheels $s
   Remove-Item Env:\COOP_PIP_ONLINE -ErrorAction SilentlyContinue

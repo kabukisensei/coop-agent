@@ -38,9 +38,9 @@ readable in one place.
 | `ms-fabric-cli` (Fabric CLI, `fab`) | 1.7.0 | Copyright (c) Microsoft Corporation | MIT | Installed from PyPI; no notice duty. |
 | `fabric-cicd` | 1.3.0 | Copyright (c) Microsoft Corporation | MIT | Installed from PyPI; trademarks used descriptively. |
 | `pyodbc` | 5.3.0 | Michael Kleehammer | MIT-style, no notice clause | Installed from PyPI. |
-| `coop-data-doc` | 1.4.2 | Copyright (c) 2026 Aaron Jennings | MIT | Cooptimize's own companion. |
-| `coop-schema-compare` | 0.1.5 | Copyright (c) 2026 Aaron Jennings | MIT | Cooptimize's own companion. |
-| `coop-sql-source-control` (`coop-sqlsc`) | 1.0.5 | Copyright (c) 2026 Aaron Jennings | Proprietary (Cooptimize) | Cooptimize's own companion; its release wheel is bundled from its GitHub release, not PyPI. |
+| `coop-data-doc` | 1.4.3 | Copyright (c) 2026 Aaron Jennings | MIT | Cooptimize's own companion. |
+| `coop-schema-compare` | 0.1.6 | Copyright (c) 2026 Aaron Jennings | MIT | Cooptimize's own companion. |
+| `coop-sql-source-control` (`coop-sqlsc`) | 1.0.6 | Copyright (c) 2026 Aaron Jennings | Proprietary (Cooptimize) | Cooptimize's own companion; its release wheel is bundled from its GitHub release, not PyPI. |
 | `@earendil-works/pi-coding-agent` (Pi) | 1.2.0 | Copyright (c) 2025 Mario Zechner | MIT | Redistributed in the window installer. The 1.2.0 npm tarball carries no LICENSE file, so this line is the notice that accompanies the copy: Permission is hereby granted, free of charge, to any person obtaining a copy of this software, to deal in the Software without restriction, subject to the MIT License conditions; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. |
 | `pi-mcp-adapter` | 5.1.0 | Nico Bailon | MIT | Redistributed; upstream LICENSE kept. |
 | `pi-hermes-memory` | 0.9.10 | chandra447 | MIT | Redistributed; upstream LICENSE kept. |
