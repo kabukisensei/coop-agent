@@ -282,6 +282,11 @@ if (tools) {
     const unlock = calls.find((e) => e.includes("unlock"));
     assert.ok(unlock && unlock.includes("coop-agent:ada@example.com") && unlock.at(-1) === "[dbo].[w]" && !unlock.includes("--force"), "the commit releases coop's own checkout of what it committed");
     assert.match(c.content[0].text, /committed 1 file\(s\) as abc123def456[\s\S]*released coop's checkout of \[dbo\]\.\[w\]/);
+    assert.ok(!execs.some((e) => e[0] === "git" && e.includes("pull")), "coop never pulls the working tree before sqlsc commit: sqlsc pulls and holds back what came in (#435)");
+    assert.ok(execs.some((e) => e[0] === "git" && e.includes("fetch")), "coop still fetches to check the branch can fast-forward");
+    sqlsc = () => ({ code: 0, stderr: "", stdout: JSON.stringify({ ok: true, command: "commit", commit: null, pushed: null, git: { upstream: "origin/main", pulled: 1, pulled_files: ["Views/dbo.v.sql"] }, files: [], skipped: [], held_back: [{ object: "[dbo].[v]", origin: "unknown", reason: "the pull just brought this file in; run get-latest" }] }) });
+    const held = await run({ command: "commit", message: "bob" });
+    assert.match(held.content[0].text, /nothing committed[\s\S]*left \[dbo\]\.\[v\]: the pull just brought this file in[\s\S]*sqlsc pulled 1 commit\(s\) from origin\/main first \(brought in Views\/dbo\.v\.sql\)/);
   });
 
   await t("script stops when its status preflight fails, and the repository file stays as it was (#414)", async () => {
@@ -508,7 +513,7 @@ sql_targets:
   });
 }
 
-await t("pull before commit: fetch + fast-forward check before the prompt, the pull after it; no upstream skips with a note", async () => {
+await t("pull before commit: fetch + fast-forward check only (sqlsc pulls); no upstream skips with a note", async () => {
   const fake = (script) => async (bin, args) => {
     assert.equal(bin, "git");
     assert.equal(args[2], "-c"); assert.equal(args[3], "credential.interactive=never");
@@ -524,20 +529,14 @@ await t("pull before commit: fetch + fast-forward check before the prompt, the p
   const current = await lib.checkUpstream(fake({ upstream: main, fetch: ok, behind: { ...ok, stdout: "0\n" } }), "/r");
   assert.ok(current.ok && /up to date with origin\/main/.test(current.note));
   const ahead = await lib.checkUpstream(fake({ upstream: main, fetch: ok, behind: { ...ok, stdout: "2\n" }, ancestor: ok }), "/r");
-  assert.ok(ahead.ok && ahead.behind === 2 && /pulls 2 commit\(s\) from origin\/main first/.test(ahead.note), "the prompt says what the pull will do");
+  assert.ok(ahead.ok && ahead.behind === 2 && /sqlsc pulls 2 commit\(s\) from origin\/main first/.test(ahead.note), "the prompt says what the pull will do");
   const diverged = await lib.checkUpstream(fake({ upstream: main, fetch: ok, behind: { ...ok, stdout: "1\n" }, ancestor: { code: 1, stdout: "", stderr: "" } }), "/r");
   assert.ok(!diverged.ok && /cannot fast-forward/.test(diverged.reason) && /pulls or rebases by hand/.test(diverged.reason), "stops before any prompt");
   const offline = await lib.checkUpstream(fake({ upstream: main, fetch: { code: 128, stdout: "", stderr: "fatal: unable to access" } }), "/r");
   assert.ok(!offline.ok && /could not fetch origin/.test(offline.reason));
-  let pulled = 0;
-  const ff = await lib.pullBeforeCommit(fake({ upstream: main, fetch: ok, behind: { ...ok, stdout: "2\n" }, ancestor: ok, pull: (a) => { pulled++; assert.ok(a.includes("--ff-only")); return ok; } }), "/r");
-  assert.ok(ff.ok && ff.pulled === 2 && pulled === 1 && /pulled 2 commit/.test(ff.note));
-  const dirty = await lib.pullBeforeCommit(fake({ upstream: main, fetch: ok, behind: { ...ok, stdout: "1\n" }, ancestor: ok, pull: { code: 1, stdout: "", stderr: "error: Your local changes to the following files would be overwritten by merge:\n\tdatabase/dbo/Views/v.sql" } }), "/r");
-  assert.ok(!dirty.ok && /did not fast-forward/.test(dirty.reason), dirty.reason);
-  assert.match(lib.pullRefusalText(dirty), /not committed; 1 commit\(s\) behind origin\/main/);
-  const local = await lib.pullBeforeCommit(fake({ upstream: { code: 128, stdout: "", stderr: "no upstream" } }), "/r");
-  assert.ok(local.ok && local.pulled === 0, "no upstream: no pull, the commit goes ahead");
-  const nogit = await lib.pullBeforeCommit(async () => { throw new Error("spawn git ENOENT"); }, "/r");
+  assert.equal(lib.pullBeforeCommit, undefined, "coop never pulls the working tree itself: sqlsc's commit pulls and records what came in (#435)");
+  assert.match(lib.pullRefusalText(diverged), /not committed; 1 commit\(s\) behind origin\/main/);
+  const nogit = await lib.checkUpstream(async () => { throw new Error("spawn git ENOENT"); }, "/r");
   assert.ok(nogit.ok && /no upstream/.test(nogit.note), "no git at all: commit as before (sqlsc reports)");
 });
 

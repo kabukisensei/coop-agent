@@ -51,11 +51,11 @@ import {
   OFF_TEXT as SQL_SOURCE_OFF,
   SQLSC_BIN,
   agentIdentity,
+  checkUpstream,
   commitLine,
   commitReleaseLines,
   committedObjects,
   findSqlscConfig,
-  pullBeforeCommit,
   pullRefusalText,
   setSqlSourceEnabled,
   scriptConflictText,
@@ -2664,13 +2664,15 @@ export default function coopTools(pi: ExtensionAPI) {
           }
         }
         // Pull first (Aaron, 2026-10-20): a teammate may have pushed since this
-        // copy last pulled. Fast-forward onto the upstream or stop.
+        // copy last pulled. coop fetches and checks that the branch can
+        // fast-forward, or stops; the pull itself is sqlsc's, so that it sees
+        // which files came in and holds them back (#435).
         if (input.command === "commit") {
-          const pull = await pullBeforeCommit((bin, args, opts) => pi.exec(bin, args, { ...opts, signal }), dirname(config));
+          const pull = await checkUpstream((bin, args, opts) => pi.exec(bin, args, { ...opts, signal }), dirname(config));
           if (!pull.ok) {
             return { content: [{ type: "text" as const, text: pullRefusalText(pull) }], details: { state: "behind", command: input.command, config, user: agent, pull } };
           }
-          pullNote = pull.note;
+          pullNote = pull.behind ? pull.note : "";
         }
         res = await pi.exec(SQLSC_BIN, sqlSourceArgs(input, config, agent), { cwd: dirname(config), signal });
       } catch (e: any) {
@@ -2686,7 +2688,8 @@ export default function coopTools(pi: ExtensionAPI) {
         return { content: [{ type: "text" as const, text }], details: { state: "failed", exitCode: res.code } };
       }
       const { head, lines } = sqlSourceText(input, out);
-      if (pullNote) lines.push(`- ${pullNote}`);
+      if (input.command === "commit" && out.git && out.git.pulled) lines.push(`- sqlsc pulled ${out.git.pulled} commit(s) from ${out.git.upstream || "the upstream"} first${Array.isArray(out.git.pulled_files) && out.git.pulled_files.length ? ` (brought in ${out.git.pulled_files.join(", ")})` : ""}`);
+      else if (pullNote) lines.push(`- ${pullNote}`);
       // The first status of a session names the project-file line coop's
       // commits need when it is missing (Aaron, 2026-10-21).
       if (input.command === "status" && !commitHintShown.has(config) && out.ok !== false) {

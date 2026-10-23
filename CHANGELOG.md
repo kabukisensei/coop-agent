@@ -28,6 +28,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   --force` keeps the old interpreter). `coop doctor` shows the mismatch as a
   warning. Troubleshooting entry 7 covers it and the shared account tools a
   dev checkout's `update --edge` moves.
+- **`sql_source commit` no longer pulls the working tree before sqlsc runs
+  (#435).** coop still fetches and checks that the branch can fast-forward
+  (before the approval and again right before the commit), but the pull itself
+  is sqlsc's: `sqlsc commit` fast-forwards and records which object files came
+  in, so an object a fresh clone has no sync record for is held back for
+  `get-latest` instead of being committed over a teammate's pushed edit. With
+  coop's own pull first, sqlsc's pull was a no-op and saw no incoming files.
+  The tool's answer now names what sqlsc pulled and brought in.
 
 ### Changed
 
