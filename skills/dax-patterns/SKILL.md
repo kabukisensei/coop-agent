@@ -63,6 +63,18 @@ Step by step:
 If you're coming from SQL, it's very similar to creating a CTE or derived table
 and then aggregating over it.
 
+## Before writing a reusable helper
+
+Check [daxlib.org](https://daxlib.org) first: it is SQLBI's public gallery of
+DAX user-defined function (UDF) packages (for example `DaxLib.SVG` for SVG
+visuals and `DaxLib.FormatString` for format strings), and an existing library
+beats a hand-written helper. A package is TMDL `function` definitions: install
+it by adding them to the repo's `functions.tmdl`, or into a live model through
+the Power BI Modeling MCP's `function_operations`, under the usual approval.
+Name the package, its version and its license in the summary (packages carry
+their own licenses; the gallery itself is MIT). The model needs compatibility
+level 1702 or later.
+
 ## Checklist
 
 - Does the business logic say "for each <entity>"? Then consider this pattern.

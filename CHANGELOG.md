@@ -7,6 +7,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- **`dax-patterns` skill:** before writing a reusable DAX helper, coop checks
+  [daxlib.org](https://daxlib.org), SQLBI's gallery of DAX user-defined function
+  packages, and installs a matching package as TMDL (`functions.tmdl` or
+  `function_operations` under the usual approval), naming the package and its
+  license in the summary. A pointer in the skill body only: no new tool, no new
+  MCP server, no fixed-context cost.
 - **Tool pin:** coop-sql-source-control 1.0.5. `commit` and `checkin` fast-forward
   the branch onto its upstream before reading anything and stop on a detached
   HEAD, a merge in progress, unresolved conflicts or a missing git identity; a
