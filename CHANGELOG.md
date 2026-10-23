@@ -5,6 +5,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Tool pin:** coop-sql-source-control 1.0.5. `commit` and `checkin` fast-forward
+  the branch onto its upstream before reading anything and stop on a detached
+  HEAD, a merge in progress, unresolved conflicts or a missing git identity; a
+  file a pull just brought in is held back for `get-latest`; half-merged `.sql`
+  files stay out of every comparison. The SSMS add-in uses coop's `sqlsc`
+  first, shows its version, drops repos whose folder is gone and asks Commit's
+  question about committable changes only. coop's own pull-first before
+  `sql_source commit` stays; the two agree.
+
 ## [0.38.3] — 2026-10-22
 
 ### Added
