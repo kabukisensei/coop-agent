@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.38.4] — 2026-10-23
+
 ### Changed
 
 - **Tool pin:** coop-sql-source-control 1.0.5. `commit` and `checkin` fast-forward
