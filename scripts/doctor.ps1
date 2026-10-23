@@ -272,6 +272,14 @@ function Check-PipxDist([string]$Dist, [string]$Exe) {
     D-Warn "$Dist environment Python could not be determined" "$repair --python 3.12"
     return
   }
+  # The interpreter the environment was built on, against coop's own (#430): a
+  # hand install from another pipx (another Python) reports the right version
+  # and still is not the tool coop installed. `coop update` moves it.
+  $coopPy = if ($Dist -eq 'ms-fabric-cli') { Get-CoopFabricBootstrapPython } else { Get-CoopPipxDefaultPython }
+  $venvInfo = Get-CoopVenvInterpreter $Dist
+  if ($coopPy -and $venvInfo -and -not (Test-CoopVenvOnPython $venvInfo $coopPy)) {
+    D-Warn "$Dist environment runs on $($venvInfo.Label), not coop's Python ($coopPy)" "coop update   (removes that environment and installs $Dist==$expected on coop's Python)"
+  }
   # Judge support by the distribution's own installed Requires-Python metadata.
   $rp = Get-CoopVenvRequiresPython $Dist $Dist
   if (-not $rp) {

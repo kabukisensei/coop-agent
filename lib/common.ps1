@@ -653,6 +653,69 @@ function Get-CoopVenvPythonVersion([string]$Venv) {
   & $py -c 'import platform;print(platform.python_version())' 2>$null
 }
 
+# --- Which interpreter a pipx environment runs on (#430) ----------------------
+# A pipx tool installed by hand on another Python (the dev VM, 2026-10-23: a
+# `pipx install --force coop-sql-source-control==1.0.5` from a shell whose pipx
+# ran on Python 3.12) reports the right version, so a version-only convergence
+# kept it on an interpreter coop never installed or pinned. The venv's own
+# pyvenv.cfg says what it was built on: `home` (the base interpreter's folder)
+# and, from Python 3.11, `executable` (its full path).
+function Get-CoopVenvInterpreter([string]$Venv) {
+  $cfg = Join-Path (Join-Path (Get-CoopPipxVenvsDir) $Venv) 'pyvenv.cfg'
+  if (-not (Test-Path -LiteralPath $cfg -PathType Leaf)) { return $null }
+  $baseDir = ''; $exe = ''; $ver = ''
+  $lines = @()
+  try { $lines = @(Get-Content -LiteralPath $cfg -ErrorAction Stop) } catch { return $null }
+  foreach ($line in $lines) {
+    if ($line -match '^\s*home\s*=\s*(.+?)\s*$') { $baseDir = $Matches[1] }
+    elseif ($line -match '^\s*executable\s*=\s*(.+?)\s*$') { $exe = $Matches[1] }
+    elseif ($line -match '^\s*version(?:_info)?\s*=\s*(.+?)\s*$') { $ver = $Matches[1] }
+  }
+  if (-not $baseDir -and -not $exe) { return $null }
+  $label = if ($exe) { $exe } else { $baseDir }
+  return [pscustomobject]@{ Home = $baseDir; Executable = $exe; Version = $ver; Label = $label }
+}
+# The interpreter coop's pipx installs tools with: the window package's bundled
+# Python (D1k), else the default of the pipx coop itself invokes. '' when neither
+# can be named (then no environment is judged wrong).
+function Get-CoopPipxDefaultPython {
+  $bundled = Get-CoopBundledPython
+  if ($bundled) { return $bundled }
+  if (-not (Test-CoopPipxAvailable)) { return '' }
+  $v = ([string](Get-CoopPipxOutput @('environment', '--value', 'PIPX_DEFAULT_PYTHON'))).Trim()
+  if ($v -and [System.IO.Path]::IsPathRooted($v) -and (Test-Path -LiteralPath $v -PathType Leaf)) { return $v }
+  return ''
+}
+# One path form for comparing interpreters: full path, one separator, no
+# trailing separator, case folded (Windows paths; a Unix pipx on a case-sensitive
+# volume with two pythons differing only by case is not a real layout).
+function ConvertTo-CoopComparablePath([string]$Path) {
+  if (-not $Path) { return '' }
+  $p = $Path
+  try { $p = [System.IO.Path]::GetFullPath($Path) } catch { $p = $Path }
+  return ($p -replace '[\\/]+', '/').TrimEnd('/').ToLowerInvariant()
+}
+# Was the environment described by $Info (Get-CoopVenvInterpreter) built on
+# $Python? $true when either side is unknown: an unreadable pyvenv.cfg is never a
+# reason to rebuild. A symlinked interpreter (Unix `python3` -> `python3.12`)
+# matches through its target.
+function Test-CoopVenvOnPython($Info, [string]$Python) {
+  if (-not $Python -or -not $Info) { return $true }
+  $want = @((ConvertTo-CoopComparablePath $Python))
+  try {
+    $item = Get-Item -LiteralPath $Python -ErrorAction Stop
+    if ($item.LinkType -and $item.Target) {
+      $target = [string]@($item.Target)[0]
+      if ($target -and -not [System.IO.Path]::IsPathRooted($target)) { $target = Join-Path (Split-Path -Parent $Python) $target }
+      if ($target) { $want += (ConvertTo-CoopComparablePath $target) }
+    }
+  } catch { }
+  $wantDirs = @($want | ForEach-Object { ConvertTo-CoopComparablePath (Split-Path -Parent $_) })
+  if ($Info.Executable -and ($want -contains (ConvertTo-CoopComparablePath $Info.Executable))) { return $true }
+  if ($Info.Home -and ($wantDirs -contains (ConvertTo-CoopComparablePath $Info.Home))) { return $true }
+  return $false
+}
+
 # Resolve a bootstrap interpreter supported by ms-fabric-cli (<3.14, >=3.10).
 # Live Fabric Python is resolved separately from the managed pipx environment.
 # Last ERROR line of captured pip output, trimmed — for actionable warnings.
@@ -3462,18 +3525,29 @@ function Get-CoopSourcedWheel($Source, [string]$Pin) {
 # `pipx install --force <spec>`; missing -> `pipx install <spec>`; -Force ->
 # `pipx install --force <spec>`; -Edge on an existing tool -> `pipx upgrade`, or a
 # forced unpinned reinstall when the tool runs on an explicit interpreter
-# ($Python, the Fabric CLI), so an unsupported venv is repaired. Postcondition:
-# outside --edge the installed version must equal the pin afterwards, so an old
-# launcher left on PATH never reads as a converged tool.
+# ($Python, the Fabric CLI), so an unsupported venv is repaired. A tool whose
+# environment was built on another interpreter than coop's (#430) is removed and
+# installed again on coop's Python before any of that (version alone proves
+# nothing). Postcondition: outside --edge the installed version must equal the
+# pin afterwards, so an old launcher left on PATH never reads as a converged tool.
 function Invoke-CoopPipxConverge {
   param([string]$Package, [string]$Pin, [bool]$Edge = $false, [bool]$Force = $false, [string]$Python = '', [string]$FetchPython = '')
   if (-not (Test-CoopPipxAvailable)) { return (Coop-UnitResult $false "skipping $Package (pipx missing)") }
   $source = Get-CoopPythonToolSource $Package
   if ($source) { $Edge = $false }   # not on PyPI: the pinned release is the only version
   $spec = if (-not $Edge -and $Pin) { "${Package}==${Pin}" } else { $Package }
+  $installed = Get-CoopPipxToolVersion $Package
+  # The interpreter this tool belongs on (#430): the explicit one ($Python, the
+  # Fabric CLI), else coop's pipx default; none when pipx fetches a standalone
+  # runtime ($FetchPython names a version, not a path). An environment built on
+  # another interpreter is wrong whatever its version says.
+  $expectedPython = ''
+  if (-not $FetchPython) { $expectedPython = if ($Python) { $Python } else { Get-CoopPipxDefaultPython } }
+  $venvInfo = if ($installed -and $expectedPython) { Get-CoopVenvInterpreter $Package } else { $null }
+  $wrongPython = [bool]($venvInfo -and -not (Test-CoopVenvOnPython $venvInfo $expectedPython))
   if ($source -and $Pin) {
-    $present = Get-CoopPipxToolVersion $Package
-    if ($present -eq $Pin -and -not $Force -and -not $FetchPython) { return (Coop-UnitResult $true "$Package $present matches manifest") }
+    $present = $installed
+    if ($present -eq $Pin -and -not $Force -and -not $FetchPython -and -not $wrongPython) { return (Coop-UnitResult $true "$Package $present matches manifest") }
     $wheel = Get-CoopSourcedWheel $source $Pin
     if (-not $wheel) {
       if ($present) { return (Coop-UnitResult $true "$Package $present present; its release wheel is not at hand, so it stays (the coop window package carries $Pin)") }
@@ -3489,9 +3563,16 @@ function Invoke-CoopPipxConverge {
     $a += $spec
     return $a
   }
-  $installed = Get-CoopPipxToolVersion $Package
   $outcome = ''
-  if ($Force) {
+  if ($wrongPython) {
+    # `pipx install --force` keeps the environment's interpreter (the dev VM,
+    # 2026-10-23), so the environment goes first, then a fresh install on the
+    # right one. --edge takes the unpinned package, as its plain path does.
+    $was = $venvInfo.Label
+    if ((Invoke-CoopPipx @('uninstall', $Package)) -ne 0) { return (Coop-UnitResult $false "could not remove $Package (on $was) to reinstall it on coop's Python $expectedPython$(Get-CoopPipxFailureSuffix)") }
+    if ((Invoke-CoopPipx @('install', '--python', $expectedPython, $spec)) -ne 0) { return (Coop-UnitResult $false "failed to reinstall $Package ($spec) on coop's Python $expectedPython$(Get-CoopPipxFailureSuffix)") }
+    $outcome = "$Package $(if ($installed) { $installed } else { $spec }) reinstalled on coop's Python $expectedPython (it was on $was)"
+  } elseif ($Force) {
     if ((Invoke-CoopPipx (New-PipxInstallArgs $true)) -ne 0) { return (Coop-UnitResult $false "failed to reinstall $Package ($spec)$(Get-CoopPipxFailureSuffix)") }
     $outcome = "$Package reinstalled ($spec)"
   } elseif ($installed) {

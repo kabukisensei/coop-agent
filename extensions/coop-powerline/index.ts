@@ -14,8 +14,13 @@
  *   • rotating working messages via ctx.ui.setWorkingMessage — actionable feature
  *     discovery tips with a small set of easter eggs
  *   • a honeycomb working indicator in the Cooptimize palette
- *   • a Coop-branded terminal title (`coop - <session> - <folder>`)
- *   • /coop-vibe and /coop-splash commands
+ *   • the running coop version in the footer (`v0.38.4`, plus `dev` from a git checkout)
+ *   • a Coop-branded terminal title (`coop - <session> - <folder>`), reasserted after
+ *     every point where Pi or a child process rewrites it (#429)
+ *   • slash-command safety (#428): Enter on `/word` runs a command only when `word` is
+ *     the start of one; an unknown command is kept in the editor with a notice, never
+ *     the list's closest fuzzy match. `/exit` quits like `/quit`.
+ *   • /coop-vibe, /coop-splash and /exit commands
  *
  * Everything is feature-detected and wrapped in try/catch so it can never crash pi.
  */
@@ -46,6 +51,10 @@ const RED = fg(239, 65, 45);
 const GRAD = [NAVY, FOREST, OLIVE, LIME];
 
 const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
+// Title reassertion schedule (#429): after Pi's post-bind restore (fast), after
+// its async provider count on /new, and after its Windows package check (~16 s).
+export const TITLE_SETTLE_DELAYS_MS = [0, 250, 1_000, 3_000, 16_000, 30_000];
+export const TITLE_HEARTBEAT_MS = 15_000;
 // Terminal columns one code point takes: 0 for combining marks, zero-width
 // joiners and variation selectors, 2 for CJK and emoji, else 1. A rough
 // East Asian Width table, enough that a wide session name cannot push a footer
@@ -85,6 +94,28 @@ export function formatSessionName(name: unknown, max = 40): string {
 export function formatCoopTitle(cwd: string, session?: string): string {
   const folder = basename(cwd) || "coop";
   return session ? `coop - ${session} - ${folder}` : `coop - ${folder}`;
+}
+// The running coop version for the footer (#429): `v0.38.4`, with ` dev` when
+// coop runs from a git checkout rather than an installed package. bin/coop.ps1
+// exports COOP_VERSION; the VERSION file beside this extension covers a plain
+// `pi -e` launch. "" when neither is readable, so the footer loses nothing.
+export function formatCoopVersion(env: NodeJS.ProcessEnv = process.env, root: string = REPO_ROOT): string {
+  let version = (env.COOP_VERSION || "").trim();
+  if (!version) {
+    try {
+      version = readFileSync(join(root, "VERSION"), "utf8").trim();
+    } catch {
+      version = "";
+    }
+  }
+  if (!/^\d+\.\d+\.\d+[\w.-]*$/.test(version)) return "";
+  let dev = false;
+  try {
+    dev = existsSync(join(root, ".git"));
+  } catch {
+    dev = false;
+  }
+  return `v${version}${dev ? " dev" : ""}`;
 }
 function center(line: string, width: number): string {
   const w = visWidth(line);
@@ -336,39 +367,144 @@ function formatUsage(ctx: any): string {
   }
 }
 
+
+// --- Slash-command safety (#428) ----------------------------------------------
+// Pi's editor applies the autocomplete list's selected item when Enter is
+// pressed on `/word`, then submits: an unknown command runs the closest FUZZY
+// match (on the dev VM `/exit` ran an MCP prompt). Two coop-side guards:
+//   1. the autocomplete wrapper keeps the list only while `word` is the start
+//      of a command name (prefix matches first, the fuzzy rest after them), so
+//      Enter never applies a fuzzy pick; an unknown word shows no list and is
+//      submitted as typed;
+//   2. the input hook catches such an unknown `/word` before it reaches the
+//      model, puts it back in the editor with a notice, and lets the same text
+//      through on a second Enter (so a message that happens to start with a
+//      slash can still be sent).
+// The command names come from Pi's own provider (built-ins, prompt templates,
+// extension commands and skills), so nothing is listed twice.
+type SlashItem = { value: string; label?: string; description?: string };
+// Bare name a `/word` is matched against: `skill:name` also answers to `name`.
+const bareName = (value: string) => (value.startsWith("skill:") ? value.slice("skill:".length) : value);
+export function slashCommandWord(lines: string[], cursorLine: number, cursorCol: number): string | undefined {
+  const line = (lines[cursorLine] || "").slice(0, cursorCol);
+  const text = line.trimStart();
+  if (!text.startsWith("/") || /\s/.test(text)) return undefined;
+  return text.slice(1);
+}
+// Reorder a slash list so prefix matches lead; null when nothing starts with
+// `word` (the list hides, Enter submits the text as typed).
+export function filterSlashItems<T extends SlashItem>(items: T[], word: string): T[] | null {
+  if (!word) return items;
+  const w = word.toLowerCase();
+  const starts = items.filter((i) => bareName(String(i.value)).toLowerCase().startsWith(w) || String(i.value).toLowerCase().startsWith(w));
+  if (starts.length === 0) return null;
+  const rest = items.filter((i) => !starts.includes(i));
+  return [...starts, ...rest];
+}
+// Wrap Pi's autocomplete provider: every member is forwarded to the base
+// provider (bound to it, so its own fields stay reachable); only getSuggestions
+// is filtered, and only for a slash command word. `onCommands` receives the
+// provider's command names for the input hook.
+export function wrapSlashProvider(base: any, onCommands: (names: Set<string>) => void): any {
+  const collect = () => {
+    try {
+      const names = new Set<string>();
+      for (const cmd of base?.commands ?? []) {
+        const name = cmd && typeof cmd === "object" ? (cmd.name ?? cmd.value) : undefined;
+        if (typeof name === "string" && name) names.add(name);
+      }
+      onCommands(names);
+    } catch {
+      /* the hook then stays passive */
+    }
+  };
+  collect();
+  const getSuggestions = async (lines: string[], cursorLine: number, cursorCol: number, options: any) => {
+    const result = await base.getSuggestions(lines, cursorLine, cursorCol, options);
+    try {
+      const word = options?.force ? undefined : slashCommandWord(lines, cursorLine, cursorCol);
+      if (word === undefined || !result?.items) return result;
+      const items = filterSlashItems(result.items, word);
+      return items ? { ...result, items } : null;
+    } catch {
+      return result;
+    }
+  };
+  return new Proxy(base, {
+    get(target, prop, _receiver) {
+      if (prop === "getSuggestions") return getSuggestions;
+      const value = Reflect.get(target, prop, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+// Is `text` an unknown slash command (one `/word` token, optionally followed by
+// arguments) given the known names? A path-like first token (`/tmp/x`, `/a.b`)
+// is ordinary text.
+export function unknownSlashCommand(text: string, known: Set<string>): string | undefined {
+  const m = /^\/([^\s/]+)(?:\s|$)/.exec(text.trim());
+  if (!m || known.size === 0) return undefined;
+  const word = m[1];
+  if (word.includes(".") && !known.has(word)) return undefined;
+  for (const name of known) if (name === word || bareName(name) === word) return undefined;
+  return word;
+}
+
 export default function coopPowerline(pi: ExtensionAPI) {
   let currentSet: string | undefined; // active vibe theme (undefined = all)
   let vibes = loadVibes();
   if (vibes.length === 0) vibes = FALLBACK_VIBES;
 
+  // Terminal title (#429). Pi restores its own title after extension binding
+  // (startup and every /new, once its async provider count settles), after its
+  // Windows package check, and a child console process (cmd.exe running npm
+  // for a tool) leaves ITS title behind when it exits. Coop's title is
+  // reasserted at each of those points: a few staggered timers after
+  // session_start, every turn and tool boundary, and a slow heartbeat while a
+  // terminal is attached (not the window: there the title is Electron's). The
+  // timers are unref'd, so they never keep the process alive; a session
+  // generation counter keeps an old session's timers from firing after /new.
   const titleTimers = new Set<ReturnType<typeof setTimeout>>();
+  let titleHeartbeat: ReturnType<typeof setInterval> | undefined;
+  let titleGeneration = 0;
   const clearTitleTimers = () => {
     for (const timer of titleTimers) clearTimeout(timer);
     titleTimers.clear();
+    if (titleHeartbeat) clearInterval(titleHeartbeat);
+    titleHeartbeat = undefined;
+    titleGeneration += 1;
+  };
+  const renderCoopTitle = (ctx: any) => {
+    try {
+      const session = ctx.sessionManager?.getSessionName?.();
+      ctx.ui.setTitle(formatCoopTitle(ctx.cwd || process.cwd(), session));
+    } catch {
+      /* title branding must never affect the session */
+    }
   };
   const setCoopTitle = (ctx: any, settleStartup = false) => {
     if (!ctx?.hasUI || typeof ctx?.ui?.setTitle !== "function") return;
-    const render = () => {
-      try {
-        const session = ctx.sessionManager?.getSessionName?.();
-        ctx.ui.setTitle(formatCoopTitle(ctx.cwd || process.cwd(), session));
-      } catch {
-        /* title branding must never affect the session */
-      }
-    };
-    render();
-    // Pi restores its own title immediately after extension binding and, on
-    // Windows, once more after its async package check. Reassert after both
-    // lifecycle points without keeping the process alive for the delayed pass.
-    for (const delay of settleStartup ? [0, 16_000] : [0]) {
+    renderCoopTitle(ctx);
+    const generation = titleGeneration;
+    const delays = settleStartup ? TITLE_SETTLE_DELAYS_MS : [0];
+    for (const delay of delays) {
       const timer = setTimeout(() => {
         titleTimers.delete(timer);
-        render();
+        if (generation === titleGeneration) renderCoopTitle(ctx);
       }, delay);
       timer.unref?.();
       titleTimers.add(timer);
     }
+    if (settleStartup && !titleHeartbeat && process.stdout?.isTTY) {
+      titleHeartbeat = setInterval(() => renderCoopTitle(ctx), TITLE_HEARTBEAT_MS);
+      titleHeartbeat.unref?.();
+    }
   };
+
+  // Slash-command safety (#428): the command names Pi's provider knows, filled
+  // by the autocomplete wrapper; an unknown `/word` is held once (lastHeld).
+  let knownCommands = new Set<string>();
+  let lastHeld = "";
 
   const pickVibe = (): string => fillVibe(vibes[Math.floor(Math.random() * vibes.length)] || FALLBACK_VIBES[0]);
 
@@ -422,6 +558,15 @@ export default function coopPowerline(pi: ExtensionAPI) {
     try {
       if (!ctx.hasUI) return;
       setCoopTitle(ctx, true);
+      // Slash-command safety (#428): wrap Pi's provider; Pi clears wrappers on
+      // every rebind, so this runs per session_start.
+      if (typeof ctx.ui.addAutocompleteProvider === "function") {
+        ctx.ui.addAutocompleteProvider((base: any) =>
+          wrapSlashProvider(base, (names) => {
+            knownCommands = names;
+          }),
+        );
+      }
       // Splash header (logo + wordmark + a vibe).
       if (typeof ctx.ui.setHeader === "function") {
         ctx.ui.setHeader((_tui, theme) => showSplash(theme));
@@ -459,8 +604,10 @@ export default function coopPowerline(pi: ExtensionAPI) {
                 } catch {
                   /* ignore */
                 }
+                const version = formatCoopVersion();
                 const left =
                   `${NAVY("⬢")}${LIME(" Cooptimize")}` +
+                  (version ? theme.fg("dim", ` ${version}`) : "") +
                   (session ? theme.fg("muted", `  ${session}`) : "") +
                   (branch ? theme.fg("dim", `  ${branch}`) : "");
                 // Model and usage first, then each extension status with its " | "
@@ -516,8 +663,68 @@ export default function coopPowerline(pi: ExtensionAPI) {
     setCoopTitle(ctx);
   });
 
+  pi.on("turn_end", async (_event, ctx) => {
+    setCoopTitle(ctx);
+  });
+
+  pi.on("agent_end", async (_event, ctx) => {
+    setCoopTitle(ctx);
+  });
+
+  // A tool that ran a child console process (npm, git, python) can leave that
+  // process's title on the tab; take it back as soon as the tool returns.
+  pi.on("tool_execution_end", async (_event, ctx) => {
+    setCoopTitle(ctx);
+  });
+
   pi.on("session_shutdown", async () => {
     clearTitleTimers();
+  });
+
+  // Slash-command safety (#428), part 2: an unknown `/word` typed in the
+  // terminal is held in the editor with a notice instead of going to the model;
+  // the same text sent again goes through. Passive when the provider was never
+  // wrapped (the window, RPC) or the input is not the user's own typing.
+  pi.on("input", async (event: any, ctx: any) => {
+    try {
+      if (event?.source !== "interactive" || typeof event?.text !== "string") return { action: "continue" as const };
+      const text = event.text;
+      if (text.trim() === lastHeld) {
+        lastHeld = "";
+        return { action: "continue" as const };
+      }
+      const word = unknownSlashCommand(text, knownCommands);
+      if (!word) return { action: "continue" as const };
+      lastHeld = text.trim();
+      if (typeof ctx?.ui?.setEditorText === "function") {
+        const restore = () => {
+          try {
+            ctx.ui.setEditorText(text);
+          } catch {
+            /* nothing to restore into */
+          }
+        };
+        restore();
+        const timer = setTimeout(restore, 0);
+        timer.unref?.();
+      }
+      ctx?.ui?.notify?.(`Unknown command /${word}. Type / to see the list (/exit quits); press Enter again to send it as text.`, "warning");
+      return { action: "handled" as const };
+    } catch {
+      return { action: "continue" as const };
+    }
+  });
+
+  // People type /exit (#428); Pi only knows /quit.
+  pi.registerCommand("exit", {
+    description: "Quit coop (same as /quit)",
+    handler: async (_args, ctx) => {
+      try {
+        ctx.shutdown();
+      } catch {
+        /* Pi handles the exit */
+      }
+    },
   });
 
   pi.registerCommand("coop-vibe", {

@@ -5,7 +5,29 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
-## [0.38.4] — 2026-10-23
+### Fixed
+
+- **Enter on an unknown slash command no longer runs the closest match** (#428).
+  Pi's editor applied the autocomplete list's selected item on Enter, so `/exit`
+  ran the first fuzzy match (an MCP prompt on the dev VM). The list now shows
+  only while the typed word starts a command name (those first, the fuzzy rest
+  after them); an unknown `/word` is kept in the editor with a notice and goes
+  through as text on a second Enter. `/exit` quits like `/quit`.
+- **The footer shows the running coop version** (`⬢ Cooptimize v0.38.5`, with
+  `dev` from a git checkout) **and the tab title stays `coop - <folder>`**
+  (#429): the title is reasserted after Pi's own restores (startup, `/new`, its
+  Windows package check), after every turn and tool call, and on a slow
+  heartbeat in a terminal, so a child process's title (`npm config get cache`)
+  no longer sticks.
+- **`coop update` reinstalls a pipx tool built on another Python** (#430).
+  Convergence compared versions only, so a hand `pipx install` on pipx's own
+  interpreter counted as converged. Each tool's environment is now checked
+  against coop's Python (the window package's bundled one, else the pipx
+  default; the Fabric CLI's bootstrap interpreter for `ms-fabric-cli`): a
+  mismatch is removed and installed again with `--python` (`pipx install
+  --force` keeps the old interpreter). `coop doctor` shows the mismatch as a
+  warning. Troubleshooting entry 7 covers it and the shared account tools a
+  dev checkout's `update --edge` moves.
 
 ### Changed
 
@@ -15,6 +37,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `function_operations` under the usual approval), naming the package and its
   license in the summary. A pointer in the skill body only: no new tool, no new
   MCP server, no fixed-context cost.
+
+## [0.38.4] — 2026-10-23
+
+### Changed
+
 - **Tool pin:** coop-sql-source-control 1.0.5. `commit` and `checkin` fast-forward
   the branch onto its upstream before reading anything and stop on a detached
   HEAD, a merge in progress, unresolved conflicts or a missing git identity; a
