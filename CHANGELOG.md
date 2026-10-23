@@ -46,6 +46,26 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   by another kind is dropped and recreated inside its new kind's section, in
   dependency order with the modules that use it, instead of after them. The
   separate "objects replaced by another kind" section is gone.
+- **Picking the newest sol now outranks an older saved Pi default (#432).**
+  Choosing the newest sol in the terminal, the window or the phone used to
+  remove `coop-model.json`, so a Pi default saved before the newest-sol rule
+  (`gpt-6-luna`, `coop/auto`) came back at the next start. The file now records
+  "follow sol": the next start and `/new` take the newest sol and advance with
+  the next release. With no coop-era choice at all, Pi's saved non-sol default
+  is kept as before; launch flags and `enabledModels` still win.
+- **Bundled standards refreshed to the wiki's current `main` (#434)** so first
+  runs and offline machines read the October SQL comment rules (line comments
+  only, no block comments) with the other changes since October 1; articles the
+  wiki removed are gone from the copy. `coop release` now compares the bundle's
+  revision with the wiki's branch head before tagging and stops on a stale
+  bundle (`bash` and PowerShell alike; an unreachable wiki warns and asks).
+- **Fleet fixture: the honest pipx stub reads a local wheel spec (#433).**
+  The sourced-tool path hands pipx the release wheel's path, which the stub
+  recorded as a package named after the path at 9.9.9, failing the convergence
+  postcondition in CI. The stub now reads the distribution and version from the
+  wheel's file name, and every fixture machine's wheel cache carries a synthetic
+  wheel named after the manifest's asset with the copied manifest's hash pointed
+  at it, so the wheel branch runs offline, with no token, on every platform.
 
 ### Changed
 

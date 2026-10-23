@@ -1586,6 +1586,49 @@ function Test-CoopReleasePins {
   return $true
 }
 
+# --- Release gate: the bundled standards copy is the wiki's current main --------
+# config/standards-bundle/bundle.json records the cooptimize/coop-standards
+# revision the bundle was captured from (first runs and offline machines read
+# that copy). bundle-check only proves the copy is internally consistent, so a
+# missed refresh shipped an older revision (issue #434): compare the bundle's
+# revision with the wiki's branch head before tagging. Same gate as
+# scripts/release.sh's coop_release_check_bundle: a different revision dies, an
+# unreachable wiki warns + confirms (--yes continues).
+function Test-CoopReleaseBundle {
+  param([bool]$AssumeYes = $false)
+  $bundle = Join-Path $script:CoopRoot 'config\standards-bundle\bundle.json'
+  $repository = ''; $branch = ''; $revision = ''
+  if (Test-Path -LiteralPath $bundle -PathType Leaf) {
+    $raw = Get-Content -LiteralPath $bundle -Raw
+    if ($raw -match '"repository"\s*:\s*"([^"]*)"') { $repository = $matches[1] }
+    if ($raw -match '"branch"\s*:\s*"([^"]*)"') { $branch = $matches[1] }
+    if ($raw -match '"revision"\s*:\s*"([^"]*)"') { $revision = $matches[1] }
+  }
+  if (-not $repository -or -not $branch -or -not $revision) {
+    Coop-Die 'config/standards-bundle/bundle.json is missing or unreadable — refresh it (node lib/standards-cli.mjs bundle-update <clone>, see RELEASE.md), or re-run with --no-check.'
+  }
+  $short = $revision.Substring(0, [Math]::Min(7, $revision.Length))
+  $head = ''
+  try {
+    $out = & git ls-remote --heads $repository "refs/heads/$branch" 2>$null
+    if ($LASTEXITCODE -eq 0 -and $out) { $head = (([string]($out | Select-Object -First 1)) -split '\s+')[0] }
+  } catch { $head = '' }
+  if (-not $head) {
+    Coop-Warn "could not read $branch of $repository — can't verify that config/standards-bundle (wiki @ $short) is current (see RELEASE.md)."
+    if ($AssumeYes) {
+      Coop-Info 'continuing (--yes) — verify the bundled standards by hand.'
+      return $true
+    }
+    return (Coop-Confirm 'Release without verifying the bundled standards?')
+  }
+  if ($head -ne $revision) {
+    $headShort = $head.Substring(0, [Math]::Min(7, $head.Length))
+    Coop-Die "config/standards-bundle is the wiki @ $short but $branch of $repository is at $headShort — refresh it (node lib/standards-cli.mjs bundle-update <clean clone>, then bundle-check; see RELEASE.md), or re-run with --no-check."
+  }
+  Coop-Ok "bundled standards are the wiki's current $branch ($short)"
+  return $true
+}
+
 # --- Release gate: an attached main that equals origin/main (#105) ------------
 # Release precondition (scripts/release.sh has the same gate). `coop update` follows only tags
 # merged into origin/main (H5), so a tag cut from a detached HEAD, another branch,
@@ -1754,6 +1797,11 @@ function Invoke-CoopRelease {
     # dies; a missing sibling warns + confirms (--yes continues). See
     # Test-CoopReleasePins above and RELEASE.md.
     if (-not (Test-CoopReleasePins -AssumeYes:$assumeYes)) {
+      Coop-Info 'release cancelled — nothing changed.'; return
+    }
+    # The bundled standards copy vs the wiki's branch head (issue #434): a stale
+    # bundle dies; an unreachable wiki warns + confirms. See Test-CoopReleaseBundle.
+    if (-not (Test-CoopReleaseBundle -AssumeYes:$assumeYes)) {
       Coop-Info 'release cancelled — nothing changed.'; return
     }
   }

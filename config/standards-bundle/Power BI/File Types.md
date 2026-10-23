@@ -45,7 +45,7 @@ Exclude local data caches and per-user settings from Git. Check these entries ev
 
 Do not ignore the entire `.pbi` folder: it can also contain shared project settings. Adding ignore rules does not remove files already tracked by Git; untrack those files while retaining local copies.
 
-## References (non-normative)
+## Supporting references
 
 
 - [Power BI Desktop project report folder](https://learn.microsoft.com/power-bi/developer/projects/projects-report)

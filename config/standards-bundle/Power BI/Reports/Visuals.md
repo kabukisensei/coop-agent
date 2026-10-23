@@ -44,6 +44,6 @@ Use approved custom SVG assets for KPI status indicators instead of platform-def
 
 Use one to five visible slicers instead of relying on the built-in Filters pane. Slicers are discoverable, flexible, and can be selectively synchronized across pages.
 
-## Open decisions (non-normative)
+## Open decisions (not standards)
 
 Clarify whether the cell-shading prohibition excludes alternating row backgrounds, which are the current default for large tables.

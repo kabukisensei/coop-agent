@@ -17,7 +17,7 @@ These rules define how SQL is displayed. Apply them to new or fully reformatted 
 
 - In multiline lists, place each comma one character left of the first expression with no following space.
 - Within each contiguous projection section, align column-alias `AS` keywords at the same visual column. A blank line or organizing comment starts a new section.
-- Do not align `AS` used for tables, CTEs, or `CREATE ... AS`.
+- CTE definitions and `CREATE ... AS` do not use column-alias alignment. Table-source aliases follow the join layout standards below.
 
 ```sql
 SELECT
@@ -38,12 +38,19 @@ WITH
 
 ### Join layout standards
 
-Indent `ON` four spaces beneath the join and each additional predicate four spaces beneath `ON`.
+- Indent joins four spaces beneath `FROM`. Indent `ON` and its additional `AND` predicates four spaces beneath the join, at the same indentation.
+- Align table-source `AS` keywords across the `FROM` and joins in the same query block. Do not align across separate queries or CTE definitions.
+- Align `=` signs within each join's `ON` clause; start alignment afresh for the next join.
+- Use SQL Prompt's alias alignment and comparison-operator alignment options.
 
 ```sql
-INNER JOIN d365fo.salestable AS st
-    ON ct.dataareaid = st.dataareaid
-        AND ct.accountnum = st.custaccount
+FROM OrderAmounts                AS oa
+    INNER JOIN d365fo.salestable AS st
+        ON oa.dataareaid = st.dataareaid
+        AND oa.salesid   = st.salesid
+    LEFT JOIN d365fo.custtable   AS ct
+        ON st.dataareaid   = ct.dataareaid
+        AND st.custaccount = ct.accountnum
 ```
 
 ### SQL Prompt bracket setting
@@ -81,6 +88,73 @@ END AS [Customer Status]
 
 Put the explanation immediately above the `WHERE` or `AND` containing `EXISTS` or `NOT EXISTS`. Plain prose is enough; no fixed comment template is required.
 
-## References (non-normative)
+## Stored procedure layout example
+
+This reporting procedure summarizes nonzero sales lines by company and sales order, labels missing customer records, and includes only customers with posted transactions. It demonstrates layout, not a Gold loading pattern. Assume the D365FO tables are available under `d365fo`.
+
+```sql
+CREATE OR ALTER PROCEDURE reporting.SalesOrderSummary
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    WITH
+         IncludedLines AS
+         (
+             SELECT
+                   sl.dataareaid
+                  ,sl.salesid
+                  ,sl.lineamount
+             FROM d365fo.salesline AS sl
+             WHERE sl.salesid <> ''
+                 AND sl.lineamount <> 0
+         )
+        ,OrderAmounts AS
+         (
+             SELECT
+                   il.dataareaid
+                  ,il.salesid
+                  ,SUM(il.lineamount) AS lineamount
+             FROM IncludedLines AS il
+             GROUP BY
+                   il.dataareaid
+                  ,il.salesid
+         )
+    SELECT
+        -- Order attributes
+          oa.dataareaid  AS Company
+         ,oa.salesid     AS [Sales Order]
+         ,st.custaccount AS Customer
+         ,CASE
+              WHEN ct.accountnum IS NULL THEN 'Missing customer'
+              ELSE 'Matched customer'
+          END            AS [Customer Match]
+
+        -- Amounts
+         ,oa.lineamount AS [Sales Amount]
+    FROM OrderAmounts                AS oa
+        INNER JOIN d365fo.salestable AS st
+            ON oa.dataareaid = st.dataareaid
+            AND oa.salesid   = st.salesid
+        LEFT JOIN d365fo.custtable   AS ct
+            ON st.dataareaid   = ct.dataareaid
+            AND st.custaccount = ct.accountnum
+    -- Require posted customer activity without multiplying sales-order rows.
+    WHERE EXISTS
+    (
+        SELECT 1
+        FROM d365fo.custtrans AS ctr
+        WHERE st.dataareaid = ctr.dataareaid
+            AND st.custaccount = ctr.accountnum
+    )
+    ORDER BY
+          oa.dataareaid
+         ,oa.salesid;
+END;
+```
+
+## Supporting references
 
 - [Redgate SQL Prompt: Add/remove square brackets](https://documentation.red-gate.com/sp10/sql-refactoring/sql-prompt-actions)
+- [Redgate SQL Prompt: table-alias alignment in joins](https://documentation.red-gate.com/sp9/release-notes-and-other-versions/sql-prompt-8-0-release-notes)
+- [Thinkwise: SQL Prompt style and comparison alignment](https://docs.thinkwisesoftware.com/docs/sf/guidelines_sql_formatting#comparison-alignment)

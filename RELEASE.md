@@ -137,7 +137,10 @@ wiki): from a clean clone of `cooptimize/coop-standards` on `main`, run
 `node lib/standards-cli.mjs bundle-update <path to that clone>`, then
 `node lib/standards-cli.mjs bundle-check` (exit 0), and commit
 `config/standards-bundle/` as `standards: bundle wiki @ <short revision>`. The
-gate lane fails if the bundle does not verify.
+gate lane fails if the bundle does not verify, and `coop release` compares the
+bundle's revision with the wiki's `main` head before tagging: a bundle behind
+the wiki stops the release (`--no-check` skips it), an unreachable wiki warns
+and asks.
 
 From a clean tree on an attached `main` that equals `origin/main` (`coop release`
 fetches `origin` and refuses anything else), with user-visible changes recorded

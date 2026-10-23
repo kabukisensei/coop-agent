@@ -1,15 +1,17 @@
 ---
 id: powerbi_semantic_model_tables
-title: Organizing Power BI Tables
+title: Power BI Semantic Model Metadata
 domain: powerbi
 layer: semantic_model
-artifact: table
+artifact: model_metadata
 technology: power_bi
 status: active
 ---
-# Organizing Semantic Model Tables
+# Semantic Model Metadata
 
-## Table naming standards
+These standards define names, formats, visibility, folders, hierarchies, and other metadata for tables and columns. Measure metadata and DAX expressions are defined separately.
+
+## Table and column naming standards
 
 - Use PascalCase table and calculated-column names unless a more specific naming rule applies. Approved measure-table names and friendly report-facing column names contain spaces; Direct Lake table names match their source exactly.
 - Qualify column references with the table name.
@@ -18,7 +20,7 @@ status: active
 Customer[CustomerGroup]
 ```
 
-## Field formatting standards
+## Column metadata standards
 
 - Disable summarization for numeric columns not intended for aggregation, especially visible fields such as Year and Line Number. Hiding a field and disabling summarization are separate settings.
 - Format dates as `mm/dd/yyyy` and Boolean/BIT fields as `TRUE` / `FALSE`.
@@ -29,13 +31,20 @@ Customer[CustomerGroup]
 Created Date ET: 10/06/2025 3:00 PM Eastern
 ```
 
-## Date table standards
+## Date table metadata standards
 
+- Define the Date table in SQL, not with a DAX calculated table.
 - Use one contiguous, marked Date table for time intelligence.
 - Disable auto date/time and remove `LocalDateTable_*` and `DateTableTemplate_*` tables.
 - Use `Calendar`, `Fiscal`, and `Relative` folders when those fields exist.
 
-## Dimension folder standards
+## Calculated column defaults
+
+- Define columns in SQL.
+- Use DAX calculated columns only for approved edge cases where special-character handling requires them.
+- Before adding a calculated column to a Direct Lake model, verify that the specific Direct Lake mode supports it.
+
+## Display folder standards
 
 Dimension folders are optional. When used, group fields by subject.
 
@@ -51,18 +60,12 @@ Month Name → sort by Month Number (hidden)
 
 For a `Product` hierarchy with Category → Subcategory → Product levels, Category is the first field. Check that its label is suitable when a visual displays that label for the hierarchy and cannot rename it.
 
-## Semantic model deployment standards
-
-- Before adding calculated columns to a Direct Lake model, check Microsoft's current [Direct Lake limitations](https://learn.microsoft.com/en-us/fabric/fundamentals/direct-lake-overview#considerations-and-limitations) for the specific Direct Lake mode. Do not use unsupported features.
-- Direct Lake table names match their source exactly.
-- Deploy semantic-model source with TMDL, not TMSL.
-
-## Open decisions (non-normative)
+## Open decisions (not standards)
 
 - Whether timestamp names should explicitly include `Time`, and whether the displayed value needs a zone when the column name already includes it. The current approved example remains `Created Date ET: 10/06/2025 3:00 PM Eastern`.
 - How clients with multiple time zones choose the reporting zone, and where that choice is configured.
-- Date-table range, fiscal-calendar source, and whether the table is supplied by SQL or DAX.
+- Date-table range and fiscal-calendar source.
 
-## References (non-normative)
+## Supporting references
 
 - [Microsoft: Direct Lake overview and limitations](https://learn.microsoft.com/en-us/fabric/fundamentals/direct-lake-overview)

@@ -1,77 +1,53 @@
 ---
-artifact: agnostic
-domain: sql
 id: sql_silver_overview
+title: Silver Tables
+domain: sql
 layer: silver
-status: active
+artifact: table
 technology: agnostic
-title: Silver Layer
+status: active
 ---
+# Silver Tables
 
-# Silver Layer
-
-Silver preserves source-system structure and data types as closely as
-the target platform allows. Dynamics 365 and Dataverse sources use
-Schema Manager for deterministic Silver generation.
+Silver tables reproduce source-system tables for downstream use. Keep their structure and data types close to the source; put reporting logic and dimensional modeling in Gold.
 
 ## Standards
 
-### Silver schema standards
+### Source structure standards
 
--   Keep Silver tables structurally aligned with their source tables.
--   Match source column data types as closely as the target platform
-    supports.
--   Preserve source string lengths, numeric precision and scale, and
-    date/time precision where supported.
--   When the target platform does not support the source type, use the
-    closest compatible target type.
--   Do not change a Silver data type solely for downstream reporting,
-    presentation, or semantic-model convenience.
--   Apply target-technology type restrictions where required by the
-    platform.
+- Keep each Silver table structurally aligned with its source table.
+- Match source data types, string lengths, numeric precision and scale, and date/time precision when the target platform supports them.
+- When the target does not support a source type, use the closest compatible type allowed by that platform.
+- Do not change Silver types for reporting, presentation, or semantic-model convenience.
 
-### Dynamics 365 and Dataverse standards
+### Schema Manager standards
 
-These standards apply to data sourced from:
+Schema Manager creates and maintains Silver tables for supported Dynamics 365 and Dataverse sources, including Finance and Operations, Project Operations, Customer Engagement, and custom Dataverse applications.
 
--   Dynamics 365 Finance & Operations (F&O).
--   Dynamics 365 Project Operations.
--   Dynamics 365 Customer Engagement (CE).
--   Custom Dataverse applications and tables.
+- Use Schema Manager to create or change these table definitions.
+- Do not manually create or alter Schema Manager-managed definitions except for the two approved changes below.
+- Do not use an LLM to create or alter Schema Manager-generated SQL.
+- Change generated behavior through Schema Manager procedures, configuration, or metadata.
 
-They apply when these sources are replicated into Azure Data Lake or
-Microsoft OneLake for Azure- and Fabric-based implementations,
-respectively.
+### Approved developer changes
 
--   Manage these Silver tables through the approved Schema Manager
-    process.
--   Treat the generated table definition and lifecycle as owned by
-    Schema Manager.
--   Do not manually alter Schema Manager-managed structures except for
-    documented exceptions.
--   Do not use an LLM to author or alter generated Silver SQL.
--   Change generated behavior through Schema Manager procedures,
-    configuration, metadata, or other supported mechanisms.
+Developers may make these two changes to a Schema Manager-managed table:
 
-See [Schema Manager](Schema%20Manager.md) for generation and lifecycle
-standards.
+1. Increase a `VARCHAR` length when source data does not fit the generated length. Change only the affected column and use the smallest length that safely holds the source data.
+2. Create, change, or remove custom indexes when the workload requires them.
 
-### Other source systems
+Schema Manager must preserve increased `VARCHAR` lengths and custom indexes when it updates or rebuilds the table. A later run must not shrink an approved length or require a developer to recreate an index.
 
-Schema Manager requirements do not apply to source systems that have not
-been incorporated into Schema Manager.
+### Other source-system standards
 
--   Match Silver columns to the source table data types as closely as
-    the target platform supports.
--   Keep the Silver table as close to the source representation as
-    practical.
--   Use the closest compatible target type when the source type is not
-    supported.
--   Perform business-oriented transformations and dimensional modeling
-    downstream unless the Silver ingestion process requires otherwise.
+Schema Manager rules do not apply to a source system it does not support. For those sources:
 
-## Documented exceptions
+- Keep the Silver table as close to the source representation as the target permits.
+- Use the closest compatible target type when the source type is unavailable.
+- Put business transformations and dimensional modeling downstream unless ingestion itself requires a change.
 
--   See [Schema Derivation](Schema%20Derivation.md) for source metadata
-    and `VARCHAR` length exceptions.
--   See [Indexing](Indexing.md) for developer-managed Silver indexes.
+## Default positions
+
+### Recurring schema mismatch defaults
+
+When the same schema mismatch recurs, correct the Schema Manager metadata, configuration, or type-mapping logic instead of repeatedly changing individual tables.

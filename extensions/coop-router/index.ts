@@ -348,10 +348,13 @@ export function describeTiers(registry: Registry, env: NodeJS.ProcessEnv = proce
 // release becomes the default at the next start with no code change. The person's
 // own pick wins and is remembered: every model they choose with /model, the
 // window's or the phone's picker is written to <agent dir>/coop-model.json and
-// new sessions start on it. Choosing the newest sol again clears the file, so the
-// session follows the next release again. Pi's own saved default is kept when it
-// is not a sol (a `/model` default saved before this rule, coop/auto included);
-// a sol there is what Pi's /login wrote, not a choice. Launch flags (--model,
+// new sessions start on it. Choosing the newest sol again writes "follow sol"
+// to the file, so the session follows the next release again. Pi's own saved
+// default is kept only while the person has made no coop-era choice at all (no
+// file): a `/model` default saved before this rule, coop/auto included; a sol
+// there is what Pi's /login wrote, not a choice. The file must record the
+// newest-sol pick rather than be removed (#432): with no file, an older saved
+// non-sol default would win again at the next start. Launch flags (--model,
 // --models, --provider) and a scoped `enabledModels` list win over all of it,
 // resumed and forked sessions keep their own model, and COOP_NO_ISOLATE (the
 // personal Pi) leaves the model to Pi.
@@ -362,23 +365,33 @@ export const DEFAULT_FAMILY = "sol";
 export const CHOICE_FILE = "coop-model.json";
 
 export interface ModelChoice { provider: string; id: string }
+/** The person chose to follow the newest model of a family (the newest sol). */
+export interface FollowChoice { follow: string }
+export type RememberedChoice = ModelChoice | FollowChoice;
+
+/** True when the remembered choice is "follow the newest <family>". */
+export function isFollow(choice: RememberedChoice | undefined): choice is FollowChoice {
+  return !!choice && typeof (choice as FollowChoice).follow === "string";
+}
 
 /** The pick remembered in `file`, or undefined (absent, unreadable, wrong shape). */
-export function readChoice(file: string): ModelChoice | undefined {
+export function readChoice(file: string): RememberedChoice | undefined {
   try {
     const data = JSON.parse(readFileSync(file, "utf8"));
+    if (data && typeof data.follow === "string" && data.follow) return { follow: data.follow };
     if (data && typeof data.provider === "string" && data.provider && typeof data.id === "string" && data.id) return { provider: data.provider, id: data.id };
   } catch { /* none remembered */ }
   return undefined;
 }
 
-/** Remember a pick (undefined forgets it, back to the newest sol). Best effort. */
-export function writeChoice(file: string, choice: ModelChoice | undefined): void {
+/** Remember a pick or a "follow the newest" choice (undefined forgets both). Best effort. */
+export function writeChoice(file: string, choice: RememberedChoice | undefined): void {
   try {
     if (!choice) { rmSync(file, { force: true }); return; }
     mkdirSync(dirname(file), { recursive: true });
     const tmp = `${file}.${process.pid}.tmp`;
-    writeFileSync(tmp, `${JSON.stringify({ provider: choice.provider, id: choice.id }, null, 2)}\n`, "utf8");
+    const data = isFollow(choice) ? { follow: choice.follow } : { provider: choice.provider, id: choice.id };
+    writeFileSync(tmp, `${JSON.stringify(data, null, 2)}\n`, "utf8");
     renameSync(tmp, file);
   } catch { /* the pick still holds for this session */ }
 }
@@ -396,7 +409,7 @@ export function launchNamesModel(argv: readonly string[]): boolean {
 export interface DefaultInput {
   registry: Registry;
   /** The pick remembered in coop-model.json. */
-  choice?: ModelChoice;
+  choice?: RememberedChoice;
   /** Pi's effective settings (pi.getSettings()). */
   settings?: { defaultProvider?: string; defaultModel?: string; enabledModels?: string[] };
   argv?: readonly string[];
@@ -410,7 +423,9 @@ export function sessionDefault(input: DefaultInput): { model?: any; why: string 
   if (launchNamesModel(input.argv ?? [])) return { why: "a launch flag names the model" };
   if (input.settings?.enabledModels?.length) return { why: "enabledModels scopes the models" };
   const choice = input.choice;
-  if (choice) {
+  if (isFollow(choice)) {
+    // An explicit "follow the newest sol": it wins over Pi's saved default.
+  } else if (choice) {
     const model = input.registry.find(choice.provider, choice.id);
     if (model && (choice.provider !== PROVIDER || usable(input.registry, model))) return { model, why: `your choice, ${choice.provider}/${choice.id}` };
   } else {
@@ -422,12 +437,13 @@ export function sessionDefault(input: DefaultInput): { model?: any; why: string 
 }
 
 /**
- * What to remember when the person picks a model: undefined (forget, follow the
- * newest sol) for the newest sol itself, else the pick.
+ * What to remember when the person picks a model: "follow the newest sol" for
+ * the newest sol itself (an explicit choice, so it outranks Pi's saved default
+ * at the next start and advances with the next release), else the pick.
  */
-export function choiceToRemember(model: any, registry: Registry): ModelChoice | undefined {
+export function choiceToRemember(model: any, registry: Registry): RememberedChoice {
   const newest = newestInFamily(DEFAULT_FAMILY, registry);
-  if (newest && model?.provider === newest.provider && model?.id === newest.id) return undefined;
+  if (newest && model?.provider === newest.provider && model?.id === newest.id) return { follow: DEFAULT_FAMILY };
   return { provider: String(model?.provider ?? ""), id: String(model?.id ?? "") };
 }
 

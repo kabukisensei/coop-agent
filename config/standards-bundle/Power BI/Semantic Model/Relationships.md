@@ -20,36 +20,16 @@ status: active
 Sales[FKCustomer] → Customer[PKCustomer] (N:1)
 ```
 
-### Inactive relationship standards
+### Impossible relationship standards
 
-Every inactive relationship needs an intentional `USERELATIONSHIP()` consumer. Remove inactive relationships with no consumer.
+Use an `FKNULL` relationship to record that a fact and dimension cannot conceptually be joined. In the model diagram, this distinguishes an impossible relationship from one that is merely missing and provides a permanent record that every potential relationship was considered.
 
-```dax
-USERELATIONSHIP(FactSales[FKShipDate], 'Date'[PKDate])
-```
+Never use `FKNULL` to replace a valid relationship with missing, incomplete, or unmatched keys.
 
-### FKNULL relationship standards
-
-Use `FKNULL` only when the fact and dimension cannot conceptually be joined. Never use it to replace a valid relationship with missing, incomplete, or unmatched keys.
-
-Relate the fact's `FKNULL` column to the dimension key. Without a relationship, a visual can repeat the fact result for each dimension member. An active `FKNULL` relationship summarizes it under the blank/null member.
+Relate the fact's `FKNULL` column to the dimension key. This prevents a visual from repeating the fact result for every member of an unrelated dimension and is more efficient than leaving the relationship absent. Keep the relationship active so the fact summarizes under the blank/null member.
 
 Adding this after deployment can change report results. Regression-test affected reports before deployment.
 
 ```text
 Sales[FKNULL] → UnrelatedDimension[PKDimension] (N:1)
 ```
-
-## Default positions
-
-### Model shape defaults
-
-Use a star schema with flat dimensions. Avoid chains through intermediate dimension tables unless an approved project requirement overrides this shape.
-
-### Filter direction defaults
-
-Avoid physical bidirectional relationships. Use `CROSSFILTER` in the measure when temporary bidirectional filtering is needed, unless an approved project override requires a physical relationship.
-
-### FKNULL activation defaults
-
-Make `FKNULL` relationships active.

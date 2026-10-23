@@ -250,7 +250,11 @@ console.log("  ✓ registers coop/auto with /router, and stays quiet on a Pi wit
   assert.equal(sessionDefault({ registry: cat, settings: { enabledModels: ["openai-codex/gpt-5.5"] } }).model, undefined, "scoped models win");
   assert.ok(launchNamesModel(["--models=a,b"]) && launchNamesModel(["--provider", "x"]) && !launchNamesModel(["--mode", "rpc", "--modelish"]));
   assert.ok(isSol("openai-codex", "gpt-6.1-sol") && !isSol("openai-codex", "gpt-6-luna") && !isSol("other", "gpt-6.1-sol"));
-  assert.equal(choiceToRemember(codex("gpt-6.1-sol"), cat), undefined, "picking the newest sol follows the newest again");
+  assert.deepEqual(choiceToRemember(codex("gpt-6.1-sol"), cat), { follow: "sol" }, "picking the newest sol is remembered as following the newest");
+  // #432: the explicit "follow the newest sol" outranks a saved non-sol Pi default and advances with the catalog.
+  assert.equal(sessionDefault({ registry: cat, choice: { follow: "sol" }, settings: { defaultProvider: "openai-codex", defaultModel: "gpt-6-luna" } }).model.id, "gpt-6.1-sol", "following the newest sol wins over Pi's saved non-sol default");
+  assert.equal(sessionDefault({ registry: withAuto(catalog(["gpt-6.1-sol", "gpt-7-sol", "gpt-6-luna"])), choice: { follow: "sol" }, settings: { defaultProvider: "openai-codex", defaultModel: "gpt-6-luna" } }).model.id, "gpt-7-sol", "following the newest sol advances to the next release");
+  assert.equal(sessionDefault({ registry: cat, choice: { follow: "sol" }, argv: ["node", "pi", "--model", "gpt-5.5"] }).model, undefined, "a launch flag still wins over following");
   assert.deepEqual(choiceToRemember(codex("gpt-6-sol"), cat), { provider: "openai-codex", id: "gpt-6-sol" }, "an older sol is a real pin");
   assert.deepEqual(choiceToRemember({ provider: "coop", id: "auto" }, cat), { provider: "coop", id: "auto" });
 
@@ -258,6 +262,8 @@ console.log("  ✓ registers coop/auto with /router, and stays quiet on a Pi wit
   const file = join(dir, CHOICE_FILE);
   writeChoice(file, { provider: "openai-codex", id: "gpt-6-luna" });
   assert.deepEqual(readChoice(file), { provider: "openai-codex", id: "gpt-6-luna" });
+  writeChoice(file, { follow: "sol" });
+  assert.deepEqual(readChoice(file), { follow: "sol" }, "following the newest sol round-trips through the file");
   writeChoice(file, undefined);
   assert.ok(!exists(file), "forgetting removes the file");
   assert.equal(readChoice(join(dir, "missing.json")), undefined);
@@ -282,7 +288,20 @@ console.log("  ✓ registers coop/auto with /router, and stays quiet on a Pi wit
   await piHooks.get("session_start")({ reason: "new" }, piCtx);
   assert.deepEqual(set, ["gpt-6.1-sol", "gpt-6-luna"], "/new starts on the remembered pick");
   await piHooks.get("model_select")({ source: "set", model: codex("gpt-6.1-sol"), previousModel: codex("gpt-6-luna") }, piCtx);
-  assert.ok(!exists(file), "choosing the newest sol again follows the newest");
+  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), { follow: "sol" }, "choosing the newest sol again is remembered as following the newest");
+  // #432, end to end: a saved non-sol Pi default, the newest sol picked, then the next process starts on Pi's unchanged default.
+  const legacyHooks = new Map(); const legacySet = [];
+  const legacyCtx = { modelRegistry: cat, model: codex("gpt-6-luna") };
+  registerSessionDefault({ on: (n, f) => legacyHooks.set(n, f), setModel: async (m) => { legacySet.push(m.id); legacyCtx.model = m; return true; }, getSettings: () => ({ defaultProvider: "openai-codex", defaultModel: "gpt-6-luna" }) }, piEnv, ["node", "pi"]);
+  writeChoice(file, undefined);
+  await legacyHooks.get("session_start")({ reason: "startup" }, legacyCtx);
+  assert.deepEqual(legacySet, [], "no coop-era choice: Pi's saved non-sol default is kept");
+  await legacyHooks.get("model_select")({ source: "set", previousModel: codex("gpt-6-luna"), model: codex("gpt-6.1-sol") }, legacyCtx);
+  legacyCtx.model = codex("gpt-6-luna");
+  await legacyHooks.get("session_start")({ reason: "startup" }, legacyCtx);
+  assert.deepEqual(legacySet, ["gpt-6.1-sol"], "after picking the newest sol, the next start is the newest sol, not the stale saved default");
+  await legacyHooks.get("session_start")({ reason: "new" }, legacyCtx);
+  assert.equal(legacySet.length, 1, "/new already on the newest sol sets nothing");
   // COOP_NO_ISOLATE: the personal Pi keeps its own default.
   const quiet = new Map();
   registerSessionDefault({ on: (n, f) => quiet.set(n, f), setModel: async () => assert.fail("set a model on the personal Pi") }, { COOP_NO_ISOLATE: "1" });

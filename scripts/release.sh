@@ -110,6 +110,51 @@ coop_release_check_pins() {
   coop_ok "coop-tool pins match coop-website/versions.json"
 }
 
+# --- Release gate: the bundled standards copy is the wiki's current main --------
+# config/standards-bundle/bundle.json records the cooptimize/coop-standards
+# revision the bundle was captured from; first runs and offline machines read
+# that copy until `coop sync` reaches the wiki. RELEASE.md asks for a refresh
+# before every release, and bundle-check only proves the bundle is internally
+# consistent, so a missed refresh shipped October's rules at an older revision
+# (issue #434). Compare the bundle's revision with the wiki's branch head BEFORE
+# tagging:
+#   - same revision             -> ok, continue
+#   - a different revision      -> die (bundle-update, or --no-check)
+#   - wiki unreachable/unknown  -> warn + confirm (--yes continues with a note)
+# Returns 1 when the user declines the confirm (caller cancels the release).
+# bin/coop.ps1's Test-CoopReleaseBundle is the same gate for `coop release` on Windows.
+coop_release_bundle_field() { # <field> -> the string value in bundle.json (one key per line)
+  sed -n 's/^[[:space:]]*"'"$1"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$COOP_ROOT/config/standards-bundle/bundle.json" | head -n 1
+}
+coop_release_wiki_head() { # <repository> <branch> -> the branch head's sha, or '' when unreachable
+  local out
+  out="$(git ls-remote --heads "$1" "refs/heads/$2" 2>/dev/null)" || return 1
+  printf '%s' "${out%%[[:space:]]*}"
+}
+coop_release_check_bundle() {
+  local assume_yes="${1:-0}"
+  local bundle="$COOP_ROOT/config/standards-bundle/bundle.json"
+  local repository branch revision head
+  repository="$(coop_release_bundle_field repository)"; branch="$(coop_release_bundle_field branch)"; revision="$(coop_release_bundle_field revision)"
+  if [ ! -f "$bundle" ] || [ -z "$repository" ] || [ -z "$branch" ] || [ -z "$revision" ]; then
+    coop_die "config/standards-bundle/bundle.json is missing or unreadable — refresh it (node lib/standards-cli.mjs bundle-update <clone>, see RELEASE.md), or re-run with --no-check."
+  fi
+  head="$(coop_release_wiki_head "$repository" "$branch")" || head=""
+  if [ -z "$head" ]; then
+    coop_warn "could not read $branch of $repository — can't verify that config/standards-bundle (wiki @ ${revision:0:7}) is current (see RELEASE.md)."
+    if [ "$assume_yes" = "1" ]; then
+      coop_info "continuing (--yes) — verify the bundled standards by hand."
+      return 0
+    fi
+    coop_confirm "Release without verifying the bundled standards?" || return 1
+    return 0
+  fi
+  if [ "$head" != "$revision" ]; then
+    coop_die "config/standards-bundle is the wiki @ ${revision:0:7} but $branch of $repository is at ${head:0:7} — refresh it (node lib/standards-cli.mjs bundle-update <clean clone>, then bundle-check; see RELEASE.md), or re-run with --no-check."
+  fi
+  coop_ok "bundled standards are the wiki's current $branch (${revision:0:7})"
+}
+
 # --- Release gate: a working pwsh, or CI green on the commit being tagged ------
 # coop is PowerShell (master plan S1), so every local suite needs pwsh:
 # tests/run.sh refuses to start without it (its coop.ps1 / common.ps1 tests
@@ -390,6 +435,12 @@ EOF
     # dies; a missing sibling warns + confirms (--yes continues). See the
     # function header above and RELEASE.md.
     coop_release_check_pins "$assume_yes" \
+      || { coop_info "release cancelled — nothing changed."; return 1; }
+
+    # The bundled standards copy vs the wiki's branch head: a stale bundle dies; an
+    # unreachable wiki warns + confirms (--yes continues). See the function header
+    # above, RELEASE.md and issue #434.
+    coop_release_check_bundle "$assume_yes" \
       || { coop_info "release cancelled — nothing changed."; return 1; }
   fi
 

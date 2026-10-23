@@ -109,9 +109,22 @@ sys.exit(0)
 # `upgrade` land on 9.9.9, "latest"), `uninstall <pkg>` drops it, so a
 # convergence is verified by what pipx then reports (the postcondition installed
 # == pin). `environment --value PIPX_DEFAULT_PYTHON` answers with the machine's
-# real interpreter (#430: the one coop's tools belong on).
+# real interpreter (#430: the one coop's tools belong on). A local wheel spec
+# (what the sourced-tool path hands pipx for coop-sql-source-control, #433) is
+# read the way pip reads it: the PEP 427 file name carries the distribution and
+# the version, and `_` in the name normalizes to `-` (the name `pipx list` shows).
 $pipxStub = $stubPrelude + @'
+import re
 state = os.environ['PIPX_STATE']
+def spec_name_version(spec):
+    base = os.path.basename(spec)
+    if base.lower().endswith('.whl'):
+        parts = base[:-4].split('-')
+        if len(parts) >= 5:
+            return re.sub(r'[-_.]+', '-', parts[0]).lower(), parts[1]
+        return base, '9.9.9'
+    name, _, ver = spec.partition('==')
+    return name, (ver or '9.9.9')
 def read_state():
     if not os.path.exists(state):
         return []
@@ -133,9 +146,7 @@ if args[:1] == ['uninstall'] and len(args) > 1:
     with open(state, 'w', encoding='utf-8', newline='\n') as f:
         f.write('\n'.join(lines) + ('\n' if lines else ''))
 if args[:1] in (['install'], ['upgrade']) and len(args) > 1:
-    name, _, ver = args[-1].partition('==')
-    if not ver:
-        ver = '9.9.9'
+    name, ver = spec_name_version(args[-1])
     lines = [l for l in read_state() if not l.startswith('package ' + name + ' ')]
     lines.append('package %s %s' % (name, ver))
     with open(state, 'w', encoding='utf-8', newline='\n') as f:
@@ -173,6 +184,14 @@ function New-Machine {
   [System.IO.File]::WriteAllText($pipxState, (($PipxList | ForEach-Object { "$_" }) -join "`n") + $(if (@($PipxList).Count) { "`n" } else { '' }), $utf8)
   $env:PIPX_STATE = $pipxState
   $null = New-PyStub $bin 'pipx' $pipxStub
+  # The sourced tool's release wheel is already in this machine's wheel cache
+  # (<profile>\wheels, hash-checked), so the convergence takes the wheel branch
+  # with no network and no token (#433); its SHA-256 is the fixture manifest's.
+  if ($script:sourcedWheel) {
+    $wheelDir = Join-Path (Join-Path $env:COOP_DIR '.coop') 'wheels'
+    New-Item -ItemType Directory -Force -Path $wheelDir | Out-Null
+    [System.IO.File]::WriteAllBytes((Join-Path $wheelDir $script:sourcedWheel.Asset), $script:sourcedWheel.Bytes)
+  }
   $null = New-PyStub $bin 'fab' ($stubPrelude + "print('fab version $FabVersion')`nsys.exit(0)`n")
   # Git and Azure CLI are install prerequisites (H1 gate); this machine has them.
   $null = New-PyStub $bin 'az' ($stubPrelude + "print('azure-cli 2.80.0')`nsys.exit(0)`n")
@@ -232,6 +251,31 @@ try {
   }
   $env:COOP_SKIP_AZ = '1'; $env:NO_COLOR = '1'
   $env:COOP_RELEASE_MANIFEST = Join-Path $root 'config\release-manifest.json'
+  Remove-Item Env:\COOP_BUNDLED_WHEELS -ErrorAction SilentlyContinue
+  # The manifest's sourced tool (a GitHub release wheel, not PyPI): a synthetic
+  # wheel named after the manifest's asset, with the copied manifest's SHA-256
+  # pointed at its bytes, so every machine's wheel cache already holds it
+  # (New-Machine) and the install path never reaches the network. Pin and asset
+  # come from the manifest, never from a literal here.
+  $script:sourcedWheel = $null
+  $manifestJson = [System.IO.File]::ReadAllText($env:COOP_RELEASE_MANIFEST, $utf8) | ConvertFrom-Json
+  $sourced = $manifestJson.python_tool_sources
+  if ($sourced) {
+    $sourcedName = @($sourced.PSObject.Properties | Select-Object -First 1)[0].Name
+    $sourcedEntry = $sourced.$sourcedName
+    $sourcedPin = [string]$manifestJson.python_tools.$sourcedName
+    $bytes = [System.Text.Encoding]::ASCII.GetBytes("coop fleet fixture wheel: $($sourcedEntry.asset)`n")
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $newHash = ([System.BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant()
+    $sha.Dispose()
+    $manifestText = [System.IO.File]::ReadAllText($env:COOP_RELEASE_MANIFEST, $utf8)
+    if (-not $manifestText.Contains([string]$sourcedEntry.sha256)) { throw "the copied manifest does not carry python_tool_sources.$sourcedName.sha256" }
+    [System.IO.File]::WriteAllText($env:COOP_RELEASE_MANIFEST, $manifestText.Replace([string]$sourcedEntry.sha256, $newHash), $utf8)
+    if ([string]$sourcedEntry.asset -notmatch ('^' + [regex]::Escape(($sourcedName -replace '[-_.]+', '_')) + '-' + [regex]::Escape($sourcedPin) + '-')) {
+      throw "the manifest's $sourcedName asset '$($sourcedEntry.asset)' does not carry the python_tools pin $sourcedPin"
+    }
+    $script:sourcedWheel = [pscustomobject]@{ Package = $sourcedName; Pin = $sourcedPin; Asset = [string]$sourcedEntry.asset; Bytes = $bytes }
+  }
   # The Fabric SQL runtime probe runs inside each machine's venv: a fixture pyodbc
   # (5.3.0 metadata; drivers() honours COOP_TEST_DRIVER_MISSING) on PYTHONPATH
   # answers it the same way on every platform.
@@ -392,6 +436,23 @@ try {
   if ($missing.Count -eq 0) { Ok 'update installs missing manifest-pinned pipx tools' } else { Ko "update did not install missing $($missing -join ', ')" (Get-Calls $m6) }
   if (Test-Call $m6 '^PIPX install --python .+ ms-fabric-cli==1\.7\.0') { Ok 'update installs a missing Fabric CLI with an explicit supported bootstrap Python' } else { Ko 'update did not select a supported bootstrap Python for the missing Fabric CLI' (Get-Calls $m6) }
   if (Test-Call $m6 '^PIPX install --force ') { Ko 'update force-reinstalled a tool that was simply missing' (Get-Calls $m6) } else { Ok 'a missing tool is installed, not force-reinstalled' }
+  # The sourced tool (a release wheel, not a PyPI spec) installs from the local
+  # wheel and converges to its pin: the honest stub records the distribution
+  # name and version the wheel's file name carries, and the postcondition
+  # (installed == pin) holds (#433).
+  if ($script:sourcedWheel) {
+    $w = $script:sourcedWheel
+    $wheelCall = '^PIPX install (--python .+ )?.*' + [regex]::Escape($w.Asset) + '$'
+    $listed = [System.IO.File]::ReadAllText($m6.PipxState).Contains("package $($w.Package) $($w.Pin)")
+    if (-not (Test-Call $m6 $wheelCall)) { Ko "update did not install $($w.Package) from its local release wheel" (Get-Calls $m6) }
+    elseif (-not $listed) { Ko "the wheel install did not record $($w.Package) $($w.Pin) (pipx list: $([System.IO.File]::ReadAllText($m6.PipxState)))" (Get-Calls $m6) }
+    elseif ($out.Contains("$($w.Package) remains at")) { Ko "$($w.Package) failed its convergence postcondition after the wheel install" $out }
+    else { Ok "update installs the missing $($w.Package) from its local release wheel and the install converges to $($w.Pin)" }
+    # Already converged: a repeat update performs no install for it.
+    Reset-Calls $m6
+    $out = Invoke-Fleet 'update.ps1'
+    if (Test-Call $m6 ('^PIPX (install|upgrade) .*' + [regex]::Escape($w.Package))) { Ko "a repeat update reinstalled $($w.Package) already at $($w.Pin)" (Get-Calls $m6) } else { Ok "a repeat update leaves $($w.Package) at its pin alone" }
+  }
 
   # --- 9. UPDATE moves a tool built on another Python onto coop's (#430) ----------
   # coop-data-doc is at its pin, but its environment's pyvenv.cfg names another
