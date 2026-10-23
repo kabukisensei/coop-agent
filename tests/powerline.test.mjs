@@ -5,7 +5,9 @@ import { pathToFileURL } from "node:url";
 
 const dist = process.env.COOP_TEST_DIST;
 assert.ok(dist, "COOP_TEST_DIST is required");
-const { formatCoopTitle, formatSessionName, layoutFooter, visWidth, default: coopPowerline } = await import(pathToFileURL(join(dist, "coop-powerline.mjs")));
+const { formatCoopTitle, formatCoopVersion, formatSessionName, layoutFooter, visWidth, wrapSlashProvider, filterSlashItems, unknownSlashCommand, TITLE_SETTLE_DELAYS_MS, default: coopPowerline } = await import(pathToFileURL(join(dist, "coop-powerline.mjs")));
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 assert.equal(formatSessionName(undefined), "");
 assert.equal(formatSessionName("  Revenue\n fix "), "Revenue fix");
@@ -16,12 +18,34 @@ assert.equal(formatCoopTitle("/work/devops"), "coop - devops");
 assert.equal(formatCoopTitle("/work/devops", "Revenue fix"), "coop - Revenue fix - devops");
 console.log("  ✓ terminal title formatter replaces Pi branding with coop")
 
+// The running version (#429): COOP_VERSION from bin/coop.ps1, else the VERSION
+// file beside the extension; ` dev` marks a git checkout.
+{
+  const root = mkdtempSync(join(tmpdir(), "coop-powerline-version-"));
+  try {
+    assert.equal(formatCoopVersion({}, root), "", "no env and no VERSION file: nothing is shown");
+    assert.equal(formatCoopVersion({ COOP_VERSION: "0.38.4" }, root), "v0.38.4");
+    writeFileSync(join(root, "VERSION"), "0.38.5\n");
+    assert.equal(formatCoopVersion({}, root), "v0.38.5", "the VERSION file covers a plain pi -e launch");
+    mkdirSync(join(root, ".git"));
+    assert.equal(formatCoopVersion({ COOP_VERSION: "0.38.4" }, root), "v0.38.4 dev", "a git checkout is marked dev");
+    assert.equal(formatCoopVersion({ COOP_VERSION: "garbage" }, root), "", "a value that is not a version is dropped");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  console.log("  ✓ the footer version comes from COOP_VERSION or the VERSION file, with dev for a checkout");
+}
+delete process.env.COOP_VERSION;
+
 const handlers = new Map();
+const commands = new Map();
 const pi = {
   on(name, handler) {
     handlers.set(name, handler);
   },
-  registerCommand() {},
+  registerCommand(name, options) {
+    commands.set(name, options);
+  },
 };
 coopPowerline(pi);
 
@@ -145,4 +169,128 @@ console.log("  5 powerline title and footer tests passed");
   assert.equal(formatModel({ model: auto, sessionManager: branchOf({ role: "assistant", model: "gpt-5.6-terra", api: "openai-codex-responses", stopReason: "stop" }, { role: "assistant", model: "auto", api: "pi-virtual", stopReason: "error" }) }), "auto → gpt-5.6-terra", "a failed route is skipped");
   assert.equal(formatModel({ model: undefined }), "");
   console.log("  ✓ the footer shows the routed model under coop/auto");
+}
+
+// --- #429: the version is in the footer; the title is reasserted after Pi and child processes rewrite it ---
+{
+  process.env.COOP_VERSION = "0.38.4";
+  const titles2 = [];
+  let footer2;
+  const ctx2 = {
+    cwd: "/work/devops",
+    hasUI: true,
+    ui: {
+      setTitle(value) { titles2.push(value); },
+      setHeader() {},
+      setFooter(factory) { footer2 = factory({ requestRender() {} }, theme, { getGitBranch: () => "main" }); },
+      setWorkingMessage() {},
+      setWorkingIndicator() {},
+      addAutocompleteProvider() {},
+    },
+    sessionManager: { getSessionName: () => undefined },
+  };
+  await handlers.get("session_start")({}, ctx2);
+  const line = stripAnsi(footer2.render(120)[0]);
+  assert.match(line, /^⬢ Cooptimize v0\.38\.4(?: dev)? {2}main/, `the footer leads with the running version: ${JSON.stringify(line)}`);
+  delete process.env.COOP_VERSION;
+  assert.ok(TITLE_SETTLE_DELAYS_MS.includes(0) && TITLE_SETTLE_DELAYS_MS.includes(250) && TITLE_SETTLE_DELAYS_MS.some((d) => d >= 16_000), "the schedule covers Pi's post-bind, /new and Windows package-check restores");
+  // Pi overwrites the title after binding; coop takes it back within the first settle delays.
+  titles2.length = 0;
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  assert.ok(titles2.length >= 3 && titles2.every((t) => t === "coop - devops"), `the title is reasserted on the settle schedule: ${JSON.stringify(titles2)}`);
+  // A tool that spawned a child process just returned: the title is set again at once.
+  for (const name of ["tool_execution_end", "turn_end", "agent_end"]) {
+    titles2.length = 0;
+    await handlers.get(name)({}, ctx2);
+    assert.equal(titles2[0], "coop - devops", `${name} reasserts the title`);
+  }
+  // After shutdown (and the /new teardown that precedes a new session_start) no old timer fires.
+  await handlers.get("session_shutdown")({}, ctx2);
+  titles2.length = 0;
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  assert.deepEqual(titles2, [], "no title timer survives session_shutdown");
+  console.log("  ✓ the footer shows the coop version and the tab title is reasserted after /new and tool calls");
+}
+
+// --- #428: Enter on an unknown slash command never runs the fuzzy match ---
+{
+  const base = {
+    commands: [{ name: "exit" }, { name: "settings" }, { name: "setup-project" }, { name: "skill:docs" }, { name: "mcp__powerbi__RunDAXQueryWithMetrics" }],
+    basePath: "/work",
+    async getSuggestions(lines, cursorLine, cursorCol) {
+      const text = (lines[cursorLine] || "").slice(0, cursorCol);
+      if (text === "@fi") return { items: [{ value: "file.sql", label: "file.sql" }], prefix: "@fi" };
+      if (!text.startsWith("/")) return null;
+      // Pi's fuzzy list for the word: the real one matched /exit to an MCP prompt.
+      const word = text.slice(1);
+      const items = this.commands.map((c) => ({ value: c.name, label: c.name })).filter((i) => [...word].every((ch) => i.value.toLowerCase().includes(ch)));
+      return items.length ? { items, prefix: text } : null;
+    },
+    applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
+      return { lines: [`/${item.value} `], cursorLine: 0, cursorCol: item.value.length + 2, note: this.basePath };
+    },
+    shouldTriggerFileCompletion() { return true; },
+  };
+  let known;
+  const wrapped = wrapSlashProvider(base, (names) => { known = names; });
+  assert.deepEqual([...known].sort(), ["exit", "mcp__powerbi__RunDAXQueryWithMetrics", "settings", "setup-project", "skill:docs"], "the command names come from Pi's provider");
+  const suggest = async (text) => wrapped.getSuggestions([text], 0, text.length, {});
+  assert.equal(await suggest("/xit"), null, "a word that starts no command shows no list, so Enter cannot apply a fuzzy pick");
+  assert.equal(await suggest("/dcs"), null, "fuzzy-only matches hide the list");
+  assert.deepEqual((await suggest("/exit")).items.map((i) => i.value), ["exit", "mcp__powerbi__RunDAXQueryWithMetrics"], "an exact command leads its list; the fuzzy rest follows");
+  assert.deepEqual((await suggest("/se")).items.map((i) => i.value)[0], "settings", "a prefix keeps Pi's order among the prefix matches");
+  assert.deepEqual((await suggest("/doc")).items.map((i) => i.value)[0], "skill:docs", "a skill answers to its bare name");
+  assert.deepEqual((await suggest("@fi")).items.map((i) => i.value), ["file.sql"], "file completion is untouched");
+  assert.equal(await suggest("/settings arg"), null, "argument completion is the base provider's answer");
+  assert.equal(wrapped.applyCompletion(["/ex"], 0, 3, { value: "exit" }, "/ex").note, "/work", "other members are forwarded bound to the base provider");
+  assert.equal(wrapped.shouldTriggerFileCompletion(), true);
+  assert.equal(wrapped.basePath, "/work");
+  assert.deepEqual(filterSlashItems([{ value: "b" }, { value: "a" }], ""), [{ value: "b" }, { value: "a" }], "an empty word keeps the whole list");
+  assert.equal(unknownSlashCommand("/xit", known), "xit");
+  assert.equal(unknownSlashCommand("/exit", known), undefined);
+  assert.equal(unknownSlashCommand("/docs", known), undefined, "a skill's bare name is known");
+  assert.equal(unknownSlashCommand("/tmp/x is full", known), undefined, "a path is text");
+  assert.equal(unknownSlashCommand("/x.y", known), undefined, "a dotted token is text");
+  assert.equal(unknownSlashCommand("/xit now", known), "xit", "arguments do not make a command known");
+  assert.equal(unknownSlashCommand("/xit", new Set()), undefined, "no provider seen (the window): passive");
+
+  // The input hook: the provider wrapper fills the known names on session_start.
+  const notices = [];
+  const editor = [];
+  let wrapper;
+  const ctx3 = {
+    cwd: "/work/devops",
+    hasUI: true,
+    ui: {
+      setTitle() {},
+      setHeader() {},
+      setFooter() {},
+      setWorkingMessage() {},
+      setWorkingIndicator() {},
+      addAutocompleteProvider(factory) { wrapper = factory; },
+      setEditorText(text) { editor.push(text); },
+      notify(message, level) { notices.push({ message, level }); },
+    },
+    sessionManager: { getSessionName: () => undefined },
+  };
+  await handlers.get("session_start")({}, ctx3);
+  assert.ok(wrapper, "session_start registers the slash provider wrapper");
+  wrapper(base);
+  const input = (text, source = "interactive") => handlers.get("input")({ type: "input", text, source }, ctx3);
+  assert.deepEqual(await input("/exit"), { action: "continue" }, "a known command passes");
+  assert.deepEqual(await input("hello /xit"), { action: "continue" }, "ordinary text passes");
+  assert.deepEqual(await input("/xit"), { action: "handled" }, "an unknown command is held");
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.ok(editor.includes("/xit"), "the held text is put back in the editor");
+  assert.match(notices.at(-1).message, /Unknown command \/xit/);
+  assert.equal(notices.at(-1).level, "warning");
+  assert.deepEqual(await input("/xit"), { action: "continue" }, "the same text sent again goes through as typed");
+  assert.deepEqual(await input("/xit"), { action: "handled" }, "a third time it is held again");
+  assert.deepEqual(await input("/xit", "rpc"), { action: "continue" }, "only the terminal's own typing is checked");
+  await handlers.get("session_shutdown")({}, ctx3);
+  assert.equal(commands.get("exit")?.description, "Quit coop (same as /quit)", "/exit is registered as a quit alias");
+  let shutdowns = 0;
+  await commands.get("exit").handler("", { shutdown() { shutdowns += 1; } });
+  assert.equal(shutdowns, 1, "/exit asks Pi to shut down");
+  console.log("  ✓ an unknown slash command never runs a fuzzy match on Enter; /exit quits");
 }

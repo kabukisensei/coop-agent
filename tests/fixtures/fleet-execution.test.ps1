@@ -106,8 +106,10 @@ sys.exit(0)
 # (exit 1, unlogged) so the failure-injection cases can fail a convergence unit;
 # everything else is logged, and `install [--force] ... <pkg>[==<ver>]` /
 # `upgrade <pkg>` record the package at that version (an unpinned spec and
-# `upgrade` land on 9.9.9, "latest"), so a convergence is verified by what pipx
-# then reports (the postcondition installed == pin).
+# `upgrade` land on 9.9.9, "latest"), `uninstall <pkg>` drops it, so a
+# convergence is verified by what pipx then reports (the postcondition installed
+# == pin). `environment --value PIPX_DEFAULT_PYTHON` answers with the machine's
+# real interpreter (#430: the one coop's tools belong on).
 $pipxStub = $stubPrelude + @'
 state = os.environ['PIPX_STATE']
 def read_state():
@@ -119,10 +121,17 @@ if args[:1] == ['list']:
     for line in read_state():
         print(line)
     sys.exit(0)
+if args[:3] == ['environment', '--value', 'PIPX_DEFAULT_PYTHON']:
+    print(os.environ.get('PIPX_STUB_DEFAULT_PYTHON', ''))
+    sys.exit(0)
 fail = os.environ.get('PIPX_FAIL_MATCH', '')
 if fail and fail in ' '.join(args):
     sys.exit(1)
 log('PIPX ' + ' '.join(args))
+if args[:1] == ['uninstall'] and len(args) > 1:
+    lines = [l for l in read_state() if not l.startswith('package ' + args[1] + ' ')]
+    with open(state, 'w', encoding='utf-8', newline='\n') as f:
+        f.write('\n'.join(lines) + ('\n' if lines else ''))
 if args[:1] in (['install'], ['upgrade']) and len(args) > 1:
     name, _, ver = args[-1].partition('==')
     if not ver:
@@ -151,6 +160,7 @@ function New-Machine {
   $env:LOCALAPPDATA = Join-Path $mHome 'AppData\Local'; $env:APPDATA = Join-Path $mHome 'AppData\Roaming'
   $env:COOP_DIR = Join-Path $d 'coop-dir'
   $env:PIPX_HOME = $pipxHome; $env:PIPX_BIN_DIR = Join-Path $d 'pipx-bin'
+  $env:PIPX_STUB_DEFAULT_PYTHON = $realPy
   $env:PI_CODING_AGENT_DIR = $agent; $env:COOP_AGENT_DIR = $agent
   $env:COOP_NO_ONBOARD = '1'; $env:COOP_NO_MODEL_LOGIN = '1'
   $env:MARKER = $marker
@@ -210,7 +220,7 @@ function Invoke-Fleet([string]$Script, [string[]]$ScriptArgs = @()) {
 $saved = Save-Env @('PATH', 'HOME', 'USERPROFILE', 'LOCALAPPDATA', 'APPDATA', 'COOP_DIR', 'PIPX_HOME', 'PIPX_BIN_DIR', 'PI_CODING_AGENT_DIR', 'COOP_AGENT_DIR',
            'COOP_NO_ONBOARD', 'COOP_NO_MODEL_LOGIN', 'MARKER', 'COOP_TEST_STUB_PATH', 'COOP_FABRIC_PYTHON', 'PIPX_FAIL_MATCH', 'COOP_TEST_DRIVER_MISSING',
            'COOP_RELEASE_MANIFEST', 'COOP_SKIP_AZ', 'NO_COLOR',
-           'PYTHONPATH', 'PYTHONHOME', 'PIPX_STATE')
+           'PYTHONPATH', 'PYTHONHOME', 'PIPX_STATE', 'PIPX_STUB_DEFAULT_PYTHON')
 $script:priorPath = $env:PATH
 try {
   # A plain copy of the tree, no .git (dot entries other than the bundled .coop
@@ -382,6 +392,35 @@ try {
   if ($missing.Count -eq 0) { Ok 'update installs missing manifest-pinned pipx tools' } else { Ko "update did not install missing $($missing -join ', ')" (Get-Calls $m6) }
   if (Test-Call $m6 '^PIPX install --python .+ ms-fabric-cli==1\.7\.0') { Ok 'update installs a missing Fabric CLI with an explicit supported bootstrap Python' } else { Ko 'update did not select a supported bootstrap Python for the missing Fabric CLI' (Get-Calls $m6) }
   if (Test-Call $m6 '^PIPX install --force ') { Ko 'update force-reinstalled a tool that was simply missing' (Get-Calls $m6) } else { Ok 'a missing tool is installed, not force-reinstalled' }
+
+  # --- 9. UPDATE moves a tool built on another Python onto coop's (#430) ----------
+  # coop-data-doc is at its pin, but its environment's pyvenv.cfg names another
+  # interpreter (a hand `pipx install` from a shell whose pipx ran on a different
+  # Python). Version alone is no longer convergence: the environment is removed
+  # and the tool installed again with --python <coop's>, where coop's Python is
+  # what pipx reports as PIPX_DEFAULT_PYTHON (the stub answers the real one).
+  $m7 = New-Machine 'wrong-python' -HonestPi $false -PipxList @('package coop-data-doc 1.4.2', 'package ms-fabric-cli 1.7.0') -LogPi $false
+  $otherVenv = Join-Path (Join-Path $m7.Dir 'pipx-home') 'venvs\coop-data-doc'
+  New-Item -ItemType Directory -Force -Path $otherVenv | Out-Null
+  $otherHome = if ($isWindowsHost) { 'C:\Users\someone\AppData\Local\Programs\Python\Python312' } else { '/opt/other-python/bin' }
+  [System.IO.File]::WriteAllText((Join-Path $otherVenv 'pyvenv.cfg'), "home = $otherHome`ninclude-system-site-packages = false`nversion = 3.12.4`nexecutable = $otherHome$(if ($isWindowsHost) { '\python.exe' } else { '/python3.12' })`n", $utf8)
+  $out = Invoke-Fleet 'update.ps1'
+  $calls7 = @((Get-Calls $m7) -split "`r?`n" | Where-Object { $_ -match '^PIPX (uninstall|install) ' })
+  $pyPattern = [regex]::Escape($realPy)
+  if (-not (Test-CallLiteral $m7 'PIPX uninstall coop-data-doc')) { Ko 'update left a coop-data-doc built on another Python in place (no uninstall)' ($out + "`n" + (Get-Calls $m7)) }
+  elseif (-not (Test-Call $m7 ('^PIPX install --python ' + $pyPattern + ' coop-data-doc==1\.4\.2$'))) { Ko "update did not reinstall coop-data-doc on coop's Python with the pin" ($out + "`n" + (Get-Calls $m7)) }
+  elseif (@($calls7 | Where-Object { $_ -match 'uninstall coop-data-doc' }).Count -ne 1 -or ($calls7.IndexOf(@($calls7 | Where-Object { $_ -match 'uninstall coop-data-doc' })[0]) -gt $calls7.IndexOf(@($calls7 | Where-Object { $_ -match 'install --python .+ coop-data-doc' })[0]))) { Ko 'the environment must go before the reinstall (pipx install --force keeps the old interpreter)' (Get-Calls $m7) }
+  elseif (Test-Call $m7 '^PIPX install --force coop-data-doc') { Ko 'a wrong-Python tool was force-reinstalled (that keeps the old interpreter)' (Get-Calls $m7) }
+  elseif (-not $out.Contains("coop-data-doc 1.4.2 reinstalled on coop's Python $realPy (it was on ")) { Ko 'update did not say the tool moved to coop''s Python' $out }
+  elseif ($out.Contains('failed to reinstall coop-data-doc') -or $out.Contains('could not remove coop-data-doc')) { Ko "the wrong-Python reinstall counted as a failure (rc=$rc)" $out }
+  else { Ok "update removes a tool built on another Python and installs it again on coop's (#430)" }
+  if (Test-Call $m7 '^PIPX (uninstall|install) .*ms-fabric-cli') { Ko 'the Fabric CLI, built on this machine''s own Python, was reinstalled' (Get-Calls $m7) } else { Ok 'a tool whose environment is on coop''s Python is left alone' }
+  # A second update is a no-op: the reinstalled environment is now on coop's Python.
+  $venvDir = Join-Path (Join-Path $m7.Dir 'pipx-home') 'venvs\coop-data-doc'
+  [System.IO.File]::WriteAllText((Join-Path $venvDir 'pyvenv.cfg'), "home = $(Split-Path -Parent $realPy)`nversion = 3.12.4`nexecutable = $realPy`n", $utf8)
+  Reset-Calls $m7
+  $out = Invoke-Fleet 'update.ps1'
+  if (Test-Call $m7 '^PIPX (uninstall|install) .*coop-data-doc') { Ko 'a tool now on coop''s Python was reinstalled again' (Get-Calls $m7) } else { Ok 'once on coop''s Python the tool is converged (offline no-op)' }
 }
 finally {
   Pop-Location

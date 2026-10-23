@@ -23,9 +23,11 @@ also exports the two env vars below.
 coop-powerline renders its own footer in plain text + common Unicode (no
 Nerd Font glyphs):
 
-- **left** — `⬢ Cooptimize · <session> · <branch>` (the honeycomb in navy,
-  `Cooptimize` in lime, the session name when one is set by `/name` or the
-  automatic naming extension, the current git branch dimmed);
+- **left** — `⬢ Cooptimize v0.38.5 · <session> · <branch>` (the honeycomb in
+  navy, `Cooptimize` in lime, the running coop version dimmed (`COOP_VERSION`
+  from `bin/coop.ps1`, else the `VERSION` file; ` dev` marks a git checkout),
+  the session name when one is set by `/name` or the automatic naming
+  extension, the current git branch dimmed);
 - **right** — `<model> · ctx N% · tokens · $cost · <plan usage limits>`: the
   active model id, the context-window usage percent, token totals
   (`input>output`), and the running cost — all read from the session, so it
@@ -77,11 +79,28 @@ at 140 ms per frame.
 ### Terminal tab title
 
 Via `ctx.ui.setTitle`, the tab reads `coop - <folder>` or
-`coop - <session> - <folder>` instead of Pi's `π` title. The extension reapplies
-the title after Pi's startup package check and whenever a session is renamed or
-the agent runs. Terminal tab icons are owned by the terminal profile; the Coop
-Windows shortcuts use `themes/coop.ico`, while an already-open PowerShell profile
-keeps its configured icon.
+`coop - <session> - <folder>` instead of Pi's `π` title. Pi restores its own
+title after binding the extensions (startup and every `/new`) and after its
+Windows package check, and a child console process a tool runs (`npm config get
+cache`) leaves its own title behind when it exits, so the extension reasserts
+the title on a short schedule after `session_start`, at every turn and tool
+boundary, and on a 15-second heartbeat while a terminal is attached (the window
+owns its own title). Terminal tab icons are owned by the terminal profile; the
+Coop Windows shortcuts use `themes/coop.ico`, while an already-open PowerShell
+profile keeps its configured icon.
+
+### Slash-command safety
+
+Pi's editor applies the autocomplete list's selected item when Enter is pressed
+on `/word` and submits it, so a mistyped or unknown command ran the list's
+closest fuzzy match (`/exit` once ran an MCP prompt). The extension wraps Pi's
+autocomplete provider: the list shows only while `word` is the start of a
+command name (those first, the fuzzy rest after them), so Enter never applies a
+fuzzy pick; an unknown `/word` shows no list, is held in the editor with a
+notice instead of going to the model, and goes through as text when sent again.
+The command names are Pi's own (built-ins, prompt templates, extension commands,
+skills). In the coop window Pi's RPC mode has no autocomplete provider, so the
+hook stays passive there.
 
 ## Commands
 
@@ -91,13 +110,15 @@ keeps its configured icon.
   - `/coop-vibe all` draws from every set, including `coop-internal` (the default rotation).
 - **`/coop-splash`** — re-show the splash header (handy after the screen
   scrolls or clears).
+- **`/exit`** — quit coop, the same as Pi's `/quit` (people type it).
 
 ## Environment variables
 
-Both are set by `bin/coop.ps1`; set them yourself if you load the extension directly.
+All are set by `bin/coop.ps1`; set them yourself if you load the extension directly.
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
+| `COOP_VERSION` | The running coop version shown in the footer. | the `VERSION` file at the repo root |
 | `COOP_VIBES_DIR` | Directory of `*.txt` vibe sets. | `<repo>/vibes` |
 | `COOP_SPLASH_FILE` | Path to the splash ANSI art. | `assets/splash.ansi` (next to `index.ts`) |
 

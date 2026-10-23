@@ -98,7 +98,7 @@ show all of it. Task logs stay in the repository.
      `COOP_SPLASH_FILE` are exported for it). coop does **not** use a third-party
      powerline footer (pi-powerline-footer was removed: its welcome overlay
      couldn't be disabled, Nerd Font glyphs showed as `?`, and it duplicated the
-     bar). The footer shows `⬢ Cooptimize · <branch>` on the left and
+     bar). The footer shows `⬢ Cooptimize v<version> · <branch>` on the left and
      `<model> · ctx N% · tokens · $cost · <plan usage limits>` on the right, in
      plain text + common Unicode (no Nerd Font glyphs). It surfaces other
      extensions' status text (e.g. pi-better-openai's plan usage limits /

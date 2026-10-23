@@ -213,3 +213,56 @@ repository once, or run `coop project home <folder>`. A Warehouse write refused 
 **Verify.** `coop doctor` shows `fabric-sqlendpoint registered` and a
 `SELECT TOP 1 1` runs.
 
+
+## 7. A tool is at its pin but on the wrong Python (`coop doctor`: `not coop's Python`)
+
+**Symptom.** `coop doctor` reports, for one of the pipx tools:
+
+```
+⚠ coop-sql-source-control environment runs on C:\Users\me\AppData\Local\Programs\Python\Python312\python.exe, not coop's Python (C:\Program Files\coop\resources\runtime\python\python.exe)
+```
+
+The tool works today, but it runs on an interpreter coop never installed or
+pinned: a wheel that needs coop's Python version, or that Python being removed,
+breaks it later with no warning.
+
+**Cause.** A `pipx install` run by hand from a shell whose `pipx` runs on
+another Python (the dev VM, 2026-10-23: `pipx install --force
+coop-sql-source-control==1.0.5` on pipx's own 3.12 while coop's runtime is
+3.13). Before 0.38.5 the convergence compared versions only, so the copy
+counted as converged. Note that `pipx install --force` keeps an environment's
+existing interpreter; only an uninstall followed by an install with `--python`
+moves it.
+
+**Fix.** Run `coop update` (the window's launch does the same). For every pipx
+tool it reads the environment's `pyvenv.cfg` and, when the interpreter is not
+coop's (the window package's bundled Python, else the default of the pipx coop
+invokes; the Fabric CLI's own bootstrap interpreter for `ms-fabric-cli`),
+removes the environment and installs the pinned version again with
+`--python <coop's Python>`. The unit line reads
+`<tool> <version> reinstalled on coop's Python <path> (it was on <path>)`.
+
+**Verify.** `coop doctor` no longer shows the row, and
+
+```powershell
+$venvs = pipx environment --value PIPX_LOCAL_VENVS
+Get-Content (Join-Path $venvs "coop-sql-source-control\pyvenv.cfg")
+```
+
+names coop's interpreter in `home` (and `executable`).
+
+### A dev checkout's `coop update --edge` moves the shared account tools
+
+**Symptom.** After `coop update --edge` from a git checkout, the machine
+install's own `coop doctor` warns that Pi, `ms-fabric-cli` or `fabric-cicd` are
+newer than its manifest (`pi 1.4.0 is newer than manifest (1.2.0)`).
+
+**Cause.** A checkout and the installed coop on the same account share one set
+of account tools: the pipx environments, the global npm tools and Pi. `--edge`
+takes upstream latest for the checkout, so the machine install sees drift. That
+is expected on a dev VM.
+
+**Fix.** Run `coop update` (without `--edge`) from either the checkout or the
+installed coop to pin everything back to the release manifest; `coop update
+--edge` refuses to run from an installed coop, so only a checkout can move the
+tools past the pins.
