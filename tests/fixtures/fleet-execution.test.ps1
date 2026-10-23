@@ -155,6 +155,21 @@ sys.exit(0)
 '@
 # One fully isolated "machine": every location the fleet scripts can touch lives
 # under it, plus the stub bin that models the tools present on it.
+# The bootstrap interpreter the fleet scripts pick for the Fabric CLI on the
+# machine whose environment is current (PATH, LOCALAPPDATA, ProgramFiles): the
+# tree copy's own resolver, run in a child PowerShell so nothing of lib/common.ps1
+# lands in this fixture's scope. '' when it names none.
+function Get-MachineFabricPython {
+  $lib = Join-Path $root 'lib\common.ps1'
+  if (-not (Test-Path -LiteralPath $lib -PathType Leaf)) { return '' }
+  $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+  try {
+    $lines = @(& $psExe -NoProfile -NonInteractive -Command ". '$lib'; [string](Get-CoopFabricBootstrapPython)" 2>$null | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+    $resolved = if ($lines.Count) { $lines[-1] } else { '' }
+  } catch { $resolved = '' } finally { $ErrorActionPreference = $eap }
+  if ($resolved -and (Test-Path -LiteralPath $resolved -PathType Leaf)) { return $resolved }
+  return ''
+}
 function New-Machine {
   param([string]$Name, [string]$PiVersion = '1.2.0', [bool]$HonestPi = $true, [string[]]$PipxList = @(), [string]$FabVersion = '1.6.1', [bool]$LogPi = $true)
   $d = Join-Path $t "m-$Name"
@@ -201,15 +216,6 @@ function New-Machine {
   # A driver_missing runtime on Windows would reach `winget install
   # Microsoft.msodbcsql.18`; this machine's winget only logs and fails.
   $null = New-PyStub $bin 'winget' ($stubPrelude + "log('WINGET ' + ' '.join(args))`nsys.exit(1)`n")
-  # The Fabric CLI's pipx environment is a REAL (pip-less) venv of the real
-  # interpreter, so Get-CoopVenvPythonPath finds Scripts\python.exe on Windows
-  # and bin/python elsewhere; the fixture pyodbc on PYTHONPATH (set once below)
-  # answers its runtime probe.
-  $venv = Join-Path $pipxHome 'venvs\ms-fabric-cli'
-  & $realPy -m venv --without-pip $venv *> $null
-  if ($LASTEXITCODE -ne 0 -or -not ((Test-Path -LiteralPath (Join-Path $venv 'Scripts\python.exe')) -or (Test-Path -LiteralPath (Join-Path $venv 'bin/python')))) {
-    throw "could not create the Fabric venv fixture under $venv with $realPy"
-  }
   if ($isWindowsHost) {
     $env:PATH = $bin + $sep + $script:priorPath
   } else {
@@ -219,7 +225,22 @@ function New-Machine {
     # into one unusable segment, and the trailing copy keeps the stubs resolvable.
     $env:PATH = $bin + ':' + $psDir + ':/usr/bin:/bin:' + $bin
   }
-  return [pscustomobject]@{ Dir = $d; Bin = $bin; Agent = $agent; Marker = $marker; Home = $mHome; PipxState = $pipxState }
+  # The Fabric CLI's pipx environment is a REAL (pip-less) venv built on the
+  # interpreter the scripts themselves resolve for it on this machine
+  # (Get-CoopFabricBootstrapPython under the machine's PATH, as a real install
+  # would have built it; $realPy when it names none), so Get-CoopVenvPythonPath
+  # finds Scripts\python.exe on Windows and bin/python elsewhere, and the
+  # environment is on the Python the convergence expects (#430: a venv on any
+  # other interpreter is removed and built again). The fixture pyodbc on
+  # PYTHONPATH (set once below) answers its runtime probe.
+  $bootPy = Get-MachineFabricPython
+  if (-not $bootPy) { $bootPy = $realPy }
+  $venv = Join-Path $pipxHome 'venvs\ms-fabric-cli'
+  & $bootPy -m venv --without-pip $venv *> $null
+  if ($LASTEXITCODE -ne 0 -or -not ((Test-Path -LiteralPath (Join-Path $venv 'Scripts\python.exe')) -or (Test-Path -LiteralPath (Join-Path $venv 'bin/python')))) {
+    throw "could not create the Fabric venv fixture under $venv with $bootPy"
+  }
+  return [pscustomobject]@{ Dir = $d; Bin = $bin; Agent = $agent; Marker = $marker; Home = $mHome; PipxState = $pipxState; FabricPython = $bootPy }
 }
 # Rewrite what the stub pipx reports (a machine whose tool drifted after install).
 function Set-PipxList([object]$M, [string[]]$Lines) { [System.IO.File]::WriteAllText($M.PipxState, ($Lines -join "`n") + "`n", $utf8) }
