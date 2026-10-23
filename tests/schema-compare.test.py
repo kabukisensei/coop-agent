@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -212,9 +213,11 @@ order = [script.index(marker) for marker in (
     "ALTER TABLE [dbo].[Orders] ADD [Region] nvarchar(50) NULL;",
     "ALTER TABLE [dbo].[Orders] DROP COLUMN [Obsolete];",
     "ALTER TABLE [dbo].[Orders] ALTER COLUMN [Amount] decimal(18, 2) NULL;",
+    # a kind swap is a module like any other: it runs in dependency order with the
+    # views, before anything that could name it (#16), not after them all
+    "DROP TABLE [dbo].[Swapped];",
     "CREATE OR ALTER VIEW [dbo].[vw_Sales]",
     "CREATE OR ALTER VIEW [dbo].[vw_Top]",
-    "DROP TABLE [dbo].[Swapped];",
     "DROP PROCEDURE [dbo].[usp_Old];",
     "DROP TABLE [dbo].[Legacy];",
     "DROP SCHEMA [old];",
@@ -246,7 +249,7 @@ wh_script, wh = sc.render_script(dev, changes, source_name="dev", target_name="p
 assert "ALTER TABLE" not in wh_script, "one change no ALTER can make: the whole table is rebuilt"
 assert "Fabric Warehouse cannot change column [Amount] type decimal(18, 4) -> decimal(18, 2) in place." in wh_script
 assert "\n--CREATE TABLE [dbo].[Orders] (\n--    [OrderId] int NOT NULL,\n" in wh_script, "the source shape rides along, commented"
-assert wh_script.index("-- 4. After the manual table rebuilds above") < wh_script.index("CREATE OR ALTER VIEW [dbo].[vw_Sales]") < wh_script.index("CREATE OR ALTER VIEW [dbo].[vw_Top]")
+assert wh_script.index("-- 5. After the manual table rebuilds above") < wh_script.index("CREATE OR ALTER VIEW [dbo].[vw_Sales]") < wh_script.index("CREATE OR ALTER VIEW [dbo].[vw_Top]")
 assert "-- Run after the manual rebuild of dbo.Orders: names region, which the target has only after it." in wh_script
 assert "-- Follows view dbo.vw_Sales in this section." in wh_script
 assert wh["manual"] == 1 and wh["statements"] == 9 and wh["commented"] == 1, wh
@@ -887,6 +890,87 @@ with tempfile.TemporaryDirectory() as tmp:
         assert sc.compare({}, cwd=repo)["state"] == "setting_invalid", bad
     for bad in ({"commented": "yes"}, {"rebuild": "dim"}):
         assert sc.compare(bad, cwd=repo)["state"] == "input_invalid", bad
+
+# --- 2026-10-23 audit: #14 partial reads, #15 Lakehouse tables, #16 replacements ---------
+# #14: a repo file the reader did not read (over the size cap, unreadable, beyond the
+# file-count cap) may define any object: nothing missing on that side is a drop.
+with tempfile.TemporaryDirectory() as tmp:
+    repo_src, repo_tgt = Path(tmp) / "source", Path(tmp) / "target"
+    repo_src.mkdir()
+    repo_tgt.mkdir()
+    ddl = "CREATE TABLE dbo.Orders (id int NULL);\n"
+    (repo_src / "Orders.sql").write_text("--" + "x" * (src.MAX_FILE_BYTES + 10) + "\n" + ddl, encoding="utf-8")
+    (repo_src / "Other.sql").write_text("CREATE TABLE dbo.Other (id int NULL);\n", encoding="utf-8")
+    (repo_tgt / "Orders.sql").write_text(ddl, encoding="utf-8")
+    (repo_tgt / "Other.sql").write_text("CREATE TABLE dbo.Other (id int NULL);\n", encoding="utf-8")
+    (repo_tgt / "Schema.sql").write_text("CREATE SCHEMA stage;\n", encoding="utf-8")
+    partial, whole = sc.read_repo(repo_src), sc.read_repo(repo_tgt)
+    assert partial.truncated == ["files"] and any("never as removed" in n for n in partial.notes), partial.notes
+    audit_changes = sc.diff(partial, whole)
+    assert [(c["kind"], c["name"], c["action"]) for c in audit_changes] == [("table", "Orders", "unknown")], audit_changes
+    assert "stage" not in [c["schema"] for c in audit_changes], "an unread file may hold CREATE SCHEMA: no schema drop either"
+    assert [(c["name"], c["action"]) for c in sc.diff(whole, partial)] == [("Orders", "unknown")], "a partial target gets no false CREATE"
+    audit_script, audit_stats = sc.render_script(partial, audit_changes, source_name="repo", target_name="dev", target_kind="azure_sql", taken_at="x")
+    assert audit_stats["statements"] == 0 and audit_stats["manual"] == 1 and "\nDROP TABLE" not in audit_script
+    with mock.patch.object(src, "MAX_FILES", 1):
+        capped = sc.read_repo(repo_tgt)
+    assert capped.truncated == ["files"], capped.truncated
+    assert [(c["name"], c["action"]) for c in sc.diff(capped, whole) if c["action"] != "add"] == [("Other", "unknown")], "unread files never prove a drop"
+    (repo_src / "Orders.sql").write_text("-- nothing here\n", encoding="utf-8")
+    read_whole = sc.read_repo(repo_src)
+    assert read_whole.truncated == [] and ("table", "Orders", "drop") in [(c["kind"], c["name"], c["action"]) for c in sc.diff(read_whole, whole)], "a fully read repo still drops what is gone"
+
+# #15: every Lakehouse table mutation is a person's step; no CREATE/DROP TABLE is runnable
+lh_has, lh_empty, lh_view = sc.Catalog(), sc.Catalog(), sc.Catalog()
+lh_has.schemas = lh_empty.schemas = lh_view.schemas = {"dbo"}
+lh_has.tables[("dbo", "T")] = [sc.Column("id", "int", True, 1)]
+lh_view.modules[("dbo", "T")] = ("view", "CREATE VIEW dbo.T AS SELECT 1 AS id")
+for name, lh_src, lh_tgt in (("add", lh_has, lh_empty), ("drop", lh_empty, lh_has), ("view->table", lh_has, lh_view), ("table->view", lh_view, lh_has)):
+    for commented in (False, True):
+        for rebuild in ((), ("dbo",)):
+            lh_changes = sc.diff(lh_src, lh_tgt)
+            lh_records = sc.plan(lh_src, lh_changes, target_kind="fabric_lakehouse", rebuild_schemas=rebuild)
+            lh_sql, lh_stats = sc.render_script(lh_src, lh_changes, source_name="s", target_name="t", target_kind="fabric_lakehouse", taken_at="x", commented=commented, rebuild_schemas=rebuild)
+            assert lh_stats["statements"] == 0 and lh_stats["manual"] >= 1, (name, commented, rebuild, lh_stats)
+            assert all(r["manual"] for r in lh_records if r["kind"] == "table"), (name, lh_records)
+            assert not re.search(r"(?m)^(CREATE|DROP) TABLE", lh_sql) and "Lakehouse" in lh_sql, (name, lh_sql)
+lh_consumer = sc.Catalog()
+lh_consumer.schemas = {"dbo"}
+lh_consumer.tables[("dbo", "T")] = [sc.Column("id", "int", True, 1)]
+lh_consumer.modules[("dbo", "v")] = ("view", "CREATE VIEW dbo.v AS SELECT id FROM dbo.T")
+lh_view_record = next(r for r in sc.plan(lh_consumer, sc.diff(lh_consumer, lh_empty), target_kind="fabric_lakehouse") if r["name"] == "v")
+assert lh_view_record["section"] == 5 and any("manual change of table dbo.T" in n for n in lh_view_record["notes"]), lh_view_record
+for kind in ("azure_sql", "fabric_warehouse"):
+    other_sql, other_stats = sc.render_script(lh_has, sc.diff(lh_has, lh_empty), source_name="s", target_name="t", target_kind=kind, taken_at="x")
+    assert "\nCREATE TABLE [dbo].[T]" in other_sql and other_stats["manual"] == 0, kind
+
+# #16: a module replacing another kind runs in dependency order, before its consumers
+rp_src, rp_tgt = sc.Catalog(), sc.Catalog()
+rp_src.schemas = rp_tgt.schemas = {"dbo"}
+rp_src.modules = {
+    ("dbo", "f"): ("function", "CREATE FUNCTION dbo.f() RETURNS int AS BEGIN RETURN 1 END"),
+    ("dbo", "v"): ("view", "CREATE VIEW dbo.v AS SELECT dbo.f() AS value"),
+}
+rp_tgt.modules = {("dbo", "f"): ("view", "CREATE VIEW dbo.f AS SELECT 1 AS value")}
+rp_changes = sc.diff(rp_src, rp_tgt)
+rp_records = sc.plan(rp_src, rp_changes, target_kind="azure_sql")
+assert [(r["object"], r["action"]) for r in rp_records] == [("dbo.f", "DROP + CREATE"), ("dbo.v", "CREATE")], rp_records
+rp_sql, rp_stats = sc.render_script(rp_src, rp_changes, source_name="s", target_name="t", target_kind="azure_sql", taken_at="x")
+assert rp_sql.index("DROP VIEW [dbo].[f];") < rp_sql.index("CREATE OR ALTER FUNCTION") < rp_sql.index("CREATE OR ALTER VIEW dbo.v"), rp_sql
+assert (rp_stats["statements"], rp_stats["destructive"], rp_stats["manual"]) == (3, 1, 0), rp_stats
+assert "Follows the replacement of dbo.f (DROP + CREATE, destructive)" in rp_sql
+rp_off, rp_off_stats = sc.render_script(rp_src, rp_changes, source_name="s", target_name="t", target_kind="azure_sql", taken_at="x", commented=True)
+assert "--DROP VIEW [dbo].[f];" in rp_off and (rp_off_stats["statements"], rp_off_stats["commented"]) == (1, 2), rp_off_stats
+rp2_src, rp2_tgt = sc.Catalog(), sc.Catalog()
+rp2_src.schemas = rp2_tgt.schemas = {"dbo"}
+rp2_src.tables[("dbo", "t")] = [sc.Column("id", "int", True, 1)]
+rp2_src.modules[("dbo", "r")] = ("view", "CREATE VIEW dbo.r AS SELECT id FROM dbo.t")
+rp2_tgt.modules[("dbo", "t")] = ("view", "CREATE VIEW dbo.t AS SELECT 1 AS id")
+rp2_sql, _ = sc.render_script(rp2_src, sc.diff(rp2_src, rp2_tgt), source_name="s", target_name="t", target_kind="azure_sql", taken_at="x")
+assert rp2_sql.index("DROP VIEW [dbo].[t];") < rp2_sql.index("CREATE TABLE [dbo].[t]") < rp2_sql.index("CREATE OR ALTER VIEW dbo.r"), "a view replaced by a table goes with the new tables"
+assert "Objects replaced by another kind" not in rp2_sql
+rp_report = sc.render_report(rp_changes, source_name="s", target_name="t", taken_at="x", sides={"source": sc._side_summary(rp_src, {"database": "s"}), "target": sc._side_summary(rp_tgt, {"database": "t"})}, notes=[], records=rp_records)
+assert rp_report.index("dbo.f") < rp_report.index("dbo.v"), "the report follows the script's order"
 
 # --- stdin contract ---------------------------------------------------------------------
 with mock.patch.object(sc, "execute", return_value=sq.result("ok", path="x")) as run:

@@ -259,6 +259,9 @@ class ParsedSource:
         self.files_without_objects = 0
         self.notes: list[str] = []
         self.truncated = False
+        # Files the reader did not read (over the size cap, unreadable): what they
+        # define is unknown, so this side proves no object absent (#14).
+        self.unread: list[str] = []
         # Tables with a column item the reader could not read: their column list is
         # not complete, so it cannot prove a column absent.
         self.incomplete: set[tuple[str, str]] = set()
@@ -422,17 +425,20 @@ def parse_folder(folder: Path) -> ParsedSource:
         files = files[:MAX_FILES]
         parsed.truncated = True
     for path in files:
+        where = path.relative_to(folder).as_posix()
         try:
             if path.stat().st_size > MAX_FILE_BYTES:
-                parsed.notes.append(f"{path.relative_to(folder).as_posix()} is larger than the file cap and was skipped")
+                parsed.notes.append(f"{where} is larger than the file cap and was not read")
+                parsed.unread.append(where)
                 continue
             text = path.read_text(encoding="utf-8-sig", errors="replace")
-        except OSError:
+        except OSError as exc:
+            parsed.notes.append(f"{where} could not be read ({exc.__class__.__name__}) and was not read")
+            parsed.unread.append(where)
             continue
         parsed.files += 1
         found = False
         file_key = sqlsc_file_key(path, script_dirs) if script_dirs else None
-        where = path.relative_to(folder).as_posix()
         for batch in split_batches(text.replace("\r\n", "\n").replace("\r", "\n")):
             if parse_batch(batch, parsed, file_key if not found else None, where):
                 found = True
@@ -450,4 +456,6 @@ def describe(parsed: ParsedSource) -> list[str]:
         notes.append(f"{parsed.files_without_objects} of {parsed.files} .sql file(s) create no schema, table, view, procedure or function and were ignored")
     if parsed.truncated:
         notes.append(f"more than {MAX_FILES} .sql files; only the first {MAX_FILES} in path order were read")
+    if parsed.truncated or parsed.unread:
+        notes.append("not every .sql file was read, so an object this side lacks compares as unknown, never as removed")
     return notes

@@ -36,6 +36,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `get-latest` instead of being committed over a teammate's pushed edit. With
   coop's own pull first, sqlsc's pull was a no-op and saw no incoming files.
   The tool's answer now names what sqlsc pulled and brought in.
+- **`schema_compare` (coop's native mirror, matching coop-schema-compare's
+  fixes for its #14, #15 and #16):** a repo side that was not read whole (more
+  `.sql` files than the limit, an oversized or unreadable file) no longer proves
+  an object or schema absent: it compares as `unknown`, the script never drops
+  it and the notes name the skipped files; a Lakehouse SQL endpoint never gets a
+  runnable `CREATE TABLE` or `DROP TABLE` (a new, removed or replaced table
+  there is a manual note like every other table change); and an object replaced
+  by another kind is dropped and recreated inside its new kind's section, in
+  dependency order with the modules that use it, instead of after them. The
+  separate "objects replaced by another kind" section is gone.
 
 ### Changed
 
