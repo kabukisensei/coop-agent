@@ -24,10 +24,10 @@ TRUNCATE TABLE fact.Sales;
 Gather source data with CTEs or temporary tables. Preserve intermediate field names according to SQL Conventions.
 
 ```sql
-FROM d365fo.salesline AS sl
-INNER JOIN d365fo.salestable AS st
-    ON sl.dataareaid = st.dataareaid
-        AND sl.salesid = st.salesid
+FROM d365fo.salesline            AS sl
+    INNER JOIN d365fo.salestable AS st
+        ON sl.dataareaid = st.dataareaid
+        AND sl.salesid   = st.salesid
 ```
 
 ## Transformation standards
@@ -35,8 +35,8 @@ INNER JOIN d365fo.salestable AS st
 Resolve keys, joins, filters, and business transformations in the stored procedure. Apply target field names in the final write projection.
 
 ```sql
-INNER JOIN dim.Customer AS cust
-    ON sl.dataareaid = cust.dataareaid
+    INNER JOIN dim.Customer AS cust
+        ON sl.dataareaid   = cust.dataareaid
         AND sl.custaccount = cust.customerid
 ```
 

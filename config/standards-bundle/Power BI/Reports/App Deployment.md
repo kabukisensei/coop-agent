@@ -24,3 +24,13 @@ Organize workspaces by department or user group. The workspace represents the au
 ### App audience defaults
 
 Avoid dividing an app into Power BI audiences; the management overhead is rarely worth it.
+
+### App access defaults
+
+Create one Microsoft Entra ID security group for each Power BI app and use that group to manage app access.
+
+## Open decisions (not standards)
+
+- Security-group naming and ownership.
+- How membership is requested, approved, reviewed, and removed.
+- Whether the app security group also grants workspace access.

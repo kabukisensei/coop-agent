@@ -38,8 +38,3 @@ Use these folders when the fields exist:
 | Attributes | Report-facing fields |
 | Keys | All fields hidden |
 | Numbers | All fields hidden |
-
-## Open decisions (non-normative)
-
-- A universal singular/plural naming rule is not defined; `Ledger Transaction Attributes` and `Ledger Transactions` are the approved example.
-- Whether one-row measure tables must remain disconnected is not explicitly defined. Do not infer a relationship requirement from the phrase "one-row table."

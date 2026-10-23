@@ -524,8 +524,10 @@ counts; the snapshot side adds `taken_at`), `counts` (`total`, `add`, `alter`,
 (`objects`, `statements` to run, `commented` out, `destructive` objects, `manual`
 objects, `batches` including the comment-only note batches), `choices`, `notes` (an unreadable `sys.sql_modules` or a capped list on
 either side, named by side), `complete` (false when a side was not read whole: a
-list cut at the cap or objects the snapshot skipped; an object such a side may
-hold is an `unknown` change, never an add or a drop) and `path`: the folder
+list cut at the cap, objects the snapshot skipped, or a repo with more `.sql`
+files than the limit or an oversized or unreadable file, each named in `notes`;
+an object such a side may hold is an `unknown` change, never an add or a drop)
+and `path`: the folder
 `.coop/schema-compare/<source>-to-<target>/` beside the contract, holding
 `report.md` (the same table for people) and `deploy.sql`. The result line tells the
 model that the list is the whole diff (report.md repeats it, so it is not read)
@@ -548,8 +550,10 @@ across kinds (a function that reads a view follows the view; `schema.name`
 references resolve exactly, a bare name only when one changed object has it, and
 comments and string literals name nothing; ties by kind then name; objects that
 name each other in a circle stay in place with a note), modules that wait on a
-manual table rebuild, objects replaced by another kind, removals (procedures,
-views, functions, tables, schemas) and what needs a person. Definitions compare
+manual table rebuild, removals (procedures, views, functions, tables, schemas)
+and what needs a person. An object replaced by another kind (a view that became
+a table, or the reverse) is dropped and recreated inside its new kind's section,
+in that dependency order, so the modules that use it follow it. Definitions compare
 with whitespace folded outside string literals and quoted names, a leading
 comment banner dropped and `CREATE`, `CREATE OR ALTER` and `ALTER` alike; the
 script turns the first `CREATE` after any banner into `CREATE OR ALTER`, and a
@@ -570,8 +574,9 @@ a type, nullability or identity change, a `NOT NULL` or identity column added, o
 a column reorder is a `MANUAL REBUILD` note with the source shape commented out
 (the preview `ALTER COLUMN` is not used). Azure SQL and SQL Server get `ALTER
 TABLE ... ADD`, `DROP COLUMN` and `ALTER COLUMN`; identity and column order are
-rebuild notes there too. A Lakehouse SQL analytics endpoint cannot change a table
-with T-SQL: its table changes are notes. A table in a `rebuild` schema is written
+rebuild notes there too. A Lakehouse SQL analytics endpoint cannot create, change
+or drop a table with T-SQL: every table change there, a new, removed or
+replaced table included, is a note and never a runnable statement. A table in a `rebuild` schema is written
 as `DROP TABLE IF EXISTS` then the full `CREATE TABLE` when it changed (never when
 it did not), its note saying the policy chose it, that the new table is empty and
 that keeping the `IDENTITY` property does not keep key values. An identity column
@@ -650,7 +655,7 @@ two schemas, `sql_impact` the live dependency trace and `data_doc` the lineage.
 | `release` | `sqlsc unlock objects --as coop-agent:<user>` (coop's own only, never `--force`) | the lock table |
 | `script` | `sqlsc status` first; then `sqlsc script -t dev [objects]`: dev's changed objects into the repo files. Refused (`conflict`) for any object changed on both sides since the last sync | repo files |
 | `get_latest` | `sqlsc get-latest -t dev --dry-run [objects]`; with `apply=true` it runs (asks). sqlsc keeps objects the database changed (`kept`) | the dev database |
-| `commit` | the guardrails `git fetch` the branch's upstream before asking (a fetch failure or a branch that cannot fast-forward blocks the commit before any prompt; no upstream: the commit stays local, said in the prompt), the tool runs `git pull --ff-only` after the approval (`behind` if it fails), then `sqlsc commit -t dev --as coop-agent:<user> -m <message> [objects]` (asks every time; never `--push` or `--force`). sqlsc leaves objects a teammate has checked out or the repo changed (`skipped`, `held_back`). After a commit, `sqlsc unlock --as coop-agent:<user>` for the committed objects releases coop's own checkouts, like a person's Check in (a teammate's stay) | the repository's history (one commit on the current branch, not pushed) and the lock table |
+| `commit` | the guardrails `git fetch` the branch's upstream before asking (a fetch failure or a branch that cannot fast-forward blocks the commit before any prompt; no upstream: the commit stays local, said in the prompt), the tool repeats that fetch-only check right before running (`behind` if the branch can no longer fast-forward) and never pulls the working tree itself, then `sqlsc commit -t dev --as coop-agent:<user> -m <message> [objects]` (asks every time; never `--push` or `--force`). sqlsc fast-forwards the branch, records which object files the pull brought in, and leaves objects a teammate has checked out, that the repo changed, or that the pull just brought in (`skipped`, `held_back`); a pull by coop first would hide those incoming files from sqlsc (#435). After a commit, `sqlsc unlock --as coop-agent:<user>` for the committed objects releases coop's own checkouts, like a person's Check in (a teammate's stay) | the repository's history (one commit on the current branch, not pushed) and the lock table |
 | `init` | where no `sqlsc.yml` exists: `git init` when the folder is not a repository, then `sqlsc init [--schema <name>]... [--exclude-schema <name>]...` in the project's only SQL repository (or the git repository holding the folder); asks once, blocked headlessly, audited. The result names the next steps and, when missing, the project-file line commits need (`agent_allowed_to_commit: ["database/**"]` under `repositories.<name>`), which the first `status` of a session and `/sql-source on` name too | the repository folder (`sqlsc.yml`, `.gitattributes`, `.gitignore`) |
 | `deploy` | `sqlsc deploy -t <dev\|test> --ref <ref> --dry-run`; with `apply=true` it runs (asks every time). Never `--allow-drops` or `--confirm` | the dev or test database, and `sqlsc.Deployment` there |
 

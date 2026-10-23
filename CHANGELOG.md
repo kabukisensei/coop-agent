@@ -28,6 +28,44 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   --force` keeps the old interpreter). `coop doctor` shows the mismatch as a
   warning. Troubleshooting entry 7 covers it and the shared account tools a
   dev checkout's `update --edge` moves.
+- **`sql_source commit` no longer pulls the working tree before sqlsc runs
+  (#435).** coop still fetches and checks that the branch can fast-forward
+  (before the approval and again right before the commit), but the pull itself
+  is sqlsc's: `sqlsc commit` fast-forwards and records which object files came
+  in, so an object a fresh clone has no sync record for is held back for
+  `get-latest` instead of being committed over a teammate's pushed edit. With
+  coop's own pull first, sqlsc's pull was a no-op and saw no incoming files.
+  The tool's answer now names what sqlsc pulled and brought in.
+- **`schema_compare` (coop's native mirror, matching coop-schema-compare's
+  fixes for its #14, #15 and #16):** a repo side that was not read whole (more
+  `.sql` files than the limit, an oversized or unreadable file) no longer proves
+  an object or schema absent: it compares as `unknown`, the script never drops
+  it and the notes name the skipped files; a Lakehouse SQL endpoint never gets a
+  runnable `CREATE TABLE` or `DROP TABLE` (a new, removed or replaced table
+  there is a manual note like every other table change); and an object replaced
+  by another kind is dropped and recreated inside its new kind's section, in
+  dependency order with the modules that use it, instead of after them. The
+  separate "objects replaced by another kind" section is gone.
+- **Picking the newest sol now outranks an older saved Pi default (#432).**
+  Choosing the newest sol in the terminal, the window or the phone used to
+  remove `coop-model.json`, so a Pi default saved before the newest-sol rule
+  (`gpt-6-luna`, `coop/auto`) came back at the next start. The file now records
+  "follow sol": the next start and `/new` take the newest sol and advance with
+  the next release. With no coop-era choice at all, Pi's saved non-sol default
+  is kept as before; launch flags and `enabledModels` still win.
+- **Bundled standards refreshed to the wiki's current `main` (#434)** so first
+  runs and offline machines read the October SQL comment rules (line comments
+  only, no block comments) with the other changes since October 1; articles the
+  wiki removed are gone from the copy. `coop release` now compares the bundle's
+  revision with the wiki's branch head before tagging and stops on a stale
+  bundle (`bash` and PowerShell alike; an unreachable wiki warns and asks).
+- **Fleet fixture: the honest pipx stub reads a local wheel spec (#433).**
+  The sourced-tool path hands pipx the release wheel's path, which the stub
+  recorded as a package named after the path at 9.9.9, failing the convergence
+  postcondition in CI. The stub now reads the distribution and version from the
+  wheel's file name, and every fixture machine's wheel cache carries a synthetic
+  wheel named after the manifest's asset with the copied manifest's hash pointed
+  at it, so the wheel branch runs offline, with no token, on every platform.
 
 ### Changed
 

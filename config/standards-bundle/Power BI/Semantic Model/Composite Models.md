@@ -9,26 +9,23 @@ status: active
 ---
 # Composite Models
 
+A composite model combines content from existing semantic models. One model supplies the shared foundation; secondary models extend it with additional facts.
+
 ## Standards
 
 ### Composite model structure standards
 
 - Designate exactly one Primary model in each composite-model family.
-- Take shared dimensions from Primary; add facts from secondary models afterward.
+- Add the Primary model first and each secondary model afterward.
+- Take shared dimensions from Primary; add facts from secondary models.
 - Keep imported table names unchanged.
-
-`Finance + Project Accounting`: Finance is Primary; Project Accounting adds facts. For SIOP, Inventory is Primary and Project Management adds facts.
 
 ### Large dimension validation standards
 
-When a large or high-cardinality dimension such as Voucher is required, validate model size, memory use, and successful deployment before adopting it.
+When a large or high-cardinality dimension is required, validate model size, memory use, and successful deployment before adopting it.
 
 ## Default positions
 
 ### Composite dimension defaults
 
-Exclude large or high-cardinality dimensions such as Voucher by default; they can cause model-size and memory errors.
-
-## Open decisions (non-normative)
-
-Whether Production participates in SIOP.
+Exclude large or high-cardinality dimensions by default; they can cause model-size and memory errors.

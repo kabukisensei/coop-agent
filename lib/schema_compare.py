@@ -461,6 +461,10 @@ def read_repo(folder: Path) -> Catalog:
         catalog.tables[key] = [Column(name, type_text, nullable, position, name.lower() in identity) for position, (name, type_text, nullable) in enumerate(columns, 1)]
     catalog.modules = dict(parsed.modules)
     catalog.incomplete = set(parsed.incomplete)
+    if parsed.truncated or parsed.unread:
+        # A file the reader did not read may define any schema or object: this side
+        # cannot prove an absence, so nothing missing here is scripted as a drop (#14).
+        catalog.truncated.append("files")
     catalog.notes = sql_source.describe(parsed)
     return catalog
 
@@ -518,10 +522,11 @@ def diff(source: Catalog, target: Catalog) -> list[dict[str, Any]]:
     src_schemas = {s for s in source.schemas if s.lower() not in INTRINSIC_SCHEMAS}
     tgt_schemas = {s for s in target.schemas if s.lower() not in INTRINSIC_SCHEMAS}
     # A side whose list was cut, or that skipped objects, cannot prove an absence.
-    if "schemas" not in target.truncated:
+    # ("files": a repo side whose .sql files were not all read cannot prove an absence either, #14.)
+    if not {"schemas", "files"} & set(target.truncated):
         for schema in sorted(src_schemas - tgt_schemas, key=str.lower):
             changes.append(_change("schema", (schema, ""), "add"))
-    if "schemas" not in source.truncated:
+    if not {"schemas", "files"} & set(source.truncated):
         for schema in sorted(tgt_schemas - src_schemas, key=str.lower):
             changes.append(_change("schema", (schema, ""), "drop", destructive=True))
     for key in sorted(set(src_kinds) | set(tgt_kinds), key=lambda k: (k[0].lower(), k[1].lower())):
@@ -530,9 +535,14 @@ def diff(source: Catalog, target: Catalog) -> list[dict[str, Any]]:
             changes.append(_change(src_kind, key, "replace", f"a {tgt_kind} on the target, a {src_kind} on the source", destructive=True))
             continue
         missing_from = target if src_kind and not tgt_kind else source if tgt_kind and not src_kind else None
-        if missing_from is not None and ("objects" in missing_from.truncated or f"{key[0]}.{key[1]}".lower() in missing_from.skipped):
+        if missing_from is not None and ({"objects", "files"} & set(missing_from.truncated) or f"{key[0]}.{key[1]}".lower() in missing_from.skipped):
             side = "target" if missing_from is target else "source"
-            why = "its object list was cut at the compare cap" if "objects" in missing_from.truncated else "its snapshot skipped this object"
+            if "objects" in missing_from.truncated:
+                why = "its object list was cut at the compare cap"
+            elif "files" in missing_from.truncated:
+                why = "not every .sql file on that side was read (over the file cap, unreadable, or beyond the file count cap)"
+            else:
+                why = "its snapshot skipped this object"
             changes.append(_change(src_kind or tgt_kind or "", key, "unknown", f"not read on the {side} ({why}); compare by hand"))
             continue
         if src_kind and not tgt_kind:
@@ -677,11 +687,19 @@ SECTIONS = (
     (3, "Table changes"),
     (4, "Views, procedures and functions, in dependency order"),
     (5, "After the manual table rebuilds above"),
-    (6, "Objects replaced by another kind"),
+    # Section 6, "Objects replaced by another kind", is retired (#16): a module
+    # replacing another kind is ordered with the modules in 4 and 5, and a table
+    # replacing another kind goes with the new tables in 2.
     (7, "Removals"),
     (8, "For a person: not scripted"),
 )
 KIND_WORDS = {"schema": "SCHEMA", "table": "TABLE", "view": "VIEW", "procedure": "PROCEDURE", "function": "FUNCTION"}
+# A Lakehouse SQL analytics endpoint takes no table DDL at all: every table change
+# there (create, alter, drop, replace) is a person's step in the Lakehouse (#15).
+_LAKEHOUSE_TABLE_NOTE = (
+    "A Lakehouse SQL analytics endpoint cannot {verb} a table with T-SQL: {verb} the Delta table in the Lakehouse "
+    "(a notebook or a pipeline), then compare again. The statement below is the shape, commented out."
+)
 
 
 def _record(kind: str, key: tuple[str, str], detected: str, action: str, section: int, *, changes: list[str] | None = None, notes: list[str] | None = None, statements: list[str] | None = None, destructive: bool = False, manual: bool = False, safe: int = 0) -> dict[str, Any]:
@@ -763,11 +781,41 @@ def plan(source: Catalog, changes: list[dict[str, Any]], *, target_kind: str, re
     for c in changes:
         if c["kind"] == "schema" and c["action"] == "add":
             records.append(_record("schema", (c["schema"], ""), "add", "CREATE", 1, changes=["New on the target."], statements=[f"CREATE SCHEMA {_bracket(c['schema'])}"]))
+    lakehouse = target_kind == "fabric_lakehouse"
+    # Tables a person must create or replace by hand (a Lakehouse): a module that
+    # names one runs only after that manual step (#15).
+    manual_tables: set[tuple[str, str]] = set()
+    # Modules replaced by DROP + CREATE in the module section: a consumer that
+    # follows one is told so, because the replacement is destructive and may be
+    # commented out (#16).
+    replaced: set[tuple[str, str]] = set()
     for c in changes:
+        key = (c["schema"], c["name"])
         if c["kind"] == "table" and c["action"] == "add":
-            key = (c["schema"], c["name"])
             cols = source.tables[key]
-            records.append(_record("table", key, "add", "CREATE", 2, changes=[f"New on the target: {len(cols)} column(s)."], notes=[_identity_line(cols)], statements=[_render_table(cols, key)]))
+            if lakehouse:
+                manual_tables.add(key)
+                records.append(_record("table", key, "add", "MANUAL", 2, changes=[f"New on the target: {len(cols)} column(s)."], manual=True, notes=[
+                    _LAKEHOUSE_TABLE_NOTE.format(verb="create"), _identity_line(cols),
+                ], statements=[_render_table(cols, key)]))
+            else:
+                records.append(_record("table", key, "add", "CREATE", 2, changes=[f"New on the target: {len(cols)} column(s)."], notes=[_identity_line(cols)], statements=[_render_table(cols, key)]))
+        elif c["kind"] == "table" and c["action"] == "replace":
+            # Another kind on the target, a table on the source: the table goes with
+            # the new tables, before the modules that may name it (#16).
+            cols = source.tables[key]
+            statements = [f"DROP {_drop_word(_target_kind_of(c))} {_qualified(key)}", _render_table(cols, key)]
+            if lakehouse:
+                manual_tables.add(key)
+                records.append(_record("table", key, "replace", "MANUAL", 2, changes=[c["detail"]], manual=True, notes=[
+                    _LAKEHOUSE_TABLE_NOTE.format(verb="create"),
+                    f"Drop the target's {_target_kind_of(c)} on the SQL analytics endpoint first; the statements below are the shape, commented out.",
+                    _identity_line(cols),
+                ], statements=statements))
+            else:
+                records.append(_record("table", key, "replace", "DROP + CREATE", 2, changes=[c["detail"]], notes=[
+                    f"DESTRUCTIVE: drops the target's {_target_kind_of(c)} before creating the source's table.", _identity_line(cols),
+                ], statements=statements, destructive=True))
     for c in changes:
         if c["kind"] != "table" or c["action"] != "alter":
             continue
@@ -779,7 +827,7 @@ def plan(source: Catalog, changes: list[dict[str, Any]], *, target_kind: str, re
         if target_kind == "fabric_lakehouse":
             manual_rebuilds[key] = added
             records.append(_record("table", key, "alter", "MANUAL", 3, changes=details, manual=True, notes=[
-                "A Lakehouse SQL analytics endpoint cannot change a table with T-SQL: change the Delta table in the Lakehouse (a notebook or a pipeline), then compare again.",
+                _LAKEHOUSE_TABLE_NOTE.format(verb="change"),
                 _identity_line(cols),
             ], statements=[_render_table(cols, key)]))
         elif key[0].lower() in rebuild_set:
@@ -805,16 +853,31 @@ def plan(source: Catalog, changes: list[dict[str, Any]], *, target_kind: str, re
     definitions = {key: _as_named(definition, key) if definition else definition for key, (_kind, definition) in source.modules.items()}
     kinds = {key: kind for key, (kind, _definition) in source.modules.items()}
     by_key = {(c["schema"], c["name"]): c for c in changes if c["kind"] in MODULE_KINDS}
-    keys = [k for k, c in by_key.items() if c["action"] in ("add", "alter")]
+    # A module that replaces another kind on the target is ordered with the other
+    # modules: a new view that calls a function replacing a view must come after the
+    # replacement, not before it (#16).
+    keys = [k for k, c in by_key.items() if c["action"] in ("add", "alter", "replace")]
     deferred: set[tuple[str, str]] = set()
     order, circular = _order(keys, definitions, kinds)
     for key in order:
         c = by_key[key]
         kind = kinds.get(key, c["kind"])
         definition = definitions.get(key, "")
-        summary = ["New on the target."] if c["action"] == "add" else ["Definition differs; the source's definition replaces the target's."]
+        replacing = _target_kind_of(c) if c["action"] == "replace" else ""
+        if replacing:
+            summary = [c["detail"]]
+        elif c["action"] == "add":
+            summary = ["New on the target."]
+        else:
+            summary = ["Definition differs; the source's definition replaces the target's."]
         if not definition:
-            records.append(_record(kind, key, c["action"], "MANUAL", 8, changes=summary, manual=True, notes=["Definition not readable on the source: write it by hand."]))
+            notes = ["Definition not readable on the source: write it by hand."]
+            statements: list[str] = []
+            if replacing:
+                notes.insert(0, "DESTRUCTIVE: drops the target's " + replacing + (" and its rows" if replacing == "table" else "") + " before creating the source's.")
+                statements = [f"DROP {_drop_word(replacing)} {_qualified(key)}"]
+                replaced.add(key)
+            records.append(_record(kind, key, c["action"], "MANUAL", 8, changes=summary, manual=True, notes=notes, statements=statements, destructive=bool(replacing)))
             continue
         notes: list[str] = []
         stale = sql_source.with_identity(source.modules[key][1], key[0], key[1])[1]
@@ -826,32 +889,39 @@ def plan(source: Catalog, changes: list[dict[str, Any]], *, target_kind: str, re
             notes.append(f"Circular reference: names {', '.join(_plain(o) for o in others)}, and those references lead back to it; run these in an order that works.")
         waits_on = sorted(dep for dep in _references(definition, sorted(deferred)) if dep != key)
         rebuilt_tables = sorted(t for t in _references(definition, list(manual_rebuilds)) if _mentions(definition, manual_rebuilds[t]))
-        if (waits_on or rebuilt_tables) and key not in circular:
+        created_tables = sorted(t for t in _references(definition, sorted(manual_tables)) if t != key)
+        follows_replaced = sorted(dep for dep in _references(definition, sorted(replaced)) if dep != key)
+        if (waits_on or rebuilt_tables or created_tables) and key not in circular:
             section = 5
             deferred.add(key)
             notes += [f"Run after the manual rebuild of {_plain(t)}: names {', '.join(sorted(_mentions(definition, manual_rebuilds[t])))}, which the target has only after it." for t in rebuilt_tables]
+            notes += [f"Run after the manual change of table {_plain(t)} above: the target has it only after that step." for t in created_tables]
             notes += [f"Follows {kinds.get(dep, 'object')} {_plain(dep)} in this section." for dep in waits_on]
-        records.append(_record(kind, key, c["action"], "CREATE" if c["action"] == "add" else "CREATE OR ALTER", section, changes=summary, notes=notes, statements=[_create_or_alter(definition)]))
-    for c in changes:
-        if c["action"] == "replace":
-            key = (c["schema"], c["name"])
-            statements = [f"DROP {_drop_word(_target_kind_of(c))} {_qualified(key)}"]
-            notes = ["DESTRUCTIVE: drops the target's object" + (" and its rows" if _target_kind_of(c) == "table" else "") + " before creating the source's."]
-            manual = False
-            if c["kind"] == "table":
-                statements.append(_render_table(source.tables[key], key))
-            elif definitions.get(key):
-                statements.append(_create_or_alter(definitions[key]))
+        notes += [f"Follows the replacement of {_plain(dep)} (DROP + CREATE, destructive): when that replacement is commented out or manual, run it first." for dep in follows_replaced]
+        if replacing:
+            replaced.add(key)
+            statements = [f"DROP {_drop_word(replacing)} {_qualified(key)}", _create_or_alter(definition)]
+            if lakehouse and replacing == "table":
+                # Dropping a Lakehouse table is not T-SQL either: the whole step is a person's.
+                manual_tables.add(key)
+                records.append(_record(kind, key, "replace", "MANUAL", section, changes=summary, manual=True, notes=[
+                    _LAKEHOUSE_TABLE_NOTE.format(verb="drop"), *notes,
+                ], statements=statements))
             else:
-                notes.append("The source's definition is not readable: write it by hand.")
-                manual = True
-            records.append(_record(c["kind"], key, "replace", "DROP + CREATE", 6, changes=[c["detail"]], notes=notes, statements=statements, destructive=True, manual=manual))
+                records.append(_record(kind, key, "replace", "DROP + CREATE", section, changes=summary, notes=[
+                    "DESTRUCTIVE: drops the target's " + replacing + (" and its rows" if replacing == "table" else "") + " before creating the source's.", *notes,
+                ], statements=statements, destructive=True))
+            continue
+        records.append(_record(kind, key, c["action"], "CREATE" if c["action"] == "add" else "CREATE OR ALTER", section, changes=summary, notes=notes, statements=[_create_or_alter(definition)]))
     for kind in ("procedure", "view", "function", "table", "schema"):
         for c in changes:
             if c["kind"] == kind and c["action"] == "drop":
                 key = (c["schema"], c["name"])
                 target_ref = _bracket(c["schema"]) if kind == "schema" else _qualified(key)
                 loses = " with its rows" if kind == "table" else ""
+                if lakehouse and kind == "table":
+                    records.append(_record(kind, key, "drop", "MANUAL", 7, changes=["Only on the target."], manual=True, notes=[_LAKEHOUSE_TABLE_NOTE.format(verb="drop")], statements=[f"DROP TABLE {target_ref}"]))
+                    continue
                 records.append(_record(kind, key, "drop", "DROP", 7, changes=["Only on the target."], notes=[f"DESTRUCTIVE: drops the {kind}{loses}."], statements=[f"DROP {_drop_word(kind)} {target_ref}"], destructive=True))
     for c in changes:
         if c["action"] == "unknown":
@@ -1232,7 +1302,10 @@ def compare(payload: Any, *, cwd: Path | None = None, now: datetime | None = Non
         for item in catalog.unavailable:
             notes.append(f"{label}: unavailable {item}")
         for item in catalog.truncated:
-            notes.append(f"{label}: the {item} list is larger than the compare cap; the compare is partial")
+            if item == "files":
+                notes.append(f"{label}: the compare is partial; objects missing on this side compare as unknown, not as removed")
+            else:
+                notes.append(f"{label}: the {item} list is larger than the compare cap; the compare is partial")
         if catalog.skipped:
             notes.append(f"{label}: the snapshot skipped {len(catalog.skipped)} object(s) (names unsafe as file names); they compare as unknown")
         if not catalog.identity_known and catalog.tables:

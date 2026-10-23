@@ -13,9 +13,8 @@ status: active
 
 ### Connection parameter standards
 
-- Use `SQLServer` and `SQLDB` connection parameters.
-- Do not use `PartialData`, the legacy development data-limiting parameter, in new models.
-- Define schema and table names as local `let` steps, distinct from the shared `SQLServer` and `SQLDB` parameters.
+- Use `SQLServer` and `SQLDB` as shared connection parameters.
+- In each source query, set `SchemaName` and `TableName` for the source object. Do not create shared parameters for schema and table names.
 
 ```powerquery
 let
@@ -27,6 +26,10 @@ in
     Result
 ```
 
+### Transformation standards
+
+Do not perform transformations in Power Query. Keep M queries limited to parameters, connections, source navigation, and the approved one-row measure-table definition below. Put data transformations in SQL.
+
 ### Fact query standards
 
 For every fact, the Attributes query reads source rows. Its paired measure query contains one `Int64` column, `Calculation`, and one row with value `0`.
@@ -37,13 +40,15 @@ Table placement and visibility are defined in [Fact Tables](<Fact Tables.md>).
 
 ### Measure table query standards
 
-Use a literal `#table` for every one-row measure table so Tabular Editor can read it. Do not use the compressed `Binary.Decompress`/JSON expression produced by **Enter Data**.
+Use a literal `#table` for every one-row measure table so Tabular Editor can read it. Do not use the compressed `Binary.Decompress`/JSON expression produced by **Enter Data** because it's not human readable.
 
 ```powerquery
 #table(type table [Calculation = Int64.Type], {{0}})
 ```
 
 ### Power Query group-order standards
+
+In the Power Query pane, organize parameters and queries into folders in this order:
 
 1. Parameters
 2. Dimensions
@@ -55,16 +60,4 @@ Use a literal `#table` for every one-row measure table so Tabular Editor can rea
 
 ### Development refresh defaults
 
-Use **Home > Refresh > Sync schema only** in Power BI Desktop when developing without loading data. Local data loads are allowed whenever useful for development or testing; they do not need to wait for deployment.
-
-Power BI's built-in refresh options replace the need for `PartialData`, the old filter used to limit development data loads.
-
-## Open decisions (non-normative)
-
-- A migration process for existing `PartialData` models is not defined.
-- Allowed M transformations, native queries, and query-folding requirements are not defined. Do not infer a ban on all M transformations from the simple source-navigation example.
-- Power BI incremental-refresh parameters and setup are not defined here; loading recipes belong in the separate patterns knowledge base.
-
-## References (non-normative)
-
-- [Microsoft: Power BI refresh options](https://learn.microsoft.com/en-us/power-bi/connect-data/refresh-data)
+During local development, default to refreshing the schema without loading data by using **Refresh schema only** in Power BI Desktop or the equivalent in Tabular Editor. Load data locally when it is useful for development or testing.

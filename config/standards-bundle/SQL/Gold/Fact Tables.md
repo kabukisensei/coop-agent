@@ -42,9 +42,3 @@ CREATE INDEX IX_CustomerTransactions_FKCustomer
      ,Customer varchar(20) NULL
      ,AmountMST decimal(19,4) NULL
 ```
-
-## Open decisions (non-normative)
-
-- Names for multiple references to one dimension and optional fact identities.
-- Naming and types for currencies, quantities, percentages, dates, flags, codes, descriptions, and audit fields.
-- Index names, column order, index type, and physical foreign-key constraints.

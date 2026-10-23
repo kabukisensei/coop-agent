@@ -2,18 +2,18 @@
   "schema_version": 1,
   "repository": "https://github.com/cooptimize/coop-standards.git",
   "branch": "main",
-  "revision": "a00c8cc34b89a23ae2bee6302979955bafee5282",
-  "captured_ms": 1790858503754,
+  "revision": "add1c5daa89f680474e2ccd9ef85725ce3ab3f15",
+  "captured_ms": 1792781032064,
   "articles": [
     {
       "file": "Power BI/File Types.md",
-      "sha256": "856a3c326bf99abb944b3daf306e2ddb93f4d03b19b3be88e717a7b88fea3b7b",
+      "sha256": "dc61a931a6b98763710667fd455ff673093b19fa66b6c9d883748bd1272371bd",
       "id": "powerbi_file_types",
       "domain": "semantic_model"
     },
     {
       "file": "Power BI/Reports/App Deployment.md",
-      "sha256": "db4a90fa263787a705caa683a6136dca7fa8b4f7529457effe50492fc5d4ae8d",
+      "sha256": "0602b247195b97f4db06f2c810b826c931a355cae8a3e54f0465739e5c7dbd4c",
       "id": "powerbi_reports_app_deployment",
       "domain": "semantic_model"
     },
@@ -25,67 +25,67 @@
     },
     {
       "file": "Power BI/Reports/Visuals.md",
-      "sha256": "ced3f1f195f9e8620b100f066bd90af64e5f589d2d10b8a32cc11ca25af942a7",
+      "sha256": "f6e626e6997488602f37a6ed092ed71c111061ce11216f061440c8dc5a7fd2e0",
       "id": "powerbi_reports_visuals",
       "domain": "semantic_model"
     },
     {
       "file": "Power BI/Semantic Model/Composite Models.md",
-      "sha256": "787861bc471b3172c7e0718cd54a1240cb55d3032c449ef21a91acaabd635766",
+      "sha256": "574a08d6f9ec7b1fd08591b4d2afc674ac6a63bf0be8b0eaf0fdfed2fdb7f4e7",
       "id": "powerbi_semantic_model_composite_models",
       "domain": "semantic_model"
     },
     {
       "file": "Power BI/Semantic Model/DAX.md",
-      "sha256": "d1752816a0a6ebadc17d7a7c69d357e48e524103ab2764427182fd2dada52107",
+      "sha256": "8d05afcb83503c302a864e6a791e84b9ac0731ed9d1536d513a0e6f9dd0296cd",
       "id": "powerbi_semantic_model_dax",
       "domain": "dax"
     },
     {
       "file": "Power BI/Semantic Model/Fact Tables.md",
-      "sha256": "8db73b07769d058e2315ea122a601c6d8d92498a077d979c313d33642cd14acf",
+      "sha256": "87878720b03ec46900c0b9b58d7f94a8a7dae18635264c81d839ead5c28d1e95",
       "id": "powerbi_semantic_model_fact_tables",
       "domain": "semantic_model"
     },
     {
       "file": "Power BI/Semantic Model/M Query.md",
-      "sha256": "36ac30f73514f21fa379911e9e7998cc05ed7b4810195c8c05c4c03335b5e828",
+      "sha256": "4371ede691673c264522948a5ce98b866cc62724eade8b2dc5f571959762671a",
       "id": "powerbi_semantic_model_m_query",
       "domain": "semantic_model"
     },
     {
-      "file": "Power BI/Semantic Model/Measures.md",
-      "sha256": "1664a9656be894b2878dd2f842ff76c2b282ebabdf2701983c4575241bbba295",
+      "file": "Power BI/Semantic Model/Measure Metadata.md",
+      "sha256": "cde091fb3ffd28c837446da37d6d2a41a5226d04c6353b2f88e7843c25871393",
       "id": "powerbi_semantic_model_measures",
       "domain": "dax"
     },
     {
-      "file": "Power BI/Semantic Model/Organizing Tables.md",
-      "sha256": "0b682f9af6069fe9e6f8c7d2eb907f1efbcfe707861fab67304f416ce09c3ed7",
+      "file": "Power BI/Semantic Model/Model Metadata.md",
+      "sha256": "2a279c74578ae3b6b60586cd1c220b026d23d88ddd48e24389d93ac5f82df13b",
       "id": "powerbi_semantic_model_tables",
       "domain": "semantic_model"
     },
     {
       "file": "Power BI/Semantic Model/Relationships.md",
-      "sha256": "d1f3f0da473b4813a82e45fdc91a0ac98d84ae70a7caac80305925555154834b",
+      "sha256": "ca6f6ebb44ef696375537bd6f5ec284fabbfeeebf975a88e1bfbad759fd87cb8",
       "id": "powerbi_semantic_model_relationships",
       "domain": "semantic_model"
     },
     {
       "file": "SQL/Gold/Dimension Tables.md",
-      "sha256": "44d4ca5a8a9d4f31f1e684a410a885c77238d116a82fc8927119514baa5e1bfd",
+      "sha256": "deb0f0fe08592a7fadea4dac315e1f359964a819153ba8afd77723b89b33e494",
       "id": "sql_gold_dimension_tables",
       "domain": "sql"
     },
     {
       "file": "SQL/Gold/Fact Tables.md",
-      "sha256": "cbe1e2bd0c630d32eaff5e08c643becd00f98567a38704ac712ae8af7ae0c3ae",
+      "sha256": "a4ab809ba804a4581e620c0af09ba9a6c89463259f35eb6c2964e8f7dfb0803c",
       "id": "sql_gold_fact_tables",
       "domain": "sql"
     },
     {
       "file": "SQL/Gold/Stored Procedures.md",
-      "sha256": "33e60f4f414cbfebc66452290f8897562024a19345fca21fa12e6bb178b95d7e",
+      "sha256": "adec44d9ee7640b9c0fe2cfa304f7dd345996ed7a3b88519a5b059ce8335d223",
       "id": "sql_gold_stored_procedures",
       "domain": "sql"
     },
@@ -97,38 +97,20 @@
     },
     {
       "file": "SQL/SQL Conventions.md",
-      "sha256": "0693fe95faadf151df55d944aa041daff4ec78ba0676122fb06ce4c69a35f448",
+      "sha256": "4dbebb5efa42ac8c2fe2ac1f1d9a4f6033cb3189c9d08ba1d6f24a3ae801c772",
       "id": "sql_conventions",
       "domain": "sql"
     },
     {
       "file": "SQL/SQL Layout.md",
-      "sha256": "dd742413afc7ac00776f1fdb6b1a0a904341e237007e6f1db7360333da9c5a0d",
+      "sha256": "1649f40327bb984019d4d3cac30eda60cdef03cdc02541dd9d36f32395d769dc",
       "id": "sql_formatting",
       "domain": "sql"
     },
     {
-      "file": "SQL/Silver/Indexing.md",
-      "sha256": "a1fe7748cf4af6df4b6bbedcad7de2a45b2c48b9aa2df725198e9e29f201f7f5",
-      "id": "sql_silver_indexing",
-      "domain": "sql"
-    },
-    {
       "file": "SQL/Silver/Overview.md",
-      "sha256": "feb9faf89dfa88ff8920824dbe99d4e4cb62d671d40c405e76c13210beab35bf",
+      "sha256": "58fbcd73d4bc9428d84a8e07928d7e2c4dad74d1505768cee4ea02760e9ac4c3",
       "id": "sql_silver_overview",
-      "domain": "sql"
-    },
-    {
-      "file": "SQL/Silver/Schema Derivation.md",
-      "sha256": "dcd5a27f304437973cc523995237021a353e73bf2e87d1d19b6bc5cfedd141d5",
-      "id": "sql_silver_schema_derivation",
-      "domain": "sql"
-    },
-    {
-      "file": "SQL/Silver/Schema Manager.md",
-      "sha256": "639cbbf6d1a964e128633a894df8edfc8b8f10582818ddafb2e2c11b0905cc70",
-      "id": "sql_silver_schema_manager",
       "domain": "sql"
     },
     {

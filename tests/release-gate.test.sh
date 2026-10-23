@@ -70,5 +70,28 @@ git_remote_for() { ( COOP_ROOT="$TMP/r$RANDOM"; git init -q "$COOP_ROOT"; git -C
 [ "$(git_remote_for git@github.com:kabukisensei/coop-agent.git)" = "kabukisensei/coop-agent" ] && ok "ssh origin -> owner/repo" || ko "ssh origin"
 [ -z "$(git_remote_for https://dev.azure.com/org/proj/_git/repo)" ] && ok "non-GitHub origin -> empty (gate reports unreachable)" || ko "non-GitHub origin"
 
+# --- the bundled-standards gate (#434): bundle revision vs the wiki's branch head ---
+bundle_verdict() { # <remote head or ''> -> stdout+stderr of the gate, then "rc=N"
+  local remote_head="$1"
+  # The gate dies (exit) on a stale bundle, so it runs in its own subshell and
+  # the rc line is printed outside it.
+  ( coop_release_wiki_head() { [ -n "$remote_head" ] && printf '%s' "$remote_head"; }
+    coop_confirm() { return 1; }
+    ( coop_release_check_bundle 0 2>&1 ); echo "rc=$?" )
+}
+bundle_rev="$(coop_release_bundle_field revision)"
+case "$bundle_rev" in
+  [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ok "bundle.json carries a revision (${bundle_rev:0:7})" ;;
+  *) ko "bundle.json revision unreadable: '$bundle_rev'" ;;
+esac
+got="$(bundle_verdict "$bundle_rev")"
+case "$got" in *"bundled standards are the wiki's current main"*"rc=0") ok "a bundle at the wiki head passes" ;; *) ko "bundle at head: $got" ;; esac
+got="$(bundle_verdict 0123456789abcdef0123456789abcdef01234567)"
+case "$got" in *"refresh it"*"rc=1") ok "a bundle behind the wiki head dies with the refresh command" ;; *) ko "stale bundle: $got" ;; esac
+got="$(bundle_verdict "")"
+case "$got" in *"can't verify"*"rc=1") ok "an unreachable wiki warns and the declined confirm cancels" ;; *) ko "unreachable wiki: $got" ;; esac
+got="$( ( coop_release_wiki_head() { return 1; }; coop_release_check_bundle 1 2>&1; echo "rc=$?" ) )"
+case "$got" in *"continuing (--yes)"*"rc=0") ok "an unreachable wiki continues under --yes with a note" ;; *) ko "unreachable wiki --yes: $got" ;; esac
+
 echo "release gate: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

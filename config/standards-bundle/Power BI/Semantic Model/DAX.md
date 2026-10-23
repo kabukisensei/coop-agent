@@ -25,6 +25,23 @@ VAR result = [Sales Amount] - [Sales Cost]
 RETURN result
 ```
 
+## Measure expression standards
+
+- Use `SUM` for additive base measures.
+- Build filtered measures from the base measure instead of repeating its aggregation.
+
+```dax
+[Sales Amount | Intercompany] =
+VAR result = CALCULATE([Sales Amount], KEEPFILTERS(Customer[Intercompany] = TRUE()))
+RETURN result
+```
+
+## DAX validation standards
+
+- Establish the business definition, what is being counted or summed, report-filter behavior, and date-table requirements before writing the expression.
+- Build and test incrementally.
+- Check the base result, slicers, blank/zero/no-row cases, and a known control total when available.
+
 ## DAX average standards
 
 Never use `AVERAGE` or `AVERAGEX`: they leave the business numerator and denominator implied, making the intended average ambiguous. Define both explicitly, then use `DIVIDE` so it is clear what is being totaled and what it is divided by.
@@ -213,7 +230,11 @@ DIVIDE([Sales Amount], [Sales Quantity], 0)
 
 Before adding more complex DAX, check what one source row represents, the relationships, and source transformations. When the model structure causes the complexity, move stable joins and row-level business transformations into the model or source layer.
 
-## References (non-normative)
+## Calculation placement defaults
+
+Put organization-certified calculations in Gold SQL when multiple semantic models use them or are expected to. Otherwise, use DAX.
+
+## Supporting references
 
 - [Microsoft DAX `VAR` syntax and identifier rules](https://learn.microsoft.com/en-us/dax/var-dax)
 - [Microsoft: avoid using `FILTER` as a `CALCULATE` filter argument](https://learn.microsoft.com/en-us/dax/best-practices/dax-avoid-avoid-filter-as-filter-argument)

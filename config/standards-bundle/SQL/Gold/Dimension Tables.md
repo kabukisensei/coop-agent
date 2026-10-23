@@ -44,7 +44,7 @@ Make every column except the identity nullable. Population is controlled by the 
      ,CustomerName varchar(100) NULL
 ```
 
-## Open decisions (non-normative)
+## Open decisions (not standards)
 
 - Naming and types for numbers, dates, flags, codes, descriptions, and audit fields.
 - Index names, column order, index type, and physical constraints on the identity key.
