@@ -73,9 +73,11 @@ git_remote_for() { ( COOP_ROOT="$TMP/r$RANDOM"; git init -q "$COOP_ROOT"; git -C
 # --- the bundled-standards gate (#434): bundle revision vs the wiki's branch head ---
 bundle_verdict() { # <remote head or ''> -> stdout+stderr of the gate, then "rc=N"
   local remote_head="$1"
+  # The gate dies (exit) on a stale bundle, so it runs in its own subshell and
+  # the rc line is printed outside it.
   ( coop_release_wiki_head() { [ -n "$remote_head" ] && printf '%s' "$remote_head"; }
     coop_confirm() { return 1; }
-    coop_release_check_bundle 0 2>&1; echo "rc=$?" )
+    ( coop_release_check_bundle 0 2>&1 ); echo "rc=$?" )
 }
 bundle_rev="$(coop_release_bundle_field revision)"
 case "$bundle_rev" in
