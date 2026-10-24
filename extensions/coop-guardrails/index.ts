@@ -342,7 +342,37 @@ export function parseProductionNames(text: string): string[] {
   }
   const prod = (yamlSection(text, "sql_targets") || {}).prod;
   if (prod && typeof prod === "object") for (const key of ["server", "workspace_id", "item_id", "sql_endpoint_id"]) add(prod[key]);
+  // The prod entry of every named target set (`sql_targets.named.<set>.prod`, a
+  // Lakehouse beside the Warehouse) labels production too.
+  for (const value of namedProductionValues(text)) add(value);
   return [...names];
+}
+
+/** The `server`, `workspace_id`, `item_id` and `sql_endpoint_id` of every
+ *  `sql_targets.named.<set>.prod` entry: four levels deep, which yamlSection does
+ *  not read, so this walks the indentation itself. Anything odd reads as nothing. */
+export function namedProductionValues(text: string): string[] {
+  const out: string[] = [];
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
+  // (indent, key, value) per line; the path is rebuilt from the indentation stack.
+  const stack: Array<{ indent: number; key: string }> = [];
+  let inside = false;
+  for (const line of lines) {
+    const body = line.trim();
+    if (!body || body.startsWith("#")) continue;
+    const indent = line.length - line.trimStart().length;
+    const kv = /^([A-Za-z0-9_-]+)\s*:(?:\s+(.*))?$/.exec(body);
+    if (!kv) continue;
+    while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop();
+    stack.push({ indent, key: kv[1] });
+    const path = stack.map((s) => s.key);
+    if (path.length === 1) inside = path[0] === "sql_targets";
+    if (!inside || path.length !== 5) continue;
+    if (path[1] === "named" && path[3] === "prod" && ["server", "workspace_id", "item_id", "sql_endpoint_id"].includes(path[4]) && kv[2] !== undefined) {
+      out.push(yamlScalar(kv[2]));
+    }
+  }
+  return out;
 }
 
 /** True when one of the values IS something the contract labels production
@@ -435,7 +465,9 @@ export function parseContractSqlScope(text: string): ContractSqlScope | null {
   const client = typeof profile.client === "string" ? profile.client : "";
   const tenant = typeof fabric.tenant_id === "string" ? fabric.tenant_id.trim().toLowerCase() : "";
   const envs = ["dev", "test", "prod"];
-  if (Object.keys(section).some((key) => key !== "default_environment" && !envs.includes(key))) return { configured: true, client, tenant, target: null };
+  // `named` holds the optional named target sets (lib/sql_targets.py); the plain
+  // entries and the default are unchanged by it, so it is not an unknown key.
+  if (Object.keys(section).some((key) => key !== "default_environment" && key !== "named" && !envs.includes(key))) return { configured: true, client, tenant, target: null };
   const entries: Record<string, ContractSqlTarget> = {};
   for (const env of envs) {
     const ready = readySqlTarget(env === "prod" ? "production" : env as "dev" | "test", section[env]);

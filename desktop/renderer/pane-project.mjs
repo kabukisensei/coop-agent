@@ -19,7 +19,7 @@ export function platformHint(platform) {
   return "";
 }
 
-const FLAT = ["profileName", "organization", "client", "timezone", "defaultBranch", "tenantId", "fabricWorkspaceName", "fabricWorkspaceId", "sqlEndpointItemType", "sqlEndpointItemName", "sqlEndpointItemId", "sqlEndpointPropertiesId", "powerBiWorkspaceName", "powerBiWorkspaceId", "fabricLayout", "tableMappingRule", "tableMappingSchema", "tableMappingPrefix", "sqlTargetKind", "sqlTargetServer", "sqlTargetDatabase", "tabularEditorPath", "bpaRulesPath"];
+const FLAT = ["profileName", "organization", "client", "timezone", "defaultBranch", "tenantId", "fabricWorkspaceName", "fabricWorkspaceId", "sqlEndpointItemType", "sqlEndpointItemName", "sqlEndpointItemId", "sqlEndpointPropertiesId", "powerBiWorkspaceName", "powerBiWorkspaceId", "fabricLayout", "tableMappingRule", "tableMappingSchema", "tableMappingPrefix", "sqlTargetKind", "sqlTargetServer", "sqlTargetDatabase", "sqlTargetProdDatabase", "sqlTargetProdServer", "sqlTargetProdWorkspaceId", "sqlTargetProdItemId", "sqlTargetProdEndpointId", "sqlTargetTestDatabase", "sqlTargetTestServer", "sqlTargetTestWorkspaceId", "sqlTargetTestItemId", "sqlTargetTestEndpointId", "schemaCompareExclude", "schemaCompareRebuild", "tabularEditorPath", "bpaRulesPath"];
 const LAYOUT_LABELS = { warehouse: "Warehouse", lakehouse: "Lakehouse", sql_database: "SQL database", mixed: "Mixed (more than one kind)" };
 const RULE_LABELS = { same_name: "Same name: a model table is named like its view", prefix: "Prefix: table <name> loads <schema>.<prefix><name>" };
 const REPO_FIELDS = ["name", "description", "role", "localPath", "remoteName", "defaultBranch"];
@@ -162,9 +162,28 @@ export function mountProject(box, options, { coop, newSession }) {
     const dbRow = row({ field: "sqlTargetDatabase", label: "Dev database name", control: text(values, "sqlTargetDatabase"), guarded: true });
     const kindChoices = [["", "None (no SQL target)"], ...data.kinds.map((kind) => [kind, KIND_LABELS[kind] || kind])];
     const kindSelect = select(values, "sqlTargetKind", kindChoices, () => { state.kindTouched = true; showTarget(); });
+    // The test and prod entries (A1, deployment call 2026-10-23): schema compare's
+    // default target is prod, so the file should name it instead of a hand edit.
+    const envRows = [["Prod", "sqlTargetProd"], ["Test", "sqlTargetTest"]].map(([label, prefix]) => ({
+      prefix,
+      db: row({ field: `${prefix}Database`, label: `${label} database name`, hint: `Blank = no ${label.toLowerCase()} entry yet. The same kind as dev.`, control: text(values, `${prefix}Database`), guarded: prefix === "sqlTargetProd" }),
+      server: row({ field: `${prefix}Server`, label: `${label} SQL server host`, control: text(values, `${prefix}Server`), guarded: prefix === "sqlTargetProd" }),
+      ws: row({ field: `${prefix}WorkspaceId`, label: `${label} Fabric workspace ID`, control: text(values, `${prefix}WorkspaceId`), guarded: prefix === "sqlTargetProd" }),
+      item: row({ field: `${prefix}ItemId`, label: `${label} Warehouse or Lakehouse item ID`, control: text(values, `${prefix}ItemId`), guarded: prefix === "sqlTargetProd" }),
+      endpoint: row({ field: `${prefix}EndpointId`, label: `${label} Lakehouse sqlEndpointProperties.id`, control: text(values, `${prefix}EndpointId`), guarded: prefix === "sqlTargetProd" }),
+    }));
     const showTarget = () => {
-      serverRow.hidden = !values.sqlTargetKind || data.discoveredKinds.includes(values.sqlTargetKind);
-      dbRow.hidden = !values.sqlTargetKind;
+      const kind = values.sqlTargetKind;
+      const discovered = Boolean(kind) && data.discoveredKinds.includes(kind);
+      serverRow.hidden = !kind || discovered;
+      dbRow.hidden = !kind;
+      for (const r of envRows) {
+        r.db.hidden = !kind;
+        r.server.hidden = !kind || discovered;
+        r.ws.hidden = !discovered;
+        r.item.hidden = !discovered;
+        r.endpoint.hidden = kind !== "fabric_lakehouse";
+      }
     };
     const teBox = el("div", { class: "form-group", hidden: !values.tabularEditorEnabled });
     const prefixRow = row({ field: "tableMappingPrefix", label: "View prefix", hint: "What the model table names drop, for example v_.", control: text(values, "tableMappingPrefix") });
@@ -233,9 +252,13 @@ export function mountProject(box, options, { coop, newSession }) {
         }),
         hint ? el("p", { class: "hint", text: hint }) : null,
         fabricBox),
-      section("Dev SQL target",
+      section("SQL targets",
         row({ field: "sqlTargetKind", label: "Kind", hint: `Where coop runs read-only SQL by default (dev, never prod).${data.settings.sqlTargetKind ? "" : " The kind shown is proposed for this machine, as /setup-project proposes it; choose None to leave it out."}`, control: kindSelect, guarded: true }),
-        serverRow, dbRow),
+        serverRow, dbRow,
+        ...envRows.flatMap((r) => [r.db, r.server, r.ws, r.item, r.endpoint])),
+      section("Schema compare",
+        row({ field: "schemaCompareExclude", label: "Schemas never compared", hint: "Comma-separated. Shared by everyone on the team, so two people get the same differences.", control: text(values, "schemaCompareExclude") }),
+        row({ field: "schemaCompareRebuild", label: "Schemas whose changed tables are dropped and recreated", hint: "Comma-separated; full-load dim and fact schemas. Blank = tables are altered.", control: text(values, "schemaCompareRebuild") })),
       section("Tabular Editor",
         toggle("tabularEditorEnabled", "Use the Tabular Editor CLI for semantic-model BPA reviews", (on) => { teBox.hidden = !on; }),
         teBox),
