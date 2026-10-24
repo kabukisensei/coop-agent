@@ -20,6 +20,7 @@ import {
   projectYamlMapping,
   SQL_TARGET_DISCOVERED_KINDS,
   SQL_TARGET_KINDS,
+  SQL_TARGET_OTHER_ENVIRONMENTS,
   cleanAnswer,
   clientPlatform,
   contractCreatedNote,
@@ -45,7 +46,9 @@ const MAX_FIELD = 2000;
 const MAX_REPOS = 50;
 
 /** Fields the guardrails read (docs/guardrails-reference.md): the form marks them. */
-export const GUARDRAIL_FIELDS = Object.freeze(["client", "tenantId", "sqlTargetKind", "sqlTargetServer", "sqlTargetDatabase", "repositories.localPath", "commitLists"]);
+export const GUARDRAIL_FIELDS = Object.freeze(["client", "tenantId", "sqlTargetKind", "sqlTargetServer", "sqlTargetDatabase", "sqlTargetProdServer", "sqlTargetProdWorkspaceId", "sqlTargetProdItemId", "sqlTargetProdEndpointId", "sqlTargetProdDatabase", "repositories.localPath", "commitLists"]);
+/** The per-environment target fields the form carries for test and prod (A1). */
+export const TARGET_ENV_FIELDS = Object.freeze(["Database", "Server", "WorkspaceId", "ItemId", "EndpointId"]);
 
 const hash = (text) => createHash("sha256").update(text).digest("hex");
 
@@ -205,7 +208,23 @@ export function settingsFromForm(input, base, existingNames) {
   if (s.sqlTargetKind) {
     if (!SQL_TARGET_DISCOVERED_KINDS.has(s.sqlTargetKind)) take("sqlTargetServer");
     take("sqlTargetDatabase");
+    // The test and prod entries (A1): the same kind as dev; written only when a
+    // database is given, like the wizard.
+    for (const { prefix } of SQL_TARGET_OTHER_ENVIRONMENTS) {
+      take(`${prefix}Database`);
+      if (SQL_TARGET_DISCOVERED_KINDS.has(s.sqlTargetKind)) {
+        take(`${prefix}WorkspaceId`);
+        take(`${prefix}ItemId`);
+        if (s.sqlTargetKind === "fabric_lakehouse") take(`${prefix}EndpointId`);
+      } else {
+        take(`${prefix}Server`);
+        if (s[`${prefix}Server`]) s[`${prefix}Server`] = s[`${prefix}Server`].toLowerCase();
+      }
+    }
   }
+  // Schema compare defaults (schema_compare: lists), kind or not.
+  take("schemaCompareExclude");
+  take("schemaCompareRebuild");
 
   if (typeof input.tabularEditorEnabled === "boolean") s.tabularEditorEnabled = input.tabularEditorEnabled;
   if (s.tabularEditorEnabled) {

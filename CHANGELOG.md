@@ -5,7 +5,34 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **Schema compare from the deployment call (2026-10-23).** `/setup-project` and
+  the coop window's Project pane now ask for the `prod` and `test` SQL targets
+  (same kind as dev; blank = no entry yet) and the shared `schema_compare:`
+  lists (schemas never compared, schemas whose changed tables are rebuilt), so
+  two people no longer get two diff counts from prompt-only exclusions; a run
+  whose choices differ from the project file's says so and names the keys to
+  add. `sql_targets.named.<set>` declares a second engine beside the main one
+  (a Lakehouse SQL endpoint beside the Warehouse) and `<env>@<set>`
+  (`dev@lakehouse`) names its environments in `schema_compare` and
+  `coop schema compare`; a named `prod` is production for the guardrails.
+  Formatting-only and column-order-only differences are labelled (and counted)
+  instead of looking like real changes, and still deploy. `coop doctor` and a
+  once-per-folder session note name the sections an older project file lacks
+  (`sql_targets.prod`, `schema_compare`, ...) and point at `/setup-project`;
+  nothing is filled in on its own. New prompts: `/schema-compare` (compare, read
+  the result, promote through the governed write path) and `/runbook <name>`
+  (walk a client's `.coop/runbooks/<name>.md` step by step, `(manual)` /
+  `(coop)` / `(check)` steps, never reordered).
+
 ### Fixed
+
+- **A session with no launch sign-in token says so.** coop launched when the
+  project file named no SQL target reported `identity_mismatch` on every native
+  SQL call; it is now `launch_identity_missing`, and the tool text, `coop
+  schema compare` and `/setup-project`'s closing notice say to fix the file and
+  exit and start coop again (a `/new` cannot mint the token the launch skipped).
 
 - **Enter on an unknown slash command no longer runs the closest match** (#428).
   Pi's editor applied the autocomplete list's selected item on Enter, so `/exit`

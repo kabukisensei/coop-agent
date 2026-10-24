@@ -55,7 +55,7 @@ assert [r[0] for r in rows] == ["ok", "ok", "warn"], rows
 assert "(default)" in rows[0][1] and "contoso-dev.database.windows.net / ContosoDW" in rows[0][1]
 assert "prod" in rows[2][1]
 payload = mixed.to_json()
-assert set(payload) == {"configured", "default_environment", "targets", "errors"}
+assert set(payload) == {"configured", "default_environment", "targets", "named", "errors"}
 assert json.dumps(payload)  # JSON-serialisable for the CLI
 
 # --- production is never the default ---------------------------------------
@@ -148,5 +148,33 @@ with tempfile.TemporaryDirectory() as td:
     )
     out = subprocess.run(cli + ["doctor-lines"], cwd=repo, env=env, capture_output=True, text=True, check=True).stdout
     assert "hunter2" not in out and "credential keys are not allowed" in out, out
+
+# --- named target sets: a Lakehouse beside the Warehouse (deployment call 2026-10-23) --
+named = section({
+    "default_environment": "dev",
+    "dev": {"kind": "fabric_warehouse", "workspace_id": WS, "item_id": ITEM, "database": "QE_WH"},
+    "prod": {"kind": "fabric_warehouse", "workspace_id": WS, "item_id": ITEM, "database": "QE_WH"},
+    "named": {
+        "lakehouse": {
+            "dev": {"kind": "fabric_lakehouse", "workspace_id": WS, "item_id": ITEM, "sql_endpoint_id": ENDPOINT, "database": "QE_LH"},
+            "prod": {"kind": "fabric_lakehouse", "workspace_id": WS, "item_id": ITEM, "database": "QE_LH"},
+        },
+        "Bad Name": {"dev": {}},
+        "empty": {},
+        "typo": {"dve": {}},
+    },
+})
+assert not any("unknown entries" in e and "named" in e and "sql_targets has" in e for e in named.errors), named.errors
+assert named.resolve("dev@lakehouse").state == "ready" and named.resolve("dev@lakehouse").kind == "fabric_lakehouse"
+assert named.resolve("prod@lakehouse").state == "unconfigured" and named.resolve("prod@lakehouse").production
+assert named.resolve("test@lakehouse") is None and named.resolve("dev@nope") is None and named.resolve("dev@") is None
+assert named.resolve("dev").database == "QE_WH" and named.resolve("prod").production
+assert st.split_target_spec("prod@lakehouse") == ("prod", "lakehouse") and st.split_target_spec("dev") == ("dev", "") and st.split_target_spec("x@y") == ("", "")
+assert any("Bad Name" in e for e in named.errors) and any("named.empty has no" in e for e in named.errors) and any("named.typo has unknown" in e for e in named.errors), named.errors
+rows = st.doctor_lines(named)
+assert any(r[0] == "ok" and "sql_targets.named.lakehouse.dev: Fabric Lakehouse SQL endpoint" in r[1] for r in rows), rows
+assert any(r[0] == "warn" and "sql_targets.named.lakehouse.prod" in r[1] for r in rows), rows
+assert "named" in named.to_json() and json.dumps(named.to_json())
+assert any("must be a mapping of set name" in e for e in section({"dev": {}, "named": "x"}).errors)
 
 print("  OK  sql_targets: kinds, host patterns, production never default, placeholders, credentials, CLI")

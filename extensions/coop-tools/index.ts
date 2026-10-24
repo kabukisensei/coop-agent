@@ -78,8 +78,10 @@ import {
   PROJECT_MESSAGES,
   SQL_TARGET_DISCOVERED_KINDS,
   SQL_TARGET_KINDS,
+  SQL_TARGET_OTHER_ENVIRONMENTS,
   TABLE_MAPPING_RULES,
   applyProjectWizardSettings,
+  badSchemaNames,
   mappingCheckLines,
   mappingExpectationLine,
   proposedFabricLayout,
@@ -97,6 +99,7 @@ import {
   proposeContractRoot,
   siblingRepositoryEntries,
   parseProjectWizardSettings,
+  projectFileGapsNote,
   projectSqlEndpointType,
   projectYamlScalar,
   proposedSqlTargetKind,
@@ -145,9 +148,14 @@ export {
   parseProjectWizardSettings,
   projectYamlScalar,
   proposedSqlTargetKind,
+  projectFileGaps,
+  projectFileGapsNote,
+  projectSettingsProblems,
+  projectYamlList,
   renderProjectWizardSettings,
   saveUserProfileName,
   scalarValue,
+  schemaCompareBlock,
   sqlTargetsBlock,
   upsertProjectYamlScalar,
 } from "../../lib/project-contract.mjs";
@@ -228,8 +236,8 @@ const CATALOG_SNAPSHOT_PARAMS = Type.Object({
 });
 
 const SCHEMA_COMPARE_PARAMS = Type.Object({
-  source: Type.Optional(Type.String({ description: "From: dev, test, prod, snapshot or repo[:<name>[/<sub>]] (a repositories entry's .sql files). Default: the contract's default." })),
-  target: Type.Optional(Type.String({ description: "To: dev, test, prod or repo[:<name>[/<sub>]]. Default: prod." })),
+  source: Type.Optional(Type.String({ description: "From: dev, test, prod (or env@set for a sql_targets.named set), snapshot or repo[:<name>[/<sub>]] (a repositories entry's .sql files). Default: the contract's default." })),
+  target: Type.Optional(Type.String({ description: "To: dev, test, prod, env@set or repo[:<name>[/<sub>]]. Default: prod of the source's set." })),
   schemas: Type.Optional(Type.Array(Type.String(), { description: "Only these schemas." })),
   exclude: Type.Optional(Type.Array(Type.String(), { description: "Leave these schemas out." })),
   rebuild: Type.Optional(Type.Array(Type.String(), { description: "Schemas whose changed tables are dropped and recreated." })),
@@ -362,7 +370,18 @@ export function contractChangedSince(snapshot: { path: string | null; text: stri
   return now.path !== snapshot.path || now.text !== snapshot.text;
 }
 
-export const CONTRACT_CHANGED_HINT = "the project contract (.coop/project.yml) changed during this session; coop keeps native SQL on the target the session started with. Start a new session (/new) to use the edited contract.";
+export const CONTRACT_CHANGED_HINT = "the project contract (.coop/project.yml) changed during this session; coop keeps native SQL on the target the session started with. Start a new session (/new) to use the edited contract; if the change added or changed a SQL target or Fabric SQL endpoint, exit and start coop again so the launch sign-in covers it.";
+/** The one-line fix for a launch-identity state (deployment call 2026-10-23): /new is not enough. */
+export const LAUNCH_IDENTITY_MISSING_HINT = "coop was launched when .coop/project.yml named no SQL target or Fabric SQL endpoint, so no sign-in token exists for this launch. Fix the file (sql_targets, with /setup-project or the Project pane), then exit and start coop again; a new session (/new) is not enough.";
+export const IDENTITY_MISMATCH_HINT = "the signed-in Azure account is not the one coop was launched with: sign in with that account (az login), or exit and start coop again.";
+/** The shared hint suffix for a native SQL tool's unavailable states. */
+export function sqlStateHint(details: any): string {
+  const state = String(details?.state || "");
+  if (state === "contract_changed") return ` ${CONTRACT_CHANGED_HINT}`;
+  if (state === "launch_identity_missing") return ` ${LAUNCH_IDENTITY_MISSING_HINT}`;
+  if (state === "identity_mismatch") return ` ${IDENTITY_MISMATCH_HINT}`;
+  return "";
+}
 
 /** How long a helper may run. One bounded query or one object's trace answers
  *  in seconds; a catalog snapshot reads every object's definition (hundreds on
@@ -1762,6 +1781,48 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
     const database = await askText(ctx, "Dev database name", settings.sqlTargetDatabase || settings.sqlEndpointItemName || "");
     if (database === null) return false;
     settings.sqlTargetDatabase = database;
+    // The other environments (A1, deployment call 2026-10-23): prod first, since
+    // schema compare's default target is prod, then test. Blank = no entry yet;
+    // the file keeps an entry the person leaves blank here.
+    for (const { prefix, label } of SQL_TARGET_OTHER_ENVIRONMENTS) {
+      const current = (settings as Record<string, unknown>)[`${prefix}Database`] as string | undefined;
+      const envDatabase = await askText(ctx, `${label} database name (same kind as dev; blank = no ${label.toLowerCase()} entry yet)`, current || "");
+      if (envDatabase === null) return false;
+      (settings as Record<string, unknown>)[`${prefix}Database`] = envDatabase.trim();
+      if (!envDatabase.trim()) continue;
+      if (SQL_TARGET_DISCOVERED_KINDS.has(kindValue)) {
+        const ws = await askText(ctx, `${label} Fabric workspace ID (canonical UUID)`, ((settings as Record<string, unknown>)[`${prefix}WorkspaceId`] as string) || "");
+        if (ws === null) return false;
+        const item = await askText(ctx, `${label} ${kindValue === "fabric_lakehouse" ? "Lakehouse" : "Warehouse"} item ID (canonical UUID)`, ((settings as Record<string, unknown>)[`${prefix}ItemId`] as string) || "");
+        if (item === null) return false;
+        let endpoint = "";
+        if (kindValue === "fabric_lakehouse") {
+          const answer = await askText(ctx, `${label} Lakehouse sqlEndpointProperties.id (canonical UUID)`, ((settings as Record<string, unknown>)[`${prefix}EndpointId`] as string) || "");
+          if (answer === null) return false;
+          endpoint = answer.trim();
+        }
+        const ids = [ws.trim(), item.trim(), endpoint];
+        if (ids.some((id) => id && !CANONICAL_UUID.test(id))) { notify(ctx, PROJECT_MESSAGES.uuids, "error"); return false; }
+        if (!ws.trim() || !item.trim() || (kindValue === "fabric_lakehouse" && !endpoint)) { notify(ctx, PROJECT_MESSAGES.targetIncomplete(label), "error"); return false; }
+        (settings as Record<string, unknown>)[`${prefix}WorkspaceId`] = ws.trim();
+        (settings as Record<string, unknown>)[`${prefix}ItemId`] = item.trim();
+        (settings as Record<string, unknown>)[`${prefix}EndpointId`] = endpoint;
+      } else {
+        const envServer = await askText(ctx, `${label} SQL server host`, ((settings as Record<string, unknown>)[`${prefix}Server`] as string) || "");
+        if (envServer === null) return false;
+        if (!isServerHost(envServer)) { notify(ctx, PROJECT_MESSAGES.serverHost, "error"); return false; }
+        (settings as Record<string, unknown>)[`${prefix}Server`] = envServer.toLowerCase();
+      }
+    }
+    // Schema compare defaults (schema_compare:, 0.38.3): the lists everyone on the
+    // team should share, so two people get the same diff count.
+    const exclude = await askText(ctx, "Schema compare: schemas never compared (comma-separated; blank = none)", settings.schemaCompareExclude || "");
+    if (exclude === null) return false;
+    const rebuild = await askText(ctx, "Schema compare: schemas whose changed tables are dropped and recreated (comma-separated; blank = none)", settings.schemaCompareRebuild || "");
+    if (rebuild === null) return false;
+    if (badSchemaNames(exclude).length || badSchemaNames(rebuild).length) { notify(ctx, PROJECT_MESSAGES.schemaNames, "error"); return false; }
+    settings.schemaCompareExclude = exclude;
+    settings.schemaCompareRebuild = rebuild;
   }
 
   settings.tabularEditorEnabled = await askConfirm(ctx, "Tabular Editor", "Use the Tabular Editor CLI for semantic-model BPA reviews?");
@@ -1790,7 +1851,9 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
   const backup = writeProjectContract(path, output);
   notify(ctx, `Project contract ${existing ? "updated" : "created"}: ${path}${backup ? `. Backup (this client): ${backup}` : ""}`, "info");
   if (!existing) notify(ctx, contractCreatedNote(root), "info");
-  notify(ctx, "Run /new or restart Coop before governed work so the guardrails load the updated contract.", "info");
+  notify(ctx, sqlTargetTouched(original, output)
+    ? "A SQL target changed: exit and start coop again before governed SQL work, so the launch sign-in covers it (/new alone keeps the old target)."
+    : "Run /new or restart Coop before governed work so the guardrails load the updated contract.", "info");
   await offerShare(ctx, path);
 
   if (!settings.repositories.length) {
@@ -2100,6 +2163,34 @@ export function catalogSnapshotNote(cwd: string, now = Date.now()): string | nul
   }
   return `No committed catalog snapshot exists yet (it would live under ${status.path}). ` +
     `When the user wants SQL written or changed and no SQL source is at hand, offer the catalog_snapshot tool (command="snapshot"): it reads the ${status.environment} target's tables, columns and object definitions read-only and writes them as files the user commits, so coop knows what exists before it writes.`;
+}
+
+/** True when the edit touched a SQL target or the Fabric SQL endpoint: the launch
+ *  sign-in covers only what the file named at launch, so /new is not enough. */
+export function sqlTargetTouched(before: string, after: string): boolean {
+  const slice = (text: string) => {
+    const lines = text.replace(/\r\n/g, "\n").split("\n");
+    const out: string[] = [];
+    let keep = false;
+    for (const line of lines) {
+      const top = /^([A-Za-z0-9_.-]+)\s*:/.exec(line);
+      if (top) keep = top[1] === "sql_targets" || top[1] === "fabric";
+      if (keep && line.trim() && !line.trim().startsWith("#")) out.push(line.trimEnd());
+    }
+    return out.join("\n");
+  };
+  return slice(before) !== slice(after);
+}
+
+/** The once-per-folder note about sections an older project file lacks (A2). */
+export function projectGapsNote(cwd: string): string | null {
+  try {
+    const contractPath = findProjectYml(cwd);
+    if (!contractPath) return null;
+    return projectFileGapsNote(safeRead(contractPath), contractPath);
+  } catch {
+    return null;
+  }
 }
 
 export function fabricTargetNote(cwd: string): { contractPath: string; content: string } | null {
@@ -2501,7 +2592,7 @@ export default function coopTools(pi: ExtensionAPI) {
           sqlImpactLines(details, contractTableMapping(ctx.cwd)),
           "query sys.dm_sql_referencing_entities or INFORMATION_SCHEMA.COLUMNS with fabric_sql_query for the rest",
         )
-        : `sql_impact unavailable: ${String(details?.state || "internal_error")}.${details?.state === "contract_changed" ? ` ${CONTRACT_CHANGED_HINT}` : ""}`;
+        : `sql_impact unavailable: ${String(details?.state || "internal_error")}.${sqlStateHint(details)}`;
       return { content: [{ type: "text" as const, text }], details };
     },
   });
@@ -2537,7 +2628,7 @@ export default function coopTools(pi: ExtensionAPI) {
           lines,
           "see manifest.json in the snapshot folder",
         )
-        : `catalog_snapshot unavailable: ${String(details?.state || "internal_error")}.${details?.state === "contract_changed" ? ` ${CONTRACT_CHANGED_HINT}` : ""}${details?.state === "output_not_snapshot" ? ` The folder ${details.path} holds files that are not a coop snapshot; move them or set catalog.path in .coop/project.yml.` : ""}`;
+        : `catalog_snapshot unavailable: ${String(details?.state || "internal_error")}.${sqlStateHint(details)}${details?.state === "output_not_snapshot" ? ` The folder ${details.path} holds files that are not a coop snapshot; move them or set catalog.path in .coop/project.yml.` : ""}`;
       return { content: [{ type: "text" as const, text }], details };
     },
   });
@@ -2564,13 +2655,13 @@ export default function coopTools(pi: ExtensionAPI) {
       const lines: string[] = [];
       for (const c of Array.isArray(details?.changes) ? details.changes : []) {
         const name = c.kind === "schema" ? String(c.schema) : `${c.schema}.${c.name}`;
-        lines.push(`- ${c.kind} ${name}: ${c.action}${c.destructive ? " (destructive)" : ""}${c.detail ? `, ${c.detail}` : ""}`);
+        lines.push(`- ${c.kind} ${name}: ${c.action}${c.destructive ? " (destructive)" : ""}${c.cosmetic ? ` (${c.cosmetic} only)` : ""}${c.detail ? `, ${c.detail}` : ""}`);
       }
       if (details?.changes_truncated) lines.push("- more changes in report.md");
       for (const choice of Array.isArray(details?.choices) ? details.choices : []) lines.push(`- choice: ${String(choice)}`);
       for (const note of Array.isArray(details?.notes) ? details.notes : []) lines.push(`- note: ${String(note)}`);
       if (details?.complete === false) lines.push("- partial: a side was not read whole, so a missing difference proves nothing; unknown changes are compared by hand");
-      const side = (s: any) => `${s?.environment ?? "?"} ${s?.kind ?? ""} ${s?.database ?? ""}`.trim();
+      const side = (s: any) => `${s?.environment ?? "?"}${s?.set ? `@${s.set}` : ""} ${s?.kind ?? ""} ${s?.database ?? ""}`.trim();
       // The list below is the whole diff: report.md repeats it for people, and
       // deploy.sql is read only when promoting, so a compare costs one tool result.
       const where = details?.changes_truncated
@@ -2578,11 +2669,11 @@ export default function coopTools(pi: ExtensionAPI) {
         : `Every change is listed below; ${details?.path}/report.md repeats this table for people, so do not read it. The script, ${details?.path}/deploy.sql, is for promoting: open it only when the user wants to promote.`;
       const text = details?.ok
         ? modelText(
-          `schema_compare: ${side(details.source)} -> ${side(details.target)}: ${details.counts?.total ?? 0} difference(s) (${details.counts?.add ?? 0} add, ${details.counts?.alter ?? 0} alter, ${details.counts?.drop ?? 0} drop, ${details.counts?.destructive ?? 0} destructive). Script: ${details.script?.statements ?? 0} statement(s) to run, ${details.script?.commented ?? 0} commented out, ${details.script?.destructive ?? 0} destructive object(s). ${where} Nothing was applied; a run against the target goes through the governed write path, one statement at a time, after the user has read the script.`,
+          `schema_compare: ${side(details.source)} -> ${side(details.target)}: ${details.counts?.total ?? 0} difference(s) (${details.counts?.add ?? 0} add, ${details.counts?.alter ?? 0} alter, ${details.counts?.drop ?? 0} drop, ${details.counts?.destructive ?? 0} destructive${details.counts?.cosmetic ? `; ${details.counts.cosmetic} formatting or column-order only` : ""}). Script: ${details.script?.statements ?? 0} statement(s) to run, ${details.script?.commented ?? 0} commented out, ${details.script?.destructive ?? 0} destructive object(s). ${where} Nothing was applied; a run against the target goes through the governed write path, one statement at a time, after the user has read the script.`,
           lines,
           "see report.md",
         )
-        : `schema_compare unavailable: ${String(details?.state || "internal_error")}${details?.side ? ` (side: ${details.side})` : ""}.${details?.state === "contract_changed" ? ` ${CONTRACT_CHANGED_HINT}` : ""}${details?.state === "snapshot_missing" ? " No committed catalog snapshot exists; run catalog_snapshot (command=\"snapshot\") first or compare a live entry." : ""}${details?.state === "snapshot_incomplete" ? " The committed snapshot is damaged (a file its manifest lists is missing or unreadable); take it again with catalog_snapshot (command=\"snapshot\")." : ""}${details?.state === "target_invalid" ? " That side is not a ready sql_targets entry in .coop/project.yml." : ""}${details?.state === "repo_missing" ? " No repositories entry with role sql or mixed and a local_path matches; name one as repo:<name>." : ""}${details?.state === "repo_ambiguous" ? " Several sql or mixed repositories exist; name one as repo:<name>." : ""}${details?.state === "repo_unavailable" ? " That repository folder (or its sql_root/subfolder) does not exist on this machine." : ""}${details?.state === "setting_invalid" ? ` ${details.setting} in .coop/project.yml is not valid.` : ""}`;
+        : `schema_compare unavailable: ${String(details?.state || "internal_error")}${details?.side ? ` (side: ${details.side})` : ""}.${sqlStateHint(details)}${details?.state === "snapshot_missing" ? " No committed catalog snapshot exists; run catalog_snapshot (command=\"snapshot\") first or compare a live entry." : ""}${details?.state === "snapshot_incomplete" ? " The committed snapshot is damaged (a file its manifest lists is missing or unreadable); take it again with catalog_snapshot (command=\"snapshot\")." : ""}${details?.state === "target_invalid" ? " That side is not a ready sql_targets entry in .coop/project.yml: add sql_targets.<env> (or sql_targets.named.<set>.<env> for <env>@<set>) with /setup-project or the Project pane, then /new." : ""}${details?.state === "repo_missing" ? " No repositories entry with role sql or mixed and a local_path matches; name one as repo:<name>." : ""}${details?.state === "repo_ambiguous" ? " Several sql or mixed repositories exist; name one as repo:<name>." : ""}${details?.state === "repo_unavailable" ? " That repository folder (or its sql_root/subfolder) does not exist on this machine." : ""}${details?.state === "setting_invalid" ? ` ${details.setting} in .coop/project.yml is not valid.` : ""}`;
       return { content: [{ type: "text" as const, text }], details };
     },
   });
@@ -2734,7 +2825,7 @@ export default function coopTools(pi: ExtensionAPI) {
           sqlRowLines(details),
           "narrow the SELECT (fewer columns or a smaller TOP) to see them",
         )
-        : `fabric_sql_query unavailable: ${String(details?.state || "internal_error")}.${details?.state === "contract_changed" ? ` ${CONTRACT_CHANGED_HINT}` : ""}`;
+        : `fabric_sql_query unavailable: ${String(details?.state || "internal_error")}.${sqlStateHint(details)}`;
       return { content: [{ type: "text" as const, text }], details };
     },
   });
@@ -3024,6 +3115,7 @@ export default function coopTools(pi: ExtensionAPI) {
     announcedCwds.clear();
     announcedFabricTargets.clear();
     announcedCatalogSnapshots.clear();
+    announcedProjectGaps.clear();
     const primedLogin = primeModelLogin(ctx);
     // The shared project file (C1): say once per session when the team's copy
     // moved, when this copy is unshared, or when the team has a file this
@@ -3059,6 +3151,7 @@ export default function coopTools(pi: ExtensionAPI) {
   // SQ8: the SQL object each in-flight edit or write is about (by toolCallId).
   const pendingSqlEdits = new Map<string, string>();
   const announcedCatalogSnapshots = new Set<string>();
+  const announcedProjectGaps = new Set<string>();
   let announcedTeamKnowledge = false;
   let sessionToolFailures = 0;
   // Distinct failed tool_result events (dedupe by toolCallId so a replayed
@@ -3182,6 +3275,22 @@ export default function coopTools(pi: ExtensionAPI) {
             patterns: standardsContext.patterns,
           },
         };
+      }
+
+      // Once per folder, after the standards (whose message type callers key on): the
+      // sections an older project file lacks (A2), so coop
+      // offers /setup-project instead of working around a missing sql_targets.prod
+      // or schema_compare with prompt-only choices.
+      if (!announcedProjectGaps.has(cwd)) {
+        const gapsNote = projectGapsNote(cwd);
+        if (gapsNote) {
+          announcedProjectGaps.add(cwd);
+          if (message) {
+            message.content = `${message.content}\n\n${gapsNote}`;
+          } else {
+            message = { customType: "coop-project-gaps", display: false, content: gapsNote };
+          }
+        }
       }
 
       if (!message && !requirement) return;

@@ -110,6 +110,24 @@ sql_targets:
     kind: azure_sql
     server: ""
     database: ""
+  # A second engine beside the main one (a Lakehouse SQL endpoint beside the
+  # Warehouse) is a named set with its own dev/test/prod entries; a side is then
+  # `<env>@<set>`, for example `coop schema compare --source dev@lakehouse
+  # --target prod@lakehouse`. The default never comes from a named set.
+  # named:
+  #   lakehouse:
+  #     dev:
+  #       kind: fabric_lakehouse
+  #       workspace_id: ""
+  #       item_id: ""
+  #       sql_endpoint_id: ""
+  #       database: ""
+  #     prod:
+  #       kind: fabric_lakehouse
+  #       workspace_id: ""
+  #       item_id: ""
+  #       sql_endpoint_id: ""
+  #       database: ""
 
 # --- Committed dev catalog snapshot (master plan SQ9) ---------------------------
 # `coop catalog snapshot` (or the catalog_snapshot tool) reads the default dev/test

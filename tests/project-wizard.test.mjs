@@ -24,6 +24,12 @@ const {
   dataDocPrefillFromProject,
   proposedSqlTargetKind,
   sqlTargetsBlock,
+  schemaCompareBlock,
+  projectSettingsProblems,
+  projectYamlList,
+  projectFileGaps,
+  projectFileGapsNote,
+  sqlTargetTouched,
 } = await import(pathToFileURL(`${dist}/coop-tools.mjs`).href);
 const { findProjectContract, searchProjectContract } = await import(pathToFileURL(join(REPO_ROOT, "lib", "standards.mjs")).href);
 const { clientRecord, clientRootFor } = await import(pathToFileURL(join(REPO_ROOT, "lib", "client-folder.mjs")).href);
@@ -217,6 +223,92 @@ await t("sql_targets: the dev kind follows the machine platform and an Azure SQL
   assert.equal(projectYamlScalar(merged, ["sql_targets", "dev", "kind"]), "azure_sql");
   const untouched = applyProjectWizardSettings(existing, { ...parsed, repositories: [] });
   assert.equal(projectYamlScalar(untouched, ["sql_targets", "dev", "kind"]), "", "no kind chosen: sql_targets is left alone");
+});
+
+await t("A1: the wizard writes the prod and test entries and the schema_compare lists (deployment call 2026-10-23)", () => {
+  const WS2 = "44444444-4444-4444-4444-444444444444";
+  const ITEM2 = "55555555-5555-5555-5555-555555555555";
+  const full = { ...settings, sqlTargetProdWorkspaceId: WS2.toUpperCase(), sqlTargetProdItemId: ITEM2, sqlTargetProdDatabase: "Contoso Warehouse", schemaCompareExclude: "stage, Audit", schemaCompareRebuild: "dim,fact" };
+  const text = renderProjectWizardSettings(full);
+  assert.equal(projectYamlScalar(text, ["sql_targets", "prod", "kind"]), "fabric_warehouse");
+  assert.equal(projectYamlScalar(text, ["sql_targets", "prod", "workspace_id"]), WS2, "ids are written canonical (lowercase)");
+  assert.equal(projectYamlScalar(text, ["sql_targets", "prod", "item_id"]), ITEM2);
+  assert.equal(projectYamlScalar(text, ["sql_targets", "prod", "database"]), "Contoso Warehouse");
+  assert.equal(projectYamlScalar(text, ["sql_targets", "test", "database"]), "", "test left blank stays a placeholder");
+  assert.equal(projectYamlScalar(text, ["sql_targets", "default_environment"]), "dev");
+  assert.deepEqual(projectYamlList(text, ["schema_compare", "exclude_schemas"]), ["stage", "Audit"]);
+  assert.deepEqual(projectYamlList(text, ["schema_compare", "rebuild_tables_in"]), ["dim", "fact"]);
+  assert.equal(projectYamlScalar(text, ["schema_compare", "destructive"]), "runnable");
+  assert.deepEqual(schemaCompareBlock(settings), [], "nothing answered: no schema_compare section");
+  // The reader round-trips the new fields.
+  const parsed = parseProjectWizardSettings(text, "/work");
+  assert.equal(parsed.sqlTargetProdWorkspaceId, WS2);
+  assert.equal(parsed.sqlTargetProdDatabase, "Contoso Warehouse");
+  assert.equal(parsed.sqlTargetTestDatabase, "");
+  assert.equal(parsed.schemaCompareExclude, "stage, Audit");
+  assert.equal(parsed.schemaCompareRebuild, "dim, fact");
+  // Editing an older file: the prod entry is added, a blank test leaves the file alone,
+  // and the schema_compare lists are inserted; the rest of the file is kept.
+  const older = "profile:\n  client: 'Contoso'\n# keep me\nsql_targets:\n  default_environment: dev\n  dev:\n    kind: azure_sql\n    server: 'd.database.windows.net'\n    database: 'D'\n  test:\n    kind: azure_sql\n    server: ''\n    database: ''\n";
+  const base = parseProjectWizardSettings(older, "/work");
+  const merged = applyProjectWizardSettings(older, { ...base, repositories: [], sqlTargetProdServer: "Contoso-Prod.database.windows.net", sqlTargetProdDatabase: "P", schemaCompareExclude: "stage", schemaCompareRebuild: "" });
+  assert.equal(projectYamlScalar(merged, ["sql_targets", "prod", "kind"]), "azure_sql");
+  assert.equal(projectYamlScalar(merged, ["sql_targets", "prod", "server"]), "contoso-prod.database.windows.net");
+  assert.equal(projectYamlScalar(merged, ["sql_targets", "prod", "database"]), "P");
+  assert.equal(projectYamlScalar(merged, ["sql_targets", "test", "server"]), "", "a blank test answer keeps the placeholder as it is");
+  assert.deepEqual(projectYamlList(merged, ["schema_compare", "exclude_schemas"]), ["stage"]);
+  assert.equal(projectYamlScalar(merged, ["schema_compare", "rebuild_tables_in"]), "", "an empty list is not written when the file has none");
+  assert.ok(merged.includes("# keep me"));
+  const emptied = applyProjectWizardSettings(merged, { ...parseProjectWizamSettingsSafe(merged), repositories: [], schemaCompareExclude: "" });
+  assert.deepEqual(projectYamlList(emptied, ["schema_compare", "exclude_schemas"]), [], "a blank answer empties an existing list");
+  // Validation: half an entry is a problem, bad schema names are a problem.
+  const problems = (s) => projectSettingsProblems({ ...settings, ...s }).map((p) => p.field);
+  assert.deepEqual(problems({ sqlTargetProdDatabase: "P" }), ["sqlTargetProdDatabase"], "a database without ids");
+  assert.deepEqual(problems({ sqlTargetProdWorkspaceId: WS2 }), ["sqlTargetProdDatabase"], "ids without a database");
+  assert.deepEqual(problems({ sqlTargetProdWorkspaceId: "nope", sqlTargetProdItemId: ITEM2, sqlTargetProdDatabase: "P" }), ["sqlTargetProdWorkspaceId"]);
+  assert.deepEqual(problems({ sqlTargetProdWorkspaceId: WS2, sqlTargetProdItemId: ITEM2, sqlTargetProdDatabase: "P" }), []);
+  assert.deepEqual(problems({ sqlTargetKind: "fabric_lakehouse", sqlTargetProdWorkspaceId: WS2, sqlTargetProdItemId: ITEM2, sqlTargetProdDatabase: "P" }), ["sqlTargetProdDatabase"], "a Lakehouse needs its endpoint id too");
+  assert.deepEqual(problems({ sqlTargetKind: "azure_sql", sqlTargetServer: "d.database.windows.net", sqlTargetTestServer: "t.database.windows.net" }), ["sqlTargetTestDatabase"]);
+  assert.deepEqual(problems({ sqlTargetKind: "azure_sql", sqlTargetServer: "d.database.windows.net", sqlTargetTestServer: "t.database.windows.net:1433", sqlTargetTestDatabase: "T" }), ["sqlTargetTestServer"]);
+  assert.deepEqual(problems({ schemaCompareExclude: "stage, [bad]" }), ["schemaCompareExclude"]);
+  assert.deepEqual(problems({ schemaCompareRebuild: "dim, fact" }), []);
+});
+
+function parseProjectWizamSettingsSafe(text) { return parseProjectWizardSettings(text, "/work"); }
+
+await t("A2: an older project file's missing sections are named, never filled in", () => {
+  const older = "profile:\n  client: 'Contoso'\nfabric:\n  default_workspace_id: '11111111-1111-1111-1111-111111111111'\nsql_targets:\n  default_environment: dev\n  dev:\n    kind: azure_sql\n    server: 'd.database.windows.net'\n    database: 'D'\n";
+  const gaps = projectFileGaps(older).map((g) => g.path);
+  assert.deepEqual(gaps, ["sql_targets.prod", "schema_compare", "fabric.layout"]);
+  const note = projectFileGapsNote(older, "/work/.coop/project.yml");
+  assert.match(note, /predates sections this coop reads: sql_targets\.prod \(schema compare's default target\); schema_compare/);
+  assert.match(note, /offer \/setup-project/);
+  assert.doesNotMatch(note, /sql_targets \(the SQL/, "a present section is not a gap");
+  assert.deepEqual(projectFileGaps("profile:\n  client: 'X'\n"), [], "a minimal file (no SQL, no Fabric, no Power BI) is missing nothing");
+  assert.deepEqual(projectFileGaps("fabric:\n  default_sql_endpoint:\n    item_id: 'x'\n").map((g) => g.path), ["sql_targets", "fabric.layout"], "a SQL endpoint without sql_targets");
+  assert.deepEqual(projectFileGaps("power_bi:\n  default_workspace_name: 'W'\n").map((g) => g.path), ["power_bi.table_mapping"]);
+  const current = renderProjectWizardSettings({ ...settings, sqlTargetProdWorkspaceId: "44444444-4444-4444-4444-444444444444", sqlTargetProdItemId: "55555555-5555-5555-5555-555555555555", sqlTargetProdDatabase: "W", schemaCompareExclude: "stage" });
+  assert.deepEqual(projectFileGaps(current), [], "a file the current wizard writes has no gaps");
+  assert.equal(projectFileGapsNote(current, "/x"), null);
+  // A commented-out key is not the section.
+  assert.ok(projectFileGaps("sql_targets:\n  dev: {}\n  prod: {}\n# schema_compare:\n#   exclude_schemas: []\n").some((g) => g.path === "schema_compare"));
+  // The CLI prints doctor rows and never edits.
+  const root = isolatedRoot("coop-project-gaps-");
+  mkdirSync(join(root, ".coop"));
+  writeFileSync(join(root, ".coop", "project.yml"), older);
+  const run = spawnSync(process.execPath, [join(REPO_ROOT, "lib", "project-gaps.mjs"), "doctor-lines", join(root, ".coop", "project.yml")], { encoding: "utf8" });
+  assert.equal(run.status, 0, run.stderr);
+  const rows = run.stdout.trim().split("\n").map((l) => l.split("\t"));
+  assert.equal(rows.length, 3);
+  assert.ok(rows.every((r) => r[0] === "warn" && r[2].includes("/setup-project")), run.stdout);
+  assert.equal(readFileSync(join(root, ".coop", "project.yml"), "utf8"), older);
+  const ok = spawnSync(process.execPath, [join(REPO_ROOT, "lib", "project-gaps.mjs"), "doctor-lines", "-"], { encoding: "utf8", input: "" });
+  assert.notEqual(ok.status, 0, "an unreadable file is an error, not a clean row");
+  rmSync(root, { recursive: true, force: true });
+  // The setup notice: /new is enough unless a SQL target or the Fabric endpoint changed.
+  assert.equal(sqlTargetTouched(older, older.replace("client: 'Contoso'", "client: 'Contoso Ltd'")), false);
+  assert.equal(sqlTargetTouched(older, older + "  prod:\n    kind: azure_sql\n    server: 'p.database.windows.net'\n    database: 'P'\n"), true);
+  assert.equal(sqlTargetTouched(older, older.replace("default_workspace_id: '11111111-1111-1111-1111-111111111111'", "default_workspace_id: '22222222-2222-2222-2222-222222222222'")), true);
 });
 
 await t("native wizard proposes the Azure SQL dev target on an Azure SQL machine", async () => {
