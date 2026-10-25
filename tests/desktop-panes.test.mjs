@@ -463,7 +463,7 @@ const ANSWERS = {
   analytics: { description: "Warehouse SQL", role: "mixed", localPath: ".", remoteName: "origin", defaultBranch: "main" },
   added: { name: "Reports Repo", description: "Power BI reports", role: "powerbi", localPath: "../reports", remoteName: "origin", defaultBranch: "release" },
   fabric: { tenantId: "11111111-1111-1111-1111-111111111111", fabricWorkspaceName: "Contoso WS", fabricWorkspaceId: "22222222-2222-2222-2222-222222222222", sqlEndpointItemType: "Warehouse", sqlEndpointItemName: "ContosoDW", sqlEndpointItemId: "33333333-3333-3333-3333-333333333333", sqlEndpointPropertiesId: "", powerBiWorkspaceName: "Contoso WS", powerBiWorkspaceId: "", fabricLayout: "warehouse", tableMappingRule: "prefix", tableMappingSchema: "dbo", tableMappingPrefix: "v_" },
-  target: { sqlTargetKind: "azure_sql", sqlTargetServer: "Contoso-Dev.Database.Windows.Net", sqlTargetDatabase: "ContosoDW", sqlTargetProdServer: "Contoso-Prod.Database.Windows.Net", sqlTargetProdDatabase: "ContosoDW", sqlTargetTestDatabase: "", schemaCompareExclude: "stage, audit", schemaCompareRebuild: "dim, fact" },
+  target: { sqlTargetKind: "azure_sql", sqlTargetServer: "Contoso-Dev.Database.Windows.Net", sqlTargetDatabase: "ContosoDW", sqlTargetProdServer: "Contoso-Prod.Database.Windows.Net", sqlTargetProdDatabase: "ContosoDW", sqlTargetTestDatabase: "", schemaCompareExclude: "stage, audit", schemaCompareRebuild: "dim, fact", schemaCompareDestructive: "commented" },
   te: { tabularEditorPath: "te", bpaRulesPath: "rules/bpa.json" },
 };
 
@@ -495,7 +495,7 @@ function wizardCtx(root, { fresh = false, localSource = true } = {}) {
             fabricLayout: "Fabric layout", tableMappingRule: "Semantic-model table to SQL object rule", tableMappingSchema: "Default schema for a model table", tableMappingPrefix: "View prefix the model table names drop",
             sqlTargetKind: "Dev SQL target kind", sqlTargetServer: "Dev SQL server host", sqlTargetDatabase: "Dev database name",
             sqlTargetProdServer: "Prod SQL server host", sqlTargetProdDatabase: "Prod database name", sqlTargetTestDatabase: "Test database name",
-            schemaCompareExclude: "Schema compare: schemas never compared", schemaCompareRebuild: "Schema compare: schemas whose changed tables",
+            schemaCompareExclude: "Schema compare: schemas never compared", schemaCompareRebuild: "Schema compare: schemas whose changed tables", schemaCompareDestructive: "Schema compare: destructive statements",
             tabularEditorPath: "Tabular Editor CLI command or path", bpaRulesPath: "BPA rules file path",
           };
           if (!fresh && label.startsWith(prompts[key])) return value;
@@ -555,7 +555,7 @@ await check("project form: loads the wizard's fields; dropped fields never reach
     assert.equal(shown.includes(dropped), false, `${dropped} reaches the window`);
   }
   const input = formInput(initialValues(data));
-  assert.deepEqual(Object.keys(input).sort(), ["bpaRulesPath", "client", "defaultBranch", "fabricEnabled", "fabricLayout", "fabricWorkspaceId", "fabricWorkspaceName", "organization", "powerBiWorkspaceId", "powerBiWorkspaceName", "profileName", "repositories", "schemaCompareExclude", "schemaCompareRebuild", "sqlEndpointItemId", "sqlEndpointItemName", "sqlEndpointItemType", "sqlEndpointPropertiesId", "sqlTargetDatabase", "sqlTargetKind", "sqlTargetProdDatabase", "sqlTargetProdEndpointId", "sqlTargetProdItemId", "sqlTargetProdServer", "sqlTargetProdWorkspaceId", "sqlTargetServer", "sqlTargetTestDatabase", "sqlTargetTestEndpointId", "sqlTargetTestItemId", "sqlTargetTestServer", "sqlTargetTestWorkspaceId", "tableMappingPrefix", "tableMappingRule", "tableMappingSchema", "tabularEditorEnabled", "tabularEditorPath", "tenantId", "timezone"]);
+  assert.deepEqual(Object.keys(input).sort(), ["bpaRulesPath", "client", "defaultBranch", "fabricEnabled", "fabricLayout", "fabricWorkspaceId", "fabricWorkspaceName", "namedTargets", "organization", "powerBiWorkspaceId", "powerBiWorkspaceName", "profileName", "repositories", "schemaCompareDestructive", "schemaCompareExclude", "schemaCompareRebuild", "sqlEndpointItemId", "sqlEndpointItemName", "sqlEndpointItemType", "sqlEndpointPropertiesId", "sqlTargetDatabase", "sqlTargetKind", "sqlTargetProdDatabase", "sqlTargetProdEndpointId", "sqlTargetProdItemId", "sqlTargetProdServer", "sqlTargetProdWorkspaceId", "sqlTargetServer", "sqlTargetTestDatabase", "sqlTargetTestEndpointId", "sqlTargetTestItemId", "sqlTargetTestServer", "sqlTargetTestWorkspaceId", "tableMappingPrefix", "tableMappingRule", "tableMappingSchema", "tabularEditorEnabled", "tabularEditorPath", "tenantId", "timezone"]);
   assert.equal(platformHint("azure_sql"), "This machine is set up as an Azure SQL client, so No is the usual answer.");
   assert.equal(platformHint(""), "");
 });
@@ -593,7 +593,7 @@ await check("project form: the same answers write the same file as /setup-projec
   assert.equal(projectYamlScalar(written, ["sql_targets", "prod", "server"]), "contoso-prod.database.windows.net", "A1: the prod entry is written by both paths");
   assert.equal(projectYamlScalar(written, ["sql_targets", "prod", "database"]), "ContosoDW");
   assert.equal(projectYamlScalar(written, ["sql_targets", "test", "database"]), "", "a blank test answer writes no test entry");
-  assert.match(written, /^schema_compare:\n  exclude_schemas: \[stage, audit\]\n  rebuild_tables_in: \[dim, fact\]/m);
+  assert.match(written, /^schema_compare:\n  exclude_schemas: \[stage, audit\]\n  rebuild_tables_in: \[dim, fact\]\n  destructive: 'commented'/m);
   assert.equal(projectYamlScalar(written, ["fabric", "layout"]), "warehouse");
   assert.equal(projectYamlScalar(written, ["power_bi", "table_mapping", "rule"]), "prefix");
   assert.equal(projectYamlScalar(written, ["power_bi", "table_mapping", "view_prefix"]), "v_");
@@ -605,6 +605,41 @@ await check("project form: the same answers write the same file as /setup-projec
   // The review diff is exactly the change.
   const model = parseUnifiedDiff(preview.diff);
   assert.ok(model.hunks.flatMap((h) => h.lines).some((l) => l.type === "add" && l.text.includes("Contoso")));
+});
+
+await check("project form: named target sets and the destructive setting round-trip through the pane", () => {
+  const root = projectFixture("named", ORIGINAL);
+  const data = loadProject(root, { env: process.env });
+  assert.deepEqual(data.namedEnvironments, ["dev", "test", "prod"]);
+  assert.deepEqual(data.destructiveChoices, ["runnable", "commented"]);
+  assert.deepEqual(data.settings.namedTargets, []);
+  const values = initialValues(data);
+  Object.assign(values, ANSWERS.target, { schemaCompareDestructive: "commented" });
+  values.namedTargets.push({ name: "lakehouse", kind: "fabric_lakehouse", isNew: true,
+    dev: { database: "LH", server: "", workspaceId: "44444444-4444-4444-4444-444444444444", itemId: "55555555-5555-5555-5555-555555555555", endpointId: "66666666-6666-6666-6666-666666666666" },
+    test: { database: "", server: "", workspaceId: "", itemId: "", endpointId: "" },
+    prod: { database: "LH", server: "", workspaceId: "44444444-4444-4444-4444-444444444444", itemId: "77777777-7777-7777-7777-777777777777", endpointId: "88888888-8888-8888-8888-888888888888" } });
+  const input = formInput(values);
+  assert.deepEqual(Object.keys(input.namedTargets[0]).sort(), ["dev", "kind", "name", "prod", "test"]);
+  const preview = previewProject(root, input, { env: process.env });
+  assert.deepEqual(preview.problems, []);
+  const saved = saveProject(root, input, preview.token, { env: process.env });
+  const written = readFileSync(join(root, ".coop", "project.yml"), "utf8");
+  assert.equal(projectYamlScalar(written, ["sql_targets", "named", "lakehouse", "dev", "kind"]), "fabric_lakehouse");
+  assert.equal(projectYamlScalar(written, ["sql_targets", "named", "lakehouse", "dev", "sql_endpoint_id"]), "66666666-6666-6666-6666-666666666666");
+  assert.equal(projectYamlScalar(written, ["sql_targets", "named", "lakehouse", "prod", "item_id"]), "77777777-7777-7777-7777-777777777777");
+  assert.equal(projectYamlScalar(written, ["sql_targets", "named", "lakehouse", "test", "kind"]), "", "a blank environment is not written");
+  assert.equal(projectYamlScalar(written, ["schema_compare", "destructive"]), "commented");
+  assert.ok(saved.backup);
+  // Reloading shows the set, not new, with its environments; a half entry is a problem.
+  const again = loadProject(root, { env: process.env });
+  assert.equal(again.settings.namedTargets.length, 1);
+  assert.equal(again.settings.namedTargets[0].prod.database, "LH");
+  assert.equal(initialValues(again).namedTargets[0].isNew, false);
+  const bad = formInput(Object.assign(initialValues(again), ANSWERS.target));
+  bad.namedTargets.push({ name: "Bad Name", kind: "azure_sql", dev: { database: "D", server: "", workspaceId: "", itemId: "", endpointId: "" }, test: {}, prod: {} });
+  const problems = previewProject(root, bad, { env: process.env }).problems.map((p) => p.field);
+  assert.deepEqual(problems, ["namedTargets.1.name", "namedTargets.1.dev.database"]);
 });
 
 await check("project form: a new contract and discovery mode match /setup-project", async () => {

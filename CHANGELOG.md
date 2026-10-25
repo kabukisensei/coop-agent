@@ -16,7 +16,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   add. `sql_targets.named.<set>` declares a second engine beside the main one
   (a Lakehouse SQL endpoint beside the Warehouse) and `<env>@<set>`
   (`dev@lakehouse`) names its environments in `schema_compare` and
-  `coop schema compare`; a named `prod` is production for the guardrails.
+  `coop schema compare`; a named `prod` is production for the guardrails; the
+  Project pane edits the sets (a "Named target sets" group) and the
+  `schema_compare.destructive` choice, which the wizard asks for too.
   Formatting-only and column-order-only differences are labelled (and counted)
   instead of looking like real changes, and still deploy. `coop doctor` and a
   once-per-folder session note name the sections an older project file lacks

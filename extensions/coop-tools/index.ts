@@ -76,6 +76,7 @@ import {
   CANONICAL_UUID,
   FABRIC_LAYOUTS,
   PROJECT_MESSAGES,
+  SCHEMA_COMPARE_DESTRUCTIVE,
   SQL_TARGET_DISCOVERED_KINDS,
   SQL_TARGET_KINDS,
   SQL_TARGET_OTHER_ENVIRONMENTS,
@@ -151,7 +152,9 @@ export {
   projectFileGaps,
   projectFileGapsNote,
   projectSettingsProblems,
+  projectYamlKeys,
   projectYamlList,
+  readNamedTargets,
   renderProjectWizardSettings,
   saveUserProfileName,
   scalarValue,
@@ -1823,6 +1826,12 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
     if (badSchemaNames(exclude).length || badSchemaNames(rebuild).length) { notify(ctx, PROJECT_MESSAGES.schemaNames, "error"); return false; }
     settings.schemaCompareExclude = exclude;
     settings.schemaCompareRebuild = rebuild;
+    const destructive = await askText(ctx, "Schema compare: destructive statements in the promotion script (runnable or commented)", settings.schemaCompareDestructive || "runnable");
+    if (destructive === null) return false;
+    if (!(SCHEMA_COMPARE_DESTRUCTIVE as readonly string[]).includes(destructive.trim().toLowerCase())) { notify(ctx, PROJECT_MESSAGES.destructive, "error"); return false; }
+    settings.schemaCompareDestructive = destructive.trim().toLowerCase();
+    // Named target sets (a second engine beside the main one) are edited in the
+    // coop window's Project pane or the file: the terminal wizard keeps them as they are.
   }
 
   settings.tabularEditorEnabled = await askConfirm(ctx, "Tabular Editor", "Use the Tabular Editor CLI for semantic-model BPA reviews?");

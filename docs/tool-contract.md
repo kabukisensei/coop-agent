@@ -864,8 +864,12 @@ warning per rule broken. `/setup-project` (and the coop window's Project pane) p
 kind from the machine's client platform (SQ7) and the Fabric answer, writes the
 dev entry, then asks for the `prod` and `test` entries of the same kind (ids or
 server, and the database; blank = no entry yet, and an entry left blank keeps
-whatever the file has), then the `schema_compare:` lists. Editing an existing
-contract touches only the entries that were answered. The SQL executor and the
+whatever the file has), then the `schema_compare:` lists and its `destructive`
+choice. Editing an existing contract touches only the entries that were answered.
+The Project pane also edits the named target sets below (a "Named target sets"
+group: name, kind, and the dev/test/prod fields; an environment left blank keeps
+what the file has, and a set removed from the form stays in the file, which the
+writer never deletes from); the terminal wizard leaves named sets as they are. The SQL executor and the
 guardrails' resolved scope read this section; the managed `fabric-sqlendpoint`
 target below still comes from `fabric.default_sql_endpoint`.
 
