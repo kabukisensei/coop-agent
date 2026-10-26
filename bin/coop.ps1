@@ -941,7 +941,8 @@ function Initialize-CoopLaunch {
   # window's first launch or `coop update` does. Say so when this package's
   # pins have not reached this account yet (B6; Aaron 2026-10-21).
   if (-not $Window -and (Test-CoopBundledSetupPending)) {
-    Coop-Warn 'new tool pins for this coop: run coop update'
+    if (Test-CoopBundledToolsPending) { Coop-Warn 'new tool pins for this coop: run coop update' }
+    else { Coop-Warn 'new coop version: run coop update   (refreshes the extensions and settings; no reinstall)' }
   }
 
   # Point the managed Warehouse MCP entry at THIS folder's project: the shared
@@ -1109,7 +1110,20 @@ function Invoke-CoopDesktop {
   # The project contract, tenant and Microsoft skill selection are read from here.
   Set-Location -LiteralPath $cwd
   if (-not $appExe -and $script:CoopWindowExe) { $appExe = $script:CoopWindowExe }
-  if (-not $printSpec -and (Test-CoopBundledSetupPending)) {
+  if (-not $printSpec -and (Test-CoopBundledSetupPending) -and -not (Test-CoopBundledToolsPending)) {
+    # A new version with the tool pins this account already has (most releases):
+    # the extensions and settings are refreshed, nothing is reinstalled, and the
+    # window opens in seconds instead of minutes (suite review pick 3).
+    Coop-Head 'New coop version: refreshing this account'
+    Coop-Info 'the tool pins are the ones already installed here, so only the extensions and settings are refreshed; the window opens once that finishes'
+    $setupRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\sync.ps1')
+    if ($setupRc -ne 0) {
+      Coop-Warn ('the refresh did not finish (the lines above say why; they are also in ' + (Join-Path (Get-CoopProfileDir) 'desktop\launch.log') + '). The window opens anyway; the next launch tries again, or run: coop doctor')
+    } else {
+      Set-CoopBundledSetupDone
+    }
+  }
+  elseif (-not $printSpec -and (Test-CoopBundledSetupPending)) {
     Coop-Head 'First launch of the coop window: setting up this computer'
     # The installer is the user's "yes" (D1k): the package carries Git, Python,
     # the Azure CLI and every coop tool, so this installs from the package with
@@ -1122,7 +1136,7 @@ function Invoke-CoopDesktop {
     } else {
       Coop-Info 'anything still missing is installed below with winget (Windows may ask for permission); the window opens once setup finishes'
     }
-    $setupRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\install.ps1') @('--prereqs', 'auto')
+    $setupRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\install.ps1') @('--prereqs', 'auto', '--unattended')
     if ($setupRc -ne 0) {
       # Not the end of the launch (the dev VM, 2026-10-20: three tool installs
       # failed and the window never opened, with the reason in a console that
