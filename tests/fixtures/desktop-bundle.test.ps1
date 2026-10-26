@@ -173,12 +173,25 @@ try {
   $script:CoopVersion = '99.0.0'
   if (Test-CoopBundledSetupPending) { Ok 'a newer package version runs its setup once more (an upgrade, D1k)' } else { Ko 'an upgraded package must re-run its setup' }
   $script:CoopVersion = $savedVersion
-  # B6: the same version with other tool pins (a build installed over another) is pending again.
+  # A newer version with the same tool pins refreshes (sync) but does not reinstall (pick 3).
+  $script:CoopVersion = '99.0.0'
+  if (-not (Test-CoopBundledToolsPending)) { Ok 'a newer package with the same tool pins does not reinstall the tools (pick 3)' } else { Ko 'same pins must not be tools-pending' }
+  $script:CoopVersion = $savedVersion
+  # B6: the same version with other tool pins (a build installed over another) is pending again, tools included.
   $savedManifest = $script:CoopReleaseManifest
   $otherManifest = Join-Path $t 'other-manifest.json'
-  [System.IO.File]::WriteAllText($otherManifest, ([System.IO.File]::ReadAllText($savedManifest) + "`n"), $utf8)
+  $otherJson = [System.IO.File]::ReadAllText($savedManifest) | ConvertFrom-Json
+  $otherJson.python_tools.'coop-data-doc' = '0.0.1'
+  [System.IO.File]::WriteAllText($otherManifest, (ConvertTo-Json -InputObject $otherJson -Depth 8), $utf8)
   $script:CoopReleaseManifest = $otherManifest
-  if (Test-CoopBundledSetupPending) { Ok 'a package with a changed release manifest runs its setup once more, same version or not (B6)' } else { Ko 'a changed manifest must re-run the setup' }
+  if (Test-CoopBundledSetupPending) { Ok 'a package with a changed tool pin runs its setup once more, same version or not (B6)' } else { Ko 'a changed pin must re-run the setup' }
+  if (Test-CoopBundledToolsPending) { Ok 'a changed tool pin reinstalls the tools (B6)' } else { Ko 'a changed pin must be tools-pending' }
+  $script:CoopReleaseManifest = $savedManifest
+  # The same pins written differently (whitespace, a comment, coop_version) are not a change.
+  $sameManifest = Join-Path $t 'same-manifest.json'
+  [System.IO.File]::WriteAllText($sameManifest, ([System.IO.File]::ReadAllText($savedManifest) + "`n"), $utf8)
+  $script:CoopReleaseManifest = $sameManifest
+  if (-not (Test-CoopBundledSetupPending)) { Ok 'the same pins in a reformatted manifest are not pending' } else { Ko 'a reformatted manifest must not re-run the setup' }
   $script:CoopReleaseManifest = $savedManifest
   if (-not (Test-CoopBundledSetupPending)) { Ok 'the recorded manifest is not pending' } else { Ko 'pending again with the recorded manifest' }
   $marker = Get-CoopBundledSetupMarker

@@ -5,6 +5,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **A release that moves no tool pin no longer reinstalls every tool on the
+  window's first launch (suite review pick 3).** The account's setup marker
+  now records a hash of the manifest sections the account installs (Pi, the
+  extensions, the Python and npm tools, the bundled Python) instead of the
+  whole file, so a new version with the same pins only refreshes the
+  extensions and settings (`coop sync`, seconds) and the window opens; new
+  pins still run the full setup. The unattended setup (the window's first
+  launch, the machine updater's account step) ends without the doctor report
+  when every step passed (`coop doctor` shows it any time). A terminal launch
+  says which of the two `coop update` would do.
+
 ### Added
 
 - **Schema compare from the deployment call (2026-10-23).** `/setup-project` and
