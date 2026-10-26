@@ -123,13 +123,17 @@ Every extension or Pi pin change must already carry a regenerated
 `CONTRIBUTING.md`); the gate lane fails otherwise, so `coop release` stops before
 tagging a manifest whose lock drifted.
 
-If this suite release also bumped coop-data-doc (step (a)), **bump its
-`python_tools` pin in `config/release-manifest.json` first** (the one manifest;
-`config/defaults.yml` carries no pins) — the pre-tag gate below verifies that pin
-against coop-website's `versions.json` and aborts on a mismatch. (Update
-`versions.json` before or together with the pin; step (c) requires it anyway.)
-`docs/ci.md` shows the pipeline pin as a `==<version>` placeholder that points at
-the manifest, so nothing there needs editing.
+If this suite release also bumped a coop tool (step (a)), **run
+`bash scripts/bump-pins.sh`** (or `bump-pins.sh coop-data-doc=1.4.4` for one
+tool): it writes the `python_tools` pin in `config/release-manifest.json`, the
+one place a tool pin is written, and for a GitHub-release wheel the tag, asset
+and sha256 too, then prints the CHANGELOG line. Nothing else carries a literal
+pin: the fixtures, `NOTICE.md` and the client-home CI template read the
+manifest (the template keeps `coop-data-doc==<version>`, rendered at copy
+time), and `tests/pins.test.sh` fails the bump PR if a stale `<tool>==<old>`
+literal is left anywhere. The pre-tag gate below verifies the pin against
+coop-website's `versions.json` and aborts on a mismatch. (Update `versions.json`
+before or together with the pin; step (c) requires it anyway.)
 
 **Refresh the bundled standards copy** so the release ships the wiki as it is
 today (first runs and offline machines read it until `coop sync` reaches the
