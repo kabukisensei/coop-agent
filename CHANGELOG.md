@@ -52,7 +52,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   bundled file now uses block keys, the writer converts a populated flow mapping
   to block keys in place (every key kept, a trailing comment kept on the parent
   line), and the reader shows the wizard the values inside one instead of its
-  defaults; only an inline mapping it cannot parse is still refused.
+  defaults; only an inline mapping it cannot parse is still refused. Two more
+  things the same VM run showed: an edited line now keeps its quote style and
+  its trailing comment (`mode: "connected"  # discovery | partial | connected`
+  used to come back as `mode: 'connected'`, and a client's file lost its
+  documentation that way), and `lib/_yaml.py` no longer mistakes `\"` inside a
+  double-quoted value, or `''` inside a single-quoted one, for the end of the
+  value when a `#` follows.
+- **The wizard never swaps a repository's folder for one above it unasked.**
+  When a recorded folder is missing (`../fabric` on a fresh VM), the folder
+  picker opens at the nearest existing parent and one Enter too many recorded
+  `..` instead. `/setup-project` now asks before replacing a repository's folder
+  with a folder above it, and No keeps the recorded path.
 - **A launch runs the pinned Pi only.** The manifest pin acted in `coop install`
   and `coop update`, but a launch started whatever `pi` was first on PATH, and
   its skew repair then aligned the extension tree to that Pi's version: after a

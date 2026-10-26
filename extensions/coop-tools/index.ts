@@ -1105,6 +1105,15 @@ function nearestExistingDirectory(cwd: string, value: string): string {
   return current;
 }
 
+/** True when `candidate` (relative to `root`) is a folder strictly above `recorded`. */
+export function isFolderAbove(root: string, candidate: string, recorded: string): boolean {
+  const above = resolve(root, expandHomePath(candidate || "."));
+  const below = resolve(root, expandHomePath(recorded || "."));
+  if (samePath(above, below)) return false;
+  const rel = relative(above, below);
+  return Boolean(rel) && !rel.startsWith("..") && !isAbsolute(rel);
+}
+
 function childDirectories(path: string): string[] {
   try {
     return readdirSync(path, { withFileTypes: true })
@@ -1555,10 +1564,18 @@ async function editRepository(ctx: any, root: string, repo: ProjectRepositorySet
   if (description === null) return null;
   const role = await chooseRole(ctx, `${name}: what kind of repository is this?`, repo.role);
   if (role === null) return null;
-  const localPath = await renderPathPrompt({ ...ctx, cwd: root }, {
+  let localPath = await renderPathPrompt({ ...ctx, cwd: root }, {
     type: "prompt", id: `repo-${name}`, kind: "path", message: `${name}: choose its local folder`, default: repo.localPath,
   });
   if (localPath === null) return null;
+  // The picker opens at the nearest existing folder when the recorded one is
+  // missing, so one Enter too many turns `../fabric` into `..`. A folder above
+  // the recorded one never replaces it silently.
+  if (!askName && localPath !== repo.localPath && isFolderAbove(root, localPath, repo.localPath)) {
+    const replace = await askConfirm(ctx, `${name}: local folder`,
+      `${name}'s folder is recorded as ${repo.localPath}; the picker chose ${localPath}, a folder above it. Replace it? No keeps ${repo.localPath}.`);
+    if (!replace) localPath = repo.localPath;
+  }
   const remoteName = await askText(ctx, `${name}: Git remote name`, repo.remoteName);
   if (remoteName === null) return null;
   const defaultBranch = await askText(ctx, `${name}: default branch`, repo.defaultBranch);
