@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.38.6] — 2026-10-26
+
 ### Added
 
 - **Schema compare from the deployment call (2026-10-23).** `/setup-project` and
