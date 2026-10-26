@@ -394,6 +394,42 @@ show all of it. Task logs stay in the repository.
    thinking and tool calls between two pieces of prose into one expandable
    line; the session file is untouched, only the view.
 
+## Environment variables
+
+coop's own processes hand most `COOP_*` variables to each other (the launcher to
+Pi and the extensions, install to sync, the window to the terminal); those are
+internal and not listed. The ones a person, a sandbox or a test fixture may set:
+
+| Variable | Effect |
+| --- | --- |
+| `COOP_NO_ISOLATE=1` | Run against your personal `~/.pi/agent` instead of coop's isolated `~/.coop/agent`. |
+| `COOP_NO_GUARDRAILS=1` | Turn the runtime guardrails extension off. Never on a client machine. |
+| `COOP_SHOW_UPSTREAM_UPDATE_NOTICES=1` | Show Pi's own update banner (maintainer diagnostics). |
+| `COOP_ASSUME_YES=1` | Answer yes to install-time questions (prerequisite install, the `az login` offer); CI and scripts. |
+| `COOP_NO_ONBOARD=1` | Skip the first-run profile question; the window's first launch sets it. |
+| `COOP_NO_MODEL_LOGIN=1` | Skip the model sign-in prime on the first launch. |
+| `COOP_SKIP_AZ=1` | Skip the Azure CLI tenant and token step at launch and in doctor. |
+| `COOP_SKIP_EXT_CHECK=1` | Skip the extension-tree preflight before Pi starts. |
+| `COOP_SKIP_FABRIC_SYNC=1` | `coop sync` leaves the Fabric Python runtime alone (install and update set it for their sync child). |
+| `COOP_ALLOW_UNPINNED_PI=1` | Let a maintainer's `--edge` Pi launch instead of stopping at the pin check. |
+| `COOP_PIP_ONLINE=1` | Let a pinned pipx install read the index instead of the bundled wheels only. |
+| `COOP_CLIENT_PLATFORM=fabric\|azure_sql\|both` | Answer the client platform question without a prompt (`coop install --platform` sets it). |
+| `COOP_DIR` | The profile folder's parent (default: the home folder, so `~/.coop`). |
+| `COOP_AGENT_DIR` | The isolated Pi agent dir (default `<profile dir>/agent`). |
+| `COOP_MACHINE_DIR` | The machine-level profile folder (sandboxes, tests). |
+| `COOP_ROOT` | The coop checkout; the launcher sets it for every child and tests point it at a fixture. |
+| `COOP_RELEASE_MANIFEST` | An alternate release manifest (tests, the fleet digest). |
+| `COOP_FABRIC_PYTHON` | The interpreter for live SQL (pyodbc), instead of the managed `ms-fabric-cli` environment. Operator-managed. |
+| `COOP_PIPX_HOME`, `COOP_PIPX_BIN` | The pipx venvs folder and the pipx binary to probe (fixtures, shadowed PATHs). |
+| `COOP_AZ_BIN` | The Azure CLI to run (test seam). |
+| `COOP_STANDARDS_ROOT`, `COOP_STANDARDS_STATE`, `COOP_STANDARDS_SNAPSHOT_ROOT`, `COOP_STANDARDS_BUNDLE` | Where the standards, their status file, the immutable snapshots and the shipped copy live (sandboxes, tests). |
+| `COOP_ROUTER_MODELS` | Override the router's model names (`plan=a,b;standard=c;build=d`). |
+| `COOP_PROJECT_SYNC=0` | Silence the session-start note about an unshared or newer team project file. |
+| `COOP_DATA_DOC_CONFIG` | coop-data-doc's own config selection; coop reads it the same way. |
+| `COOP_DEVOPS_CONFIG`, `COOP_GRAPH_CLIENT_SECRET` | The Azure DevOps digest's config path and Graph client secret (never logged). |
+| `COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS`, `COOP_TEAMAI_TIMEOUT_SECONDS`, `COOP_EXT_TREE_LOCK_TIMEOUT` | Deadlines: knowledge git operations (30 s), TeamAI calls (60 s), the extension-tree lock wait. |
+| `COOP_TEST_EXTENDED=1` | Run the extended test lane as well as the gate lane. |
+
 ## Diagram
 
 ```mermaid
