@@ -332,6 +332,44 @@ try {
     Ok 'launch-spec leaves the Pi 1.x flags off for an older Pi, which would reject them'
   } else { Ko "launch-spec passed Pi 1.x flags to Pi 0.87.1: $oldSpec" }
 
+  # --- 1a2. the launch preflight refuses a Pi that is not the manifest pin ----
+  # A `pi update` / `npm install -g` after `coop install` puts another Pi first
+  # on PATH; the launch must stop with the pin-back command instead of running it
+  # (and aligning the extension tree to it). COOP_ALLOW_UNPINNED_PI=1 is the
+  # deliberate --edge bypass. Child process: Coop-Die exits the host.
+  Head 'launch preflight: unpinned Pi refused, COOP_ALLOW_UNPINNED_PI=1 lets it through'
+  $unpinnedPi = Join-Path $stub 'unpinned-pi'
+  New-Item -ItemType Directory -Path $unpinnedPi -Force | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $unpinnedPi 'pi'), "#!/bin/sh`n[ `"`$1`" = `"--version`" ] && { echo `"pi 9.9.9`"; exit 0; }`nexit 0`n")
+  if ($IsLinux -or $IsMacOS) { & chmod +x (Join-Path $unpinnedPi 'pi') }
+  [System.IO.File]::WriteAllText((Join-Path $unpinnedPi 'pi.cmd'), "@echo off`r`nif `"%1`"==`"--version`" (echo pi 9.9.9& exit /b 0)`r`nexit /b 0`r`n")
+  function Invoke-CoopNoLaunchChild {
+    $so = Join-Path $stub 'unpinned-out.txt'; $se = Join-Path $stub 'unpinned-err.txt'
+    $p = Start-Process -FilePath $psExe -ArgumentList @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $coop + '"'), '--no-launch') -PassThru -NoNewWindow -WorkingDirectory $stub -RedirectStandardOutput $so -RedirectStandardError $se
+    $null = $p.Handle
+    $p.WaitForExit()
+    return @{ Rc = $p.ExitCode; Text = ([System.IO.File]::ReadAllText($so) + [System.IO.File]::ReadAllText($se)) }
+  }
+  $pinNow = (Get-Content -LiteralPath (Join-Path $root 'config\release-manifest.json') -Raw | ConvertFrom-Json).pi.version
+  $pathBefore = $env:PATH
+  $priorAllowUnpinned = $env:COOP_ALLOW_UNPINNED_PI
+  try {
+    $env:PATH = "$unpinnedPi$([System.IO.Path]::PathSeparator)$pathBefore"
+    Remove-Item Env:COOP_ALLOW_UNPINNED_PI -ErrorAction SilentlyContinue
+    $refused = Invoke-CoopNoLaunchChild
+    $env:COOP_ALLOW_UNPINNED_PI = '1'
+    $allowed = Invoke-CoopNoLaunchChild
+  } finally {
+    $env:PATH = $pathBefore
+    if ($null -eq $priorAllowUnpinned) { Remove-Item Env:COOP_ALLOW_UNPINNED_PI -ErrorAction SilentlyContinue } else { $env:COOP_ALLOW_UNPINNED_PI = $priorAllowUnpinned }
+  }
+  if ($refused.Rc -ne 0 -and $refused.Text -like "*pi 9.9.9 is not this coop's pinned Pi $pinNow*" -and $refused.Text -like '*coop update*') {
+    Ok 'an unpinned pi on PATH stops the launch with the pin-back command'
+  } else { Ko "unpinned pi 9.9.9 was not refused (rc $($refused.Rc)): $($refused.Text)" }
+  if ($allowed.Rc -eq 0 -and $allowed.Text -notlike '*is not this coop''s pinned Pi*') {
+    Ok 'COOP_ALLOW_UNPINNED_PI=1 lets a deliberate --edge Pi launch'
+  } else { Ko "COOP_ALLOW_UNPINNED_PI=1 did not let the launch through (rc $($allowed.Rc)): $($allowed.Text)" }
+
   # --- 1b. launch-spec includes team skills from configured knowledge repo ---
   $kbTmp = Join-Path $stub "team-kb"
   New-Item -ItemType Directory -Path (Join-Path $kbTmp 'skills\team-fixture') -Force | Out-Null
