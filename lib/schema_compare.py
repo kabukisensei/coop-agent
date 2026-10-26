@@ -1066,7 +1066,9 @@ def render_report(
     ]
     for label in ("source", "target"):
         side = sides[label]
-        lines.append(f"| {label} | {side.get('environment', '')} | {side.get('kind', '')} | {side.get('database', '')} | {side['tables']} | {side['views']} | {side['procedures']} | {side['functions']} |")
+        # A named set's environment reads as the side was named (`dev@lakehouse`).
+        environment = f"{side.get('environment', '')}@{side['set']}" if side.get("set") else side.get("environment", "")
+        lines.append(f"| {label} | {environment} | {side.get('kind', '')} | {side.get('database', '')} | {side['tables']} | {side['views']} | {side['procedures']} | {side['functions']} |")
     cosmetic = f" {counts['cosmetic']} of them change formatting or column order only." if counts.get("cosmetic") else ""
     lines += ["", f"**{counts['total']} difference(s)**: {counts['add']} to add, {counts['alter']} to alter, {counts['drop']} to drop; {counts['destructive']} of them can lose data as detected.{cosmetic}", ""]
     if records:

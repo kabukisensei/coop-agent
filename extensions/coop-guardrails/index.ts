@@ -164,6 +164,9 @@ export type ContractSqlScope = {
   configured: boolean; client: string; tenant: string; target: ContractSqlTarget | null;
   /** Every ready entry by the contract's name (dev, test, prod): a read may name one. */
   entries?: Record<string, ContractSqlTarget>;
+  /** The named target sets (`sql_targets.named.<set>`): set name -> the environments
+   *  it declares (dev, test, prod), present or not ready. `<env>@<set>` names one. */
+  namedSets?: Record<string, string[]>;
 };
 
 const SQL_HOST_LABEL = "[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?";
@@ -206,6 +209,21 @@ export function namedProductionValues(text: string): string[] {
     for (const key of SQL_PRODUCTION_KEYS) {
       if (projectYamlHas(text, ["sql_targets", "named", set, "prod", key])) out.push(projectYamlScalar(text, ["sql_targets", "named", set, "prod", key]));
     }
+  }
+  return out;
+}
+
+/** The named target sets a contract declares (`sql_targets.named.<set>.<env>`):
+ *  set name -> its environment keys among dev, test and prod, in file order. A set
+ *  name outside lib/sql_targets.py's shape, or an environment outside the three,
+ *  is left out, so `dev@<that set>` stays blocked. Readiness is not judged here:
+ *  lib/schema_compare.py refuses an incomplete entry as target_invalid. */
+export function namedTargetSets(text: string): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const set of projectYamlKeys(text, ["sql_targets", "named"])) {
+    if (!SCHEMA_COMPARE_SET_NAME.test(set)) continue;
+    const envs = projectYamlKeys(text, ["sql_targets", "named", set]).filter((env) => SCHEMA_COMPARE_SIDES.has(env));
+    if (envs.length) out[set] = envs;
   }
   return out;
 }
@@ -301,6 +319,7 @@ export function parseContractSqlScope(text: string): ContractSqlScope | null {
   // entries and the default are unchanged by it, so it is not an unknown key.
   if (projectYamlKeys(text, ["sql_targets"]).some((key) => key !== "default_environment" && key !== "named" && !envs.includes(key))) return { configured: true, client, tenant, target: null };
   const entry = (env: string) => (projectYamlHas(text, ["sql_targets", env]) ? projectYamlMapping(text, ["sql_targets", env]) : null);
+  const namedSets = namedTargetSets(text);
   const entries: Record<string, ContractSqlTarget> = {};
   for (const env of envs) {
     const ready = readySqlTarget(env === "prod" ? "production" : env as "dev" | "test", entry(env));
@@ -308,8 +327,8 @@ export function parseContractSqlScope(text: string): ContractSqlScope | null {
   }
   const rawDefault = projectYamlScalar(text, ["sql_targets", "default_environment"]).trim().toLowerCase();
   const environment = rawDefault === "" ? "dev" : rawDefault;
-  if (environment !== "dev" && environment !== "test") return { configured: true, client, tenant, target: null, entries };
-  return { configured: true, client, tenant, target: readySqlTarget(environment, entry(environment)), entries };
+  if (environment !== "dev" && environment !== "test") return { configured: true, client, tenant, target: null, entries, namedSets };
+  return { configured: true, client, tenant, target: readySqlTarget(environment, entry(environment)), entries, namedSets };
 }
 
 function ensureSessionGovernance(sessionCwd: string): SessionGovernance {
@@ -1188,6 +1207,10 @@ const SQL_IMPACT_TOOL = "sql_impact";
 const CATALOG_SNAPSHOT_TOOL = "catalog_snapshot";
 const SCHEMA_COMPARE_TOOL = "schema_compare";
 const SCHEMA_COMPARE_SIDES = new Set(["dev", "test", "prod"]);
+// A named target set's name (lib/sql_targets.py NAME_RE) and `<env>@<set>`, an
+// environment of one (`dev@lakehouse`): the plain entry when there is no `@`.
+const SCHEMA_COMPARE_SET_NAME = /^[a-z][a-z0-9_-]{0,31}$/;
+const SCHEMA_COMPARE_LIVE_SIDE = /^(dev|test|prod)(?:@([a-z][a-z0-9_-]{0,31}))?$/;
 const SQL_SOURCE_TOOL = "sql_source";
 // `repo`, `repo:<name>` or `repo:<name>/<subfolder>`: the .sql files of one contract
 // repositories entry, read with no connection (lib/schema_compare.py, SQ10).
@@ -2016,7 +2039,7 @@ export function decideCatalogSnapshot(event: any, deps: LiveReadResolverDeps): S
  *  pair it compares. The sides come from the contract alone: a call carrying any
  *  field beyond `source`, `target`, the schema lists and `commented`, or a value
  *  outside the fixed sets, is blocked outright. */
-export function decideSchemaCompare(event: any): SqlImpactDecision {
+export function decideSchemaCompare(event: any, contract?: ContractSqlScope | null): SqlImpactDecision {
   const input = event?.input ?? {};
   const only = "accepts only the fields source, target, schemas, exclude, rebuild and commented";
   if (!input || typeof input !== "object" || Array.isArray(input)) {
@@ -2038,11 +2061,26 @@ export function decideSchemaCompare(event: any): SqlImpactDecision {
   }
   const source = input.source === undefined ? "default" : input.source;
   const target = input.target === undefined ? "prod" : input.target;
-  if (source !== "default" && source !== "snapshot" && !SCHEMA_COMPARE_SIDES.has(source) && !isSchemaCompareRepo(source)) {
-    return { action: "block", environment: "", reason: "source must be dev, test, prod, snapshot or repo[:<name>[/<subfolder>]]" };
+  // A live side is dev, test or prod, or `<env>@<set>` for an environment of a named
+  // target set the project file declares (`sql_targets.named.<set>.<env>`); the set
+  // and the environment come from the file alone, so `dev@lakehouse` is dev with the
+  // Lakehouse entry and `prod@lakehouse` is production, read like prod. A set the
+  // file does not declare, or an environment the set lacks, is blocked before any
+  // connection, like a side outside the fixed names.
+  const liveSide = (value: unknown): boolean => {
+    if (typeof value !== "string") return false;
+    const m = SCHEMA_COMPARE_LIVE_SIDE.exec(value);
+    if (!m) return false;
+    if (!m[2]) return true;
+    const envs = contract?.namedSets?.[m[2]];
+    return Array.isArray(envs) && envs.includes(m[1]);
+  };
+  const sides = "dev, test, prod (or <env>@<set> for a named target set in .coop/project.yml)";
+  if (source !== "default" && source !== "snapshot" && !liveSide(source) && !isSchemaCompareRepo(source)) {
+    return { action: "block", environment: "", reason: `source must be ${sides}, snapshot or repo[:<name>[/<subfolder>]]` };
   }
-  if (!SCHEMA_COMPARE_SIDES.has(target) && !isSchemaCompareRepo(target)) {
-    return { action: "block", environment: "", reason: "target must be dev, test, prod or repo[:<name>[/<subfolder>]]" };
+  if (!liveSide(target) && !isSchemaCompareRepo(target)) {
+    return { action: "block", environment: "", reason: `target must be ${sides} or repo[:<name>[/<subfolder>]]` };
   }
   if (source === target) return { action: "block", environment: "", reason: "source and target must differ" };
   return { action: "allow", environment: `${source}->${target}`, reason: "two catalog reads; nothing is applied" };
@@ -3291,7 +3329,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
           const deps = { ...liveReadDeps, contract: () => ensureSessionGovernance(ctx.cwd).sqlContract };
           const impact = tool === SQL_IMPACT_TOOL ? decideSqlImpact(event, deps)
             : tool === CATALOG_SNAPSHOT_TOOL ? decideCatalogSnapshot(event, deps)
-            : decideSchemaCompare(event);
+            : decideSchemaCompare(event, deps.contract());
           const auditTool = tool === SQL_IMPACT_TOOL ? "governed-sql-impact" : tool === CATALOG_SNAPSHOT_TOOL ? "governed-catalog-snapshot" : "governed-schema-compare";
           const label = tool === SQL_IMPACT_TOOL ? "live metadata read" : tool === CATALOG_SNAPSHOT_TOOL ? "live catalog snapshot" : "live schema compare";
           if (impact.action === "block") {
