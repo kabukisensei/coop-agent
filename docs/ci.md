@@ -285,8 +285,10 @@ The run scripts are the list; this page does not repeat it.
   `VERSION`, which the release PR (`release-pr.yml`, `scripts/bump-version.sh`)
   always does, so a release carries the full suite's evidence. `coop release`
   (`scripts/release.sh`) then tags only when GitHub's check runs for the exact
-  commit on `main` are all complete and green (`tests/release-gate.test.sh`
-  covers the verdict reader). See `RELEASE.md`.
+  commit on `main` are all complete and green. `tests/release-gate.test.sh`
+  covers the verdict reader, the tree check, the bump and the tag in
+  disposable repositories; `tests/fixtures/release.test.ps1` only proves that
+  `coop.ps1 release` forwards to the script. See `RELEASE.md`.
 
 The extended block of `tests/run.sh` keeps the gate lane's temp home (#135).
 `tests/fixtures/home-guard.test.ps1` (run by `tests/run.ps1`) is the one exception: it reads the real `~/.local/bin`

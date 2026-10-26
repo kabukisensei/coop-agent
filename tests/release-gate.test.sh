@@ -117,5 +117,93 @@ case "$got" in *"nothing under [Unreleased]"*"2.0.0"*"rc=0") ok "an explicit new
 got="$( (bash "$t/scripts/bump-version.sh" 1.2 2>&1); echo " rc=$?" )"
 case "$got" in *"rc=1") ok "a malformed version is refused" ;; *) ko "malformed version: '$got'" ;; esac
 
+# --- the release itself, in disposable repositories ---------------------------------
+# Every origin is a local bare repository, so nothing leaves this machine; git is
+# hermetic (no user or system config, a fixed identity). --no-check keeps GitHub,
+# the sibling coop-website and the wiki out of it.
+export HOME="$TMP/home" GIT_CONFIG_NOSYSTEM=1
+export GIT_AUTHOR_NAME='Coop Release Test' GIT_AUTHOR_EMAIL='coop-release-test@example.invalid'
+export GIT_COMMITTER_NAME='Coop Release Test' GIT_COMMITTER_EMAIL='coop-release-test@example.invalid'
+mkdir -p "$HOME"
+new_repo() { # <dir> -> a release-ready checkout at 1.2.3 on main == origin/main; its origin is <dir>.git
+  local t="$1"
+  mkdir -p "$t/config" "$t/extensions/a" "$t/scripts"
+  printf '1.2.3\n' > "$t/VERSION"
+  printf '{\n  "coop_version": "1.2.3",\n  "pi": {}\n}\n' > "$t/config/release-manifest.json"
+  printf '{\n  "name": "a",\n  "version": "1.2.3"\n}\n' > "$t/extensions/a/package.json"
+  printf '# Changelog\n\n## [Unreleased]\n\n### Added\n\n- a thing\n\n## [1.2.3] — 2026-01-01\n\n- old\n' > "$t/CHANGELOG.md"
+  cp "$ROOT/scripts/bump-version.sh" "$t/scripts/bump-version.sh"
+  git init -q "$t"; git -C "$t" symbolic-ref HEAD refs/heads/main
+  git -C "$t" add . && git -C "$t" commit -q -m fixture
+  git init -q --bare "$t.git"; git -C "$t.git" symbolic-ref HEAD refs/heads/main
+  git -C "$t" remote add origin "$t.git" && git -C "$t" push -q -u origin main
+}
+release_in() { # <dir> <args...> -> the release's output, then " rc=N"
+  local t="$1"; shift
+  ( COOP_ROOT="$t"; ( coop_release "$@" 2>&1 ); echo " rc=$?" )
+}
+origin_tags() { git -C "$1.git" tag -l; }
+unchanged() { # <dir> <head0>: HEAD, the tree, VERSION and both tag lists are as before
+  [ "$(git -C "$1" rev-parse HEAD)" = "$2" ] && [ -z "$(git -C "$1" status --porcelain)" ] \
+    && [ "$(cat "$1/VERSION")" = "1.2.3" ] && [ -z "$(git -C "$1" tag -l)" ] && [ -z "$(origin_tags "$1")" ]
+}
+
+r="$TMP/happy"; new_repo "$r"
+got="$(release_in "$r" --yes --no-check)"
+case "$got" in *"released v1.2.3: pushed tag v1.2.3"*"rc=0") ok "a release-ready main is tagged and the tag pushed" ;; *) ko "happy release: '$got'" ;; esac
+git -C "$r" rev-parse -q --verify refs/tags/v1.2.3 >/dev/null && ok "the tag exists here" || ko "no local tag v1.2.3"
+[ "$(origin_tags "$r")" = "v1.2.3" ] && ok "the tag reached origin" || ko "origin tags: '$(origin_tags "$r")'"
+git -C "$r.git" merge-base --is-ancestor v1.2.3 refs/heads/main && ok "the tag is on origin main" || ko "origin tag off main"
+[ "$(git -C "$r.git" rev-parse refs/heads/main)" = "$(git -C "$r" rev-parse HEAD)" ] && ok "origin main did not move (the release commits nothing)" || ko "origin main moved"
+got="$(release_in "$r" --yes --no-check)"
+case "$got" in *"tag v1.2.3 already exists here"*"rc=1") ok "a second release of the same version is refused" ;; *) ko "released twice: '$got'" ;; esac
+
+r="$TMP/levels"; new_repo "$r"; head0="$(git -C "$r" rev-parse HEAD)"
+got="$(release_in "$r" patch --yes --no-check)"
+case "$got" in *"the version bump is a pull request now"*"rc=1") ok "coop release patch names the release pull request" ;; *) ko "release patch: '$got'" ;; esac
+unchanged "$r" "$head0" && ok "a bump level changes nothing" || ko "release patch changed something"
+
+# The two steps by hand: bump on a branch, merge (push) to main, then tag.
+r="$TMP/twostep"; new_repo "$r"
+(cd "$r" && bash scripts/bump-version.sh patch --date 2026-10-26 >/dev/null)
+git -C "$r" add . && git -C "$r" commit -q -m 'Release v1.2.4' && git -C "$r" push -q origin main
+got="$(release_in "$r" --yes --no-check)"
+case "$got" in *"agree on 1.2.4, not yet tagged"*"released v1.2.4"*"rc=0") ok "after the bump has merged, coop release tags the new version" ;; *) ko "two-step release: '$got'" ;; esac
+[ "$(origin_tags "$r")" = "v1.2.4" ] && ok "v1.2.4 reached origin" || ko "origin tags after the bump: '$(origin_tags "$r")'"
+
+r="$TMP/mismatch"; new_repo "$r"
+printf '{\n  "coop_version": "0.0.0",\n  "pi": {}\n}\n' > "$r/config/release-manifest.json"
+git -C "$r" commit -q -am mismatch && git -C "$r" push -q origin main
+got="$(release_in "$r" --yes --no-check)"
+case "$got" in *"coop_version ('0.0.0') does not match VERSION ('1.2.3')"*"rc=1") ok "a manifest that disagrees with VERSION is refused, naming the release PR" ;; *) ko "mismatch: '$got'" ;; esac
+[ -z "$(git -C "$r" tag -l)" ] && [ -z "$(origin_tags "$r")" ] && ok "the mismatch tagged nothing" || ko "mismatch tagged"
+
+r="$TMP/rejected"; new_repo "$r"
+# origin refuses every tag, as a protected ref or a lost race would.
+printf '#!/bin/sh\ncase "$1" in refs/tags/*) echo "tags are protected" >&2; exit 1 ;; esac\nexit 0\n' > "$r.git/hooks/update"; chmod +x "$r.git/hooks/update"
+got="$(release_in "$r" --yes --no-check)"
+case "$got" in *"v1.2.3 exists only on this machine. Retry: git push origin v1.2.3"*"rc=1") ok "a rejected tag push fails with the retry command" ;; *) ko "rejected push: '$got'" ;; esac
+[ -z "$(origin_tags "$r")" ] && ok "origin has no tag after the rejection" || ko "tag reached origin despite the hook"
+
+refused() { # <dir> <label> <wanted text>
+  local t="$1" label="$2" want="$3" head0 got
+  head0="$(git -C "$t" rev-parse HEAD)"
+  got="$(release_in "$t" --yes --no-check)"
+  case "$got" in *"$want"*"rc=1") ok "$label: refused, naming the fix" ;; *) ko "$label: '$got'" ;; esac
+  unchanged "$t" "$head0" && ok "$label: nothing changed here or on origin" || ko "$label: the refused release changed something"
+}
+r="$TMP/detached"; new_repo "$r"; git -C "$r" checkout -q --detach
+refused "$r" "detached HEAD" "HEAD is detached"
+r="$TMP/branch"; new_repo "$r"; git -C "$r" checkout -q -b topic
+refused "$r" "another branch" "on branch 'topic'"
+r="$TMP/behind"; new_repo "$r"
+git clone -q "$r.git" "$TMP/behind-other"; git -C "$TMP/behind-other" commit -q --allow-empty -m 'merged elsewhere'; git -C "$TMP/behind-other" push -q origin main
+refused "$r" "main behind origin/main" "0 ahead, 1 behind"
+r="$TMP/ahead"; new_repo "$r"; git -C "$r" commit -q --allow-empty -m 'local only'
+refused "$r" "main ahead of origin/main" "1 ahead, 0 behind"
+r="$TMP/dirty"; new_repo "$r"; echo x > "$r/stray"
+got="$(release_in "$r" --yes --no-check)"
+case "$got" in *"working tree not clean"*"rc=1") ok "a dirty tree is refused" ;; *) ko "dirty tree: '$got'" ;; esac
+
 echo "release gate: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

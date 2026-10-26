@@ -20,7 +20,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   after the GitHub Release, calls coop-website's `sync-release.yml`, which
   opens the site's sync pull request (needs a `COOP_WEBSITE_TOKEN` secret). The
   PowerShell twin of the release (`Invoke-CoopRelease` and its gates, ~340
-  lines) is gone: `coop release` on Windows forwards to Git Bash.
+  lines) is gone: `coop release` on Windows forwards to Git's bash. The
+  release is tested in disposable repositories by `tests/release-gate.test.sh`;
+  the PowerShell fixture now proves only the forwarder.
 
 ## [0.38.6] — 2026-10-26
 

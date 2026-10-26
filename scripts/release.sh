@@ -325,7 +325,7 @@ EOF
   coop_release_require_main
 
   local ver head_sha
-  ver="$(coop_release_check_tree)"
+  ver="$(coop_release_check_tree)" || return 1
   if git -C "$COOP_ROOT" rev-parse -q --verify "refs/tags/v$ver" >/dev/null 2>&1; then
     coop_die "tag v$ver already exists here — v$ver is released; the next release starts with a new release PR."
   fi

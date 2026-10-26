@@ -1564,10 +1564,24 @@ Steps:
 # on Windows this forwards to Git Bash's bash when there is one.
 function Invoke-CoopRelease {
   param([string[]]$Rest = @())
-  $sh = Join-Path $script:CoopRoot 'scripts\release.sh'
-  $bash = Get-Command bash -ErrorAction SilentlyContinue
+  # Forward slashes: bash's dirname on a backslash path is '.', and release.sh
+  # finds its checkout from its own location.
+  $sh = (Join-Path $script:CoopRoot 'scripts\release.sh').Replace('\', '/')
+  $bash = $null
+  if ($env:OS -eq 'Windows_NT') {
+    # Git's own bash, not the WSL launcher that System32 puts first on PATH.
+    $git = Get-Command git.exe -ErrorAction SilentlyContinue
+    if ($git) {
+      $gitBash = Join-Path (Split-Path (Split-Path $git.Source -Parent) -Parent) 'bin\bash.exe'
+      if (Test-Path -LiteralPath $gitBash -PathType Leaf) { $bash = $gitBash }
+    }
+  }
+  if (-not $bash) {
+    $cmd = Get-Command bash -ErrorAction SilentlyContinue
+    if ($cmd) { $bash = $cmd.Source }
+  }
   if (-not $bash) { Coop-Die "coop release runs scripts/release.sh under bash (Git Bash on Windows): open Git Bash and run  ./bin/coop release" }
-  & $bash.Source $sh @Rest
+  & $bash $sh @Rest
   exit $LASTEXITCODE
 }
 
