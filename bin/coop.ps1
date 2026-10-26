@@ -12,24 +12,14 @@
 # Usage:
 #   coop                      Launch the branded Pi agent (passes extra args to pi)
 #   coop desktop [folder]     Open coop in a window on a folder (Electron over pi --mode rpc)
-#   coop doctor               Check dependencies and configuration
+#   coop doctor [--fix]       Check dependencies and configuration
 #   coop update               Update Pi, Coop tools, vibes, skills/prompts, then doctor
-#   coop install              Fresh-install / bootstrap everything (idempotent)
+#   coop install              Fresh-install everything (idempotent); `coop install <source>` adds a Pi extension
 #   coop uninstall            Remove coop from this machine (--keep-tools spares pi + tools)
-#   coop sync                 Ensure Pi extensions + place read-only MCP config + verify assets
-#   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
-#   coop support [--json]     Collect a sanitized support bundle (health, versions, events); preview + export
-#   coop fabric [args]        Pass through to the Microsoft Fabric CLI (`fab`)
-#   coop version              Print coop + pi versions
-#   coop help                 Show this help
-#
-# Pi management, aliased under coop:
-#   coop list                 List installed Pi extensions   (-> pi list)
-#   coop config               Open Pi's resource TUI         (-> pi config)
-#   coop add <source>         Install a Pi extension          (-> pi install <source>)
-#   coop install <source>     Same as `coop add` (bare `coop install` bootstraps)
-#   coop remove <source>      Remove a Pi extension           (-> pi remove <source>)
-#   coop pi <args...>         Raw escape hatch to pi          (-> pi <args...>)
+#   coop onboard | profile | project | folders | data-doc | catalog | schema | support | version | help
+#   coop dev <cmd>            Maintainer commands (sync, init, new-skill, new-prompt, release, launch-spec,
+#                             context-budget, teamai, fabric, list, config, add, remove, pi); the bare
+#                             names still dispatch
 #
 # NB: deliberately NO param() block. With `powershell -File coop.ps1 <args>`, the
 # absence of declared parameters routes EVERY token — including bare flags like
@@ -500,22 +490,20 @@ $(Coop-Bold)Usage$(Coop-Rst)
   coop                      Launch the branded Pi agent
   coop desktop [folder]     Open coop in a window on a folder (default: here; installs the window on first use;
                             --app <exe> opens it in the installed coop window package instead)
-  coop doctor               Check dependencies and configuration
+  coop doctor [--fix]       Check dependencies and configuration (--fix applies the safe repairs)
   coop update               Update Pi + Coop tools + vibes/skills, then run doctor
-  coop install              Fresh-install / bootstrap everything (idempotent)
+  coop install              Fresh-install everything (idempotent)
   coop uninstall            Remove coop from this machine (--keep-tools spares pi + tools)
-  coop sync                 Ensure Pi extensions + place read-only MCP config + verify assets
   coop onboard              First-run global onboarding (creates ~/.coop/user.json)
   coop onboard --machine    Write the machine-level profile (name, communication) once per VM, from an elevated terminal
   coop onboard --platform <fabric|azure_sql|both>   Switch the client platform (a fresh machine onboards with that answer)
-  coop profile              Show your COOP user profile
-  coop profile edit         Edit your COOP user profile
-  coop profile reset        Remove your COOP user profile
-  coop teamai <cmd>         TeamAI shared-knowledge trial, isolated (status|install|init|pull|
-                            skills|maintenance|recall --query <text>|compare --query <text>|
-                            contribute --file <draft.md> [--approve]); off until
-                            knowledge.teamai.enabled is true
-  coop context-budget       Report fixed startup context sizes (use --json for machine output)
+  coop profile              Show your COOP user profile (edit | reset)
+  coop project status|get|share
+                            The team's .coop/project.yml: compare with origin, get it, or share it
+                            (share commits that one file and pushes; --force on a non-default branch)
+  coop project home [folder]
+                            Show or set this Windows user's client folder (and its project file), where coop opens every time
+  coop folders              Show the three places coop uses: this machine, this client, the repository
   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
                             (--strict: exit 2 on a failing linter; --skip-docs: linters only)
   coop catalog <cmd>        Committed dev catalog snapshot: snapshot (read the dev/test catalog
@@ -525,36 +513,46 @@ $(Coop-Bold)Usage$(Coop-Rst)
                             a side is dev|test|prod, or <env>@<set> for a sql_targets.named set)
   coop support [--json]     Collect a sanitized support bundle (health, versions, events)
                             (--incident: incident record; --export PATH: write bundle)
-  coop fabric [args]        Pass through to the Microsoft Fabric CLI (fab)
   coop version              Print coop + pi versions
   coop help                 Show this help
-
-$(Coop-Bold)Authoring$(Coop-Rst)
-  coop init [dir]           Scaffold .coop/project.yml into a work repo (default: .)
-                            (--seed-docs: generate coop-data-doc.yml from repositories:)
-  coop init --migrate-legacy [dir]
-                            Inspect legacy project configuration (dry run; add --apply to confirm changes)
-  coop project status|get|share
-                            The team's .coop/project.yml: compare with origin, get it, or share it
-                            (share commits that one file and pushes; --force on a non-default branch)
-  coop project home [folder]
-                            Show or set this Windows user's client folder (and its project file), where coop opens every time
-  coop folders              Show the three places coop uses: this machine, this client, the repository
-  coop new-skill <name>     Scaffold skills/<name>/SKILL.md (shipped tier)
-                            (--client: .coop/skills beside the contract; --personal: ~/.coop/skills)
-  coop new-prompt <name>    Scaffold prompts/<name>.md (shipped tier; --client / --personal as above)
-  coop release [level]      Cut a release: bump version + roll CHANGELOG + commit + tag + push
-                            (level = patch|minor|major, default patch; --yes, --no-push)
-
-$(Coop-Bold)Pi management (aliased under coop)$(Coop-Rst)
-  coop list                 List installed Pi extensions   (pi list)
-  coop config               Open Pi's resource TUI         (pi config)
-  coop add <source>         Install a Pi extension         (pi install <source>)
-  coop remove <source>      Remove a Pi extension          (pi remove <source>)
-  coop pi <args...>         Raw escape hatch to pi
+  coop dev <cmd>            Maintainer commands (coop dev help lists them)
 
 Anything after ``coop`` that is not a known subcommand is passed straight to pi,
 e.g. ``coop -c`` resumes the last session, ``coop @notes.md "review this"``.
+"@
+}
+
+# Maintainer commands (suite review 2026-10-26, pick 9): the worker help above
+# lists the day-to-day verbs; these sit under `coop dev <cmd>`. The bare names
+# still dispatch (release scripts and fixtures call them), they are just not shown.
+function Show-DevUsage {
+  Write-Host @"
+$(Coop-Bold)coop dev <cmd>$(Coop-Rst) — maintainer commands (each also runs as ``coop <cmd>``)
+
+  coop dev sync             Ensure Pi extensions + place read-only MCP config + verify assets
+                            (coop update and coop doctor --fix run this themselves)
+  coop dev init [dir]       Scaffold .coop/project.yml into a work repo (default: .)
+                            (--seed-docs: generate coop-data-doc.yml from repositories:;
+                            --migrate-legacy: inspect legacy project configuration, --apply to confirm)
+  coop dev new-skill <name> Scaffold skills/<name>/SKILL.md (shipped tier)
+                            (--client: .coop/skills beside the contract; --personal: ~/.coop/skills)
+  coop dev new-prompt <name>
+                            Scaffold prompts/<name>.md (shipped tier; --client / --personal as above)
+  coop dev release [level]  Cut a release: bump version + roll CHANGELOG + commit + tag + push
+                            (level = patch|minor|major, default patch; --yes, --no-push)
+  coop dev launch-spec      Print the resolved pi invocation (--json for machine output); coop --no-launch
+                            runs the launch preflights first
+  coop dev context-budget   Report fixed startup context sizes (use --json for machine output)
+  coop dev teamai <cmd>     TeamAI shared-knowledge trial, isolated (status|install|init|pull|
+                            skills|maintenance|recall --query <text>|compare --query <text>|
+                            contribute --file <draft.md> [--approve]); off until
+                            knowledge.teamai.enabled is true
+  coop dev fabric [args]    Pass through to the Microsoft Fabric CLI (fab)
+  coop dev list             List installed Pi extensions   (pi list)
+  coop dev config           Open Pi's resource TUI         (pi config)
+  coop dev add <source>     Install a Pi extension         (pi install <source>)
+  coop dev remove <source>  Remove a Pi extension          (pi remove <source>)
+  coop dev pi <args...>     Raw escape hatch to pi
 "@
 }
 
@@ -1951,6 +1949,14 @@ if ($argList.Count -gt 1) { $rest = @($argList[1..($argList.Count - 1)]) }
 # Surface freshly-installed tools (npm-global `pi`, pipx `fab`/coop-*) on PATH for
 # this process so a shell whose persistent PATH predates the install still finds them.
 Add-CoopRuntimePaths
+
+# `coop dev <cmd>` unwraps to the bare maintainer command (Show-DevUsage lists
+# them); `coop dev` alone, or `coop dev help`, prints that list.
+if ($cmd -ceq 'dev') {
+  if ($rest.Count -eq 0 -or $rest[0] -ceq 'help' -or $rest[0] -ceq '--help' -or $rest[0] -ceq '-h') { Show-DevUsage; exit 0 }
+  $cmd = [string]$rest[0]
+  if ($rest.Count -gt 1) { $rest = @($rest[1..($rest.Count - 1)]) } else { $rest = @() }
+}
 
 switch -CaseSensitive ($cmd) {
   '' { Invoke-LaunchPi; break }
