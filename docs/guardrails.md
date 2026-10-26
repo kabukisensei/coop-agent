@@ -35,6 +35,14 @@ or when the user explicitly opts out for that task.
 
 Advisory tools: `data_doc`, `bpa_review`. Follow the standards in context; deviate only on a user exception or a stated reason. A missing or partial repo is not a blocker: use local sources, then approved live discovery. Read-only MCP (Fabric, Power BI, Microsoft Learn), memory, web, and ask-user. See `docs/guardrails-reference.md` and the `coop-workflow` skill.
 
+## Files first
+
+Local sources before live ones. When the client's SQL repository (an `sqlsc` repo or any committed `.sql` files), the committed catalog snapshot or the built lineage docs exist, answer from them: `data_doc` for lineage, the files for definitions. Go to a live database (`sql_impact`, `fabric_sql_query`, the SQL MCP) only when those are missing or plainly stale, when the task is about live rows or live state, or when the user asks; say in one line when you do. Never re-read live what a file already told you in this session.
+
+## Mark your SQL edits
+
+Every view, procedure, function or trigger you change gets one comment line inside the object, next to what you changed, in this form: `-- coop YYYY-MM-DD for <user>: <what changed and why, one line>`. A table change gets the line in the script that makes it. One line per change, never a running log at the top of the object, never a banner before `CREATE`. Together with the `Prepared-by:` trailer `sql_source commit` adds, it is how the team sees where coop was involved.
+
 ## Read focused
 
 Documentation can be large. Before changing an object, look up its lineage with `data_doc` (`command="lineage"`, `object="<name>"`) and read **only that object's doc plus its immediate upstream/downstream neighbors**, not the whole tree. Widen the radius only when the blast radius requires it.

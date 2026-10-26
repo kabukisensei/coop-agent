@@ -50,6 +50,7 @@ import {
   NO_USER_TEXT as SQL_SOURCE_NO_USER,
   OFF_TEXT as SQL_SOURCE_OFF,
   SQLSC_BIN,
+  preparedByLabel,
   agentIdentity,
   checkUpstream,
   commitLine,
@@ -270,6 +271,11 @@ const FABRIC_SQL_QUERY_PARAMS = Type.Object({
 });
 
 interface FabricSqlInvocation { bin: string; args: string[]; env?: Record<string, string> }
+
+/** coop's own version (the VERSION file at the checkout root), "" when unreadable. */
+function coopVersion(root = process.env.COOP_ROOT || resolve(dirname(fileURLToPath(import.meta.url)), "..", "..")): string {
+  try { return readFileSync(join(root, "VERSION"), "utf8").trim(); } catch { return ""; }
+}
 
 export function fabricSqlPythonResolverInvocation(
   root = process.env.COOP_ROOT || resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."),
@@ -2774,7 +2780,7 @@ export default function coopTools(pi: ExtensionAPI) {
           }
           pullNote = pull.behind ? pull.note : "";
         }
-        res = await pi.exec(SQLSC_BIN, sqlSourceArgs(input, config, agent), { cwd: dirname(config), signal });
+        res = await pi.exec(SQLSC_BIN, sqlSourceArgs(input, config, agent, input.command === "commit" ? preparedByLabel(coopVersion()) : ""), { cwd: dirname(config), signal });
       } catch (e: any) {
         return { content: [{ type: "text" as const, text: SQL_SOURCE_NOT_INSTALLED }], details: { state: "not_installed", error: errMsg(e) } };
       }

@@ -7,6 +7,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- **Team feedback of 2026-10-26.** `/deploy-brief` writes `deploy-brief.md` from a
+  `schema_compare` run or a git range: one plain-English paragraph per changed
+  object by schema, the standards self-check over those objects, downstream impact
+  from the built docs, who changed what from `git log` (with the `Prepared-by:`
+  trailer), the destructive and manual steps; nothing deployed. `sql_source commit`
+  passes `--prepared-by "coop-agent <version>"` so the commit's trailer names coop
+  and its version while the person stays the author (sqlsc 1.0.8). The guardrails
+  gain two rules: *Files first* (the SQL repository, the catalog snapshot and the
+  built docs before any live read, and say when going live) and *Mark your SQL
+  edits* (one `-- coop <date> for <user>: <what and why>` line inside every module
+  coop changes, next to the change).
+
 - **Schema compare from the deployment call (2026-10-23).** `/setup-project` and
   the coop window's Project pane now ask for the `prod` and `test` SQL targets
   (same kind as dev; blank = no entry yet) and the shared `schema_compare:`

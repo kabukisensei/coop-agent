@@ -791,7 +791,7 @@ procedures and functions, formatting-only and column-order-only differences
 labelled, and an ordered promotion script with a note per
 object, destructive statements marked (commented out on request, or per client
 in `schema_compare:` of the project file, which `/setup-project` fills in), written under `.coop/schema-compare/`;
-`coop schema compare` is the terminal form, `/schema-compare` walks a compare and the promotion, and `/runbook <name>` walks a client's own `.coop/runbooks/<name>.md` step by step; nothing is ever applied by the compare), `sql_source` (SQL
+`coop schema compare` is the terminal form, `/schema-compare` walks a compare and the promotion, `/deploy-brief` writes the plain-English page a reviewer reads before a deployment (changes by schema, the standards check, downstream impact from the docs, who changed what from git, the destructive list), and `/runbook <name>` walks a client's own `.coop/runbooks/<name>.md` step by step; nothing is ever applied by the compare), `sql_source` (SQL
 source control through `coop-sqlsc` where the client SQL repository has an
 `sqlsc.yml` and the user has run `/sql-source on`: coop checks objects out as
 `coop-agent:<user>` before changing them, writes dev's changes into the files or
