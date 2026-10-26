@@ -142,6 +142,12 @@ await t("argv: coop acts as coop-agent:<person>, writes only to dev, never pushe
   assert.deepEqual(args({ command: "deploy", environment: "test", ref: "v1.4" }), ["--json", "--config", "/r/sqlsc.yml", "deploy", "--target", "test", "--ref", "v1.4", "--dry-run"]);
   assert.deepEqual(args({ command: "deploy", environment: "dev", apply: true }), ["--json", "--config", "/r/sqlsc.yml", "deploy", "--target", "dev", "--ref", "HEAD"]);
   assert.deepEqual(args({ command: "commit", message: "add Region", objects: ["dbo.v"] }), ["--json", "--config", "/r/sqlsc.yml", "commit", "--target", "dev", "--as", agent, "--message", "add Region", "--", "dbo.v"]);
+  // The commit names coop and its version in a Prepared-by trailer; nothing else does.
+  assert.equal(lib.preparedByLabel("0.38.6\n"), "coop-agent 0.38.6");
+  assert.equal(lib.preparedByLabel(""), "coop-agent");
+  const marked = (p) => lib.sqlSourceArgs(lib.sqlSourceInput(p), "/r/sqlsc.yml", agent, "coop-agent 0.38.6");
+  assert.deepEqual(marked({ command: "commit", message: "add Region" }), ["--json", "--config", "/r/sqlsc.yml", "commit", "--target", "dev", "--as", agent, "--prepared-by", "coop-agent 0.38.6", "--message", "add Region"]);
+  assert.ok(!marked({ command: "checkout", objects: ["dbo.v"] }).includes("--prepared-by"));
   for (const p of [{ command: "status" }, { command: "checkout", objects: ["x"] }, { command: "get_latest", apply: true }, { command: "release", objects: ["x"] }, { command: "deploy", environment: "test", apply: true }, { command: "commit", message: "m" }]) {
     const a = args(p);
     for (const word of ["checkin", "--force", "--allow-drops", "--push", "--confirm", "prod"]) assert.ok(!a.includes(word), `${p.command} has no ${word}`);
