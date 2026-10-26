@@ -62,6 +62,23 @@ manifest = {"coop_catalog_snapshot": True, "schema_version": 1, "taken_at": "202
 print(json.dumps({"ok": True, "state": "ok", "taken_at": manifest["taken_at"], "objects": manifest["objects"], "files": 1, "skipped": 1, "unavailable": manifest["unavailable"], "path": out.as_posix()}))
 '''
 
+def write_stub(folder: Path, source: str) -> Path:
+    """The stub as an executable: a shebang script on POSIX; on Windows a .cmd
+    wrapper that runs the script with this interpreter (a shebang file cannot be
+    started by CreateProcess)."""
+    folder.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "win32":
+        script = folder / "coop-schema-compare.py"
+        script.write_text(source, encoding="utf-8")
+        wrapper = folder / "coop-schema-compare.cmd"
+        wrapper.write_text(f'@"{sys.executable}" "{script}" %*\r\n', encoding="ascii")
+        return wrapper
+    stub = folder / "coop-schema-compare"
+    stub.write_text(source, encoding="utf-8")
+    stub.chmod(stub.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return stub
+
+
 CONTRACT = """schema_version: 1
 profile:
   client: Contoso
@@ -98,10 +115,7 @@ with mock.patch.object(sq, "resolve_target", side_effect=AssertionError("no reso
     assert cs.execute("snapshot")["state"] == "input_invalid"
 
 with tempfile.TemporaryDirectory() as tmp:
-    stub = Path(tmp) / "bin" / "coop-schema-compare"
-    stub.parent.mkdir()
-    stub.write_text(STUB, encoding="utf-8")
-    stub.chmod(stub.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    stub = write_stub(Path(tmp) / "bin", STUB)
     record_path = Path(tmp) / "record.json"
     os.environ[ct.TOOL_ENV] = str(stub)
     os.environ["COOP_TEST_RECORD"] = str(record_path)
