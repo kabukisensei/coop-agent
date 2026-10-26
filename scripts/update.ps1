@@ -64,8 +64,15 @@ if (Test-CoopMachineInstall) {
     exit 0
   }
   Coop-Info (Get-CoopMachineUpdateSummary)
-  Coop-Info "Bringing this account's tools to this package's pins (version $($script:CoopVersion))"
-  $accountRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\install.ps1') @('--prereqs', 'auto')
+  if (Test-CoopBundledToolsPending) {
+    Coop-Info "Bringing this account's tools to this package's pins (version $($script:CoopVersion))"
+    $accountRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\install.ps1') @('--prereqs', 'auto', '--unattended')
+  } else {
+    # The pins are the ones already installed for this account: refresh the
+    # extensions and settings only (suite review pick 3).
+    Coop-Info "This package's tool pins are already installed for this account; refreshing extensions and settings (version $($script:CoopVersion))"
+    $accountRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\sync.ps1')
+  }
   if ($accountRc -eq 0) { Set-CoopBundledSetupDone }
   else { Coop-Warn "this account's setup did not finish (the lines above say which tool); run: coop doctor" }
   exit $accountRc
