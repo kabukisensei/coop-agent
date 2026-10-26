@@ -5,6 +5,23 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **The Fabric Python is found once per session (suite review 2026-10-26, pick 6).**
+  Every native SQL call (`fabric_sql_query`, `sql_impact`, `schema_compare`,
+  `catalog_snapshot`) started PowerShell, dot-sourced `lib/common.ps1` and asked
+  pipx where its venvs are, to find an interpreter path that does not move. The
+  coop-tools extension now looks in the same places itself (`COOP_FABRIC_PYTHON`,
+  then the `ms-fabric-cli` venv under `COOP_PIPX_HOME`, `PIPX_HOME` and the
+  platform's pipx default), probes the first one that exists, and keeps the answer
+  while the environment names it and the file is still there; a miss falls back to
+  `Get-CoopFabricPython` as before, and only a success is kept, so a runtime
+  installed later (`coop update`) is found on the next call. The resolver probes
+  and the helper run share one supervised child-process routine (bounded time and
+  output, abortable, force-killed and reaped on a stop) instead of two copies.
+
+## [0.38.6] — 2026-10-26
+
 ### Added
 
 - **Schema compare from the deployment call (2026-10-23).** `/setup-project` and
@@ -30,21 +47,30 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
-- **The Fabric Python is found once per session (suite review 2026-10-26, pick 6).**
-  Every native SQL call (`fabric_sql_query`, `sql_impact`, `schema_compare`,
-  `catalog_snapshot`) started PowerShell, dot-sourced `lib/common.ps1` and asked
-  pipx where its venvs are, to find an interpreter path that does not move. The
-  coop-tools extension now looks in the same places itself (`COOP_FABRIC_PYTHON`,
-  then the `ms-fabric-cli` venv under `COOP_PIPX_HOME`, `PIPX_HOME` and the
-  platform's pipx default), probes the first one that exists, and keeps the answer
-  while the environment names it and the file is still there; a miss falls back to
-  `Get-CoopFabricPython` as before, and only a success is kept, so a runtime
-  installed later (`coop update`) is found on the next call. The resolver probes
-  and the helper run share one supervised child-process routine (bounded time and
-  output, abortable, force-killed and reaped on a stop) instead of two copies.
+- **Tool pins:** coop-sql-source-control 1.0.7 (a catalog query that fails for
+  indexes, keys, checks, foreign keys, defaults, identity, computed columns,
+  collation or schemas holds that object type out of the comparison instead of
+  removing valid objects from the tracked schema; migration ids over 200
+  characters are refused before any migration runs), coop-schema-compare 0.1.7
+  (the #20, #21 and #22 fixes mirrored under Fixed below, plus Lakehouse `fabric://`
+  resolution and the formatting-only and column-order-only labels) and
+  coop-data-doc 1.4.4 (`GO` inside a comment, string literal or bracketed name
+  no longer splits a batch; `impact --git` reads the baseline from the git
+  worktree root).
 
 ### Fixed
 
+- **`schema_compare` accepts a named target set's environment.** The guardrail
+  that vets the native tool's sides still knew only `dev`, `test`, `prod`,
+  `snapshot` and `repo`, so every `<env>@<set>` side (`dev@lakehouse`) was
+  blocked before any connection, while `coop schema compare` took it (found by
+  the v0.38.6 dev VM check). The guardrail now reads the project file's
+  `sql_targets.named` sets and accepts `<env>@<set>` when that set declares that
+  environment, classified exactly as its environment: `prod@<set>` is production,
+  a read on either side like `prod`, audited with the pair as named. A set the
+  file does not declare, or an environment the set lacks, stays blocked. The
+  report's side table now names the set with the environment (`dev@lakehouse`,
+  not `dev`).
 - **A launch runs the pinned Pi only.** The manifest pin acted in `coop install`
   and `coop update`, but a launch started whatever `pi` was first on PATH, and
   its skew repair then aligned the extension tree to that Pi's version: after a
