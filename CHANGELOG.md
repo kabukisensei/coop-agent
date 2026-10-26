@@ -5,6 +5,32 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/setup-project` edits a project file written with inline mappings.** The
+  bundled `.coop/project.yml` wrote its `tools:` and `mcp:` entries as flow
+  mappings (`fabric_cli: { command: "fab", enabled: true, ... }`), and the
+  project-file writer refused to edit under one ("tools.fabric_cli is written as
+  an inline mapping") rather than lose its other keys, so anyone whose project
+  file was copied from the bundled one could not run `/setup-project`. The
+  bundled file now uses block keys, the writer converts a populated flow mapping
+  to block keys in place (every key kept, a trailing comment kept on the parent
+  line), and the reader shows the wizard the values inside one instead of its
+  defaults; only an inline mapping it cannot parse is still refused. Two more
+  things the same VM run showed: an edited line now keeps its quote style and
+  its trailing comment (`mode: "connected"  # discovery | partial | connected`
+  used to come back as `mode: 'connected'`, and a client's file lost its
+  documentation that way), and `lib/_yaml.py` no longer mistakes `\"` inside a
+  double-quoted value, or `''` inside a single-quoted one, for the end of the
+  value when a `#` follows.
+- **The wizard never swaps a repository's folder for one above it unasked.**
+  When a recorded folder is missing (`../fabric` on a fresh VM), the folder
+  picker opens at the nearest existing parent and one Enter too many recorded
+  `..` instead. `/setup-project` now asks before replacing a repository's folder
+  with a folder above it, and No keeps the recorded path.
+
+## [0.38.6] — 2026-10-26
+
 ### Added
 
 - **Schema compare from the deployment call (2026-10-23).** `/setup-project` and
@@ -43,27 +69,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
-- **`/setup-project` edits a project file written with inline mappings.** The
-  bundled `.coop/project.yml` wrote its `tools:` and `mcp:` entries as flow
-  mappings (`fabric_cli: { command: "fab", enabled: true, ... }`), and the
-  project-file writer refused to edit under one ("tools.fabric_cli is written as
-  an inline mapping") rather than lose its other keys, so anyone whose project
-  file was copied from the bundled one could not run `/setup-project`. The
-  bundled file now uses block keys, the writer converts a populated flow mapping
-  to block keys in place (every key kept, a trailing comment kept on the parent
-  line), and the reader shows the wizard the values inside one instead of its
-  defaults; only an inline mapping it cannot parse is still refused. Two more
-  things the same VM run showed: an edited line now keeps its quote style and
-  its trailing comment (`mode: "connected"  # discovery | partial | connected`
-  used to come back as `mode: 'connected'`, and a client's file lost its
-  documentation that way), and `lib/_yaml.py` no longer mistakes `\"` inside a
-  double-quoted value, or `''` inside a single-quoted one, for the end of the
-  value when a `#` follows.
-- **The wizard never swaps a repository's folder for one above it unasked.**
-  When a recorded folder is missing (`../fabric` on a fresh VM), the folder
-  picker opens at the nearest existing parent and one Enter too many recorded
-  `..` instead. `/setup-project` now asks before replacing a repository's folder
-  with a folder above it, and No keeps the recorded path.
+- **`schema_compare` accepts a named target set's environment.** The guardrail
+  that vets the native tool's sides still knew only `dev`, `test`, `prod`,
+  `snapshot` and `repo`, so every `<env>@<set>` side (`dev@lakehouse`) was
+  blocked before any connection, while `coop schema compare` took it (found by
+  the v0.38.6 dev VM check). The guardrail now reads the project file's
+  `sql_targets.named` sets and accepts `<env>@<set>` when that set declares that
+  environment, classified exactly as its environment: `prod@<set>` is production,
+  a read on either side like `prod`, audited with the pair as named. A set the
+  file does not declare, or an environment the set lacks, stays blocked. The
+  report's side table now names the set with the environment (`dev@lakehouse`,
+  not `dev`).
 - **A launch runs the pinned Pi only.** The manifest pin acted in `coop install`
   and `coop update`, but a launch started whatever `pi` was first on PATH, and
   its skew repair then aligned the extension tree to that Pi's version: after a
