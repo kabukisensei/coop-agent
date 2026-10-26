@@ -27,6 +27,7 @@ def load(name: str):
 sq = load("sql_query")
 cs = load("catalog_snapshot")
 sc = load("schema_compare")
+sql_source = sys.modules["sql_source"]
 
 AZ_HOST = "contoso-dev.database.windows.net"
 PROD_HOST = "contoso-prod.database.windows.net"
@@ -971,6 +972,77 @@ assert rp2_sql.index("DROP VIEW [dbo].[t];") < rp2_sql.index("CREATE TABLE [dbo]
 assert "Objects replaced by another kind" not in rp2_sql
 rp_report = sc.render_report(rp_changes, source_name="s", target_name="t", taken_at="x", sides={"source": sc._side_summary(rp_src, {"database": "s"}), "target": sc._side_summary(rp_tgt, {"database": "t"})}, notes=[], records=rp_records)
 assert rp_report.index("dbo.f") < rp_report.index("dbo.v"), "the report follows the script's order"
+
+# --- audit 2026-10-26: #443 a column list cut at the cap is unknown, never a drop ------
+_capped_rows = {
+    sc.SCHEMAS_SQL: [("dbo",)],
+    sc.OBJECTS_SQL: [("dbo", "T", "U"), ("dbo", "Later", "U")],
+    sc.COLUMNS_SQL: [
+        ("dbo", "T", "id", "int", None, 10, 0, None, "YES", 1),
+        ("dbo", "T", "payload", "int", None, 10, 0, None, "YES", 2),
+        ("dbo", "Later", "a", "int", None, 10, 0, None, "YES", 1),
+    ],
+    sc.IDENTITY_SQL: [], sc.MODULES_SQL: [],
+}
+with mock.patch.object(cs, "MAX_COLUMNS", 1):
+    capped = catalog(_capped_rows)
+assert capped.truncated == ["columns"] and capped.incomplete == {("dbo", "T"), ("dbo", "Later")}, (capped.truncated, capped.incomplete)
+_complete = sc.Catalog()
+_complete.schemas = {"dbo"}
+_complete.tables[("dbo", "T")] = [sc.Column("id", "int", True, 1), sc.Column("payload", "int", True, 2)]
+_complete.tables[("dbo", "Later")] = [sc.Column("a", "int", True, 1)]
+for _src, _tgt in ((capped, _complete), (_complete, capped)):
+    _changes = sc.diff(_src, _tgt)
+    assert [(c["name"], c["action"]) for c in _changes] == [("Later", "unknown"), ("T", "unknown")], _changes
+    _sql, _stats = sc.render_script(_src, _changes, source_name="s", target_name="t", target_kind="azure_sql", taken_at="x")
+    assert "DROP COLUMN" not in _sql and "ADD [" not in _sql and _stats["manual"] == 2, _sql
+_empty = sc.Catalog()
+_empty.schemas = {"dbo"}
+_changes = sc.diff(capped, _empty)
+assert [c["action"] for c in _changes] == ["unknown", "unknown"], "a source-only table with a cut shape is no runnable CREATE"
+_sql, _ = sc.render_script(capped, _changes, source_name="s", target_name="t", target_kind="azure_sql", taken_at="x")
+assert [line for line in _sql.splitlines() if line.startswith("CREATE TABLE")] == [], _sql
+_whole = catalog(_capped_rows)
+assert _whole.incomplete == set()
+_whole.tables[("dbo", "T")] = _whole.tables[("dbo", "T")][:1]
+_sql, _ = sc.render_script(_whole, sc.diff(_whole, _complete), source_name="s", target_name="t", target_kind="azure_sql", taken_at="x")
+assert "DROP COLUMN [payload]" in _sql, "a whole read still detects a genuine drop"
+with tempfile.TemporaryDirectory() as tmp:
+    folder = Path(tmp) / "snap"
+    (folder / "dbo").mkdir(parents=True)
+    summary = {"environment": "dev", "kind": "azure_sql", "database": "ContosoDW"}
+    _file = cs._header(summary, "2026-10-10T00:00:00Z", "dbo", "T", "table") + cs.render_table("dbo", "T", [("id", "int", None, 10, 0, None, "YES")])
+    (folder / "dbo" / "T.sql").write_text(_file, encoding="utf-8")
+    (folder / "manifest.json").write_text(json.dumps({"coop_catalog_snapshot": True, "taken_at": "2026-10-10T00:00:00Z", "target": summary, "files": ["dbo/T.sql"], "truncated": {"columns": True}}), encoding="utf-8")
+    snap, state = sc.read_snapshot(folder)
+    assert state == "ok" and snap.incomplete == {("dbo", "T")}, "a snapshot taken from a cut column list stays unknown"
+    assert [(c["name"], c["action"]) for c in sc.diff(snap, _complete)] == [("Later", "drop"), ("T", "unknown")]
+
+# --- audit 2026-10-26: #442 GO inside a literal or comment is not a batch break -------
+_ddl = "CREATE VIEW dbo.v AS SELECT N'first\nGO\nlast' AS value;"
+_parsed = sql_source.ParsedSource()
+for _batch in sql_source.split_batches(_ddl):
+    sql_source.parse_batch(_batch, _parsed)
+assert _parsed.modules[("dbo", "v")] == ("view", _ddl), _parsed.modules
+for _text in (
+    "CREATE VIEW dbo.v AS SELECT 'it''s\nGO\nhere' AS value",
+    "CREATE VIEW dbo.v AS SELECT 1 AS [odd\nGO\nname]",
+    "CREATE VIEW dbo.v AS SELECT 1 AS \"odd\nGO\nname\"",
+    "CREATE VIEW dbo.v AS /* a /* b\nGO\n */ c\nGO\n */ SELECT 1",
+):
+    assert sql_source.split_batches(_text) == [_text], _text
+    assert sql_source.split_batches(_text.replace("\n", "\r\n")) == [_text.replace("\n", "\r\n")], _text
+assert [b.strip() for b in sql_source.split_batches("CREATE VIEW a AS SELECT 1\nGO\nCREATE VIEW b AS SELECT 2\ngo 2\nCREATE VIEW c AS SELECT 3\nGO;\n")] == ["CREATE VIEW a AS SELECT 1", "CREATE VIEW b AS SELECT 2", "CREATE VIEW c AS SELECT 3"]
+with tempfile.TemporaryDirectory() as tmp:
+    for _side, _tail in (("a", "last"), ("b", "LAST")):
+        (Path(tmp) / _side).mkdir()
+        (Path(tmp) / _side / "v.sql").write_text(f"CREATE VIEW dbo.v AS SELECT N'first\r\nGO\r\n{_tail}' AS value;\r\nGO\r\n", encoding="utf-8")
+    _a = sc.read_repo(Path(tmp) / "a")
+    _b = sc.read_repo(Path(tmp) / "b")
+    assert _a.modules[("dbo", "v")][1] == "CREATE VIEW dbo.v AS SELECT N'first\nGO\nlast' AS value;", _a.modules
+    assert sc.diff(_a, _a) == [] and [c["action"] for c in sc.diff(_a, _b)] == ["alter"], "the whole definition is read and compared"
+    _plan_sql, _ = sc.render_script(_a, sc.diff(_a, sc.Catalog()), source_name="s", target_name="t", target_kind="azure_sql", taken_at="x")
+    assert "N'first\nGO\nlast'" in _plan_sql, "the plan carries the whole string"
 
 # --- stdin contract ---------------------------------------------------------------------
 with mock.patch.object(sc, "execute", return_value=sq.result("ok", path="x")) as run:
