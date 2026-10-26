@@ -793,38 +793,16 @@ export function findProjectYml(cwd: string): string | null {
   return findProjectContract(cwd);
 }
 
-/** Pull `repositories.<name>.local_path` values out of a project.yml (block-style,
- *  best-effort — same spirit as classifyManagedLines). TODO/blank placeholders are
- *  returned in `todo` so the caller can note-and-skip rather than scan them. */
+/** `repositories.<name>.local_path` values of a project.yml, read with
+ *  lib/project-contract.mjs (the one JS contract reader). TODO/blank placeholders
+ *  are returned in `todo` so the caller can note-and-skip rather than scan them. */
 export function contractRepoPaths(text: string): { paths: string[]; todo: string[] } {
-  const lines = text.split("\n");
   const paths: string[] = [];
   const todo: string[] = [];
-  let inRepos = false;
-  let repoIndent: number | null = null;
-  let repo: string | null = null;
-  for (const raw of lines) {
-    const line = raw.replace(/\t/g, "  ");
-    const body = line.trim();
-    if (!body || body.startsWith("#")) continue;
-    const indent = line.length - line.trimStart().length;
-    if (indent === 0) {
-      inRepos = body === "repositories:";
-      repoIndent = null;
-      repo = null;
-      continue;
-    }
-    if (!inRepos) continue;
-    if (repoIndent === null) repoIndent = indent; // first nested key sets the repo level
-    if (indent === repoIndent) {
-      repo = body.endsWith(":") ? body.slice(0, -1).trim() : null;
-      continue;
-    }
-    if (indent > repoIndent && repo && body.startsWith("local_path:")) {
-      const v = scalarValue(body.slice(body.indexOf(":") + 1));
-      if (!v || /^TODO\b/i.test(v)) todo.push(repo);
-      else paths.push(v);
-    }
+  for (const name of repositoryNames(text)) {
+    const v = projectYamlScalar(text, ["repositories", name, "local_path"]);
+    if (!v || /^TODO\b/i.test(v)) todo.push(name);
+    else paths.push(v);
   }
   return { paths, todo };
 }

@@ -39,6 +39,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { DEPLOY_ENVIRONMENTS, SQLSC_BIN, checkUpstream, classifySqlscWrite, findSqlscConfig, sqlSourceEnabled, sqlscFolder, sqlscInitRoot } from "../../lib/sqlsc.mjs";
 import { findProjectContract } from "../../lib/standards.mjs";
+import { projectYamlHas, projectYamlKeys, projectYamlList, projectYamlMapping, projectYamlScalar, repositoryNames } from "../../lib/project-contract.mjs";
 import { appendFileSync, existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { agentDir as coopAgentDir, coopAgentDir as coopIsolatedAgentDir, homeDir as coopHomeDir, personalPiAgentDir, profileDir as coopProfileDir } from "../../lib/paths.mjs";
@@ -54,23 +55,6 @@ const DEFAULT_ALLOWED_GLOBS = [
   "data-docs/**",
   "data-docs-site/**",
 ];
-
-/** Find the nearest .coop/project.yml walking up from `cwd` (bounded), else the
- *  contract the launcher resolved (COOP_PROJECT_YML: the client home repository
- *  beside this one, C1), so the trusted snapshot is the file every other part
- *  of coop reads. */
-function findProjectYml(cwd: string, exists: (path: string) => boolean = existsSync): string | null {
-  let d = cwd;
-  for (let i = 0; i < 8; i++) {
-    const p = join(d, ".coop", "project.yml");
-    if (exists(p)) return p;
-    const up = dirname(d);
-    if (up === d) break;
-    d = up;
-  }
-  const launched = process.env.COOP_PROJECT_YML;
-  return launched && exists(launched) ? launched : null;
-}
 
 /** A committed path is allowed only after explicit deny rules have been checked. */
 function isAllowedCommitPath(file: string, allowedGlobs: string[], deniedGlobs: string[]): boolean {
@@ -110,112 +94,19 @@ export type RepoCommitPolicy = { allowed: string[]; denied: string[] };
 export type RepoPolicyEntry = { name: string; path: string; allowed: string[]; denied: string[] };
 
 /** Parse EVERY repositories: entry into resolved policy entries. This is the input
- *  to the trusted per-session governance snapshot — it is read once, never per commit. */
+ *  to the trusted per-session governance snapshot — it is read once, never per commit.
+ *  Read with lib/project-contract.mjs, the one JS contract reader, so the guardrail
+ *  and the tools see the same repositories and globs (suite review 2026-10-26, pick 7). */
 export function parseRepoEntries(text: string, projectDir: string): RepoPolicyEntry[] {
   const entries: RepoPolicyEntry[] = [];
-  const lines = text.split("\n");
-  let inRepos = false;
-  let repoBaseIndent = 0;
-  let currentName: string | null = null;
-  let currentLocalPath: string | null = null;
-  let currentAllowed: string[] = [];
-  let currentDenied: string[] = [];
-  let currentBaseIndent = 0;
-
-  function flush(): void {
-    if (!currentName || !currentLocalPath) return;
-    const resolved = isAbsolute(currentLocalPath)
-      ? currentLocalPath
-      : resolve(projectDir, currentLocalPath);
-    entries.push({ name: currentName, path: resolve(resolved), allowed: [...currentAllowed], denied: [...currentDenied] });
-    currentName = null;
-    currentLocalPath = null;
-    currentAllowed = [];
-    currentDenied = [];
+  for (const name of repositoryNames(text)) {
+    const localPath = projectYamlScalar(text, ["repositories", name, "local_path"]);
+    if (!localPath) continue;
+    const resolved = isAbsolute(localPath) ? localPath : resolve(projectDir, localPath);
+    const globs = (key: string) => projectYamlList(text, ["repositories", name, key]).filter(Boolean);
+    entries.push({ name, path: resolve(resolved), allowed: globs("agent_allowed_to_commit"), denied: globs("agent_never_commit") });
   }
-
-  for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i];
-    const trimmed = raw.trimStart();
-    const indent = raw.length - trimmed.length;
-    if (!trimmed || trimmed.startsWith("#")) continue;
-
-    if (/^repositories\s*:\s*(#.*)?$/.test(trimmed)) {
-      inRepos = true;
-      repoBaseIndent = indent;
-      continue;
-    }
-    if (!inRepos) continue;
-
-    // End of repositories section: a key at or before repoBaseIndent that isn't a repo name.
-    if (indent <= repoBaseIndent && !trimmed.startsWith("-")) {
-      flush();
-      inRepos = false;
-      continue;
-    }
-
-    // A repository entry name is a key exactly one indent deeper than `repositories:`.
-    const repoKey = /^(?:'((?:[^']|'')+)'|"([^"]+)"|([A-Za-z0-9_\-]+))\s*:\s*(#.*)?$/.exec(trimmed);
-    if (indent === repoBaseIndent + 2 && repoKey && !trimmed.startsWith("-")) {
-      flush();
-      currentName = (repoKey[1] || repoKey[2] || repoKey[3]).replace(/''/g, "'");
-      currentLocalPath = null;
-      currentAllowed = [];
-      currentDenied = [];
-      currentBaseIndent = indent;
-      continue;
-    }
-
-    // Properties inside a repository entry.
-    if (currentName && indent > currentBaseIndent) {
-      const kv = /^([A-Za-z0-9_\-]+)\s*:\s*(.*)$/.exec(trimmed);
-      if (kv) {
-        const k = kv[1];
-        const v = kv[2].trim().replace(/\s+#.*$/, "");
-        if (k === "local_path") {
-          currentLocalPath = v.replace(/^["']|["']$/g, "");
-        } else if (k === "agent_allowed_to_commit" && v.startsWith("[")) {
-          // Flow form on a single line.
-          for (const raw of v.slice(1, -1).split(",")) {
-            const g = raw.trim().replace(/^["']|["']$/g, "");
-            if (g) currentAllowed.push(g);
-          }
-        } else if (k === "agent_never_commit" && v.startsWith("[")) {
-          for (const raw of v.slice(1, -1).split(",")) {
-            const g = raw.trim().replace(/^["']|["']$/g, "");
-            if (g) currentDenied.push(g);
-          }
-        }
-      }
-      const item = /^-\s+(.*)$/.exec(trimmed);
-      if (item && indent > currentBaseIndent + 2) {
-        const parentKey = findParentKey(lines, i, currentBaseIndent + 2);
-        // Same cleanup as the scalar branch: a trailing `  # note` is a comment, not part of the glob.
-        const g = item[1].trim().replace(/\s+#.*$/, "").replace(/^["']|["']$/g, "");
-        if (g) {
-          if (parentKey === "agent_allowed_to_commit") currentAllowed.push(g);
-          else if (parentKey === "agent_never_commit") currentDenied.push(g);
-        }
-      }
-    }
-  }
-  if (inRepos) flush();
   return entries;
-}
-
-function findParentKey(lines: string[], idx: number, parentIndent: number): string | null {
-  for (let j = idx - 1; j >= 0; j--) {
-    const raw = lines[j];
-    const trimmed = raw.trimStart();
-    const indent = raw.length - trimmed.length;
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    if (indent === parentIndent) {
-      const kv = /^([A-Za-z0-9_\-]+)\s*:/.exec(trimmed);
-      return kv ? kv[1] : null;
-    }
-    if (indent < parentIndent) return null;
-  }
-  return null;
 }
 
 /** The contract's dev Fabric workspace (`fabric.default_workspace_id`), named in the
@@ -233,7 +124,7 @@ export function buildSessionGovernance(sessionCwd: string): SessionGovernance {
   let devWorkspaceId = "";
   let productionNames: string[] = [];
   try {
-    const proj = findProjectYml(sessionCwd);
+    const proj = findProjectContract(sessionCwd);
     if (proj) {
       const projectRoot = dirname(dirname(proj));
       const text = readFileSync(proj, "utf8");
@@ -287,45 +178,6 @@ const SQL_TARGET_KEYS = new Set(["kind", "server", "database", "workspace_id", "
 const SQL_SAFE_DATABASE = /^[A-Za-z0-9][A-Za-z0-9 ._@&'()+-]{0,159}$/;
 const SQL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** A YAML scalar as lib/_yaml.py reads it: quotes stripped, trailing comment dropped. */
-function yamlScalar(raw: string): string {
-  const v = raw.trim();
-  const quoted = /^"((?:[^"\\]|\\.)*)"\s*(?:#.*)?$|^'((?:[^']|'')*)'\s*(?:#.*)?$/.exec(v);
-  if (quoted) return quoted[1] !== undefined ? quoted[1].replace(/\\(.)/g, "$1") : quoted[2].replace(/''/g, "'");
-  return v.replace(/\s+#.*$/, "").trim();
-}
-
-/** The top-level `section:` block of a contract as nested string maps (two levels:
- *  `section.key: scalar` and `section.key.subkey: scalar`). Deeper nesting, lists
- *  and flow collections are not what sql_targets uses, so they read as "". */
-function yamlSection(text: string, section: string): Record<string, string | Record<string, string>> | null {
-  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
-  const start = lines.findIndex((line) => new RegExp(`^${section}\\s*:\\s*(?:#.*)?$`).test(line));
-  if (start < 0) return null;
-  const out: Record<string, string | Record<string, string>> = {};
-  let current: string | null = null;
-  let currentIndent = 0;
-  for (let i = start + 1; i < lines.length; i++) {
-    const line = lines[i];
-    const body = line.trim();
-    if (!body || body.startsWith("#")) continue;
-    const indent = line.length - line.trimStart().length;
-    if (indent === 0) break;
-    const kv = /^([A-Za-z0-9_]+)\s*:(?:\s+(.*))?$/.exec(body);
-    if (!kv) { current = null; continue; }
-    const [, key, rawValue] = kv;
-    if (current !== null && indent > currentIndent) {
-      const nested = out[current];
-      if (typeof nested === "object") nested[key] = rawValue === undefined ? "" : yamlScalar(rawValue);
-      continue;
-    }
-    currentIndent = indent;
-    if (rawValue === undefined || rawValue.trim() === "" || rawValue.trim().startsWith("#")) { out[key] = {}; current = key; }
-    else { out[key] = yamlScalar(rawValue); current = null; }
-  }
-  return out;
-}
-
 /** What the contract labels production: the prod workspace names under
  *  `fabric.environment_names` and `power_bi.environment_names`, and the ids and
  *  server of `sql_targets.prod`. A write that names one is a production write,
@@ -336,40 +188,23 @@ export function parseProductionNames(text: string): string[] {
     const v = typeof value === "string" ? value.trim() : "";
     if (v.length >= 3 && !sqlPlaceholder(v)) names.add(v.toLocaleLowerCase());
   };
-  for (const section of ["fabric", "power_bi"]) {
-    const envs = (yamlSection(text, section) || {}).environment_names;
-    if (envs && typeof envs === "object") add(envs.prod);
-  }
-  const prod = (yamlSection(text, "sql_targets") || {}).prod;
-  if (prod && typeof prod === "object") for (const key of ["server", "workspace_id", "item_id", "sql_endpoint_id"]) add(prod[key]);
+  for (const section of ["fabric", "power_bi"]) add(projectYamlScalar(text, [section, "environment_names", "prod"]));
+  for (const key of SQL_PRODUCTION_KEYS) add(projectYamlScalar(text, ["sql_targets", "prod", key]));
   // The prod entry of every named target set (`sql_targets.named.<set>.prod`, a
   // Lakehouse beside the Warehouse) labels production too.
   for (const value of namedProductionValues(text)) add(value);
   return [...names];
 }
 
+const SQL_PRODUCTION_KEYS = ["server", "workspace_id", "item_id", "sql_endpoint_id"];
+
 /** The `server`, `workspace_id`, `item_id` and `sql_endpoint_id` of every
- *  `sql_targets.named.<set>.prod` entry: four levels deep, which yamlSection does
- *  not read, so this walks the indentation itself. Anything odd reads as nothing. */
+ *  `sql_targets.named.<set>.prod` entry (a Lakehouse beside the Warehouse). */
 export function namedProductionValues(text: string): string[] {
   const out: string[] = [];
-  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
-  // (indent, key, value) per line; the path is rebuilt from the indentation stack.
-  const stack: Array<{ indent: number; key: string }> = [];
-  let inside = false;
-  for (const line of lines) {
-    const body = line.trim();
-    if (!body || body.startsWith("#")) continue;
-    const indent = line.length - line.trimStart().length;
-    const kv = /^([A-Za-z0-9_-]+)\s*:(?:\s+(.*))?$/.exec(body);
-    if (!kv) continue;
-    while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop();
-    stack.push({ indent, key: kv[1] });
-    const path = stack.map((s) => s.key);
-    if (path.length === 1) inside = path[0] === "sql_targets";
-    if (!inside || path.length !== 5) continue;
-    if (path[1] === "named" && path[3] === "prod" && ["server", "workspace_id", "item_id", "sql_endpoint_id"].includes(path[4]) && kv[2] !== undefined) {
-      out.push(yamlScalar(kv[2]));
+  for (const set of projectYamlKeys(text, ["sql_targets", "named"])) {
+    for (const key of SQL_PRODUCTION_KEYS) {
+      if (projectYamlHas(text, ["sql_targets", "named", set, "prod", key])) out.push(projectYamlScalar(text, ["sql_targets", "named", set, "prod", key]));
     }
   }
   return out;
@@ -450,33 +285,31 @@ function readySqlTarget(environment: ContractSqlTarget["environment"], raw: unkn
 
 /** `fabric.default_workspace_id` as a lower-case GUID, or "" (absent, TODO, typo). */
 export function parseDevWorkspaceId(text: string): string {
-  const ws = yamlSection(text, "fabric")?.default_workspace_id;
-  return typeof ws === "string" && SQL_UUID.test(ws.trim()) ? ws.trim().toLowerCase() : "";
+  const ws = projectYamlScalar(text, ["fabric", "default_workspace_id"]);
+  return SQL_UUID.test(ws.trim()) ? ws.trim().toLowerCase() : "";
 }
 
 /** The contract's SQL scope source: profile.client, fabric.tenant_id and the ready
  *  default `sql_targets` entry. `target` is null when the default is prod, missing,
  *  unconfigured or invalid, so a contract-driven read then asks on every call. */
 export function parseContractSqlScope(text: string): ContractSqlScope | null {
-  const section = yamlSection(text, "sql_targets");
-  if (section === null) return null;
-  const profile = yamlSection(text, "profile") || {};
-  const fabric = yamlSection(text, "fabric") || {};
-  const client = typeof profile.client === "string" ? profile.client : "";
-  const tenant = typeof fabric.tenant_id === "string" ? fabric.tenant_id.trim().toLowerCase() : "";
+  if (!projectYamlHas(text, ["sql_targets"])) return null;
+  const client = projectYamlScalar(text, ["profile", "client"]);
+  const tenant = projectYamlScalar(text, ["fabric", "tenant_id"]).trim().toLowerCase();
   const envs = ["dev", "test", "prod"];
   // `named` holds the optional named target sets (lib/sql_targets.py); the plain
   // entries and the default are unchanged by it, so it is not an unknown key.
-  if (Object.keys(section).some((key) => key !== "default_environment" && key !== "named" && !envs.includes(key))) return { configured: true, client, tenant, target: null };
+  if (projectYamlKeys(text, ["sql_targets"]).some((key) => key !== "default_environment" && key !== "named" && !envs.includes(key))) return { configured: true, client, tenant, target: null };
+  const entry = (env: string) => (projectYamlHas(text, ["sql_targets", env]) ? projectYamlMapping(text, ["sql_targets", env]) : null);
   const entries: Record<string, ContractSqlTarget> = {};
   for (const env of envs) {
-    const ready = readySqlTarget(env === "prod" ? "production" : env as "dev" | "test", section[env]);
+    const ready = readySqlTarget(env === "prod" ? "production" : env as "dev" | "test", entry(env));
     if (ready) entries[env] = ready;
   }
-  const rawDefault = typeof section.default_environment === "string" ? section.default_environment.trim().toLowerCase() : "";
+  const rawDefault = projectYamlScalar(text, ["sql_targets", "default_environment"]).trim().toLowerCase();
   const environment = rawDefault === "" ? "dev" : rawDefault;
   if (environment !== "dev" && environment !== "test") return { configured: true, client, tenant, target: null, entries };
-  return { configured: true, client, tenant, target: readySqlTarget(environment, section[environment]), entries };
+  return { configured: true, client, tenant, target: readySqlTarget(environment, entry(environment)), entries };
 }
 
 function ensureSessionGovernance(sessionCwd: string): SessionGovernance {

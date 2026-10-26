@@ -30,6 +30,7 @@ from pathlib import Path
 LIB_DIR = Path(__file__).resolve().parent.parent / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
+import _yaml  # noqa: E402
 import coop_paths  # noqa: E402
 
 SCHEMA_VERSION = 1
@@ -78,28 +79,14 @@ def estimate_tokens(chars: int) -> int:
 
 
 def defaults_value(defaults_text: str, key: str) -> str:
-    """Extract a simple top-level scalar from config/defaults.yml.
-
-    Handles quoted strings, unquoted scalars, and inline comments. Multi-line
-    values are not needed for the keys we care about.
-    """
-    for line in defaults_text.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        m = re.match(rf"^\s*{re.escape(key)}\s*:\s*(.*)$", line)
-        if not m:
-            continue
-        val = m.group(1).strip()
-        # remove inline comment (only when # preceded by whitespace)
-        val = re.sub(r"\s#.*$", "", val)
-        val = val.strip()
-        if len(val) >= 2 and val[0] == val[-1] and val[0] in ('"', "'"):
-            val = val[1:-1]
-        return val
-    return ""
-
-
+    """A top-level scalar of config/defaults.yml (lib/_yaml.py), or ""."""
+    try:
+        value = _yaml.loads(defaults_text).get(key)
+    except Exception:
+        return ""
+    if value is None or isinstance(value, (list, dict)):
+        return ""
+    return str(value).strip()
 def find_project_instructions(start_dir: Path) -> tuple[Path | None, int, int]:
     """Find the nearest AGENTS.md or CLAUDE.md from start_dir upward."""
     cur = start_dir.resolve()
