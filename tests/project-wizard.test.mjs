@@ -642,8 +642,7 @@ repositories:
 
   const workflow = readFileSync(join(REPO_ROOT, "templates", "client-home", "github-workflow-data-docs-check.yml"), "utf8");
   assert.match(workflow, /run: coop-data-doc check/);
-  const pin = JSON.parse(readFileSync(join(REPO_ROOT, "config", "release-manifest.json"), "utf8")).python_tools["coop-data-doc"];
-  assert.ok(workflow.includes(`pipx install coop-data-doc==${pin}`), "the template pins the manifest's coop-data-doc");
+  assert.ok(workflow.includes("pipx install coop-data-doc==<version>"), "the committed template carries the placeholder, never a literal pin");
   assert.match(readFileSync(join(REPO_ROOT, "templates", "client-home", "README.md"), "utf8"), /data-docs-check\.yml/);
 });
 
