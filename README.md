@@ -357,31 +357,30 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop onboard [--edit|--config-only|--reset|--json]` | Configure profile and managed integrations without launching the agent |
 | `coop onboard --machine [--reset|--json]` | Write the machine-level profile (your name and communication preference) once per machine, from an elevated terminal: on a VM with one Windows user per client, every user without a profile of its own starts from it, and a per-user profile wins field by field. It never holds a client, tenant, workspace or contract |
 | `coop profile [--edit|--reset|--json]` | Inspect or update the private user profile |
-| `coop context-budget [--json]` | Inspect the active model/context budget |
-| `coop teamai <status\|install\|init\|pull\|skills\|maintenance\|recall --query <text>\|compare --query <text>\|contribute --file <draft.md> [--title <text>] [--approve]>` | TeamAI shared-knowledge trial (master plan K1, K2, K3): the pinned `teamai-cli` isolated under `~/.coop/teamai`, explicit and bounded, one JSON document per call; `contribute` previews, and stages a review branch only with `--approve`; `skills`, `maintenance` and `compare` are read-only lifecycle views; off until `knowledge.teamai.enabled` is true |
 | `coop uninstall [--keep-tools] [--yes]` | Remove the launcher/shortcuts/user-PATH entry and isolated agent dir; by default also uninstall Pi, pipx tools/Fabric CLI, Power BI Report Authoring CLI, Power BI Modeling MCP, and the Windows Desktop Bridge. `--keep-tools` preserves all managed npm/pipx tools. Never touches repo clones, work repos, the rest of `~/.coop`, or personal `~/.pi/agent` |
 | `coop install [--edge] [--force] [--yes] [--prereqs auto] [--no-prereqs] [--no-fabric] [--platform fabric\|azure_sql\|both]` | Fresh-install/bootstrap (idempotent). Normal mode uses manifest pins; `--edge` deliberately takes upstream latest and is tools-only here (install never moves the repo). With a source arg, alias of `coop add` |
 | `coop bootstrap` | Same bootstrap as bare `coop install` |
-| `coop sync` | Ensure core Pi extensions are installed, place the governed MCP config non-destructively, refresh managed catalogs/team knowledge, and verify brand assets |
 | `coop data-doc [args]` | Run `coop-data-doc` (default: `build`) and summarize outputs |
 | `coop catalog snapshot\|status` | The committed dev catalog snapshot: `snapshot` reads the contract's dev/test target read-only and writes one file per table, view, procedure and function under the contract's snapshot folder (commit it); `status` says whether it exists and how old it is |
-| `coop fabric [args]` | Pass through to the Microsoft Fabric CLI (`fab`) |
 | `coop version` | Print `coop` + `pi` versions; a git checkout adds its `git describe` (for example `coop 0.23.5 (v0.23.5-21-gdf91630)`) |
 | `coop help` | Show usage |
-| **Authoring** | |
-| `coop init [dir] [--seed-docs] [--template] [--ci github|ado] [--yes]` | Guided minimal project-contract wizard (default `.`); beside several repositories it creates the client home repository `<client>-coop` and puts the file there; `--template` explicitly selects the full legacy template and `--seed-docs` generates/patches `coop-data-doc.yml` |
+| **Maintainers: `coop dev <cmd>`** (each also runs as the bare `coop <cmd>`) | |
+| `coop dev context-budget [--json]` | Inspect the active model/context budget |
+| `coop dev teamai <status\|install\|init\|pull\|skills\|maintenance\|recall --query <text>\|compare --query <text>\|contribute --file <draft.md> [--title <text>] [--approve]>` | TeamAI shared-knowledge trial (master plan K1, K2, K3): the pinned `teamai-cli` isolated under `~/.coop/teamai`, explicit and bounded, one JSON document per call; `contribute` previews, and stages a review branch only with `--approve`; `skills`, `maintenance` and `compare` are read-only lifecycle views; off until `knowledge.teamai.enabled` is true |
+| `coop dev sync` | Ensure core Pi extensions are installed, place the governed MCP config non-destructively, refresh managed catalogs/team knowledge, and verify brand assets |
+| `coop dev fabric [args]` | Pass through to the Microsoft Fabric CLI (`fab`) |
+| `coop dev init [dir] [--seed-docs] [--template] [--ci github|ado] [--yes]` | Guided minimal project-contract wizard (default `.`); beside several repositories it creates the client home repository `<client>-coop` and puts the file there; `--template` explicitly selects the full legacy template and `--seed-docs` generates/patches `coop-data-doc.yml` |
+| `coop dev new-skill <name> [--client\|--personal]` | Scaffold `skills/<name>/SKILL.md` here, or in the client tier (`.coop/skills/` beside the committed contract) or your personal tier (`~/.coop/skills/`) |
+| `coop dev new-prompt <name> [--client\|--personal]` | Scaffold `prompts/<name>.md` here, or in the client tier (`.coop/prompts/`) or your personal tier (`~/.coop/prompts/`) |
+| `coop dev release [--yes] [--no-check]` | Tag the release a merged release PR prepared (Actions -> release-pr bumps `VERSION`, the manifests and CHANGELOG): verifies a clean `main` at `origin/main`, one `X.Y.Z` across the tree, CI green on the commit and the pins, then tags `vX.Y.Z` and pushes the tag; `--yes` skips the confirm, `--no-check` the gates |
+| `coop dev list` | List installed Pi extensions (`pi list`) |
+| `coop dev config` | Open Pi's resource TUI (`pi config`) |
+| `coop dev add <source>` | Install a Pi extension (`pi install <source>`) |
+| `coop dev remove <source>` | Remove a Pi extension (`pi remove <source>`) |
+| `coop dev pi <args...>` | Raw escape hatch to `pi` |
 | `coop project home [<folder>]` | Show this Windows user's client folder record (client, folder, project file), or set it to `<folder>` (the folder given becomes the client folder; the project file is the one found in or above it) |
 | `coop folders` | Print the three places coop uses (this machine, this client, the repository) with their real paths; read-only |
 | `coop project status\|get\|share [--root <dir>] [--force]` | The shared project file from a shell: compare `.coop/project.yml` with the team's copy on origin, get the team's version (a fast-forward pull when nothing else would move, else only that file with a backup), or share yours (commits only that file and pushes the current branch; `--force` from a branch other than the default). Same code as `/project-get`, `/project-share` and the window's Project pane |
-| `coop new-skill <name> [--client\|--personal]` | Scaffold `skills/<name>/SKILL.md` here, or in the client tier (`.coop/skills/` beside the committed contract) or your personal tier (`~/.coop/skills/`) |
-| `coop new-prompt <name> [--client\|--personal]` | Scaffold `prompts/<name>.md` here, or in the client tier (`.coop/prompts/`) or your personal tier (`~/.coop/prompts/`) |
-| `coop release [--yes] [--no-check]` | Tag the release a merged release PR prepared (Actions -> release-pr bumps `VERSION`, the manifests and CHANGELOG): verifies a clean `main` at `origin/main`, one `X.Y.Z` across the tree, CI green on the commit and the pins, then tags `vX.Y.Z` and pushes the tag; `--yes` skips the confirm, `--no-check` the gates |
-| **Pi management (aliased under coop)** | |
-| `coop list` | List installed Pi extensions (`pi list`) |
-| `coop config` | Open Pi's resource TUI (`pi config`) |
-| `coop add <source>` | Install a Pi extension (`pi install <source>`) |
-| `coop remove <source>` | Remove a Pi extension (`pi remove <source>`) |
-| `coop pi <args...>` | Raw escape hatch to `pi` |
 
 `coop data-doc` **flows straight through** to `coop-data-doc` — every subcommand
 (`check`, `upgrade`, the full `coop-data-doc setup` wizard, …) and the tool's own
