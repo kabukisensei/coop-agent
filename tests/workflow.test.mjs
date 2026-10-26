@@ -99,7 +99,6 @@ const authoritySurfaces = [
   "prompts/discovery.md",
   "docs/guardrails-reference.md",
   "README.md",
-  "lib/init_wizard.py",
   "lib/project-contract.mjs",
   "bin/coop.ps1",
 ].map((path) => [path, readFileSync(join(ROOT, path), "utf8")]);

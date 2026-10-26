@@ -209,6 +209,8 @@ echo "→ data_doc lineage branch and session lineage note tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/lineage.test.mjs"
 echo "→ session lineage context (SQ8): store, snapshot source, edit gate, coop-tools hooks"
 node "$ROOT/tests/lineage-context.test.mjs"
+echo "→ Fabric ids looked up by name for /setup-project (lib/fabric-discovery.mjs)"
+node "$ROOT/tests/fabric-discovery.test.mjs"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/lineage-context-runtime.test.mjs"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/setupbridge-integration.test.mjs"
 
@@ -317,7 +319,7 @@ echo "→ one profile root: COOP_DIR is the parent of .coop; one agent-dir chain
 python3 "$ROOT/tests/coop-paths.test.py"
 python3 "$ROOT/tests/p0-vertical-slice.test.py"
 bash "$ROOT/tests/onboard.test.sh"
-echo "→ Azure CLI resolution and sign-in helpers (onboarding, coop init)"
+echo "→ Azure CLI resolution and sign-in helpers (onboarding)"
 "$(command -v python3 2>/dev/null || command -v python)" "$ROOT/tests/azure-auth.test.py"
 echo "→ team knowledge config block + readers tests"
 bash "$ROOT/tests/knowledge-config.test.sh"
@@ -348,9 +350,8 @@ for prev, ok, detail in cases:
 print("  OK  resume verdict: failure sentinel / expected prev=1 / already-running / still-suspended")
 PY
 
-echo "→ coop init wizard tests"
+echo "→ coop init (the non-wizard jobs: --template, C1 placement) tests"
 bash "$ROOT/tests/init-wizard.test.sh"
-"$(command -v python3 2>/dev/null || command -v python)" "$ROOT/tests/init-wizard-windows-paths.test.py"
 echo "→ bounded legacy project diagnostics and migration tests"
 "$(command -v python3 2>/dev/null || command -v python)" "$ROOT/tests/project-health.test.py"
 

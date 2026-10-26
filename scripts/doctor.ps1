@@ -990,7 +990,7 @@ if ($proj) {
     }
   }
 } else {
-  D-Warn 'no .coop/project.yml found' "run /setup-project inside coop at the client's Git root (or coop init there), then commit the file with the repository"
+  D-Warn 'no .coop/project.yml found' "run /setup-project inside coop at the client's Git root (or the coop window's Project pane), then commit the file with the repository"
 }
 
 # F2: the three places coop keeps its files, named the way coop speaks of them
