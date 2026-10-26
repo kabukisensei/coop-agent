@@ -28,6 +28,20 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   (walk a client's `.coop/runbooks/<name>.md` step by step, `(manual)` /
   `(coop)` / `(check)` steps, never reordered).
 
+### Changed
+
+- **One convergence path for the pipx tools (suite review 2026-10-26, pick 8).**
+  `coop doctor --fix` repaired the Coop tools and the Fabric CLI with its own
+  `pipx install` lines beside the convergence unit install and update run; it
+  now runs that unit (`Invoke-CoopPipxConverge`: skip at the manifest pin,
+  rebuild an environment on the wrong interpreter, install the pin, never
+  PyPI's latest), so a repair cannot drift from an install. `coop bootstrap`,
+  an alias of bare `coop install`, is retired so "bootstrap" names only the
+  `irm | iex` window bootstrapper. `lib/common.ps1` defined
+  `ConvertTo-CoopComparablePath` twice (the second, loaded last, kept the
+  separator the first normalised away); one definition remains, and three
+  functions nothing called are gone.
+
 ### Fixed
 
 - **A launch runs the pinned Pi only.** The manifest pin acted in `coop install`
