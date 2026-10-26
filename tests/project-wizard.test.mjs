@@ -484,11 +484,35 @@ tools:
   assert.equal(read.stdout.trim(), "../warehouse", "the dependency-free reader parses the written contract");
 });
 
-await t("a populated inline mapping is refused rather than losing its other keys", () => {
-  const original = "profile: {organization: 'Old', client: 'Keep'}\n";
+await t("a populated inline mapping becomes block keys on their own lines, losing none of them", () => {
+  const original = "profile: {organization: 'Old, Inc', client: 'Keep'}  # who\ntools:\n  fabric_cli:    { command: \"fab\",  enabled: true,  default_mode: \"read_only_first\" }\n";
   const parsed = parseProjectWizardSettings(original, "/work/contoso");
   parsed.client = "New";
-  assert.throws(() => applyProjectWizardSettings(original, parsed), /inline mapping/);
+  const merged = applyProjectWizardSettings(original, parsed);
+  assert.doesNotMatch(merged, /^profile: \{/m, "no flow mapping survives on an edited path");
+  assert.match(merged, /^profile:  # who\n/m, "the trailing comment stays on the parent line");
+  assert.equal(projectYamlScalar(merged, ["profile", "organization"]), "Old, Inc");
+  assert.equal(projectYamlScalar(merged, ["profile", "client"]), "New");
+  assert.equal(projectYamlScalar(merged, ["tools", "fabric_cli", "command"]), "fab");
+  assert.equal(projectYamlScalar(merged, ["tools", "fabric_cli", "default_mode"]), "read_only_first");
+  // The dependency-free reader agrees with what was written.
+  const root = trackFixture(mkdtempSync(join(tmpdir(), "coop-flowmap-")));
+  writeFileSync(join(root, "project.yml"), merged);
+  const py = ["python3", "python"].find((bin) => spawnSync(bin, ["--version"]).status === 0);
+  const read = spawnSync(py, ["-I", join(REPO_ROOT, "lib", "_yaml.py"), "get", join(root, "project.yml"), "profile.organization", "MISS"], { encoding: "utf8" });
+  assert.equal(read.status, 0, read.stderr);
+  assert.equal(read.stdout.trim(), "Old, Inc");
+  // An inline mapping the splitter cannot read is still refused, never guessed.
+  assert.throws(() => lib.upsertProjectYamlScalar("profile: {organization: 'Old' trailing\n", ["profile", "client"], "x"), /inline mapping/);
+});
+
+await t("the bundled .coop/project.yml writes no populated inline mapping, so a copied file takes /setup-project edits", () => {
+  const bundled = readFileSync(join(REPO_ROOT, ".coop", "project.yml"), "utf8");
+  const flow = bundled.split("\n").filter((line) => /^\s*[A-Za-z0-9_.-]+:\s*\{[^}]/.test(line));
+  assert.deepEqual(flow, [], "inline {...} mappings in the bundled contract");
+  const parsed = parseProjectWizardSettings(bundled, "/work/contoso");
+  parsed.client = "Contoso";
+  assert.doesNotThrow(() => applyProjectWizardSettings(bundled, parsed));
 });
 
 await t("coop init contract round-trips through /setup-project with a nested standards override intact", () => {
