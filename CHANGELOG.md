@@ -28,6 +28,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   (walk a client's `.coop/runbooks/<name>.md` step by step, `(manual)` /
   `(coop)` / `(check)` steps, never reordered).
 
+### Changed
+
+- **Worker help and maintainer commands (suite review 2026-10-26, pick 9).**
+  `coop help` lists the day-to-day verbs; `sync`, `init`, `new-skill`,
+  `new-prompt`, `release`, `launch-spec`, `context-budget`, `teamai`, `fabric`
+  and the Pi aliases (`list`, `config`, `add`, `remove`, `pi`) sit under
+  `coop dev <cmd>` (`coop dev help` lists them). The bare names still run, so
+  release scripts and fixtures are untouched. `config/defaults.yml` keeps only
+  the keys something reads (`resources`, `tested_with`); the MCP and Fabric CLI
+  prose it carried lives in the docs that already had it. `docs/architecture.md`
+  gains the one table of the `COOP_*` environment variables a person, a sandbox
+  or a fixture may set.
+
 ### Fixed
 
 - **A launch runs the pinned Pi only.** The manifest pin acted in `coop install`
