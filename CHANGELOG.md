@@ -36,6 +36,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   schema compare` and `/setup-project`'s closing notice say to fix the file and
   exit and start coop again (a `/new` cannot mint the token the launch skipped).
 
+## [0.38.5] — 2026-10-26
+
+### Fixed
+
+- **The nightly extended CI lane is green again.** The fleet-execution fixture's
+  wrong-Python case (#430) matched an escaped `coop-data-doc==1.4.2` literal that
+  the 1.4.3 pin (#438) did not move; the case now reads the pin from the release
+  manifest, so a pin bump cannot strand it again.
 - **Enter on an unknown slash command no longer runs the closest match** (#428).
   Pi's editor applied the autocomplete list's selected item on Enter, so `/exit`
   ran the first fuzzy match (an MCP prompt on the dev VM). The list now shows
