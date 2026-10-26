@@ -69,9 +69,11 @@ for name, spec in m.get("python_tool_sources", {}).items():
     print("SOURCE", name, "ok" if ok else "stale")
 PY
 )"
+# python on Windows prints CRLF; a trailing CR would end up inside the pin regex
+report="$(printf '%s' "$report" | tr -d '\r')"
 [ -n "$report" ] || ko "could not read python_tools from config/release-manifest.json"
 stale=""
-while read -r kind name pin pinre; do
+while read -r kind name _ pinre; do
   [ "$kind" = "PIN" ] || continue
   hits="$(git -C "$ROOT" ls-files -z \
     | grep -zvE '^(CHANGELOG\.md|docs/history/|docs/COOP_MASTER_PLAN\.md|docs/agent/|config/release-manifest\.json|tests/pins\.test\.sh)' \
