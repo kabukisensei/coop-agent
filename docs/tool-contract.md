@@ -967,7 +967,9 @@ one explicit fallback, `fabric_sql_query`, implemented by the new consolidated
 `lib/sql_query.py` helper (renamed from `fabric_sql_query.py`; it also serves Azure SQL, Fabric SQL database and Synapse serverless targets declared in `sql_targets:`).
 The tool accepts only `query` plus optional `maximum_rows`; target, server, identity,
 and credentials come from the contract and the selected Fabric Python
-(`coop_fabric_python` / `Get-CoopFabricPython`). When the contract declares
+(`coop_fabric_python` / `Get-CoopFabricPython`; the extension finds it once per
+session in the same places, `COOP_FABRIC_PYTHON` then the `ms-fabric-cli` pipx
+venv, and starts PowerShell only when those miss). When the contract declares
 `sql_targets:` (row SQ2), the executor connects to its ready default entry: a
 direct kind (`azure_sql`, `fabric_sql_database`, `synapse_serverless`) connects to
 the contract's `server` with that kind's connect timeout (60 s for Azure SQL, whose

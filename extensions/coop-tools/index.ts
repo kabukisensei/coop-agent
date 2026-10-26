@@ -295,23 +295,63 @@ export function fabricSqlHelperInvocation(
   return { bin: python, args: [join(root, "lib", helper)] };
 }
 
-async function resolveFabricSqlPython(signal: AbortSignal | undefined): Promise<{ python?: string; state?: string }> {
-  if (signal?.aborted) return { state: "aborted" };
-  const invocation = fabricSqlPythonResolverInvocation();
-  return await new Promise((done) => {
-    const child = spawn(invocation.bin, invocation.args, {
-      stdio: ["ignore", "pipe", "ignore"], shell: false,
-      env: { ...process.env, ...invocation.env },
+/** Where the Fabric Python (the ms-fabric-cli pipx venv's interpreter, the one
+ *  with pyodbc) can be, in lib/common.ps1's Get-CoopFabricPython order:
+ *  COOP_FABRIC_PYTHON alone when set; else that venv under COOP_PIPX_HOME,
+ *  PIPX_HOME, then the platform's pipx default (%LOCALAPPDATA%\pipx\pipx and
+ *  ~\pipx on Windows, ~/.local/pipx elsewhere). Computed here so a native SQL
+ *  call does not start PowerShell, parse lib/common.ps1 and run a pipx probe to
+ *  find a path that does not move (suite review 2026-10-26, pick 6). */
+export function fabricPythonCandidates(env: NodeJS.ProcessEnv = process.env, platform = process.platform, home = homedir()): string[] {
+  if (env.COOP_FABRIC_PYTHON) return [env.COOP_FABRIC_PYTHON];
+  const venvs: string[] = [];
+  if (env.COOP_PIPX_HOME) venvs.push(join(env.COOP_PIPX_HOME, "venvs"));
+  if (env.PIPX_HOME) venvs.push(join(env.PIPX_HOME, "venvs"));
+  if (platform === "win32") {
+    if (env.LOCALAPPDATA) venvs.push(join(env.LOCALAPPDATA, "pipx", "pipx", "venvs"));
+    venvs.push(join(home, "pipx", "venvs"));
+  } else {
+    venvs.push(join(home, ".local", "pipx", "venvs"));
+  }
+  const inner = platform === "win32" ? ["Scripts", "python.exe"] : ["bin", "python"];
+  return venvs.map((dir) => join(dir, "ms-fabric-cli", ...inner));
+}
+
+function usableExecutable(path: string): boolean {
+  if (!path || path !== path.trim() || /[\r\n]/.test(path) || !isAbsolute(path)) return false;
+  try {
+    if (!statSync(path).isFile()) return false;
+    if (process.platform !== "win32") accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+interface SpawnOutcome { state: string; stdout: string; code: number | null }
+
+/** One supervised child process: bounded time and output, abortable, force-killed
+ *  and reaped within a second of a stop. `state` is "" when the child exited on
+ *  its own (then `code` is its exit code), else why it was stopped. stdout is
+ *  decoded as one UTF-8 text, so a multi-byte character split across chunks is
+ *  not read as U+FFFD. */
+function supervisedSpawn(bin: string, args: string[], options: {
+  cwd?: string; env?: NodeJS.ProcessEnv; input?: string; signal?: AbortSignal;
+  timeoutMs: number; maxStdout: number; launchState: string; timeoutState: string; overflowState: string;
+}): Promise<SpawnOutcome> {
+  return new Promise((done) => {
+    const child = spawn(bin, args, {
+      cwd: options.cwd, stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "ignore"], shell: false, env: options.env,
     });
     child.stdout?.setEncoding("utf8");
     let stdout = "", finished = false, stopState = "";
     let forceTimer: ReturnType<typeof setTimeout> | undefined;
     let reapTimer: ReturnType<typeof setTimeout> | undefined;
-    const finish = (value: { python?: string; state?: string }) => {
+    const finish = (value: SpawnOutcome) => {
       if (finished) return;
       finished = true;
-      clearTimeout(timeoutTimer); clearTimeout(forceTimer); clearTimeout(reapTimer);
-      signal?.removeEventListener("abort", onAbort);
+      clearTimeout(timer); clearTimeout(forceTimer); clearTimeout(reapTimer);
+      options.signal?.removeEventListener("abort", onAbort);
       done(value);
     };
     const stop = (state: string) => {
@@ -319,33 +359,65 @@ async function resolveFabricSqlPython(signal: AbortSignal | undefined): Promise<
       stopState = state;
       try { child.kill("SIGTERM"); } catch { /* already exited */ }
       forceTimer = setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* already exited */ } }, 250);
-      reapTimer = setTimeout(() => finish({ state }), 1_000);
+      reapTimer = setTimeout(() => finish({ state, stdout, code: null }), 1_000);
     };
     const onAbort = () => stop("aborted");
-    const timeoutTimer = setTimeout(() => stop("python_resolver_timeout"), 30_000);
-    signal?.addEventListener("abort", onAbort, { once: true });
+    const timer = setTimeout(() => stop(options.timeoutState), options.timeoutMs);
+    options.signal?.addEventListener("abort", onAbort, { once: true });
     child.stdout?.on("data", (data: any) => {
       if (stopState) return;
-      if (data.length > 4_096 - stdout.length) return stop("selected_python_unavailable");
+      if (data.length > options.maxStdout - stdout.length) return stop(options.overflowState);
       stdout += data.toString();
     });
-    child.on("error", () => finish({ state: stopState || "selected_python_unavailable" }));
-    child.on("close", (code: number | null) => {
-      if (stopState) return finish({ state: stopState });
-      if (code !== 0) return finish({ state: "selected_python_unavailable" });
-      const python = stdout.replace(/\r?\n$/, "");
-      if (!python || python !== python.trim() || /[\r\n]/.test(python) || !isAbsolute(python)) {
-        return finish({ state: "selected_python_unavailable" });
-      }
-      try {
-        if (!statSync(python).isFile()) throw new Error("not a file");
-        if (process.platform !== "win32") accessSync(python, constants.X_OK);
-      } catch {
-        return finish({ state: "selected_python_unavailable" });
-      }
-      finish({ python });
-    });
+    child.on("error", () => finish({ state: stopState || options.launchState, stdout, code: null }));
+    child.on("close", (code: number | null) => finish({ state: stopState, stdout, code }));
+    if (options.input !== undefined) {
+      child.stdin?.on("error", () => { /* child exited before consuming input */ });
+      child.stdin?.end(options.input);
+    }
   });
+}
+
+// The interpreter is resolved once per session and kept while the same
+// environment names it and the file is still there; only a success is kept, so
+// a missing runtime is looked for again on the next call (after `coop update`).
+let fabricPythonCache: { key: string; python: string } | null = null;
+
+export function resetFabricPythonCache(): void {
+  fabricPythonCache = null;
+}
+
+function fabricPythonCacheKey(env: NodeJS.ProcessEnv = process.env): string {
+  return [env.COOP_FABRIC_PYTHON, env.COOP_PIPX_HOME, env.PIPX_HOME, env.LOCALAPPDATA].map((value) => value || "").join("\u0000");
+}
+
+const RESOLVER_SPAWN = { timeoutMs: 30_000, maxStdout: 4_096, launchState: "selected_python_unavailable", timeoutState: "python_resolver_timeout", overflowState: "selected_python_unavailable" };
+
+async function resolveFabricSqlPython(signal: AbortSignal | undefined): Promise<{ python?: string; state?: string }> {
+  if (signal?.aborted) return { state: "aborted" };
+  const key = fabricPythonCacheKey();
+  if (fabricPythonCache && fabricPythonCache.key === key && usableExecutable(fabricPythonCache.python)) return { python: fabricPythonCache.python };
+  fabricPythonCache = null;
+  // The known places first: a file that is there and starts is the interpreter.
+  for (const candidate of fabricPythonCandidates()) {
+    if (!usableExecutable(candidate)) continue;
+    const probe = await supervisedSpawn(candidate, ["-c", "import sys; raise SystemExit(0 if sys.executable else 1)"], { ...RESOLVER_SPAWN, signal });
+    if (probe.state) return { state: probe.state };
+    if (probe.code !== 0) return { state: "selected_python_unavailable" };
+    fabricPythonCache = { key, python: candidate };
+    return { python: candidate };
+  }
+  // Then lib/common.ps1's Get-CoopFabricPython, which also asks pipx itself where
+  // its venvs are (a PIPX_LOCAL_VENVS nobody exported): the one resolver on every
+  // platform (master plan S1), paid only when the known places miss.
+  const invocation = fabricSqlPythonResolverInvocation();
+  const out = await supervisedSpawn(invocation.bin, invocation.args, { ...RESOLVER_SPAWN, signal, env: { ...process.env, ...invocation.env } });
+  if (out.state) return { state: out.state };
+  if (out.code !== 0) return { state: "selected_python_unavailable" };
+  const python = out.stdout.replace(/\r?\n$/, "");
+  if (!usableExecutable(python)) return { state: "selected_python_unavailable" };
+  fabricPythonCache = { key, python };
+  return { python };
 }
 
 // The guardrails authorize native SQL from their trusted session snapshot of
@@ -402,55 +474,22 @@ async function runFabricSqlHelper(params: any, signal: AbortSignal | undefined, 
   if (!selected.python) return { ok: false, state: selected.state || "selected_python_unavailable" };
   if (signal?.aborted) return { ok: false, state: "aborted" };
   const invocation = fabricSqlHelperInvocation(selected.python, undefined, helper);
-  return await new Promise((done) => {
-    // The helpers print JSON with ensure_ascii=False: pin Python's stdout to UTF-8
-    // (on Windows a pipe otherwise gets the ANSI code page and a non-ASCII value
-    // raises UnicodeEncodeError) and decode the stream as one UTF-8 text, so a
-    // multi-byte character split across chunks is not read as U+FFFD.
-    const child = spawn(invocation.bin, invocation.args, {
-      cwd, stdio: ["pipe", "pipe", "ignore"], shell: false,
-      env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" },
-    });
-    child.stdout?.setEncoding("utf8");
-    let stdout = "", finished = false, stopState = "";
-    let forceTimer: ReturnType<typeof setTimeout> | undefined;
-    let reapTimer: ReturnType<typeof setTimeout> | undefined;
-    const finish = (value: any) => {
-      if (!finished) {
-        finished = true;
-        clearTimeout(timer);
-        clearTimeout(forceTimer);
-        clearTimeout(reapTimer);
-        signal?.removeEventListener("abort", onAbort);
-        done(value);
-      }
-    };
-    const stop = (state: string) => {
-      if (stopState) return;
-      stopState = state;
-      try { child.kill("SIGTERM"); } catch { /* already exited */ }
-      forceTimer = setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* already exited */ } }, 250);
-      reapTimer = setTimeout(() => finish({ ok: false, state }), 1_000);
-    };
-    const onAbort = () => stop("aborted");
-    const timer = setTimeout(() => stop("timeout"), sqlHelperTimeoutMs(helper));
-    signal?.addEventListener("abort", onAbort, { once: true });
-    child.stdout?.on("data", (data: any) => {
-      if (stopState) return;
-      if (data.length > 2_000_000 - stdout.length) return stop("helper_output_invalid");
-      stdout += data.toString();
-    });
-    child.on("error", () => finish({ ok: false, state: stopState || "helper_launch_failed" }));
-    child.on("close", (code: number | null) => {
-      if (stopState) return finish({ ok: false, state: stopState });
-      try {
-        const parsed = JSON.parse(stdout);
-        finish(parsed && typeof parsed === "object" ? parsed : { ok: false, state: "helper_output_invalid" });
-      } catch { finish({ ok: false, state: "helper_output_invalid" }); }
-    });
-    child.stdin?.on("error", () => { /* child exited before consuming input */ });
-    child.stdin?.end(JSON.stringify(params));
+  // The helpers print JSON with ensure_ascii=False: pin Python's stdout to UTF-8
+  // (on Windows a pipe otherwise gets the ANSI code page and a non-ASCII value
+  // raises UnicodeEncodeError).
+  const out = await supervisedSpawn(invocation.bin, invocation.args, {
+    cwd, signal, input: JSON.stringify(params),
+    env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" },
+    timeoutMs: sqlHelperTimeoutMs(helper), maxStdout: 2_000_000,
+    launchState: "helper_launch_failed", timeoutState: "timeout", overflowState: "helper_output_invalid",
   });
+  if (out.state) return { ok: false, state: out.state };
+  try {
+    const parsed = JSON.parse(out.stdout);
+    return parsed && typeof parsed === "object" ? parsed : { ok: false, state: "helper_output_invalid" };
+  } catch {
+    return { ok: false, state: "helper_output_invalid" };
+  }
 }
 
 interface ReviewParams {
