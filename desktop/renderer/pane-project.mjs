@@ -32,6 +32,7 @@ export function initialValues(data) {
   const values = Object.fromEntries(FLAT.map((key) => [key, typeof s[key] === "string" ? s[key] : ""]));
   values.profileName = "";
   values.fabricEnabled = Boolean(s.fabricEnabled);
+  values.powerBiEnabled = typeof s.powerBiEnabled === "boolean" ? s.powerBiEnabled : Boolean(s.fabricEnabled);
   values.tabularEditorEnabled = Boolean(s.tabularEditorEnabled);
   values.tabularEditorPath = s.tabularEditorPath || "te";
   values.powerBiWorkspaceName = s.powerBiWorkspaceName || s.fabricWorkspaceName || "";
@@ -69,6 +70,7 @@ export function folderRows(folders) {
 export function formInput(values) {
   const input = Object.fromEntries(FLAT.map((key) => [key, String(values[key] || "")]));
   input.fabricEnabled = Boolean(values.fabricEnabled);
+  input.powerBiEnabled = Boolean(values.powerBiEnabled);
   input.tabularEditorEnabled = Boolean(values.tabularEditorEnabled);
   input.repositories = values.repositories.map((repo) => Object.fromEntries(REPO_FIELDS.map((key) => [key, String(repo[key] || "")])));
   input.namedTargets = (values.namedTargets || []).map((set) => ({
@@ -168,6 +170,7 @@ export function mountProject(box, options, { coop, newSession }) {
     state.view = "form";
     const { data, values } = state;
     const fabricBox = el("div", { class: "form-group", hidden: !values.fabricEnabled });
+    const powerBiBox = el("div", { class: "form-group", hidden: !values.powerBiEnabled });
     const serverRow = row({ field: "sqlTargetServer", label: "Dev SQL server host", hint: "For example contoso-dev.database.windows.net. A host name only.", control: text(values, "sqlTargetServer"), guarded: true });
     const dbRow = row({ field: "sqlTargetDatabase", label: "Dev database name", control: text(values, "sqlTargetDatabase"), guarded: true });
     const kindChoices = [["", "None (no SQL target)"], ...data.kinds.map((kind) => [kind, KIND_LABELS[kind] || kind])];
@@ -251,9 +254,10 @@ export function mountProject(box, options, { coop, newSession }) {
       row({ field: "sqlEndpointItemName", label: "Default SQL endpoint item name", hint: "Optional.", control: text(values, "sqlEndpointItemName") }),
       row({ field: "sqlEndpointItemId", label: "Default SQL endpoint item ID", hint: "Optional; a lowercase UUID.", control: text(values, "sqlEndpointItemId") }),
       row({ field: "sqlEndpointPropertiesId", label: "Lakehouse sqlEndpointProperties.id", hint: "A lowercase UUID; required for a Lakehouse.", control: text(values, "sqlEndpointPropertiesId") }),
-      row({ field: "powerBiWorkspaceName", label: "Default Power BI workspace name", hint: "Optional.", control: text(values, "powerBiWorkspaceName") }),
-      row({ field: "powerBiWorkspaceId", label: "Default Power BI workspace ID", hint: "Optional.", control: text(values, "powerBiWorkspaceId") }),
-      row({ field: "fabricLayout", label: "Fabric layout", hint: "Which Fabric items hold this client's SQL. coop assumes nothing beyond what is declared here.", control: select(values, "fabricLayout", [["", "Not declared"], ...(data.layouts || []).map((layout) => [layout, LAYOUT_LABELS[layout] || layout])]) }),
+      row({ field: "fabricLayout", label: "Fabric layout", hint: "Which Fabric items hold this client's SQL. coop assumes nothing beyond what is declared here.", control: select(values, "fabricLayout", [["", "Not declared"], ...(data.layouts || []).map((layout) => [layout, LAYOUT_LABELS[layout] || layout])]) }));
+    powerBiBox.append(
+      row({ field: "powerBiWorkspaceName", label: "Default Power BI workspace name", hint: "Optional. A Pro or PPU workspace works; no Fabric capacity is needed.", control: text(values, "powerBiWorkspaceName") }),
+      row({ field: "powerBiWorkspaceId", label: "Default Power BI workspace ID", hint: "Optional; the GUID in the workspace URL.", control: text(values, "powerBiWorkspaceId") }),
       row({ field: "tableMappingRule", label: "Model table to SQL object rule", hint: "How a semantic-model table maps to the view or table it loads. Lineage checks it and reports a mismatch instead of \"no dependents\".", control: select(values, "tableMappingRule", (data.mappingRules || []).map((rule) => [rule, RULE_LABELS[rule] || rule]), showPrefix) }),
       row({ field: "tableMappingSchema", label: "Default schema", hint: "For a model table named without a schema.", control: text(values, "tableMappingSchema") }),
       prefixRow,
@@ -289,8 +293,8 @@ export function mountProject(box, options, { coop, newSession }) {
           changed();
           renderForm();
         } }, icon("plus"), el("span", { text: "Add a repository" }))),
-      section("Microsoft Fabric / Power BI",
-        toggle("fabricEnabled", "This project uses Microsoft Fabric or Power BI", (on) => {
+      section("Microsoft Fabric",
+        toggle("fabricEnabled", "This project uses Microsoft Fabric (a Warehouse, Lakehouse or SQL database)", (on) => {
           fabricBox.hidden = !on;
           if (!state.kindTouched && !data.settings.sqlTargetKind) {
             values.sqlTargetKind = data.proposedKind[on ? "fabric" : "noFabric"] || "";
@@ -300,6 +304,9 @@ export function mountProject(box, options, { coop, newSession }) {
         }),
         hint ? el("p", { class: "hint", text: hint }) : null,
         fabricBox),
+      section("Power BI",
+        toggle("powerBiEnabled", "This project uses Power BI semantic models or reports", (on) => { powerBiBox.hidden = !on; }),
+        powerBiBox),
       section("SQL targets",
         row({ field: "sqlTargetKind", label: "Kind", hint: `Where coop runs read-only SQL by default (dev, never prod).${data.settings.sqlTargetKind ? "" : " The kind shown is proposed for this machine, as /setup-project proposes it; choose None to leave it out."}`, control: kindSelect, guarded: true }),
         serverRow, dbRow,

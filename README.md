@@ -669,7 +669,11 @@ the record; an older `home-project.json` is carried over once and left in place.
 Fabric projects may use two workspaces per environment. Record Warehouse/Lakehouse
 DEV/TEST/PROD workspaces in `fabric.environment_names` and semantic-model
 DEV/TEST/PROD workspaces in `power_bi.environment_names`; keep both default workspace
-entries pointed at DEV. The contract also declares what coop would otherwise assume:
+entries pointed at DEV. `/setup-project` asks about Fabric and Power BI separately:
+a Power BI-only client (Pro or PPU workspaces beside Azure SQL, no Fabric capacity)
+answers No to Fabric and Yes to Power BI and gets the `power_bi` block alone, with
+the Warehouse MCP and `fabric_cicd` off; `fab` and the Fabric MCP stay on because
+they list Power BI workspaces too. The contract also declares what coop would otherwise assume:
 `fabric.layout` (which Fabric item kinds hold the SQL) and `power_bi.table_mapping`
 (how a semantic-model table maps to the SQL object it loads, `same_name` or `prefix`,
 with `overrides` for the exceptions); `data_doc lineage` and `sql_impact` check the

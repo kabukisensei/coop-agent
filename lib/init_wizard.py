@@ -304,6 +304,7 @@ def build_project_yml(answers: dict) -> str:
         lines.append('    prod: ""')
         lines.append("")
 
+    if answers.get("use_power_bi", answers.get("use_fabric")):
         lines.append("power_bi:")
         lines.append('  default_workspace_name: ""')
         lines.append('  default_workspace_id: ""')
@@ -326,10 +327,15 @@ def build_project_yml(answers: dict) -> str:
         lines.append("    overrides: {}")
         lines.append("")
 
+    # fab and the Fabric MCP list Power BI workspaces too (Pro and PPU included),
+    # so they follow either answer; fabric_cicd and the Warehouse MCP are Fabric-only.
+    fabric_or_pbi = bool(
+        answers.get("use_fabric") or answers.get("use_power_bi", answers.get("use_fabric"))
+    )
     lines.append("tools:")
     lines.append("  fabric_cli:")
     lines.append("    command: fab")
-    lines.append(f"    enabled: {str(answers.get('use_fabric', False)).lower()}")
+    lines.append(f"    enabled: {str(fabric_or_pbi).lower()}")
     lines.append("    default_mode: read_only_first")
     lines.append("  fabric_cicd:")
     lines.append("    library: fabric_cicd")
@@ -354,7 +360,7 @@ def build_project_yml(answers: dict) -> str:
 
     lines.append("mcp:")
     lines.append("  fabric:")
-    lines.append(f"    enabled: {str(answers.get('use_fabric', False)).lower()}")
+    lines.append(f"    enabled: {str(fabric_or_pbi).lower()}")
     lines.append("  microsoft_learn:")
     lines.append("    enabled: true")
     lines.append('    purpose: "Always-current Microsoft documentation lookups"')
@@ -562,8 +568,15 @@ def run_wizard(target_dir: Path) -> dict:
             }
         )
 
+    # Two answers (2026-10-26): a Power BI-only client (Pro or PPU workspaces
+    # beside Azure SQL, no Fabric capacity) gets the power_bi block alone.
     use_fabric = read_confirm(
-        "Is this a Microsoft Fabric / Power BI engagement?", default=False
+        "Is this a Microsoft Fabric engagement (a Warehouse, Lakehouse or SQL database)?",
+        default=False,
+    )
+    use_power_bi = read_confirm(
+        "Does this project use Power BI semantic models or reports? (Pro and PPU workspaces count; no Fabric capacity is needed)",
+        default=use_fabric,
     )
     tenant_id = ""
     if use_fabric:
@@ -605,6 +618,7 @@ def run_wizard(target_dir: Path) -> dict:
         "repo_remote_name": "origin",
         "repositories": repositories,
         "use_fabric": use_fabric,
+        "use_power_bi": use_power_bi,
         "tenant_id": tenant_id,
         "use_tabular_editor": use_tabular_editor,
         "te_path": te_path,

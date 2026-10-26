@@ -39,7 +39,7 @@ answers() {
 
 # --- guided wizard generates a usable project.yml -------------------------------
 answers \
-  "Cooptimize" "Test Client" "" "" "" "" "" "n" "no" "no" "n" | \
+  "Cooptimize" "Test Client" "" "" "" "" "" "n" "no" "no" "no" "n" | \
   HOME="$TMP" "$PY" "$ROOT/lib/init_wizard.py" "$TMP/repo" >/dev/null 2>&1
 rc=$?
 [ "$rc" -eq 0 ] && ok "wizard exits 0" || ko "wizard exit: $rc"
@@ -78,7 +78,7 @@ if command -v cygpath >/dev/null 2>&1; then
   az_login_state="$(cygpath -w "$az_login_state")"
 fi
 answers \
-  "Cooptimize" "Login Client" "" "" "" "" "" "generic" "n" "y" "y" "" "n" "n" | \
+  "Cooptimize" "Login Client" "" "" "" "" "" "generic" "n" "y" "y" "y" "" "n" "n" | \
   COOP_AZ_BIN="$az_login_stub" COOP_TEST_AZ_STATE="$az_login_state" \
   HOME="$TMP" "$PY" "$ROOT/lib/init_wizard.py" "$TMP/repo-login" > "$TMP/login.out" 2>&1
 login_text="$(cat "$TMP/repo-login/.coop/project.yml" 2>/dev/null)"
@@ -128,7 +128,7 @@ fi
 export COOP_DATA_DOC_BIN
 
 # Explicit SQL role guarantees config-set seeding before native setup.
-answers "Cooptimize" "Test Client" "" "" "" "" "" "sql" "n" "no" "no" "y" | \
+answers "Cooptimize" "Test Client" "" "" "" "" "" "sql" "n" "no" "no" "no" "y" | \
   COOP_SETUP_MARKER=setup-marker \
   COOP_DATA_DOC_BIN="$COOP_DATA_DOC_BIN" \
   HOME="$TMP" \
@@ -145,7 +145,7 @@ PY
 [ "$?" -eq 0 ] && ok "seed patch contains the entered SQL path" || ko "seed patch missing entered path"
 
 # --- lineage offer declined → no coop-data-doc invocation ----------------------
-answers "Cooptimize" "Test Client" "" "" "" "" "" "generic" "n" "no" "no" "n" | \
+answers "Cooptimize" "Test Client" "" "" "" "" "" "generic" "n" "no" "no" "no" "n" | \
   COOP_SETUP_MARKER=setup-marker2 \
   COOP_DATA_DOC_BIN="$COOP_DATA_DOC_BIN" \
   HOME="$TMP" \
@@ -157,7 +157,7 @@ rc=$?
 # --- C1: one contract per client Git root; nothing is created below it ----------
 mkdir -p "$TMP/client/.coop" "$TMP/client/analytics/.git" "$TMP/client/reports/.git"
 printf "profile:\n  client: 'Contoso'\n" > "$TMP/client/.coop/project.yml"
-answers "Cooptimize" "Test Client" "" "" "" "" "" "n" "no" "no" "n" | \
+answers "Cooptimize" "Test Client" "" "" "" "" "" "n" "no" "no" "no" "n" | \
   HOME="$TMP" "$PY" "$ROOT/lib/init_wizard.py" "$TMP/client/analytics" >"$TMP/below.out" 2>&1
 rc=$?
 [ "$rc" -ne 0 ] && ok "python wizard refuses a contract below an existing one (exit $rc)" || ko "python wizard created a second contract below the root"
@@ -175,7 +175,7 @@ if command -v git >/dev/null 2>&1; then
   mkdir -p "$TMP/estate/analytics" "$TMP/estate/reports"
   git -C "$TMP/estate/analytics" init --quiet
   git -C "$TMP/estate/reports" init --quiet
-  answers "" "" "" "" "" "" "" "n" "no" "no" "n" | HOME="$TMP" USERPROFILE="$TMP" COOP_ASSUME_YES=1 COOP_INIT_CLIENT="Fabrikam Foods" \
+  answers "" "" "" "" "" "" "" "n" "no" "no" "no" "n" | HOME="$TMP" USERPROFILE="$TMP" COOP_ASSUME_YES=1 COOP_INIT_CLIENT="Fabrikam Foods" \
     "$PWSH" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "$COOP_PS1" init "$TMP/estate/analytics" >"$TMP/home.out" 2>&1
   rc=$?
   [ "$rc" -eq 0 ] && ok "coop init exits 0 beside several repositories (home repo)" || ko "coop init home-repo exit $rc: $(cat "$TMP/home.out")"
@@ -194,7 +194,7 @@ else
 fi
 
 # Tabular Editor CLI captures both executable and BPA rules path.
-answers "Cooptimize" "BPA Client" "" "" "" "" "" "generic" "n" "no" "yes" "/custom/te" "/rules/BPARules.json" "n" | \
+answers "Cooptimize" "BPA Client" "" "" "" "" "" "generic" "n" "no" "no" "yes" "/custom/te" "/rules/BPARules.json" "n" | \
   HOME="$TMP" "$PY" "$ROOT/lib/init_wizard.py" "$TMP/repo4" >/dev/null 2>&1
 text="$(cat "$TMP/repo4/.coop/project.yml")"
 case "$text" in *"executable_path: '/custom/te'"*"bpa_rules_path: '/rules/BPARules.json'"*) ok "Tabular Editor executable and BPA rules captured" ;; *) ko "Tabular Editor config incomplete" ;; esac

@@ -33,3 +33,17 @@ fabric_contract = yaml_mod._load_fallback(mod.build_project_yml(fabric_answers))
 assert set(fabric_contract["fabric"]["environment_names"]) == {"dev", "test", "prod"}
 assert set(fabric_contract["power_bi"]["environment_names"]) == {"dev", "test", "prod"}
 print("OK: init YAML round-trips Windows paths, apostrophes, punctuation, Unicode, and multiple repos")
+# Two answers (2026-10-26): a Power BI-only client gets power_bi: without fabric:.
+pbi_only = dict(answers)
+pbi_only["use_power_bi"] = True
+pbi_contract = yaml_mod._load_fallback(mod.build_project_yml(pbi_only))
+assert "fabric" not in pbi_contract, "no empty fabric: block for a Power BI-only client"
+assert set(pbi_contract["power_bi"]["environment_names"]) == {"dev", "test", "prod"}
+assert pbi_contract["tools"]["fabric_cli"]["enabled"] is True
+assert pbi_contract["mcp"]["fabric"]["enabled"] is True
+assert pbi_contract["tools"]["fabric_cicd"]["enabled"] is False
+assert pbi_contract["mcp"]["fabric_sqlendpoint"]["enabled"] is False
+fabric_only = dict(fabric_answers)
+fabric_only["use_power_bi"] = False
+assert "power_bi" not in yaml_mod._load_fallback(mod.build_project_yml(fabric_only))
+print("OK: the Fabric and Power BI answers write their own blocks")
