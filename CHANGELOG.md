@@ -47,6 +47,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   No contract shape changed; `project_health.py` keeps its block scan because
   its migration needs the block's line positions.
 
+- **One guardrails dispatcher (suite review 2026-10-26, pick 12).** The
+  `tool_call` handler in `extensions/coop-guardrails` is now one `enforce()`
+  over `RULES` in a declared order (seventeen named rules: the native tools
+  first, then the shell rules over one alias-expanded command), each answering
+  with one `Decision` (pass, allow or block), and every question to the person
+  goes through one `Session.ask()` that fails closed headlessly, offers the
+  session approval, audits and blocks on a no; the per-session state
+  (live-read grant, edit approvals, production connection, unscripted dev
+  writes) lives in one `Session`. No rule, message or audit row changed: the
+  existing 175-case corpus is the gate, plus a test that pins the order.
+
 ### Fixed
 
 - **A launch runs the pinned Pi only.** The manifest pin acted in `coop install`

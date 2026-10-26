@@ -3555,4 +3555,19 @@ await t("merge, cherry-pick, revert, am and commit-tree take the never-commit-so
   assert.ok(entries.some((e) => e.label === "git merge") && entries.some((e) => e.label === "git cherry-pick"), "audit names the verb");
 });
 
+await t("the rules run in their declared order: native tools each own a rule, then the shell rules over one command", async () => {
+  assert.deepEqual([...cg.RULE_ORDER], [
+    "codemode", "mcp-script", "powershell", "files", "sql-source", "live-metadata", "mcp",
+    "shell-command", "prod-unlock-shell", "secret-file-shell", "environment-dump", "azure-sign-in",
+    "git-commit", "sqlsc-shell", "destructive-command", "fabric-write-shell", "desktop-reload",
+  ]);
+  // A cleared shell rule hands the command to the next: a destructive command that also touches a
+  // secret asks twice, in that order, and a no at either point blocks.
+  const asked = [];
+  const r = await handle({ toolName: "bash", input: { command: "rm -rf .env" } }, { cwd: ROOT, hasUI: true, ui: { confirm: async (title, message) => { asked.push(message.split("\n")[0]); return true; } } });
+  assert.equal(r, undefined);
+  assert.match(asked[0], /secret-looking file/);
+  assert.match(asked[1], /^Destructive command/);
+});
+
 console.log(`  ${n} guardrails tests passed`);
