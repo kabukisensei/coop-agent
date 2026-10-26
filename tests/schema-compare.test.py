@@ -127,6 +127,23 @@ def fake_resolve_connection(target):
     return target.server, f"tok-{target.environment}", None
 
 
+def write_stub(folder: Path, source: str) -> Path:
+    """The stub as an executable: a shebang script on POSIX; on Windows a .cmd
+    wrapper that runs the script with this interpreter (a shebang file cannot be
+    started by CreateProcess)."""
+    folder.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "win32":
+        script = folder / "coop-schema-compare.py"
+        script.write_text(source, encoding="utf-8")
+        wrapper = folder / "coop-schema-compare.cmd"
+        wrapper.write_text(f'@"{sys.executable}" "{script}" %*\r\n', encoding="ascii")
+        return wrapper
+    stub = folder / "coop-schema-compare"
+    stub.write_text(source, encoding="utf-8")
+    stub.chmod(stub.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return stub
+
+
 class Record:
     """The stub's record of its last call."""
 
@@ -142,10 +159,7 @@ class Record:
 
 
 with tempfile.TemporaryDirectory() as tmp:
-    stub = Path(tmp) / "bin" / "coop-schema-compare"
-    stub.parent.mkdir()
-    stub.write_text(STUB, encoding="utf-8")
-    stub.chmod(stub.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    stub = write_stub(Path(tmp) / "bin", STUB)
     record = Record(Path(tmp) / "record.json")
     os.environ[ct.TOOL_ENV] = str(stub)
     os.environ["COOP_TEST_RECORD"] = str(record.path)
