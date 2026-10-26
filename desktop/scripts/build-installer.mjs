@@ -313,7 +313,7 @@ export function prefixPackages(manifest) {
  */
 export function snapshotIncludes(file) {
   const posix = file.split(/[\\/]/).join("/");
-  if (/^(tests|desktop|acceptance|\.github|\.agents|\.specify)\//.test(posix)) return false;
+  if (/^(tests|desktop|acceptance|\.github)\//.test(posix)) return false;
   if (/^docs\/history\//.test(posix)) return false;
   if (posix === ".gitignore" || posix === ".gitattributes" || posix === ".coop/project.yml") return false;
   return true;
