@@ -1475,6 +1475,7 @@ await t("parseContractSqlScope ports lib/sql_targets.py: ready default only, pro
     configured: true, client: "Contoso", tenant: TENANT_ID, target: devEntry,
     // Every ready entry, so a read may name prod; the default never is.
     entries: { dev: devEntry, prod: { ...devEntry, environment: "production", server: "contoso.database.windows.net" } },
+    namedSets: {},
   });
   const warehouse = cg.parseContractSqlScope(contractText(["  default_environment: test", "  test:", "    kind: fabric_warehouse", `    workspace_id: ${WORKSPACE_ID.toUpperCase()}`, `    item_id: ${ITEM_ID}`, "    database: CustomerWarehouse"]));
   assert.deepEqual(warehouse.target, { environment: "test", kind: "fabric_warehouse", database: "CustomerWarehouse", server: "", workspaceId: WORKSPACE_ID, itemId: ITEM_ID, sqlEndpointId: "" });
@@ -1671,6 +1672,65 @@ await t("schema_compare (SQ10): two catalog reads run on every pair without a pr
   }
   assert.equal(confirmCount, 0, "forged shapes are blocked, never prompted");
   assert.equal(readAudit().filter((x) => x.tool === "governed-schema-compare" && x.decision === "blocked").length, 20);
+  removeContract();
+  writeManagedTarget();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+});
+
+await t("schema_compare (SQ10): `<env>@<set>` names an environment of a named target set the project file declares, read exactly as its environment; an undeclared set is blocked (v0.38.6 pre-tag check)", async () => {
+  clearAudit();
+  writeManagedTarget();
+  // A Lakehouse set with dev and prod (no test), beside the plain dev/prod entries.
+  const named = AZURE_CONTRACT + [
+    "  named:", "    lakehouse:", "      dev:", "        kind: azure_sql", "        server: contoso-lh-dev.database.windows.net", "        database: ContosoLH",
+    "      prod:", "        kind: azure_sql", "        server: contoso-lh.database.windows.net", "        database: ContosoLH", "",
+  ].join("\n");
+  assert.deepEqual(cg.namedTargetSets(named), { lakehouse: ["dev", "prod"] });
+  assert.deepEqual(cg.namedTargetSets(AZURE_CONTRACT), {}, "no named sets without the key");
+  assert.deepEqual(cg.namedTargetSets(AZURE_CONTRACT + "  named:\n    Lake House:\n      dev:\n        kind: azure_sql\n    dw2:\n      staging:\n        kind: azure_sql\n"), {}, "a set name or an environment outside the shape is not a set");
+  assert.deepEqual(cg.parseContractSqlScope(named).namedSets, { lakehouse: ["dev", "prod"] });
+  // The pure decision: the set and its environments come from the contract alone.
+  const scope = cg.parseContractSqlScope(named);
+  const decide = (input, contract = scope) => cg.decideSchemaCompare({ toolName: "schema_compare", input }, contract);
+  assert.equal(decide({ source: "dev@lakehouse", target: "dev" }).action, "allow", "the VM's offline repro: a Lakehouse dev side against the Warehouse dev side");
+  assert.equal(decide({ source: "dev@lakehouse", target: "prod@lakehouse" }).environment, "dev@lakehouse->prod@lakehouse");
+  assert.equal(decide({ source: "prod@lakehouse", target: "dev@lakehouse" }).action, "allow", "a named prod is production: a read on either side, like prod");
+  assert.equal(decide({ source: "prod@lakehouse", target: "prod" }).action, "allow");
+  assert.equal(decide({ source: "snapshot", target: "prod@lakehouse" }).action, "allow");
+  assert.equal(decide({ source: "repo:sql", target: "dev@lakehouse" }).action, "allow");
+  for (const [input, why] of [
+    [{ source: "dev@nope" }, "a set the file does not declare"],
+    [{ source: "test@lakehouse" }, "an environment the set lacks"],
+    [{ source: "dev", target: "prod@nope" }, "the target side too"],
+    [{ source: "dev@lakehouse", target: "dev@lakehouse" }, "the same side twice"],
+    [{ source: "dev@Lakehouse" }, "set names are lower-case"],
+    [{ source: "dev@" }, "an empty set"],
+    [{ source: "staging@lakehouse" }, "an environment outside dev, test, prod"],
+    [{ source: "lakehouse@dev" }, "the order is <env>@<set>"],
+    [{ source: "prod@lakehouse", target: "prod@lakehouse" }, "prod against itself"],
+  ]) {
+    const d = decide(input);
+    assert.equal(d.action, "block", `${why}: ${JSON.stringify(input)}`);
+    assert.equal(d.environment, "", why);
+  }
+  assert.equal(decide({ source: "dev@lakehouse" }, cg.parseContractSqlScope(AZURE_CONTRACT)).action, "block", "no named sets in the file: the spec is blocked");
+  assert.equal(decide({ source: "dev@lakehouse" }, null).action, "block", "no contract at all: blocked");
+  assert.equal(decide({ source: "dev", target: "prod" }, null).action, "allow", "the plain names need no contract, as before");
+  // Through the hook: the session's contract supplies the sets; audited with the pair; never a prompt.
+  writeContract(named);
+  process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmAnswer = false; confirmCount = 0;
+  const call = (input) => ({ toolName: "schema_compare", input });
+  assert.equal(blocked(await handle(call({ source: "dev@lakehouse", target: "dev" }), liveCtx)), false);
+  assert.equal(blocked(await handle(call({ source: "prod@lakehouse", target: "dev@lakehouse" }), { ...liveCtx, hasUI: false, ui: {} })), false, "headless too: a named prod side is a read");
+  const r = await handle(call({ source: "dev@nope", target: "prod" }), liveCtx);
+  assert.equal(blocked(r), true);
+  assert.match(r.reason, /named target set in \.coop\/project\.yml/);
+  assert.equal(confirmCount, 0);
+  assert.deepEqual(readAudit().filter((x) => x.tool === "governed-schema-compare").map((x) => [x.decision, x.detail]), [
+    ["allowed", "dev@lakehouse->dev"], ["allowed", "prod@lakehouse->dev@lakehouse"], ["blocked", "input-invalid"],
+  ]);
   removeContract();
   writeManagedTarget();
   await handleSessionStart({ reason: "new" }, liveCtx);

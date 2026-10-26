@@ -5,29 +5,6 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
-### Added
-
-- **Schema compare from the deployment call (2026-10-23).** `/setup-project` and
-  the coop window's Project pane now ask for the `prod` and `test` SQL targets
-  (same kind as dev; blank = no entry yet) and the shared `schema_compare:`
-  lists (schemas never compared, schemas whose changed tables are rebuilt), so
-  two people no longer get two diff counts from prompt-only exclusions; a run
-  whose choices differ from the project file's says so and names the keys to
-  add. `sql_targets.named.<set>` declares a second engine beside the main one
-  (a Lakehouse SQL endpoint beside the Warehouse) and `<env>@<set>`
-  (`dev@lakehouse`) names its environments in `schema_compare` and
-  `coop schema compare`; a named `prod` is production for the guardrails; the
-  Project pane edits the sets (a "Named target sets" group) and the
-  `schema_compare.destructive` choice, which the wizard asks for too.
-  Formatting-only and column-order-only differences are labelled (and counted)
-  instead of looking like real changes, and still deploy. `coop doctor` and a
-  once-per-folder session note name the sections an older project file lacks
-  (`sql_targets.prod`, `schema_compare`, ...) and point at `/setup-project`;
-  nothing is filled in on its own. New prompts: `/schema-compare` (compare, read
-  the result, promote through the governed write path) and `/runbook <name>`
-  (walk a client's `.coop/runbooks/<name>.md` step by step, `(manual)` /
-  `(coop)` / `(check)` steps, never reordered).
-
 ### Changed
 
 - **One project-file reader per language (suite review 2026-10-26, pick 7).**
@@ -58,8 +35,57 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   writes) lives in one `Session`. No rule, message or audit row changed: the
   existing 175-case corpus is the gate, plus a test that pins the order.
 
+## [0.38.6] — 2026-10-26
+
+### Added
+
+- **Schema compare from the deployment call (2026-10-23).** `/setup-project` and
+  the coop window's Project pane now ask for the `prod` and `test` SQL targets
+  (same kind as dev; blank = no entry yet) and the shared `schema_compare:`
+  lists (schemas never compared, schemas whose changed tables are rebuilt), so
+  two people no longer get two diff counts from prompt-only exclusions; a run
+  whose choices differ from the project file's says so and names the keys to
+  add. `sql_targets.named.<set>` declares a second engine beside the main one
+  (a Lakehouse SQL endpoint beside the Warehouse) and `<env>@<set>`
+  (`dev@lakehouse`) names its environments in `schema_compare` and
+  `coop schema compare`; a named `prod` is production for the guardrails; the
+  Project pane edits the sets (a "Named target sets" group) and the
+  `schema_compare.destructive` choice, which the wizard asks for too.
+  Formatting-only and column-order-only differences are labelled (and counted)
+  instead of looking like real changes, and still deploy. `coop doctor` and a
+  once-per-folder session note name the sections an older project file lacks
+  (`sql_targets.prod`, `schema_compare`, ...) and point at `/setup-project`;
+  nothing is filled in on its own. New prompts: `/schema-compare` (compare, read
+  the result, promote through the governed write path) and `/runbook <name>`
+  (walk a client's `.coop/runbooks/<name>.md` step by step, `(manual)` /
+  `(coop)` / `(check)` steps, never reordered).
+
+### Changed
+
+- **Tool pins:** coop-sql-source-control 1.0.7 (a catalog query that fails for
+  indexes, keys, checks, foreign keys, defaults, identity, computed columns,
+  collation or schemas holds that object type out of the comparison instead of
+  removing valid objects from the tracked schema; migration ids over 200
+  characters are refused before any migration runs), coop-schema-compare 0.1.7
+  (the #20, #21 and #22 fixes mirrored under Fixed below, plus Lakehouse `fabric://`
+  resolution and the formatting-only and column-order-only labels) and
+  coop-data-doc 1.4.4 (`GO` inside a comment, string literal or bracketed name
+  no longer splits a batch; `impact --git` reads the baseline from the git
+  worktree root).
+
 ### Fixed
 
+- **`schema_compare` accepts a named target set's environment.** The guardrail
+  that vets the native tool's sides still knew only `dev`, `test`, `prod`,
+  `snapshot` and `repo`, so every `<env>@<set>` side (`dev@lakehouse`) was
+  blocked before any connection, while `coop schema compare` took it (found by
+  the v0.38.6 dev VM check). The guardrail now reads the project file's
+  `sql_targets.named` sets and accepts `<env>@<set>` when that set declares that
+  environment, classified exactly as its environment: `prod@<set>` is production,
+  a read on either side like `prod`, audited with the pair as named. A set the
+  file does not declare, or an environment the set lacks, stays blocked. The
+  report's side table now names the set with the environment (`dev@lakehouse`,
+  not `dev`).
 - **A launch runs the pinned Pi only.** The manifest pin acted in `coop install`
   and `coop update`, but a launch started whatever `pi` was first on PATH, and
   its skew repair then aligned the extension tree to that Pi's version: after a
