@@ -16,6 +16,9 @@
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '_common.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+# The pins come from the manifest (tests/pins.test.sh fails a bump that leaves a stale literal).
+$pins = ([System.IO.File]::ReadAllText((Join-Path $root 'config\release-manifest.json')) | ConvertFrom-Json).python_tools
+$pinDoc = [string]$pins.'coop-data-doc'; $pinFab = [string]$pins.'ms-fabric-cli'; $pinPyodbc = [string]$pins.'pyodbc'
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-bundled-tools-' + [guid]::NewGuid().ToString('N'))
 
 function New-Runtime([string]$Dir, [bool]$WithTools) {
@@ -61,9 +64,9 @@ try {
 
   # Offline for exact pins only.
   $cases = @(
-    @{ Args = @('install', 'coop-data-doc==1.4.3'); Offline = $true; Name = 'install of a pin' },
-    @{ Args = @('install', '--force', '--python', 'C:\py\python.exe', 'ms-fabric-cli==1.7.0'); Offline = $true; Name = 'forced install with --python' },
-    @{ Args = @('inject', 'ms-fabric-cli', 'pyodbc==5.3.0', '--force'); Offline = $true; Name = 'inject of a pin' },
+    @{ Args = @('install', "coop-data-doc==$pinDoc"); Offline = $true; Name = 'install of a pin' },
+    @{ Args = @('install', '--force', '--python', 'C:\py\python.exe', "ms-fabric-cli==$pinFab"); Offline = $true; Name = 'forced install with --python' },
+    @{ Args = @('inject', 'ms-fabric-cli', "pyodbc==$pinPyodbc", '--force'); Offline = $true; Name = 'inject of a pin' },
     @{ Args = @('install', 'coop-data-doc'); Offline = $false; Name = 'unpinned (--edge) install' },
     @{ Args = @('inject', 'ms-fabric-cli', 'fabric-cicd', '--force'); Offline = $false; Name = 'unpinned inject' },
     @{ Args = @('upgrade', 'coop-data-doc'); Offline = $false; Name = 'pipx upgrade' },
@@ -78,7 +81,7 @@ try {
     elseif (-not $back) { Ko "$($c.Name): the pip variables were not restored (PIP_NO_INDEX='$($env:PIP_NO_INDEX)', PIP_FIND_LINKS='$($env:PIP_FIND_LINKS)')" }
   }
   $env:COOP_PIP_ONLINE = '1'
-  $s = Use-CoopBundledWheels @('install', 'coop-data-doc==1.4.3')
+  $s = Use-CoopBundledWheels @('install', "coop-data-doc==$pinDoc")
   if ($null -ne $s -or $env:PIP_NO_INDEX) { Ko 'COOP_PIP_ONLINE=1 still went offline' }
   Restore-CoopBundledWheels $s
   Remove-Item Env:\COOP_PIP_ONLINE -ErrorAction SilentlyContinue

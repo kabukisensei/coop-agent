@@ -6,6 +6,13 @@
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '_common.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+# Every pin this fixture names comes from the manifest (tests/pins.test.sh fails
+# a pin bump that leaves a stale literal in a fixture).
+$pins = ([System.IO.File]::ReadAllText((Join-Path $root 'config\release-manifest.json')) | ConvertFrom-Json).python_tools
+$pinDoc = [string]$pins.'coop-data-doc'; $pinCompare = [string]$pins.'coop-schema-compare'; $pinSqlsc = [string]$pins.'coop-sql-source-control'
+$pinFab = [string]$pins.'ms-fabric-cli'; $pinCicd = [string]$pins.'fabric-cicd'; $pinPyodbc = [string]$pins.'pyodbc'
+$pipxListSh = "echo 'package coop-data-doc $pinDoc'; echo 'package coop-schema-compare $pinCompare'; echo 'package coop-sql-source-control $pinSqlsc'; echo 'package ms-fabric-cli $pinFab'"
+$pipxListCmd = "  echo package coop-data-doc $pinDoc`n  echo package coop-schema-compare $pinCompare`n  echo package coop-sql-source-control $pinSqlsc`n  echo package ms-fabric-cli $pinFab"
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-install-python-' + [guid]::NewGuid().ToString('N'))
 # Run the installer and updater from a plain copy of this tree with no .git
 # (#104): step 1 of `coop update` fetches from origin and fast-forwards the
@@ -30,11 +37,11 @@ try {
     Where-Object { $_.Name -eq '.coop' -or -not $_.Name.StartsWith('.') } |
     ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $src -Recurse -Force }
   $runtimeFixture = Join-Path $t 'runtime-fixture'
-  $pyodbcMetadata = Join-Path $runtimeFixture 'pyodbc-5.3.0.dist-info'
+  $pyodbcMetadata = Join-Path $runtimeFixture "pyodbc-$pinPyodbc.dist-info"
   New-Item -ItemType Directory -Force -Path $runtimeFixture, $pyodbcMetadata | Out-Null
   [System.IO.File]::WriteAllText((Join-Path $runtimeFixture 'pyodbc.py'), "import os`ndef drivers():`n    missing = os.environ.get('COOP_TEST_DRIVER_MISSING') == '1'`n    ready = os.path.exists(os.environ.get('COOP_TEST_DRIVER_READY', ''))`n    return [] if missing and not ready else ['ODBC Driver 18 for SQL Server']`n")
   # Exercise the real runtime probe against the fixture module and metadata.
-  [System.IO.File]::WriteAllText((Join-Path $pyodbcMetadata 'METADATA'), "Metadata-Version: 2.1`nName: pyodbc`nVersion: 5.3.0`n")
+  [System.IO.File]::WriteAllText((Join-Path $pyodbcMetadata 'METADATA'), "Metadata-Version: 2.1`nName: pyodbc`nVersion: $pinPyodbc`n")
 
   Write-Shim 'python3' -Raw @'
 #!/bin/sh
@@ -84,14 +91,14 @@ exit /b 1
   # The pipx list is static, so the coop tools sit at their pins: the convergence
   # postcondition (installed version == pin) holds and the Fabric CLI, at its
   # pin too, is rebuilt only because pipx must fetch its Python.
-  Write-Shim 'pipx' -Raw @'
+  Write-Shim 'pipx' -Raw (@'
 #!/bin/sh
 echo "PIPX $*" >> "$COOP_TEST_CALLS"
 if [ "$1" = "list" ]; then
-  echo 'package coop-data-doc 1.4.3'; echo 'package coop-schema-compare 0.1.6'; echo 'package coop-sql-source-control 1.0.6'; echo 'package ms-fabric-cli 1.7.0'
+  __PIPX_LIST_SH__
 fi
 exit 0
-'@ @'
+'@ -replace '__PIPX_LIST_SH__', $pipxListSh) (@'
 @echo off
 echo PIPX %*>>"%COOP_TEST_CALLS%"
 if "%1"=="install" if "%2"=="--help" (
@@ -99,10 +106,7 @@ if "%1"=="install" if "%2"=="--help" (
   exit /b 0
 )
 if "%1"=="list" (
-  echo package coop-data-doc 1.4.3
-  echo package coop-schema-compare 0.1.6
-  echo package coop-sql-source-control 1.0.6
-  echo package ms-fabric-cli 1.7.0
+__PIPX_LIST_CMD__
 )
 if "%1"=="install" if not "%2"=="--help" (
   echo %*| findstr /C:"ms-fabric-cli" >nul
@@ -115,13 +119,13 @@ echo MATERIALIZE_PYTHON __NATIVE_PYTHON__>>"%COOP_TEST_CALLS%"
 if errorlevel 1 exit /b 3
 if not exist "%PIPX_HOME%\venvs\ms-fabric-cli\Scripts\python.exe" exit /b 3
 exit /b 0
-'@
+'@ -replace '__PIPX_LIST_CMD__', $pipxListCmd)
   $pipxCmdPath = Join-Path $bin 'pipx.cmd'
   # CI may supply a venv interpreter. Create a complete venv instead of copying
   # Scripts alone, which loses pyvenv.cfg and cannot locate the base runtime.
   $pipxCmd = [System.IO.File]::ReadAllText($pipxCmdPath).Replace('__NATIVE_PYTHON__', $nativePython.Source)
   [System.IO.File]::WriteAllText($pipxCmdPath, $pipxCmd)
-  Write-Shim 'fab' -Raw "#!/bin/sh`necho 'fab version 1.7.0'`n" "@echo off`r`necho fab version 1.7.0`r`n"
+  Write-Shim 'fab' -Raw "#!/bin/sh`necho 'fab version $pinFab'`n" "@echo off`r`necho fab version $pinFab`r`n"
   Write-Shim 'az' -Raw "#!/bin/sh`necho 'azure-cli 2.80.0'`n" "@echo off`r`necho azure-cli 2.80.0`r`n"
 
   # Defect D bounded comparison, stage A: a harmless Start-Job returning a
@@ -326,17 +330,17 @@ exit /b 0
   if (-not ($output.Contains('8/8') -and $output.Contains('Bootstrap'))) { Write-Error "install stopped before step 8/8 (rc=$rc) runtime-state=$($installedRuntime.state) runtime-version=$($installedRuntime.version) runtime-driver=$($installedRuntime.driver)`nevidence file: $evidencePath`n$output`n--- stream-tagged ---`n$evidence`nCALLS:`n$(Get-Content $calls -Raw)" }
   $transcript = Get-Content $calls -Raw
   if ($transcript -like '*WINGET*') { Write-Error "Python 3.14-only install unexpectedly required winget`n$transcript" }
-  if ($transcript -notlike '*PIPX install --force --fetch-python=missing --python 3.12 ms-fabric-cli==1.7.0*') { Write-Error "Fabric CLI did not fetch and use a standalone Python 3.12`n$transcript" }
+  if ($transcript -notlike "*PIPX install --force --fetch-python=missing --python 3.12 ms-fabric-cli==$pinFab*") { Write-Error "Fabric CLI did not fetch and use a standalone Python 3.12`n$transcript" }
   foreach ($expectedCall in @(
-    'PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force',
-    'PIPX inject ms-fabric-cli pyodbc==5.3.0 --force'
+    "PIPX inject ms-fabric-cli fabric-cicd==$pinCicd --force",
+    "PIPX inject ms-fabric-cli pyodbc==$pinPyodbc --force"
   )) {
     if (@($transcript -split "`r?`n" | Where-Object { $_ -eq $expectedCall }).Count -ne 1) {
       Write-Error "Fabric runtime did not make exactly one expected inject call: $expectedCall`n$transcript"
     }
   }
-  if ($installedRuntime.state -ne 'ready' -or $installedRuntime.version -ne '5.3.0' -or $installedRuntime.driver -ne 18) {
-    Write-Error "Fabric runtime status was not ready with pyodbc 5.3.0 and Driver 18: $($installedRuntime | ConvertTo-Json -Compress)"
+  if ($installedRuntime.state -ne 'ready' -or $installedRuntime.version -ne $pinPyodbc -or $installedRuntime.driver -ne 18) {
+    Write-Error "Fabric runtime status was not ready with pyodbc $pinPyodbc and Driver 18: $($installedRuntime | ConvertTo-Json -Compress)"
   }
   Ok 'Windows installer fetches a standalone Fabric Python without winget/py/pymanager'
 
@@ -361,18 +365,18 @@ exit /b 0
   # Coop-Emit writes through [Console]::Error, which *>&1 does not capture, so
   # the git shim's log is the witness: step 1 must never point git at a checkout.
   if ($transcript -match '(?m)^GIT -C ') { Write-Error "update step 1 ran git against a checkout; the fixture must run a copy, never the checkout running the tests (#104)`n$transcript" }
-  if ($transcript -notlike '*PIPX install --force --fetch-python=missing --python 3.12 ms-fabric-cli==1.7.0*') { Write-Error "Updater did not rebuild Fabric CLI with standalone Python 3.12`n$transcript" }
+  if ($transcript -notlike "*PIPX install --force --fetch-python=missing --python 3.12 ms-fabric-cli==$pinFab*") { Write-Error "Updater did not rebuild Fabric CLI with standalone Python 3.12`n$transcript" }
   foreach ($expectedCall in @(
-    'PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force',
-    'PIPX inject ms-fabric-cli pyodbc==5.3.0 --force'
+    "PIPX inject ms-fabric-cli fabric-cicd==$pinCicd --force",
+    "PIPX inject ms-fabric-cli pyodbc==$pinPyodbc --force"
   )) {
     if (@($transcript -split "`r?`n" | Where-Object { $_ -eq $expectedCall }).Count -ne 1) {
       Write-Error "Updater did not make exactly one expected inject call: $expectedCall`n$transcript"
     }
   }
   $updatedRuntime = Get-CoopFabricSqlRuntimeStatus
-  if ($updatedRuntime.state -ne 'ready' -or $updatedRuntime.version -ne '5.3.0' -or $updatedRuntime.driver -ne 18) {
-    Write-Error "Updated Fabric runtime status was not ready with pyodbc 5.3.0 and Driver 18: $($updatedRuntime | ConvertTo-Json -Compress)"
+  if ($updatedRuntime.state -ne 'ready' -or $updatedRuntime.version -ne $pinPyodbc -or $updatedRuntime.driver -ne 18) {
+    Write-Error "Updated Fabric runtime status was not ready with pyodbc $pinPyodbc and Driver 18: $($updatedRuntime | ConvertTo-Json -Compress)"
   }
   Ok 'Windows updater repairs and reconverges the managed Fabric runtime'
 

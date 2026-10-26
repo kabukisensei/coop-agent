@@ -52,5 +52,43 @@ PY
 then ok "the manifest pins Pi and every tool doctor --fix repairs, all to exact versions"
 else ko "the manifest is missing a pin or holds a range"; fi
 
+
+# --- The manifest is the only place a Python tool pin is written (suite review
+# pick 2). A pin bump that leaves `<tool>==<old>` anywhere else (a fixture, a
+# doc, a template) fails here, on the bump PR, instead of in the nightly lane.
+manifest="$ROOT/config/release-manifest.json"
+report="$(python3 - "$manifest" <<'PY'
+import json, re, sys
+m = json.load(open(sys.argv[1], encoding="utf-8"))
+for name, pin in m["python_tools"].items():
+    # ERE: the pin with each dot optionally regex-escaped (fixtures write `1\.4\.3` in patterns)
+    print("PIN", name, pin, pin.replace(".", r"\\?\."))
+for name, spec in m.get("python_tool_sources", {}).items():
+    pin = m["python_tools"].get(name, "")
+    ok = spec.get("tag") == "v" + pin and ("-" + pin + "-") in spec.get("asset", "")
+    print("SOURCE", name, "ok" if ok else "stale")
+PY
+)"
+[ -n "$report" ] || ko "could not read python_tools from config/release-manifest.json"
+stale=""
+while read -r kind name pin pinre; do
+  [ "$kind" = "PIN" ] || continue
+  hits="$(git -C "$ROOT" ls-files -z \
+    | grep -zvE '^(CHANGELOG\.md|docs/history/|docs/COOP_MASTER_PLAN\.md|docs/agent/|config/release-manifest\.json|tests/pins\.test\.sh)' \
+    | xargs -0 grep -nE -I "${name}==[0-9]+(\\\\?\\.[0-9]+){2}" -- 2>/dev/null \
+    | grep -vE "${name}==${pinre}([^0-9]|$)" || true)"
+  [ -z "$hits" ] || stale="$stale
+$hits"
+done <<< "$report"
+[ -z "$stale" ] && ok "every <tool>==<version> literal names the manifest pin (fixtures, docs, templates)" || ko "stale pin literal(s); bump them with the manifest:$stale"
+if printf '%s\n' "$report" | grep -q '^SOURCE .* stale$'; then
+  ko "python_tool_sources tag/asset do not name the python_tools pin: $(printf '%s\n' "$report" | grep '^SOURCE .* stale$' | tr '\n' ' ')"
+else
+  ok "python_tool_sources tag and asset name the python_tools pin"
+fi
+grep -q 'coop-data-doc==<version>' "$ROOT/templates/client-home/github-workflow-data-docs-check.yml" \
+  && ok "the client-home CI template carries the <version> placeholder (rendered from the manifest at copy time)" \
+  || ko "templates/client-home/github-workflow-data-docs-check.yml must carry coop-data-doc==<version>, not a literal pin"
+
 if [ "$fail" -ne 0 ]; then echo "  ✗ pin tests FAILED"; exit 1; fi
 echo "  pin tests passed"
