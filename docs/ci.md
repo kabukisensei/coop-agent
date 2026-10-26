@@ -236,7 +236,11 @@ The run scripts are the list; this page does not repeat it.
   they stand, and its child fixtures sit in one table with a lane column
   (`gate` / `extended`); an extended row runs only with `COOP_TEST_EXTENDED=1`.
 - Some gate files keep a few extended-only cases (hang, watchdog or
-  live-process cases) behind the same variable inside the file. The header of
+  live-process cases) behind the same variable inside the file
+  (`tests/test-approver.test.mjs` keeps its one real-process run there; the
+  approver itself, `tests/test-approver.mjs`, is a host script for the
+  development VM and answers coop's approval questions only behind its three
+  gates, described in its header). The header of
   `tests/run.sh` names them; in `tests/run.ps1`'s table it is
   `extension-tree-lock` (a second process holding the extension tree's mutex).
 - `tests/repro-tmp-contamination.sh` is a manual reproducer, not a test, and no

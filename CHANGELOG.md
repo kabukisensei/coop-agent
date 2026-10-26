@@ -7,6 +7,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- **A test approver for the development VM (tests only).** `tests/test-approver.mjs`
+  is a host script that runs coop in Pi's RPC mode from a `coop desktop
+  --print-spec` launch spec and answers the guardrails' yes/no questions itself,
+  so a scripted check can drive an approval-gated flow on the dev VM without a
+  person at the desk. It answers only when all three hold: `COOP_TEST_APPROVER=1`
+  in the environment, a marker file outside every git repository (default
+  `C:\ProgramData\coop\test-approver.json`) naming this machine and the
+  fake-data client, and the nearest `.coop/project.yml` naming that same client.
+  A question that says PRODUCTION is always declined, other dialogs are
+  cancelled, and every answer is one `kind: "test-approver"` row in
+  `guardrails-audit.jsonl` with no question or command text. It is development
+  tooling under `tests/`: never installed, and coop and the guardrails are
+  unchanged, so nothing shippable gains a bypass.
 - **Schema compare from the deployment call (2026-10-23).** `/setup-project` and
   the coop window's Project pane now ask for the `prod` and `test` SQL targets
   (same kind as dev; blank = no entry yet) and the shared `schema_compare:`
