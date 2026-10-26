@@ -333,7 +333,7 @@ then change without touching the rule. A new `ci.yml` job must be added to the
 
 ## See also
 
-- [onboarding.md](onboarding.md) — get `coop` itself running on a workstation
+- [Onboarding](https://coop.aaron-jennings.cloud/docs/onboarding.html) — get `coop` itself running on a workstation
 - [tool-contract.md](tool-contract.md) — how the agent calls the same tool natively
 - The tool's own README — every flag above is documented there:
   [coop-data-doc](https://github.com/kabukisensei/coop-data-doc)

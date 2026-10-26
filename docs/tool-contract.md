@@ -283,8 +283,8 @@ coop consult lineage without the user asking:
   coop-data-doc itself would select, then its output dir has `graph.json`), it injects an
   agent-visible, **`display: false`** note (`customType: "coop-lineage"`) telling
   coop to look up an object's up/downstream via `data_doc (command="lineage")`
-  before touching it. **Silent when no built docs exist** — the docs are an aid,
-  not a gate.
+  before touching it. **Silent when no built docs exist**: the built docs are an aid, not a gate; the one gate is the live catalog (master plan SQ8): before a SQL object is edited, `sql_impact` must have been asked when a live dev/test target can answer
+  ("Session lineage context" below).
 
 The same hook also grounds **simple Fabric reads**: once per contract, when the
 nearest `.coop/project.yml` pins a Warehouse/Lakehouse target
@@ -962,8 +962,10 @@ four-part cross-database name. Double-quoted identifiers, unfamiliar SQL, batche
 and mutations do not inherit this grant; scope expansion asks again. Rejecting an
 expansion retains the earlier grant; revocation and a new session clear it.
 
-The preferred live SQL route is that managed MCP server. Coop also registers exactly
-one explicit fallback, `fabric_sql_query`, implemented by the new consolidated
+For a managed Fabric target the live SQL route is that MCP server. `fabric_sql_query`
+is coop's native bounded read: the route for `sql_targets:` entries (the workflow's
+"Verify with data" step uses it) and the fallback when the MCP cannot answer,
+implemented by the consolidated
 `lib/sql_query.py` helper (renamed from `fabric_sql_query.py`; it also serves Azure SQL, Fabric SQL database and Synapse serverless targets declared in `sql_targets:`).
 The tool accepts only `query` plus optional `maximum_rows`; target, server, identity,
 and credentials come from the contract and the selected Fabric Python

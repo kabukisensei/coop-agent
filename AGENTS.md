@@ -49,8 +49,8 @@ policy:** BEFORE analyzing or changing any SQL object, DAX measure, or semantic
 model, look up its lineage (`data_doc` with `command="lineage"`, `object="<name>"`)
 so you know its up/downstream impact — don't re-derive it by hand. coop
 **auto-detects** built docs at session start (a hidden note when they exist) and
-**degrades gracefully** when they're absent: lineage is an aid, not a gate, so
-proceed without it and, if useful, suggest `/setup-docs`.
+**degrades gracefully** when they're absent: the built docs are an aid, not a gate; the one gate is the live catalog (master plan SQ8): before a SQL object is edited, `sql_impact` must have been asked when a live dev/test target can answer; so proceed without
+the docs and, if useful, suggest `/setup-docs`.
 
 Official Microsoft skills (`skills/_microsoft/`) are **subordinate**: one loads only
 if allow-listed in `microsoft_skills.allow[]` and no Cooptimize skill conflicts.
@@ -194,7 +194,7 @@ delete or re-push a tag, never commit secrets (`.env*`, keys, tokens — see
 
 - **Operational (follow these):** `AGENTS.md`, `CONTRIBUTING.md`, `RELEASE.md`,
   `README.md`, `docs/architecture.md`, `docs/ci.md`, `docs/extending.md`,
-  `docs/guardrails.md`, `docs/install-windows.md`, `docs/onboarding.md`,
+  `docs/guardrails.md`, `docs/install-windows.md`,
   `docs/tool-contract.md`, `docs/troubleshooting.md`.
 - **The one plan (each phase needs an explicit start):** `docs/COOP_MASTER_PLAN.md`.
 - **History (read-only context; never execute their steps):** everything under
