@@ -318,7 +318,7 @@ try {
   $out = Invoke-Fleet 'install.ps1' @('--force')
   if ($out.Contains('8/8') -and -not $out.Contains('install/sync step(s) failed')) { Ok 'install --force runs through step 8/8 with no failed install/sync step' } else { Ko "install --force stopped early or reported a failed step (rc=$rc)" $out }
   if (Test-Call $m 'PIPX install --force --python .+ ms-fabric-cli==1\.7\.0') { Ok 'Fabric CLI install selects a supported bootstrap Python explicitly' } else { Ko 'Fabric CLI install did not select a supported bootstrap Python explicitly' (Get-Calls $m) }
-  if (Test-CallLiteral $m 'PIPX install --force coop-data-doc==1.4.3') { Ok 'install --force reinstalls a pipx tool at its exact pin' } else { Ko 'install --force did not reinstall coop-data-doc at its pin' (Get-Calls $m) }
+  if (Test-CallLiteral $m 'PIPX install --force coop-data-doc==1.4.4') { Ok 'install --force reinstalls a pipx tool at its exact pin' } else { Ko 'install --force did not reinstall coop-data-doc at its pin' (Get-Calls $m) }
   # Extensions are the sync child's (one `pi install` path, S2; fleet-manifest
   # asserts install.ps1 carries no `pi install` of its own): the child installed them.
   if (Test-CallLiteral $m 'PI install npm:pi-mcp-adapter@5.1.0') { Ok 'the sync child of install installs the manifest extensions' } else { Ko 'the sync child of install did not install the extensions' (Get-Calls $m) }
@@ -347,7 +347,7 @@ try {
   if ($rc -ne 0 -and $out.Contains('install/sync step(s) failed')) { Ok 'exact pyodbc pin is injected and injection failure is nonzero with a failed-step summary' } else { Ko "failed pyodbc injection was converted into install success (rc=$rc)" $out }
   # Install, like update, keeps a visible convergence failure in its exit status
   # even though it continues through the remaining units for diagnostics.
-  $env:PIPX_FAIL_MATCH = 'install --force coop-data-doc==1.4.3'
+  $env:PIPX_FAIL_MATCH = 'install --force coop-data-doc==1.4.4'
   $out = Invoke-Fleet 'install.ps1' @('--force')
   if ($rc -ne 0 -and $out.Contains('install/sync step(s) failed')) { Ok 'install exits non-zero with a failed-step summary when a convergence unit fails' } else { Ko "failed pipx convergence was converted into install success (rc=$rc)" $out }
   Remove-Item Env:\PIPX_FAIL_MATCH -ErrorAction SilentlyContinue
@@ -372,9 +372,9 @@ try {
   Reset-Calls $m
   Set-PipxList $m @('package coop-data-doc 1.1.0', 'package ms-fabric-cli 1.7.0')
   $out = Invoke-Fleet 'update.ps1'
-  if (-not $out.Contains('failed convergence step(s)') -and (Test-CallLiteral $m 'PIPX install --force coop-data-doc==1.4.3')) { Ok 'update converges a drifted pipx tool to its manifest pin' } else { Ko "update did not converge drifted coop-data-doc (rc=$rc)" ($out + "`n" + (Get-Calls $m)) }
+  if (-not $out.Contains('failed convergence step(s)') -and (Test-CallLiteral $m 'PIPX install --force coop-data-doc==1.4.4')) { Ok 'update converges a drifted pipx tool to its manifest pin' } else { Ko "update did not converge drifted coop-data-doc (rc=$rc)" ($out + "`n" + (Get-Calls $m)) }
   Set-PipxList $m @('package coop-data-doc 1.1.0', 'package ms-fabric-cli 1.7.0')
-  $env:PIPX_FAIL_MATCH = 'coop-data-doc==1.4.3'
+  $env:PIPX_FAIL_MATCH = 'coop-data-doc==1.4.4'
   $out = Invoke-Fleet 'update.ps1'
   if ($rc -ne 0 -and $out.Contains('update finished with 1 failed convergence step(s)')) { Ok 'update exits non-zero with a failed-step summary when a convergence unit fails' } else { Ko "failed pipx convergence was converted into update success (rc=$rc)" $out }
   Remove-Item Env:\PIPX_FAIL_MATCH -ErrorAction SilentlyContinue
@@ -412,13 +412,13 @@ try {
   if (-not (Test-CallLiteral $m2 'NPM install -g @earendil-works/pi-coding-agent@1.2.0')) { Ko 'drifted Pi NOT converged to manifest' (Get-Calls $m2) }
   else { Ok 'normal install converges a drifted Pi to the manifest without --force' }
   if (-not (Test-CallLiteral $m2 'PIPX install --force coop-data-doc')) { Ko 'drifted coop-data-doc NOT force-installed' (Get-Calls $m2) }
-  elseif (-not (Test-CallLiteral $m2 'PIPX install --force coop-data-doc==1.4.3')) { Ko 'drifted coop-data-doc NOT force-installed to its manifest pin' (Get-Calls $m2) }
+  elseif (-not (Test-CallLiteral $m2 'PIPX install --force coop-data-doc==1.4.4')) { Ko 'drifted coop-data-doc NOT force-installed to its manifest pin' (Get-Calls $m2) }
   else { Ok 'normal install converges a drifted pipx tool to its manifest pin without --force' }
   if (Test-Call $m2 'PIPX install .*ms-fabric-cli==') { Ko 'matching fabric-cli was reinstalled despite matching pin' (Get-Calls $m2) }
   else { Ok 'normal install leaves a pipx tool that already matches its pin alone' }
 
   # --- 5. --edge on an EXISTING machine attempts upstream latest -------------------
-  $m4 = New-Machine 'edge' -HonestPi $false -PipxList @('package coop-data-doc 1.4.3', 'package coop-schema-compare 0.1.6', 'package coop-sql-source-control 1.0.6', 'package ms-fabric-cli 1.7.0')
+  $m4 = New-Machine 'edge' -HonestPi $false -PipxList @('package coop-data-doc 1.4.4', 'package coop-schema-compare 0.1.7', 'package coop-sql-source-control 1.0.7', 'package ms-fabric-cli 1.7.0')
   $out = Invoke-Fleet 'install.ps1' @('--edge')
   if (-not (Test-CallLiteral $m4 'NPM install -g @earendil-works/pi-coding-agent')) { Ko 'edge install did not attempt a Pi upstream update' (Get-Calls $m4) }
   else { Ok 'install --edge attempts a Pi upstream update' }
@@ -436,7 +436,7 @@ try {
   # --- 6. Fabric failed convergence must NOT read as success -------------------------
   # pipx refuses the --force install of ms-fabric-cli==pin while an OLD fab binary
   # stays on PATH: the unit must fail, not report "ready".
-  $m5 = New-Machine 'fabric-fail' -HonestPi $false -PipxList @('package coop-data-doc 1.4.3', 'package coop-schema-compare 0.1.6', 'package coop-sql-source-control 1.0.6', 'package ms-fabric-cli 1.5.0') -FabVersion '1.5.0'
+  $m5 = New-Machine 'fabric-fail' -HonestPi $false -PipxList @('package coop-data-doc 1.4.4', 'package coop-schema-compare 0.1.7', 'package coop-sql-source-control 1.0.7', 'package ms-fabric-cli 1.5.0') -FabVersion '1.5.0'
   $env:PIPX_FAIL_MATCH = 'ms-fabric-cli==1.7.0'
   $out = Invoke-Fleet 'install.ps1'
   if ($rc -eq 0 -or -not $out.Contains('install/sync step(s) failed')) { Ko "failed Fabric convergence returned install success (rc=$rc)" $out }
@@ -446,7 +446,7 @@ try {
   Remove-Item Env:\PIPX_FAIL_MATCH -ErrorAction SilentlyContinue
 
   # --- 7. NORMAL-mode skip when everything already matches --------------------------
-  $m3 = New-Machine 'match' -HonestPi $false -PipxList @('package coop-data-doc 1.4.3', 'package coop-schema-compare 0.1.6', 'package coop-sql-source-control 1.0.6', 'package ms-fabric-cli 1.7.0')
+  $m3 = New-Machine 'match' -HonestPi $false -PipxList @('package coop-data-doc 1.4.4', 'package coop-schema-compare 0.1.7', 'package coop-sql-source-control 1.0.7', 'package ms-fabric-cli 1.7.0')
   $out = Invoke-Fleet 'install.ps1'
   if (Test-Call $m3 '^NPM install -g @earendil-works/pi-coding-agent@') { Ko 'Pi was reinstalled although it matched the manifest' (Get-Calls $m3) }
   elseif (Test-CallLiteral $m3 'PIPX install --force coop-data-doc==') { Ko 'coop-data-doc was reinstalled although it matched the manifest' (Get-Calls $m3) }
@@ -455,7 +455,7 @@ try {
   # --- 8. UPDATE repairs an incomplete workstation instead of only diagnosing it ----
   $m6 = New-Machine 'repair' -HonestPi $false -PipxList @() -LogPi $false
   $out = Invoke-Fleet 'update.ps1'
-  $missing = @(@('coop-data-doc==1.4.3', 'ms-fabric-cli==1.7.0') | Where-Object { -not (Test-CallLiteral $m6 $_) })
+  $missing = @(@('coop-data-doc==1.4.4', 'ms-fabric-cli==1.7.0') | Where-Object { -not (Test-CallLiteral $m6 $_) })
   if ($missing.Count -eq 0) { Ok 'update installs missing manifest-pinned pipx tools' } else { Ko "update did not install missing $($missing -join ', ')" (Get-Calls $m6) }
   if (Test-Call $m6 '^PIPX install --python .+ ms-fabric-cli==1\.7\.0') { Ok 'update installs a missing Fabric CLI with an explicit supported bootstrap Python' } else { Ko 'update did not select a supported bootstrap Python for the missing Fabric CLI' (Get-Calls $m6) }
   if (Test-Call $m6 '^PIPX install --force ') { Ko 'update force-reinstalled a tool that was simply missing' (Get-Calls $m6) } else { Ok 'a missing tool is installed, not force-reinstalled' }
@@ -483,7 +483,7 @@ try {
   # Python). Version alone is no longer convergence: the environment is removed
   # and the tool installed again with --python <coop's>, where coop's Python is
   # what pipx reports as PIPX_DEFAULT_PYTHON (the stub answers the real one).
-  $m7 = New-Machine 'wrong-python' -HonestPi $false -PipxList @('package coop-data-doc 1.4.3', 'package ms-fabric-cli 1.7.0') -LogPi $false
+  $m7 = New-Machine 'wrong-python' -HonestPi $false -PipxList @('package coop-data-doc 1.4.4', 'package ms-fabric-cli 1.7.0') -LogPi $false
   $otherVenv = Join-Path (Join-Path $m7.Dir 'pipx-home') 'venvs\coop-data-doc'
   New-Item -ItemType Directory -Force -Path $otherVenv | Out-Null
   $otherHome = if ($isWindowsHost) { 'C:\Users\someone\AppData\Local\Programs\Python\Python312' } else { '/opt/other-python/bin' }
@@ -498,7 +498,7 @@ try {
   elseif (-not (Test-Call $m7 ('^PIPX install --python ' + $pyPattern + ' coop-data-doc==' + [regex]::Escape($dataDocPin) + '$'))) { Ko "update did not reinstall coop-data-doc on coop's Python with the pin" ($out + "`n" + (Get-Calls $m7)) }
   elseif (@($calls7 | Where-Object { $_ -match 'uninstall coop-data-doc$' }).Count -ne 1 -or ($calls7.IndexOf(@($calls7 | Where-Object { $_ -match 'uninstall coop-data-doc$' })[0]) -gt $calls7.IndexOf(@($calls7 | Where-Object { $_ -match 'install --python .+ coop-data-doc' })[0]))) { Ko 'the environment must go before the reinstall (pipx install --force keeps the old interpreter)' (Get-Calls $m7) }
   elseif (Test-Call $m7 '^PIPX install --force coop-data-doc') { Ko 'a wrong-Python tool was force-reinstalled (that keeps the old interpreter)' (Get-Calls $m7) }
-  elseif (-not $out.Contains("coop-data-doc 1.4.3 reinstalled on coop's Python $realPy (it was on ")) { Ko 'update did not say the tool moved to coop''s Python' $out }
+  elseif (-not $out.Contains("coop-data-doc 1.4.4 reinstalled on coop's Python $realPy (it was on ")) { Ko 'update did not say the tool moved to coop''s Python' $out }
   elseif ($out.Contains('failed to reinstall coop-data-doc') -or $out.Contains('could not remove coop-data-doc')) { Ko "the wrong-Python reinstall counted as a failure (rc=$rc)" $out }
   else { Ok "update removes a tool built on another Python and installs it again on coop's (#430)" }
   if (Test-Call $m7 '^PIPX (uninstall|install) .*ms-fabric-cli') { Ko 'the Fabric CLI, built on this machine''s own Python, was reinstalled' (Get-Calls $m7) } else { Ok 'a tool whose environment is on coop''s Python is left alone' }
