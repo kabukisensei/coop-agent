@@ -338,14 +338,14 @@ await check("runtime: Git, Python, the Azure CLI, ODBC 18 and its VC++ runtime c
 await check("runtime: the wheel folder must hold every manifest Python tool at its pin; pipx runs through a .cmd", () => {
   const specs = pythonToolSpecs(MANIFEST);
   for (const [name, pin] of Object.entries(MANIFEST.python_tools)) assert.ok(specs.includes(`${name}==${pin}`), `${name}==${pin}`);
-  const files = ["coop_data_doc-1.4.3-py3-none-any.whl", "coop_schema_compare-0.1.8-py3-none-any.whl", "coop_sql_source_control-1.0.6-py3-none-any.whl", "ms_fabric_cli-1.7.0-py3-none-any.whl", "pyodbc-5.3.0-cp313-cp313-win_amd64.whl", "fabric_cicd-1.3.0-py3-none-any.whl"];
-  assert.ok(hasWheel(files, "coop-data-doc", "1.4.3"));
+  const files = ["coop_data_doc-1.4.4-py3-none-any.whl", "coop_schema_compare-0.1.8-py3-none-any.whl", "coop_sql_source_control-1.0.7-py3-none-any.whl", "ms_fabric_cli-1.7.0-py3-none-any.whl", "pyodbc-5.3.0-cp313-cp313-win_amd64.whl", "fabric_cicd-1.3.0-py3-none-any.whl"];
+  assert.ok(hasWheel(files, "coop-data-doc", "1.4.4"));
   assert.ok(hasWheel(files, "coop-schema-compare", "0.1.8"));
-  assert.ok(hasWheel(files, "coop-sql-source-control", "1.0.6"));
+  assert.ok(hasWheel(files, "coop-sql-source-control", "1.0.7"));
   assert.ok(hasWheel(files, "ms-fabric-cli", "1.7.0"));
   assert.ok(hasWheel(files, "pyodbc", "5.3.0"));
   assert.ok(!hasWheel(files, "pyodbc", "5.2.0"));
-  assert.ok(!hasWheel(["coop-data-doc-1.4.3.tar.gz"], "coop-data-doc", "1.4.3"));
+  assert.ok(!hasWheel(["coop-data-doc-1.4.4.tar.gz"], "coop-data-doc", "1.4.4"));
   assert.equal(PIPX_SHIM, '@"%~dp0..\\python.exe" -m pipx %*\r\n');
 });
 
@@ -376,7 +376,7 @@ await check("runtime: a Python tool that is not on PyPI (sqlsc) comes from its G
     if (url.endsWith("/assets/1")) return { ok: true, status: 200, arrayBuffer: async () => bytes };
     return { ok: false, status: 404 };
   };
-  assert.equal(sourcedWheelUrl(sqlsc), "https://github.com/kabukisensei/coop-sql-source-control/releases/download/v1.0.6/coop_sql_source_control-1.0.6-py3-none-any.whl");
+  assert.equal(sourcedWheelUrl(sqlsc), "https://github.com/kabukisensei/coop-sql-source-control/releases/download/v1.0.7/coop_sql_source_control-1.0.7-py3-none-any.whl");
   await assert.rejects(() => fetchSourcedWheel(source, cache, { env: {}, fetchImpl }), /HTTP 404 \(a private repository needs a token in COOP_SQLSC_TOKEN\)/);
   assert.equal(calls.length, 1, "no token: one anonymous try at the public URL, no API call");
   assert.equal(calls[0].auth, undefined);
@@ -396,12 +396,12 @@ await check("runtime: a Python tool that is not on PyPI (sqlsc) comes from its G
   assert.deepEqual(readFileSync(anon), bytes);
   assert.equal(calls.length, 1, "a public release: one anonymous download");
   assert.equal(calls[0].auth, undefined);
-  const wrong = { ...source, sha256: "1".repeat(64), file: "coop_sql_source_control-1.0.6-py3-none-any.whl" };
+  const wrong = { ...source, sha256: "1".repeat(64), file: "coop_sql_source_control-1.0.7-py3-none-any.whl" };
   rmSync(join(cache, wrong.file), { force: true });
   await assert.rejects(() => fetchSourcedWheel(wrong, cache, { env: { COOP_SQLSC_TOKEN: "tok" }, fetchImpl }), /does not match/);
   assert.ok(!existsSync(join(cache, wrong.file)), "a wheel with the wrong hash is not kept");
-  await assert.rejects(() => fetchSourcedWheel({ ...source, file: "coop_sql_source_control-1.0.6-py3-none-any.whl", tag: "v9.9.9" }, cache, { env: { COOP_SQLSC_TOKEN: "tok" }, fetchImpl: async () => ({ ok: false, status: 404 }) }), /HTTP 404/);
-  await assert.rejects(() => fetchSourcedWheel({ ...source, file: "coop_sql_source_control-1.0.6-py3-none-any.whl", tag: "v9.9.9" }, cache, { env: {}, fetchImpl: async () => ({ ok: false, status: 500 }) }), /HTTP 500$/);
+  await assert.rejects(() => fetchSourcedWheel({ ...source, file: "coop_sql_source_control-1.0.7-py3-none-any.whl", tag: "v9.9.9" }, cache, { env: { COOP_SQLSC_TOKEN: "tok" }, fetchImpl: async () => ({ ok: false, status: 404 }) }), /HTTP 404/);
+  await assert.rejects(() => fetchSourcedWheel({ ...source, file: "coop_sql_source_control-1.0.7-py3-none-any.whl", tag: "v9.9.9" }, cache, { env: {}, fetchImpl: async () => ({ ok: false, status: 500 }) }), /HTTP 500$/);
 });
 
 await check("snapshot: coop's own files ship, the development-only ones do not", () => {
