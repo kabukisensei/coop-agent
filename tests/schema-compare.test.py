@@ -1120,6 +1120,10 @@ with tempfile.TemporaryDirectory() as tmp:
     assert opened == ["dev@lakehouse", "prod@lakehouse"], opened
     assert out["source"]["set"] == "lakehouse" and out["target"]["set"] == "lakehouse" and out["target"]["environment"] == "prod"
     assert out["path"] == ".coop/schema-compare/dev-lakehouse-to-prod-lakehouse", out["path"]
+    # The report's side table names the set with the environment (the VM check of
+    # 2026-10-26 saw a bare "dev" for a dev@lakehouse source).
+    named_report = (repo / out["path"] / "report.md").read_text(encoding="utf-8")
+    assert "| source | dev@lakehouse |" in named_report and "| target | prod@lakehouse |" in named_report, named_report
     # The real resolver: an unknown set is target_invalid for that side, before any connection.
     sq_project = sq.wmcp.load_project(repo / ".coop" / "project.yml")
     assert sq._contract_target(sq_project, "dev@lakehouse")[1] == "ok"
