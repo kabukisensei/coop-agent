@@ -88,7 +88,7 @@ exit /b 1
 #!/bin/sh
 echo "PIPX $*" >> "$COOP_TEST_CALLS"
 if [ "$1" = "list" ]; then
-  echo 'package coop-data-doc 1.4.3'; echo 'package coop-schema-compare 0.1.6'; echo 'package coop-sql-source-control 1.0.6'; echo 'package ms-fabric-cli 1.7.0'
+  echo 'package coop-data-doc 1.4.4'; echo 'package coop-schema-compare 0.1.7'; echo 'package coop-sql-source-control 1.0.7'; echo 'package ms-fabric-cli 1.7.0'
 fi
 exit 0
 '@ @'
@@ -99,9 +99,9 @@ if "%1"=="install" if "%2"=="--help" (
   exit /b 0
 )
 if "%1"=="list" (
-  echo package coop-data-doc 1.4.3
-  echo package coop-schema-compare 0.1.6
-  echo package coop-sql-source-control 1.0.6
+  echo package coop-data-doc 1.4.4
+  echo package coop-schema-compare 0.1.7
+  echo package coop-sql-source-control 1.0.7
   echo package ms-fabric-cli 1.7.0
 )
 if "%1"=="install" if not "%2"=="--help" (
