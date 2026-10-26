@@ -9,6 +9,7 @@ what coop needs for this client.
 | `.coop/catalog/` | the committed dev catalog snapshot (`coop catalog snapshot`) |
 | `data-docs/`, `coop-data-doc.yml` | the lineage docs coop-data-doc builds (`/setup-docs`); `.github/workflows/data-docs-check.yml` fails a push whose docs are older than the source |
 | `.coop/skills/`, `.coop/prompts/` | the client's own skills and prompts |
+| `.coop/runbooks/` | the client's step-by-step procedures (`<name>.md`, for example `deploy.md`); `/runbook <name>` walks one with coop, step by step |
 
 The client's source repositories sit beside this one; the project file names
 them by relative path (`../<repo>`). Open coop in this folder, or in any

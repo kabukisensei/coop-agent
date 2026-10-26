@@ -7,8 +7,9 @@ does not (or the other way round) and carry the change over by hand or through
 coop's governed write path. The tool never writes to any target: its only output
 is two files under the contract's compare folder.
 
-A side is one of the contract's `sql_targets` entries (`dev`, `test`, `prod`),
-read exactly as lib/sql_query.py reads it (`open_connection(environment=...)`:
+A side is one of the contract's `sql_targets` entries (`dev`, `test`, `prod`, or an
+environment of a named set such as `dev@lakehouse`, for a client whose Lakehouse
+sits beside its Warehouse in every environment), read exactly as lib/sql_query.py reads it (`open_connection(environment=...)`:
 same identity pinning, driver, encryption and timeouts; production reads are
 plain reads); `snapshot`, the committed dev catalog snapshot
 (lib/catalog_snapshot.py), so a compare can run against the state the team
@@ -61,6 +62,8 @@ import warehouse_mcp as wmcp  # noqa: E402
 SCHEMA_VERSION = 1
 ENVIRONMENTS = ("dev", "test", "prod")
 SIDES = ENVIRONMENTS + ("snapshot",)
+# `dev@lakehouse`: an environment of a named target set (lib/sql_targets.py).
+LIVE_SIDE = re.compile(r"^(dev|test|prod)(?:@([a-z][a-z0-9_-]{0,31}))?$")
 REPO_SIDE = re.compile(r"^repo(?::([A-Za-z0-9_.-]+)((?:/[A-Za-z0-9_. -]+)*))?$")
 REPO_ROLES = ("sql", "mixed")
 DEFAULT_TARGET = "prod"
@@ -161,51 +164,9 @@ def _plain(key: tuple[str, str]) -> str:
 
 
 def _segments(sql: str) -> list[tuple[str, str]]:
-    """The text as (kind, text) runs: `ws`, `comment` (line or nested block),
-    `string` ('...' with '' escapes), `ident` ([...] with ]] escapes, "..." with ""
-    escapes) and `code` (everything else). Joined back, the runs are the text."""
-    out: list[tuple[str, str]] = []
-    i, n = 0, len(sql)
-    while i < n:
-        ch = sql[i]
-        if ch.isspace() or ch == "\ufeff":  # a byte-order mark reads as whitespace
-            end = i
-            while end < n and (sql[end].isspace() or sql[end] == "\ufeff"):
-                end += 1
-            out.append(("ws", sql[i:end]))
-        elif sql.startswith("--", i):
-            end = sql.find("\n", i)
-            end = n if end < 0 else end
-            out.append(("comment", sql[i:end]))
-        elif sql.startswith("/*", i):
-            depth, end = 1, i + 2
-            while end < n and depth:
-                if sql.startswith("/*", end):
-                    depth, end = depth + 1, end + 2
-                elif sql.startswith("*/", end):
-                    depth, end = depth - 1, end + 2
-                else:
-                    end += 1
-            out.append(("comment", sql[i:end]))
-        elif ch in "'[\"":
-            close = "]" if ch == "[" else ch
-            end = i + 1
-            while end < n:
-                if sql[end] == close:
-                    if end + 1 < n and sql[end + 1] == close:
-                        end += 2
-                        continue
-                    end += 1
-                    break
-                end += 1
-            out.append(("string" if ch == "'" else "ident", sql[i:end]))
-        else:
-            end = i + 1
-            while end < n and not (sql[end].isspace() or sql[end] == "\ufeff" or sql[end] in "'[\"" or sql.startswith("--", end) or sql.startswith("/*", end)):
-                end += 1
-            out.append(("code", sql[i:end]))
-        i = end
-    return out
+    """The text as (kind, text) runs: `ws`, `comment`, `string`, `ident` and `code`
+    (sql_source.segments, the one lexer the batch splitter uses too)."""
+    return sql_source.segments(sql)
 
 
 def _code_only(sql: str) -> str:
@@ -326,6 +287,10 @@ def read_live(cursor: Any) -> Catalog:
         else:
             catalog.modules[key] = (kind, modules.get(key, ""))
     catalog.schemas |= {s for s in listed if not (s.startswith(INTERNAL_SCHEMA_PREFIX) and s not in catalog.schemas)}
+    if "columns" in catalog.truncated:
+        # The column list was cut at the cap: no table's shape is known whole, so a
+        # column missing here is unread, never dropped or added (#443).
+        catalog.incomplete |= set(catalog.tables)
     return catalog
 
 
@@ -387,6 +352,8 @@ def read_snapshot(folder: Path) -> tuple[Catalog | None, str]:
             catalog.modules[key] = (kind, "")
         else:
             catalog.modules[key] = (kind, "\n".join(lines[body_start:]))
+    if "columns" in catalog.truncated:
+        catalog.incomplete |= set(catalog.tables)  # as when it was taken (#443)
     for item in skipped:
         # A module whose definition was not readable is there, definition unknown;
         # a name unsafe as a file name is there, kind unknown.
@@ -472,12 +439,53 @@ def read_repo(folder: Path) -> Catalog:
 # --- diff ---------------------------------------------------------------------------
 
 
-def _change(kind: str, key: tuple[str, str], action: str, detail: str = "", destructive: bool = False) -> dict[str, Any]:
+# A change that alters no behaviour: a module whose two sides differ only in
+# whitespace, line breaks or comments, or a table whose columns are only reordered.
+# Labelled in the report and the result so a reviewer can skip reading it; still
+# scripted, so the target comes to match the source and the compare stops listing
+# it (the 2026-10-23 deployment call deployed three such views on purpose).
+COSMETIC_FORMATTING = "formatting"
+COSMETIC_COLUMN_ORDER = "column order"
+COSMETIC_WORDS = {COSMETIC_FORMATTING: "formatting only", COSMETIC_COLUMN_ORDER: "column order only"}
+_COLUMN_ORDER_DETAIL = "columns reordered"
+
+
+def flatten_definition(definition: str) -> str:
+    """The normalized definition with comments dropped and every run of whitespace
+    (line breaks included) folded to one space: what the engine parses. String
+    literals and quoted names keep their text."""
+    out: list[str] = []
+    for kind, text in _segments(normalize_definition(definition)):
+        if kind in ("ws", "comment"):
+            # Adjacent whitespace and comment runs fold to one space here, run by
+            # run: never with a regex over the joined text, which would also fold
+            # the spaces inside a literal or a quoted name (coop-schema-compare #20).
+            if out and out[-1] != " ":
+                out.append(" ")
+        else:
+            out.append(text)
+    return "".join(out).strip()
+
+
+def formatting_only(source_definition: str, target_definition: str) -> bool:
+    """True when two definitions that normalize differently differ in formatting only."""
+    return flatten_definition(source_definition) == flatten_definition(target_definition)
+
+
+def cosmetic_flag(c: dict[str, Any]) -> str:
+    """` (formatting only)` / ` (column order only)` for a cosmetic change, else ``."""
+    word = COSMETIC_WORDS.get(str(c.get("cosmetic", "")), "")
+    return f" ({word})" if word else ""
+
+
+def _change(kind: str, key: tuple[str, str], action: str, detail: str = "", destructive: bool = False, cosmetic: str = "") -> dict[str, Any]:
     item: dict[str, Any] = {"kind": kind, "schema": key[0], "name": key[1], "action": action}
     if detail:
         item["detail"] = detail
     if destructive:
         item["destructive"] = True
+    if cosmetic:
+        item["cosmetic"] = cosmetic
     return item
 
 
@@ -531,6 +539,9 @@ def diff(source: Catalog, target: Catalog) -> list[dict[str, Any]]:
             changes.append(_change("schema", (schema, ""), "drop", destructive=True))
     for key in sorted(set(src_kinds) | set(tgt_kinds), key=lambda k: (k[0].lower(), k[1].lower())):
         src_kind, tgt_kind = src_kinds.get(key), tgt_kinds.get(key)
+        if src_kind == "table" and tgt_kind and tgt_kind != "table" and key in source.incomplete:
+            changes.append(_change("table", key, "unknown", f"a {tgt_kind} on the target, a table on the source whose columns could not all be read; replace it by hand"))
+            continue
         if src_kind and tgt_kind and src_kind != tgt_kind:
             changes.append(_change(src_kind, key, "replace", f"a {tgt_kind} on the target, a {src_kind} on the source", destructive=True))
             continue
@@ -545,6 +556,10 @@ def diff(source: Catalog, target: Catalog) -> list[dict[str, Any]]:
                 why = "its snapshot skipped this object"
             changes.append(_change(src_kind or tgt_kind or "", key, "unknown", f"not read on the {side} ({why}); compare by hand"))
             continue
+        if src_kind == "table" and not tgt_kind and key in source.incomplete:
+            # Its columns were not all read: a CREATE from this shape would be wrong (#443).
+            changes.append(_change("table", key, "unknown", "not every column could be read on the source side; create it by hand"))
+            continue
         if src_kind and not tgt_kind:
             if src_kind == "table":
                 changes.append(_change("table", key, "add", f"{len(source.tables[key])} column(s)"))
@@ -558,11 +573,12 @@ def diff(source: Catalog, target: Catalog) -> list[dict[str, Any]]:
             unread = [side for side, cat in (("source", source), ("target", target)) if key in cat.incomplete]
             if unread:
                 # A column the reader lost would show as a drop (or an add): never script that.
-                changes.append(_change("table", key, "unknown", f"a column could not be read on the {' and '.join(unread)} side; compare its columns by hand"))
+                changes.append(_change("table", key, "unknown", f"not every column could be read on the {' and '.join(unread)} side; compare its columns by hand"))
                 continue
             details, lossy = compare_tables(source.tables[key], target.tables[key], source.identity_known and target.identity_known)
             if details:
-                changes.append(_change("table", key, "alter", "; ".join(details), destructive=lossy))
+                cosmetic = COSMETIC_COLUMN_ORDER if details == [_COLUMN_ORDER_DETAIL] else ""
+                changes.append(_change("table", key, "alter", "; ".join(details), destructive=lossy, cosmetic=cosmetic))
         else:
             src_def, tgt_def = source.modules[key][1], target.modules[key][1]
             if not src_def or not tgt_def:
@@ -570,7 +586,10 @@ def diff(source: Catalog, target: Catalog) -> list[dict[str, Any]]:
                     continue
                 changes.append(_change(src_kind, key, "unknown", "definition not readable on one side; compare by hand"))
             elif normalize_definition(_as_named(src_def, key)) != normalize_definition(_as_named(tgt_def, key)):
-                changes.append(_change(src_kind, key, "alter", "definition differs"))
+                if formatting_only(_as_named(src_def, key), _as_named(tgt_def, key)):
+                    changes.append(_change(src_kind, key, "alter", "definition differs in whitespace, line breaks or comments only", cosmetic=COSMETIC_FORMATTING))
+                else:
+                    changes.append(_change(src_kind, key, "alter", "definition differs"))
     return changes
 
 
@@ -868,6 +887,8 @@ def plan(source: Catalog, changes: list[dict[str, Any]], *, target_kind: str, re
             summary = [c["detail"]]
         elif c["action"] == "add":
             summary = ["New on the target."]
+        elif c.get("cosmetic"):
+            summary = ["Definition differs in whitespace, line breaks or comments only; the source's text replaces the target's so the two match from now on."]
         else:
             summary = ["Definition differs; the source's definition replaces the target's."]
         if not definition:
@@ -1046,7 +1067,8 @@ def render_report(
     for label in ("source", "target"):
         side = sides[label]
         lines.append(f"| {label} | {side.get('environment', '')} | {side.get('kind', '')} | {side.get('database', '')} | {side['tables']} | {side['views']} | {side['procedures']} | {side['functions']} |")
-    lines += ["", f"**{counts['total']} difference(s)**: {counts['add']} to add, {counts['alter']} to alter, {counts['drop']} to drop; {counts['destructive']} of them can lose data as detected.", ""]
+    cosmetic = f" {counts['cosmetic']} of them change formatting or column order only." if counts.get("cosmetic") else ""
+    lines += ["", f"**{counts['total']} difference(s)**: {counts['add']} to add, {counts['alter']} to alter, {counts['drop']} to drop; {counts['destructive']} of them can lose data as detected.{cosmetic}", ""]
     if records:
         stats = script_stats(records, commented=commented)
         lines += [
@@ -1062,7 +1084,7 @@ def render_report(
         lines += ["| Kind | Object | Change | Detail |", "| --- | --- | --- | --- |"]
         for c in changes:
             name = c["schema"] if c["kind"] == "schema" else f"{c['schema']}.{c['name']}"
-            flag = " (destructive)" if c.get("destructive") else ""
+            flag = (" (destructive)" if c.get("destructive") else "") + cosmetic_flag(c)
             lines.append(f"| {c['kind']} | `{name}` | {c['action']}{flag} | {c.get('detail', '')} |")
     if records:
         lines += ["", "## Objects", "", "In the order deploy.sql runs them; each has the same note there."]
@@ -1080,12 +1102,14 @@ def render_report(
 
 
 def summarize(changes: list[dict[str, Any]]) -> dict[str, int]:
-    counts = {"total": len(changes), "add": 0, "alter": 0, "drop": 0, "destructive": 0}
+    counts = {"total": len(changes), "add": 0, "alter": 0, "drop": 0, "destructive": 0, "cosmetic": 0}
     for c in changes:
         if c["action"] in ("add", "alter", "drop"):
             counts[c["action"]] += 1
         if c.get("destructive"):
             counts["destructive"] += 1
+        if c.get("cosmetic"):
+            counts["cosmetic"] += 1
     return counts
 
 
@@ -1152,7 +1176,11 @@ def _read_side(side: str, *, cwd: Path | None, project: dict[str, Any], project_
             connection.close()
         except Exception:
             pass
-    return catalog, target.summary(), None
+    summary = target.summary()
+    named = LIVE_SIDE.match(side)
+    if named and named.group(2):
+        summary["set"] = named.group(2)
+    return catalog, summary, None
 
 
 def schema_filter(value: Any) -> list[str] | None:
@@ -1232,6 +1260,31 @@ def _choices(payload: dict[str, Any], saved: dict[str, Any]) -> tuple[list[str],
     return keep, drop, rebuild, commented, words
 
 
+def _defaults_hint(payload: dict[str, Any], saved: dict[str, Any]) -> str:
+    """One note when a run names schema choices the project file does not hold, so
+    two people stop getting different counts from exclusions typed into a prompt
+    (2026-10-23: 72 against 74). Names the exact keys; coop never writes them itself."""
+    def names(values: Any) -> list[str]:
+        return sorted({v.lower() for v in values}) if isinstance(values, list) else []
+
+    offers: list[str] = []
+    run_drop = [d for d in names(payload.get("exclude")) if d not in names(saved["exclude"])]
+    if run_drop:
+        offers.append(f"exclude_schemas: [{', '.join(run_drop)}]")
+    if payload.get("schemas") is not None and names(payload.get("schemas")) != names(saved["schemas"]):
+        offers.append(f"schemas: [{', '.join(names(payload.get('schemas')))}]")
+    if payload.get("rebuild") is not None and names(payload.get("rebuild")) != names(saved["rebuild"]):
+        offers.append(f"rebuild_tables_in: [{', '.join(names(payload.get('rebuild')))}]")
+    if isinstance(payload.get("commented"), bool) and payload["commented"] != saved["commented"]:
+        offers.append(f"destructive: {'commented' if payload['commented'] else 'runnable'}")
+    if not offers:
+        return ""
+    return (
+        "this run's choices are not the project file's: to make them this client's defaults for everyone, add under "
+        f"schema_compare in .coop/project.yml: {'; '.join(offers)} (the Project pane or /setup-project edits it; then /new)"
+    )
+
+
 def _write_script(folder: Path, script: str, stamp: str) -> str:
     """Write deploy.sql with a closing checksum line. A deploy.sql someone edited
     since coop wrote it (its checksum no longer matches) is kept beside the new
@@ -1266,8 +1319,9 @@ def compare(payload: Any, *, cwd: Path | None = None, now: datetime | None = Non
     if saved is None:
         return sql_query.result("setting_invalid", setting=bad)
     keep, drop, rebuild, commented, choices = _choices(payload, saved)
+    defaults_hint = _defaults_hint(payload, saved)
     source = payload.get("source", snapshot_lib.default_environment(project))
-    target = payload.get("target", DEFAULT_TARGET)
+    target = payload.get("target", default_target_for(source))
     if not (valid_side(source) and valid_side(target, target=True)) or source == target:
         return sql_query.result("input_invalid")
     for side in (source, target):
@@ -1294,6 +1348,8 @@ def compare(payload: Any, *, cwd: Path | None = None, now: datetime | None = Non
     changes = diff(source_catalog, target_catalog)
     taken_at = (now or datetime.now(timezone.utc)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     notes: list[str] = []
+    if defaults_hint:
+        notes.append(defaults_hint)
     if bookkeeping:
         notes.append("schema sqlsc (SQL source control's locks) left out")
     for label, catalog in (("source", source_catalog), ("target", target_catalog)):
@@ -1344,9 +1400,17 @@ def compare(payload: Any, *, cwd: Path | None = None, now: datetime | None = Non
 def valid_side(value: Any, *, target: bool = False) -> bool:
     if not isinstance(value, str):
         return False
-    if value in ENVIRONMENTS or (value == "snapshot" and not target):
+    if LIVE_SIDE.match(value) or (value == "snapshot" and not target):
         return True
     return bool(REPO_SIDE.match(value)) and ".." not in value
+
+
+def default_target_for(source: Any) -> str:
+    """The target a run gets when it names none: prod, in the source's named set
+    when the source is `dev@<set>` (a Lakehouse dev side compares with the Lakehouse
+    prod side, never with the Warehouse)."""
+    m = LIVE_SIDE.match(source) if isinstance(source, str) else None
+    return f"{DEFAULT_TARGET}@{m.group(2)}" if m and m.group(2) else DEFAULT_TARGET
 
 
 def execute(payload: Any, *, cwd: Path | None = None) -> dict[str, Any]:

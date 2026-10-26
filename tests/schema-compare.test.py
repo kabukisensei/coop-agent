@@ -27,6 +27,7 @@ def load(name: str):
 sq = load("sql_query")
 cs = load("catalog_snapshot")
 sc = load("schema_compare")
+sql_source = sys.modules["sql_source"]
 
 AZ_HOST = "contoso-dev.database.windows.net"
 PROD_HOST = "contoso-prod.database.windows.net"
@@ -446,7 +447,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert opened == ["dev", "prod"], "the default pair is the contract's default entry against prod, each read once"
     assert all(c.closed for c in connections.values())
     assert out["path"] == ".coop/schema-compare/dev-to-prod"
-    assert out["counts"] == {"total": 9, "add": 3, "alter": 2, "drop": 3, "destructive": 5}, out["counts"]
+    assert out["counts"] == {"total": 9, "add": 3, "alter": 2, "drop": 3, "destructive": 5, "cosmetic": 0}, out["counts"]
     assert out["script"] == stats, out["script"]
     assert out["choices"] == ["changed tables: ALTER where the target allows it, a manual rebuild note where it does not (default)", "destructive statements: active, marked DESTRUCTIVE (default)"], out["choices"]
     assert out["source"]["environment"] == "dev" and out["target"]["environment"] == "prod"
@@ -972,6 +973,77 @@ assert "Objects replaced by another kind" not in rp2_sql
 rp_report = sc.render_report(rp_changes, source_name="s", target_name="t", taken_at="x", sides={"source": sc._side_summary(rp_src, {"database": "s"}), "target": sc._side_summary(rp_tgt, {"database": "t"})}, notes=[], records=rp_records)
 assert rp_report.index("dbo.f") < rp_report.index("dbo.v"), "the report follows the script's order"
 
+# --- audit 2026-10-26: #443 a column list cut at the cap is unknown, never a drop ------
+_capped_rows = {
+    sc.SCHEMAS_SQL: [("dbo",)],
+    sc.OBJECTS_SQL: [("dbo", "T", "U"), ("dbo", "Later", "U")],
+    sc.COLUMNS_SQL: [
+        ("dbo", "T", "id", "int", None, 10, 0, None, "YES", 1),
+        ("dbo", "T", "payload", "int", None, 10, 0, None, "YES", 2),
+        ("dbo", "Later", "a", "int", None, 10, 0, None, "YES", 1),
+    ],
+    sc.IDENTITY_SQL: [], sc.MODULES_SQL: [],
+}
+with mock.patch.object(cs, "MAX_COLUMNS", 1):
+    capped = catalog(_capped_rows)
+assert capped.truncated == ["columns"] and capped.incomplete == {("dbo", "T"), ("dbo", "Later")}, (capped.truncated, capped.incomplete)
+_complete = sc.Catalog()
+_complete.schemas = {"dbo"}
+_complete.tables[("dbo", "T")] = [sc.Column("id", "int", True, 1), sc.Column("payload", "int", True, 2)]
+_complete.tables[("dbo", "Later")] = [sc.Column("a", "int", True, 1)]
+for _src, _tgt in ((capped, _complete), (_complete, capped)):
+    _changes = sc.diff(_src, _tgt)
+    assert [(c["name"], c["action"]) for c in _changes] == [("Later", "unknown"), ("T", "unknown")], _changes
+    _sql, _stats = sc.render_script(_src, _changes, source_name="s", target_name="t", target_kind="azure_sql", taken_at="x")
+    assert "DROP COLUMN" not in _sql and "ADD [" not in _sql and _stats["manual"] == 2, _sql
+_empty = sc.Catalog()
+_empty.schemas = {"dbo"}
+_changes = sc.diff(capped, _empty)
+assert [c["action"] for c in _changes] == ["unknown", "unknown"], "a source-only table with a cut shape is no runnable CREATE"
+_sql, _ = sc.render_script(capped, _changes, source_name="s", target_name="t", target_kind="azure_sql", taken_at="x")
+assert [line for line in _sql.splitlines() if line.startswith("CREATE TABLE")] == [], _sql
+_whole = catalog(_capped_rows)
+assert _whole.incomplete == set()
+_whole.tables[("dbo", "T")] = _whole.tables[("dbo", "T")][:1]
+_sql, _ = sc.render_script(_whole, sc.diff(_whole, _complete), source_name="s", target_name="t", target_kind="azure_sql", taken_at="x")
+assert "DROP COLUMN [payload]" in _sql, "a whole read still detects a genuine drop"
+with tempfile.TemporaryDirectory() as tmp:
+    folder = Path(tmp) / "snap"
+    (folder / "dbo").mkdir(parents=True)
+    summary = {"environment": "dev", "kind": "azure_sql", "database": "ContosoDW"}
+    _file = cs._header(summary, "2026-10-10T00:00:00Z", "dbo", "T", "table") + cs.render_table("dbo", "T", [("id", "int", None, 10, 0, None, "YES")])
+    (folder / "dbo" / "T.sql").write_text(_file, encoding="utf-8")
+    (folder / "manifest.json").write_text(json.dumps({"coop_catalog_snapshot": True, "taken_at": "2026-10-10T00:00:00Z", "target": summary, "files": ["dbo/T.sql"], "truncated": {"columns": True}}), encoding="utf-8")
+    snap, state = sc.read_snapshot(folder)
+    assert state == "ok" and snap.incomplete == {("dbo", "T")}, "a snapshot taken from a cut column list stays unknown"
+    assert [(c["name"], c["action"]) for c in sc.diff(snap, _complete)] == [("Later", "drop"), ("T", "unknown")]
+
+# --- audit 2026-10-26: #442 GO inside a literal or comment is not a batch break -------
+_ddl = "CREATE VIEW dbo.v AS SELECT N'first\nGO\nlast' AS value;"
+_parsed = sql_source.ParsedSource()
+for _batch in sql_source.split_batches(_ddl):
+    sql_source.parse_batch(_batch, _parsed)
+assert _parsed.modules[("dbo", "v")] == ("view", _ddl), _parsed.modules
+for _text in (
+    "CREATE VIEW dbo.v AS SELECT 'it''s\nGO\nhere' AS value",
+    "CREATE VIEW dbo.v AS SELECT 1 AS [odd\nGO\nname]",
+    "CREATE VIEW dbo.v AS SELECT 1 AS \"odd\nGO\nname\"",
+    "CREATE VIEW dbo.v AS /* a /* b\nGO\n */ c\nGO\n */ SELECT 1",
+):
+    assert sql_source.split_batches(_text) == [_text], _text
+    assert sql_source.split_batches(_text.replace("\n", "\r\n")) == [_text.replace("\n", "\r\n")], _text
+assert [b.strip() for b in sql_source.split_batches("CREATE VIEW a AS SELECT 1\nGO\nCREATE VIEW b AS SELECT 2\ngo 2\nCREATE VIEW c AS SELECT 3\nGO;\n")] == ["CREATE VIEW a AS SELECT 1", "CREATE VIEW b AS SELECT 2", "CREATE VIEW c AS SELECT 3"]
+with tempfile.TemporaryDirectory() as tmp:
+    for _side, _tail in (("a", "last"), ("b", "LAST")):
+        (Path(tmp) / _side).mkdir()
+        (Path(tmp) / _side / "v.sql").write_bytes(f"CREATE VIEW dbo.v AS SELECT N'first\r\nGO\r\n{_tail}' AS value;\r\nGO\r\n".encode("utf-8"))
+    _a = sc.read_repo(Path(tmp) / "a")
+    _b = sc.read_repo(Path(tmp) / "b")
+    assert _a.modules[("dbo", "v")][1] == "CREATE VIEW dbo.v AS SELECT N'first\nGO\nlast' AS value;", _a.modules
+    assert sc.diff(_a, _a) == [] and [c["action"] for c in sc.diff(_a, _b)] == ["alter"], "the whole definition is read and compared"
+    _plan_sql, _ = sc.render_script(_a, sc.diff(_a, sc.Catalog()), source_name="s", target_name="t", target_kind="azure_sql", taken_at="x")
+    assert "N'first\nGO\nlast'" in _plan_sql, "the plan carries the whole string"
+
 # --- stdin contract ---------------------------------------------------------------------
 with mock.patch.object(sc, "execute", return_value=sq.result("ok", path="x")) as run:
     import io
@@ -987,5 +1059,81 @@ with mock.patch.object(sc, "execute", return_value=sq.result("ok", path="x")) as
     with mock.patch.object(sys, "stdin", io.StringIO('{"source": "dev"}')):
         assert sc.main(["--cli"]) == 0, "the terminal form never reads stdin"
     assert run.call_args.args[0] == {}
+
+# --- 2026-10-23 deployment call: cosmetic labels, named target sets, defaults hint --------
+src, tgt = sc.Catalog(), sc.Catalog()
+src.schemas = tgt.schemas = {"dbo"}
+spaced = "CREATE VIEW [dbo].[vw_Sales]\nAS\n  -- a new comment\n  SELECT OrderId,\n         Amount\n  FROM dbo.Orders"
+flat = "CREATE VIEW [dbo].[vw_Sales] AS SELECT OrderId, Amount FROM dbo.Orders"
+src.modules = {("dbo", "vw_Sales"): ("view", spaced), ("dbo", "vw_Other"): ("view", "CREATE VIEW [dbo].[vw_Other] AS SELECT 1 AS a")}
+tgt.modules = {("dbo", "vw_Sales"): ("view", flat), ("dbo", "vw_Other"): ("view", "CREATE VIEW [dbo].[vw_Other] AS SELECT 2 AS a")}
+src.tables = {("dbo", "T"): [sc.Column("A", "int", True, 1), sc.Column("B", "int", True, 2)]}
+tgt.tables = {("dbo", "T"): [sc.Column("B", "int", True, 1), sc.Column("A", "int", True, 2)]}
+cosmetic_changes = sc.diff(src, tgt)
+assert [(c["name"], c.get("cosmetic")) for c in cosmetic_changes] == [("T", "column order"), ("vw_Other", None), ("vw_Sales", "formatting")], cosmetic_changes
+assert "whitespace, line breaks or comments only" in cosmetic_changes[2]["detail"]
+assert sc.summarize(cosmetic_changes)["cosmetic"] == 2
+assert sc.cosmetic_flag(cosmetic_changes[0]) == " (column order only)" and sc.cosmetic_flag(cosmetic_changes[1]) == ""
+# A space inside a string literal or a quoted name is a change, not formatting
+# (coop-schema-compare #20): whitespace folds run by run, outside literals only.
+assert sc.formatting_only("CREATE VIEW v AS SELECT N'a b'  AS x", "CREATE VIEW v AS\n  SELECT N'a b' AS x")
+assert not sc.formatting_only("CREATE VIEW v AS SELECT N'a  b' AS x", "CREATE VIEW v AS SELECT N'a b' AS x")
+assert not sc.formatting_only("CREATE VIEW v AS SELECT 1 AS [a  b]", "CREATE VIEW v AS SELECT 1 AS [a b]")
+assert sc.flatten_definition("SELECT /* c */  1,\n\n2") == "SELECT 1, 2"
+assert not sc.formatting_only("CREATE VIEW v AS SELECT 'a' AS x", "CREATE VIEW v AS SELECT 'a ' AS x"), "a string literal is never formatting"
+assert sc.formatting_only("CREATE VIEW v AS SELECT 1 /*x*/ + 1", "CREATE VIEW v AS SELECT 1 + 1")
+cosmetic_records = sc.plan(src, cosmetic_changes, target_kind="azure_sql")
+formatted = next(r for r in cosmetic_records if r["name"] == "vw_Sales")
+assert formatted["action"] == "CREATE OR ALTER" and "whitespace, line breaks or comments only" in formatted["changes"][0], "still scripted"
+cosmetic_report = sc.render_report(cosmetic_changes, source_name="dev", target_name="prod", taken_at="t", sides={"source": sc._side_summary(src, {}), "target": sc._side_summary(tgt, {})}, notes=[], records=cosmetic_records)
+assert "| view | `dbo.vw_Sales` | alter (formatting only) |" in cosmetic_report and "| table | `dbo.T` | alter (column order only) |" in cosmetic_report, cosmetic_report
+assert "2 of them change formatting or column order only." in cosmetic_report
+
+# named sets: `dev@lakehouse` is a side; its default target is prod of the same set.
+assert sc.valid_side("dev@lakehouse") and sc.valid_side("prod@lakehouse", target=True) and not sc.valid_side("dev@") and not sc.valid_side("dev@Lake House")
+assert sc.default_target_for("dev@lakehouse") == "prod@lakehouse" and sc.default_target_for("dev") == "prod" and sc.default_target_for("snapshot") == "prod"
+NAMED_CONTRACT = CONTRACT + """  named:
+    lakehouse:
+      dev:
+        kind: azure_sql
+        server: "contoso-lh-dev.database.windows.net"
+        database: ContosoLH
+      prod:
+        kind: azure_sql
+        server: "contoso-lh.database.windows.net"
+        database: ContosoLH
+"""
+with tempfile.TemporaryDirectory() as tmp:
+    repo = Path(tmp) / "repo"
+    (repo / ".coop").mkdir(parents=True)
+    (repo / ".coop" / "project.yml").write_text(NAMED_CONTRACT, encoding="utf-8")
+    opened = []
+
+    def fake_open_named(*, cwd=None, environment=None):
+        opened.append(environment)
+        env = environment.split("@")[0]
+        return FakeConnection(FakeCursor({"dev": DEV, "prod": PROD}[env])), target(env), "ODBC Driver 18 for SQL Server", None
+
+    with mock.patch.object(sq, "open_connection", side_effect=fake_open_named):
+        out = sc.compare({"source": "dev@lakehouse"}, cwd=repo, now=NOW)
+    assert out["state"] == "ok", out
+    assert opened == ["dev@lakehouse", "prod@lakehouse"], opened
+    assert out["source"]["set"] == "lakehouse" and out["target"]["set"] == "lakehouse" and out["target"]["environment"] == "prod"
+    assert out["path"] == ".coop/schema-compare/dev-lakehouse-to-prod-lakehouse", out["path"]
+    # The real resolver: an unknown set is target_invalid for that side, before any connection.
+    sq_project = sq.wmcp.load_project(repo / ".coop" / "project.yml")
+    assert sq._contract_target(sq_project, "dev@lakehouse")[1] == "ok"
+    assert sq._contract_target(sq_project, "dev@lakehouse")[0].database == "ContosoLH"
+    assert sq._contract_target(sq_project, "dev@nope") == (None, "target_invalid")
+    assert sq._contract_target(sq_project, "test@lakehouse") == (None, "target_invalid")
+
+    # A4: choices typed into a run that the project file does not hold earn one note naming the keys.
+    with mock.patch.object(sq, "open_connection", side_effect=fake_open_named):
+        out = sc.compare({"exclude": ["sm", "Stage"], "rebuild": ["dim"], "commented": True}, cwd=repo, now=NOW)
+    hint = [n for n in out["notes"] if "this client's defaults" in n]
+    assert len(hint) == 1 and "exclude_schemas: [sm, stage]" in hint[0] and "rebuild_tables_in: [dim]" in hint[0] and "destructive: commented" in hint[0], out["notes"]
+    with mock.patch.object(sq, "open_connection", side_effect=fake_open_named):
+        out = sc.compare({}, cwd=repo, now=NOW)
+    assert not [n for n in out["notes"] if "this client's defaults" in n], "no hint when the run adds nothing"
 
 print("✓ schema_compare tests passed")

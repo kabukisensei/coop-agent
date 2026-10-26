@@ -278,6 +278,20 @@ Promote a prompt or skill by moving the file up a tier: a personal prompt the
 team adopts becomes a pull request against `prompts/` here; a client-specific one
 is committed in the client repository's `.coop/`.
 
+### Client runbooks (`.coop/runbooks/<name>.md`)
+
+A procedure that is the client's, not coop's (a production deployment order, a
+month-end checklist), is a **runbook**: a Markdown file beside the committed
+`.coop/project.yml`, under `.coop/runbooks/`, committed with it. It is a numbered
+list of steps, each marked `(manual)` (a person does it: a portal click, a
+pipeline run), `(coop)` (coop does it with its tools, under the usual guardrails)
+or `(check)` (someone confirms a state before the next step). The shipped
+`/runbook <name>` prompt walks one: coop reads the file, does each `(coop)` step
+when the person says go, waits at each `(manual)` step, never skips or reorders,
+and summarizes what ran and what is left. `/runbook` alone lists the runbooks the
+client has. Runbooks hold no secrets or client identifiers coop should not log;
+the project file already names the targets.
+
 ---
 
 ## Sharing changes with the team

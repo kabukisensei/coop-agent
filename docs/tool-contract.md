@@ -457,8 +457,8 @@ The tool accepts these optional fields:
 
 | Field | Values | Default |
 | --- | --- | --- |
-| `source` | `dev`, `test`, `prod`, `snapshot` (the committed catalog snapshot, read from its folder with no connection) or `repo[:<name>[/<subfolder>]]` | the contract's default dev/test entry |
-| `target` | `dev`, `test`, `prod` or `repo[:<name>[/<subfolder>]]` | `prod` |
+| `source` | `dev`, `test`, `prod` (or `<env>@<set>` for an environment of a `sql_targets.named` set, for example `dev@lakehouse`), `snapshot` (the committed catalog snapshot, read from its folder with no connection) or `repo[:<name>[/<subfolder>]]` | the contract's default dev/test entry |
+| `target` | `dev`, `test`, `prod`, `<env>@<set>` or `repo[:<name>[/<subfolder>]]` | `prod`, of the source's set when the source names one |
 | `schemas` | schema names: compare only these | the project file's `schemas`, else all |
 | `exclude` | schema names to leave out; added to the project file's list | the project file's `exclude_schemas` |
 | `rebuild` | schemas whose changed tables are dropped and recreated (DROP + CREATE) | the project file's `rebuild_tables_in`, else none |
@@ -472,7 +472,30 @@ passes replaces the file's value for that run, and a schema the run names in
 `schemas` is never left out by the file's exclude list. A malformed section is
 `setting_invalid` with the key named in `setting`. The result's `choices` (and
 report.md's Choices section and the script header) state the effective choices
-and where each came from (project file, this run, default).
+and where each came from (project file, this run, default). When a run's choices
+differ from the project file's, `notes` carries one line saying so and naming the
+`schema_compare:` keys that would make them the client's defaults for everyone
+(the Project pane or `/setup-project` writes the section; then `/new`), so a
+prompt-only exclusion does not stay a private habit (deployment call 2026-10-23:
+two people, two diff counts).
+
+**Named target sets.** A client with a second engine beside the main one (a
+Lakehouse SQL endpoint beside the Warehouse) declares it once under
+`sql_targets.named.<set>` with its own `dev`/`test`/`prod` entries of any kind
+(`lib/sql_targets.py`: up to 20 sets, names `[a-z][a-z0-9_-]{0,31}`). A side
+`<env>@<set>` resolves through `SqlTargets.resolve`, the output folder is
+`.coop/schema-compare/<env>-<set>-to-<env>-<set>/`, each side's summary carries
+`set`, and a named `prod` entry is production for the guardrails (its ids and
+server join the production names). The plain `dev`/`test`/`prod` entries are
+unchanged; there is still one default, never a named one.
+
+**Cosmetic changes.** A module whose definition differs only in whitespace,
+comments or line breaks, and a table whose columns differ only in order, are
+still listed (the file is what deploys), but each carries `cosmetic`
+(`"formatting"` or `"column order"`), `counts.cosmetic` says how many, report.md
+flags them `(formatting only)` / `(column order only)` and the plan line of
+deploy.sql states the count. Nothing is skipped: a compare that ignored them
+would leave the two sides different.
 
 The same side on both ends, a value outside those forms, a repo side containing
 `..`, or any other field is `input_invalid` before anything connects. Any pairing
@@ -589,7 +612,9 @@ one and says so in `notes`.
 
 A failed side
 is reported with its own state and `side` (`target_invalid` when the entry is not
-ready, `snapshot_missing` when no snapshot exists, `setting_invalid` when the
+ready or, for `<env>@<set>`, when `sql_targets.named.<set>.<env>` does not exist;
+the tool's text says to add it with `/setup-project` or the Project pane, then
+`/new`; `snapshot_missing` when no snapshot exists, `setting_invalid` when the
 contract's `schema_compare:` section is malformed, `snapshot_incomplete` when a
 file its manifest lists is missing, unreadable, outside the folder or without its
 header), and `output_unwritable` when
@@ -835,12 +860,47 @@ host cannot hide behind a dev kind and a Fabric host cannot pass as Azure SQL;
 placeholders; credential keys (`user`, `password`, `connection_string`, ...) make
 the entry invalid because coop authenticates with Entra ID tokens only. `coop doctor`
 prints one Project-contract row per entry (the ready default is marked) and one
-warning per rule broken. `/setup-project` proposes the dev entry's kind from the
-machine's client platform (SQ7) and the Fabric answer, writes the dev entry, and
-leaves `test` / `prod` to fill in; editing an existing contract touches only the
-dev entry. The SQL executor and the guardrails' resolved scope read this section
-in the later SQ rows; until then the managed `fabric-sqlendpoint` target below
-still comes from `fabric.default_sql_endpoint`.
+warning per rule broken. `/setup-project` (and the coop window's Project pane) proposes the dev entry's
+kind from the machine's client platform (SQ7) and the Fabric answer, writes the
+dev entry, then asks for the `prod` and `test` entries of the same kind (ids or
+server, and the database; blank = no entry yet, and an entry left blank keeps
+whatever the file has), then the `schema_compare:` lists and its `destructive`
+choice. Editing an existing contract touches only the entries that were answered.
+The Project pane also edits the named target sets below (a "Named target sets"
+group: name, kind, and the dev/test/prod fields; an environment left blank keeps
+what the file has, and a set removed from the form stays in the file, which the
+writer never deletes from); the terminal wizard leaves named sets as they are. The SQL executor and the
+guardrails' resolved scope read this section; the managed `fabric-sqlendpoint`
+target below still comes from `fabric.default_sql_endpoint`.
+
+A second engine beside the main one is a **named set** (deployment call
+2026-10-23: the client's Lakehouse bronze views beside the Warehouse):
+
+```yaml
+sql_targets:
+  default_environment: dev
+  dev: { kind: fabric_warehouse, workspace_id: <guid>, item_id: <guid>, database: SalesWarehouse }
+  prod: { kind: fabric_warehouse, workspace_id: <guid>, item_id: <guid>, database: SalesWarehouse }
+  named:
+    lakehouse:                  # [a-z][a-z0-9_-]{0,31}; up to 20 sets
+      dev: { kind: fabric_lakehouse, workspace_id: <guid>, item_id: <guid>, sql_endpoint_id: <guid>, database: SalesLakehouse }
+      prod: { kind: fabric_lakehouse, workspace_id: <guid>, item_id: <guid>, sql_endpoint_id: <guid>, database: SalesLakehouse }
+```
+
+Each named entry follows the same kind, host and credential rules; `coop doctor`
+prints one row per named entry (`sql_targets.named.<set>.<env>`). A native tool
+or `coop schema compare` names one as `<env>@<set>` (`dev@lakehouse`); the
+default never comes from a named set, and a named `prod` is production.
+
+**Older project files.** A file written before a section existed keeps working,
+but the sections a current coop reads and the file lacks, relative to what it
+declares (`sql_targets` when `fabric.default_sql_endpoint` exists;
+`sql_targets.prod` and `schema_compare` when `sql_targets` exists;
+`fabric.layout` when `fabric:` exists; `power_bi.table_mapping` when
+`power_bi:` exists), are named by `coop doctor` (`lib/project-gaps.mjs
+doctor-lines`, one warning per gap) and once per folder in a hidden session note
+that tells coop to offer `/setup-project` when work one of them governs comes up.
+Nothing fills a gap in on its own.
 
 ### Managed Warehouse SQL endpoint MCP
 
@@ -917,7 +977,12 @@ adds `ApplicationIntent=ReadOnly`. A discovered kind (`fabric_warehouse`,
 `fabric_lakehouse`) runs the same Fabric REST discovery as the managed target, from
 the contract's ids. A production entry is never selected, and a contract whose
 default entry is unconfigured or invalid returns `target_invalid` before any mint.
-Without `sql_targets:` the executor falls back to the canonical project/managed MCP
+A session launched when the contract named no SQL target and no Fabric SQL
+endpoint has no launch token at all; every native SQL tool then returns
+`launch_identity_missing` (not `identity_mismatch`, which is reserved for a
+signed-in account other than the launch one), and the tool text says to fix the
+file and exit and start coop again, because `/new` re-reads the contract but
+cannot mint the token the launch skipped. Without `sql_targets:` the executor falls back to the canonical project/managed MCP
 snapshot as before. The `ok` result carries a `target` summary (`environment`,
 `kind`, `database`; never the host). On a machine with no managed Warehouse server
 (an Azure SQL-only install), the launch token helper mints the SQL audience for the

@@ -19,6 +19,18 @@ can reach, and which one is the default:
         kind: azure_sql
         server: contoso.database.windows.net
         database: ContosoDW
+      # Optional named target sets: a second item per environment (a Lakehouse
+      # beside the Warehouse). Same entry shape and rules; a side or environment
+      # names one as `dev@lakehouse` / `prod@lakehouse`. Never a default.
+      named:
+        lakehouse:
+          dev:
+            kind: fabric_lakehouse
+            workspace_id: <guid>
+            item_id: <guid>
+            sql_endpoint_id: <guid>
+            database: SalesLakehouse
+          prod: ...
 
 Rules (section 8 item 1):
 - the host pattern must match the kind, so a production host cannot hide
@@ -57,6 +69,12 @@ except Exception:  # pragma: no cover - the launcher always ships _yaml.py
 ENVIRONMENTS = ("dev", "test", "prod")
 DEFAULTABLE_ENVIRONMENTS = ("dev", "test")
 PRODUCTION_ENVIRONMENT = "prod"
+NAMED_KEY = "named"
+# A named target set's name: short, lower-case, file-name safe (`lakehouse`, `dw2`).
+NAMED_SET_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+MAX_NAMED_SETS = 20
+# `dev@lakehouse`: an environment of a named set. `dev` alone is the plain entry.
+TARGET_SPEC_RE = re.compile(r"^(dev|test|prod)(?:@([a-z][a-z0-9_-]{0,31}))?$")
 
 _LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
 # Host pattern per kind. A Fabric Warehouse/Lakehouse host is discovered, so the
@@ -145,6 +163,8 @@ class SqlTargets:
     configured: bool = False
     default_environment: str = ""
     targets: dict[str, SqlTarget] = field(default_factory=dict)
+    # Named target sets (`sql_targets.named.<name>.<env>`): set name -> env -> entry.
+    named: dict[str, dict[str, SqlTarget]] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
 
     @property
@@ -152,13 +172,32 @@ class SqlTargets:
         target = self.targets.get(self.default_environment)
         return target if target and target.state == "ready" else None
 
+    def resolve(self, spec: str) -> SqlTarget | None:
+        """The entry a spec names: `dev` (the plain entry) or `dev@lakehouse` (an
+        environment of a named set); None when absent or malformed. The entry's
+        state is the caller's to check (`ready` or not)."""
+        m = TARGET_SPEC_RE.match(spec) if isinstance(spec, str) else None
+        if not m:
+            return None
+        env, name = m.group(1), m.group(2)
+        if name:
+            return self.named.get(name, {}).get(env)
+        return self.targets.get(env)
+
     def to_json(self) -> dict[str, Any]:
         return {
             "configured": self.configured,
             "default_environment": self.default_environment,
             "targets": {env: asdict(t) for env, t in self.targets.items()},
+            "named": {name: {env: asdict(t) for env, t in entries.items()} for name, entries in self.named.items()},
             "errors": list(self.errors),
         }
+
+
+def split_target_spec(spec: str) -> tuple[str, str]:
+    """`dev@lakehouse` -> ("dev", "lakehouse"); `dev` -> ("dev", ""); anything else -> ("", "")."""
+    m = TARGET_SPEC_RE.match(spec) if isinstance(spec, str) else None
+    return (m.group(1), m.group(2) or "") if m else ("", "")
 
 
 def _text(value: Any) -> str:
@@ -268,14 +307,16 @@ def parse_sql_targets(project: Any) -> SqlTargets:
     if not isinstance(raw, dict):
         result.errors.append("sql_targets must be a mapping")
         return result
-    unknown = sorted(str(k) for k in raw if str(k) not in ENVIRONMENTS and str(k) != "default_environment")
+    unknown = sorted(str(k) for k in raw if str(k) not in ENVIRONMENTS and str(k) not in ("default_environment", NAMED_KEY))
     if unknown:
         result.errors.append(
-            f"sql_targets has unknown entries ({', '.join(unknown)}); environments are dev, test, prod"
+            f"sql_targets has unknown entries ({', '.join(unknown)}); environments are dev, test, prod (named sets go under named)"
         )
     for env in ENVIRONMENTS:
         if env in raw:
             result.targets[env] = parse_target(env, raw.get(env))
+    if NAMED_KEY in raw:
+        _parse_named(raw.get(NAMED_KEY), result)
     default = _text(raw.get("default_environment")).lower()
     if not default:
         default = "dev" if "dev" in result.targets else ""
@@ -294,7 +335,36 @@ def parse_sql_targets(project: Any) -> SqlTargets:
     for env, target in result.targets.items():
         if target.state == "invalid":
             result.errors.append(f"sql_targets.{env}: {target.reason}")
+    for name, entries in result.named.items():
+        for env, target in entries.items():
+            if target.state == "invalid":
+                result.errors.append(f"sql_targets.named.{name}.{env}: {target.reason}")
     return result
+
+
+def _parse_named(raw: Any, result: SqlTargets) -> None:
+    """`sql_targets.named`: set name -> {dev, test, prod} entries, each validated like
+    the plain ones. A set is never the default and has no default of its own."""
+    if not isinstance(raw, dict):
+        result.errors.append("sql_targets.named must be a mapping of set name to dev/test/prod entries")
+        return
+    if len(raw) > MAX_NAMED_SETS:
+        result.errors.append(f"sql_targets.named holds more than {MAX_NAMED_SETS} sets")
+        return
+    for key, entries in raw.items():
+        name = str(key)
+        if not NAMED_SET_RE.match(name):
+            result.errors.append(f"sql_targets.named.{name}: a set name is lower-case letters, digits, _ or - (up to 32)")
+            continue
+        if not isinstance(entries, dict):
+            result.errors.append(f"sql_targets.named.{name} must be a mapping of dev/test/prod entries")
+            continue
+        unknown = sorted(str(k) for k in entries if str(k) not in ENVIRONMENTS)
+        if unknown:
+            result.errors.append(f"sql_targets.named.{name} has unknown entries ({', '.join(unknown)}); environments are dev, test, prod")
+        result.named[name] = {env: parse_target(env, entries.get(env)) for env in ENVIRONMENTS if env in entries}
+        if not result.named[name]:
+            result.errors.append(f"sql_targets.named.{name} has no dev, test or prod entry")
 
 
 def load_project(path: Path | None) -> dict[str, Any]:
@@ -352,6 +422,16 @@ def doctor_lines(targets: SqlTargets) -> list[tuple[str, str, str]]:
             "sql_targets: no ready default environment (dev or test)",
             "set sql_targets.default_environment and complete that entry",
         ))
+    for name, entries in sorted(targets.named.items()):
+        for env in ENVIRONMENTS:
+            target = entries.get(env)
+            if not target:
+                continue
+            if target.state == "ready":
+                where = target.server or f"{target.workspace_id}/{target.item_id}"
+                rows.append(("ok", f"sql_targets.named.{name}.{env}: {target.label} {where} / {target.database}", ""))
+            elif target.state == "unconfigured":
+                rows.append(("warn", f"sql_targets.named.{name}.{env}: {target.reason}", "complete the entry in .coop/project.yml"))
     return rows
 
 

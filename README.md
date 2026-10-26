@@ -784,12 +784,14 @@ exposes six native LLM tools: `data_doc`,
 per table, view, procedure and function under the contract's snapshot folder, read
 before coop writes SQL and used by coop-data-doc as a SQL source when the client has
 none), `schema_compare` (the deterministic compare of two schemas, each a `sql_targets`
-entry, the committed snapshot or a contract repository's `.sql` files read as
+entry (`dev`, `prod`, or `<env>@<set>` for a named set such as a Lakehouse beside
+the Warehouse), the committed snapshot or a contract repository's `.sql` files read as
 code, in any pairing: a sorted diff of schemas, tables and columns, views,
-procedures and functions, and an ordered promotion script with a note per
+procedures and functions, formatting-only and column-order-only differences
+labelled, and an ordered promotion script with a note per
 object, destructive statements marked (commented out on request, or per client
-in `schema_compare:` of the project file), written under `.coop/schema-compare/`;
-`coop schema compare` is the terminal form; nothing is ever applied), `sql_source` (SQL
+in `schema_compare:` of the project file, which `/setup-project` fills in), written under `.coop/schema-compare/`;
+`coop schema compare` is the terminal form, `/schema-compare` walks a compare and the promotion, and `/runbook <name>` walks a client's own `.coop/runbooks/<name>.md` step by step; nothing is ever applied by the compare), `sql_source` (SQL
 source control through `coop-sqlsc` where the client SQL repository has an
 `sqlsc.yml` and the user has run `/sql-source on`: coop checks objects out as
 `coop-agent:<user>` before changing them, writes dev's changes into the files or
@@ -1105,7 +1107,10 @@ drift away from the tested fleet. The daily **coop-agent is N commit(s) behind r
 remains: it is the safe prompt to run `coop update`, which advances the whole manifest
 together. It appears only when a newer release is waiting. Maintainers debugging an
 upstream release can temporarily restore Pi's notice with
-`COOP_SHOW_UPSTREAM_UPDATE_NOTICES=1`.
+`COOP_SHOW_UPSTREAM_UPDATE_NOTICES=1`. A launch runs the pinned Pi only: when the
+`pi` on PATH is another version (a hand `pi update` or `npm install -g`), coop
+stops with the pin-back command (`coop update`) instead of starting it; a
+maintainer running an `--edge` Pi on purpose sets `COOP_ALLOW_UNPINNED_PI=1`.
 
 ---
 
