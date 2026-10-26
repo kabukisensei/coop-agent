@@ -164,51 +164,9 @@ def _plain(key: tuple[str, str]) -> str:
 
 
 def _segments(sql: str) -> list[tuple[str, str]]:
-    """The text as (kind, text) runs: `ws`, `comment` (line or nested block),
-    `string` ('...' with '' escapes), `ident` ([...] with ]] escapes, "..." with ""
-    escapes) and `code` (everything else). Joined back, the runs are the text."""
-    out: list[tuple[str, str]] = []
-    i, n = 0, len(sql)
-    while i < n:
-        ch = sql[i]
-        if ch.isspace() or ch == "\ufeff":  # a byte-order mark reads as whitespace
-            end = i
-            while end < n and (sql[end].isspace() or sql[end] == "\ufeff"):
-                end += 1
-            out.append(("ws", sql[i:end]))
-        elif sql.startswith("--", i):
-            end = sql.find("\n", i)
-            end = n if end < 0 else end
-            out.append(("comment", sql[i:end]))
-        elif sql.startswith("/*", i):
-            depth, end = 1, i + 2
-            while end < n and depth:
-                if sql.startswith("/*", end):
-                    depth, end = depth + 1, end + 2
-                elif sql.startswith("*/", end):
-                    depth, end = depth - 1, end + 2
-                else:
-                    end += 1
-            out.append(("comment", sql[i:end]))
-        elif ch in "'[\"":
-            close = "]" if ch == "[" else ch
-            end = i + 1
-            while end < n:
-                if sql[end] == close:
-                    if end + 1 < n and sql[end + 1] == close:
-                        end += 2
-                        continue
-                    end += 1
-                    break
-                end += 1
-            out.append(("string" if ch == "'" else "ident", sql[i:end]))
-        else:
-            end = i + 1
-            while end < n and not (sql[end].isspace() or sql[end] == "\ufeff" or sql[end] in "'[\"" or sql.startswith("--", end) or sql.startswith("/*", end)):
-                end += 1
-            out.append(("code", sql[i:end]))
-        i = end
-    return out
+    """The text as (kind, text) runs: `ws`, `comment`, `string`, `ident` and `code`
+    (sql_source.segments, the one lexer the batch splitter uses too)."""
+    return sql_source.segments(sql)
 
 
 def _code_only(sql: str) -> str:
@@ -329,6 +287,10 @@ def read_live(cursor: Any) -> Catalog:
         else:
             catalog.modules[key] = (kind, modules.get(key, ""))
     catalog.schemas |= {s for s in listed if not (s.startswith(INTERNAL_SCHEMA_PREFIX) and s not in catalog.schemas)}
+    if "columns" in catalog.truncated:
+        # The column list was cut at the cap: no table's shape is known whole, so a
+        # column missing here is unread, never dropped or added (#443).
+        catalog.incomplete |= set(catalog.tables)
     return catalog
 
 
@@ -390,6 +352,8 @@ def read_snapshot(folder: Path) -> tuple[Catalog | None, str]:
             catalog.modules[key] = (kind, "")
         else:
             catalog.modules[key] = (kind, "\n".join(lines[body_start:]))
+    if "columns" in catalog.truncated:
+        catalog.incomplete |= set(catalog.tables)  # as when it was taken (#443)
     for item in skipped:
         # A module whose definition was not readable is there, definition unknown;
         # a name unsafe as a file name is there, kind unknown.
@@ -492,8 +456,15 @@ def flatten_definition(definition: str) -> str:
     literals and quoted names keep their text."""
     out: list[str] = []
     for kind, text in _segments(normalize_definition(definition)):
-        out.append(" " if kind in ("ws", "comment") else text)
-    return re.sub(r" {2,}", " ", "".join(out)).strip()
+        if kind in ("ws", "comment"):
+            # Adjacent whitespace and comment runs fold to one space here, run by
+            # run: never with a regex over the joined text, which would also fold
+            # the spaces inside a literal or a quoted name (coop-schema-compare #20).
+            if out and out[-1] != " ":
+                out.append(" ")
+        else:
+            out.append(text)
+    return "".join(out).strip()
 
 
 def formatting_only(source_definition: str, target_definition: str) -> bool:
@@ -568,6 +539,9 @@ def diff(source: Catalog, target: Catalog) -> list[dict[str, Any]]:
             changes.append(_change("schema", (schema, ""), "drop", destructive=True))
     for key in sorted(set(src_kinds) | set(tgt_kinds), key=lambda k: (k[0].lower(), k[1].lower())):
         src_kind, tgt_kind = src_kinds.get(key), tgt_kinds.get(key)
+        if src_kind == "table" and tgt_kind and tgt_kind != "table" and key in source.incomplete:
+            changes.append(_change("table", key, "unknown", f"a {tgt_kind} on the target, a table on the source whose columns could not all be read; replace it by hand"))
+            continue
         if src_kind and tgt_kind and src_kind != tgt_kind:
             changes.append(_change(src_kind, key, "replace", f"a {tgt_kind} on the target, a {src_kind} on the source", destructive=True))
             continue
@@ -582,6 +556,10 @@ def diff(source: Catalog, target: Catalog) -> list[dict[str, Any]]:
                 why = "its snapshot skipped this object"
             changes.append(_change(src_kind or tgt_kind or "", key, "unknown", f"not read on the {side} ({why}); compare by hand"))
             continue
+        if src_kind == "table" and not tgt_kind and key in source.incomplete:
+            # Its columns were not all read: a CREATE from this shape would be wrong (#443).
+            changes.append(_change("table", key, "unknown", "not every column could be read on the source side; create it by hand"))
+            continue
         if src_kind and not tgt_kind:
             if src_kind == "table":
                 changes.append(_change("table", key, "add", f"{len(source.tables[key])} column(s)"))
@@ -595,7 +573,7 @@ def diff(source: Catalog, target: Catalog) -> list[dict[str, Any]]:
             unread = [side for side, cat in (("source", source), ("target", target)) if key in cat.incomplete]
             if unread:
                 # A column the reader lost would show as a drop (or an add): never script that.
-                changes.append(_change("table", key, "unknown", f"a column could not be read on the {' and '.join(unread)} side; compare its columns by hand"))
+                changes.append(_change("table", key, "unknown", f"not every column could be read on the {' and '.join(unread)} side; compare its columns by hand"))
                 continue
             details, lossy = compare_tables(source.tables[key], target.tables[key], source.identity_known and target.identity_known)
             if details:
@@ -1088,7 +1066,9 @@ def render_report(
     ]
     for label in ("source", "target"):
         side = sides[label]
-        lines.append(f"| {label} | {side.get('environment', '')} | {side.get('kind', '')} | {side.get('database', '')} | {side['tables']} | {side['views']} | {side['procedures']} | {side['functions']} |")
+        # A named set's environment reads as the side was named (`dev@lakehouse`).
+        environment = f"{side.get('environment', '')}@{side['set']}" if side.get("set") else side.get("environment", "")
+        lines.append(f"| {label} | {environment} | {side.get('kind', '')} | {side.get('database', '')} | {side['tables']} | {side['views']} | {side['procedures']} | {side['functions']} |")
     cosmetic = f" {counts['cosmetic']} of them change formatting or column order only." if counts.get("cosmetic") else ""
     lines += ["", f"**{counts['total']} difference(s)**: {counts['add']} to add, {counts['alter']} to alter, {counts['drop']} to drop; {counts['destructive']} of them can lose data as detected.{cosmetic}", ""]
     if records:

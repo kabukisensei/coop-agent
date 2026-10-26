@@ -117,8 +117,74 @@ def split_name(text: str) -> tuple[str, str]:
     return parts[-2], parts[-1]
 
 
+def segments(sql: str) -> list[tuple[str, str]]:
+    """The text as (kind, text) runs: `ws`, `comment` (line or nested block),
+    `string` ('...' with '' escapes), `ident` ([...] with ]] escapes, "..." with ""
+    escapes) and `code` (everything else). Joined back, the runs are the text.
+    An unterminated string, name or block comment runs to the end of the text."""
+    out: list[tuple[str, str]] = []
+    i, n = 0, len(sql)
+    while i < n:
+        ch = sql[i]
+        if ch.isspace() or ch == "\ufeff":  # a byte-order mark reads as whitespace
+            end = i
+            while end < n and (sql[end].isspace() or sql[end] == "\ufeff"):
+                end += 1
+            out.append(("ws", sql[i:end]))
+        elif sql.startswith("--", i):
+            end = sql.find("\n", i)
+            end = n if end < 0 else end
+            out.append(("comment", sql[i:end]))
+        elif sql.startswith("/*", i):
+            depth, end = 1, i + 2
+            while end < n and depth:
+                if sql.startswith("/*", end):
+                    depth, end = depth + 1, end + 2
+                elif sql.startswith("*/", end):
+                    depth, end = depth - 1, end + 2
+                else:
+                    end += 1
+            out.append(("comment", sql[i:end]))
+        elif ch in "'[\"":
+            close = "]" if ch == "[" else ch
+            end = i + 1
+            while end < n:
+                if sql[end] == close:
+                    if end + 1 < n and sql[end + 1] == close:
+                        end += 2
+                        continue
+                    end += 1
+                    break
+                end += 1
+            out.append(("string" if ch == "'" else "ident", sql[i:end]))
+        else:
+            end = i + 1
+            while end < n and not (sql[end].isspace() or sql[end] == "\ufeff" or sql[end] in "'[\"" or sql.startswith("--", end) or sql.startswith("/*", end)):
+                end += 1
+            out.append(("code", sql[i:end]))
+        i = end
+    return out
+
+
+def _masked(text: str) -> str:
+    """The text with every string literal, quoted name and comment blanked (line
+    breaks kept, so positions and lines stay): what a GO line is looked for in."""
+    return "".join(text if kind in ("code", "ws") else re.sub(r"[^\n]", "x", text) for kind, text in segments(text))
+
+
 def split_batches(sql: str) -> list[str]:
-    return [batch for batch in _GO.split(sql) if batch.strip()]
+    """The script split on its GO lines, the way SSMS and sqlcmd split it: a GO
+    line counts only in plain code. One inside a string literal, a quoted name or
+    a comment is the literal's, name's or comment's text and stays in its batch,
+    so a multi-line string holding a line `GO` never cuts a definition short (#22).
+    Each batch keeps its original bytes; only the GO lines are taken out."""
+    masked = _masked(sql)
+    out, start = [], 0
+    for match in _GO.finditer(masked):
+        out.append(sql[start : match.start()])
+        start = match.end()
+    out.append(sql[start:])
+    return [batch for batch in out if batch.strip()]
 
 
 def split_top_level(text: str) -> list[str]:

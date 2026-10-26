@@ -3568,9 +3568,33 @@ function Invoke-CoopPipxConverge {
     # `pipx install --force` keeps the environment's interpreter (the dev VM,
     # 2026-10-23), so the environment goes first, then a fresh install on the
     # right one. --edge takes the unpinned package, as its plain path does.
+    # The working tool is not removed until its replacement is proven (#441): a
+    # probe install under a suffix (its own environment, `<package>_coopnext`,
+    # nothing of the real one touched) shows the package and its dependencies
+    # can be had on coop's Python right now; when that fails (offline, an index
+    # outage, a dependency the interpreter cannot take) the tool stays as it
+    # is, usable, and the unit reports the failure. The probe costs one extra
+    # install, once per migrated tool.
     $was = $venvInfo.Label
+    $probe = "${Package}_coopnext"
+    $null = Invoke-CoopPipx @('uninstall', $probe)   # a probe a cut-short run left behind; absent is fine
+    if ((Invoke-CoopPipx @('install', '--suffix', '_coopnext', '--python', $expectedPython, $spec)) -ne 0) {
+      $null = Invoke-CoopPipx @('uninstall', $probe)
+      return (Coop-UnitResult $false "could not prepare $Package ($spec) on coop's Python $expectedPython, so the installation on $was stays as it is$(Get-CoopPipxFailureSuffix)")
+    }
+    $null = Invoke-CoopPipx @('uninstall', $probe)
     if ((Invoke-CoopPipx @('uninstall', $Package)) -ne 0) { return (Coop-UnitResult $false "could not remove $Package (on $was) to reinstall it on coop's Python $expectedPython$(Get-CoopPipxFailureSuffix)") }
-    if ((Invoke-CoopPipx @('install', '--python', $expectedPython, $spec)) -ne 0) { return (Coop-UnitResult $false "failed to reinstall $Package ($spec) on coop's Python $expectedPython$(Get-CoopPipxFailureSuffix)") }
+    if ((Invoke-CoopPipx @('install', '--python', $expectedPython, $spec)) -ne 0) {
+      # The probe passed moments ago, so this is rare; put the tool back where
+      # it was rather than leave none (the old interpreter is still there).
+      $suffix = Get-CoopPipxFailureSuffix
+      $restored = $false
+      if ($venvInfo.Executable -and (Test-Path -LiteralPath $venvInfo.Executable -PathType Leaf)) {
+        $restored = ((Invoke-CoopPipx @('install', '--python', $venvInfo.Executable, $spec)) -eq 0)
+      }
+      $tail = if ($restored) { "; it was installed again on $was, so it still runs (coop update tries the move again)" } else { "; $Package is not installed now (coop update installs it again)" }
+      return (Coop-UnitResult $false "failed to reinstall $Package ($spec) on coop's Python $expectedPython$suffix$tail")
+    }
     $outcome = "$Package $(if ($installed) { $installed } else { $spec }) reinstalled on coop's Python $expectedPython (it was on $was)"
   } elseif ($Force) {
     if ((Invoke-CoopPipx (New-PipxInstallArgs $true)) -ne 0) { return (Coop-UnitResult $false "failed to reinstall $Package ($spec)$(Get-CoopPipxFailureSuffix)") }
