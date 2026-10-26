@@ -331,7 +331,7 @@ duplicated gates, not in the logic tests users depend on.
 | --- | --- | --- |
 | `gate` (required on every PR) | push and PR | syntax (`bash -n`, pwsh parse), shellcheck, parity/BOM (until retired), JSON/YAML/resource validation, esbuild transpile, and the **deterministic logic suites**: standards, guardrails, coop-tools contract, project wizard, launch-spec, `_yaml.py`, `_extdeps.py`, mcp-config, warehouse-mcp, fabric-sql-query, init wizard, doctor project. Target under five minutes on ubuntu. |
 | `extended` (manual `workflow_dispatch` + nightly) | schedule | process and timing fixtures: fabric-mcp-launch, sync-knowledge hang cases, first-run PTY, fleet execution, knowledge-git process inspector, update-guard, staleness, azcache, home-guard, inventory, and the Windows-native probes. |
-| `workstation acceptance` | on demand before a release | the existing `windows-terminal-workstation-acceptance.yml` and `acceptance/` receipt. |
+| `workstation acceptance` | retired 2026-10-26 (suite review pick 4) | `windows-terminal-workstation-acceptance.yml` and `acceptance/` were the Windows-terminal-era harness; the dev VM pre-tag check and `release.yml`'s installer acceptance replaced them. |
 
 **Delete with their surface (Phase 2):** `webbridge.test.mjs`, `protocol.test.mjs`,
 `diffmodel.test.mjs`, `fabric-mcp-web-launch.test.mjs`, `stub-pi.mjs`, and the two

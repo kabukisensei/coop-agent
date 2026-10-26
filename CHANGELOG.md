@@ -19,13 +19,45 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   edits* (one `-- coop <date> for <user>: <what and why>` line inside every module
   coop changes, next to the change).
 
+- **One place for a tool pin (suite review pick 2).** `config/release-manifest.json`
+  is the only file that carries a coop tool version: the client-home CI template
+  keeps `coop-data-doc==<version>` and `/setup-docs` fills it from the manifest
+  when it copies the workflow, `NOTICE.md` points at the manifest, and the
+  fixtures (`fleet-execution`, `install-python-prereq`, `bundled-tools`,
+  `fleet-manifest`, the installer test) read their pins from it. `tests/pins.test.sh`
+  fails a bump PR that leaves a stale `<tool>==<old>` literal anywhere, so the
+  nightly lane can no longer go red on a pin literal (it did on every bump from
+  2026-10-22 to 10-26). `scripts/bump-pins.sh` moves the pins to the newest
+  release of each tool (PyPI or the GitHub release, with the wheel's sha256)
+  and prints the CHANGELOG line.
+
 ### Changed
+
+- **Leaner CI (suite review 2026-10-26, pick 4).** A pull request now runs four
+  jobs: lint, the logic suites on ubuntu, the Windows PowerShell 5.1 checks
+  (parse, a pinned and cached PSScriptAnalyzer, `tests\run.ps1`) and the
+  installer build with its install/doctor/uninstall acceptance, which also runs
+  the guardrails against the staged, pinned Pi. The upgrade, shortcut-launch and
+  one-liner acceptance (five more install cycles on one runner) runs on every
+  push to `main` and, new, in `release.yml` on the tag build before the
+  installer is published, so the released bytes get the whole acceptance. The
+  Windows Git Bash leg of `tests/run.sh` moved to the nightly extended lane;
+  the pwsh 7 parse step (weaker than the 5.1 one) and the separate esbuild job
+  (folded into the ubuntu tests job) are gone; the installer's SHA-pinned
+  downloads and electron-builder's `node_modules` are cached. Retired with
+  their surface: `pi-matrix.yml` and `scripts/test-pi-matrix.ps1` (the installer
+  job stages the same pinned Pi and applies the lock on every PR), the
+  Windows-terminal-era `windows-terminal-workstation-acceptance.yml`,
+  `acceptance/`, `tests/terminal-workstation-acceptance.test.mjs`,
+  `docs/terminal-workstation-acceptance.md`, the `win-ownership-probe` fixture
+  and the `jsonschema` venv steps that only they used. The `_extdeps.py` exit
+  code asserts moved from the lint job into `tests/extdeps-agent-pin.test.sh`.
 
 - **Pins.** coop-sql-source-control 1.0.8 (`sqlsc sqlproj` and `init --sqlproj` write
   an SDK-style SQL project for a `dotnet build` compile check; `commit` and `checkin`
   add the `Prepared-by:` trailer; the drift pipeline and the exit-path docs). The
-  sourced wheel's tag, asset and SHA-256 follow the v1.0.8 release; the fixtures'
-  pin literals move with the manifest.
+  sourced wheel's tag, asset and SHA-256 follow the v1.0.8 release (the
+  fixtures read the manifest).
 
 ## [0.38.6] — 2026-10-26
 
