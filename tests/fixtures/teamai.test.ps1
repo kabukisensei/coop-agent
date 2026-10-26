@@ -48,8 +48,8 @@ try {
   if ($p.ExitCode -ne 0 -and $usage.Contains('usage: coop teamai')) { Ok 'coop teamai (no command) -> usage, non-zero exit' } else { Ko "coop teamai without a command must print usage and fail (rc=$($p.ExitCode))" $usage }
 
   # --- help lists the command -------------------------------------------------
-  $help = [string]((Invoke-Native { & $coop help *>&1 }) | Out-String)
-  if ($help -match 'coop teamai <cmd>') { Ok 'coop help lists coop teamai' } else { Ko 'coop help must list coop teamai' }
+  $help = [string]((Invoke-Native { & $coop dev help *>&1 }) | Out-String)
+  if ($help -match 'coop dev teamai <cmd>') { Ok 'coop dev help lists coop teamai' } else { Ko 'coop dev help must list coop teamai' }
 
   # --- launch never touches TeamAI: no adapter call in the launch path ---------
   $launcher = [System.IO.File]::ReadAllText($coop)
