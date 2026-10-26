@@ -4,8 +4,11 @@ name: release
 # that version's section from CHANGELOG.md — so release notes are automatic —
 # with the coop window installer attached (master plan D1c), so teammates
 # download it from the release page. The installer is published only after the
-# same acceptance ci.yml runs on every PR has passed against these exact bytes
-# (#277): install silently, `coop.exe --doctor`, uninstall, profile untouched.
+# whole acceptance has passed against these exact bytes (#277): install
+# silently, `coop.exe --doctor`, uninstall, profile untouched (the ci.yml PR
+# job), then the previous release upgraded to this build, this build over a
+# terminal install, the "coop" shortcut opening a window, and the one-liner
+# (the ci.yml push-to-main job).
 on:
   push:
     tags: ['v*']
@@ -57,6 +60,59 @@ jobs:
           name: coop-window-installer-acceptance
           path: ${{ runner.temp }}/installer-acceptance.json
           if-no-files-found: error
+          retention-days: 90
+      # The upgrade, shortcut-launch and one-liner acceptance ci.yml runs on every
+      # push to main, on the release bytes: the previous release (the latest one
+      # published) upgraded to this build, this build over a terminal install,
+      # the Desktop "coop" shortcut opening a window, and the `irm | iex`
+      # one-liner installing the latest release. A failure here also keeps the
+      # release from being published.
+      - name: download the latest release's installer and acceptance report
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\current" | Out-Null
+          Copy-Item desktop\installer\dist\coop-window-*.exe "$env:RUNNER_TEMP\current"
+          gh release download --repo "$env:GITHUB_REPOSITORY" --pattern 'coop-window-*.exe' --pattern 'installer-acceptance.json' --dir "$env:RUNNER_TEMP\previous"
+      - name: previous release, then this build over it; this build over a terminal install
+        shell: pwsh
+        env:
+          COOP_INSTALLER_TEST: '1'
+        run: node desktop/scripts/verify-upgrade.mjs --previous "$env:RUNNER_TEMP\previous" --dist "$env:RUNNER_TEMP\current" --output "$env:RUNNER_TEMP\upgrade-acceptance.json"
+      - name: double-click the "coop" shortcut; a window must open
+        shell: pwsh
+        env:
+          COOP_INSTALLER_TEST: '1'
+        run: node desktop/scripts/verify-launch.mjs --dist "$env:RUNNER_TEMP\current" --output "$env:RUNNER_TEMP\launch-acceptance.json"
+      - name: the one-liner (irm | iex form) installs the latest release, then finds it installed
+        shell: pwsh
+        env:
+          COOP_BOOTSTRAP_NO_LAUNCH: '1'
+        run: |
+          $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          $cmd = "Invoke-Expression ([System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes('scripts\bootstrap.ps1')))"
+          $first = (& $ps -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $cmd 2>&1 | Out-String)
+          Write-Output $first
+          if ($first -match 'is not recognized' -or $first -notmatch "SHA-256 matches the release's acceptance report" -or $first -notmatch 'the coop window is installed') { throw 'the one-liner did not download, verify and install the latest release' }
+          $second = (& $ps -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $cmd 2>&1 | Out-String)
+          Write-Output $second
+          if ($second -notmatch 'is already installed') { throw 'a second run of the one-liner did not find the window installed' }
+      - name: the acceptance reports in the log
+        if: always()
+        shell: pwsh
+        run: |
+          foreach ($f in @("$env:RUNNER_TEMP\upgrade-acceptance.json", "$env:RUNNER_TEMP\launch-acceptance.json")) {
+            if (Test-Path -LiteralPath $f) { Write-Output "--- $f"; Get-Content -LiteralPath $f -Raw }
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coop-window-upgrade-acceptance
+          path: |
+            ${{ runner.temp }}/upgrade-acceptance.json
+            ${{ runner.temp }}/launch-acceptance.json
+          if-no-files-found: ignore
           retention-days: 90
 
   release:

@@ -200,20 +200,21 @@ client-repo gates above are a different thing.
 
 | Lane | Run it locally | Where CI runs it | What it holds |
 | --- | --- | --- | --- |
-| gate (default) | `bash tests/run.sh` | `.github/workflows/ci.yml` on every PR and every push to `main` | Deterministic logic tests. The same workflow also runs `bash -n` and shellcheck over the bash dev tooling, JSON, YAML and skill validation, the esbuild transpile, `tests/run.ps1` (which starts with `scripts/check-bom.ps1`), and the `.ps1` parse under pwsh 7 and Windows PowerShell 5.1 with PSScriptAnalyzer. Its `installer (Windows)` job builds the coop window package (master plan D1c and D1d: it downloads the pinned Node and stages Pi, the extension tree and the repository snapshot first) as the `coop-window-installer` artifact, installs it silently on the runner, runs `coop.exe --doctor`, checks the bundled Node, Pi and extension pins against the manifest and lock, runs the bundled `coop.ps1 version`, checks that PowerShell's `& npm` reaches the bundled `npm.cmd` and that every bundled path fits Windows' limit, and uninstalls, checking that the first launch's `coop` link and "coop" shortcut go with the package while a foreign shortcut stays (`desktop/scripts/verify-installer.mjs`, which refuses any host but an opted-in GitHub-hosted Windows runner). Its `installer upgrade (Windows)` job then installs the latest release's installer and this build over it, and this build over a terminal install (the checkout): one Add/Remove entry at the new version, "coop" on the Desktop and in the Start Menu opening the new window, the profile kept, the next launch finishing setup, the terminal install's `coop` link and "coop (terminal)" left alone (`desktop/scripts/verify-upgrade.mjs`); it then double-clicks the installed Desktop "coop" shortcut (ShellExecute on the `.lnk`) and requires a window: the client folder question on a fresh profile, then, with a client folder recorded (`~/.coop/client.json`), the first-launch setup and the coop window on that folder, the setup version recorded, and a second click keeping the one window (`desktop/scripts/verify-launch.mjs`); it then runs the one-liner the `irm | iex` way, which must download, hash-check and install the latest release, and on a second run find it installed. `release.yml` runs the same acceptance on the tag build and publishes the installer only when its report passes and names the published file's SHA-256 (`desktop/scripts/check-installer-report.mjs`). |
+| gate (default) | `bash tests/run.sh` | `.github/workflows/ci.yml` on every PR and every push to `main` | Deterministic logic tests. The same workflow runs `bash -n` and shellcheck over the bash dev tooling, JSON, YAML and skill validation, the esbuild transpile of every extension, `tests/run.ps1` under pwsh 7 (which starts with `scripts/check-bom.ps1`), and on Windows the `.ps1` parse under Windows PowerShell 5.1 (the runtime `bin/coop.cmd` uses), PSScriptAnalyzer (pinned and cached) and `tests\run.ps1` under 5.1. Its `installer (Windows)` job builds the coop window package (master plan D1c and D1d: it downloads the pinned Node and stages Pi, the extension tree and the repository snapshot first; the SHA-pinned downloads and electron-builder's `node_modules` are cached) as the `coop-window-installer` artifact, runs `tests/guardrails-pi-runner.test.mjs` against the staged, pinned Pi (the one check that needs a real Pi), installs the package silently on the runner, runs `coop.exe --doctor`, checks the bundled Node, Pi and extension pins against the manifest and lock, runs the bundled `coop.ps1 version`, checks that PowerShell's `& npm` reaches the bundled `npm.cmd` and that every bundled path fits Windows' limit, and uninstalls, checking that the first launch's `coop` link and "coop" shortcut go with the package while a foreign shortcut stays (`desktop/scripts/verify-installer.mjs`, which refuses any host but an opted-in GitHub-hosted Windows runner). Its `installer upgrade (Windows)` job runs on every push to `main`, not on a PR (the `gate` check accepts its skip there): it installs the latest release's installer and this build over it, and this build over a terminal install (the checkout): one Add/Remove entry at the new version, "coop" on the Desktop and in the Start Menu opening the new window, the profile kept, the next launch finishing setup, the terminal install's `coop` link and "coop (terminal)" left alone (`desktop/scripts/verify-upgrade.mjs`); it then double-clicks the installed Desktop "coop" shortcut (ShellExecute on the `.lnk`) and requires a window: the client folder question on a fresh profile, then, with a client folder recorded (`~/.coop/client.json`), the first-launch setup and the coop window on that folder, the setup version recorded, and a second click keeping the one window (`desktop/scripts/verify-launch.mjs`); it then runs the one-liner the `irm \| iex` way, which must download, hash-check and install the latest release, and on a second run find it installed. A PR that changes the upgrade or launch path (`verify-upgrade.mjs`, `verify-launch.mjs`, `scripts/bootstrap.ps1`, the NSIS script, the first-launch setup) should run that job by hand before it merges. `release.yml` runs the whole acceptance, the install and the upgrade, launch and one-liner parts, on the tag build and publishes the installer only when its install report passes and names the published file's SHA-256 (`desktop/scripts/check-installer-report.mjs`). |
 | extended | `COOP_TEST_EXTENDED=1 bash tests/run.sh` | `.github/workflows/extended.yml`: nightly, on demand, and on a PR that changes that file | The gate lane plus the timing and process fixtures. The two lanes together are the full suite. |
-| Pi matrix | `pwsh -NoProfile -File scripts/test-pi-matrix.ps1 -PiVersion <pi-version>` (needs the network; installs that Pi from npm into a temp prefix) | `.github/workflows/pi-matrix.yml`: nightly, on demand, and on a PR that touches Pi alignment | `scripts/test-pi-matrix.ps1` against the pinned Pi release on Windows. |
 
 `COOP_TEST_EXTENDED` is the only switch. Unset or `0` runs the gate lane; `1`
 runs both lanes. `tests/run.ps1` reads the same variable. Each run names its lane
 when it starts and again in its last line; for `tests/run.sh` that line is
 `✓ all tests passed (gate lane)` or `✓ all tests passed (gate + extended lanes)`.
 
-Both `ci.yml` and `extended.yml` run the suite on three hosts: ubuntu
-(`bash tests/run.sh`, then `tests/run.ps1` under pwsh 7), Windows Git Bash
-(`bash tests/run.sh`) and Windows PowerShell 5.1
-(`powershell -NoProfile -File tests\run.ps1`, the runtime `bin/coop.cmd` uses).
-`extended.yml` adds a fourth Windows job, `datadoc-windows` (master plan row
+`ci.yml` runs the suite on ubuntu (`bash tests/run.sh`, then `tests/run.ps1`
+under pwsh 7) and under Windows PowerShell 5.1 (`powershell -NoProfile -File
+tests\run.ps1`, the runtime `bin/coop.cmd` uses). `extended.yml` runs both of
+those with the extended lane and adds the Windows Git Bash leg
+(`bash tests/run.sh`): the suites in `tests/run.sh` are platform-neutral logic,
+and a Windows-only behavior gets one Windows test, so that leg runs nightly
+rather than on every PR. `extended.yml` also adds a Windows job, `datadoc-windows` (master plan row
 11a): it installs `coop-data-doc` at the manifest pin with pipx and the pinned Pi
 from npm, then runs `tests/datadoc-live.test.mjs` from Windows PowerShell 5.1 with
 `COOP_TEST_DATADOC_REQUIRED=1`. That test drives `/setup-docs` and the `data_doc`
@@ -304,30 +305,23 @@ them. Pi session transcripts and az's own logs and caches are left out, because 
 coop session or `az` command running at the same time writes them. If the check
 fails while one of those was running, close it and rerun.
 
-### Pi matrix triggers
+### Pi matrix
 
-`pi-matrix.yml` runs nightly, from Actions -> pi-matrix -> Run workflow, and on a
-pull request that changes any of these paths:
-
-- `scripts/sync.ps1`
-- `lib/_extdeps.py`
-- `config/release-manifest.json`
-- `extensions/**`
-- `scripts/test-pi-matrix.*`
-- `tests/guardrails-pi-runner.test.mjs`
-- `.github/workflows/pi-matrix.yml`
-
-A PR that changes how coop installs, aligns or loads Pi without touching these
-paths should run the workflow by hand before it merges.
+There is no separate Pi matrix workflow. The `installer (Windows)` job stages the
+pinned Pi from npm on every PR, applies `config/pi-lock.json` to it, checks the
+lock and runs `tests/guardrails-pi-runner.test.mjs` through Pi's own extension
+runner, so every PR exercises the exact release pin.
 
 ### The `gate` check
 
 `ci.yml` ends with a job named `gate`. It needs every other `ci.yml` job, runs
 even when one of them fails (`if: always()`), and passes only when every one of
 them finished with `success`, so a failed, cancelled or skipped job fails it.
-If `main` requires a status check, require `gate`; the job names above it can
-then change without touching the rule. A new `ci.yml` job must be added to the
-`gate` job's `needs:` list. `extended.yml` and `pi-matrix.yml` do not feed `gate`.
+The one exception is `installer upgrade (Windows)`, which runs only on a push to
+`main`: on a pull request `gate` accepts its `skipped`. If `main` requires a
+status check, require `gate`; the job names above it can then change without
+touching the rule. A new `ci.yml` job must be added to the `gate` job's `needs:`
+list and to its result check. `extended.yml` does not feed `gate`.
 
 ## See also
 
