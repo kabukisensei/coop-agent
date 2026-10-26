@@ -1,10 +1,16 @@
 name: ci
 
 # The PR gate lane (#96). Every job here runs the fast, deterministic checks;
-# the timing and process fixtures run in extended.yml (nightly + on demand) and
-# the live Pi install in pi-matrix.yml. The `gate` job at the bottom is the one
-# stable check that summarizes this workflow. See docs/ci.md, "coop-agent's own
-# CI (maintainers): gate and extended lanes".
+# the timing and process fixtures run in extended.yml (nightly + on demand). The
+# `gate` job at the bottom is the one stable check that summarizes this
+# workflow. See docs/ci.md, "coop-agent's own CI (maintainers): gate and
+# extended lanes".
+#
+# Lane layout (suite review 2026-10-26, pick 4): a PR runs lint, the logic
+# suites on ubuntu, the Windows PowerShell 5.1 checks, and the installer build
+# with its install/doctor/uninstall acceptance. The upgrade, shortcut-launch and
+# one-liner acceptance (five more install cycles on one runner) runs on every
+# push to main and in release.yml on the tag build, not on every PR.
 
 on:
   push:
@@ -42,41 +48,8 @@ jobs:
           test "$(python3 -S -I lib/_yaml.py get .coop/project.yml profile.organization MISS)" = "Cooptimize"
           test "$(python3 -S -I lib/_yaml.py get .coop/project.yml tools.fabric_cli.enabled MISS)" = "true"
           python3 -S -I -c "import sys; sys.path.insert(0, 'lib'); import _yaml; d = _yaml.loads('a: true\nb: null\nc: 12\nd: 1.5\ne: \"true\"\n'); assert d == {'a': True, 'b': None, 'c': 12, 'd': 1.5, 'e': 'true'}, d; assert 'yaml' not in sys.modules"
-      - name: python extdeps helper
-        # NB: this step runs under `bash -e`, so capture the intentionally-nonzero
-        # exit codes with `|| rc=$?` (a list context, exempt from set -e) rather than
-        # `cmd; test "$?"` — the bare `cmd` would abort the step before the test runs.
-        run: |
-          python3 -c "import ast; ast.parse(open('lib/_extdeps.py').read())"
-          # no extension tree -> exit 2 (nothing to do)
-          rc=0; python3 lib/_extdeps.py align /tmp/coop-no-such-dir 0.0.0 --check || rc=$?
-          test "$rc" -eq 2
-          # bad usage -> exit 3
-          rc=0; python3 lib/_extdeps.py 2>/dev/null || rc=$?
-          test "$rc" -eq 3
-          # write + report on a fixture: overrides written, skew reported (exit 10)
-          d="$(mktemp -d)"; mkdir -p "$d/npm/node_modules/@earendil-works/pi-ai" "$d/npm/node_modules/@earendil-works/pi-tui"
-          printf '{"version":"0.74.2"}' > "$d/npm/node_modules/@earendil-works/pi-ai/package.json"
-          printf '{"version":"0.74.2"}' > "$d/npm/node_modules/@earendil-works/pi-tui/package.json"
-          printf '{"name":"pi-extensions","dependencies":{}}' > "$d/npm/package.json"
-          rc=0; out="$(python3 lib/_extdeps.py align "$d" 0.80.2)" || rc=$?
-          test "$rc" -eq 10
-          # 8-field line: tree_ai tree_tui ovr_ai ovr_tui changed aligned required_floor offending_ext
-          # (last two are "-" here: nothing imposes a pi-ai floor, so the agent is not "too old")
-          test "$out" = "0.74.2 0.74.2 0.80.2 0.80.2 1 0 - -"
-          python3 -c "import json,sys; o=json.load(open(sys.argv[1]))['overrides']; assert o['@earendil-works/pi-ai']=='0.80.2' and o['@earendil-works/pi-tui']=='0.80.2'" "$d/npm/package.json"
-          # agent too old for an installed extension -> exit 11, names the offending ext + floor
-          e="$(mktemp -d)"; mkdir -p "$e/npm/node_modules/@earendil-works/pi-ai" "$e/npm/node_modules/@earendil-works/pi-tui" "$e/npm/node_modules/@earendil-works/pi-coding-agent" "$e/npm/node_modules/pi-hermes-memory"
-          printf '{"version":"0.80.2"}' > "$e/npm/node_modules/@earendil-works/pi-ai/package.json"
-          printf '{"version":"0.80.2"}' > "$e/npm/node_modules/@earendil-works/pi-tui/package.json"
-          printf '{"name":"pi-hermes-memory","dependencies":{"@earendil-works/pi-ai":"^0.99.0"}}' > "$e/npm/node_modules/pi-hermes-memory/package.json"
-          # npm can auto-install a newer peer host at the top level. It is not an
-          # extension and must not override the direct extension's requirement.
-          printf '{"name":"@earendil-works/pi-coding-agent","dependencies":{"@earendil-works/pi-ai":"^0.99.1"}}' > "$e/npm/node_modules/@earendil-works/pi-coding-agent/package.json"
-          printf '{"name":"pi-extensions","dependencies":{"pi-hermes-memory":"0.0.0"}}' > "$e/npm/package.json"
-          rc=0; out="$(python3 lib/_extdeps.py align "$e" 0.80.2 --check)" || rc=$?
-          test "$rc" -eq 11
-          test "$out" = "0.80.2 0.80.2 - - 0 1 0.99.0 pi-hermes-memory"
+      # lib/_extdeps.py's exit codes and report line are covered by
+      # tests/extdeps-agent-pin.test.sh (run by tests/run.sh in the `tests` job).
       - name: validate JSON
         run: for f in $(find . -name '*.json' -not -path './node_modules/*' -not -path './.git/*'); do echo "$f"; python3 -m json.tool "$f" >/dev/null; done
       - name: validate YAML
@@ -86,25 +59,12 @@ jobs:
       - name: validate skills + prompts
         run: bash scripts/validate-resources.sh
 
-  extensions:
-    name: extensions transpile
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '22.19.0'
-      - name: esbuild check (mirrors how Pi loads .ts extensions)
-        run: |
-          for f in extensions/*/index.ts; do
-            echo "transpiling $f"
-            npx -y esbuild "$f" --bundle --format=esm --platform=node --packages=external --outfile=/dev/null
-          done
-
   tests:
     # Gate lane only (COOP_TEST_EXTENDED unset). The full suite runs in
-    # extended.yml and in the `coop release` pre-tag gate.
+    # extended.yml and in the `coop release` pre-tag gate. The Windows Git Bash
+    # leg of tests/run.sh runs nightly in extended.yml: the suites are
+    # platform-neutral logic, and the `windows` and `installer` jobs below
+    # exercise the product itself on Windows on every PR.
     name: logic tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -113,96 +73,32 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '22.19.0'
+      - name: esbuild check of every extension (mirrors how Pi loads .ts extensions)
+        run: |
+          for f in extensions/*/index.ts; do
+            echo "transpiling $f"
+            npx -y esbuild "$f" --bundle --format=esm --platform=node --packages=external --outfile=/dev/null
+          done
       - name: run test suite, gate lane (bash tests/run.sh)
         run: bash tests/run.sh
       - name: PowerShell behavioral tests, gate lane (pwsh 7; starts with scripts/check-bom.ps1)
         shell: pwsh
         run: pwsh -File tests/run.ps1
 
-  tests-windows:
-    # Windows is coop's ONLY deployment target. Git Bash on windows-latest runs
-    # tests/run.sh unchanged (bash + node + npx + pwsh all present), gate lane only
-    # here: the Node and Python logic tests and the bash-harness suites.
-    name: logic tests (Windows)
-    runs-on: windows-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '22.19.0'
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-      - name: Pin Python and install receipt-schema dependency
-        shell: pwsh
-        run: |
-          $venv = Join-Path $env:RUNNER_TEMP 'coop-ci-python'
-          & python -m venv $venv
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $python = Join-Path $venv 'Scripts\python.exe'
-          & $python -m pip install --disable-pip-version-check --no-input "jsonschema==4.25.1"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $python -c "import jsonschema,os,sys; print(os.path.abspath(sys.executable))"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $sitePackages = (& $python -c "import jsonschema,os; print(os.path.dirname(os.path.dirname(jsonschema.__file__)))").Trim()
-          if ($LASTEXITCODE -ne 0 -or -not $sitePackages) { exit 1 }
-          "CERT_PYTHON=$python" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "PYTHONPATH=$sitePackages" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - name: run test suite under Git Bash, gate lane
-        shell: bash
-        run: bash tests/run.sh
-
   windows:
-    name: powershell parse (Windows)
+    # Windows is coop's ONLY deployment target, and bin/coop.cmd runs Windows
+    # PowerShell 5.1 (System32\WindowsPowerShell\v1.0\powershell.exe), not pwsh 7.
+    # Everything here runs under 5.1: the parse floor, the analyzer and the
+    # behavioral suite. (pwsh 7 accepts PS-7-only syntax - ternary `? :`, `??`,
+    # `?.`, `clean{}` - that is a HARD parse error on 5.1, so an agent editing
+    # .ps1 on macOS could land a 7-ism that breaks `coop` at launch for the whole
+    # fleet; the `tests` job above runs tests/run.ps1 under pwsh 7 for the
+    # cross-edition check.)
+    name: powershell 5.1 (Windows)
     runs-on: windows-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-      - name: Pin Python and install receipt-schema dependency
-        shell: pwsh
-        run: |
-          $venv = Join-Path $env:RUNNER_TEMP 'coop-ci-python'
-          & python -m venv $venv
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $python = Join-Path $venv 'Scripts\python.exe'
-          & $python -m pip install --disable-pip-version-check --no-input "jsonschema==4.25.1"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $python -c "import jsonschema,os,sys; print(os.path.abspath(sys.executable))"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $sitePackages = (& $python -c "import jsonschema,os; print(os.path.dirname(os.path.dirname(jsonschema.__file__)))").Trim()
-          if ($LASTEXITCODE -ne 0 -or -not $sitePackages) { exit 1 }
-          "CERT_PYTHON=$python" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "PYTHONPATH=$sitePackages" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - name: parse every .ps1 with the PowerShell language parser
-        shell: pwsh
-        run: |
-          $failed = $false
-          Get-ChildItem -Recurse -Filter *.ps1 |
-            Where-Object { $_.FullName -notmatch 'node_modules' } |
-            ForEach-Object {
-              $errors = $null
-              [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$errors) | Out-Null
-              if ($errors) {
-                Write-Host "PARSE ERRORS in $($_.FullName):"
-                $errors | ForEach-Object { Write-Host "  $_" }
-                $failed = $true
-              } else {
-                Write-Host "ok: $($_.FullName)"
-              }
-            }
-          if ($failed) { exit 1 }
-
-      # Parse EVERY .ps1 under Windows PowerShell 5.1 too — the runtime bin/coop.cmd,
-      # the Install shortcut, and install.ps1's Start-Menu/Desktop shortcuts all invoke
-      # (System32\WindowsPowerShell\v1.0\powershell.exe), not pwsh 7. The pwsh step above
-      # accepts PS-7-only syntax (ternary `? :`, `??`, `?.`, `clean{}`) that is a HARD
-      # parse error on 5.1 — so an agent editing .ps1 on macOS (pwsh only) could land a
-      # 7-ism that sails CI green and then breaks `coop` at launch for the whole fleet.
-      # This step is the 5.1 floor. (Same parser API; runs under Windows PowerShell 5.1.)
       - name: parse every .ps1 under Windows PowerShell 5.1 (the runtime coop.cmd uses)
         shell: powershell
         run: |
@@ -222,11 +118,22 @@ jobs:
             }
           if ($failed) { exit 1 }
 
-      - name: PSScriptAnalyzer (errors only)
+      - name: PSScriptAnalyzer module (pinned, cached)
+        id: analyzer-cache
+        uses: actions/cache@v4
+        with:
+          path: ~\Documents\PowerShell\Modules\PSScriptAnalyzer
+          key: psscriptanalyzer-1.24.0
+      - name: install PSScriptAnalyzer
+        if: steps.analyzer-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+          Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Scope CurrentUser -Force
+      - name: PSScriptAnalyzer (errors only)
+        shell: pwsh
+        run: |
+          Import-Module PSScriptAnalyzer -RequiredVersion 1.24.0
           $issues = Get-ChildItem -Recurse -Filter *.ps1 |
             Where-Object { $_.FullName -notmatch 'node_modules' } |
             ForEach-Object { Invoke-ScriptAnalyzer -Path $_.FullName -Severity Error }
@@ -237,11 +144,10 @@ jobs:
           Write-Host "PSScriptAnalyzer: no errors"
 
       # Behavioral tests of the product under Windows PowerShell 5.1 — the runtime
-      # bin/coop.cmd actually launches (not pwsh 7): the .ps1 BOM check, coop.ps1's
-      # launch-spec / --no-launch / review parser, update.ps1 --check and the fixture
-      # table, the closest production fidelity for coop's ONLY platform. (The ubuntu
-      # `tests` job runs the same file under pwsh 7 for the cross-edition check.)
-      # Gate lane only; the full 5.1 run is in extended.yml.
+      # bin/coop.cmd actually launches: the .ps1 BOM check, coop.ps1's launch-spec /
+      # --no-launch / review parser, update.ps1 --check and the fixture table, the
+      # closest production fidelity for coop's ONLY platform. Gate lane only; the
+      # full 5.1 run is in extended.yml.
       - name: PowerShell behavioral tests, gate lane (Windows PowerShell 5.1)
         shell: powershell
         run: powershell -NoProfile -File tests\run.ps1
@@ -249,12 +155,14 @@ jobs:
   installer:
     # The coop window package (master plan D1c, D1d): stage the pinned Node,
     # Pi, the extension tree and the repository snapshot, build the unsigned
-    # NSIS per-machine installer (F3) on every PR as an artifact, then install
-    # it silently for every account on this disposable runner, check the
-    # machine shim, PATH entry and "coop update" task, run the auto-update dry
-    # run, `coop.exe --doctor`, check the bundled runtime, run the bundled
+    # NSIS per-machine installer (F3) on every PR as an artifact, run the
+    # guardrails against the staged Pi (the one real-Pi check), then install
+    # the package silently for every account on this disposable runner, check
+    # the machine shim, PATH entry and "coop update" task, run the auto-update
+    # dry run, `coop.exe --doctor`, check the bundled runtime, run the bundled
     # `coop.ps1 version` and uninstall (desktop/scripts/verify-installer.mjs
-    # refuses to run anywhere else).
+    # refuses to run anywhere else). The downloads are SHA-pinned in the
+    # manifest, so the download cache is keyed on the manifest.
     name: installer (Windows)
     runs-on: windows-latest
     timeout-minutes: 45
@@ -263,6 +171,16 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '22.19.0'
+      - name: cache electron-builder (desktop/installer/node_modules)
+        uses: actions/cache@v4
+        with:
+          path: desktop/installer/node_modules
+          key: installer-node-modules-${{ hashFiles('desktop/installer/package-lock.json') }}
+      - name: cache the verified runtime downloads (desktop/installer/cache)
+        uses: actions/cache@v4
+        with:
+          path: desktop/installer/cache
+          key: installer-downloads-${{ hashFiles('config/release-manifest.json') }}
       - name: install electron-builder (desktop/installer, pinned)
         shell: pwsh
         working-directory: desktop/installer
@@ -270,6 +188,9 @@ jobs:
       - name: build the installer (stage + electron-builder, unsigned)
         shell: pwsh
         run: node desktop/scripts/build-installer.mjs
+      - name: guardrails through Pi's own extension runner (the staged, pinned Pi)
+        shell: pwsh
+        run: node tests/guardrails-pi-runner.test.mjs "$PWD\desktop\installer\runtime\npm\node_modules\@earendil-works\pi-coding-agent"
       - uses: actions/upload-artifact@v4
         with:
           name: coop-window-installer
@@ -298,9 +219,14 @@ jobs:
     # then this build over a terminal install (this checkout). Shortcuts, the
     # `coop` link, the machine shim and task, the profile and the next launch's
     # setup are checked (desktop/scripts/verify-upgrade.mjs refuses to run
-    # anywhere else).
+    # anywhere else). Runs on every push to main (and in release.yml on the tag
+    # build); a PR runs the build and the install acceptance above. Dispatch
+    # the job by hand on a PR that changes the upgrade or launch path:
+    # desktop/scripts/verify-upgrade.mjs, verify-launch.mjs, scripts/bootstrap.ps1,
+    # the installer's NSIS script, or the first-launch setup.
     name: installer upgrade (Windows)
     needs: [installer]
+    if: github.event_name == 'push'
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
@@ -359,27 +285,34 @@ jobs:
   gate:
     # The one stable check name for this workflow. It needs every job above and
     # fails unless each one finished with `success`, so a failed, cancelled or
-    # skipped job fails it too. Add any new ci.yml job to `needs` here.
+    # skipped job fails it too. The one exception is `installer-upgrade`, which
+    # runs only on a push to main: on a pull request its `skipped` passes. Add
+    # any new ci.yml job to `needs` here.
     name: gate
     if: always()
-    needs: [shell, extensions, tests, tests-windows, windows, installer, installer-upgrade]
+    needs: [shell, tests, windows, installer, installer-upgrade]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: every gate job succeeded
         env:
-          RESULTS: ${{ join(needs.*.result, ' ') }}
           NEEDS_JSON: ${{ toJSON(needs) }}
+          SHELL_RESULT: ${{ needs.shell.result }}
+          TESTS_RESULT: ${{ needs.tests.result }}
+          WINDOWS_RESULT: ${{ needs.windows.result }}
+          INSTALLER_RESULT: ${{ needs.installer.result }}
+          UPGRADE_RESULT: ${{ needs.installer-upgrade.result }}
+          EVENT: ${{ github.event_name }}
         run: |
           printf '%s\n' "$NEEDS_JSON"
-          if [ -z "$RESULTS" ]; then
-            echo "::error::gate: no job results to check"
-            exit 1
-          fi
-          for r in $RESULTS; do
-            if [ "$r" != "success" ]; then
-              echo "::error::gate: a required job finished with '$r' (per-job results above)"
-              exit 1
-            fi
+          rc=0
+          for job in "shell=$SHELL_RESULT" "tests=$TESTS_RESULT" "windows=$WINDOWS_RESULT" "installer=$INSTALLER_RESULT"; do
+            if [ "${job#*=}" != "success" ]; then echo "::error::gate: ${job%%=*} finished with '${job#*=}'"; rc=1; fi
           done
-          echo "gate: every job succeeded ($RESULTS)"
+          case "$UPGRADE_RESULT" in
+            success) ;;
+            skipped) if [ "$EVENT" = "pull_request" ]; then echo "gate: installer-upgrade runs on every push to main, not on a pull request"; else echo "::error::gate: installer-upgrade was skipped on a $EVENT"; rc=1; fi ;;
+            *) echo "::error::gate: installer-upgrade finished with '$UPGRADE_RESULT'"; rc=1 ;;
+          esac
+          if [ "$rc" -ne 0 ]; then exit 1; fi
+          echo "gate: every job succeeded"
