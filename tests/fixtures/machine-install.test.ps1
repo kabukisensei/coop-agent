@@ -311,9 +311,9 @@ try {
   $setupMarker = Join-Path $home2 '.coop\desktop\window-setup-version'
   if ($updRc -ne 0 -or $out -notmatch 'This coop updates itself \(this machine\): last checked .*, installed 0\.37\.0') { Ko "coop update on a machine install (rc=$updRc)" $out }
   elseif ($out -cmatch '1/6|Doctor|repository') { Ko 'coop update on a machine install started the fleet update' $out }
-  elseif ($installArgs -ne '--prereqs auto' -or $out -notmatch "Bringing this account's tools to this package's pins") { Ko "coop update on a machine install did not run this account's setup (install.ps1 args: '$installArgs')" $out }
+  elseif ($installArgs -ne '--prereqs auto --unattended' -or $out -notmatch "Bringing this account's tools to this package's pins") { Ko "coop update on a machine install did not run this account's setup (install.ps1 args: '$installArgs')" $out }
   elseif (-not (Test-Path -LiteralPath $setupMarker) -or ([System.IO.File]::ReadAllText($setupMarker)).Trim() -notmatch '^0\.37\.0\+[0-9a-f]{16}$') { Ko "coop update did not record the setup marker at $setupMarker" $out }
-  else { Ok 'coop update on a machine install says the task moves coop, runs install.ps1 --prereqs auto for this account and records the setup marker (B6)' }
+  else { Ok 'coop update on a machine install says the task moves coop, runs install.ps1 --prereqs auto --unattended for this account and records the setup marker (B6)' }
   $out = Invoke-Update @('--check')
   if ($updRc -ne 0 -or $out -notmatch 'install\s+this machine \(' -or $out -notmatch 'update task result\s+up to date' -or $out -notmatch 'installed by the task\s+0\.37\.0') { Ko "coop update --check on a machine install (rc=$updRc)" $out }
   else { Ok 'coop update --check on a machine install reports the state file' }
