@@ -5,8 +5,6 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
-## [0.38.6] — 2026-10-26
-
 ### Added
 
 - **Team feedback of 2026-10-26.** `/deploy-brief` writes `deploy-brief.md` from a
@@ -20,6 +18,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   built docs before any live read, and say when going live) and *Mark your SQL
   edits* (one `-- coop <date> for <user>: <what and why>` line inside every module
   coop changes, next to the change).
+
+### Changed
+
+- **Pins.** coop-sql-source-control 1.0.8 (`sqlsc sqlproj` and `init --sqlproj` write
+  an SDK-style SQL project for a `dotnet build` compile check; `commit` and `checkin`
+  add the `Prepared-by:` trailer; the drift pipeline and the exit-path docs). The
+  sourced wheel's tag, asset and SHA-256 follow the v1.0.8 release; the fixtures'
+  pin literals move with the manifest.
+
+## [0.38.6] — 2026-10-26
+
+### Added
 
 - **Schema compare from the deployment call (2026-10-23).** `/setup-project` and
   the coop window's Project pane now ask for the `prod` and `test` SQL targets
