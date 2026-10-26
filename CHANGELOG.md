@@ -7,6 +7,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- **Team feedback of 2026-10-26.** `/deploy-brief` writes `deploy-brief.md` from a
+  `schema_compare` run or a git range: one plain-English paragraph per changed
+  object by schema, the standards self-check over those objects, downstream impact
+  from the built docs, who changed what from `git log` (with the `Prepared-by:`
+  trailer), the destructive and manual steps; nothing deployed. `sql_source commit`
+  passes `--prepared-by "coop-agent <version>"` so the commit's trailer names coop
+  and its version while the person stays the author (sqlsc 1.0.8). The guardrails
+  gain two rules: *Files first* (the SQL repository, the catalog snapshot and the
+  built docs before any live read, and say when going live) and *Mark your SQL
+  edits* (one `-- coop <date> for <user>: <what and why>` line inside every module
+  coop changes, next to the change).
+
 - **One place for a tool pin (suite review pick 2).** `config/release-manifest.json`
   is the only file that carries a coop tool version: the client-home CI template
   keeps `coop-data-doc==<version>` and `/setup-docs` fills it from the manifest
@@ -76,6 +88,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   launch, the machine updater's account step) ends without the doctor report
   when every step passed (`coop doctor` shows it any time). A terminal launch
   says which of the two `coop update` would do.
+
+- **Pins.** coop-sql-source-control 1.0.8 (`sqlsc sqlproj` and `init --sqlproj` write
+  an SDK-style SQL project for a `dotnet build` compile check; `commit` and `checkin`
+  add the `Prepared-by:` trailer; the drift pipeline and the exit-path docs). The
+  sourced wheel's tag, asset and SHA-256 follow the v1.0.8 release (the
+  fixtures read the manifest).
 
 - **The Fabric Python is found once per session (suite review 2026-10-26, pick 6).**
   Every native SQL call (`fabric_sql_query`, `sql_impact`, `schema_compare`,
