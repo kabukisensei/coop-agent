@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.38.5] — 2026-10-26
+
 ### Fixed
 
 - **Enter on an unknown slash command no longer runs the closest match** (#428).
