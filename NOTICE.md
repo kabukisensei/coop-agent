@@ -28,6 +28,8 @@ readable in one place.
 
 ## Components
 
+"The manifest pin" means the version in `config/release-manifest.json` `python_tools`, the one place those pins are written.
+
 | Component | Pin | Copyright | License | Terms coop honors |
 | --- | --- | --- | --- | --- |
 | `@microsoft/powerbi-modeling-mcp` and `@microsoft/powerbi-modeling-mcp-win32-x64` (Microsoft Power BI Authoring MCP Server, named "Power BI Modeling MCP" in coop's docs) | 1.0.0 | Copyright (c) Microsoft Corporation | MIT in the package (`LICENSE`), plus the **Microsoft Software License Terms – Microsoft Power BI Authoring MCP Server** EULA the server requires before any tool runs (https://go.microsoft.com/fwlink/?LinkId=2381247, text in the repository's `EULA.txt`) | See "Microsoft terms" below: Cooptimize treats the package's MIT file as the license that governs its copy (Aaron, 2026-10-05), so the window installer keeps bundling it with `LICENSE` and `NOTICE.txt` in place (section 2(c)); EULA acceptance at launch; telemetry (3(a)). |
@@ -35,12 +37,12 @@ readable in one place.
 | `@microsoft/powerbi-desktop-bridge-cli` (`powerbi-desktop`) | 1.0.0 | Copyright (c) Microsoft Corporation | MIT; `NOTICE` lists its third-party components | As above. |
 | `@microsoft/fabric-mcp` (Fabric MCP server) | 1.4.0 | Copyright 2025 (c) Microsoft Corporation | MIT | Launched, not redistributed. Its README states it may send usage telemetry to Microsoft; see "Microsoft terms". |
 | `@azure-devops/mcp` | 2.10.0 | Copyright (c) Microsoft Corporation | MIT | Launched only when Azure DevOps is enabled; trademarks used descriptively. |
-| `ms-fabric-cli` (Fabric CLI, `fab`) | 1.7.0 | Copyright (c) Microsoft Corporation | MIT | Installed from PyPI; no notice duty. |
-| `fabric-cicd` | 1.3.0 | Copyright (c) Microsoft Corporation | MIT | Installed from PyPI; trademarks used descriptively. |
-| `pyodbc` | 5.3.0 | Michael Kleehammer | MIT-style, no notice clause | Installed from PyPI. |
-| `coop-data-doc` | 1.4.4 | Copyright (c) 2026 Aaron Jennings | MIT | Cooptimize's own companion. |
-| `coop-schema-compare` | 0.1.8 | Copyright (c) 2026 Aaron Jennings | MIT | Cooptimize's own companion. |
-| `coop-sql-source-control` (`coop-sqlsc`) | 1.0.7 | Copyright (c) 2026 Aaron Jennings | Proprietary (Cooptimize) | Cooptimize's own companion; its release wheel is bundled from its GitHub release, not PyPI. |
+| `ms-fabric-cli` (Fabric CLI, `fab`) | the manifest pin | Copyright (c) Microsoft Corporation | MIT | Installed from PyPI; no notice duty. |
+| `fabric-cicd` | the manifest pin | Copyright (c) Microsoft Corporation | MIT | Installed from PyPI; trademarks used descriptively. |
+| `pyodbc` | the manifest pin | Michael Kleehammer | MIT-style, no notice clause | Installed from PyPI. |
+| `coop-data-doc` | the manifest pin | Copyright (c) 2026 Aaron Jennings | MIT | Cooptimize's own companion. |
+| `coop-schema-compare` | the manifest pin | Copyright (c) 2026 Aaron Jennings | MIT | Cooptimize's own companion. |
+| `coop-sql-source-control` (`coop-sqlsc`) | the manifest pin | Copyright (c) 2026 Aaron Jennings | Proprietary (Cooptimize) | Cooptimize's own companion; its release wheel is bundled from its GitHub release, not PyPI. |
 | `@earendil-works/pi-coding-agent` (Pi) | 1.2.0 | Copyright (c) 2025 Mario Zechner | MIT | Redistributed in the window installer. The 1.2.0 npm tarball carries no LICENSE file, so this line is the notice that accompanies the copy: Permission is hereby granted, free of charge, to any person obtaining a copy of this software, to deal in the Software without restriction, subject to the MIT License conditions; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. |
 | `pi-mcp-adapter` | 5.1.0 | Nico Bailon | MIT | Redistributed; upstream LICENSE kept. |
 | `pi-hermes-memory` | 0.9.10 | chandra447 | MIT | Redistributed; upstream LICENSE kept. |

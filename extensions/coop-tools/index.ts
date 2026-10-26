@@ -1305,6 +1305,15 @@ export async function runJsonlSetup(_pi: ExtensionAPI, ctx: any, prefill: DataDo
  * has no check workflow yet, offer coop's template so `coop-data-doc check` runs
  * in its CI. coop writes the file; a human commits it with the docs.
  */
+/** A Python tool's pin from config/release-manifest.json (the one pin list). */
+function manifestPythonPin(name: string): string {
+  const root = process.env.COOP_ROOT || resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const manifest = JSON.parse(readFileSync(join(root, "config", "release-manifest.json"), "utf8"));
+  const pin = manifest?.python_tools?.[name];
+  if (typeof pin !== "string" || !/^\d+\.\d+\.\d+$/.test(pin)) throw new Error(`release manifest has no python_tools.${name} pin`);
+  return pin;
+}
+
 async function offerDataDocsCi(ctx: any): Promise<void> {
   const contract = findProjectContract(ctx.cwd);
   const configPath = findDataDocConfig(ctx.cwd);
@@ -1327,7 +1336,9 @@ async function offerDataDocsCi(ctx: any): Promise<void> {
   if (!addCi) return;
   try {
     mkdirSync(dirname(workflow), { recursive: true });
-    writeFileSync(workflow, safeRead(template), "utf8");
+    // The template carries `coop-data-doc==<version>`; the pin comes from the
+    // manifest at copy time, so the committed template never goes stale.
+    writeFileSync(workflow, safeRead(template).replace("coop-data-doc==<version>", `coop-data-doc==${manifestPythonPin("coop-data-doc")}`), "utf8");
     notify(ctx, `Wrote ${workflow}. Commit it with the docs (coop shares only .coop/project.yml on its own).`, "info");
   } catch (e: any) {
     notify(ctx, `Could not write the workflow: ${errMsg(e)}`, "warning");
