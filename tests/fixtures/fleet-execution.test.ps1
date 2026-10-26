@@ -491,8 +491,11 @@ try {
   $out = Invoke-Fleet 'update.ps1'
   $calls7 = @((Get-Calls $m7) -split "`r?`n" | Where-Object { $_ -match '^PIPX (uninstall|install) ' })
   $pyPattern = [regex]::Escape($realPy)
+  # The pin comes from the manifest: a release that bumps it must not leave an
+  # escaped literal behind (the nightly lane was red from 2026-10-24 on 1\.4\.2).
+  $dataDocPin = [string]$manifestJson.python_tools.'coop-data-doc'
   if (-not (Test-CallLiteral $m7 'PIPX uninstall coop-data-doc')) { Ko 'update left a coop-data-doc built on another Python in place (no uninstall)' ($out + "`n" + (Get-Calls $m7)) }
-  elseif (-not (Test-Call $m7 ('^PIPX install --python ' + $pyPattern + ' coop-data-doc==1\.4\.2$'))) { Ko "update did not reinstall coop-data-doc on coop's Python with the pin" ($out + "`n" + (Get-Calls $m7)) }
+  elseif (-not (Test-Call $m7 ('^PIPX install --python ' + $pyPattern + ' coop-data-doc==' + [regex]::Escape($dataDocPin) + '$'))) { Ko "update did not reinstall coop-data-doc on coop's Python with the pin" ($out + "`n" + (Get-Calls $m7)) }
   elseif (@($calls7 | Where-Object { $_ -match 'uninstall coop-data-doc' }).Count -ne 1 -or ($calls7.IndexOf(@($calls7 | Where-Object { $_ -match 'uninstall coop-data-doc' })[0]) -gt $calls7.IndexOf(@($calls7 | Where-Object { $_ -match 'install --python .+ coop-data-doc' })[0]))) { Ko 'the environment must go before the reinstall (pipx install --force keeps the old interpreter)' (Get-Calls $m7) }
   elseif (Test-Call $m7 '^PIPX install --force coop-data-doc') { Ko 'a wrong-Python tool was force-reinstalled (that keeps the old interpreter)' (Get-Calls $m7) }
   elseif (-not $out.Contains("coop-data-doc 1.4.3 reinstalled on coop's Python $realPy (it was on ")) { Ko 'update did not say the tool moved to coop''s Python' $out }
