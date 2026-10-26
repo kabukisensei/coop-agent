@@ -5,6 +5,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Tool pins:** coop-sql-source-control 1.0.7 (a catalog query that fails for
+  indexes, keys, checks, foreign keys, defaults, identity, computed columns,
+  collation or schemas holds that object type out of the comparison instead of
+  removing valid objects from the tracked schema; migration ids over 200
+  characters are refused before any migration runs), coop-schema-compare 0.1.7
+  (the #20, #21 and #22 fixes mirrored above, plus Lakehouse `fabric://`
+  resolution and the formatting-only and column-order-only labels) and
+  coop-data-doc 1.4.4 (`GO` inside a comment, string literal or bracketed name
+  no longer splits a batch; `impact --git` reads the baseline from the git
+  worktree root).
+
 ## [0.38.5] — 2026-10-26
 
 ### Fixed
