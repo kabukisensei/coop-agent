@@ -30,6 +30,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **A launch runs the pinned Pi only.** The manifest pin acted in `coop install`
+  and `coop update`, but a launch started whatever `pi` was first on PATH, and
+  its skew repair then aligned the extension tree to that Pi's version: after a
+  hand `pi update` to 1.4.0 on the dev VM, a checkout launch ran Pi 1.4.0 and
+  moved the shared `~/.coop/agent` tree to 1.4.0, which the installed coop moved
+  back to 1.2.0 on its next launch. The preflight now refuses a Pi that is not
+  the pin, naming the pin-back command (`coop update`); a maintainer running an
+  `--edge` Pi on purpose sets `COOP_ALLOW_UNPINNED_PI=1`. The window package
+  was never affected: it runs its bundled Pi first on PATH.
 - **A session with no launch sign-in token says so.** coop launched when the
   project file named no SQL target reported `identity_mismatch` on every native
   SQL call; it is now `launch_identity_missing`, and the tool text, `coop
