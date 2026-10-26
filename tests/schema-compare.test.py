@@ -447,7 +447,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert opened == ["dev", "prod"], "the default pair is the contract's default entry against prod, each read once"
     assert all(c.closed for c in connections.values())
     assert out["path"] == ".coop/schema-compare/dev-to-prod"
-    assert out["counts"] == {"total": 9, "add": 3, "alter": 2, "drop": 3, "destructive": 5}, out["counts"]
+    assert out["counts"] == {"total": 9, "add": 3, "alter": 2, "drop": 3, "destructive": 5, "cosmetic": 0}, out["counts"]
     assert out["script"] == stats, out["script"]
     assert out["choices"] == ["changed tables: ALTER where the target allows it, a manual rebuild note where it does not (default)", "destructive statements: active, marked DESTRUCTIVE (default)"], out["choices"]
     assert out["source"]["environment"] == "dev" and out["target"]["environment"] == "prod"
@@ -1059,5 +1059,75 @@ with mock.patch.object(sc, "execute", return_value=sq.result("ok", path="x")) as
     with mock.patch.object(sys, "stdin", io.StringIO('{"source": "dev"}')):
         assert sc.main(["--cli"]) == 0, "the terminal form never reads stdin"
     assert run.call_args.args[0] == {}
+
+# --- 2026-10-23 deployment call: cosmetic labels, named target sets, defaults hint --------
+src, tgt = sc.Catalog(), sc.Catalog()
+src.schemas = tgt.schemas = {"dbo"}
+spaced = "CREATE VIEW [dbo].[vw_Sales]\nAS\n  -- a new comment\n  SELECT OrderId,\n         Amount\n  FROM dbo.Orders"
+flat = "CREATE VIEW [dbo].[vw_Sales] AS SELECT OrderId, Amount FROM dbo.Orders"
+src.modules = {("dbo", "vw_Sales"): ("view", spaced), ("dbo", "vw_Other"): ("view", "CREATE VIEW [dbo].[vw_Other] AS SELECT 1 AS a")}
+tgt.modules = {("dbo", "vw_Sales"): ("view", flat), ("dbo", "vw_Other"): ("view", "CREATE VIEW [dbo].[vw_Other] AS SELECT 2 AS a")}
+src.tables = {("dbo", "T"): [sc.Column("A", "int", True, 1), sc.Column("B", "int", True, 2)]}
+tgt.tables = {("dbo", "T"): [sc.Column("B", "int", True, 1), sc.Column("A", "int", True, 2)]}
+cosmetic_changes = sc.diff(src, tgt)
+assert [(c["name"], c.get("cosmetic")) for c in cosmetic_changes] == [("T", "column order"), ("vw_Other", None), ("vw_Sales", "formatting")], cosmetic_changes
+assert "whitespace, line breaks or comments only" in cosmetic_changes[2]["detail"]
+assert sc.summarize(cosmetic_changes)["cosmetic"] == 2
+assert sc.cosmetic_flag(cosmetic_changes[0]) == " (column order only)" and sc.cosmetic_flag(cosmetic_changes[1]) == ""
+assert not sc.formatting_only("CREATE VIEW v AS SELECT 'a' AS x", "CREATE VIEW v AS SELECT 'a ' AS x"), "a string literal is never formatting"
+assert sc.formatting_only("CREATE VIEW v AS SELECT 1 /*x*/ + 1", "CREATE VIEW v AS SELECT 1 + 1")
+cosmetic_records = sc.plan(src, cosmetic_changes, target_kind="azure_sql")
+formatted = next(r for r in cosmetic_records if r["name"] == "vw_Sales")
+assert formatted["action"] == "CREATE OR ALTER" and "whitespace, line breaks or comments only" in formatted["changes"][0], "still scripted"
+cosmetic_report = sc.render_report(cosmetic_changes, source_name="dev", target_name="prod", taken_at="t", sides={"source": sc._side_summary(src, {}), "target": sc._side_summary(tgt, {})}, notes=[], records=cosmetic_records)
+assert "| view | `dbo.vw_Sales` | alter (formatting only) |" in cosmetic_report and "| table | `dbo.T` | alter (column order only) |" in cosmetic_report, cosmetic_report
+assert "2 of them change formatting or column order only." in cosmetic_report
+
+# named sets: `dev@lakehouse` is a side; its default target is prod of the same set.
+assert sc.valid_side("dev@lakehouse") and sc.valid_side("prod@lakehouse", target=True) and not sc.valid_side("dev@") and not sc.valid_side("dev@Lake House")
+assert sc.default_target_for("dev@lakehouse") == "prod@lakehouse" and sc.default_target_for("dev") == "prod" and sc.default_target_for("snapshot") == "prod"
+NAMED_CONTRACT = CONTRACT + """  named:
+    lakehouse:
+      dev:
+        kind: azure_sql
+        server: "contoso-lh-dev.database.windows.net"
+        database: ContosoLH
+      prod:
+        kind: azure_sql
+        server: "contoso-lh.database.windows.net"
+        database: ContosoLH
+"""
+with tempfile.TemporaryDirectory() as tmp:
+    repo = Path(tmp) / "repo"
+    (repo / ".coop").mkdir(parents=True)
+    (repo / ".coop" / "project.yml").write_text(NAMED_CONTRACT, encoding="utf-8")
+    opened = []
+
+    def fake_open_named(*, cwd=None, environment=None):
+        opened.append(environment)
+        env = environment.split("@")[0]
+        return FakeConnection(FakeCursor({"dev": DEV, "prod": PROD}[env])), target(env), "ODBC Driver 18 for SQL Server", None
+
+    with mock.patch.object(sq, "open_connection", side_effect=fake_open_named):
+        out = sc.compare({"source": "dev@lakehouse"}, cwd=repo, now=NOW)
+    assert out["state"] == "ok", out
+    assert opened == ["dev@lakehouse", "prod@lakehouse"], opened
+    assert out["source"]["set"] == "lakehouse" and out["target"]["set"] == "lakehouse" and out["target"]["environment"] == "prod"
+    assert out["path"] == ".coop/schema-compare/dev-lakehouse-to-prod-lakehouse", out["path"]
+    # The real resolver: an unknown set is target_invalid for that side, before any connection.
+    sq_project = sq.wmcp.load_project(repo / ".coop" / "project.yml")
+    assert sq._contract_target(sq_project, "dev@lakehouse")[1] == "ok"
+    assert sq._contract_target(sq_project, "dev@lakehouse")[0].database == "ContosoLH"
+    assert sq._contract_target(sq_project, "dev@nope") == (None, "target_invalid")
+    assert sq._contract_target(sq_project, "test@lakehouse") == (None, "target_invalid")
+
+    # A4: choices typed into a run that the project file does not hold earn one note naming the keys.
+    with mock.patch.object(sq, "open_connection", side_effect=fake_open_named):
+        out = sc.compare({"exclude": ["sm", "Stage"], "rebuild": ["dim"], "commented": True}, cwd=repo, now=NOW)
+    hint = [n for n in out["notes"] if "this client's defaults" in n]
+    assert len(hint) == 1 and "exclude_schemas: [sm, stage]" in hint[0] and "rebuild_tables_in: [dim]" in hint[0] and "destructive: commented" in hint[0], out["notes"]
+    with mock.patch.object(sq, "open_connection", side_effect=fake_open_named):
+        out = sc.compare({}, cwd=repo, now=NOW)
+    assert not [n for n in out["notes"] if "this client's defaults" in n], "no hint when the run adds nothing"
 
 print("✓ schema_compare tests passed")

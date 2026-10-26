@@ -956,6 +956,17 @@ if ($proj) {
     }
   }
 
+  # Sections a current coop reads that this (older) project file lacks (A2,
+  # deployment call 2026-10-23): named, never filled in by doctor.
+  if (Test-Have 'node') {
+    foreach ($line in @(& node (Join-Path $script:CoopRoot 'lib\project-gaps.mjs') doctor-lines $proj 2>$null)) {
+      $parts = @(([string]$line) -split "`t", 3)
+      if ($parts.Count -lt 2 -or -not $parts[0]) { continue }
+      $hint = if ($parts.Count -ge 3) { $parts[2] } else { '' }
+      if ($parts[0] -ceq 'ok') { D-Ok $parts[1] } else { D-Warn $parts[1] $hint }
+    }
+  }
+
   # The committed dev catalog snapshot (SQ9): present and fresh, stale, or
   # missing, for contracts that name a SQL target.
   if ($pyBin) {
