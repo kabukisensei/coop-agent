@@ -166,16 +166,17 @@ The lanes, the fixture rules, and the CI workflows are described in
 
 CI (`.github/workflows/ci.yml`) runs on every PR and every push to `main`. Its
 jobs run `bash -n` and `shellcheck` over the bash dev tooling, JSON/YAML/skill
-validation, and the esbuild transpile of the TypeScript extensions; they parse
-every `.ps1` under pwsh 7 and Windows PowerShell 5.1 with PSScriptAnalyzer; and
-they run the gate lane on ubuntu (`tests/run.sh`, then `tests/run.ps1` under
-pwsh 7, which starts with `scripts/check-bom.ps1`), under Windows Git Bash
-(`tests/run.sh`), and under Windows PowerShell 5.1 (`tests/run.ps1`). The
-`gate` job passes only when every other job succeeded. The extended lane runs in
+validation and the esbuild transpile of the TypeScript extensions; they run the
+gate lane on ubuntu (`tests/run.sh`, then `tests/run.ps1` under pwsh 7, which
+starts with `scripts/check-bom.ps1`); on Windows they parse every `.ps1` under
+Windows PowerShell 5.1, run PSScriptAnalyzer and `tests/run.ps1` under 5.1, and
+build the coop window installer, run the guardrails against its staged Pi and
+install, doctor and uninstall it. The upgrade, shortcut-launch and one-liner
+acceptance runs on every push to `main` and on the release tag, not per PR. The
+`gate` job passes only when every other job succeeded. The extended lane,
+including the Windows Git Bash leg of `tests/run.sh`, runs in
 `.github/workflows/extended.yml` (nightly, or Actions -> extended -> Run workflow
-on any branch), and the live Pi compatibility matrix in
-`.github/workflows/pi-matrix.yml` (nightly, on demand, and on PRs that touch Pi
-alignment).
+on any branch).
 
 ## Commits & PRs
 
