@@ -281,16 +281,12 @@ The run scripts are the list; this page does not repeat it.
 
 - Locally: `COOP_TEST_EXTENDED=1 bash tests/run.sh`.
 - In CI: Actions -> extended -> Run workflow, on any branch.
-- `coop release` runs both lanes. Its pre-tag gate (`scripts/release.sh`, and
-  `bin/coop.ps1` on Windows) runs `COOP_TEST_EXTENDED=1 bash tests/run.sh`,
-  `tests/run.ps1` and `scripts/check-bom.ps1`, so every release keeps the full
-  suite's coverage. On a host without a working `pwsh` none of the three can
-  run, so the gate checks that GitHub's check runs for the commit being tagged
-  are all complete and green instead (`tests/release-gate.test.sh` covers the
-  verdict reader). See `RELEASE.md`.
-
-The Windows terminal-workstation acceptance workflow runs `tests\run.ps1` with
-`COOP_TEST_EXTENDED=1`, so its behavioral-suite receipt covers both lanes.
+- On every release pull request: `extended.yml` runs on a PR that changes
+  `VERSION`, which the release PR (`release-pr.yml`, `scripts/bump-version.sh`)
+  always does, so a release carries the full suite's evidence. `coop release`
+  (`scripts/release.sh`) then tags only when GitHub's check runs for the exact
+  commit on `main` are all complete and green (`tests/release-gate.test.sh`
+  covers the verdict reader). See `RELEASE.md`.
 
 The extended block of `tests/run.sh` keeps the gate lane's temp home (#135).
 `tests/fixtures/home-guard.test.ps1` (run by `tests/run.ps1`) is the one exception: it reads the real `~/.local/bin`

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# The release gate on a host without a working PowerShell 7 (scripts/release.sh):
-# every local suite needs pwsh, so coop release verifies GitHub CI on the commit
-# instead. This checks the verdict reader against saved check-runs responses and
-# the pwsh probe, offline; the live gate is exercised by Aaron's releases.
+# The release gate (scripts/release.sh): coop release verifies GitHub CI on the
+# commit, the tree's one X.Y.Z and the bundle, then tags. This checks the verdict
+# reader against saved check-runs responses, the tree check and
+# scripts/bump-version.sh on a copy, offline; the live gate is Aaron's releases.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
@@ -45,25 +45,6 @@ expect "a non-JSON response is unreachable" "unreachable" 'Not Found'
 got="$(COOP_RELEASE_CHECKS_JSON="$TMP/absent.json" coop_release_ci_verdict deadbeef)"
 case "$got" in unreachable*) ok "an unreadable saved response is unreachable" ;; *) ko "unreadable file: got '$got'" ;; esac
 
-# The pwsh probe: a PATH without pwsh fails with the reason; a pwsh that cannot
-# start fails with its first error line.
-# shellcheck disable=SC2123  # an empty PATH is the point: no pwsh anywhere
-why="$(PATH="$TMP/nopath"; coop_release_pwsh_ready && printf 'READY' || printf '%s' "$COOP_RELEASE_PWSH_WHY")"
-case "$why" in
-  *"not on PATH"*) ok "no pwsh on PATH: probe fails and names it" ;;
-  *) ko "no pwsh on PATH: got '$why'" ;;
-esac
-mkdir -p "$TMP/badpwsh"; printf '#!/bin/sh\necho "You must install .NET to run this application." >&2\nexit 131\n' > "$TMP/badpwsh/pwsh"; chmod +x "$TMP/badpwsh/pwsh"
-# shellcheck disable=SC2123
-why="$(PATH="$TMP/badpwsh:$PATH"; coop_release_pwsh_ready && printf 'READY' || printf '%s' "$COOP_RELEASE_PWSH_WHY")"
-case "$why" in
-  *"does not start"*"install .NET"*) ok "a pwsh that cannot start: probe fails with its error" ;;
-  *) ko "broken pwsh: got '$why'" ;;
-esac
-if command -v pwsh >/dev/null 2>&1 && pwsh -NoLogo -NoProfile -Command 'exit 0' >/dev/null 2>&1; then
-  if coop_release_pwsh_ready; then ok "a working pwsh passes the probe"; else ko "working pwsh should pass the probe"; fi
-fi
-
 # The remote parser: origin spellings that are github.com, and one that is not.
 git_remote_for() { ( COOP_ROOT="$TMP/r$RANDOM"; git init -q "$COOP_ROOT"; git -C "$COOP_ROOT" remote add origin "$1"; coop_release_github_repo ); }
 [ "$(git_remote_for https://github.com/kabukisensei/coop-agent.git)" = "kabukisensei/coop-agent" ] && ok "https origin -> owner/repo" || ko "https origin"
@@ -92,6 +73,49 @@ got="$(bundle_verdict "")"
 case "$got" in *"can't verify"*"rc=1") ok "an unreachable wiki warns and the declined confirm cancels" ;; *) ko "unreachable wiki: $got" ;; esac
 got="$( ( coop_release_wiki_head() { return 1; }; coop_release_check_bundle 1 2>&1; echo "rc=$?" ) )"
 case "$got" in *"continuing (--yes)"*"rc=0") ok "an unreachable wiki continues under --yes with a note" ;; *) ko "unreachable wiki --yes: $got" ;; esac
+
+
+# --- the tree check and the bump, on a copy of the release-bearing files ---------
+tree_copy() { # -> a temp tree with VERSION, the manifest, two extensions and a CHANGELOG
+  local t="$TMP/tree$RANDOM"; mkdir -p "$t/config" "$t/extensions/a" "$t/extensions/b"
+  printf '1.2.3\n' > "$t/VERSION"
+  printf '{\n  "coop_version": "1.2.3",\n  "pi": {}\n}\n' > "$t/config/release-manifest.json"
+  printf '{\n  "name": "a",\n  "version": "1.2.3"\n}\n' > "$t/extensions/a/package.json"
+  printf '{\n  "name": "b",\n  "version": "1.2.3"\n}\n' > "$t/extensions/b/package.json"
+  printf '# Changelog\n\n## [Unreleased]\n\n### Added\n\n- a thing\n\n## [1.2.3] — 2026-01-01\n\n- old\n' > "$t/CHANGELOG.md"
+  printf '%s' "$t"
+}
+check_tree() { ( COOP_ROOT="$1"; ( coop_release_check_tree 2>&1 ); echo " rc=$?" ) }
+t="$(tree_copy)"
+got="$(check_tree "$t")"
+case "$got" in "1.2.3 rc=0") ok "a consistent tree prints its version" ;; *) ko "consistent tree: '$got'" ;; esac
+printf '1.2.4\n' > "$t/VERSION"
+got="$(check_tree "$t")"
+case "$got" in *"coop_version ('1.2.3') does not match VERSION ('1.2.4')"*"rc=1") ok "a manifest behind VERSION dies naming the release PR" ;; *) ko "manifest behind: '$got'" ;; esac
+t="$(tree_copy)"; printf '{\n  "name": "b",\n  "version": "1.2.2"\n}\n' > "$t/extensions/b/package.json"
+got="$(check_tree "$t")"
+case "$got" in *"extensions/b/package.json is at '1.2.2'"*"rc=1") ok "an extension behind VERSION dies" ;; *) ko "extension behind: '$got'" ;; esac
+t="$(tree_copy)"; printf '# Changelog\n\n## [Unreleased]\n' > "$t/CHANGELOG.md"
+got="$(check_tree "$t")"
+case "$got" in *"no '## [1.2.3]' section"*"rc=1") ok "a CHANGELOG without the version's section dies" ;; *) ko "no changelog section: '$got'" ;; esac
+
+t="$(tree_copy)"
+# the script resolves ROOT from its own location, so run a copy placed in <tree>/scripts
+mkdir -p "$t/scripts"; cp "$ROOT/scripts/bump-version.sh" "$t/scripts/bump-version.sh"
+got="$( (bash "$t/scripts/bump-version.sh" minor --date 2026-10-26 2>&1); echo " rc=$?" )"
+case "$got" in "1.3.0"*"rc=0") ok "bump minor prints 1.3.0" ;; *) ko "bump minor: '$got'" ;; esac
+[ "$(cat "$t/VERSION")" = "1.3.0" ] && ok "VERSION moved" || ko "VERSION is $(cat "$t/VERSION")"
+grep -q '"coop_version": "1.3.0"' "$t/config/release-manifest.json" && ok "manifest coop_version moved" || ko "manifest not moved"
+grep -q '"version": "1.3.0"' "$t/extensions/a/package.json" && grep -q '"version": "1.3.0"' "$t/extensions/b/package.json" && ok "every extension moved" || ko "extensions not moved"
+grep -q '^## \[1.3.0\] — 2026-10-26$' "$t/CHANGELOG.md" && ok "CHANGELOG rolled [Unreleased] into a dated [1.3.0]" || ko "CHANGELOG not rolled: $(head -n 6 "$t/CHANGELOG.md")"
+got="$( (cd "$t" && COOP_ROOT="$t" coop_release_check_tree 2>&1); echo " rc=$?" )"
+case "$got" in "1.3.0"*"rc=0") ok "the bumped tree passes the tree check" ;; *) ko "bumped tree check: '$got'" ;; esac
+got="$( (bash "$t/scripts/bump-version.sh" 1.2.9 2>&1); echo " rc=$?" )"
+case "$got" in *"older than the current 1.3.0"*"rc=1") ok "an explicit older version is refused" ;; *) ko "older version: '$got'" ;; esac
+got="$( (bash "$t/scripts/bump-version.sh" 2.0.0 --date 2026-11-01 2>&1); echo " rc=$?" )"
+case "$got" in *"nothing under [Unreleased]"*"2.0.0"*"rc=0") ok "an explicit newer version is taken, with a note that [Unreleased] is empty" ;; *) ko "explicit version: '$got'" ;; esac
+got="$( (bash "$t/scripts/bump-version.sh" 1.2 2>&1); echo " rc=$?" )"
+case "$got" in *"rc=1") ok "a malformed version is refused" ;; *) ko "malformed version: '$got'" ;; esac
 
 echo "release gate: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
