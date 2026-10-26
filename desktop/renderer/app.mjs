@@ -1303,7 +1303,7 @@ function hotkeys() {
   const rows = [
     ["Ctrl+K", "Command palette: every action and /command"],
     // The tree view's own controls are listed in that view, not here.
-    ...Object.entries(KEYS).filter(([id, k]) => !id.startsWith("app.tree.") && k.keys && k.keys !== "native" && k.keys !== "terminal").map(([, k]) => [k.keys, k.does]),
+    ...Object.values(KEYS).map((k) => [k.keys, k.does]),
     ["Ctrl+N", "New tab: another session alongside, with its own coop"],
     ["Ctrl+Tab / Ctrl+Shift+Tab", "Next or previous tab (Ctrl+1 to Ctrl+9 jump to one)"],
     ["Ctrl+= / Ctrl+-", "Zoom in or out (Ctrl+0 resets)"],

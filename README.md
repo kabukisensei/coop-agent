@@ -325,8 +325,8 @@ code with No as the default; `ask_user_question` questions are cards; three
 example prompts fill the composer; a Windows notification and taskbar flash
 arrive when coop finishes or asks while the window is in the background
 (Settings); and a File, Edit, View, Session and Help menu bar carries every
-window action (View > Menu bar hides it, Alt shows it). `desktop/PARITY.md` maps
-all of it to the terminal.
+window action (View > Menu bar hides it, Alt shows it). `desktop/PARITY.md` is
+the window's contract: what it runs itself, and what opens in the terminal.
 
 > `pi-powerline-footer` is **not** used. coop renders its own footer and splash via
 > `extensions/coop-powerline` (see [Footer & splash](#footer--splash)).
