@@ -80,6 +80,12 @@ if command -v git >/dev/null 2>&1; then
   grep -q "Fabrikam Foods" "$TMP/estate/fabrikam-foods-coop/README.md" 2>/dev/null && ok "the home repository README names the client" || ko "home README missing or unnamed"
   [ ! -e "$TMP/estate/analytics/.coop" ] && [ ! -e "$TMP/estate/.coop" ] && ok "nothing was written in the repository or the parent folder" || ko "a contract appeared outside the home repository"
   grep -q "Not shared yet" "$TMP/home.out" && ok "without an origin, coop init says the file is not shared yet" || ko "missing 'Not shared yet' line: $(cat "$TMP/home.out")"
+  # The template lists no repositories (that is /setup-project's job), so the
+  # sibling lookup has nothing to match yet; list the other repository the way
+  # the wizard does, then a second contract beside it must be refused.
+  sed -i.bak 's#local_path: "TODO: /path/to/fabric"#local_path: "../reports"#' "$TMP/estate/fabrikam-foods-coop/.coop/project.yml"
+  rm -f "$TMP/estate/fabrikam-foods-coop/.coop/project.yml.bak"
+  grep -q 'local_path: "../reports"' "$TMP/estate/fabrikam-foods-coop/.coop/project.yml" && ok "the home contract lists the sibling repository (as /setup-project would)" || ko "could not list ../reports in the home contract"
   coop_init --template "$TMP/estate/reports" >"$TMP/home2.out" 2>&1 </dev/null
   rc=$?
   [ "$rc" -ne 0 ] && grep -q "One project file per client" "$TMP/home2.out" && ok "a sibling repository finds the home repository's contract and refuses a second one" || ko "sibling lookup failed (exit $rc): $(cat "$TMP/home2.out")"
