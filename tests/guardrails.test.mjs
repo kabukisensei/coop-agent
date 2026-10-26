@@ -1401,6 +1401,14 @@ await t("G1: a write naming what the contract labels production is a production 
     "sql_targets:", "  default_environment: dev", "  prod:", "    kind: azure_sql", "    server: contoso.database.windows.net", "    database: ContosoDW", "",
   ].join("\n");
   assert.deepEqual(cg.parseProductionNames(text).sort(), ["contoso sales", "contoso.database.windows.net", "finance live"]);
+  // A named target set's prod entry (sql_targets.named.<set>.prod) labels production too.
+  const named = text + [
+    "  named:", "    lakehouse:", "      dev:", "        kind: fabric_lakehouse", `        workspace_id: "${WORKSPACE_ID}"`, `        item_id: ${ITEM_ID}`, "        database: LH",
+    "      prod:", "        kind: fabric_lakehouse", "        workspace_id: 99999999-9999-4999-8999-999999999999   # prod", "        item_id: 88888888-8888-4888-8888-888888888888", "        sql_endpoint_id: 77777777-7777-4777-8777-777777777777", "        database: LH", "",
+  ].join("\n");
+  assert.deepEqual(cg.namedProductionValues(named), ["99999999-9999-4999-8999-999999999999", "88888888-8888-4888-8888-888888888888", "77777777-7777-4777-8777-777777777777"]);
+  assert.ok(cg.parseProductionNames(named).includes("99999999-9999-4999-8999-999999999999"));
+  assert.ok(!cg.parseProductionNames(named).includes(WORKSPACE_ID.toLowerCase()), "the named set's dev ids are not production");
   assert.equal(cg.namesContractProduction(["Contoso Sales Dev"], ["contoso sales"]), false, "whole values only");
   writeContract(text);
   await handleSessionStart({ reason: "new" }, liveCtx);
@@ -1489,6 +1497,9 @@ await t("parseContractSqlScope ports lib/sql_targets.py: ready default only, pro
   }
   // An omitted default_environment assumes dev, as lib/sql_targets.py does.
   assert.equal(cg.parseContractSqlScope(contractText(["  dev:", "    kind: synapse_serverless", "    server: ws-ondemand.sql.azuresynapse.net", "    database: Lake"])).target.kind, "synapse_serverless");
+  // `named` target sets leave the plain default in force (not an unknown key).
+  const withNamed = cg.parseContractSqlScope(AZURE_CONTRACT + "  named:\n    lakehouse:\n      dev:\n        kind: azure_sql\n        server: lh-dev.database.windows.net\n        database: LH\n");
+  assert.equal(withNamed.target?.kind, "azure_sql", "the default dev entry still resolves beside a named set");
 });
 
 const AZ_TEST_HOST = "contoso-test.database.windows.net";

@@ -186,7 +186,8 @@ def _contract_target(
         if target is None or target.production:
             return None, "target_invalid"
     else:
-        target = parsed.targets.get(environment)
+        # `dev`, `test`, `prod`, or an environment of a named set (`prod@lakehouse`).
+        target = parsed.resolve(environment)
         if target is None or target.state != "ready":
             return None, "target_invalid"
     if target.discovered:
@@ -331,9 +332,12 @@ def open_connection(
         return None, None, "", result("odbc_driver_unavailable", minimum_version=18)
     # Every mint is pinned to the launch token's tenant (its tid), not to
     # whichever account az treats as the default; no launch identity, no mint.
+    # A session with no launch token at all (coop launched when the project file
+    # named no SQL target or Fabric SQL endpoint, so nothing was minted) is its
+    # own state: the fix is to edit the file and relaunch coop, not to sign in.
     launch_identity = wmcp.jwt_identity(os.environ.get(wmcp.FABRIC_TOKEN_ENV, ""))
     if not launch_identity:
-        return None, None, "", result("identity_mismatch")
+        return None, None, "", result("launch_identity_missing")
     tenant = launch_identity[0]
     if target.fabric is not None:
         fabric_token, state = wmcp.az_access_token(

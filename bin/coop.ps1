@@ -207,7 +207,7 @@ function Invoke-CoopSchema {
   if (-not $py) { $py = Get-CoopPython }
   if (-not $py) { Coop-Die 'python3 is required for coop schema' }
   $null = Set-CoopProjectYmlEnv
-  $usage = 'usage: coop schema compare [--source dev|test|prod|snapshot|repo[:<name>[/<subfolder>]]] [--target dev|test|prod|repo[:<name>[/<subfolder>]]] [--schema <name>]... [--exclude-schema <name>]... [--rebuild-tables-in <schema>]... [--destructive runnable|commented]   (default: the contract''s default entry against prod, with the project file''s schema_compare choices; a repo side is the .sql files of a contract repositories entry; writes report.md and deploy.sql, applies nothing)'
+  $usage = 'usage: coop schema compare [--source dev|test|prod[@<set>]|snapshot|repo[:<name>[/<subfolder>]]] [--target dev|test|prod[@<set>]|repo[:<name>[/<subfolder>]]] [--schema <name>]... [--exclude-schema <name>]... [--rebuild-tables-in <schema>]... [--destructive runnable|commented]   (default: the contract''s default entry against prod, with the project file''s schema_compare choices; a repo side is the .sql files of a contract repositories entry; writes report.md and deploy.sql, applies nothing; <env>@<set> is an environment of a sql_targets.named set, for example dev@lakehouse)'
   $cmd = ''
   if ($Rest -and $Rest.Count -ge 1) { $cmd = $Rest[0] }
   if ($cmd -ne 'compare') { Coop-Die $usage }
@@ -230,10 +230,11 @@ function Invoke-CoopSchema {
       $i += 2
       continue
     }
-    $allowed = @('dev', 'test', 'prod')
-    if ($flag -eq '--source') { $allowed += 'snapshot' }
+    # A live side is dev|test|prod, alone or as <env>@<set> (a sql_targets.named set).
+    $isLive = $value -match '^(dev|test|prod)(@[a-z][a-z0-9_-]{0,31})?$'
+    if ($flag -eq '--source' -and $value -eq 'snapshot') { $isLive = $true }
     $isRepo = ($value -match '^repo(:[A-Za-z0-9_.-]+(/[A-Za-z0-9_. -]+)*)?$') -and ($value -notmatch '\.\.')
-    if (($value -notin $allowed) -and (-not $isRepo)) { Coop-Die $usage }
+    if ((-not $isLive) -and (-not $isRepo)) { Coop-Die $usage }
     $helperArgs += @($flag, $value)
     $i += 2
   }
@@ -250,7 +251,10 @@ function Invoke-CoopSchema {
   $state = [string]$info.state
   if ($state -eq 'ok') {
     $c = $info.counts
-    Coop-Ok "schema compare $($info.source.environment) -> $($info.target.environment): $($c.total) difference(s) ($($c.add) add, $($c.alter) alter, $($c.drop) drop, $($c.destructive) destructive)"
+    $sideOf = { param($s) if ($s.set) { "$($s.environment)@$($s.set)" } else { "$($s.environment)" } }
+    $cosmetic = ''
+    if ($c.cosmetic) { $cosmetic = "; $($c.cosmetic) formatting or column-order only" }
+    Coop-Ok "schema compare $(& $sideOf $info.source) -> $(& $sideOf $info.target): $($c.total) difference(s) ($($c.add) add, $($c.alter) alter, $($c.drop) drop, $($c.destructive) destructive$cosmetic)"
     Coop-Info "report: $($info.path)/report.md; script: $($info.path)/deploy.sql ($($info.script.objects) object(s), $($info.script.statements) statement(s) to run, $($info.script.commented) commented out, $($info.script.destructive) destructive)"
     foreach ($ch in @($info.choices)) { if ($ch) { Coop-Info "choice: $ch" } }
     foreach ($n in @($info.notes)) { if ($n) { Coop-Warn "$n" } }
@@ -261,7 +265,9 @@ function Invoke-CoopSchema {
   $hint = switch ($state) {
     'project_unavailable' { ' - no .coop/project.yml above this folder' }
     'pyodbc_unavailable' { ' - pyodbc is missing in the Fabric Python (coop doctor)' }
-    'target_invalid' { " - side $($info.side) is not a ready sql_targets entry in .coop/project.yml" }
+    'target_invalid' { " - side $($info.side) is not a ready sql_targets entry in .coop/project.yml (add it with /setup-project or the Project pane; <env>@<set> needs sql_targets.named.<set>.<env>)" }
+    'launch_identity_missing' { ' - coop was launched when .coop/project.yml named no SQL target or Fabric SQL endpoint, so no sign-in token exists for this launch: fix the file, then exit and start coop again (a new session is not enough)' }
+    'identity_mismatch' { ' - the signed-in Azure account is not the one coop was launched with: sign in with that account (az login) or exit and start coop again' }
     'snapshot_missing' { ' - no committed catalog snapshot; run: coop catalog snapshot' }
     'snapshot_incomplete' { ' - the catalog snapshot is damaged (a listed file is missing or unreadable); run: coop catalog snapshot' }
     'input_invalid' { ' - source and target must be different sides' }
@@ -515,7 +521,8 @@ $(Coop-Bold)Usage$(Coop-Rst)
   coop catalog <cmd>        Committed dev catalog snapshot: snapshot (read the dev/test catalog
                             into the contract's snapshot folder, read-only) | status
   coop schema compare       Compare two sql_targets entries (or the committed snapshot) and write
-                            an ordered promotion script, nothing applied (--source, --target)
+                            an ordered promotion script, nothing applied (--source, --target;
+                            a side is dev|test|prod, or <env>@<set> for a sql_targets.named set)
   coop support [--json]     Collect a sanitized support bundle (health, versions, events)
                             (--incident: incident record; --export PATH: write bundle)
   coop fabric [args]        Pass through to the Microsoft Fabric CLI (fab)

@@ -20,6 +20,11 @@ import {
   projectYamlMapping,
   SQL_TARGET_DISCOVERED_KINDS,
   SQL_TARGET_KINDS,
+  SQL_TARGET_OTHER_ENVIRONMENTS,
+  NAMED_SET_ENVIRONMENTS,
+  NAMED_ENTRY_FIELDS,
+  MAX_NAMED_SETS,
+  SCHEMA_COMPARE_DESTRUCTIVE,
   cleanAnswer,
   clientPlatform,
   contractCreatedNote,
@@ -45,7 +50,9 @@ const MAX_FIELD = 2000;
 const MAX_REPOS = 50;
 
 /** Fields the guardrails read (docs/guardrails-reference.md): the form marks them. */
-export const GUARDRAIL_FIELDS = Object.freeze(["client", "tenantId", "sqlTargetKind", "sqlTargetServer", "sqlTargetDatabase", "repositories.localPath", "commitLists"]);
+export const GUARDRAIL_FIELDS = Object.freeze(["client", "tenantId", "sqlTargetKind", "sqlTargetServer", "sqlTargetDatabase", "sqlTargetProdServer", "sqlTargetProdWorkspaceId", "sqlTargetProdItemId", "sqlTargetProdEndpointId", "sqlTargetProdDatabase", "repositories.localPath", "commitLists"]);
+/** The per-environment target fields the form carries for test and prod (A1). */
+export const TARGET_ENV_FIELDS = Object.freeze(["Database", "Server", "WorkspaceId", "ItemId", "EndpointId"]);
 
 const hash = (text) => createHash("sha256").update(text).digest("hex");
 
@@ -135,6 +142,9 @@ export function loadProject(cwd, { env } = {}) {
     endpointTypes: [...SQL_ENDPOINT_TYPES],
     roles: [...ROLES],
     guardrailFields: [...GUARDRAIL_FIELDS],
+    namedEnvironments: [...NAMED_SET_ENVIRONMENTS],
+    destructiveChoices: [...SCHEMA_COMPARE_DESTRUCTIVE],
+    maxNamedSets: MAX_NAMED_SETS,
     token: hash(original),
   };
 }
@@ -205,7 +215,40 @@ export function settingsFromForm(input, base, existingNames) {
   if (s.sqlTargetKind) {
     if (!SQL_TARGET_DISCOVERED_KINDS.has(s.sqlTargetKind)) take("sqlTargetServer");
     take("sqlTargetDatabase");
+    // The test and prod entries (A1): the same kind as dev; written only when a
+    // database is given, like the wizard.
+    for (const { prefix } of SQL_TARGET_OTHER_ENVIRONMENTS) {
+      take(`${prefix}Database`);
+      if (SQL_TARGET_DISCOVERED_KINDS.has(s.sqlTargetKind)) {
+        take(`${prefix}WorkspaceId`);
+        take(`${prefix}ItemId`);
+        if (s.sqlTargetKind === "fabric_lakehouse") take(`${prefix}EndpointId`);
+      } else {
+        take(`${prefix}Server`);
+        if (s[`${prefix}Server`]) s[`${prefix}Server`] = s[`${prefix}Server`].toLowerCase();
+      }
+    }
   }
+  // Named target sets (a second engine beside the main one): rebuilt field by
+  // field from the allowlist, like repositories; a set the form drops stays in
+  // the file (the writer never removes an entry).
+  const sets = Array.isArray(input && input.namedTargets) ? input.namedTargets.slice(0, MAX_NAMED_SETS) : null;
+  if (sets) {
+    s.namedTargets = sets.filter((raw) => raw && typeof raw === "object").map((raw) => {
+      const set = { name: (field(raw, "name") || "").toLowerCase(), kind: (field(raw, "kind") || "").toLowerCase() };
+      for (const env of NAMED_SET_ENVIRONMENTS) {
+        const source = raw[env] && typeof raw[env] === "object" ? raw[env] : {};
+        set[env] = Object.fromEntries(NAMED_ENTRY_FIELDS.map(([key]) => [key, field(source, key) || ""]));
+        if (set[env].server) set[env].server = set[env].server.toLowerCase();
+      }
+      return set;
+    });
+  }
+  // Schema compare defaults (schema_compare:), kind or not.
+  take("schemaCompareExclude");
+  take("schemaCompareRebuild");
+  const destructive = field(input, "schemaCompareDestructive");
+  if (destructive !== undefined) s.schemaCompareDestructive = destructive.toLowerCase();
 
   if (typeof input.tabularEditorEnabled === "boolean") s.tabularEditorEnabled = input.tabularEditorEnabled;
   if (s.tabularEditorEnabled) {

@@ -439,7 +439,7 @@ with (
     ),
 ):
     os.environ.pop(fsq.wmcp.FABRIC_TOKEN_ENV, None)
-    assert fsq.execute({"query": QUERY}, cwd=project2) == {"ok": False, "state": "identity_mismatch"}
+    assert fsq.execute({"query": QUERY}, cwd=project2) == {"ok": False, "state": "launch_identity_missing"}
 
 # SQ2: a contract `sql_targets:` section drives the executor instead of the
 # managed Fabric target. Azure SQL connects straight to the named host: no
