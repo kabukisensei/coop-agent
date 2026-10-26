@@ -87,8 +87,8 @@ try {
   # --- doctor carries the row -----------------------------------------------------------
   $doctor = [System.IO.File]::ReadAllText((Join-Path $root 'scripts\doctor.ps1'))
   if ($doctor.Contains('pilock.js') -and $doctor.Contains('config/pi-lock.json')) { Ok 'doctor.ps1 carries the Pi dependency tree row' } else { Ko 'doctor.ps1 must check config/pi-lock.json' }
-  $matrix = [System.IO.File]::ReadAllText((Join-Path $root 'scripts\test-pi-matrix.ps1'))
-  if ($matrix.Contains('pilock') -and $matrix -match 'apply \$PiPackageDir') { Ok 'the Pi matrix applies the lock to the Pi it installs' } else { Ko 'test-pi-matrix.ps1 must apply config/pi-lock.json' }
+  $stage = [System.IO.File]::ReadAllText((Join-Path $root 'desktop\scripts\build-installer.mjs'))
+  if ($stage.Contains('pilock.js') -and $stage -match '"apply", dirname\(piPkg\)' -and $stage -match '"matches", dirname\(piPkg\)') { Ok 'the installer stage applies and checks the lock on the Pi it bundles' } else { Ko 'desktop/scripts/build-installer.mjs must apply config/pi-lock.json to the staged Pi' }
 }
 finally {
   Restore-Env $saved
