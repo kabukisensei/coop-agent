@@ -1107,7 +1107,10 @@ drift away from the tested fleet. The daily **coop-agent is N commit(s) behind r
 remains: it is the safe prompt to run `coop update`, which advances the whole manifest
 together. It appears only when a newer release is waiting. Maintainers debugging an
 upstream release can temporarily restore Pi's notice with
-`COOP_SHOW_UPSTREAM_UPDATE_NOTICES=1`.
+`COOP_SHOW_UPSTREAM_UPDATE_NOTICES=1`. A launch runs the pinned Pi only: when the
+`pi` on PATH is another version (a hand `pi update` or `npm install -g`), coop
+stops with the pin-back command (`coop update`) instead of starting it; a
+maintainer running an `--edge` Pi on purpose sets `COOP_ALLOW_UNPINNED_PI=1`.
 
 ---
 

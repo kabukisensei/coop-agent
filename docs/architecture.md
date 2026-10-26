@@ -52,10 +52,13 @@ show all of it. Task logs stay in the repository.
 1. **`coop` (orchestrator).** `bin/coop.ps1` resolves `COOP_ROOT`, dot-sources
    `lib/common.ps1`, exports `PI_CODING_AGENT_DIR` to point Pi at coop's isolated
    agent dir (`~/.coop/agent`; see **Isolation** above), runs a **launch-time
-   extension-skew preflight** (checks the Pi agent against every installed
-   extension's `@earendil-works/pi-ai` requirement — aborts with clear guidance if
-   the agent is too old for an installed extension, and auto-realigns a merely-stale
-   extension tree; bypass with `COOP_SKIP_EXT_CHECK=1`), runs the **Azure sign-in
+   extension-skew preflight** (refuses a `pi` that is not the release manifest's
+   pin, with the pin-back command, so the extension tree never follows an unpinned
+   Pi — `COOP_ALLOW_UNPINNED_PI=1` for a deliberate `--edge` Pi; checks the Pi
+   agent against every installed extension's `@earendil-works/pi-ai` requirement —
+   aborts with clear guidance if the agent is too old for an installed extension,
+   and auto-realigns a merely-stale extension tree; bypass the whole preflight with
+   `COOP_SKIP_EXT_CHECK=1`), runs the **Azure sign-in
    preflight** (client tenant from the project's `fabric.tenant_id`, else
    `~/.coop/config` `azure.tenant_id`; checks the Fabric token, then the Power BI
    token; in an interactive console an authentication failure opens a bounded

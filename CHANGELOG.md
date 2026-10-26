@@ -22,6 +22,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   PowerShell twin of the release (`Invoke-CoopRelease` and its gates, ~340
   lines) is gone: `coop release` on Windows forwards to Git Bash.
 
+## [0.38.6] — 2026-10-26
+
 ### Added
 
 - **Schema compare from the deployment call (2026-10-23).** `/setup-project` and
@@ -45,8 +47,41 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   (walk a client's `.coop/runbooks/<name>.md` step by step, `(manual)` /
   `(coop)` / `(check)` steps, never reordered).
 
+### Changed
+
+- **Tool pins:** coop-sql-source-control 1.0.7 (a catalog query that fails for
+  indexes, keys, checks, foreign keys, defaults, identity, computed columns,
+  collation or schemas holds that object type out of the comparison instead of
+  removing valid objects from the tracked schema; migration ids over 200
+  characters are refused before any migration runs), coop-schema-compare 0.1.7
+  (the #20, #21 and #22 fixes mirrored under Fixed below, plus Lakehouse `fabric://`
+  resolution and the formatting-only and column-order-only labels) and
+  coop-data-doc 1.4.4 (`GO` inside a comment, string literal or bracketed name
+  no longer splits a batch; `impact --git` reads the baseline from the git
+  worktree root).
+
 ### Fixed
 
+- **`schema_compare` accepts a named target set's environment.** The guardrail
+  that vets the native tool's sides still knew only `dev`, `test`, `prod`,
+  `snapshot` and `repo`, so every `<env>@<set>` side (`dev@lakehouse`) was
+  blocked before any connection, while `coop schema compare` took it (found by
+  the v0.38.6 dev VM check). The guardrail now reads the project file's
+  `sql_targets.named` sets and accepts `<env>@<set>` when that set declares that
+  environment, classified exactly as its environment: `prod@<set>` is production,
+  a read on either side like `prod`, audited with the pair as named. A set the
+  file does not declare, or an environment the set lacks, stays blocked. The
+  report's side table now names the set with the environment (`dev@lakehouse`,
+  not `dev`).
+- **A launch runs the pinned Pi only.** The manifest pin acted in `coop install`
+  and `coop update`, but a launch started whatever `pi` was first on PATH, and
+  its skew repair then aligned the extension tree to that Pi's version: after a
+  hand `pi update` to 1.4.0 on the dev VM, a checkout launch ran Pi 1.4.0 and
+  moved the shared `~/.coop/agent` tree to 1.4.0, which the installed coop moved
+  back to 1.2.0 on its next launch. The preflight now refuses a Pi that is not
+  the pin, naming the pin-back command (`coop update`); a maintainer running an
+  `--edge` Pi on purpose sets `COOP_ALLOW_UNPINNED_PI=1`. The window package
+  was never affected: it runs its bundled Pi first on PATH.
 - **A session with no launch sign-in token says so.** coop launched when the
   project file named no SQL target reported `identity_mismatch` on every native
   SQL call; it is now `launch_identity_missing`, and the tool text, `coop
@@ -82,6 +117,32 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   --force` keeps the old interpreter). `coop doctor` shows the mismatch as a
   warning. Troubleshooting entry 7 covers it and the shared account tools a
   dev checkout's `update --edge` moves.
+- **A move to coop's Python that cannot be completed keeps the working tool**
+  (#441). The reinstall above removed the environment first, so an install
+  that then failed (offline, an index outage, a dependency the interpreter
+  cannot take) left no tool at all. The replacement is now proven first under
+  a suffix (`pipx install --suffix _coopnext --python <coop's>`, its own
+  environment, removed again) before the old one goes; when the probe fails
+  the tool stays as it was and the unit reports `could not prepare`. Should
+  the final install still fail, the tool is put back on its old interpreter.
+- **The native SQL source reader no longer splits a batch at a `GO` line
+  inside a string literal, a quoted name or a comment** (#442): a view holding
+  a multi-line string with a line `GO` kept only its first fragment, which the
+  schema compare then planned as a cut, unterminated definition. The batch
+  splitter is lexical now (`sql_source.segments`); real separators, `go 2`
+  and `GO;` included, still split.
+- **A live column list cut at the schema compare's cap is unknown, never a
+  DROP COLUMN** (#443): the reader marked the catalog partial but built every
+  table from the retained prefix, so a complete target got `DROP COLUMN` for
+  the columns the cap lost. Every table on such a side now compares as
+  `unknown` (a snapshot taken from it stays unknown), and a source-only table
+  with a cut shape is not offered as a runnable CREATE.
+- **A space inside a string literal or a quoted name is a change, not
+  formatting** (coop-schema-compare #20, mirrored in the native compare): the
+  formatting-only label folded repeated spaces across the whole flattened
+  definition, literals included, so `N'a  b'` against `N'a b'` was labelled
+  cosmetic. Whitespace and comments now fold run by run, outside literals and
+  quoted names only.
 - **`sql_source commit` no longer pulls the working tree before sqlsc runs
   (#435).** coop still fetches and checks that the branch can fast-forward
   (before the approval and again right before the commit), but the pull itself
