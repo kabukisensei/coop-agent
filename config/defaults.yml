@@ -1,63 +1,18 @@
-# coop-agent human-readable behavior defaults.
+# coop-agent behavior defaults: only keys something reads live here.
 #
 # Members and pins: config/release-manifest.json (the one manifest: Pi, the Pi
 # extensions, the Coop tools, the Fabric CLI and its runtime libraries, the npm
-# authoring tools and the MCP packages). `coop install`, `coop update`, `coop
-# sync`, `coop doctor`, `coop release` and the fleet digest all read it; this file
-# carries no second copy of any version or member list.
+# authoring tools and the MCP packages). This file carries no second copy of any
+# version or member list. The MCP policy is docs/tool-contract.md and
+# lib/mcp_config.py; the Fabric CLI notes (the `fab` collision, fabric-cicd as a
+# library) are docs/troubleshooting.md and README.md.
 
-agent:
-  name: coop
-  brand: Cooptimize
-  built_on: "@earendil-works/pi-coding-agent"   # Pi — coop is a layer, never a fork
-
-# Microsoft Fabric CLI (`fab`, the pipx package ms-fabric-cli in the manifest).
-# NOTE: installing it makes `fab` the Microsoft Fabric CLI. A Homebrew formula
-# named `fabric` ships a DIFFERENT `fab` (Python SSH automation); `coop doctor`
-# detects the clash (and the Python-Fabric/Paramiko collision) and warns. See
-# docs/troubleshooting.md and README.
-#
-# fabric-cicd is a Python LIBRARY (no CLI), injected INTO the Fabric CLI's
-# environment via `pipx inject ms-fabric-cli fabric-cicd`, so `fabric_cicd` is
-# importable there. Used as `import fabric_cicd` in deployment scripts
-# (validate-only by default), NOT a `fabric-cicd` command. `coop doctor` checks
-# it's importable.
-
-# Optional cross-platform CLI (https://tabulareditor.com/product/features-and-tools/tabular-editor-cli)
-tabular_editor_cli:
-  note: "BPA reviews run through the cross-platform te CLI: download from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli (requires a Tabular Editor account during the preview), place on PATH or set tools.tabular_editor_cli.executable_path in .coop/project.yml, and run `te auth login` once."
-
-# MCP servers coop preloads — all optional (coop runs without them). Placed non-
-# destructively into coop's isolated agent dir (~/.coop/agent/mcp-adapter.json) by `coop sync`
-# — never touches your personal `pi`'s MCP. NOTE: fabric/microsoft-learn are read-only
-# over CLIENT data (fabric *by policy* — its MCP has no server-side switch; see
-# docs/guardrails.md). powerbi-modeling-mcp runs read-write so approved semantic model
-# edits can land; the guardrail asks before each edit (#159). powerbi-mcp-server is retired: it ignores
-# --readonly and exposes refresh_dataset, a write (#93); doctor warns if it is present.
-# The Warehouse SQL endpoint MCP is a separate
-# managed remote HTTP server and every SQL call is approval-gated.
-mcp:
-  generator: lib/mcp_config.py
-  install_target: "~/.coop/agent/mcp-adapter.json"
-  servers:
-    - name: fabric          # @microsoft/fabric-mcp (AzureCliCredential)
-      mode: read-only       # by policy — Fabric MCP has no server-side read-only switch
-    - name: fabric-sqlendpoint # https://api.fabric.microsoft.com/v1/mcp/dataPlane/... direct HTTP (adapter-native)
-      mode: approval-gated-sql
-    - name: powerbi-modeling-mcp # @microsoft/powerbi-modeling-mcp --start --readwrite --accept-eula
-      mode: approval-gated-edits  # reads run; edits ask; deletes/imports/deploys/production always ask
-    - name: microsoft-learn # learn.microsoft.com/api/mcp direct HTTP, no bridge package (always-current docs)
-      mode: read-only
-
-# Branded resources loaded at launch (see bin/coop.ps1; scripts/context-budget.py
-# reads these keys).
+# Branded resources scripts/context-budget.py measures (bin/coop.ps1 resolves
+# the launch resources itself).
 resources:
   skills: skills
   prompts: prompts
-  theme: themes/cooptimize.json
   guardrails: docs/guardrails.md
-  vibes: vibes
-  splash: extensions/coop-powerline/assets/splash.ansi
 
 # The oldest Pi whose extension API coop's extensions still work with. `coop doctor`
 # warns when the installed Pi is older; the Pi coop ships with is the manifest's
@@ -65,10 +20,5 @@ resources:
 tested_with:
   pi_min: "0.79.0"
 
-# Cooptimize brand palette (sampled from the color logo).
-brand_colors:
-  navy:   "#00416B"
-  forest: "#42783C"
-  olive:  "#82AA43"
-  lime:   "#B2D235"
-  red:    "#EF412D"
+# fleet.publish_dir may be set here or in ~/.coop/config for `coop doctor --publish`
+# and the fleet digest; unset by default.
