@@ -1036,7 +1036,7 @@ assert [b.strip() for b in sql_source.split_batches("CREATE VIEW a AS SELECT 1\n
 with tempfile.TemporaryDirectory() as tmp:
     for _side, _tail in (("a", "last"), ("b", "LAST")):
         (Path(tmp) / _side).mkdir()
-        (Path(tmp) / _side / "v.sql").write_text(f"CREATE VIEW dbo.v AS SELECT N'first\r\nGO\r\n{_tail}' AS value;\r\nGO\r\n", encoding="utf-8")
+        (Path(tmp) / _side / "v.sql").write_bytes(f"CREATE VIEW dbo.v AS SELECT N'first\r\nGO\r\n{_tail}' AS value;\r\nGO\r\n".encode("utf-8"))
     _a = sc.read_repo(Path(tmp) / "a")
     _b = sc.read_repo(Path(tmp) / "b")
     assert _a.modules[("dbo", "v")][1] == "CREATE VIEW dbo.v AS SELECT N'first\nGO\nlast' AS value;", _a.modules
