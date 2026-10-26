@@ -134,7 +134,7 @@ for (const event of mutations) await dispatch(event, true);
 assert.equal(executions, beforeMutations, "no mutation reaches even the inert executor");
 await dispatch({ toolName: "mcp__fabric__get_schema", input: { environment: "production" } }, false);
 await dispatch({ toolName: "mcp__fabric__executeSQL", input: { sql: "DELETE FROM dbo.Customer" } }, true);
-await commands.get("coop-live-read").handler("revoke", runner.createContext());
+await commands.get("approvals").handler("revoke", runner.createContext());
 await dispatch(read(), false);
 await runner.emit({ type: "session_shutdown", reason: "switch" });
 await dispatch(read(), false);

@@ -201,9 +201,7 @@ dialogs as cards and lists.
 | `/setup-docs` | coop-tools | Pi | The docs wizard's questions, or a notice when coop-data-doc lacks the native wizard. |
 | `/impact` | coop-tools | Pi | The session's lineage context (`/impact <schema.name>` for one object), shown in the conversation. |
 | `/standards-status` | coop-tools | Pi | A notice and the JSON status in the conversation. The Standards pane (Ctrl+Shift+S) shows the same status's domains and its team knowledge sources (`cooptimize/incremental-bi`, `cooptimize/coop-team-knowledge`), the notes of each clone readable one at a time; the terminal reads those clones through the team-knowledge skill's search. |
-| `/coop-live-read` | coop-tools | Pi | The live-read grant, or its revocation (`/coop-live-read revoke`). |
-| `/coop-approvals` | coop-tools | Pi | Edit approvals (`status`, `revoke`). |
-| `/coop-guardrails` | coop-guardrails | Pi | What the guardrails enforce. |
+| `/approvals` | coop-guardrails | Pi | What this session may do without asking (edit approvals, the live-read grant, the production unlock, the last decisions); `/approvals revoke` ends the session grants. |
 | `/coop-vibe` | coop-powerline | Pi | A vibe tip, as a notice. |
 | `/coop-splash` | coop-powerline | Pi | A notice; the window's own header and empty state stand in for the terminal splash. |
 | `/mcp` | pi-mcp-adapter | Pi | The MCP status report in the conversation. The server panel (enable, disable, reconnect) is a terminal screen: use Open in terminal. |
@@ -320,7 +318,7 @@ terminal capability with its phone status:
 
 | Capability | Status | What closes it |
 | --- | --- | --- |
-| Extension commands, prompt templates and skills (`/start`, `/standards-status`, `/todos`, `/memory-*`, `/rename`, `/websearch`, `/search`, `/coop-approvals`, `/coop-live-read`, prompt templates such as `/spec-first`, `/skill:name`) | phone (MC6) | Typing `/` lists the commands Pi returned (`get_commands`) and sends the ones the window maps to **Pi** as typed; their dialogs and notices reach the phone. `/coop-approvals` and `/coop-live-read` only show or revoke, so they narrow access. |
+| Extension commands, prompt templates and skills (`/start`, `/standards-status`, `/todos`, `/memory-*`, `/rename`, `/websearch`, `/search`, `/approvals`, prompt templates such as `/spec-first`, `/skill:name`) | phone (MC6) | Typing `/` lists the commands Pi returned (`get_commands`) and sends the ones the window maps to **Pi** as typed; their dialogs and notices reach the phone. `/approvals` only shows or revokes, so it narrows access. |
 | Steer while coop works (Enter) and pull back queued messages (`clear_queue`, Alt+Up) | phone (MC6) | Send now and Queue while coop works; the queued messages show above the text box, and Edit queued brings them back into it. |
 | `/model`, `/thinking` (and Ctrl+P, Shift+Tab) | phone (MC7) | The menu's Model and Thinking sheets (`get_available_models`, `set_model`, `set_thinking_level`); a model must be one Pi lists. Typing `/model` or `/thinking` points to the menu. |
 | `/compact`, `/session`, `/name`, `/copy` | phone (MC7) | The menu's Compact (with optional instructions, when coop is idle), Session details (`get_state`, `get_session_stats`, without file paths) and Name this session sheets, and Copy under every answer. |
@@ -341,7 +339,7 @@ terminal capability with its phone status:
 | Capability | Status | Why |
 | --- | --- | --- |
 | Approving a production action (`PRODUCTION` confirms, the G1 production-write unlock) | desk only | MC1 contract: production stays at the desk; the phone can decline. |
-| Options that allow more than the one action ("Allow … for this session", "always", "don't ask again") and `/trust` | desk only | MC1 contract: the phone answers for the exact action in front of it. Grants only ever come from those options; `/coop-approvals` and `/coop-live-read` show or revoke and work on the phone (MC6). |
+| Options that allow more than the one action ("Allow … for this session", "always", "don't ask again") and `/trust` | desk only | MC1 contract: the phone answers for the exact action in front of it. Grants only ever come from those options; `/approvals` shows or revokes and works on the phone (MC6). |
 | `!command` and `!!command` (a shell on the VM) | desk only | MC1 contract, confirmed by Aaron 2026-10-06 03:34: the phone is not a remote shell; coop's own tools still run commands under the guardrails when asked in chat. |
 
 ### Not on a phone

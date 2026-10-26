@@ -84,16 +84,16 @@ show all of it. Task logs stay in the repository.
    - **Skills** — `skills/`, including `coop-workflow` (the principles-first
      Cooptimize workflow) that the task skills run inside: `data-doc-analysis`, `power-bi-impact-analysis`,
      `fabric-workspace-review`, `fabric-apps` (builds and deploys a Fabric App
-     with Rayfin to the dev workspace), `daily-logger`, `setup-docs` (the in-agent
-     coop-data-doc wizard driven via `ask-user-question` + coop-data-doc's
-     non-interactive commands), and `git-helper` (drafts Conventional-Commits
+     with Rayfin to the dev workspace), `daily-logger`, and `git-helper` (drafts Conventional-Commits
      messages + PR descriptions from the diff — drafts only, never commits) —
      plus a subordinate, pinned official Microsoft skills catalog refreshed by
      `coop sync` and resolved locally at launch.
    - **Prompt templates** — `prompts/` (per task skill: `discovery`,
-     `impact-analysis`, `semantic-model-review`, `fabric-architecture-review`,
-     `setup-docs`, `daily-log`, `weekly-log`; plus workflow prompts `spec-first`,
-     `annotate`, `handoff`, and `pr-description`).
+     `semantic-model-review`, `fabric-architecture-review`; plus workflow prompts
+     `spec-first`, `annotate`, `handoff`, and `pr-description`; the native
+     `/setup-docs` and `/impact` commands and the `daily-logger` skill cover what
+     the retired `setup-docs`, `impact-analysis`, `daily-log` and `weekly-log`
+     prompts restated).
    - **Theme** — `themes/cooptimize.json` (brand palette: navy `#00416B`,
      forest `#42783C`, olive `#82AA43`, lime `#B2D235`, red `#EF412D`).
    - **`coop-powerline` extension** — `extensions/coop-powerline/`: coop's OWN

@@ -28,6 +28,26 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   (walk a client's `.coop/runbooks/<name>.md` step by step, `(manual)` /
   `(coop)` / `(check)` steps, never reordered).
 
+### Changed
+
+- **One `/approvals` command (suite review 2026-10-26, pick 9).** `/approvals`
+  shows what this session may do without asking: the edit approvals, the
+  live-read grant, the production unlock, whether enforcement is on, the audit
+  log path and the last decisions; `/approvals revoke` ends the session's own
+  grants. It replaces `/coop-approvals`, `/coop-live-read` and
+  `/coop-guardrails`, three commands for one question.
+
+### Removed
+
+- **Prompt templates the native commands and skills already cover (suite
+  review 2026-10-26, pick 9).** `/setup-docs` is a native wizard, so the
+  `setup-docs` prompt and skill (which taught the model a transport the
+  extension speaks itself) are gone; `/impact` and the `coop-workflow` skill
+  cover the `impact-analysis` prompt; the `daily-logger` skill covers the
+  `daily-log` and `weekly-log` prompts, which only restated it (the Start menu's
+  log item asks for today's log or the weekly roll-up in words). Fewer templates
+  in the slash-command list and in every session's context budget.
+
 ### Fixed
 
 - **A launch runs the pinned Pi only.** The manifest pin acted in `coop install`
