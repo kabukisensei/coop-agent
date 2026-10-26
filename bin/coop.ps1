@@ -140,14 +140,15 @@ function Invoke-CoopTeamai {
 }
 
 # coop catalog snapshot|status (master plan SQ9): the committed dev catalog
-# snapshot, written by lib/catalog_snapshot.py over the same read-only
-# dev/test connection path as the native SQL tools (never production). The
+# snapshot, written by the pinned coop-schema-compare through
+# lib/catalog_snapshot.py on the same read-only dev/test target as the native
+# SQL tools (never production). The
 # launch identity token is minted the way a session mints it, so the helper's
 # tenant pinning holds outside a session too. Prints the helper's summary.
 function Invoke-CoopCatalog {
   param([string[]]$Rest)
-  # The snapshot reads the warehouse through pyodbc, which lives in the Fabric
-  # Python (the session's SQL tools use the same one); status needs none.
+  # The helper resolves the target and the token the way a session does and
+  # hands them to coop-schema-compare; status needs no connection.
   $py = Get-CoopFabricPython
   if (-not $py) { $py = Get-CoopPython }
   if (-not $py) { Coop-Die 'python3 is required for coop catalog' }
@@ -167,7 +168,7 @@ function Invoke-CoopCatalog {
   if ($cmd -eq 'snapshot') { Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue }
   $info = $null
   try { if ($raw) { $info = $raw | ConvertFrom-Json } } catch { $info = $null }
-  if (-not $info) { Coop-Die "coop catalog $cmd`: the helper printed no result (is python3 the Fabric Python with pyodbc?)" }
+  if (-not $info) { Coop-Die "coop catalog $cmd`: the helper printed no result (is python3 available?)" }
   $state = [string]$info.state
   if ($state -eq 'ok' -and $cmd -eq 'snapshot') {
     $o = $info.objects
@@ -186,7 +187,9 @@ function Invoke-CoopCatalog {
     $hint = switch ($state) {
       'output_not_snapshot' { " — $($info.path) holds files that are not a coop snapshot; move them or set catalog.path in .coop/project.yml" }
       'project_unavailable' { ' — no .coop/project.yml above this folder' }
-      'pyodbc_unavailable' { ' — pyodbc is missing in the Fabric Python (coop doctor)' }
+      'pyodbc_unavailable' { ' — pyodbc is missing in the coop-schema-compare install (coop doctor)' }
+      'tool_unavailable' { ' — the coop-schema-compare command is not installed (coop update, or coop doctor for the row that names it)' }
+      'tool_timeout' { ' — coop-schema-compare did not answer within its time limit; try again' }
       'target_not_dev_or_test' { ' — the contract default must be a dev or test entry; production is never snapshotted' }
       default { '' }
     }
@@ -196,10 +199,11 @@ function Invoke-CoopCatalog {
 }
 
 # coop schema compare [--source dev|test|prod|snapshot] [--target dev|test|prod]
-# (master plan SQ10): the deterministic schema compare, written by
-# lib/schema_compare.py over the same read-only connection path as the native SQL
-# tools (two catalog reads, production included, since reads need no approval),
-# into .coop/schema-compare/<source>-to-<target>/report.md and deploy.sql. Nothing
+# (master plan SQ10): the deterministic schema compare, run by the pinned
+# coop-schema-compare through lib/schema_compare.py, which resolves each live side
+# as the native SQL tools do (two catalog reads, production included, since reads
+# need no approval), into .coop/schema-compare/<source>-to-<target>/report.md and
+# deploy.sql. Nothing
 # is applied to either side; the script is for a person to read and carry over.
 function Invoke-CoopSchema {
   param([string[]]$Rest)
@@ -247,7 +251,7 @@ function Invoke-CoopSchema {
   Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue
   $info = $null
   try { if ($raw) { $info = $raw | ConvertFrom-Json } } catch { $info = $null }
-  if (-not $info) { Coop-Die 'coop schema compare: the helper printed no result (is python3 the Fabric Python with pyodbc?)' }
+  if (-not $info) { Coop-Die 'coop schema compare: the helper printed no result (is python3 available?)' }
   $state = [string]$info.state
   if ($state -eq 'ok') {
     $c = $info.counts
@@ -264,7 +268,9 @@ function Invoke-CoopSchema {
   }
   $hint = switch ($state) {
     'project_unavailable' { ' - no .coop/project.yml above this folder' }
-    'pyodbc_unavailable' { ' - pyodbc is missing in the Fabric Python (coop doctor)' }
+    'pyodbc_unavailable' { ' - pyodbc is missing in the coop-schema-compare install (coop doctor)' }
+    'tool_unavailable' { ' - the coop-schema-compare command is not installed (coop update, or coop doctor for the row that names it)' }
+    'tool_timeout' { ' - coop-schema-compare did not answer within its time limit; try again or narrow the compare with --schema' }
     'target_invalid' { " - side $($info.side) is not a ready sql_targets entry in .coop/project.yml (add it with /setup-project or the Project pane; <env>@<set> needs sql_targets.named.<set>.<env>)" }
     'launch_identity_missing' { ' - coop was launched when .coop/project.yml named no SQL target or Fabric SQL endpoint, so no sign-in token exists for this launch: fix the file, then exit and start coop again (a new session is not enough)' }
     'identity_mismatch' { ' - the signed-in Azure account is not the one coop was launched with: sign in with that account (az login) or exit and start coop again' }
