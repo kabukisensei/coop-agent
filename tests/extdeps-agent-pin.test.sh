@@ -56,5 +56,39 @@ grep -q "_extdeps.py') align \$AgentDir \$piVer" "$ROOT/lib/common.ps1" \
   && ok "Sync-CoopExtensionPins pins peers before its npm install" \
   || ko "lib/common.ps1 convergence no longer pins peers before npm install"
 
+# Exit codes and the report line (moved here from the ci.yml `shell` job, suite
+# review 2026-10-26). NB: under `set -e` capture the intentionally non-zero exit
+# codes with `|| rc=$?` (a list context, exempt from set -e).
+rc=0; "$PY" "$ROOT/lib/_extdeps.py" align "$TMP/no-such-dir" 0.0.0 --check >/dev/null 2>&1 || rc=$?
+[ "$rc" -eq 2 ] && ok "no extension tree -> exit 2 (nothing to do)" || ko "a missing tree returned rc $rc, not 2"
+rc=0; "$PY" "$ROOT/lib/_extdeps.py" >/dev/null 2>&1 || rc=$?
+[ "$rc" -eq 3 ] && ok "bad usage -> exit 3" || ko "bad usage returned rc $rc, not 3"
+
+# write + report on a fixture: overrides written, skew reported (exit 10)
+d="$TMP/skew"; mkdir -p "$d/npm/node_modules/@earendil-works/pi-ai" "$d/npm/node_modules/@earendil-works/pi-tui"
+printf '{"version":"0.74.2"}' > "$d/npm/node_modules/@earendil-works/pi-ai/package.json"
+printf '{"version":"0.74.2"}' > "$d/npm/node_modules/@earendil-works/pi-tui/package.json"
+printf '{"name":"pi-extensions","dependencies":{}}' > "$d/npm/package.json"
+rc=0; out="$("$PY" "$ROOT/lib/_extdeps.py" align "$d" 0.80.2)" || rc=$?
+[ "$rc" -eq 10 ] && ok "a tree behind the agent is skew (rc 10)" || ko "a 0.74.2 tree under agent 0.80.2 returned rc $rc, not 10"
+# 8-field line: tree_ai tree_tui ovr_ai ovr_tui changed aligned required_floor offending_ext
+# (last two are "-" here: nothing imposes a pi-ai floor, so the agent is not "too old")
+[ "$out" = "0.74.2 0.74.2 0.80.2 0.80.2 1 0 - -" ] && ok "the report line names tree, override, changed and aligned" || ko "unexpected report line: '$out'"
+"$PY" -c 'import json,sys; o=json.load(open(sys.argv[1]))["overrides"]; assert o["@earendil-works/pi-ai"]=="0.80.2" and o["@earendil-works/pi-tui"]=="0.80.2"' "$d/npm/package.json" \
+  && ok "align writes the pi-ai and pi-tui overrides" || ko "align did not write the pi-ai/pi-tui overrides"
+
+# agent too old for an installed extension -> exit 11, names the offending ext + floor
+e="$TMP/floor"; mkdir -p "$e/npm/node_modules/@earendil-works/pi-ai" "$e/npm/node_modules/@earendil-works/pi-tui" "$e/npm/node_modules/@earendil-works/pi-coding-agent" "$e/npm/node_modules/pi-hermes-memory"
+printf '{"version":"0.80.2"}' > "$e/npm/node_modules/@earendil-works/pi-ai/package.json"
+printf '{"version":"0.80.2"}' > "$e/npm/node_modules/@earendil-works/pi-tui/package.json"
+printf '{"name":"pi-hermes-memory","dependencies":{"@earendil-works/pi-ai":"^0.99.0"}}' > "$e/npm/node_modules/pi-hermes-memory/package.json"
+# npm can auto-install a newer peer host at the top level. It is not an
+# extension and must not override the direct extension's requirement.
+printf '{"name":"@earendil-works/pi-coding-agent","dependencies":{"@earendil-works/pi-ai":"^0.99.1"}}' > "$e/npm/node_modules/@earendil-works/pi-coding-agent/package.json"
+printf '{"name":"pi-extensions","dependencies":{"pi-hermes-memory":"0.0.0"}}' > "$e/npm/package.json"
+rc=0; out="$("$PY" "$ROOT/lib/_extdeps.py" align "$e" 0.80.2 --check)" || rc=$?
+[ "$rc" -eq 11 ] && ok "an extension needing a newer pi-ai than the agent -> exit 11" || ko "the floor case returned rc $rc, not 11"
+[ "$out" = "0.80.2 0.80.2 - - 0 1 0.99.0 pi-hermes-memory" ] && ok "the report line names the floor and the offending extension" || ko "unexpected floor report line: '$out'"
+
 if [ "$fail" -ne 0 ]; then echo "  ✗ extdeps agent-pin tests FAILED"; exit 1; fi
 echo "  extdeps agent-pin tests passed"

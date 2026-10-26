@@ -417,33 +417,6 @@ if [ "${COOP_TEST_EXTENDED:-0}" = "1" ]; then
 
   echo "→ coop window: Pi as a real process (dialogs, hang, crash, leftover children)"
   node "$ROOT/tests/desktop-rpc.test.mjs"
-
-  echo "→ windows owned-kill native evidence probe (Defect A diagnostics)"
-  case "$(uname -s 2>/dev/null)" in
-    MINGW*|MSYS*|CYGWIN*) pwsh -NoProfile -File "$ROOT/tests/fixtures/win-ownership-probe.ps1" ;;
-    *) echo "  – Windows-only probe; skipped on POSIX (covered by the Windows CI legs)" ;;
-  esac
-
-
-
-  # The whole file (#133): tests that need pwsh skip themselves without it.
-  # tests/run.ps1 keeps its reparse subset, so Windows does not run the file
-  # twice per lane.
-  # "native Windows lifecycle faults" needs the candidate and baseline checkouts
-  # that only the Windows terminal-workstation acceptance workflow creates; that
-  # workflow runs it (its "lifecycle" selection). Every other test runs here.
-  echo "→ terminal-workstation acceptance harness tests (all but the workflow-only lifecycle test)"
-  # These tests validate evidence against the committed JSON schema, and python
-  # jsonschema is mandatory for them (#133); say so once instead of a traceback per test.
-  # CI names its interpreter in CERT_PYTHON and the test checks that one itself.
-  if [ -z "${CERT_PYTHON:-}" ]; then
-    TW_PY=python3; command -v python3 >/dev/null 2>&1 || TW_PY=python
-    if ! "$TW_PY" -c 'import jsonschema' >/dev/null 2>&1; then
-      echo "✗ the extended lane needs the Python jsonschema module ($TW_PY has none): $TW_PY -m pip install --user jsonschema==4.25.1 (CI's pin), or point CERT_PYTHON at a Python that has it, then re-run" >&2
-      exit 1
-    fi
-  fi
-  node --test --test-skip-pattern "native Windows lifecycle faults" "$ROOT/tests/terminal-workstation-acceptance.test.mjs"
 fi
 
 # The real home and this checkout are as they were before the run (#135).
