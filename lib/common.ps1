@@ -261,23 +261,58 @@ function Repair-CoopOlderCloneShortcuts([string]$CloneRoot) {
 # over an older window: its uninstaller removed the `coop` link and "coop
 # (terminal)" shortcut, and new tool pins need installing even when the
 # extension lock is unchanged), so `coop desktop` runs the install first (D1d, D1k).
-# The marker holds the package version AND a hash of its release manifest: a
-# package whose tool pins changed under the same version (a build installed over
-# another, the dev VM 2026-10-20: coop-data-doc stayed at the old pin and the new
-# tool never arrived) re-runs the setup for this account too (B6).
+# The marker holds the package version AND a hash of the manifest sections this
+# account installs (Pi, the extensions, the Python and npm tools, the bundled
+# Python): a package whose tool pins changed under the same version (a build
+# installed over another, the dev VM 2026-10-20: coop-data-doc stayed at the old
+# pin and the new tool never arrived) re-runs the setup for this account too
+# (B6). A release that moved no pin (most of them) only refreshes the
+# extensions and settings (sync) instead of reinstalling every tool: the hash
+# is of those sections, not of the whole file, so coop_version, the Electron or
+# ODBC pins and a comment never cost the account a reinstall (suite review pick 3).
 function Get-CoopBundledSetupMarker { return (Join-Path (Get-CoopProfileDir) 'desktop\window-setup-version') }
-function Get-CoopBundledSetupStamp {
-  $manifestSha = Get-CoopFileSha256 $script:CoopReleaseManifest
-  if (-not $manifestSha) { return [string]$script:CoopVersion }
-  return ([string]$script:CoopVersion + '+' + $manifestSha.Substring(0, 16).ToLower())
+function Get-CoopBundledToolsHash {
+  if (-not (Test-Path -LiteralPath $script:CoopReleaseManifest -PathType Leaf)) { return '' }
+  try { $m = [System.IO.File]::ReadAllText($script:CoopReleaseManifest) | ConvertFrom-Json } catch { return '' }
+  $parts = New-Object System.Collections.Generic.List[string]
+  foreach ($key in @('pi', 'extensions', 'python_tools', 'python_tool_sources', 'npm_tools')) {
+    $v = $m.$key
+    if ($null -ne $v) { $parts.Add($key + '=' + (ConvertTo-Json -InputObject $v -Compress -Depth 6)) }
+  }
+  if ($m.desktop -and $m.desktop.python) { $parts.Add('desktop.python=' + (ConvertTo-Json -InputObject $m.desktop.python -Compress -Depth 4)) }
+  if ($parts.Count -eq 0) { return '' }
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes(($parts -join "`n"))
+    return ([System.BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').Substring(0, 16).ToLower()
+  } finally { $sha.Dispose() }
 }
+function Get-CoopBundledSetupStamp {
+  $tools = Get-CoopBundledToolsHash
+  if (-not $tools) { return [string]$script:CoopVersion }
+  return ([string]$script:CoopVersion + '+' + $tools)
+}
+function Get-CoopBundledSetupDoneStamp {
+  $marker = Get-CoopBundledSetupMarker
+  if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) { return '' }
+  try { return ([System.IO.File]::ReadAllText($marker)).Trim() } catch { return '' }
+}
+# Something of this package has not reached this account: a new version (sync
+# refreshes the extensions and settings) or new tool pins (the full setup).
 function Test-CoopBundledSetupPending {
   if (-not $script:CoopBundledRuntime) { return $false }
   if (Test-CoopExtensionsLockPending -AgentDir (Get-CoopPiAgentDir) -PiVersion (Get-CoopPiVersion)) { return $true }
-  $marker = Get-CoopBundledSetupMarker
-  $done = ''
-  if (Test-Path -LiteralPath $marker -PathType Leaf) { try { $done = ([System.IO.File]::ReadAllText($marker)).Trim() } catch { $done = '' } }
-  return ($done -ne (Get-CoopBundledSetupStamp))
+  return ((Get-CoopBundledSetupDoneStamp) -ne (Get-CoopBundledSetupStamp))
+}
+# The tool pins this package carries differ from the ones last installed for
+# this account (or nothing was ever installed): the full setup is needed, not
+# only a sync.
+function Test-CoopBundledToolsPending {
+  if (-not $script:CoopBundledRuntime) { return $false }
+  if (Test-CoopExtensionsLockPending -AgentDir (Get-CoopPiAgentDir) -PiVersion (Get-CoopPiVersion)) { return $true }
+  $tools = Get-CoopBundledToolsHash
+  if (-not $tools) { return $true }
+  return (-not (Get-CoopBundledSetupDoneStamp).EndsWith('+' + $tools))
 }
 # Record that this package (version and manifest) finished its setup on this profile.
 function Set-CoopBundledSetupDone {

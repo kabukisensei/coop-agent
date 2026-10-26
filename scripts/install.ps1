@@ -64,7 +64,7 @@ function Add-CoopNpmPath {
 }
 
 # --- Parse flags -------------------------------------------------------------
-$FORCE = $false; $NO_FABRIC = $false; $NO_PREREQS = $false; $EDGE = $false; $PREREQS_AUTO = $false
+$FORCE = $false; $NO_FABRIC = $false; $NO_PREREQS = $false; $EDGE = $false; $PREREQS_AUTO = $false; $UNATTENDED = $false
 # --platform <fabric|azure_sql|both> answers the client platform question (master
 # plan section 8 item 7) without a prompt: onboarding reads COOP_CLIENT_PLATFORM,
 # and step 8 saves it even when onboarding does not run (non-interactive install).
@@ -80,6 +80,9 @@ for ($ai = 0; $ai -lt $args.Count; $ai++) {
     '--no-fabric'  { $NO_FABRIC = $true }
     '--no-prereqs' { $NO_PREREQS = $true }
     '--prereqs=auto' { $PREREQS_AUTO = $true }
+    # The window's first launch and the machine updater: nobody reads this console,
+    # so a clean run ends without the doctor report (coop doctor shows it any time).
+    '--unattended'   { $UNATTENDED = $true }
     '--prereqs'    { $ai++; if ($ai -lt $args.Count -and $args[$ai] -eq 'auto') { $PREREQS_AUTO = $true } else { Coop-Warn "install: --prereqs takes one value: auto" } }
     '--platform'   { $ai++; if ($ai -lt $args.Count) { Set-CoopInstallPlatform ([string]$args[$ai]) } else { Coop-Warn "install: --platform takes one value: fabric, azure_sql or both" } }
     '--edge'       { $EDGE = $true }
@@ -535,7 +538,14 @@ if ($script:InstallFailures -eq 0 -and
 # Propagate doctor's verdict as the install's exit code: a
 # genuinely broken install (a required dep still missing → doctor exits 1) is then
 # detectable by whatever ran `coop install`, incl. the double-click launcher wrapper.
-$doctorRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\doctor.ps1')
+# An unattended run whose every step passed skips the report: each unit above
+# verified its own postcondition, and the console has no reader (pick 3).
+$doctorRc = 0
+if ($UNATTENDED -and $script:InstallFailures -eq 0) {
+  Coop-Ok 'every setup step passed (run: coop doctor   for the full report)'
+} else {
+  $doctorRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\doctor.ps1')
+}
 
 [Console]::Error.WriteLine('')
 # Close on doctor's verdict: a green "complete" line after a
