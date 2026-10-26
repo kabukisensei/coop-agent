@@ -5,6 +5,23 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **The window defines itself (suite review 2026-10-26, pick 11).**
+  `desktop/PARITY.md` is now the coop window's own contract, written from its
+  lists in `desktop/renderer/commands.mjs`: the Pi built-ins it runs, its
+  keyboard shortcuts, and the few terminal-only extension screens. Everything
+  else goes to Pi as typed, and anything only a terminal can show opens in the
+  terminal by default, so a Pi or extension upgrade no longer needs a row per
+  new command or keybinding; the test asks one thing of a new Pi slash command,
+  whether the window runs it or opens the terminal, decided in `BUILTINS` or
+  `TERMINAL_ONLY`. `KEYS` holds the window's real shortcuts only (the 61
+  native and terminal placeholders are gone; `/hotkeys` shows the same table),
+  and the terminal-only commands appear in `/` completion even when Pi did not
+  list them.
+
+## [0.38.6] — 2026-10-26
+
 ### Added
 
 - **Schema compare from the deployment call (2026-10-23).** `/setup-project` and
@@ -30,21 +47,30 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
-- **The window defines itself (suite review 2026-10-26, pick 11).**
-  `desktop/PARITY.md` is now the coop window's own contract, written from its
-  lists in `desktop/renderer/commands.mjs`: the Pi built-ins it runs, its
-  keyboard shortcuts, and the few terminal-only extension screens. Everything
-  else goes to Pi as typed, and anything only a terminal can show opens in the
-  terminal by default, so a Pi or extension upgrade no longer needs a row per
-  new command or keybinding; the test asks one thing of a new Pi slash command,
-  whether the window runs it or opens the terminal, decided in `BUILTINS` or
-  `TERMINAL_ONLY`. `KEYS` holds the window's real shortcuts only (the 61
-  native and terminal placeholders are gone; `/hotkeys` shows the same table),
-  and the terminal-only commands appear in `/` completion even when Pi did not
-  list them.
+- **Tool pins:** coop-sql-source-control 1.0.7 (a catalog query that fails for
+  indexes, keys, checks, foreign keys, defaults, identity, computed columns,
+  collation or schemas holds that object type out of the comparison instead of
+  removing valid objects from the tracked schema; migration ids over 200
+  characters are refused before any migration runs), coop-schema-compare 0.1.7
+  (the #20, #21 and #22 fixes mirrored under Fixed below, plus Lakehouse `fabric://`
+  resolution and the formatting-only and column-order-only labels) and
+  coop-data-doc 1.4.4 (`GO` inside a comment, string literal or bracketed name
+  no longer splits a batch; `impact --git` reads the baseline from the git
+  worktree root).
 
 ### Fixed
 
+- **`schema_compare` accepts a named target set's environment.** The guardrail
+  that vets the native tool's sides still knew only `dev`, `test`, `prod`,
+  `snapshot` and `repo`, so every `<env>@<set>` side (`dev@lakehouse`) was
+  blocked before any connection, while `coop schema compare` took it (found by
+  the v0.38.6 dev VM check). The guardrail now reads the project file's
+  `sql_targets.named` sets and accepts `<env>@<set>` when that set declares that
+  environment, classified exactly as its environment: `prod@<set>` is production,
+  a read on either side like `prod`, audited with the pair as named. A set the
+  file does not declare, or an environment the set lacks, stays blocked. The
+  report's side table now names the set with the environment (`dev@lakehouse`,
+  not `dev`).
 - **A launch runs the pinned Pi only.** The manifest pin acted in `coop install`
   and `coop update`, but a launch started whatever `pi` was first on PATH, and
   its skew repair then aligned the extension tree to that Pi's version: after a
