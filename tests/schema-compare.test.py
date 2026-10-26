@@ -1074,6 +1074,12 @@ assert [(c["name"], c.get("cosmetic")) for c in cosmetic_changes] == [("T", "col
 assert "whitespace, line breaks or comments only" in cosmetic_changes[2]["detail"]
 assert sc.summarize(cosmetic_changes)["cosmetic"] == 2
 assert sc.cosmetic_flag(cosmetic_changes[0]) == " (column order only)" and sc.cosmetic_flag(cosmetic_changes[1]) == ""
+# A space inside a string literal or a quoted name is a change, not formatting
+# (coop-schema-compare #20): whitespace folds run by run, outside literals only.
+assert sc.formatting_only("CREATE VIEW v AS SELECT N'a b'  AS x", "CREATE VIEW v AS\n  SELECT N'a b' AS x")
+assert not sc.formatting_only("CREATE VIEW v AS SELECT N'a  b' AS x", "CREATE VIEW v AS SELECT N'a b' AS x")
+assert not sc.formatting_only("CREATE VIEW v AS SELECT 1 AS [a  b]", "CREATE VIEW v AS SELECT 1 AS [a b]")
+assert sc.flatten_definition("SELECT /* c */  1,\n\n2") == "SELECT 1, 2"
 assert not sc.formatting_only("CREATE VIEW v AS SELECT 'a' AS x", "CREATE VIEW v AS SELECT 'a ' AS x"), "a string literal is never formatting"
 assert sc.formatting_only("CREATE VIEW v AS SELECT 1 /*x*/ + 1", "CREATE VIEW v AS SELECT 1 + 1")
 cosmetic_records = sc.plan(src, cosmetic_changes, target_kind="azure_sql")

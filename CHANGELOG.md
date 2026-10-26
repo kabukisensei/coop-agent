@@ -85,6 +85,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   the columns the cap lost. Every table on such a side now compares as
   `unknown` (a snapshot taken from it stays unknown), and a source-only table
   with a cut shape is not offered as a runnable CREATE.
+- **A space inside a string literal or a quoted name is a change, not
+  formatting** (coop-schema-compare #20, mirrored in the native compare): the
+  formatting-only label folded repeated spaces across the whole flattened
+  definition, literals included, so `N'a  b'` against `N'a b'` was labelled
+  cosmetic. Whitespace and comments now fold run by run, outside literals and
+  quoted names only.
 - **`sql_source commit` no longer pulls the working tree before sqlsc runs
   (#435).** coop still fetches and checks that the branch can fast-forward
   (before the approval and again right before the commit), but the pull itself

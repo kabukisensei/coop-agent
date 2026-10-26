@@ -456,8 +456,15 @@ def flatten_definition(definition: str) -> str:
     literals and quoted names keep their text."""
     out: list[str] = []
     for kind, text in _segments(normalize_definition(definition)):
-        out.append(" " if kind in ("ws", "comment") else text)
-    return re.sub(r" {2,}", " ", "".join(out)).strip()
+        if kind in ("ws", "comment"):
+            # Adjacent whitespace and comment runs fold to one space here, run by
+            # run: never with a regex over the joined text, which would also fold
+            # the spaces inside a literal or a quoted name (coop-schema-compare #20).
+            if out and out[-1] != " ":
+                out.append(" ")
+        else:
+            out.append(text)
+    return "".join(out).strip()
 
 
 def formatting_only(source_definition: str, target_definition: str) -> bool:
