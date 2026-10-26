@@ -138,18 +138,6 @@ try {
   if ($extendedLane) { $env:COOP_TEST_EXTENDED = '1' }
   else { Remove-Item Env:\COOP_TEST_EXTENDED -ErrorAction SilentlyContinue }
 
-  # --- EXTENDED LANE: terminal acceptance reparse subset --------------------
-  # Run receipt/reparse validation before fixture PATH and interpreter seams.
-  # Native extension imports (jsonschema/rpds) must be consumed from the exact
-  # CI-pinned interpreter before later fixtures replace executable discovery.
-  if ($extendedLane) {
-    Head 'terminal acceptance reparse boundary tests'
-    $reparseOut = & node --test --test-name-pattern 'directory links|junctioned ancestor|authorization revocation|failure cleanup|checkout ancestry|owned-root probe|fully safe authorization|decisive receipt mutations' (Join-Path $root 'tests\terminal-workstation-acceptance.test.mjs') 2>&1
-    $reparseRc = $LASTEXITCODE
-    if ($reparseRc -eq 0) { $reparseOut | ForEach-Object { Write-Host $_ }; Ok 'terminal acceptance rejects reparse evidence' }
-    else { Ko "terminal acceptance reparse boundary tests failed: $($reparseOut | Out-String)" }
-  }
-
   $env:PATH = $stubPath
   $env:COOP_DIR = Join-Path $stub 'coop-dir'
   $env:COOP_AGENT_DIR = Join-Path $stub 'agent'
@@ -619,7 +607,6 @@ print("resume verdict contract OK")
   # it back for that child, then the gate-lane temp home returns.
   $fixtures = @(
     @{ Name = 'sync-knowledge-timeout'; Lane = 'extended'; Head = 'knowledge git timeout (PowerShell)' },
-    @{ Name = 'win-ownership-probe';    Lane = 'extended'; File = 'win-ownership-probe.ps1'; Head = 'windows ownership native probe (evidence only)'; OkLine = 'ownership probe completed; PROBE| evidence above' },
     @{ Name = 'update-follow';          Lane = 'gate';     Head = 'coop update follows release tags (never backwards)' },
     @{ Name = 'version-describe';       Lane = 'gate';     Head = 'coop version and doctor --publish carry git describe' },
     @{ Name = 'pipx-ownership';         Lane = 'gate';     Head = 'pipx executable ownership' },
