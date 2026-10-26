@@ -7,6 +7,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- **One place for a tool pin (suite review pick 2).** `config/release-manifest.json`
+  is the only file that carries a coop tool version: the client-home CI template
+  keeps `coop-data-doc==<version>` and `/setup-docs` fills it from the manifest
+  when it copies the workflow, `NOTICE.md` points at the manifest, and the
+  fixtures (`fleet-execution`, `install-python-prereq`, `bundled-tools`,
+  `fleet-manifest`, the installer test) read their pins from it. `tests/pins.test.sh`
+  fails a bump PR that leaves a stale `<tool>==<old>` literal anywhere, so the
+  nightly lane can no longer go red on a pin literal (it did on every bump from
+  2026-10-22 to 10-26). `scripts/bump-pins.sh` moves the pins to the newest
+  release of each tool (PyPI or the GitHub release, with the wheel's sha256)
+  and prints the CHANGELOG line.
+
 - **A test approver for the development VM (tests only).** `tests/test-approver.mjs`
   is a host script that runs coop in Pi's RPC mode from a `coop desktop
   --print-spec` launch spec and answers the guardrails' yes/no questions itself,
