@@ -147,6 +147,8 @@ if args[:1] == ['uninstall'] and len(args) > 1:
         f.write('\n'.join(lines) + ('\n' if lines else ''))
 if args[:1] in (['install'], ['upgrade']) and len(args) > 1:
     name, ver = spec_name_version(args[-1])
+    if '--suffix' in args:  # a suffixed install is its own environment (#441's probe)
+        name += args[args.index('--suffix') + 1]
     lines = [l for l in read_state() if not l.startswith('package ' + name + ' ')]
     lines.append('package %s %s' % (name, ver))
     with open(state, 'w', encoding='utf-8', newline='\n') as f:
@@ -494,18 +496,42 @@ try {
   $dataDocPin = [string]$manifestJson.python_tools.'coop-data-doc'
   if (-not (Test-CallLiteral $m7 'PIPX uninstall coop-data-doc')) { Ko 'update left a coop-data-doc built on another Python in place (no uninstall)' ($out + "`n" + (Get-Calls $m7)) }
   elseif (-not (Test-Call $m7 ('^PIPX install --python ' + $pyPattern + ' coop-data-doc==' + [regex]::Escape($dataDocPin) + '$'))) { Ko "update did not reinstall coop-data-doc on coop's Python with the pin" ($out + "`n" + (Get-Calls $m7)) }
-  elseif (@($calls7 | Where-Object { $_ -match 'uninstall coop-data-doc' }).Count -ne 1 -or ($calls7.IndexOf(@($calls7 | Where-Object { $_ -match 'uninstall coop-data-doc' })[0]) -gt $calls7.IndexOf(@($calls7 | Where-Object { $_ -match 'install --python .+ coop-data-doc' })[0]))) { Ko 'the environment must go before the reinstall (pipx install --force keeps the old interpreter)' (Get-Calls $m7) }
+  elseif (@($calls7 | Where-Object { $_ -match 'uninstall coop-data-doc$' }).Count -ne 1 -or ($calls7.IndexOf(@($calls7 | Where-Object { $_ -match 'uninstall coop-data-doc$' })[0]) -gt $calls7.IndexOf(@($calls7 | Where-Object { $_ -match 'install --python .+ coop-data-doc' })[0]))) { Ko 'the environment must go before the reinstall (pipx install --force keeps the old interpreter)' (Get-Calls $m7) }
   elseif (Test-Call $m7 '^PIPX install --force coop-data-doc') { Ko 'a wrong-Python tool was force-reinstalled (that keeps the old interpreter)' (Get-Calls $m7) }
   elseif (-not $out.Contains("coop-data-doc 1.4.3 reinstalled on coop's Python $realPy (it was on ")) { Ko 'update did not say the tool moved to coop''s Python' $out }
   elseif ($out.Contains('failed to reinstall coop-data-doc') -or $out.Contains('could not remove coop-data-doc')) { Ko "the wrong-Python reinstall counted as a failure (rc=$rc)" $out }
   else { Ok "update removes a tool built on another Python and installs it again on coop's (#430)" }
   if (Test-Call $m7 '^PIPX (uninstall|install) .*ms-fabric-cli') { Ko 'the Fabric CLI, built on this machine''s own Python, was reinstalled' (Get-Calls $m7) } else { Ok 'a tool whose environment is on coop''s Python is left alone' }
+  if (-not (Test-Call $m7 ('^PIPX install --suffix _coopnext --python ' + $pyPattern + ' coop-data-doc==' + [regex]::Escape($dataDocPin) + '$'))) { Ko 'the replacement was not proven under a suffix before the working tool was removed (#441)' (Get-Calls $m7) }
+  elseif ($calls7.IndexOf(@($calls7 | Where-Object { $_ -match 'install --suffix' })[0]) -gt $calls7.IndexOf(@($calls7 | Where-Object { $_ -match 'uninstall coop-data-doc$' })[0])) { Ko 'the probe install must come before the uninstall (#441)' (Get-Calls $m7) }
+  elseif (-not (Test-CallLiteral $m7 'PIPX uninstall coop-data-doc_coopnext')) { Ko 'the probe environment was left behind' (Get-Calls $m7) }
+  elseif (((Get-Content -LiteralPath $m7.PipxState -Raw) -split "`r?`n") -match '_coopnext') { Ko 'the probe environment is still installed' (Get-Content -LiteralPath $m7.PipxState -Raw) }
+  else { Ok 'the move is proven under a suffix first and the probe is removed (#441)' }
   # A second update is a no-op: the reinstalled environment is now on coop's Python.
   $venvDir = Join-Path (Join-Path $m7.Dir 'pipx-home') 'venvs\coop-data-doc'
   [System.IO.File]::WriteAllText((Join-Path $venvDir 'pyvenv.cfg'), "home = $(Split-Path -Parent $realPy)`nversion = 3.12.4`nexecutable = $realPy`n", $utf8)
   Reset-Calls $m7
   $out = Invoke-Fleet 'update.ps1'
   if (Test-Call $m7 '^PIPX (uninstall|install) .*coop-data-doc') { Ko 'a tool now on coop''s Python was reinstalled again' (Get-Calls $m7) } else { Ok 'once on coop''s Python the tool is converged (offline no-op)' }
+
+  # --- 10. A move that cannot be completed keeps the working tool (#441) ----------
+  # The same wrong-Python tool, but the replacement cannot be installed (the
+  # index is unreachable: every install carrying --python fails). The tool must
+  # stay installed and usable, the unit must report failure, and nothing may
+  # have been uninstalled.
+  $m8 = New-Machine 'wrong-python-offline' -HonestPi $false -PipxList @('package coop-data-doc 1.4.3') -LogPi $false
+  $otherVenv8 = Join-Path (Join-Path $m8.Dir 'pipx-home') 'venvs\coop-data-doc'
+  New-Item -ItemType Directory -Force -Path $otherVenv8 | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $otherVenv8 'pyvenv.cfg'), "home = $otherHome`ninclude-system-site-packages = false`nversion = 3.12.4`nexecutable = $otherHome$(if ($isWindowsHost) { '\python.exe' } else { '/python3.12' })`n", $utf8)
+  $env:PIPX_FAIL_MATCH = '--python'
+  $out = Invoke-Fleet 'update.ps1'
+  Remove-Item Env:\PIPX_FAIL_MATCH -ErrorAction SilentlyContinue
+  $state8 = Get-Content -LiteralPath $m8.PipxState -Raw
+  if ($state8 -notmatch 'package coop-data-doc 1\.4\.3') { Ko 'a failed interpreter move removed the working coop-data-doc (#441)' ($out + "`n" + (Get-Calls $m8) + "`n" + $state8) }
+  elseif (Test-Call $m8 '^PIPX uninstall coop-data-doc$') { Ko 'the working tool was uninstalled before its replacement was proven (#441)' (Get-Calls $m8) }
+  elseif (-not $out.Contains("could not prepare coop-data-doc (coop-data-doc==$dataDocPin) on coop's Python")) { Ko 'a failed move did not say the installation stays (#441)' $out }
+  elseif ($rc -eq 0) { Ko 'a failed interpreter move counted as a converged update' $out }
+  else { Ok 'a move that cannot be completed keeps the working tool and reports the failure (#441)' }
 }
 finally {
   Pop-Location

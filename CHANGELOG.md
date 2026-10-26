@@ -74,6 +74,32 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   --force` keeps the old interpreter). `coop doctor` shows the mismatch as a
   warning. Troubleshooting entry 7 covers it and the shared account tools a
   dev checkout's `update --edge` moves.
+- **A move to coop's Python that cannot be completed keeps the working tool**
+  (#441). The reinstall above removed the environment first, so an install
+  that then failed (offline, an index outage, a dependency the interpreter
+  cannot take) left no tool at all. The replacement is now proven first under
+  a suffix (`pipx install --suffix _coopnext --python <coop's>`, its own
+  environment, removed again) before the old one goes; when the probe fails
+  the tool stays as it was and the unit reports `could not prepare`. Should
+  the final install still fail, the tool is put back on its old interpreter.
+- **The native SQL source reader no longer splits a batch at a `GO` line
+  inside a string literal, a quoted name or a comment** (#442): a view holding
+  a multi-line string with a line `GO` kept only its first fragment, which the
+  schema compare then planned as a cut, unterminated definition. The batch
+  splitter is lexical now (`sql_source.segments`); real separators, `go 2`
+  and `GO;` included, still split.
+- **A live column list cut at the schema compare's cap is unknown, never a
+  DROP COLUMN** (#443): the reader marked the catalog partial but built every
+  table from the retained prefix, so a complete target got `DROP COLUMN` for
+  the columns the cap lost. Every table on such a side now compares as
+  `unknown` (a snapshot taken from it stays unknown), and a source-only table
+  with a cut shape is not offered as a runnable CREATE.
+- **A space inside a string literal or a quoted name is a change, not
+  formatting** (coop-schema-compare #20, mirrored in the native compare): the
+  formatting-only label folded repeated spaces across the whole flattened
+  definition, literals included, so `N'a  b'` against `N'a b'` was labelled
+  cosmetic. Whitespace and comments now fold run by run, outside literals and
+  quoted names only.
 - **`sql_source commit` no longer pulls the working tree before sqlsc runs
   (#435).** coop still fetches and checks that the branch can fast-forward
   (before the approval and again right before the commit), but the pull itself
