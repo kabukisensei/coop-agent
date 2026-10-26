@@ -15,8 +15,8 @@
 #                  workflow, and `coop release` run it.
 # A few gate files also carry extended-only cases guarded by COOP_TEST_EXTENDED
 # inside the file (azcache, knowledge-git, warehouse-mcp, onboard,
-# standards-live-sync, and tests/fixtures/azcache.test.ps1, which tests/run.ps1
-# runs). They are invoked once, in the gate section.
+# standards-live-sync, test-approver, and tests/fixtures/azcache.test.ps1, which
+# tests/run.ps1 runs). They are invoked once, in the gate section.
 #
 set -euo pipefail
 
@@ -181,6 +181,8 @@ echo "→ lineage docs over a coop-sql-source-control repo"
 node "$ROOT/tests/sqlsc-datadoc.test.mjs"
 echo "→ coop-guardrails enforcement tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/guardrails.test.mjs"
+echo "→ dev-VM test approver (tests/test-approver.mjs): gates, answers, audit rows"
+node "$ROOT/tests/test-approver.test.mjs"
 echo "→ start-here menu tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/startmenu.test.mjs"
 echo "→ in-Coop project contract wizard tests"
