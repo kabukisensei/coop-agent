@@ -19,7 +19,7 @@
   },
   "python_tools": {
     "coop-data-doc": "1.4.4",
-    "coop-schema-compare": "0.1.7",
+    "coop-schema-compare": "0.1.8",
     "coop-sql-source-control": "1.0.7",
     "ms-fabric-cli": "1.7.0",
     "fabric-cicd": "1.3.0",
