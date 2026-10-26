@@ -563,6 +563,12 @@ e.g. ``coop -c`` resumes the last session, ``coop @notes.md "review this"``.
 # of crashing in pi's loader. If the tree is merely skewed but fixable (rc 10), run
 # sync to re-pin + reinstall, then continue. Read-only + fast. Bypass with
 # COOP_SKIP_EXT_CHECK=1.
+# It also refuses a Pi that is not the release manifest's pin: the pin acts in
+# `coop install` / `coop update`, and a later `pi update` or `npm install -g`
+# puts another Pi first on PATH, which the skew repair below would then align
+# the (shared) extension tree to. Every dependency is pinned (master plan), so
+# the launch stops with the pin-back command instead; a maintainer who runs an
+# `--edge` Pi on purpose sets COOP_ALLOW_UNPINNED_PI=1.
 function Invoke-CoopLaunchPreflight {
   if ($env:COOP_SKIP_EXT_CHECK -eq '1') { return }
   # The dir Pi will ACTUALLY load (with COOP_NO_ISOLATE Pi uses the personal
@@ -574,10 +580,15 @@ function Invoke-CoopLaunchPreflight {
     Coop-Die 'launch aborted — another coop process is still updating the extension tree; wait for it to finish, then re-run: coop'
   }
   if (-not (Test-Have 'pi')) { return }
-  $py = Get-CoopPython; if (-not $py) { return }
-  if (-not (Test-Path -LiteralPath (Join-Path $agentDir 'npm\package.json') -PathType Leaf)) { return }
   $ver = Get-CoopLaunchPiVersion
   if (-not $ver) { return }
+  $pin = Coop-ManifestGet -Key 'pi.version'
+  if ($pin -and $ver -ne $pin -and $env:COOP_ALLOW_UNPINNED_PI -ne '1') {
+    Coop-Warn "pi $ver is not this coop's pinned Pi $pin — pin it back: coop update   (a maintainer on an --edge Pi sets COOP_ALLOW_UNPINNED_PI=1)"
+    Coop-Die 'launch aborted — coop runs the pinned Pi only, so the extension tree never follows an unpinned one   (bypass once with COOP_SKIP_EXT_CHECK=1)'
+  }
+  $py = Get-CoopPython; if (-not $py) { return }
+  if (-not (Test-Path -LiteralPath (Join-Path $agentDir 'npm\package.json') -PathType Leaf)) { return }
   $extScript = Join-Path $script:CoopRoot 'lib/_extdeps.py'
   # Capture output BEFORE reading $LASTEXITCODE (piping a native command can leave it unset).
   $out = (& $py $extScript align $agentDir $ver --check 2>$null)
