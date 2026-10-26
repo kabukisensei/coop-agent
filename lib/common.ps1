@@ -690,7 +690,7 @@ function Get-CoopVenvPythonVersion([string]$Venv) {
 
 # --- Which interpreter a pipx environment runs on (#430) ----------------------
 # A pipx tool installed by hand on another Python (the dev VM, 2026-10-23: a
-# `pipx install --force coop-sql-source-control==1.0.5` from a shell whose pipx
+# `pipx install --force coop-sql-source-control==<pin>` from a shell whose pipx
 # ran on Python 3.12) reports the right version, so a version-only convergence
 # kept it on an interpreter coop never installed or pinned. The venv's own
 # pyvenv.cfg says what it was built on: `home` (the base interpreter's folder)
