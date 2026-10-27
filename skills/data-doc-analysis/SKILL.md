@@ -22,8 +22,10 @@ workflow calls at step 3 (read target + lineage) and step 9 (document).
   authoritative wizard) to create it, then continue. coop
   also offers this on startup when a folder has no built docs. When the folder *does*
   have built docs, coop auto-detects them at session start and announces it so you
-  consult lineage before touching objects. The lineage is an **aid, not a gate** —
-  if it's absent, proceed without it.
+  consult lineage before touching objects. The built docs are an **aid, not a gate**:
+  if they are absent, proceed without them. The one gate is the live catalog (SQ8):
+  before a SQL object is edited, `sql_impact` must have been asked when a live
+  dev/test target can answer.
 - **Lineage before you touch an object.** Before analyzing or changing any SQL
   object, DAX measure, or semantic model, look up its up/downstream impact: call
   `data_doc` with `command="lineage"`, `object="<name>"` (optionally `depth`) to get

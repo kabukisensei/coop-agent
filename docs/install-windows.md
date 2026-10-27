@@ -238,4 +238,4 @@ saying so, with a link to the release notes; `coop doctor` shows the same on its
 install row and names the log, `%ProgramData%\coop\logs\update.log`, if a
 run failed.
 
-Next: [onboarding](onboarding.md) has a safe first task and the day-to-day commands.
+Next: [Onboarding](https://coop.aaron-jennings.cloud/docs/onboarding.html) has a safe first task and the day-to-day commands.
