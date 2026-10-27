@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
 """Committed dev catalog snapshot (master plan SQ9).
 
-Reads the contract's default dev or test target read-only, exactly as
-lib/sql_query.py and lib/sql_impact.py do (`open_connection`: same target, same
-identity pinning, driver, encryption and timeouts; never production), and writes
-the catalog as committable files, one per object:
+Reads the contract's default dev or test target read-only (never production) and
+writes the catalog as committable files, one per object, through the pinned
+`coop-schema-compare snapshot` (lib/compare_tool.py; suite review 2026-10-26,
+pick 1: coop keeps no snapshot writer of its own). The target is resolved
+exactly as lib/sql_query.py and lib/sql_impact.py resolve a read
+(`resolve_target` + `resolve_connection`: same entry, same identity pinning,
+same Fabric host discovery); the package receives the host and the database and
+the tenant-pinned token through its `SQL_ACCESS_TOKEN` environment variable,
+with the entry's `connect_timeout` and read-only intent, and writes:
 
-- tables: a synthesized `CREATE TABLE` with every column, type and nullability
-  (INFORMATION_SCHEMA.COLUMNS);
+- tables: a synthesized `CREATE TABLE` with every column, type, nullability and
+  identity (INFORMATION_SCHEMA.COLUMNS, sys.identity_columns);
 - views, procedures and functions: the definition the catalog holds
   (sys.sql_modules), so coop-data-doc can parse the folder as a SQL source;
 - `manifest.json`: when the snapshot was taken, the target's environment, kind
-  and database, the counts, and the list of files it wrote;
+  and database (as the contract names them), the counts, and the list of files
+  it wrote;
 - `README.md`: what the folder is and that nothing is ever deployed from it.
 
 No row data, no credential, no connection string and no server name is written.
@@ -28,7 +34,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,49 +41,13 @@ from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import compare_tool  # noqa: E402
 import sql_query  # noqa: E402
 import sql_targets as targets_lib  # noqa: E402
 import warehouse_mcp as wmcp  # noqa: E402
 
-SCHEMA_VERSION = 1
 DEFAULT_MAX_AGE_DAYS = 7
-MAX_OBJECTS = 5000
-MAX_COLUMNS = 200_000
-MAX_DEFINITION_CHARS = 1_000_000
-OBJECT_TYPES = {"U": "table", "V": "view", "P": "procedure", "FN": "function", "IF": "function", "TF": "function"}
 COUNT_KEYS = ("tables", "views", "procedures", "functions")
-
-# Fixed catalog queries, no parameters and no free text.
-OBJECTS_SQL = (
-    f"SELECT TOP ({MAX_OBJECTS + 1}) s.name, o.name, RTRIM(o.type) FROM sys.objects AS o "
-    "JOIN sys.schemas AS s ON s.schema_id = o.schema_id "
-    "WHERE o.type IN ('U', 'V', 'P', 'FN', 'IF', 'TF') AND o.is_ms_shipped = 0 "
-    "ORDER BY s.name, o.name"
-)
-COLUMNS_SQL = (
-    f"SELECT TOP ({MAX_COLUMNS + 1}) TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE, "
-    "CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE, DATETIME_PRECISION, IS_NULLABLE, ORDINAL_POSITION "
-    "FROM INFORMATION_SCHEMA.COLUMNS ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION"
-)
-# Identity columns: INFORMATION_SCHEMA.COLUMNS does not say which column is one.
-# sys.identity_columns is the documented list on SQL Server and Fabric Warehouse
-# (where every identity column is BIGINT IDENTITY, its seed and increment NULL).
-IDENTITY_SQL = (
-    f"SELECT TOP ({MAX_COLUMNS + 1}) s.name, o.name, c.name FROM sys.identity_columns AS c "
-    "JOIN sys.objects AS o ON o.object_id = c.object_id "
-    "JOIN sys.schemas AS s ON s.schema_id = o.schema_id "
-    "WHERE o.type = 'U' AND o.is_ms_shipped = 0 "
-    "ORDER BY s.name, o.name, c.name"
-)
-MODULES_SQL = (
-    f"SELECT TOP ({MAX_OBJECTS + 1}) s.name, o.name, m.definition FROM sys.sql_modules AS m "
-    "JOIN sys.objects AS o ON o.object_id = m.object_id "
-    "JOIN sys.schemas AS s ON s.schema_id = o.schema_id "
-    "WHERE o.type IN ('V', 'P', 'FN', 'IF', 'TF') AND o.is_ms_shipped = 0 "
-    "ORDER BY s.name, o.name"
-)
-
-_SAFE_NAME = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_@#$")
 
 
 # --- contract: where the snapshot lives and how old it may be -------------------
@@ -180,17 +149,20 @@ def _age_days(taken_at: str, now: datetime) -> float | None:
     return max(0.0, (now - taken).total_seconds() / 86400.0)
 
 
+def _relative(folder: Path, root: Path) -> str:
+    try:
+        return folder.relative_to(root).as_posix()
+    except ValueError:
+        return folder.as_posix()
+
+
 def status(*, cwd: Path | None = None, project_arg: str | None = None, now: datetime | None = None) -> dict[str, Any]:
     project, path = _load(cwd, project_arg)
     if project is None or path is None:
         return sql_query.result("project_unavailable")
     environment = default_environment(project)
     folder, chosen = resolve_output(project, path, environment)
-    root = path.resolve().parent.parent
-    try:
-        rel = folder.relative_to(root).as_posix()
-    except ValueError:
-        rel = folder.as_posix()
+    rel = _relative(folder, path.resolve().parent.parent)
     limit = max_age_days(project)
     base = {"path": rel, "chosen_by": chosen, "environment": environment, "max_age_days": limit}
     manifest = read_manifest(folder)
@@ -228,240 +200,76 @@ def doctor_lines(*, cwd: Path | None = None, project_arg: str | None = None, now
 # --- snapshot -------------------------------------------------------------------
 
 
-_RESERVED_FILE_NAMES = {"CON", "PRN", "AUX", "NUL"} | {f"COM{i}" for i in range(1, 10)} | {f"LPT{i}" for i in range(1, 10)}
+def tool_args(server: str, target: sql_query.ResolvedTarget, folder: Path, environment: str) -> tuple[list[str], dict[str, str]]:
+    """(argv after the executable, the child's extra environment) for one snapshot;
+    the token is added by snapshot() itself."""
+    args = [
+        "snapshot", f"{server}/{target.database}",
+        "--out", str(folder),
+        "--environment", environment,
+        "--connect-timeout", str(target.connect_timeout),
+    ]
+    if target.read_only_intent:
+        args.append("--read-only-intent")
+    return args, {}
 
 
-def _safe(name: str) -> bool:
-    # Reserved Windows device names cannot be written as `<name>.sql`.
-    return 0 < len(name) <= 128 and all(ch in _SAFE_NAME for ch in name) and name.upper() not in _RESERVED_FILE_NAMES
+def _stamp_manifest(folder: Path, summary: dict[str, str]) -> dict[str, Any]:
+    """The manifest the package wrote, its `target` set to the contract's own words
+    for the entry (the package names the kind from the host, which cannot tell a
+    Lakehouse SQL endpoint from a Warehouse)."""
+    manifest = read_manifest(folder) or {}
+    if manifest and manifest.get("target") != summary:
+        manifest["target"] = summary
+        (folder / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
+    return manifest
 
 
-def _bracket(name: str) -> str:
-    return "[" + name.replace("]", "]]") + "]"
-
-
-def render_type(data_type: str, char_max: Any, precision: Any, scale: Any, dt_precision: Any) -> str:
-    t = data_type.lower()
-    if t in ("varchar", "nvarchar", "char", "nchar", "binary", "varbinary"):
-        if char_max in (-1, "-1"):
-            return f"{t}(max)"
-        return f"{t}({char_max})" if char_max not in (None, "") else t
-    if t in ("decimal", "numeric"):
-        if precision not in (None, "") and scale not in (None, ""):
-            return f"{t}({precision}, {scale})"
-        return t
-    if t in ("datetime2", "datetimeoffset", "time") and dt_precision not in (None, ""):
-        return f"{t}({dt_precision})"
-    return t
-
-
-def _rows(cursor: Any, sql: str, limit: int) -> tuple[list[tuple[Any, ...]], bool]:
-    cursor.execute(sql, ())
-    out: list[tuple[Any, ...]] = []
-    while True:
-        row = cursor.fetchone()
-        if row is None:
-            break
-        out.append(tuple(row))
-        if len(out) > limit:
-            return out[:limit], True
-    return out, False
-
-
-def _header(target: dict[str, str], taken_at: str, schema: str, name: str, kind: str) -> str:
-    return (
-        f"-- coop catalog snapshot: {kind} {schema}.{name}\n"
-        f"-- target: {target.get('environment', '')} {target.get('kind', '')} database {target.get('database', '')}, taken {taken_at}\n"
-        "-- Read-only copy of what the catalog held at that time. Never deploy from this file; refresh with: coop catalog snapshot\n\n"
-    )
-
-
-def render_table(schema: str, name: str, columns: list[tuple[Any, ...]], identity: set[str] | None = None) -> str:
-    """CREATE TABLE text; a column in `identity` (lower-case names) is written
-    `bigint IDENTITY`, the form Fabric Warehouse takes (no seed or increment)."""
-    lines = []
-    for col in columns:
-        col_name, data_type, char_max, precision, scale, dt_precision, nullable = (list(col) + [None] * 7)[:7]
-        col_name = _text(col_name)
-        if not col_name:
-            continue
-        type_text = render_type(_text(data_type) or "sql_variant", char_max, precision, scale, dt_precision)
-        null_text = "NULL" if _text(nullable).upper() != "NO" else "NOT NULL"
-        if identity and col_name.lower() in identity:
-            type_text += " IDENTITY"
-        lines.append(f"    {_bracket(col_name)} {type_text} {null_text}")
-    body = ",\n".join(lines)
-    return f"CREATE TABLE {_bracket(schema)}.{_bracket(name)} (\n{body}\n);\n"
-
-
-def _readme(target: dict[str, str], environment: str) -> str:
-    return (
-        "# coop catalog snapshot\n\n"
-        f"A read-only copy of the {environment} catalog ({target.get('kind', '')}, database `{target.get('database', '')}`): "
-        "one file per table (a `CREATE TABLE` built from the catalog's columns), view, procedure and function "
-        "(the definition the catalog holds), and `manifest.json` with the time it was taken.\n\n"
-        "coop reads these files before it writes SQL for this client, so it knows the tables and columns that exist, "
-        "and coop-data-doc can build lineage from them when the client has no SQL repository. "
-        "It holds no row data, no credential and no server name.\n\n"
-        "It is never a deployment artifact: nothing is run from this folder. Refresh it with `coop catalog snapshot` "
-        "(or the `catalog_snapshot` tool in a session) and commit the result.\n"
-    )
-
-
-def _remove_previous_files(folder: Path, previous: dict[str, Any]) -> None:
-    """Delete the .sql files the last manifest listed, inside the snapshot folder
-    only: a committed manifest naming an absolute or escaping path must never
-    delete anything elsewhere."""
-    root = folder.resolve()
-    for old in previous.get("files") or []:
-        if not (isinstance(old, str) and old.endswith(".sql") and ".." not in old) or os.path.isabs(old):
-            continue
-        try:
-            target = (folder / old).resolve()
-            if root not in target.parents:
-                continue
-            target.unlink()
-        except OSError:
-            pass
-
-
-def snapshot(*, cwd: Path | None = None, project_arg: str | None = None, now: datetime | None = None) -> dict[str, Any]:
+def snapshot(*, cwd: Path | None = None, project_arg: str | None = None) -> dict[str, Any]:
     project, path = _load(cwd, project_arg)
     if project is None or path is None:
         return sql_query.result("project_unavailable")
     environment = default_environment(project)
     folder, chosen = resolve_output(project, path, environment)
-    root = path.resolve().parent.parent
-    try:
-        rel = folder.relative_to(root).as_posix()
-    except ValueError:
-        rel = folder.as_posix()
+    rel = _relative(folder, path.resolve().parent.parent)
     if folder.exists():
         if not folder.is_dir():
             return sql_query.result("output_not_snapshot", path=rel)
         if read_manifest(folder) is None and any(folder.iterdir()):
             return sql_query.result("output_not_snapshot", path=rel)
 
-    connection, target, _driver, error = sql_query.open_connection(cwd=cwd if project_arg is None else path.parent.parent)
-    if error is not None or connection is None or target is None:
-        return error or sql_query.result("connection_failed")
+    target, error = sql_query.resolve_target(cwd=cwd if project_arg is None else path.parent.parent)
+    if error is not None or target is None:
+        return error or sql_query.result("target_invalid")
     if target.environment not in ("dev", "test"):
-        try:
-            connection.close()
-        except Exception:
-            pass
         return sql_query.result("target_not_dev_or_test", environment=target.environment)
+    server, token, error = sql_query.resolve_connection(target)
+    if error is not None:
+        return error
     summary = target.summary()
-    taken_at = (now or datetime.now(timezone.utc)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    try:
-        connection.timeout = sql_query.QUERY_TIMEOUT
-        cursor = connection.cursor()
-        try:
-            objects, objects_truncated = _rows(cursor, OBJECTS_SQL, MAX_OBJECTS)
-        except Exception:
-            return sql_query.result("query_failed", stage="objects")
-        try:
-            columns, columns_truncated = _rows(cursor, COLUMNS_SQL, MAX_COLUMNS)
-        except Exception:
-            return sql_query.result("query_failed", stage="columns")
-        unavailable: list[str] = []
-        modules: dict[tuple[str, str], str] = {}
-        try:
-            module_rows, _ = _rows(cursor, MODULES_SQL, MAX_OBJECTS)
-            for row in module_rows:
-                schema, name, definition = (list(row) + [None] * 3)[:3]
-                if _text(schema) and _text(name) and isinstance(definition, str):
-                    modules[(_text(schema), _text(name))] = definition[:MAX_DEFINITION_CHARS]
-        except Exception:
-            unavailable.append("definitions (sys.sql_modules is not readable on this target)")
-        identity: dict[tuple[str, str], set[str]] | None = {}
-        try:
-            identity_rows, _ = _rows(cursor, IDENTITY_SQL, MAX_COLUMNS)
-            for row in identity_rows:
-                schema, name, column = (list(row) + [None] * 3)[:3]
-                if _text(schema) and _text(name) and _text(column):
-                    identity.setdefault((_text(schema), _text(name)), set()).add(_text(column).lower())
-        except Exception:
-            identity = None
-            unavailable.append("identity columns (sys.identity_columns is not readable on this target)")
-    except Exception:
-        return sql_query.result("query_failed")
-    finally:
-        try:
-            connection.close()
-        except Exception:
-            pass
-
-    by_table: dict[tuple[str, str], list[tuple[Any, ...]]] = {}
-    for row in columns:
-        schema, name = _text(row[0]), _text(row[1])
-        if schema and name:
-            by_table.setdefault((schema, name), []).append(tuple(row[2:9]))
-
-    files: list[tuple[str, str]] = []  # (relative path, content)
-    counts = {key: 0 for key in COUNT_KEYS}
-    skipped: list[str] = []
-    for row in objects:
-        schema, name, type_code = _text(row[0]), _text(row[1]), _text(row[2]).upper()
-        kind = OBJECT_TYPES.get(type_code)
-        if not kind or not _safe(schema) or not _safe(name):
-            if schema or name:
-                skipped.append(f"{schema}.{name}")
-            continue
-        key = (schema, name)
-        if kind == "table":
-            body = render_table(schema, name, by_table.get(key, []), (identity or {}).get(key))
-        else:
-            definition = modules.get(key)
-            if definition is None:
-                cols = by_table.get(key)
-                if kind == "view" and cols:
-                    body = "-- definition not readable on this target; columns from INFORMATION_SCHEMA.COLUMNS\n" + render_table(schema, name, cols).replace("CREATE TABLE", "-- VIEW", 1)
-                else:
-                    skipped.append(f"{schema}.{name} ({kind}: definition not readable)")
-                    continue
-            else:
-                body = definition.strip() + "\n"
-        counts[kind + "s"] += 1
-        files.append((f"{schema}/{name}.sql", _header(summary, taken_at, schema, name, kind) + body))
-
-    folder.mkdir(parents=True, exist_ok=True)
-    _remove_previous_files(folder, read_manifest(folder) or {})
-    for child in list(folder.iterdir()):
-        if child.is_dir() and not any(child.iterdir()):
-            shutil.rmtree(child, ignore_errors=True)
-    for rel_file, content in files:
-        target_file = folder / rel_file
-        target_file.parent.mkdir(parents=True, exist_ok=True)
-        target_file.write_text(content, encoding="utf-8", newline="\n")
-    manifest = {
-        "coop_catalog_snapshot": True,
-        "schema_version": SCHEMA_VERSION,
-        "taken_at": taken_at,
-        "target": summary,
-        "objects": counts,
-        "files": sorted(rel_file for rel_file, _ in files),
-        "truncated": {"objects": objects_truncated, "columns": columns_truncated},
-        "unavailable": unavailable,
-        "skipped": skipped[:200],
-        # True when the table files mark identity columns: an older snapshot did
-        # not, and a compare must not read its silence as "no identity".
-        "identity_columns": identity is not None,
-    }
-    (folder / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
-    (folder / "README.md").write_text(_readme(summary, environment), encoding="utf-8", newline="\n")
+    args, env = tool_args(server, target, folder, environment)
+    env[compare_tool.TOKEN_ENV] = token
+    out = compare_tool.run_tool(args, env=env)
+    if not out.get("ok"):
+        state = _text(out.get("state")) or "tool_failed"
+        details = {key: out[key] for key in ("tool", "exit_code") if key in out}
+        if state == "output_not_snapshot":
+            details["path"] = rel
+        return sql_query.result(state, **details)
+    manifest = _stamp_manifest(folder, summary)
+    counts = {key: int(_mapping(out.get("objects")).get(key, 0) or 0) for key in COUNT_KEYS}
     return sql_query.result(
         "ok",
         path=rel,
         chosen_by=chosen,
         environment=environment,
         target=summary,
-        taken_at=taken_at,
+        taken_at=_text(out.get("taken_at")),
         objects=counts,
-        files=len(files),
-        truncated=manifest["truncated"],
-        unavailable=unavailable,
-        skipped=len(skipped),
+        files=int(out.get("files", 0) or 0),
+        truncated=_mapping(manifest.get("truncated")),
+        unavailable=[item for item in (out.get("unavailable") or []) if isinstance(item, str)],
+        skipped=int(out.get("skipped", 0) or 0),
     )
 
 
