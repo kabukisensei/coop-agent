@@ -112,6 +112,21 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   release is tested in disposable repositories by `tests/release-gate.test.sh`;
   the PowerShell fixture now proves only the forwarder.
 
+- **One schema-compare engine (suite review 2026-10-26, pick 1).** The native
+  `schema_compare` and `catalog_snapshot` tools, `coop schema compare` and
+  `coop catalog snapshot` now run the pinned `coop-schema-compare` package
+  (0.1.8) as a child process instead of coop's own copy of the engine:
+  `lib/schema_compare.py` and `lib/sql_source.py` (about 1,900 lines of
+  catalog reading, diffing, planning and rendering, plus the SQL source reader)
+  are gone; what stays coop's is the contract's side grammar (`dev`, `prod@<set>`,
+  `snapshot`, `repo:<name>`), the identity pinning (`lib/sql_query.py` now
+  splits into `resolve_target` + `resolve_connection`, and the package receives
+  the host and the tenant-pinned token through its environment, never a command
+  line), the `schema_compare:` defaults and their provenance notes, the output
+  folders and the `sqlsc` exclusion. Results keep their shape; a machine without
+  the package answers `tool_unavailable` and the tools say to run `coop update`.
+  The manifest pins `coop-schema-compare` 0.1.8 (the flags coop passes).
+
 ## [0.38.6] — 2026-10-26
 
 ### Added
