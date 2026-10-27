@@ -602,7 +602,7 @@ command classification. Command text and arguments are not persisted; the secret
 logs only the matched path, never file contents. Enforcement exceptions, including a
 throwing approval dialog, block the affected tool call with a fixed reason that excludes
 exception details. Optional audit/display failures do not change an enforcement decision.
-Run `/coop-guardrails` in a session to see the last ~10 decisions and the log path; the log
+Run `/approvals` in a session to see the last ~10 decisions and the log path; the log
 rolls to `.jsonl.1` past ~1 MB. It's the reviewable record of "the agent tried X; a human
 said yes/no" — useful for client trust and for debugging a guardrail false positive.
 Older command-bearing records are displayed without their command details. Their stored
