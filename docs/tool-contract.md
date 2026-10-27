@@ -344,7 +344,7 @@ without `sql_targets`); a production or unresolved target asks once per call (an
 is blocked headlessly); a call carrying any field beyond `object` is blocked. The
 audit records a fixed label and the environment, never the object name. The tool's
 text output adds a `data_doc` lineage hint when built docs exist in the folder, and
-the `impact-analysis` prompt and the `coop-workflow` skill call `sql_impact` before
+the `coop-workflow` skill calls `sql_impact` before
 any live SQL edit. The text lists every item in each section (`- schema.name (type)`,
 unresolved references flagged, dependents with `uses <columns>`; columns as
 `- name type NULL|NOT NULL`). With a declared `power_bi.table_mapping`, an

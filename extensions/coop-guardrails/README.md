@@ -46,7 +46,7 @@ may still contain command text and are not sanitized exports.
 
 - Disable governance confirms/blocks: `COOP_NO_GUARDRAILS=1`.
 - Show Pi's own update banner for maintainer diagnostics: `COOP_SHOW_UPSTREAM_UPDATE_NOTICES=1` (read by the Coop launcher).
-- `/coop-guardrails` — show what's enforced and whether it's on.
+- `/approvals [revoke]` — what this session may do without asking (edit approvals, the live-read grant, the production unlock), whether enforcement is on, and the last decisions; `revoke` ends the session grants.
 
 ## Live reads
 

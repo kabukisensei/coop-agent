@@ -60,7 +60,7 @@ t("prompt-sending items name the prompt or tool that does the work", async () =>
   assert.match(sent[1], /data_doc lineage/);
   assert.match(sent[2], /\/spec-first/);
   assert.match(sent[2], /\/slice-next/);
-  assert.match(sent[3], /\/daily-log/);
+  assert.match(sent[3], /daily-logger/);
   assert.match(sent[3], /\/handoff/);
   assert.match(sent[4], /coop doctor/);
   assert.match(sent[4], /az login/);

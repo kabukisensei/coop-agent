@@ -287,11 +287,9 @@ const WEBSITE_SLASH_COMMANDS = [
   "/setup-docs",
   "/openai-usage",
   "/discovery",
-  "/impact-analysis",
+  "/impact",
   "/semantic-model-review",
   "/fabric-architecture-review",
-  "/daily-log",
-  "/weekly-log",
   "/spec-first",
   "/slice-next",
   "/annotate",
@@ -306,7 +304,7 @@ const WEBSITE_SLASH_COMMANDS = [
   "/compact",
   "/coop-vibe",
   "/coop-splash",
-  "/coop-guardrails",
+  "/approvals",
 ];
 
 const REQUIRED_NEEDLES = [
