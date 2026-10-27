@@ -113,10 +113,11 @@ show all of it. Task logs stay in the repository.
      governed `fabric_sql_query` fallback, `sql_impact` (`lib/sql_impact.py`:
      three fixed catalog queries for one object's dependents, references and
      columns on the contract's dev/test SQL target), `catalog_snapshot` and
-     `schema_compare` (`lib/schema_compare.py`: two catalogs, each read live or
-     from the repo's `.sql` files by `lib/sql_source.py`, a sorted diff and an
-     ordered promotion script under `.coop/schema-compare/`, applied by nobody
-     but a person) and `sql_source` (`lib/sqlsc.mjs`: the `coop-sqlsc` CLI for
+     `schema_compare` (`lib/schema_compare.py`: coop's sides, identity and
+     choices over the pinned `coop-schema-compare`, which reads the two
+     catalogs, live or from the repo's `.sql` files, and writes the sorted
+     diff and the ordered promotion script under `.coop/schema-compare/`,
+     applied by nobody but a person) and `sql_source` (`lib/sqlsc.mjs`: the `coop-sqlsc` CLI for
      SQL source control, off until `/sql-source on`; checkouts as `coop-agent:<user>`,
      commits with approval, never a push), which shell out and return
      JSON the model reasons over. SQL/DAX/semantic-model standards need no tool: at launch
@@ -234,10 +235,11 @@ show all of it. Task logs stay in the repository.
    - `coop-schema-compare` — the schema compare as a standalone command
      (`compare`, `snapshot`, `diff`) over live databases, `fabric://` names,
      snapshot folders and repo folders; installed at the manifest pin for people
-     and CI pipelines. The native `schema_compare` tool still runs
-     `lib/schema_compare.py` in-process (contract `sql_targets` entries, the
-     guardrails' audit and coop's own token path); the two share the compare
-     engine and the snapshot layout.
+     and CI pipelines, and the one compare engine: the native
+     `schema_compare` and `catalog_snapshot` tools run it as a child process
+     (`lib/compare_tool.py`) after coop has resolved the contract `sql_targets`
+     entries and minted its own tokens, so the guardrails' audit and coop's
+     identity rules stay coop's.
    - `coop-data-doc` — SQL + Power BI documentation and lineage.
      `scan` → `graph.json`; `build` → `manifest.json` + Markdown docs + portal;
      `lineage <object> [--depth]` → one object's up/downstream + relationships as
