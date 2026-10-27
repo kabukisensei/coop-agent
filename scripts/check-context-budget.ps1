@@ -8,14 +8,18 @@ $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $coop = Join-Path (Join-Path $root 'bin') 'coop.ps1'
 
-$GUARDRAILS_LIMIT_BYTES = 6500
+$GUARDRAILS_LIMIT_BYTES = 6700
+# 6500 -> 6700 on 2026-10-27 (team feedback: no unnecessary functions in SQL):
+# one short guardrails section, with headroom for the CRLF checkout on Windows.
 # 7000 -> 7200 on 2026-10-01 (master plan row SQ4): one new native tool,
 # sql_impact, plus its one-line AGENTS.md mention. Its metadata is kept compact.
 # 7200 -> 7300 on 2026-10-12 (master plan row SQ10): one new native tool,
 # schema_compare, with its metadata kept to three short strings.
 # Held at 7300 on 2026-10-20 (master plan row SQ12): the new native tool,
 # sql_source, and its AGENTS.md mention were paid for by trimming AGENTS.md prose.
-$TOTAL_LIMIT_TOKENS = 7300
+# 7300 -> 7350 on 2026-10-27 (team feedback): the guardrails section above; Aaron
+# allowed the budget to grow for it.
+$TOTAL_LIMIT_TOKENS = 7350
 
 $py = Get-Command python3 -ErrorAction SilentlyContinue
 if (-not $py) { $py = Get-Command python -ErrorAction SilentlyContinue }

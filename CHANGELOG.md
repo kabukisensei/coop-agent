@@ -7,6 +7,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- **No unnecessary functions in SQL** (team feedback of 2026-10-27). `docs/guardrails.md`
+  gains a short section: coop wraps a column in `CAST`, `CONVERT`, `TRY_CONVERT`,
+  `UPPER`, `TRIM` or any other function only when the column's type, collation or
+  actual values prove it is needed, never in a `JOIN` or `WHERE` predicate, and
+  comments the evidence for each one it keeps. The full rule is the new "Function
+  standards" section of the coop-standards *SQL Conventions* article, which coop
+  applies while writing and in the self-check. The context-budget caps grow to
+  6700 bytes / 7350 tokens for it.
 - **Team feedback of 2026-10-26.** `/deploy-brief` writes `deploy-brief.md` from a
   `schema_compare` run or a git range: one plain-English paragraph per changed
   object by schema, the standards self-check over those objects, downstream impact

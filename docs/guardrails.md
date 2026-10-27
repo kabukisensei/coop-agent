@@ -37,6 +37,10 @@ When the client's SQL repository, catalog snapshot or built lineage docs exist, 
 
 Every module you change (a table: in its change script) gets one comment line next to the change: `-- coop YYYY-MM-DD for <user>: <what and why>`. One line per change: no running log, no banner before `CREATE`. With the `Prepared-by:` trailer `sql_source commit` adds, the team sees where coop was involved.
 
+## No unnecessary functions in SQL
+
+Do not wrap a column in `CAST`, `CONVERT`, `TRY_CONVERT`, `UPPER`, `TRIM` or any other function unless the column's type, collation or actual values prove it is needed; never in a `JOIN` or `WHERE` predicate. Each function you keep gets a `--` comment naming that evidence.
+
 ## Read focused
 
 Before changing an object, look up its lineage with `data_doc` (`command="lineage"`, `object="<name>"`) and read **only that object's doc and its immediate neighbors**, not the whole tree. Widen only when the blast radius requires it.
