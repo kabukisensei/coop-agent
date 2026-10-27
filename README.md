@@ -359,7 +359,6 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop profile [--edit|--reset|--json]` | Inspect or update the private user profile |
 | `coop uninstall [--keep-tools] [--yes]` | Remove the launcher/shortcuts/user-PATH entry and isolated agent dir; by default also uninstall Pi, pipx tools/Fabric CLI, Power BI Report Authoring CLI, Power BI Modeling MCP, and the Windows Desktop Bridge. `--keep-tools` preserves all managed npm/pipx tools. Never touches repo clones, work repos, the rest of `~/.coop`, or personal `~/.pi/agent` |
 | `coop install [--edge] [--force] [--yes] [--prereqs auto] [--no-prereqs] [--no-fabric] [--platform fabric\|azure_sql\|both]` | Fresh-install/bootstrap (idempotent). Normal mode uses manifest pins; `--edge` deliberately takes upstream latest and is tools-only here (install never moves the repo). With a source arg, alias of `coop add` |
-| `coop bootstrap` | Same bootstrap as bare `coop install` |
 | `coop data-doc [args]` | Run `coop-data-doc` (default: `build`) and summarize outputs |
 | `coop catalog snapshot\|status` | The committed dev catalog snapshot: `snapshot` reads the contract's dev/test target read-only and writes one file per table, view, procedure and function under the contract's snapshot folder (commit it); `status` says whether it exists and how old it is |
 | `coop version` | Print `coop` + `pi` versions; a git checkout adds its `git describe` (for example `coop 0.23.5 (v0.23.5-21-gdf91630)`) |

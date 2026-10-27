@@ -501,7 +501,6 @@ function Coop-ManifestObjectGet([string]$Object, [string]$Key, [string]$Default 
 function Coop-ManifestExtensionSpec([string]$Package) { $v = Coop-ManifestObjectGet 'extensions' $Package; if ($v) { return "npm:${Package}@${v}" }; return '' }
 function Coop-ManifestPythonSpec([string]$Package) { $v = Coop-ManifestObjectGet 'python_tools' $Package; if ($v) { return "${Package}==${v}" }; return '' }
 function Coop-ManifestNpmToolSpec([string]$Package) { $v = Coop-ManifestObjectGet 'npm_tools' $Package; if ($v) { return "${Package}@${v}" }; return '' }
-function Coop-ManifestMcpSpec([string]$Package) { $v = Coop-ManifestObjectGet 'mcp_servers' $Package; if ($v) { return "${Package}@${v}" }; return '' }
 
 # Every installed version `pi list` reports for one managed extension. Only real
 # package specs count: an extension's install path also contains its name (and
@@ -963,16 +962,6 @@ function Install-CoopBundledOdbc {
   }
   if ($p -and @(0, 3010) -notcontains $p.ExitCode) { return 'failed' }
   return 'ok'
-}
-
-# Is this process elevated (a member of the Administrators group with the token
-# to match)? False off Windows.
-function Test-CoopProcessElevated {
-  if ($env:OS -ne 'Windows_NT') { return $false }
-  try {
-    $id = [Security.Principal.WindowsIdentity]::GetCurrent()
-    return (New-Object Security.Principal.WindowsPrincipal $id).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-  } catch { return $false }
 }
 
 function Ensure-CoopFabricOdbcDriver([bool]$AllowPrereqs = $true, [bool]$Auto = $false) {
@@ -3742,14 +3731,6 @@ function Invoke-CoopNpmToolsConverge {
   return (Coop-UnitResult $false "$ok ready, $failed failed: $($problems -join '; ')")
 }
 
-# True if version $A's MAJOR.MINOR is strictly newer than $B's (patch ignored).
-function Test-CoopMinorNewer {
-  param([string]$A, [string]$B)
-  $ma = [regex]::Match([string]$A, '^(\d+)\.(\d+)'); $mb = [regex]::Match([string]$B, '^(\d+)\.(\d+)')
-  if (-not $ma.Success -or -not $mb.Success) { return $false }
-  return ([version]("{0}.{1}" -f $ma.Groups[1].Value, $ma.Groups[2].Value) -gt [version]("{0}.{1}" -f $mb.Groups[1].Value, $mb.Groups[2].Value))
-}
-
 # Read a dotted scalar key from a YAML file via lib/_yaml.py (coop's own
 # dependency-free parser on every machine; a bool prints as true / false).
 function Get-CoopYamlValue {
@@ -4774,21 +4755,15 @@ function Get-CoopProfileInUse {
 function Get-CoopRegisteredProfile {
   try { return [string][Environment]::GetFolderPath('UserProfile') } catch { return '' }
 }
-# Normalized form for comparing two paths: absolute, no trailing separator,
-# case-folded (Windows paths are case-insensitive; a sandbox is never a
-# case-variant of the real profile).
-function ConvertTo-CoopComparablePath {
-  param([string]$Path)
-  if (-not $Path) { return '' }
-  $full = try { [System.IO.Path]::GetFullPath($Path) } catch { $Path }
-  return $full.TrimEnd('\', '/').ToLowerInvariant()
-}
+# Paths compare through ConvertTo-CoopComparablePath (one separator, no
+# trailing one, case folded): a sandbox is never a case-variant of the real
+# profile.
 function Test-CoopPathInside {
   param([string]$Path, [string]$Root)
   $p = ConvertTo-CoopComparablePath $Path
   $r = ConvertTo-CoopComparablePath $Root
   if (-not $p -or -not $r) { return $false }
-  return ($p -eq $r) -or $p.StartsWith($r + '\') -or $p.StartsWith($r + '/')
+  return ($p -eq $r) -or $p.StartsWith($r + '/')
 }
 function Test-CoopProfileRedirected {
   $registered = ConvertTo-CoopComparablePath (Get-CoopRegisteredProfile)
