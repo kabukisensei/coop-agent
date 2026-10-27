@@ -526,3 +526,7 @@ The project contract `.coop/project.yml` (copied from
 workspaces, backup/log rules, allowed/blocked commit paths, and the approval policy.
 It may provide deliberate project standards overrides; otherwise COOP's resolved
 standards task authority is authoritative.
+One reader per language reads it: `lib/project-contract.mjs` in JS and the
+extensions (`findProjectContract` in `lib/standards.mjs` finds it), `lib/_yaml.py`
+in Python (`coop_paths.find_project_yml` finds it) and, at launch where no Python
+runs yet, the `Get-CoopContractRepositories` line scan in `lib/common.ps1`.
