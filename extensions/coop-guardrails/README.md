@@ -54,6 +54,18 @@ Reads need no approval on any environment, production included; only changes do.
 
 ## Implementation
 
-A `pi.on("tool_call", …)` handler (returns `{ block, reason }` to deny). The
-never-commit-source check runs `git diff --cached --name-only` and classifies staged
-paths; the destructive check is a conservative set of command patterns.
+A `pi.on("tool_call", …)` handler (returns `{ block, reason }` to deny) hands every
+call to one `enforce()`, which runs `RULES` in their declared order until one
+decides. Each rule answers with one `Decision`: pass (not its call, or cleared for
+the next rule), allow (the call runs, no later rule looks) or block (with the
+reason). The native rules each own a tool (`codemode`, `mcpScript`, `powershell`,
+the file tools, `sql_source`, the live-metadata tools, then every other native or
+MCP tool); the shell rules run in sequence over the one alias-expanded command
+(production unlock, secret files, environment dumps, Azure sign-in, git commits,
+sqlsc, destructive commands, Fabric writes, Desktop reloads). Every question goes
+through `Session.ask()`, the one dialog site: it fails closed without a UI, offers
+a session approval when the rule names a key, writes the audit row and turns a no
+into a block. The classifiers the rules call (`dangerLabel`, `mcpEditLabel`,
+`sqlscShellRisk`, …) are pure functions over the call, tested one by one. The
+never-commit-source check runs `git diff --cached --name-only` and classifies
+staged paths; the destructive check is a conservative set of command patterns.

@@ -3037,31 +3037,773 @@ export function withDialogSignal<C extends { ui?: any }>(ctx: C, signal: AbortSi
 
 const CALL_CANCELLED = "coop guardrails: blocked. The turn was stopped before this call was checked.";
 
-export default function coopGuardrails(pi: ExtensionAPI) {
-  const enabled = () => process.env.COOP_NO_GUARDRAILS !== "1";
-  const showUpstreamUpdates = () => process.env.COOP_SHOW_UPSTREAM_UPDATE_NOTICES === "1";
-  // Closure-owned: one extension instance can hold one grant for its current Pi
-  // session. Nothing is serialized into messages, disk, config, or audit output.
-  let liveReadGrant: LiveReadGrant | null = null;
-  // Session edit approvals (#156): server keys only, never arguments or SQL.
-  const editApprovals = new Set<string>();
-  // Nothing lost between SSMS and the files (SQ12, Aaron 2026-10-20): a dev
-  // write coop made while SQL source control is on and the repository has an
-  // sqlsc.yml owes the files a `sql_source script` (then a commit). Approved
-  // writes are counted here; script or commit clears the count; the next turn
-  // starts with a note naming the debt until it is paid.
-  let unscriptedDevWrites = 0;
-  function noteDevSqlWrite(ctx: ExtensionContext, environment: string): void {
+// --- Enforcement: one Decision, one enforce(), the rules in declared order -------
+//
+// Every governed tool call goes through enforce(), which runs RULES in the order
+// written below and stops at the first rule that decides. A rule answers with one
+// Decision: pass (not this rule's call, or checked and cleared for the next rule),
+// allow (checked; the call runs and no later rule looks) or block (with the reason
+// Pi shows the model). A question to the person goes through Session.ask(), the
+// one dialog site: it fails closed without a UI, offers a session approval when
+// the rule names a key, writes the audit row and turns a "no" into a block.
+
+/** A rule's word on one tool call. */
+export type Decision = { action: "pass" } | { action: "allow" } | { action: "block"; reason: string };
+const PASS: Decision = { action: "pass" };
+const ALLOW: Decision = { action: "allow" };
+const block = (reason: string): Decision => ({ action: "block", reason });
+
+/** One tool call under check. `command` is the shell command, alias-expanded by
+ *  the shell-command rule for every shell rule after it. */
+type Call = { event: any; ctx: ExtensionContext; tool: string; command: string };
+
+/** A rule: which calls it looks at, and its decision. */
+type Rule = { id: string; applies: (call: Call) => boolean; check: (call: Call, session: Session) => Decision | Promise<Decision> };
+
+/** One question to the person, audited either way. */
+type Ask = {
+  title?: string;
+  question: string;
+  kind: AuditEntry["kind"];
+  tool: string;
+  label: string;
+  detail: string;
+  headless: string;          // the block reason when no UI can answer
+  declined: string;          // the block reason after a no
+  headlessDetail?: string;   // audit detail of the headless row (default: detail)
+  sessionKey?: string | null; // offers "for this session"; a key already granted skips the question
+  heldDetail?: string;       // audit detail when a granted key covers the call
+  grantedDetail?: string;    // audit detail when the person grants the key now
+};
+
+const UI_HEADLESS = (ctx: ExtensionContext): boolean => !ctx.hasUI || typeof ctx.ui?.confirm !== "function";
+
+/** The state one extension instance holds for its current Pi session. Nothing
+ *  here is serialized into messages, disk, config or audit output. */
+class Session {
+  /** Closure-owned: one grant for the current session (SQL live reads). */
+  liveReadGrant: LiveReadGrant | null = null;
+  /** Session edit approvals (#156): server keys only, never arguments or SQL. */
+  readonly editApprovals = new Set<string>();
+  /** Set once the session connects the Power BI Modeling MCP to anything naming
+   *  production; from then on every model edit asks (#159). */
+  modelingProduction = false;
+  /** Nothing lost between SSMS and the files (SQ12, Aaron 2026-10-20): a dev
+   *  write coop made while SQL source control is on and the repository has an
+   *  sqlsc.yml owes the files a `sql_source script` (then a commit). Approved
+   *  writes are counted here; script or commit clears the count; the next turn
+   *  starts with a note naming the debt until it is paid. */
+  unscriptedDevWrites = 0;
+  readonly liveReadDeps: LiveReadResolverDeps;
+  constructor(readonly pi: ExtensionAPI) {
+    this.liveReadDeps = {
+      readText: (path) => readFileSync(path, "utf8"),
+      agentDir: auditDir(),
+      token: () => (globalThis as any).process?.env?.COOP_FABRIC_MCP_TOKEN,
+    };
+  }
+  /** Drop every per-session grant (session_start / session_shutdown). */
+  reset(): void {
+    this.liveReadGrant = null;
+    this.editApprovals.clear();
+    this.modelingProduction = false;
+  }
+  exec = (bin: string, args: string[], opts?: any) => this.pi.exec(bin, args, opts);
+  governance(ctx: ExtensionContext): SessionGovernance { return ensureSessionGovernance(ctx.cwd); }
+  deps(ctx: ExtensionContext): LiveReadResolverDeps & { contract: () => ContractSqlScope | null } {
+    return { ...this.liveReadDeps, contract: () => this.governance(ctx).sqlContract };
+  }
+  noteDevSqlWrite(ctx: ExtensionContext, environment: string): void {
     try {
       if (environment !== "dev" && environment !== "test") return;
       if (!sqlSourceEnabled()) return;
       if (!findSqlscConfig(ctx.cwd, findProjectContract(ctx.cwd))) return;
-      unscriptedDevWrites++;
+      this.unscriptedDevWrites++;
     } catch { /* best effort */ }
   }
+  /** G1: the human unlock, re-read on every production write (it expires on its
+   *  own and `coop unlock-prod --revoke` deletes it); matched to the trusted
+   *  contract's client so one client's grant never covers another's session. */
+  activeProdUnlock(ctx: ExtensionContext): ProdUnlock | null {
+    const unlock = readProdUnlock();
+    return prodUnlockApplies(unlock, this.governance(ctx).sqlContract?.client || "") ? unlock : null;
+  }
+  /** G1: one production write, permitted by a person (a yes/no under their unlock)
+   *  and audited either way. Null when it may run. */
+  async permitProductionWrite(ctx: ExtensionContext, kind: AuditEntry["kind"], tool: string, what: string): Promise<Decision | null> {
+    const verdict = await askProductionWrite(ctx, what, this.activeProdUnlock(ctx));
+    // Shell records keep no detail of their own (it could carry command text), so the permit rides the label there.
+    audit({ cwd: ctx.cwd, kind, tool, decision: verdict.decision, label: kind === "danger-confirm" ? `production write (${verdict.detail})` : "production write", detail: verdict.detail });
+    return verdict.decision === "allowed" ? null : block(verdict.reason);
+  }
+  /** The SQ8 edit gate: a live target is one sql_impact would answer on without
+   *  a prompt (the contract's sql_targets, or a managed dev/test Fabric entry). */
+  decideSqlEditGate(path: string, content: string, ctx: ExtensionContext): { action: "allow" | "block"; object?: string; reason?: string } {
+    try {
+      const contract = this.governance(ctx).sqlContract;
+      const managed = managedSqlEnvironment(this.liveReadDeps);
+      const liveTarget = Boolean(contract?.configured) || managed === "dev" || managed === "test";
+      return editGateDecision(ctx.cwd, isAbsolute(path) ? path : resolve(ctx.cwd, path), content, { liveTarget });
+    } catch {
+      return { action: "allow" };
+    }
+  }
+  /** The one dialog site. Null when the person approved (or a granted session key
+   *  covers the call); a block otherwise. Every outcome is audited. */
+  async ask(ctx: ExtensionContext, spec: Ask): Promise<Decision | null> {
+    const { kind, tool, label } = spec;
+    const key = spec.sessionKey || null;
+    if (key && this.editApprovals.has(key)) {
+      audit({ cwd: ctx.cwd, kind, tool, decision: "allowed", label, detail: spec.heldDetail ?? "session-approval" });
+      return null;
+    }
+    if (UI_HEADLESS(ctx)) {
+      audit({ cwd: ctx.cwd, kind, tool, decision: "blocked-headless", label, detail: spec.headlessDetail ?? spec.detail });
+      return block(spec.headless);
+    }
+    const choice = await askEditApproval(ctx, spec.title || "coop guardrails", spec.question, key);
+    if (choice === "session" && key) this.editApprovals.add(key);
+    audit({ cwd: ctx.cwd, kind, tool, decision: choice === "declined" ? "declined" : "allowed", label, detail: choice === "session" ? spec.grantedDetail ?? "session-approval-granted" : spec.detail });
+    return choice === "declined" ? block(spec.declined) : null;
+  }
+}
+
+const isFileTool = (call: Call) => call.tool === "read" || call.tool === "edit" || call.tool === "write";
+const isShell = (call: Call) => call.tool === "bash";
+const isNative = (call: Call) => !isShell(call) && !isFileTool(call) && !["codemode", "mcpScript", "powershell"].includes(call.tool);
+const shown = (command: string) => command.slice(0, 200);
+
+// codemode (Pi 1.x): only coop's own copy runs, with script model calls off. The
+// calls a script makes come back through this hook one by one.
+const codemodeRule: Rule = {
+  id: "codemode",
+  applies: (call) => call.tool === "codemode",
+  check: ({ ctx, tool }, session) => {
+    let info: any;
+    try { info = ((session.pi as any).getAllTools?.() ?? []).find((t: any) => t?.name === "codemode"); } catch { info = undefined; }
+    if (!isCoopCodemode(info, process.env.COOP_ROOT)) {
+      audit({ cwd: ctx.cwd, kind: "codemode-script", tool, decision: "blocked", label: "codemode script", detail: "not-coop-codemode" });
+      return block("coop guardrails: blocked a codemode script. This codemode is not coop's own, and its scripts can call outside models that coop's checks cannot see. Call the tools directly instead.");
+    }
+    return ALLOW;
+  },
+};
+
+// pi-mcp-adapter's mcpScript runs JavaScript that calls MCP tools inside the
+// adapter, where this hook never sees them, so no MCP mutation or Warehouse SQL
+// check could apply. Coop's generated MCP config turns it off; block it too in
+// case a project or user config turns it back on.
+const mcpScriptRule: Rule = {
+  id: "mcp-script",
+  applies: (call) => call.tool === "mcpScript",
+  check: ({ ctx }) => {
+    audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "mcpScript", decision: "blocked", label: "MCP script", detail: "script-mode" });
+    return block("coop guardrails: blocked mcpScript. Its MCP calls run inside the adapter where coop's read-only MCP checks cannot see them. Call MCP tools one at a time with the mcp tool instead.");
+  },
+};
+
+// Pi's optional `powershell` tool is off by default, but a user's settings, a
+// trusted project's settings or --tools can turn it on. The shell rules parse
+// bash, so none of them (secret files, git commits, destructive commands) would
+// see a PowerShell command. Show each one and ask; fail closed headlessly (#166).
+// The audit records a fixed label, never the command.
+const powershellRule: Rule = {
+  id: "powershell",
+  applies: (call) => call.tool === "powershell",
+  check: async ({ event, ctx, tool }, session) => {
+    const command = String(event?.input?.command ?? "");
+    if (touchesProdUnlock(command)) {
+      audit({ cwd: ctx.cwd, kind: "danger-confirm", tool, decision: "blocked", label: "production unlock", detail: "prod-unlock-self" });
+      return block(PROD_UNLOCK_SELF_BLOCK);
+    }
+    const shownCommand = command.length > 600 ? `${command.slice(0, 600)}…` : command;
+    const refused = await session.ask(ctx, {
+      kind: "danger-confirm", tool, label: "PowerShell command", detail: "powershell",
+      question: `Run this PowerShell command?\n  ${shownCommand}\ncoop's shell checks (secret files, git commits, destructive commands) cover bash only, so every PowerShell command asks.`,
+      headless: "coop guardrails: blocked a PowerShell command. coop's shell checks cover bash only, and approval is unavailable in headless mode. Use the bash tool.",
+      declined: "coop guardrails: blocked the PowerShell command (you declined). Use the bash tool, which coop's shell checks cover.",
+    });
+    return refused || ALLOW;
+  },
+};
+
+// File access (read / edit / write): the production unlock is never written, a
+// secret-looking file asks, and a SQL edit waits for its lineage (SQ8).
+const fileRule: Rule = {
+  id: "files",
+  applies: isFileTool,
+  check: async ({ event, ctx, tool }, session) => {
+    const path = String(event?.input?.path ?? "");
+    const writes = tool === "edit" || tool === "write";
+    // G1: the production unlock is a person's grant; a session never writes it.
+    // #371: through any link, junction or hard link too, and no confirmation overrides it.
+    if (writes && path && writesProdUnlock(path, ctx.cwd)) {
+      audit({ cwd: ctx.cwd, kind: "secret-confirm", tool, decision: "blocked", label: "production unlock", detail: "prod-unlock-self" });
+      return block(PROD_UNLOCK_SELF_BLOCK);
+    }
+    // F2: this client's backups and drafts (<profile dir>/backups, <profile dir>/drafts)
+    // are coop's own working folders, never source: a backup of a .env or a draft
+    // .sql written there needs no confirmation and no lineage lookup.
+    if (writes && path && isClientWorkPath(path, ctx.cwd)) return ALLOW;
+    // #367: an innocent-looking link to a secret is the secret.
+    const linked = path && !isSecretPath(path) ? secretLinkTarget(path, ctx.cwd) : null;
+    if (path && (linked || isSecretPath(path))) {
+      const verb = tool === "read" ? "read" : "write to";
+      const refused = await session.ask(ctx, {
+        kind: "secret-confirm", tool, label: path, detail: path,
+        question: `Secret-looking file (${verb}):\n  ${path}${linked ? ` -> ${linked}` : ""}\ncoop never exposes secrets (tokens, keys, .env). Proceed?`,
+        headless: `coop guardrails: blocked ${tool} of secret-looking file ${path}; approval is unavailable in headless mode.`,
+        declined: `coop guardrails: blocked ${tool} of the secret-looking file ${path} (you declined). Reference an env var / vault instead.`,
+      });
+      if (refused) return refused;
+    }
+    // SQL edits (SQ8): the lookup happens before the edit. coop-tools fills the
+    // session's lineage context from the snapshot and the built docs in its own
+    // tool_call hook (it loads first); when no source holds the object and a live
+    // target could still answer, the edit waits for sql_impact.
+    if (writes && /\.sql$/i.test(path)) {
+      const gate = session.decideSqlEditGate(path, tool === "write" ? String(event?.input?.content ?? "") : "", ctx);
+      if (gate.action === "block") {
+        audit({ cwd: ctx.cwd, kind: "lineage-gate", tool, decision: "blocked", label: path, detail: "lineage-not-held" });
+        return block(`coop guardrails: blocked ${tool} of ${path}: ${gate.reason}`);
+      }
+    }
+    return ALLOW;
+  },
+};
+
+// sql_source (SQ12): applying the repo to dev is a dev DDL write and asks; a
+// commit of the scripted files asks every time, only where the project file lets
+// coop commit that folder, and is never pushed.
+const sqlSourceRule: Rule = {
+  id: "sql-source",
+  applies: (call) => call.tool === SQL_SOURCE_TOOL,
+  check: async ({ event, ctx }, session) => {
+    if (event?.input?.command === "script" || event?.input?.command === "commit") session.unscriptedDevWrites = 0;
+    const decision = decideSqlSource(event);
+    if (decision.action === "allow" || !decision.write) return ALLOW;
+    const verb = decision.write.verb;
+    const label = `sql_source ${verb}`;
+    const tool = "governed-sql-source";
+    if (verb === "init") {
+      const contract = findProjectContract(ctx.cwd);
+      const where = findSqlscConfig(ctx.cwd, contract) ? null : sqlscInitRoot(ctx.cwd, contract);
+      // Already set up, or nowhere to set up: the tool says so without changing anything.
+      if (!where || "error" in where) return ALLOW;
+      const git = existsSync(join(where.root, ".git")) ? "" : "git init (a new repository), then ";
+      const refused = await session.ask(ctx, {
+        kind: "commit-block", tool, label, detail: where.root,
+        question: `SQL source control: set up ${where.root}: ${git}sqlsc init (writes sqlsc.yml, .gitattributes and .gitignore; the dev target comes from the project file). Nothing is committed or pushed. Set it up?`,
+        headless: `coop guardrails: blocked ${label}; setting a repository up needs the user's approval, which is unavailable in headless mode.`,
+        declined: `coop guardrails: blocked ${label} (you declined).`,
+      });
+      return refused || ALLOW;
+    }
+    if (verb === "commit") {
+      const cfg = findSqlscConfig(ctx.cwd, findProjectContract(ctx.cwd));
+      const refusal = cfg ? sqlscCommitRefusal(cfg, session.governance(ctx)) : "no sqlsc.yml here or in the project's SQL repository";
+      if (refusal) {
+        audit({ cwd: ctx.cwd, kind: "commit-block", tool, decision: "blocked", label, detail: refusal });
+        return block(`coop guardrails: blocked ${label}; ${refusal}. The user commits (Check in in the SSMS window, or sqlsc checkin).`);
+      }
+      if (UI_HEADLESS(ctx)) {
+        audit({ cwd: ctx.cwd, kind: "commit-block", tool, decision: "blocked-headless", label, detail: cfg || "" });
+        return block(`coop guardrails: blocked ${label}; a commit needs the user's approval, which is unavailable in headless mode.`);
+      }
+      const message = String(event?.input?.message || "").slice(0, 200);
+      const objects = Array.isArray(event?.input?.objects) && event.input.objects.length ? event.input.objects.join(", ") : "every changed object";
+      // Pull first (Aaron, 2026-10-20): fetch now and stop before asking when
+      // the branch is behind and cannot fast-forward; the tool pulls after the yes.
+      const upstream = await checkUpstream(session.exec, dirname(cfg || ""));
+      if (!upstream.ok) {
+        audit({ cwd: ctx.cwd, kind: "commit-block", tool, decision: "blocked", label, detail: upstream.reason });
+        return block(`coop guardrails: blocked ${label}; ${upstream.reason}.`);
+      }
+      const refused = await session.ask(ctx, {
+        kind: "commit-block", tool, label, detail: `${dirname(cfg || "")}: ${message}`,
+        question: `SQL source control: commit the scripted SQL files in ${dirname(cfg || "")} (sqlsc commit, not pushed).\nObjects: ${objects}\nMessage: ${message}\nBranch: ${upstream.note}. Objects a teammate has checked out or changed in the repo are left alone. Commit?`,
+        headless: `coop guardrails: blocked ${label}; a commit needs the user's approval, which is unavailable in headless mode.`,
+        declined: `coop guardrails: blocked ${label} (you declined).`,
+      });
+      return refused || ALLOW;
+    }
+    // Where the write really goes, by the project file's labels: a target the
+    // contract does not vouch for counts as production, a person's.
+    const where = await resolveSqlscWrite(session.exec, ctx.cwd, decision.write.environment, session.governance(ctx));
+    if (!where.ok) {
+      audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool, decision: "blocked", label, detail: where.reason });
+      return block(`coop guardrails: blocked ${label}; ${where.reason}. coop changes dev and test only, and only targets the project file names; a release to production is a person's command.`);
+    }
+    const place = `${where.server || "(discovered server)"} / ${where.database}`;
+    const key = verb === "get_latest" ? "sql_source:get_latest:dev" : null;
+    const question = verb === "get_latest"
+      ? `SQL source control: apply the repo's SQL files to the dev database (sqlsc get-latest).\nTarget: ${place}. Objects a teammate changed in dev are kept; prod is never touched. Run it?`
+      : `SQL source control: release commit ${String(event?.input?.ref || "HEAD")} to the ${decision.write.environment} database (sqlsc deploy).\nTarget: ${place}. Production is never touched. Run it?`;
+    const refused = await session.ask(ctx, {
+      kind: "mcp-confirm", tool, label, detail: place, question,
+      sessionKey: key, heldDetail: `session-approval ${place}`, grantedDetail: `session-approval-granted ${place}`,
+      headless: `coop guardrails: blocked ${label}; changing the ${decision.write.environment} database needs approval, which is unavailable in headless mode.`,
+      declined: `coop guardrails: blocked ${label} (you declined).`,
+    });
+    return refused || ALLOW;
+  },
+};
+
+// sql_impact (SQ4), catalog_snapshot and schema_compare: catalog metadata on the
+// executor's dev/test target runs without a prompt; anything else asks or is blocked.
+const liveMetadataRule: Rule = {
+  id: "live-metadata",
+  applies: (call) => call.tool === SQL_IMPACT_TOOL || call.tool === CATALOG_SNAPSHOT_TOOL || call.tool === SCHEMA_COMPARE_TOOL,
+  check: async ({ event, ctx, tool }, session) => {
+    const deps = session.deps(ctx);
+    const impact = tool === SQL_IMPACT_TOOL ? decideSqlImpact(event, deps)
+      : tool === CATALOG_SNAPSHOT_TOOL ? decideCatalogSnapshot(event, deps)
+      : decideSchemaCompare(event, deps.contract());
+    const auditTool = tool === SQL_IMPACT_TOOL ? "governed-sql-impact" : tool === CATALOG_SNAPSHOT_TOOL ? "governed-catalog-snapshot" : "governed-schema-compare";
+    const label = tool === SQL_IMPACT_TOOL ? "live metadata read" : tool === CATALOG_SNAPSHOT_TOOL ? "live catalog snapshot" : "live schema compare";
+    if (impact.action === "block") {
+      audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: auditTool, decision: "blocked", label, detail: "input-invalid" });
+      return block(`coop guardrails: blocked ${tool}; it ${impact.reason}.`);
+    }
+    if (impact.action === "allow") {
+      // A snapshot status reads a folder, not a target: nothing to audit.
+      if (impact.environment) audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: auditTool, decision: "allowed", label, detail: impact.environment });
+      return ALLOW;
+    }
+    const refused = await session.ask(ctx, {
+      title: "coop live-data guardrail", kind: "mcp-confirm", tool: auditTool, label, detail: impact.environment,
+      question: `Live catalog metadata read (${tool}) on a target that is not a resolved dev/test entry:\n  environment: ${impact.environment} (${impact.reason})\nDev/test metadata is read-only by default; production and unresolved targets ask. Read it once?`,
+      headless: `coop guardrails: blocked ${tool} (${impact.reason}); explicit approval is unavailable in headless mode.`,
+      declined: `coop guardrails: blocked ${tool} (you declined).`,
+    });
+    return refused || ALLOW;
+  },
+};
+
+// Every other native or MCP tool: a mutating MCP / Fabric / Power BI action needs
+// explicit approval (proxied calls use the adapter's server/tool identity), a
+// production write a person's permit (G1), and a Warehouse SQL call its live-read
+// or write decision. Approval fails closed headlessly.
+const mcpRule: Rule = {
+  id: "mcp",
+  applies: isNative,
+  check: async ({ event, ctx }, session) => {
+    const target = effectiveMutationTarget(event);
+    const productionNames = session.governance(ctx).productionNames;
+    if (modelingConnectsProduction(event) || (isModelingConnection(event) && namesContractProduction(callStringValues(event), productionNames))) session.modelingProduction = true;
+    const mcp = mcpEditLabel(event);
+    // G1: a production write waits for a person's permit before any other approval path. The signal is
+    // the call's own words (server, tool, arguments naming prod) or the session's
+    // production Modeling connection; the Warehouse SQL path below uses coop's
+    // trusted config for the same decision.
+    const mcpProductionWrite = Boolean(mcp) && (
+      (session.modelingProduction && isModelingEdit(event)) || PRODUCTION_WORD.test(mutationCallText(event, target)) ||
+      namesContractProduction(callStringValues(event), productionNames));
+    // The permit is this call's approval: it is not asked twice below.
+    let productionPermitted = false;
+    if (mcpProductionWrite) {
+      const refused = await session.permitProductionWrite(ctx, "mcp-confirm", "governed-mcp", mcp as string);
+      if (refused) return refused;
+      productionPermitted = true;
+    }
+    const editKey = mcp ? sessionApprovalKey(event, session.modelingProduction && isModelingEdit(event) ? "production" : undefined) : null;
+    if (mcp && !productionPermitted) {
+      const refused = await session.ask(ctx, {
+        kind: "mcp-confirm", tool: "governed-mcp", label: "managed MCP mutation", detail: "mutation", sessionKey: editKey,
+        question: `This looks like a MUTATING MCP action (create/update/delete/deploy/publish):\n  ${mcp}\ncoop treats MCP as read-only (list / read / inspect). Run it?`,
+        headless: `coop guardrails: blocked mutating MCP action ${mcp}; approval is unavailable in headless mode.`,
+        declined: `coop guardrails: blocked the MCP action ${mcp} (you declined). MCP is read-only by default — list / read / inspect only; make changes with explicit approval or in the Fabric / Power BI UX.`,
+      });
+      if (refused) return refused;
+    }
+    const resolvedScope = resolveLiveReadScope(event, session.deps(ctx));
+    const decision = decideLiveRead(event, session.liveReadGrant, resolvedScope);
+    if (decision.action === "allow-read") {
+      audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: "allowed", label: "live read", detail: `${decision.scope?.environment || "unresolved"}-read-only` });
+      return ALLOW;
+    }
+    if (decision.action === "none" || decision.action === "allow-grant") return ALLOW;
+    // A single dev/test Warehouse INSERT/UPDATE/CREATE/ALTER can ride a session
+    // approval (#156); destructive SQL, batches and production always ask. The
+    // environment is the trusted config's, resolved for the write itself: a
+    // mutation never resolves a read scope, so without this a production
+    // target whose SQL does not say "prod" offered the session option (#283).
+    const trustedSqlEnvironment = decision.kind === "ddl-dml-destructive" ? managedSqlEnvironment(session.liveReadDeps) : "";
+    const sqlEditKey = decision.kind === "ddl-dml-destructive" && (trustedSqlEnvironment === "dev" || trustedSqlEnvironment === "test")
+      ? sessionApprovalKey(event, trustedSqlEnvironment)
+      : null;
+    // A write is recorded as a write: "live read" on an approved CREATE/ALTER
+    // misread the audit trail (SQ live acceptance, 2026-10-03).
+    const auditLabel = decision.kind === "ddl-dml-destructive" ? "Warehouse SQL write" : "live read";
+    // G1: a production Warehouse write runs only on a person's permit. Coop's own
+    // trusted config decides; the call's words decide only when that config
+    // resolves no dev or test target (a dev Warehouse may hold a schema named
+    // prod_staging, and a production write without the word "prod" is still
+    // a production write, #283). An active unlock falls back to asking.
+    // Ambiguous SQL (a DISABLE TRIGGER, DBCC, KILL, an unclosed quote) may
+    // write too, so off a confirmed dev/test target it takes the same
+    // production path as a destructive write instead of a yes/no (#5).
+    const mayWrite = decision.kind === "ddl-dml-destructive" || (decision.kind === "ambiguous-sql" && callSqlText(event).trim() !== "");
+    const contract = session.governance(ctx).sqlContract;
+    const writeEnvironment = mayWrite ? trustedWriteEnvironment(event, session.liveReadDeps, contract) : "";
+    const production = decision.environment === "production" || decision.scope?.environment === "production" || writeEnvironment === "production";
+    // A write on a target coop's config cannot confirm as dev or test (the global
+    // endpoint, blank environment_names with no matching sql_targets ids) may be
+    // production, so it needs the same permit (Aaron, 2026-10-07: he had written
+    // to production through such a target with only the ordinary approval).
+    const unconfirmedWrite = mayWrite && writeEnvironment !== "dev" && writeEnvironment !== "test";
+    const sqlProductionWrite = mayWrite && (unconfirmedWrite || decision.scope?.environment === "production");
+    if (sqlProductionWrite) {
+      // Permitted once above for the same call, or asked now; never a session approval.
+      if (productionPermitted) return ALLOW;
+      const ambiguousNote = decision.kind === "ambiguous-sql" ? " (ambiguous SQL, treated as a write)" : "";
+      const what = production
+        ? `${decision.label || "Warehouse SQL write"}${ambiguousNote}`
+        : `${decision.label || "Warehouse SQL write"}${ambiguousNote} (target not confirmed as dev or test; treated as production)`;
+      const refused = await session.permitProductionWrite(ctx, "mcp-confirm", "governed-live-read", what);
+      // Say why the target is unconfirmed and what to do; the write stays refused.
+      if (refused && refused.action === "block" && refused.reason === PROD_WRITE_LOCKED && !production) {
+        return block(unconfirmedTargetReason(event, session.liveReadDeps, contract));
+      }
+      return refused || ALLOW;
+    }
+    const sessionGrant = decision.action === "prompt-and-grant";
+    const scopeSummary = decision.scope ? [
+      "Resolved bounded session scope:",
+      `  client: ${decision.scope.client}`,
+      `  tenant: ${decision.scope.tenant}`,
+      `  principal: ${decision.scope.principal}`,
+      `  environment: ${decision.scope.environment}`,
+      `  target(s): ${decision.scope.targets.join(", ")}`,
+      `  operation: ${decision.scope.operationClass}`,
+      `  row limit: ${decision.scope.resultLimit}`,
+      `  time limit: ${decision.scope.timeoutMs} ms`,
+    ].join("\n") : "";
+    const prompt = decision.kind === "ddl-dml-destructive"
+      ? sqlEditKey
+        ? `Warehouse SQL write (one INSERT, UPDATE, CREATE or ALTER):\n  ${decision.label}\nDeletes, drops, merges, EXEC, batches and production always ask. Run it?`
+        : `${production ? "PRODUCTION " : ""}Warehouse SQL mutation/DDL call:\n  ${decision.label}\nDDL, DML, destructive SQL, EXEC, and batches require separate explicit approval. Run it?`
+      : decision.kind === "ambiguous-sql"
+        ? `Ambiguous Warehouse SQL call:\n  ${decision.label}\nOnly one plain read statement runs without asking. Run this call once?`
+        : `${production ? "PRODUCTION " : ""}row-level data read:\n  ${decision.label}\n${scopeSummary ? `${scopeSummary}\n` : ""}${sessionGrant ? "Approve this exact bounded scope for this session?" : "Read these rows once?"}`;
+    const refused = await session.ask(ctx, {
+      title: "coop live-data guardrail", kind: "mcp-confirm", tool: "governed-live-read", label: auditLabel, detail: decision.kind || "live-read",
+      sessionKey: sqlEditKey, question: prompt,
+      headless: `coop guardrails: blocked ${decision.kind || "live-read"} access through ${decision.label || "the governed tool"}; explicit approval is unavailable in headless mode.`,
+      declined: `coop guardrails: blocked ${decision.kind || "live-read"} access through ${decision.label || "the governed tool"} (you declined).`,
+    });
+    if (refused) return refused;
+    if (mayWrite) session.noteDevSqlWrite(ctx, writeEnvironment);
+    if (sessionGrant && decision.scope) session.liveReadGrant = createLiveReadGrant(decision.scope);
+    return ALLOW;
+  },
+};
+
+// The shell command itself: an empty one runs, an ambiguous Git wrapper or
+// segment is blocked, and a Git alias in the subcommand position is expanded
+// (#3: ask git what it is, check the expanded command, fail closed when the
+// lookup fails or the alias is a shell command). Every shell rule after this one
+// sees the expanded command.
+const AMBIGUOUS_GIT = "coop guardrails: blocked an ambiguous Git wrapper/segment that cannot be safely inspected. Run Git directly or use a supported env/command/group wrapper.";
+const shellCommandRule: Rule = {
+  id: "shell-command",
+  applies: isShell,
+  check: async (call, session) => {
+    const cmd = String(call.event?.input?.command ?? "").trim();
+    if (!cmd) return ALLOW;
+    if (hasAmbiguousGitInvocation(cmd)) return block(AMBIGUOUS_GIT);
+    const expanded = await expandGitAliases(session.exec, cmd, call.ctx.cwd);
+    if ("ambiguous" in expanded) return block(AMBIGUOUS_GIT);
+    call.command = expanded.cmd;
+    if (expanded.cmd !== cmd && hasAmbiguousGitInvocation(expanded.cmd)) return block(AMBIGUOUS_GIT);
+    return PASS;
+  },
+};
+
+// G1: `coop unlock-prod` and its file belong to a person's own terminal.
+const prodUnlockShellRule: Rule = {
+  id: "prod-unlock-shell",
+  applies: isShell,
+  check: ({ ctx, command }) => {
+    if (!touchesProdUnlock(command)) return PASS;
+    audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "blocked", label: "production unlock", detail: "prod-unlock-self" });
+    return block(PROD_UNLOCK_SELF_BLOCK);
+  },
+};
+
+// Secret-file access via bash mirrors the file rule and fails closed when
+// approval UI is unavailable. The audit logs the matched PATH only, never the
+// command (it may embed the secret's value).
+const secretShellRule: Rule = {
+  id: "secret-file-shell",
+  applies: isShell,
+  check: async ({ ctx, command }, session) => {
+    const secretPath = bashSecretCmdPath(command, ctx.cwd);
+    if (!secretPath) return PASS;
+    const refused = await session.ask(ctx, {
+      kind: "secret-confirm", tool: "bash", label: secretPath, detail: secretPath,
+      question: `This command touches a secret-looking file:\n  ${secretPath}\ncoop never exposes secrets (tokens, keys, .env). Run it?`,
+      headless: `coop guardrails: blocked command touching ${secretPath}; approval is unavailable in headless mode.`,
+      declined: `coop guardrails: blocked a command touching the secret-looking file ${secretPath} (you declined). Reference an env var / vault instead of reading or writing secrets.`,
+    });
+    return refused || PASS;
+  },
+};
+
+// Printing the environment prints the Fabric launch bearer (#4): ask, fail
+// closed headlessly. The audit names the command word only.
+const envDumpRule: Rule = {
+  id: "environment-dump",
+  applies: isShell,
+  check: async ({ ctx, command }, session) => {
+    const envDump = envDumpLabel(command);
+    if (!envDump) return PASS;
+    const refused = await session.ask(ctx, {
+      kind: "secret-confirm", tool: "bash", label: "environment dump", detail: envDump,
+      question: `This command prints the environment (${envDump}):\n  ${shown(command)}\nPi's environment holds the Fabric sign-in token (COOP_FABRIC_MCP_TOKEN). Run it?`,
+      headless: `coop guardrails: blocked a command that prints the environment (${envDump}); it would expose the Fabric sign-in token, and approval is unavailable in headless mode.`,
+      declined: `coop guardrails: blocked a command that prints the environment (${envDump}) (you declined). Name the one variable you need instead.`,
+    });
+    return refused || PASS;
+  },
+};
+
+// An az command that prints a bearer token or changes the Azure sign-in (login,
+// logout, account clear/set): ask, fail closed headlessly. The audit names the
+// az verbs only.
+const azureSignInRule: Rule = {
+  id: "azure-sign-in",
+  applies: isShell,
+  check: async ({ ctx, command }, session) => {
+    const azSignIn = azSignInLabel(command);
+    if (!azSignIn) return PASS;
+    const refused = await session.ask(ctx, {
+      kind: "secret-confirm", tool: "bash", label: "azure sign-in", detail: azSignIn,
+      question: `This command prints an Azure token or changes the Azure sign-in (${azSignIn}):\n  ${shown(command)}\nA printed token lands in the session transcript; a sign-in change affects every tool on this machine. Run it?`,
+      headless: `coop guardrails: blocked ${azSignIn}; it would print an Azure token or change the Azure sign-in, and approval is unavailable in headless mode.`,
+      declined: `coop guardrails: blocked ${azSignIn} (you declined). coop mints its own tokens for the client tenant; use \`az account show\` to inspect the sign-in.`,
+    });
+    return refused || PASS;
+  },
+};
+
+// Never commit source (incl. `git commit -a/-am` auto-staging, `git -C <dir>`,
+// `git commit <pathspec>`, and `cd <dir> && git commit`: the staged check runs
+// against the repo the commit actually targets, see gitRepoDir). Policy comes
+// from the TRUSTED SESSION SNAPSHOT (read once at first governed call): in-session
+// edits to .coop/project.yml cannot weaken it, and the contract is resolved from
+// the session directory so sibling repositories inherit their configured policies.
+// Hard-blocked first: --amend (rewrites history) and pathspec-file forms (commits
+// paths the guardrail deliberately does not read), with no approval path. Other
+// commit-creating verbs (merge, cherry-pick, revert, am, commit-tree) take the
+// same gate: their paths come from the named commits when git can list them,
+// otherwise the verb asks like an unverifiable commit.
+const gitCommitRule: Rule = {
+  id: "git-commit",
+  applies: isShell,
+  check: async ({ ctx, command }, session) => {
+    const governance = session.governance(ctx);
+    for (const git of parseGitCommands(command).filter((g) => COMMIT_LIKE_SUBCOMMANDS.has(g.subcommand || ""))) {
+      const hard = commitHardBlockReason(git);
+      if (hard) {
+        // Inside this loop every entry is a commit; explain WHICH hard block fired.
+        const why = hard.includes("--amend")
+          ? "amend rewrites an existing commit"
+          : "the guardrail does not read pathspec files";
+        audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: "blocked", label: hard, detail: hard });
+        return block(`coop guardrails: ${hard} is never permitted — ${why}. Let a human run it.`);
+      }
+      const { offending, unverifiable, nothing } = await offendingCommitPaths(session.pi, ctx.cwd, command, git, governance);
+      if (offending.length) {
+        const list = offending.slice(0, 8).join(", ");
+        const more = offending.length > 8 ? ` (+${offending.length - 8} more)` : "";
+        audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: "blocked", label: `git ${git.subcommand}`, detail: list });
+        return block(`coop guardrails: never commit source. These paths aren't docs/logs/site: ${list}${more}. Unstage them and let a human commit source.`);
+      }
+      // Ask when the target repository cannot be resolved or read (#2), and,
+      // as before, when a chained `cd` precedes a commit the check found empty.
+      if (unverifiable || (nothing && commitHasLeadingCd(command, git))) {
+        const why = unverifiable ? `\n  (${unverifiable})` : "";
+        const refused = await session.ask(ctx, {
+          kind: "commit-block", tool: "bash", label: "unverifiable git commit", detail: "unverifiable git commit",
+          question: `Can't verify what this commit would include:\n  ${git.segment.slice(0, 200)}${why}\nProceed?`,
+          headless: "coop guardrails: blocked an unverifiable commit because approval is unavailable in headless mode.",
+          declined: "coop guardrails: blocked an unverifiable commit (you declined).",
+        });
+        if (refused) return refused;
+      }
+    }
+    return PASS;
+  },
+};
+
+// coop-sql-source-control (SQ12): its commit verbs commit inside sqlsc, out of
+// the git gate's sight, so they are hard-blocked; a database change is classified
+// by the project file and asks; production is a person's.
+const sqlscShellRule: Rule = {
+  id: "sqlsc-shell",
+  applies: isShell,
+  check: async ({ ctx, command }, session) => {
+    const sqlsc = sqlscShellRisk(command);
+    if (!sqlsc) return PASS;
+    if (sqlsc.hard && /^sqlsc (get-latest|deploy)/.test(sqlsc.label)) {
+      audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "blocked", label: sqlsc.label, detail: "dev or test only, named with -t" });
+      return block(`coop guardrails: blocked ${sqlsc.label}. coop changes the dev or test database only, so name one (-t dev or -t test); a release to any other target is a person's command. Write the script for them instead (--output <file>).`);
+    }
+    if (sqlsc.hard) {
+      audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: "blocked", label: sqlsc.label, detail: sqlsc.label });
+      return block(`coop guardrails: never commit source from the shell. ${sqlsc.label} makes a git commit out of the commit gate's sight; use the sql_source tool (command commit, with a message: it asks the user), or leave it to the user (Check in in the SSMS window, or sqlsc checkin in their own terminal).`);
+    }
+    if (PRODUCTION_WORD.test(command) || namesContractProduction(commandValues(command), session.governance(ctx).productionNames)) {
+      const refused = await session.permitProductionWrite(ctx, "danger-confirm", "bash", `${sqlsc.label}: ${shown(command)}`);
+      if (refused) return refused;
+    }
+    let place = "";
+    if (sqlsc.write) {
+      const where = await resolveSqlscWrite(session.exec, ctx.cwd, sqlsc.write.target, session.governance(ctx), sqlsc.write.config || undefined);
+      if (!where.ok) {
+        audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "blocked", label: sqlsc.label, detail: where.reason });
+        return block(`coop guardrails: blocked ${sqlsc.label}; ${where.reason}. coop changes dev and test only, and only targets the project file names; a release to production is a person's command.`);
+      }
+      place = `\n  Target: ${where.server || "(discovered server)"} / ${where.database}`;
+    }
+    const refused = await session.ask(ctx, {
+      kind: "danger-confirm", tool: "bash", label: sqlsc.label, detail: sqlsc.label, sessionKey: sqlsc.sessionKey,
+      question: `SQL source control from the shell (${sqlsc.label}):\n  ${shown(command)}${place}\nRun it?`,
+      headless: `coop guardrails: blocked ${sqlsc.label}; approval is unavailable in headless mode.`,
+      declined: `coop guardrails: blocked ${sqlsc.label} (you declined).`,
+    });
+    return refused || PASS;
+  },
+};
+
+// Destructive command: explicit approval; fail closed without UI.
+const destructiveRule: Rule = {
+  id: "destructive-command",
+  applies: isShell,
+  check: async ({ ctx, command }, session) => {
+    const danger = dangerLabel(command);
+    if (!danger) return PASS;
+    const refused = await session.ask(ctx, {
+      kind: "danger-confirm", tool: "bash", label: danger, detail: danger,
+      question: `Destructive command (${danger}):\n  ${shown(command)}\nRun it?`,
+      headless: `coop guardrails: blocked ${danger}; approval is unavailable in headless mode.`,
+      declined: `coop guardrails: blocked the ${danger} command (you declined). Propose a safer approach.`,
+    });
+    return refused || PASS;
+  },
+};
+
+// Fabric / Azure REST write from the shell (`az rest --method post`, `fab api -X
+// post`, `fab deploy`, ...): explicit approval, the same rule as a mutating MCP
+// call. The official Microsoft skills issue item create / update / deploy /
+// delete this way; fail closed without UI.
+const fabricWriteRule: Rule = {
+  id: "fabric-write-shell",
+  applies: isShell,
+  check: async ({ ctx, command }, session) => {
+    const fabricWrite = fabricWriteLabel(command);
+    if (!fabricWrite) return PASS;
+    // G1: a Fabric write whose command names prod is a production write: it runs
+    // only on a person's permit, which is that call's one approval.
+    if (PRODUCTION_WORD.test(command) || namesContractProduction(commandValues(command), session.governance(ctx).productionNames)) {
+      return (await session.permitProductionWrite(ctx, "danger-confirm", "bash", `${fabricWrite}: ${shown(command)}`)) || PASS;
+    }
+    // Aaron, 2026-10-07: a write may ride a session approval (per command kind,
+    // e.g. `fab deploy`); a delete asks every time.
+    const rayfin = fabricWrite.startsWith("rayfin ");
+    const refused = await session.ask(ctx, {
+      kind: "danger-confirm", tool: "bash", label: fabricWrite, detail: fabricWrite, sessionKey: fabricShellSessionKey(fabricWrite),
+      question: `Fabric / Azure write from the shell (${fabricWrite}):\n  ${shown(command)}\n` +
+        (rayfin ? rayfinTargetNote(command, session.governance(ctx).devWorkspaceId) : "") +
+        `coop treats Fabric item create/update/deploy/delete as approval-gated, like a mutating MCP call. Run it?`,
+      headless: `coop guardrails: blocked ${fabricWrite}; approval is unavailable in headless mode.`,
+      declined: `coop guardrails: blocked the ${fabricWrite} command (you declined). Fabric writes need explicit approval; read with \`--method get\` or make the change in the Fabric UX.`,
+    });
+    return refused || PASS;
+  },
+};
+
+// Power BI Desktop reload (S31): read `powerbi-desktop status` first; ask when
+// the targeted instance has unsaved changes (the bridge would discard them),
+// block when it cannot be verified; fail closed without UI.
+const desktopReloadRule: Rule = {
+  id: "desktop-reload",
+  applies: isShell,
+  check: async ({ ctx, command }, session) => {
+    const reload = desktopReloadTarget(command);
+    if (!reload) return PASS;
+    let decision: DesktopReloadDecision;
+    try {
+      const status = desktopStatusCommand(reload.pid);
+      const res = await session.exec(status.bin, status.args, { cwd: ctx.cwd });
+      decision = res && res.code === 0 ? decideDesktopReload(String(res.stdout || ""), reload) : { action: "block", reason: `\`powerbi-desktop status\` exited ${res ? res.code : "without a result"}` };
+    } catch {
+      decision = { action: "block", reason: "`powerbi-desktop status` could not run" };
+    }
+    if (decision.action === "block") {
+      audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "blocked", label: "Desktop reload", detail: "status-unverified" });
+      return block(`coop guardrails: blocked ${reload.label}; ${decision.reason}. A reload discards unsaved Desktop edits, so coop only reloads an instance whose status it can read. Run \`powerbi-desktop status\`, pick the right --pid, and retry.`);
+    }
+    if (decision.action !== "ask") {
+      audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "allowed", label: "Desktop reload", detail: "clean" });
+      return PASS;
+    }
+    const refused = await session.ask(ctx, {
+      kind: "danger-confirm", tool: "bash", label: "Desktop reload", detail: "unsaved-changes",
+      question: `Power BI Desktop instance ${decision.pid} has unsaved changes${decision.file ? `:\n  ${decision.file}` : ""}\n  ${shown(command)}\nA reload discards them. Save or discard in Desktop first, then retry. (Desktop 2.157.627.0 reports a false positive on untouched files.) Reload anyway?`,
+      headless: `coop guardrails: blocked ${reload.label}; Desktop instance ${decision.pid} has unsaved changes and approval is unavailable in headless mode. Ask the user to save or discard in Power BI Desktop first.`,
+      declined: `coop guardrails: blocked ${reload.label} (you declined); Desktop instance ${decision.pid} has unsaved changes. Ask the user to save or discard in Power BI Desktop, then retry.`,
+    });
+    return refused || PASS;
+  },
+};
+
+/** The rules, in the order they run. The native rules each own one tool (or, for
+ *  `mcp`, every remaining native and MCP tool) and decide it; the shell rules run
+ *  in sequence over the one command, each passing a cleared command to the next. */
+export const RULES: readonly Rule[] = Object.freeze([
+  codemodeRule,
+  mcpScriptRule,
+  powershellRule,
+  fileRule,
+  sqlSourceRule,
+  liveMetadataRule,
+  mcpRule,
+  shellCommandRule,
+  prodUnlockShellRule,
+  secretShellRule,
+  envDumpRule,
+  azureSignInRule,
+  gitCommitRule,
+  sqlscShellRule,
+  destructiveRule,
+  fabricWriteRule,
+  desktopReloadRule,
+]);
+/** The rule ids in order (tests pin the order). */
+export const RULE_ORDER: readonly string[] = Object.freeze(RULES.map((rule) => rule.id));
+
+/** Run the rules over one call, in order, until one decides. A call no rule
+ *  blocks runs. */
+async function enforce(call: Call, session: Session): Promise<Decision> {
+  for (const rule of RULES) {
+    if (!rule.applies(call)) continue;
+    const decision = await rule.check(call, session);
+    if (decision.action !== "pass") return decision;
+  }
+  return ALLOW;
+}
+
+export default function coopGuardrails(pi: ExtensionAPI) {
+  const enabled = () => process.env.COOP_NO_GUARDRAILS !== "1";
+  const showUpstreamUpdates = () => process.env.COOP_SHOW_UPSTREAM_UPDATE_NOTICES === "1";
+  const session = new Session(pi);
+  const activeProdUnlock = (ctx: ExtensionContext) => session.activeProdUnlock(ctx);
+  const editApprovals = session.editApprovals;
   pi.on("before_agent_start", async () => {
-    if (!enabled() || unscriptedDevWrites <= 0) return;
-    const n = unscriptedDevWrites;
+    if (!enabled() || session.unscriptedDevWrites <= 0) return;
+    const n = session.unscriptedDevWrites;
     return {
       message: {
         customType: "coop-sql-source-debt",
@@ -3070,44 +3812,17 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       },
     };
   });
-  // Set once the session connects the Power BI Modeling MCP to anything naming
-  // production; from then on every model edit asks (#159).
-  let modelingProduction = false;
-  const liveReadDeps: LiveReadResolverDeps = {
-    readText: (path) => readFileSync(path, "utf8"),
-    agentDir: auditDir(),
-    token: () => (globalThis as any).process?.env?.COOP_FABRIC_MCP_TOKEN,
-  };
   rotateAuditIfLarge();
-  // G1: the human unlock, re-read on every production write (it expires on its
-  // own and `coop unlock-prod --revoke` deletes it); matched to the trusted
-  // contract's client so one client's grant never covers another's session.
-  const activeProdUnlock = (ctx: ExtensionContext): ProdUnlock | null => {
-    const unlock = readProdUnlock();
-    return prodUnlockApplies(unlock, ensureSessionGovernance(ctx.cwd).sqlContract?.client || "") ? unlock : null;
-  };
-  // G1: one production write, permitted by a person (a yes/no under their unlock)
-  // and audited either way. Null when it may run.
-  const permitProductionWrite = async (ctx: ExtensionContext, kind: string, tool: string, what: string) => {
-    const verdict = await askProductionWrite(ctx, what, activeProdUnlock(ctx));
-    // Shell records keep no detail of their own (it could carry command text), so the permit rides the label there.
-    audit({ cwd: ctx.cwd, kind, tool, decision: verdict.decision, label: kind === "danger-confirm" ? `production write (${verdict.detail})` : "production write", detail: verdict.detail });
-    return verdict.decision === "allowed" ? null : { block: true, reason: verdict.reason };
-  };
   // One Pi process can serve multiple sessions (/new, /resume, /fork fire
   // session_shutdown + session_start without reloading this module). Drop the
   // stale governance snapshot so THIS session's project contract is re-read on
   // its next governed call — never carry policy across session switches.
   pi.on("session_start", async () => {
     resetSessionGovernance();
-    liveReadGrant = null;
-    editApprovals.clear();
-    modelingProduction = false;
+    session.reset();
   });
   pi.on("session_shutdown", async () => {
-    liveReadGrant = null;
-    editApprovals.clear();
-    modelingProduction = false;
+    session.reset();
   });
   // One audit row per codemode script, naming each nested call and its outcome.
   // The asks and blocks inside it were audited one by one as they happened.
@@ -3117,19 +3832,6 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       audit({ cwd: ctx?.cwd ?? process.cwd(), kind: "codemode-script", tool: "codemode", decision: "ran", label: "codemode script", detail });
     }
   });
-
-  /** The SQ8 edit gate: a live target is one sql_impact would answer on without
-   *  a prompt (the contract's sql_targets, or a managed dev/test Fabric entry). */
-  function decideSqlEditGate(path: string, content: string, ctx: ExtensionContext): { action: "allow" | "block"; object?: string; reason?: string } {
-    try {
-      const contract = ensureSessionGovernance(ctx.cwd).sqlContract;
-      const managed = managedSqlEnvironment(liveReadDeps);
-      const liveTarget = Boolean(contract?.configured) || managed === "dev" || managed === "test";
-      return editGateDecision(ctx.cwd, isAbsolute(path) ? path : resolve(ctx.cwd, path), content, { liveTarget });
-    } catch {
-      return { action: "allow" };
-    }
-  }
 
   // Pi 0.99's built-in MCP registers its tools directly, so the checks need the
   // registry's word on which server a tool belongs to (older Pi: name matching).
@@ -3155,589 +3857,8 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       if (signal?.aborted) return { block: true, reason: CALL_CANCELLED };
       const ctx = withDialogSignal(arrivedCtx, signal);
       const event = withToolOrigin(rawEvent);
-      const tool = event?.toolName;
-
-      // 0. codemode (Pi 1.x): only coop's own copy runs, with script model calls
-      // off. The calls a script makes come back through this hook one by one.
-      if (tool === "codemode") {
-        let info: any;
-        try { info = ((pi as any).getAllTools?.() ?? []).find((t: any) => t?.name === "codemode"); } catch { info = undefined; }
-        if (!isCoopCodemode(info, process.env.COOP_ROOT)) {
-          audit({ cwd: ctx.cwd, kind: "codemode-script", tool, decision: "blocked", label: "codemode script", detail: "not-coop-codemode" });
-          return { block: true, reason: "coop guardrails: blocked a codemode script. This codemode is not coop's own, and its scripts can call outside models that coop's checks cannot see. Call the tools directly instead." };
-        }
-        return;
-      }
-
-      // 0a. pi-mcp-adapter's mcpScript runs JavaScript that calls MCP tools inside
-      // the adapter, where this hook never sees them, so no MCP mutation or
-      // Warehouse SQL check could apply. Coop's generated MCP config turns it off;
-      // block it too in case a project or user config turns it back on.
-      if (tool === "mcpScript") {
-        audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "mcpScript", decision: "blocked", label: "MCP script", detail: "script-mode" });
-        return { block: true, reason: "coop guardrails: blocked mcpScript. Its MCP calls run inside the adapter where coop's read-only MCP checks cannot see them. Call MCP tools one at a time with the mcp tool instead." };
-      }
-
-      // 0a'. Pi's optional `powershell` tool is off by default, but a user's settings,
-      // a trusted project's settings or --tools can turn it on. The shell checks
-      // below parse bash, so none of them (secret files, git commits, destructive
-      // commands) would see a PowerShell command. Show each one and ask; fail
-      // closed headlessly (#166). The audit records a fixed label, never the command.
-      if (tool === "powershell") {
-        const command = String(event?.input?.command ?? "");
-        if (touchesProdUnlock(command)) {
-          audit({ cwd: ctx.cwd, kind: "danger-confirm", tool, decision: "blocked", label: "production unlock", detail: "prod-unlock-self" });
-          return { block: true, reason: PROD_UNLOCK_SELF_BLOCK };
-        }
-        if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
-          audit({ cwd: ctx.cwd, kind: "danger-confirm", tool, decision: "blocked-headless", label: "PowerShell command", detail: "powershell" });
-          return { block: true, reason: "coop guardrails: blocked a PowerShell command. coop's shell checks cover bash only, and approval is unavailable in headless mode. Use the bash tool." };
-        }
-        const shown = command.length > 600 ? `${command.slice(0, 600)}…` : command;
-        const ok = await ctx.ui.confirm(
-          "coop guardrails",
-          `Run this PowerShell command?\n  ${shown}\ncoop's shell checks (secret files, git commits, destructive commands) cover bash only, so every PowerShell command asks.`,
-        );
-        audit({ cwd: ctx.cwd, kind: "danger-confirm", tool, decision: ok ? "allowed" : "declined", label: "PowerShell command", detail: "powershell" });
-        if (!ok) return { block: true, reason: "coop guardrails: blocked the PowerShell command (you declined). Use the bash tool, which coop's shell checks cover." };
-        return;
-      }
-
-      // 0. Secret-file access (read / edit / write) → confirm.
-      if (tool === "read" || tool === "edit" || tool === "write") {
-        const path = String(event?.input?.path ?? "");
-        // G1: the production unlock is a person's grant; a session never writes it.
-        // #371: through any link, junction or hard link too, and no confirmation overrides it.
-        if ((tool === "edit" || tool === "write") && path && writesProdUnlock(path, ctx.cwd)) {
-          audit({ cwd: ctx.cwd, kind: "secret-confirm", tool, decision: "blocked", label: "production unlock", detail: "prod-unlock-self" });
-          return { block: true, reason: PROD_UNLOCK_SELF_BLOCK };
-        }
-        // F2: this client's backups and drafts (<profile dir>/backups, <profile dir>/drafts)
-        // are coop's own working folders, never source: a backup of a .env or a draft
-        // .sql written there needs no confirmation and no lineage lookup.
-        if ((tool === "edit" || tool === "write") && path && isClientWorkPath(path, ctx.cwd)) return;
-        // #367: an innocent-looking link to a secret is the secret.
-        const linked = path && !isSecretPath(path) ? secretLinkTarget(path, ctx.cwd) : null;
-        if (path && (linked || isSecretPath(path))) {
-          if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
-            audit({ cwd: ctx.cwd, kind: "secret-confirm", tool, decision: "blocked-headless", label: path, detail: path });
-            return { block: true, reason: `coop guardrails: blocked ${tool} of secret-looking file ${path}; approval is unavailable in headless mode.` };
-          }
-          const verb = tool === "read" ? "read" : "write to";
-          const ok = await ctx.ui.confirm(
-            "coop guardrails",
-            `Secret-looking file (${verb}):\n  ${path}${linked ? ` -> ${linked}` : ""}\ncoop never exposes secrets (tokens, keys, .env). Proceed?`,
-          );
-          audit({ cwd: ctx.cwd, kind: "secret-confirm", tool, decision: ok ? "allowed" : "declined", label: path, detail: path });
-          if (!ok) return { block: true, reason: `coop guardrails: blocked ${tool} of the secret-looking file ${path} (you declined). Reference an env var / vault instead.` };
-        }
-        // 0'. SQL edits (SQ8): the lookup happens before the edit. coop-tools fills
-        // the session's lineage context from the snapshot and the built docs in its
-        // own tool_call hook (it loads first); when no source holds the object and
-        // a live target could still answer, the edit waits for sql_impact.
-        if ((tool === "edit" || tool === "write") && /\.sql$/i.test(path)) {
-          const gate = decideSqlEditGate(path, tool === "write" ? String(event?.input?.content ?? "") : "", ctx);
-          if (gate.action === "block") {
-            audit({ cwd: ctx.cwd, kind: "lineage-gate", tool, decision: "blocked", label: path, detail: "lineage-not-held" });
-            return { block: true, reason: `coop guardrails: blocked ${tool} of ${path}: ${gate.reason}` };
-          }
-        }
-        return;
-      }
-
-      // 0b. Mutating MCP / Fabric / Power BI action → explicit approval. Proxied
-      // calls use the adapter's server/tool identity; approval fails closed headlessly.
-      if (tool !== "bash") {
-        // 0b'. sql_impact (SQ4): catalog metadata for one object on the executor's
-        // dev/test target runs without a prompt; anything else asks or is blocked.
-        // 0b''. sql_source (SQ12): applying the repo to dev is a dev DDL write and
-        // asks; a commit of the scripted files asks every time, only where the
-        // project file lets coop commit that folder, and is never pushed.
-        if (tool === SQL_SOURCE_TOOL) {
-          if (event?.input?.command === "script" || event?.input?.command === "commit") unscriptedDevWrites = 0;
-          const decision = decideSqlSource(event);
-          if (decision.action === "allow" || !decision.write) return;
-          const verb = decision.write.verb;
-          const label = `sql_source ${verb}`;
-          if (verb === "init") {
-            const contract = findProjectContract(ctx.cwd);
-            const where = findSqlscConfig(ctx.cwd, contract) ? null : sqlscInitRoot(ctx.cwd, contract);
-            // Already set up, or nowhere to set up: the tool says so without changing anything.
-            if (!where || "error" in where) return;
-            if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
-              audit({ cwd: ctx.cwd, kind: "commit-block", tool: "governed-sql-source", decision: "blocked-headless", label, detail: where.root });
-              return { block: true, reason: `coop guardrails: blocked ${label}; setting a repository up needs the user's approval, which is unavailable in headless mode.` };
-            }
-            const git = existsSync(join(where.root, ".git")) ? "" : "git init (a new repository), then ";
-            const choice = await askEditApproval(ctx, "coop guardrails", `SQL source control: set up ${where.root}: ${git}sqlsc init (writes sqlsc.yml, .gitattributes and .gitignore; the dev target comes from the project file). Nothing is committed or pushed. Set it up?`, null);
-            audit({ cwd: ctx.cwd, kind: "commit-block", tool: "governed-sql-source", decision: choice === "declined" ? "declined" : "allowed", label, detail: where.root });
-            if (choice === "declined") return { block: true, reason: `coop guardrails: blocked ${label} (you declined).` };
-            return;
-          }
-          if (verb === "commit") {
-            const cfg = findSqlscConfig(ctx.cwd, findProjectContract(ctx.cwd));
-            const refusal = cfg ? sqlscCommitRefusal(cfg, ensureSessionGovernance(ctx.cwd)) : "no sqlsc.yml here or in the project's SQL repository";
-            if (refusal) {
-              audit({ cwd: ctx.cwd, kind: "commit-block", tool: "governed-sql-source", decision: "blocked", label, detail: refusal });
-              return { block: true, reason: `coop guardrails: blocked ${label}; ${refusal}. The user commits (Check in in the SSMS window, or sqlsc checkin).` };
-            }
-            if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
-              audit({ cwd: ctx.cwd, kind: "commit-block", tool: "governed-sql-source", decision: "blocked-headless", label, detail: cfg || "" });
-              return { block: true, reason: `coop guardrails: blocked ${label}; a commit needs the user's approval, which is unavailable in headless mode.` };
-            }
-            const message = String(event?.input?.message || "").slice(0, 200);
-            const objects = Array.isArray(event?.input?.objects) && event.input.objects.length ? event.input.objects.join(", ") : "every changed object";
-            // Pull first (Aaron, 2026-10-20): fetch now and stop before asking when
-            // the branch is behind and cannot fast-forward; the tool pulls after the yes.
-            const upstream = await checkUpstream((bin, args, opts) => pi.exec(bin, args, opts), dirname(cfg || ""));
-            if (!upstream.ok) {
-              audit({ cwd: ctx.cwd, kind: "commit-block", tool: "governed-sql-source", decision: "blocked", label, detail: upstream.reason });
-              return { block: true, reason: `coop guardrails: blocked ${label}; ${upstream.reason}.` };
-            }
-            const choice = await askEditApproval(ctx, "coop guardrails", `SQL source control: commit the scripted SQL files in ${dirname(cfg || "")} (sqlsc commit, not pushed).\nObjects: ${objects}\nMessage: ${message}\nBranch: ${upstream.note}. Objects a teammate has checked out or changed in the repo are left alone. Commit?`, null);
-            audit({ cwd: ctx.cwd, kind: "commit-block", tool: "governed-sql-source", decision: choice === "declined" ? "declined" : "allowed", label, detail: `${dirname(cfg || "")}: ${message}` });
-            if (choice === "declined") return { block: true, reason: `coop guardrails: blocked ${label} (you declined).` };
-            return;
-          }
-          // Where the write really goes, by the project file's labels: a target
-          // the contract does not vouch for counts as production, a person's.
-          const where = await resolveSqlscWrite((bin, args, opts) => pi.exec(bin, args, opts), ctx.cwd, decision.write.environment, ensureSessionGovernance(ctx.cwd));
-          if (!where.ok) {
-            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-sql-source", decision: "blocked", label, detail: where.reason });
-            return { block: true, reason: `coop guardrails: blocked ${label}; ${where.reason}. coop changes dev and test only, and only targets the project file names; a release to production is a person's command.` };
-          }
-          const place = `${where.server || "(discovered server)"} / ${where.database}`;
-          const key = verb === "get_latest" ? "sql_source:get_latest:dev" : null;
-          if (key && editApprovals.has(key)) {
-            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-sql-source", decision: "allowed", label, detail: `session-approval ${place}` });
-            return;
-          }
-          if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
-            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-sql-source", decision: "blocked-headless", label, detail: place });
-            return { block: true, reason: `coop guardrails: blocked ${label}; changing the ${decision.write.environment} database needs approval, which is unavailable in headless mode.` };
-          }
-          const question = verb === "get_latest"
-            ? `SQL source control: apply the repo's SQL files to the dev database (sqlsc get-latest).\nTarget: ${place}. Objects a teammate changed in dev are kept; prod is never touched. Run it?`
-            : `SQL source control: release commit ${String(event?.input?.ref || "HEAD")} to the ${decision.write.environment} database (sqlsc deploy).\nTarget: ${place}. Production is never touched. Run it?`;
-          const choice = await askEditApproval(ctx, "coop guardrails", question, key);
-          if (choice === "session" && key) editApprovals.add(key);
-          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-sql-source", decision: choice === "declined" ? "declined" : "allowed", label, detail: choice === "session" ? `session-approval-granted ${place}` : place });
-          if (choice === "declined") return { block: true, reason: `coop guardrails: blocked ${label} (you declined).` };
-          return;
-        }
-        if (tool === SQL_IMPACT_TOOL || tool === CATALOG_SNAPSHOT_TOOL || tool === SCHEMA_COMPARE_TOOL) {
-          const deps = { ...liveReadDeps, contract: () => ensureSessionGovernance(ctx.cwd).sqlContract };
-          const impact = tool === SQL_IMPACT_TOOL ? decideSqlImpact(event, deps)
-            : tool === CATALOG_SNAPSHOT_TOOL ? decideCatalogSnapshot(event, deps)
-            : decideSchemaCompare(event, deps.contract());
-          const auditTool = tool === SQL_IMPACT_TOOL ? "governed-sql-impact" : tool === CATALOG_SNAPSHOT_TOOL ? "governed-catalog-snapshot" : "governed-schema-compare";
-          const label = tool === SQL_IMPACT_TOOL ? "live metadata read" : tool === CATALOG_SNAPSHOT_TOOL ? "live catalog snapshot" : "live schema compare";
-          if (impact.action === "block") {
-            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: auditTool, decision: "blocked", label, detail: "input-invalid" });
-            return { block: true, reason: `coop guardrails: blocked ${tool}; it ${impact.reason}.` };
-          }
-          if (impact.action === "allow") {
-            // A snapshot status reads a folder, not a target: nothing to audit.
-            if (impact.environment) audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: auditTool, decision: "allowed", label, detail: impact.environment });
-            return;
-          }
-          if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
-            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: auditTool, decision: "blocked-headless", label, detail: impact.environment });
-            return { block: true, reason: `coop guardrails: blocked ${tool} (${impact.reason}); explicit approval is unavailable in headless mode.` };
-          }
-          const ok = await ctx.ui.confirm(
-            "coop live-data guardrail",
-            `Live catalog metadata read (${tool}) on a target that is not a resolved dev/test entry:\n  environment: ${impact.environment} (${impact.reason})\nDev/test metadata is read-only by default; production and unresolved targets ask. Read it once?`,
-          );
-          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: auditTool, decision: ok ? "allowed" : "declined", label, detail: impact.environment });
-          if (!ok) return { block: true, reason: `coop guardrails: blocked ${tool} (you declined).` };
-          return;
-        }
-        const target = effectiveMutationTarget(event);
-        const productionNames = ensureSessionGovernance(ctx.cwd).productionNames;
-        if (modelingConnectsProduction(event) || (isModelingConnection(event) && namesContractProduction(callStringValues(event), productionNames))) modelingProduction = true;
-        const mcp = mcpEditLabel(event);
-        // G1: a production write waits for a person's permit before any other approval path. The signal is
-        // the call's own words (server, tool, arguments naming prod) or the session's
-        // production Modeling connection; the Warehouse SQL path below uses coop's
-        // trusted config for the same decision.
-        const mcpProductionWrite = Boolean(mcp) && (
-          (modelingProduction && isModelingEdit(event)) || PRODUCTION_WORD.test(mutationCallText(event, target)) ||
-          namesContractProduction(callStringValues(event), productionNames));
-        // The permit is this call's approval: it is not asked twice below.
-        let productionPermitted = false;
-        if (mcpProductionWrite) {
-          const refused = await permitProductionWrite(ctx, "mcp-confirm", "governed-mcp", mcp);
-          if (refused) return refused;
-          productionPermitted = true;
-        }
-        const editKey = mcp ? sessionApprovalKey(event, modelingProduction && isModelingEdit(event) ? "production" : undefined) : null;
-        if (productionPermitted) {
-          // asked and audited above
-        } else if (mcp && editKey && editApprovals.has(editKey)) {
-          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-mcp", decision: "allowed", label: "managed MCP mutation", detail: "session-approval" });
-        } else if (mcp) {
-          if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
-            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-mcp", decision: "blocked-headless", label: "managed MCP mutation", detail: "mutation" });
-            return { block: true, reason: `coop guardrails: blocked mutating MCP action ${mcp}; approval is unavailable in headless mode.` };
-          }
-          const choice = await askEditApproval(
-            ctx,
-            "coop guardrails",
-            `This looks like a MUTATING MCP action (create/update/delete/deploy/publish):\n  ${mcp}\ncoop treats MCP as read-only (list / read / inspect). Run it?`,
-            editKey,
-          );
-          const ok = choice !== "declined";
-          if (choice === "session" && editKey) editApprovals.add(editKey);
-          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-mcp", decision: ok ? "allowed" : "declined", label: "managed MCP mutation", detail: choice === "session" ? "session-approval-granted" : "mutation" });
-          if (!ok) {
-            return { block: true, reason: `coop guardrails: blocked the MCP action ${mcp} (you declined). MCP is read-only by default — list / read / inspect only; make changes with explicit approval or in the Fabric / Power BI UX.` };
-          }
-        }
-        const resolvedScope = resolveLiveReadScope(event, { ...liveReadDeps, contract: () => ensureSessionGovernance(ctx.cwd).sqlContract });
-        const decision = decideLiveRead(event, liveReadGrant, resolvedScope);
-        if (decision.action === "allow-read") {
-          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: "allowed", label: "live read", detail: `${decision.scope?.environment || "unresolved"}-read-only` });
-          return;
-        }
-        if (decision.action !== "none" && decision.action !== "allow-grant") {
-          // A single dev/test Warehouse INSERT/UPDATE/CREATE/ALTER can ride a session
-          // approval (#156); destructive SQL, batches and production always ask. The
-          // environment is the trusted config's, resolved for the write itself: a
-          // mutation never resolves a read scope, so without this a production
-          // target whose SQL does not say "prod" offered the session option (#283).
-          const trustedSqlEnvironment = decision.kind === "ddl-dml-destructive" ? managedSqlEnvironment(liveReadDeps) : "";
-          const sqlEditKey = decision.kind === "ddl-dml-destructive" && (trustedSqlEnvironment === "dev" || trustedSqlEnvironment === "test")
-            ? sessionApprovalKey(event, trustedSqlEnvironment)
-            : null;
-          // A write is recorded as a write: "live read" on an approved CREATE/ALTER
-          // misread the audit trail (SQ live acceptance, 2026-10-03).
-          const auditLabel = decision.kind === "ddl-dml-destructive" ? "Warehouse SQL write" : "live read";
-          // G1: a production Warehouse write runs only on a person's permit. Coop's own
-          // trusted config decides; the call's words decide only when that config
-          // resolves no dev or test target (a dev Warehouse may hold a schema named
-          // prod_staging, and a production write without the word "prod" is still
-          // a production write, #283). An active unlock falls back to asking.
-          // Ambiguous SQL (a DISABLE TRIGGER, DBCC, KILL, an unclosed quote) may
-          // write too, so off a confirmed dev/test target it takes the same
-          // production path as a destructive write instead of a yes/no (#5).
-          const mayWrite = decision.kind === "ddl-dml-destructive" || (decision.kind === "ambiguous-sql" && callSqlText(event).trim() !== "");
-          const writeEnvironment = mayWrite
-            ? trustedWriteEnvironment(event, liveReadDeps, ensureSessionGovernance(ctx.cwd).sqlContract)
-            : "";
-          const production = decision.environment === "production" || decision.scope?.environment === "production" || writeEnvironment === "production";
-          // A write on a target coop's config cannot confirm as dev or test (the global
-          // endpoint, blank environment_names with no matching sql_targets ids) may be
-          // production, so it needs the same permit (Aaron, 2026-10-07: he had written
-          // to production through such a target with only the ordinary approval).
-          const unconfirmedWrite = mayWrite && writeEnvironment !== "dev" && writeEnvironment !== "test";
-          const sqlProductionWrite = mayWrite && (
-            unconfirmedWrite || decision.scope?.environment === "production");
-          if (sqlProductionWrite) {
-            // Permitted once above for the same call, or asked now; never a session approval.
-            if (productionPermitted) return;
-            const ambiguousNote = decision.kind === "ambiguous-sql" ? " (ambiguous SQL, treated as a write)" : "";
-            const what = writeEnvironment === "production" || decision.environment === "production" || decision.scope?.environment === "production"
-              ? `${decision.label || "Warehouse SQL write"}${ambiguousNote}`
-              : `${decision.label || "Warehouse SQL write"}${ambiguousNote} (target not confirmed as dev or test; treated as production)`;
-            const refused = await permitProductionWrite(ctx, "mcp-confirm", "governed-live-read", what);
-            // Say why the target is unconfirmed and what to do; the write stays refused.
-            if (refused && refused.reason === PROD_WRITE_LOCKED && writeEnvironment !== "production"
-                && decision.environment !== "production" && decision.scope?.environment !== "production") {
-              return { block: true, reason: unconfirmedTargetReason(event, liveReadDeps, ensureSessionGovernance(ctx.cwd).sqlContract) };
-            }
-            return refused || undefined;
-          }
-          if (sqlEditKey && editApprovals.has(sqlEditKey)) {
-            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: "allowed", label: auditLabel, detail: "session-approval" });
-            noteDevSqlWrite(ctx, writeEnvironment);
-            return;
-          }
-          if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
-            audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: "blocked-headless", label: auditLabel, detail: decision.kind || "live-read" });
-            return { block: true, reason: `coop guardrails: blocked ${decision.kind || "live-read"} access through ${decision.label || "the governed tool"}; explicit approval is unavailable in headless mode.` };
-          }
-          const sessionGrant = decision.action === "prompt-and-grant";
-          const scopeSummary = decision.scope ? [
-            "Resolved bounded session scope:",
-            `  client: ${decision.scope.client}`,
-            `  tenant: ${decision.scope.tenant}`,
-            `  principal: ${decision.scope.principal}`,
-            `  environment: ${decision.scope.environment}`,
-            `  target(s): ${decision.scope.targets.join(", ")}`,
-            `  operation: ${decision.scope.operationClass}`,
-            `  row limit: ${decision.scope.resultLimit}`,
-            `  time limit: ${decision.scope.timeoutMs} ms`,
-          ].join("\n") : "";
-          const prompt = decision.kind === "ddl-dml-destructive"
-            ? sqlEditKey
-              ? `Warehouse SQL write (one INSERT, UPDATE, CREATE or ALTER):\n  ${decision.label}\nDeletes, drops, merges, EXEC, batches and production always ask. Run it?`
-              : `${production ? "PRODUCTION " : ""}Warehouse SQL mutation/DDL call:\n  ${decision.label}\nDDL, DML, destructive SQL, EXEC, and batches require separate explicit approval. Run it?`
-            : decision.kind === "ambiguous-sql"
-              ? `Ambiguous Warehouse SQL call:\n  ${decision.label}\nOnly one plain read statement runs without asking. Run this call once?`
-              : `${production ? "PRODUCTION " : ""}row-level data read:\n  ${decision.label}\n${scopeSummary ? `${scopeSummary}\n` : ""}${sessionGrant ? "Approve this exact bounded scope for this session?" : "Read these rows once?"}`;
-          const choice = await askEditApproval(ctx, "coop live-data guardrail", prompt, sqlEditKey);
-          const ok = choice !== "declined";
-          if (choice === "session" && sqlEditKey) editApprovals.add(sqlEditKey);
-          audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: ok ? "allowed" : "declined", label: auditLabel, detail: choice === "session" ? "session-approval-granted" : decision.kind || "live-read" });
-          if (!ok) {
-            return { block: true, reason: `coop guardrails: blocked ${decision.kind || "live-read"} access through ${decision.label || "the governed tool"} (you declined).` };
-          }
-          if (mayWrite) noteDevSqlWrite(ctx, writeEnvironment);
-          if (sessionGrant && decision.scope) liveReadGrant = createLiveReadGrant(decision.scope);
-        }
-        return;
-      }
-
-      let cmd = String(event?.input?.command ?? "").trim();
-      if (!cmd) return;
-      const AMBIGUOUS_GIT = "coop guardrails: blocked an ambiguous Git wrapper/segment that cannot be safely inspected. Run Git directly or use a supported env/command/group wrapper.";
-      if (hasAmbiguousGitInvocation(cmd)) return { block: true, reason: AMBIGUOUS_GIT };
-      // A Git alias in the subcommand position runs the aliased command (#3): ask
-      // git what it is, check the expanded command, and fail closed when the
-      // lookup fails or the alias is a shell command.
-      const expanded = await expandGitAliases((bin, args, opts) => pi.exec(bin, args, opts), cmd, ctx.cwd);
-      if ("ambiguous" in expanded) return { block: true, reason: AMBIGUOUS_GIT };
-      if (expanded.cmd !== cmd) {
-        cmd = expanded.cmd;
-        if (hasAmbiguousGitInvocation(cmd)) return { block: true, reason: AMBIGUOUS_GIT };
-      }
-
-      // 1a'. G1: `coop unlock-prod` and its file belong to a person's own terminal.
-      if (touchesProdUnlock(cmd)) {
-        audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "blocked", label: "production unlock", detail: "prod-unlock-self" });
-        return { block: true, reason: PROD_UNLOCK_SELF_BLOCK };
-      }
-
-      // 1a. Secret-file access via bash mirrors the read/edit/write gate and fails
-      // closed when approval UI is unavailable.
-      const secretPath = bashSecretCmdPath(cmd, ctx.cwd);
-      if (secretPath) {
-        if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
-          audit({ cwd: ctx.cwd, kind: "secret-confirm", tool: "bash", decision: "blocked-headless", label: secretPath, detail: secretPath });
-          return { block: true, reason: `coop guardrails: blocked command touching ${secretPath}; approval is unavailable in headless mode.` };
-        }
-        const ok = await ctx.ui.confirm(
-          "coop guardrails",
-          `This command touches a secret-looking file:\n  ${secretPath}\ncoop never exposes secrets (tokens, keys, .env). Run it?`,
-        );
-        // Log the matched PATH only — never the command (it may embed the secret's value).
-        audit({ cwd: ctx.cwd, kind: "secret-confirm", tool: "bash", decision: ok ? "allowed" : "declined", label: secretPath, detail: secretPath });
-        if (!ok) {
-          return { block: true, reason: `coop guardrails: blocked a command touching the secret-looking file ${secretPath} (you declined). Reference an env var / vault instead of reading or writing secrets.` };
-        }
-      }
-
-      // 1a''. Printing the environment prints the Fabric launch bearer (#4): ask,
-      // fail closed headlessly. The audit names the command word only.
-      const envDump = envDumpLabel(cmd);
-      if (envDump) {
-        if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
-          audit({ cwd: ctx.cwd, kind: "secret-confirm", tool: "bash", decision: "blocked-headless", label: "environment dump", detail: envDump });
-          return { block: true, reason: `coop guardrails: blocked a command that prints the environment (${envDump}); it would expose the Fabric sign-in token, and approval is unavailable in headless mode.` };
-        }
-        const ok = await ctx.ui.confirm(
-          "coop guardrails",
-          `This command prints the environment (${envDump}):\n  ${cmd.slice(0, 200)}\nPi's environment holds the Fabric sign-in token (COOP_FABRIC_MCP_TOKEN). Run it?`,
-        );
-        audit({ cwd: ctx.cwd, kind: "secret-confirm", tool: "bash", decision: ok ? "allowed" : "declined", label: "environment dump", detail: envDump });
-        if (!ok) return { block: true, reason: `coop guardrails: blocked a command that prints the environment (${envDump}) (you declined). Name the one variable you need instead.` };
-      }
-
-      // 1a-az. An az command that prints a bearer token or changes the Azure
-      // sign-in (login, logout, account clear/set): ask, fail closed headlessly.
-      // The audit names the az verbs only.
-      const azSignIn = azSignInLabel(cmd);
-      if (azSignIn) {
-        if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
-          audit({ cwd: ctx.cwd, kind: "secret-confirm", tool: "bash", decision: "blocked-headless", label: "azure sign-in", detail: azSignIn });
-          return { block: true, reason: `coop guardrails: blocked ${azSignIn}; it would print an Azure token or change the Azure sign-in, and approval is unavailable in headless mode.` };
-        }
-        const ok = await ctx.ui.confirm(
-          "coop guardrails",
-          `This command prints an Azure token or changes the Azure sign-in (${azSignIn}):\n  ${cmd.slice(0, 200)}\nA printed token lands in the session transcript; a sign-in change affects every tool on this machine. Run it?`,
-        );
-        audit({ cwd: ctx.cwd, kind: "secret-confirm", tool: "bash", decision: ok ? "allowed" : "declined", label: "azure sign-in", detail: azSignIn });
-        if (!ok) return { block: true, reason: `coop guardrails: blocked ${azSignIn} (you declined). coop mints its own tokens for the client tenant; use \`az account show\` to inspect the sign-in.` };
-      }
-
-      // 1. Never commit source (incl. `git commit -a/-am` auto-staging, `git -C <dir>`,
-      //    `git commit <pathspec>`, and `cd <dir> && git commit` — the staged check runs
-      //    against the repo the commit actually targets, see gitRepoDir).
-      //    Policy comes from the TRUSTED SESSION SNAPSHOT (read once at first governed
-      //    call) — in-session edits to .coop/project.yml cannot weaken it, and the
-      //    contract is resolved from the session directory so sibling repositories
-      //    inherit their configured policies.
-      //    Hard-blocked first: --amend (rewrites history) and pathspec-file forms
-      //    (commits paths the guardrail deliberately does not read) — no approval path.
-      const governance = ensureSessionGovernance(ctx.cwd);
-      //    Other commit-creating verbs (merge, cherry-pick, revert, am, commit-tree)
-      //    take the same gate: their paths come from the named commits when git
-      //    can list them, otherwise the verb asks like an unverifiable commit.
-      for (const git of parseGitCommands(cmd).filter((g) => COMMIT_LIKE_SUBCOMMANDS.has(g.subcommand || ""))) {
-        const hard = commitHardBlockReason(git);
-        if (hard) {
-          // Inside this loop every entry is a commit; explain WHICH hard block fired.
-          const why = hard.includes("--amend")
-            ? "amend rewrites an existing commit"
-            : "the guardrail does not read pathspec files";
-          audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: "blocked", label: hard, detail: hard });
-          return { block: true, reason: `coop guardrails: ${hard} is never permitted — ${why}. Let a human run it.` };
-        }
-        const { offending, unverifiable, nothing } = await offendingCommitPaths(pi, ctx.cwd, cmd, git, governance);
-        if (offending.length) {
-          const shown = offending.slice(0, 8).join(", ");
-          const more = offending.length > 8 ? ` (+${offending.length - 8} more)` : "";
-          audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: "blocked", label: `git ${git.subcommand}`, detail: shown });
-          return { block: true, reason: `coop guardrails: never commit source. These paths aren't docs/logs/site: ${shown}${more}. Unstage them and let a human commit source.` };
-        }
-        // Ask when the target repository cannot be resolved or read (#2), and,
-        // as before, when a chained `cd` precedes a commit the check found empty.
-        if (unverifiable || (nothing && commitHasLeadingCd(cmd, git))) {
-          if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
-            audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: "blocked-headless", label: "unverifiable git commit", detail: "unverifiable git commit" });
-            return { block: true, reason: "coop guardrails: blocked an unverifiable commit because approval is unavailable in headless mode." };
-          }
-          const why = unverifiable ? `\n  (${unverifiable})` : "";
-          const ok = await ctx.ui.confirm("coop guardrails", `Can't verify what this commit would include:\n  ${git.segment.slice(0, 200)}${why}\nProceed?`);
-          audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: ok ? "allowed" : "declined", label: "unverifiable git commit", detail: "unverifiable git commit" });
-          if (!ok) return { block: true, reason: "coop guardrails: blocked an unverifiable commit (you declined)." };
-        }
-      }
-
-      // 1d. coop-sql-source-control (SQ12): its commit verbs commit inside sqlsc,
-      // out of the git gate's sight, so they are hard-blocked; a database change
-      // is classified by the project file and asks; production is a person's.
-      const sqlsc = sqlscShellRisk(cmd);
-      if (sqlsc?.hard && /^sqlsc (get-latest|deploy)/.test(sqlsc.label)) {
-        audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "blocked", label: sqlsc.label, detail: "dev or test only, named with -t" });
-        return { block: true, reason: `coop guardrails: blocked ${sqlsc.label}. coop changes the dev or test database only, so name one (-t dev or -t test); a release to any other target is a person's command. Write the script for them instead (--output <file>).` };
-      }
-      if (sqlsc?.hard) {
-        audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: "blocked", label: sqlsc.label, detail: sqlsc.label });
-        return { block: true, reason: `coop guardrails: never commit source from the shell. ${sqlsc.label} makes a git commit out of the commit gate's sight; use the sql_source tool (command commit, with a message: it asks the user), or leave it to the user (Check in in the SSMS window, or sqlsc checkin in their own terminal).` };
-      }
-      if (sqlsc) {
-        if (PRODUCTION_WORD.test(cmd) || namesContractProduction(commandValues(cmd), ensureSessionGovernance(ctx.cwd).productionNames)) {
-          const refused = await permitProductionWrite(ctx, "danger-confirm", "bash", `${sqlsc.label}: ${cmd.slice(0, 200)}`);
-          if (refused) return refused;
-        }
-        let place = "";
-        if (sqlsc.write) {
-          const where = await resolveSqlscWrite((bin, args, opts) => pi.exec(bin, args, opts), ctx.cwd, sqlsc.write.target, ensureSessionGovernance(ctx.cwd), sqlsc.write.config || undefined);
-          if (!where.ok) {
-            audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "blocked", label: sqlsc.label, detail: where.reason });
-            return { block: true, reason: `coop guardrails: blocked ${sqlsc.label}; ${where.reason}. coop changes dev and test only, and only targets the project file names; a release to production is a person's command.` };
-          }
-          place = `\n  Target: ${where.server || "(discovered server)"} / ${where.database}`;
-        }
-        if (sqlsc.sessionKey && editApprovals.has(sqlsc.sessionKey)) {
-          audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "allowed", label: sqlsc.label, detail: "session-approval" });
-        } else {
-          if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
-            audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "blocked-headless", label: sqlsc.label, detail: sqlsc.label });
-            return { block: true, reason: `coop guardrails: blocked ${sqlsc.label}; approval is unavailable in headless mode.` };
-          }
-          const choice = await askEditApproval(ctx, "coop guardrails", `SQL source control from the shell (${sqlsc.label}):\n  ${cmd.slice(0, 200)}${place}\nRun it?`, sqlsc.sessionKey);
-          if (choice === "session" && sqlsc.sessionKey) editApprovals.add(sqlsc.sessionKey);
-          audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: choice === "declined" ? "declined" : "allowed", label: sqlsc.label, detail: choice === "session" ? "session-approval-granted" : sqlsc.label });
-          if (choice === "declined") return { block: true, reason: `coop guardrails: blocked ${sqlsc.label} (you declined).` };
-        }
-      }
-
-      // 2. Destructive command → explicit approval; fail closed without UI.
-      const danger = dangerLabel(cmd);
-      if (danger) {
-        if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
-          audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "blocked-headless", label: danger, detail: danger });
-          return { block: true, reason: `coop guardrails: blocked ${danger}; approval is unavailable in headless mode.` };
-        }
-        const ok = await ctx.ui.confirm(
-          "coop guardrails",
-          `Destructive command (${danger}):\n  ${cmd.slice(0, 200)}\nRun it?`,
-        );
-        audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: ok ? "allowed" : "declined", label: danger, detail: danger });
-        if (!ok) {
-          return { block: true, reason: `coop guardrails: blocked the ${danger} command (you declined). Propose a safer approach.` };
-        }
-      }
-
-      // 2b. Fabric / Azure REST write from the shell (`az rest --method post`,
-      // `fab api -X post`, `fab deploy`, ...) → explicit approval, the same rule as
-      // a mutating MCP call. The official Microsoft skills issue item create /
-      // update / deploy / delete this way; fail closed without UI.
-      const fabricWrite = fabricWriteLabel(cmd);
-      const rayfin = fabricWrite !== null && fabricWrite.startsWith("rayfin ");
-      if (fabricWrite) {
-        // G1: a Fabric write whose command names prod is a production write: it runs
-        // only on a person's permit, which is that call's one approval.
-        if (PRODUCTION_WORD.test(cmd) || namesContractProduction(commandValues(cmd), ensureSessionGovernance(ctx.cwd).productionNames)) {
-          const refused = await permitProductionWrite(ctx, "danger-confirm", "bash", `${fabricWrite}: ${cmd.slice(0, 200)}`);
-          if (refused) return refused;
-        } else {
-          if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
-            audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "blocked-headless", label: fabricWrite, detail: fabricWrite });
-            return { block: true, reason: `coop guardrails: blocked ${fabricWrite}; approval is unavailable in headless mode.` };
-          }
-          // Aaron, 2026-10-07: a write may ride a session approval (per command kind,
-          // e.g. `fab deploy`); a delete asks every time.
-          const shellKey = fabricShellSessionKey(fabricWrite);
-          let ok = true;
-          if (shellKey && editApprovals.has(shellKey)) {
-            audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "allowed", label: fabricWrite, detail: "session-approval" });
-          } else {
-            const choice = await askEditApproval(
-              ctx,
-              "coop guardrails",
-              `Fabric / Azure write from the shell (${fabricWrite}):\n  ${cmd.slice(0, 200)}\n` +
-                (rayfin ? rayfinTargetNote(cmd, governance.devWorkspaceId) : "") +
-                `coop treats Fabric item create/update/deploy/delete as approval-gated, like a mutating MCP call. Run it?`,
-              shellKey,
-            );
-            ok = choice !== "declined";
-            if (choice === "session" && shellKey) editApprovals.add(shellKey);
-            audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: ok ? "allowed" : "declined", label: fabricWrite, detail: choice === "session" ? "session-approval-granted" : fabricWrite });
-          }
-          if (!ok) {
-            return { block: true, reason: `coop guardrails: blocked the ${fabricWrite} command (you declined). Fabric writes need explicit approval; read with \`--method get\` or make the change in the Fabric UX.` };
-          }
-        }
-      }
-
-      // 2c. Power BI Desktop reload (S31) → read `powerbi-desktop status` first; ask
-      // when the targeted instance has unsaved changes (the bridge would discard
-      // them), block when it cannot be verified; fail closed without UI.
-      const reload = desktopReloadTarget(cmd);
-      if (reload) {
-        let decision: DesktopReloadDecision;
-        try {
-          const status = desktopStatusCommand(reload.pid);
-          const res = await pi.exec(status.bin, status.args, { cwd: ctx.cwd });
-          decision = res && res.code === 0 ? decideDesktopReload(String(res.stdout || ""), reload) : { action: "block", reason: `\`powerbi-desktop status\` exited ${res ? res.code : "without a result"}` };
-        } catch {
-          decision = { action: "block", reason: "`powerbi-desktop status` could not run" };
-        }
-        if (decision.action === "block") {
-          audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "blocked", label: "Desktop reload", detail: "status-unverified" });
-          return { block: true, reason: `coop guardrails: blocked ${reload.label}; ${decision.reason}. A reload discards unsaved Desktop edits, so coop only reloads an instance whose status it can read. Run \`powerbi-desktop status\`, pick the right --pid, and retry.` };
-        }
-        if (decision.action === "ask") {
-          if (!ctx.hasUI || typeof ctx.ui?.confirm !== "function") {
-            audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "blocked-headless", label: "Desktop reload", detail: "unsaved-changes" });
-            return { block: true, reason: `coop guardrails: blocked ${reload.label}; Desktop instance ${decision.pid} has unsaved changes and approval is unavailable in headless mode. Ask the user to save or discard in Power BI Desktop first.` };
-          }
-          const ok = await ctx.ui.confirm(
-            "coop guardrails",
-            `Power BI Desktop instance ${decision.pid} has unsaved changes${decision.file ? `:\n  ${decision.file}` : ""}\n  ${cmd.slice(0, 200)}\nA reload discards them. Save or discard in Desktop first, then retry. (Desktop 2.157.627.0 reports a false positive on untouched files.) Reload anyway?`,
-          );
-          audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: ok ? "allowed" : "declined", label: "Desktop reload", detail: "unsaved-changes" });
-          if (!ok) {
-            return { block: true, reason: `coop guardrails: blocked ${reload.label} (you declined); Desktop instance ${decision.pid} has unsaved changes. Ask the user to save or discard in Power BI Desktop, then retry.` };
-          }
-        } else {
-          audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "allowed", label: "Desktop reload", detail: "clean" });
-        }
-      }
+      const decision = await enforce({ event, ctx, tool: String(event?.toolName ?? ""), command: "" }, session);
+      return decision.action === "block" ? { block: true, reason: decision.reason } : undefined;
     } catch {
       // An approval/policy failure is not permission. Never forward exception text:
       // it can contain command arguments, credentials, or private tool payloads.
@@ -3763,7 +3884,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       let message: string;
       if (action === "revoke") {
         editApprovals.clear();
-        liveReadGrant = null;
+        session.liveReadGrant = null;
         message = "coop approvals: edit approvals and the live-read grant revoked for this session. The next edit or live read asks again.";
       } else if (action !== "status") {
         message = "Usage: /approvals [revoke]";
@@ -3780,8 +3901,8 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         } else {
           lines.push("Edit approvals: none. Each edit asks; pick \"for this session\" to approve a server once.");
         }
-        if (liveReadGrant) {
-          const s = liveReadGrant.scope;
+        if (session.liveReadGrant) {
+          const s = session.liveReadGrant.scope;
           // Closed, non-secret scope only: never show SQL, arguments, credentials,
           // transport, or results. Targets are explicit consent identifiers.
           lines.push(
