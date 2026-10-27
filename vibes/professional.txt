@@ -8,8 +8,8 @@ Run /spec-first to draft and align on a concise spec before editing.
 Use /slice-next to plan the next vertical slice with testable checks.
 Use /annotate to apply structured Markdown review feedback cleanly.
 Run /pr-description to draft a Conventional Commits message and PR summary.
-Run /daily-log to record session work, or /weekly-log for a roll-up.
-Use /impact-analysis to assess upstream and downstream effects before edits.
+Ask for today's log to record session work, or for the weekly roll-up.
+Use /impact to assess upstream and downstream effects before edits.
 Type /compact to summarize context when conversations grow long.
 Type /new to start a fresh session without leaving Coop.
 Type /tree to explore conversation branches and switch directions.
@@ -19,11 +19,11 @@ Type /openai-usage to inspect your OpenAI plan limits from inside Coop.
 Type /skill:<name> to invoke a specific Coop skill directly.
 Run /coop-vibe <set> to switch pools, or /coop-vibe all for the full rotation.
 Run /coop-splash to re-display the startup header and brand banner.
-Run /coop-guardrails to check Coop's source and destructive-action protections.
+Run /approvals to see Coop's protections and what this session may do without asking.
 Run /setup-project to create or edit .coop/project.yml with a wizard instead of hand-editing YAML.
 Type /standards-status to see which standards are active, their commit, and how fresh they are.
-Type /coop-live-read status to see this session's bounded live-read grant, or revoke to clear it.
-Type /coop-approvals status to list this session's edit approvals, or revoke to clear them.
+Type /approvals to see this session's live-read grant and edit approvals.
+Type /approvals revoke to end this session's grants so the next edit asks again.
 Run /share-learning to turn a correction or reusable pattern into a reviewed team-knowledge note.
 Type /mcp-adapter to see which managed MCP servers this session is connected to.
 Type /export to save the session as HTML, or /resume to reopen an earlier one.
