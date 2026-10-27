@@ -161,6 +161,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Removed
 
+- **Unreferenced repo weight (suite review 2026-10-26, pick 9).** `.specify/`
+  (spec-kit templates and scripts) and `.agents/skills/speckit-*` were read by
+  nothing in the product, the tests, CI or the maintainer workflow; the only
+  mentions were the installer's exclusion list and its test. `CONTEXT.md` (a
+  standards glossary nothing linked) and `docs/agent/logs/` (this repo's own
+  September daily logs) go with them. Git keeps all of it.
+
 - **Prompt templates the native commands and skills already cover (suite
   review 2026-10-26, pick 9).** `/setup-docs` is a native wizard, so the
   `setup-docs` prompt and skill (which taught the model a transport the
