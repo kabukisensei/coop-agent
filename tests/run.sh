@@ -243,7 +243,7 @@ COOP_TEST_DIST="$TMP" node "$ROOT/tests/powerline.test.mjs"
 echo "→ vibes & feature-discovery tips contract tests"
 node "$ROOT/tests/vibes.test.mjs"
 
-echo "→ release gate without PowerShell: CI verdict reader, pwsh probe, origin parser (scripts/release.sh)"
+echo "→ release gate: CI verdict reader, origin parser, tree check, bump and tag in disposable repositories (scripts/release.sh)"
 bash "$ROOT/tests/release-gate.test.sh"
 
 echo "→ Git Bash forwarder: bin/coop forwards to coop.ps1 (launch-spec) and release.sh"
