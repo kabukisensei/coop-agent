@@ -46,7 +46,7 @@ docs/agent/logs/daily/YYYY-MM-DD.md
 ```
 
 (Weekly roll-ups go to `logging.weekly_log_path`, default
-`docs/agent/logs/weekly/YYYY-Www.md` — see the `/weekly-log` prompt.) Create the
+`docs/agent/logs/weekly/YYYY-Www.md`, rolled up from the week's daily logs on request.) Create the
 folder/file from the template at first required use if missing; otherwise append a
 new dated task block. Never create an empty log as a startup side effect.
 
@@ -94,6 +94,5 @@ those. Never write secrets (tokens, connection strings, keys) into the log.
 
 ## Tools / related
 
-- **`/daily-log`** prompt — scaffolds or appends today's entry on demand.
-- **`/weekly-log`** prompt — rolls up the week's daily logs.
+- On request ("write today's log", "roll up this week", the Start menu's log item) this skill scaffolds or appends today's entry, or rolls the week's daily logs into the weekly log.
 - Runs inside the **`coop-workflow`** skill (step 10) and under `docs/guardrails.md`.

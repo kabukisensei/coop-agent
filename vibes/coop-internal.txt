@@ -8,14 +8,14 @@ Run /spec-first before a change whose shape still needs consent.
 Use /slice-next to turn a broad plan into one testable vertical slice.
 Use /annotate to hand Coop exact Markdown feedback to apply.
 Run /pr-description after review to draft the commit and PR story from the diff.
-Run /daily-log now, or /weekly-log when Friday has happened all at once.
-Use /impact-analysis before touching a shared table, measure, or procedure.
+Ask for today's log now, or the weekly roll-up when Friday has happened all at once.
+Use /impact before touching a shared table, measure, or procedure.
 Type /compact when the conversation is useful but the context is getting crowded.
 Type /tree to inspect branches, then /fork when an alternate path deserves a session.
 Type /model to switch among the models already configured for Coop.
 Run /coop-vibe coop-internal when you want only the coworker-safe pool.
 Run /coop-splash when the terminal has forgotten who owns the means of computation.
-Run /coop-guardrails to check source and destructive-action protections.
+Run /approvals to see what this session may do without asking.
 Ask Coop to trace a report issue all the way back to its load procedure.
 Try asking Coop for exact before-and-after outputs before accepting a refactor.
 Ask Coop to test the real visual context, not only a standalone measure.
