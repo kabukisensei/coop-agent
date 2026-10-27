@@ -130,7 +130,7 @@ show all of it. Task logs stay in the repository.
      of guessing. A `before_agent_start` hook injects an agent-visible,
      human-hidden (`display:false`) note — once per folder — telling the agent to
      consult that lineage **before** touching any SQL/DAX/semantic-model object;
-     it stays silent when no built docs exist (the docs are an aid, not a gate).
+     it stays silent when no built docs exist (the built docs are an aid, not a gate; the one gate is the live catalog (master plan SQ8): before a SQL object is edited, `sql_impact` must have been asked when a live dev/test target can answer).
      The same hook hands the agent the Warehouse target the project contract
      pins, so a simple read goes straight to `fabric-sqlendpoint` with the
      contract ids instead of rediscovering them (silent without a contract target).

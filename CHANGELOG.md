@@ -159,6 +159,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   grants. It replaces `/coop-approvals`, `/coop-live-read` and
   `/coop-guardrails`, three commands for one question.
 
+- **Docs say what the code does (suite review 2026-10-26, pick 9).** Four
+  places still called every Warehouse SQL call approval-gated; the code (and
+  the rest of the docs) runs a plain read on a resolved dev/test target without
+  a prompt and asks for writes, so the guardrails prompt, the README's MCP table
+  and ground rules now say that. "Lineage is an aid, not a gate" now names the
+  one gate it does not cover (the live catalog ask before a SQL edit, SQ8), and
+  `fabric_sql_query` is described as the native bounded read (the route for
+  `sql_targets:` and the fallback when the MCP cannot answer), as the workflow
+  skill already used it. `docs/onboarding.md` is gone: the coop site's
+  Onboarding page is the one user guide, and every link points there.
+  `CHANGELOG.md` keeps the current series; 0.35.0 and earlier moved to
+  `docs/history/CHANGELOG-pre-0.36.md`.
+
 - **The window defines itself (suite review 2026-10-26, pick 11).**
   `desktop/PARITY.md` is now the coop window's own contract, written from its
   lists in `desktop/renderer/commands.mjs`: the Pi built-ins it runs, its
