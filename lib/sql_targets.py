@@ -65,6 +65,7 @@ try:
     from _yaml import load as load_yaml  # type: ignore[import-not-found]
 except Exception:  # pragma: no cover - the launcher always ships _yaml.py
     load_yaml = None  # type: ignore[assignment]
+from coop_paths import find_project_yml  # noqa: E402,F401  (the one Python contract finder)
 
 ENVIRONMENTS = ("dev", "test", "prod")
 DEFAULTABLE_ENVIRONMENTS = ("dev", "test")
@@ -375,23 +376,6 @@ def load_project(path: Path | None) -> dict[str, Any]:
     except Exception:
         return {}
     return data if isinstance(data, dict) else {}
-
-
-def find_project_yml(start: Path) -> Path | None:
-    d = start.resolve()
-    for _ in range(8):
-        p = d / ".coop" / "project.yml"
-        if p.is_file():
-            return p
-        if d.parent == d:
-            break
-        d = d.parent
-    # The launcher's answer (COOP_PROJECT_YML, bin/coop.ps1): the contract in the
-    # client home repository beside this one (master plan C1).
-    launched = os.environ.get("COOP_PROJECT_YML", "")
-    if launched and Path(launched).is_file():
-        return Path(launched)
-    return None
 
 
 def doctor_lines(targets: SqlTargets) -> list[tuple[str, str, str]]:

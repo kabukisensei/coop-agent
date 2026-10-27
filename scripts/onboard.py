@@ -24,6 +24,7 @@ from azure_auth import (  # noqa: E402
     login_azure,
     tenant_label,
 )
+import _yaml  # noqa: E402
 import coop_paths  # noqa: E402
 
 # One profile root (master plan S3): COOP_DIR is the parent of .coop, and the
@@ -90,33 +91,20 @@ def coop_user_profile_missing() -> bool:
 
 
 def find_project_yml() -> Path | None:
-    """Walk up from cwd looking for .coop/project.yml (bounded)."""
-    cwd = Path.cwd().resolve()
-    for _ in range(8):
-        candidate = cwd / ".coop" / "project.yml"
-        if candidate.is_file():
-            return candidate
-        parent = cwd.parent
-        if parent == cwd:
-            break
-        cwd = parent
-    return None
+    """The contract for the current folder (coop_paths.find_project_yml)."""
+    return coop_paths.find_project_yml(Path.cwd())
 
 
 def parse_consultant_name(project_yml: Path) -> str | None:
-    """Best-effort regex extraction of profile.consultant_name from project.yml."""
+    """`profile.consultant_name` of a legacy project.yml (lib/_yaml.py), or None."""
     try:
-        text = project_yml.read_text(encoding="utf-8")
+        profile = _yaml.load(project_yml).get("profile")
     except Exception:
         return None
-    m = re.search(
-        r"^\s*consultant_name\s*:\s*['\"]?(.*?)(?:['\"]?\s*$)",
-        text,
-        re.MULTILINE | re.IGNORECASE,
-    )
-    if not m:
+    name = profile.get("consultant_name") if isinstance(profile, dict) else None
+    if name is None or isinstance(name, (list, dict)):
         return None
-    name = m.group(1).strip().strip('"').strip("'")
+    name = str(name).strip()
     if not name or "TODO" in name.upper():
         return None
     return name

@@ -36,6 +36,7 @@ _LIB_DIR = str(Path(__file__).resolve().parent)
 if _LIB_DIR not in sys.path:
     sys.path.insert(0, _LIB_DIR)
 import coop_paths  # noqa: E402
+from coop_paths import find_project_yml  # noqa: E402,F401  (the one Python contract finder)
 
 FABRIC_RESOURCE = "https://api.fabric.microsoft.com"
 SQL_RESOURCE = "https://database.windows.net/"
@@ -126,23 +127,6 @@ def is_uuid(value: Any) -> bool:
 
 def canonical_uuid(value: str) -> str:
     return value.strip().lower()
-
-
-def find_project_yml(start: Path) -> Path | None:
-    d = start.resolve()
-    for _ in range(8):
-        p = d / ".coop" / "project.yml"
-        if p.is_file():
-            return p
-        if d.parent == d:
-            break
-        d = d.parent
-    # The launcher's answer (COOP_PROJECT_YML, bin/coop.ps1): the contract in the
-    # client home repository beside this one (master plan C1).
-    launched = os.environ.get("COOP_PROJECT_YML", "")
-    if launched and Path(launched).is_file():
-        return Path(launched)
-    return None
 
 
 def load_project(path: Path | None) -> dict[str, Any]:
@@ -241,14 +225,9 @@ def launcher_project_yml() -> Path | None:
     signed in to, even from deeper than find_project_yml's eight levels.
     """
     try:
-        d = Path.cwd()
-        while True:
-            candidate = d / ".coop" / "project.yml"
-            if candidate.is_file():
-                return candidate
-            if d.parent == d:
-                break
-            d = d.parent
+        above = coop_paths.contract_above(Path.cwd())
+        if above is not None:
+            return above
         launched = os.environ.get("COOP_PROJECT_YML", "")
         if launched and Path(launched).is_file():
             return Path(launched)
