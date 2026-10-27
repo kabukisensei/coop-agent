@@ -32,7 +32,7 @@ first; this section adds architecture detail for working ON this repo.
 pwsh -NoProfile -File scripts/check-bom.ps1   # .ps1 UTF-8 BOM gate (tests/run.ps1 runs it first)
 pwsh -NoProfile -File tests/run.ps1      # the PowerShell suite (coop's own lane), gate lane
 bash tests/run.sh              # gate lane: bundles the TS extensions with esbuild, runs the deterministic suites
-COOP_TEST_EXTENDED=1 bash tests/run.sh   # gate + extended lanes (full suite; optional per change, `coop release` runs it)
+COOP_TEST_EXTENDED=1 bash tests/run.sh   # gate + extended lanes (full suite; optional per change, CI runs it on every release PR)
 ```
 
 Lanes and fixture rules: `docs/ci.md`, "coop-agent's own CI (maintainers): gate and extended lanes".
