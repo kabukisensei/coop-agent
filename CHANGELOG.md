@@ -152,6 +152,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   separator the first normalised away); one definition remains, and three
   functions nothing called are gone.
 
+### Removed
+
+- **Unreferenced repo weight (suite review 2026-10-26, pick 9).** `.specify/`
+  (spec-kit templates and scripts) and `.agents/skills/speckit-*` were read by
+  nothing in the product, the tests, CI or the maintainer workflow; the only
+  mentions were the installer's exclusion list and its test. `CONTEXT.md` (a
+  standards glossary nothing linked) and `docs/agent/logs/` (this repo's own
+  September daily logs) go with them. Git keeps all of it.
+
 ## [0.38.6] — 2026-10-26
 
 ### Added
