@@ -151,7 +151,7 @@ coop sync
 release version" line per extension and no warning; coop (terminal or window)
 starts with the extensions loaded.
 
-## 5. `Fabric Warehouse MCP unavailable: Azure CLI is not installed or not on PATH`
+## 5. `live SQL sign-in unavailable: Azure CLI is not installed or not on PATH`
 
 **Symptom.** The launch prints that line (or `coop doctor` shows
 `fabric-sqlendpoint azure_cli_unavailable`) while `az` is installed and signed

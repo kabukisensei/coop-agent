@@ -243,6 +243,20 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **Azure SQL sign-in no longer depends on the Fabric MCP entry.** The launch
+  token helper decided what to mint by the managed `fabric-sqlendpoint` entry,
+  which a non-Fabric project still gets (the global endpoint) unless it disables
+  it: an Azure SQL-only teammate's launch minted a Fabric token, and when that
+  mint failed the session had no launch identity, so `catalog_snapshot`,
+  `schema_compare`, `fabric_sql_query` and `sql_impact` answered
+  `launch_identity_missing` with a hint about the project file. The contract's
+  ready default `sql_targets` entry now decides first (a named host mints the
+  `database.windows.net` audience, a discovered Fabric kind the Fabric one), the
+  launch warning reads `live SQL sign-in unavailable: <reason>` instead of
+  `Fabric Warehouse MCP unavailable`, and the `launch_identity_missing` hint
+  names that line. Every consumer reads only the launch token's identity, so the
+  audience change touches nothing else.
+
 - **`/setup-project` edits a project file written with inline mappings.** The
   bundled `.coop/project.yml` wrote its `tools:` and `mcp:` entries as flow
   mappings (`fabric_cli: { command: "fab", enabled: true, ... }`), and the

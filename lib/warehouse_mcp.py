@@ -207,14 +207,27 @@ def resolve_tenant(project_path: Path | None, config_path: Path) -> tuple[str, s
     return tenant_from_sources(project, config)
 
 
-def _direct_sql_target_configured(project_path: Path | None) -> bool:
-    """True when the contract's ready default sql_targets entry names its host."""
+def launch_mint_resource(project_path: Path | None) -> str:
+    """The audience the launch token is minted for, decided by the contract first.
+
+    A ready default `sql_targets` entry (SQ1) decides: a kind that names its host
+    (Azure SQL, Fabric SQL database, Synapse serverless) mints the SQL audience, a
+    discovered kind (Fabric Warehouse / Lakehouse by ids) the Fabric one. Without
+    a ready default entry the answer is '' and the managed Warehouse MCP entry
+    decides as before. Every consumer of the launch token reads only its identity
+    (tenant and principal: lib/sql_query.py, lib/fabric_request_headers.mjs, the
+    guardrails) and mints its own audience pinned to that identity, so a SQL-audience
+    launch token serves a Fabric project as well. This is what keeps an Azure SQL
+    sign-in from depending on the Fabric MCP configuration (2026-10-27).
+    """
     try:
         import sql_targets as targets_lib  # noqa: WPS433 (same lib directory)
     except Exception:
-        return False
+        return ""
     target = targets_lib.parse_sql_targets(load_project(project_path)).default
-    return target is not None and not target.discovered
+    if target is None:
+        return ""
+    return FABRIC_RESOURCE if target.discovered else SQL_RESOURCE
 
 
 def launcher_project_yml() -> Path | None:
@@ -1265,27 +1278,25 @@ def main(argv: list[str] | None = None) -> int:
             cfg = json.loads(Path(args.mcp_config).read_text(encoding="utf-8-sig"))
         except Exception:
             cfg = {}
-        entry = managed_sqlendpoint_entry(cfg)
-        if entry is None:
-            # No managed Warehouse server (an Azure SQL-only machine, say): a
-            # contract whose default sql_targets entry names its host (SQ2) still
-            # needs a session identity, so mint the SQL audience for the same
-            # tenant chain. The executor pins its own mint to this token's tid.
-            if _direct_sql_target_configured(launcher_project_yml()):
-                tenant = pinned_tenant(launcher_project_yml())
-                token, state = az_access_token(resource=SQL_RESOURCE, tenant=tenant)
-                if state == "ok":
-                    sys.stdout.write("token\t" + token + "\tend")
-                else:
-                    sys.stdout.write("warning\t" + state + "\tend")
-            return 0
-        if sqlendpoint_config_status(entry) != "registered":
-            sys.stdout.write("warning\tconfig_invalid\tend")
-            return 0
-        # Pin the session identity to the client tenant (H2b). The per-request
-        # header helper and fabric_sql_query then pin to this token's tid.
+        # The contract's ready default sql_targets entry decides the audience
+        # (launch_mint_resource); only without one does the managed Warehouse
+        # MCP entry decide, as before SQ1. Either way the session identity is
+        # pinned to the client tenant chain (H2b): the per-request header helper
+        # and the native SQL tools then pin their own mints to this token's tid.
         tenant = pinned_tenant(launcher_project_yml())
-        token, state = az_access_token(tenant=tenant) if tenant else az_access_token()
+        resource = launch_mint_resource(launcher_project_yml())
+        if not resource:
+            entry = managed_sqlendpoint_entry(cfg)
+            if entry is None:
+                # Nothing to sign in for: no SQL target named, no managed
+                # Warehouse server. The session has no launch identity and the
+                # native SQL tools say so (launch_identity_missing).
+                return 0
+            if sqlendpoint_config_status(entry) != "registered":
+                sys.stdout.write("warning\tconfig_invalid\tend")
+                return 0
+            resource = FABRIC_RESOURCE
+        token, state = az_access_token(resource=resource, tenant=tenant)
         if state == "ok":
             sys.stdout.write("token\t" + token + "\tend")
             return 0
