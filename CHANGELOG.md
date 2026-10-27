@@ -5,6 +5,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.38.8] — 2026-10-27
+
+v0.38.7 was tagged but never published (its release run could not start, see
+Fixed below), so this is the first release that ships the changes listed under
+[0.38.7]: `/deploy-brief`, the files-first, mark-your-edits and
+no-unnecessary-functions rules, one `/approvals`, Fabric ids looked up by name,
+`coop dev` for maintainer commands, the retired `coop bootstrap`, `coop init`
+wizard and prompt templates, one schema-compare engine, the release in two
+steps, and the coop-sql-source-control 1.0.10 and coop-schema-compare 0.1.8 pins.
+
 ### Fixed
 
 - **The tag run starts again.** `release.yml`'s `website` job called
@@ -15,6 +25,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   command for a person to run, as coop-sql-source-control's release does.
 
 ## [0.38.7] — 2026-10-27
+
+Tagged, never published: these changes first ship in 0.38.8.
 
 ### Added
 
