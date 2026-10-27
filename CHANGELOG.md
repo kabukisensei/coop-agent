@@ -5,6 +5,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **The tag run starts again.** `release.yml`'s `website` job called
+  coop-website's reusable `sync-release.yml`, but coop-website is private and a
+  public repository cannot call a private repository's reusable workflow, so the
+  v0.38.7 tag run failed at planning: no installer, no GitHub Release. The job
+  now prints the site's `bash scripts/sync-release.sh coop-agent <version>`
+  command for a person to run, as coop-sql-source-control's release does.
+
 ## [0.38.7] — 2026-10-27
 
 ### Added

@@ -192,8 +192,10 @@ release, the shortcut launch and the one-liner, as `ci.yml` runs on every push
 to `main`); the release job publishes the executable only when the acceptance
 report says ok and names the executable's SHA-256
 (`desktop/scripts/check-installer-report.mjs`), with that version's CHANGELOG
-section as the body; then the `website` job calls coop-website's
-`sync-release.yml`, which opens the site's sync PR (step (c)). A failed
+section as the body; then the `website` job prints the coop-website command
+for step (c) (`bash scripts/sync-release.sh coop-agent X.Y.Z` in a site clone):
+coop-website is private, and a public repository cannot call its reusable
+`sync-release.yml`, so a `uses:` of it stops the whole tag run before it starts. A failed
 acceptance fails the tag run with no release created; fix, then release the
 next patch (never re-push a tag).
 
