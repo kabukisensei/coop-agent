@@ -180,6 +180,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   writes) lives in one `Session`. No rule, message or audit row changed: the
   existing 175-case corpus is the gate, plus a test that pins the order.
 
+### Removed
+
+- **Unreferenced repo weight (suite review 2026-10-26, pick 9).** `.specify/`
+  (spec-kit templates and scripts) and `.agents/skills/speckit-*` were read by
+  nothing in the product, the tests, CI or the maintainer workflow; the only
+  mentions were the installer's exclusion list and its test. `CONTEXT.md` (a
+  standards glossary nothing linked) and `docs/agent/logs/` (this repo's own
+  September daily logs) go with them. Git keeps all of it.
+
 ## [0.38.6] — 2026-10-26
 
 ### Added
