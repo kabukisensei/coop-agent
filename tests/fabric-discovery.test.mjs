@@ -2,7 +2,7 @@
 // (suite review 2026-10-26, pick 10). Read-only GETs with the az token; every
 // failure resolves to "" so the wizard keeps its typed fallback.
 import { strict as assert } from "node:assert";
-import { fabricDiscovery, isUuid, SQL_ITEM_TYPES } from "../lib/fabric-discovery.mjs";
+import { azureCliInvocation, fabricDiscovery, isUuid, SQL_ITEM_TYPES } from "../lib/fabric-discovery.mjs";
 
 const WS = "11111111-1111-4111-8111-111111111111";
 const WS2 = "22222222-2222-4222-8222-222222222222";
@@ -34,7 +34,7 @@ const PAGES = {
 
 await t("workspaces and SQL items resolve by name, case-insensitively, with one az mint and cached pages", async () => {
   const f = fake({ pages: PAGES });
-  const d = fabricDiscovery({ exec: f.exec, fetchFn: f.fetchFn, tenant: "contoso.onmicrosoft.com" });
+  const d = fabricDiscovery({ exec: f.exec, fetchFn: f.fetchFn, tenant: "contoso.onmicrosoft.com", platform: "linux" });
   assert.equal(await d.workspaceId("contoso sales dev"), WS);
   assert.equal(await d.workspaceId("Contoso Sales"), WS2);
   assert.equal(await d.workspaceId("Nowhere"), "");
@@ -67,8 +67,26 @@ await t("an ambiguous name, a failed mint, no exec or a failed GET all resolve t
   const throwing = fabricDiscovery({ exec: async () => { throw new Error("ENOENT"); }, fetchFn: fake().fetchFn });
   assert.equal(await throwing.workspaceId("Contoso Sales Dev"), "");
   const invalidTenant = fake({ pages: PAGES });
-  await fabricDiscovery({ exec: invalidTenant.exec, fetchFn: invalidTenant.fetchFn, tenant: "bad tenant; rm" }).workspaces();
+  await fabricDiscovery({ exec: invalidTenant.exec, fetchFn: invalidTenant.fetchFn, tenant: "bad tenant; rm", platform: "linux" }).workspaces();
   assert.ok(!invalidTenant.calls.az[0].includes("--tenant"), "a tenant that is not a GUID or domain is never passed to az");
+});
+
+await t("on Windows the az call goes through cmd.exe (az is a .cmd Pi's exec cannot spawn); elsewhere az runs as it is", async () => {
+  const args = ["account", "get-access-token", "--resource", "https://api.fabric.microsoft.com", "--output", "json", "--tenant", "contoso.onmicrosoft.com"];
+  assert.deepEqual(azureCliInvocation(args, "linux", {}), { command: "az", args });
+  assert.deepEqual(azureCliInvocation(args, "win32", { ComSpec: "C:\Windows\System32\cmd.exe" }), {
+    command: "C:\Windows\System32\cmd.exe",
+    args: ["/d", "/s", "/c", "az account get-access-token --resource https://api.fabric.microsoft.com --output json --tenant contoso.onmicrosoft.com"],
+  });
+  assert.equal(azureCliInvocation(args, "win32", {}).command, "cmd.exe", "no ComSpec: cmd.exe from PATH");
+  const win = fake({ pages: PAGES });
+  const d = fabricDiscovery({ exec: win.exec, fetchFn: win.fetchFn, tenant: "contoso.onmicrosoft.com", platform: "win32", env: { ComSpec: "C:\Windows\System32\cmd.exe" } });
+  assert.equal(await d.workspaceId("Contoso Sales Dev"), WS, "the lookup works through cmd.exe");
+  assert.deepEqual(win.calls.az[0].slice(0, 4), ["C:\Windows\System32\cmd.exe", "/d", "/s", "/c"]);
+  assert.ok(win.calls.az[0][4].startsWith("az account get-access-token ") && win.calls.az[0][4].endsWith("--tenant contoso.onmicrosoft.com"));
+  const spaced = fake({ pages: PAGES });
+  await fabricDiscovery({ exec: spaced.exec, fetchFn: spaced.fetchFn, tenant: "bad tenant; rm", platform: "win32", env: {} }).workspaces();
+  assert.ok(!spaced.calls.az[0][4].includes("--tenant"), "an invalid tenant never reaches the cmd.exe line");
 });
 
 await t("paged lists follow continuationUri on the Fabric host only", async () => {
