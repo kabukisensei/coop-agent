@@ -43,11 +43,19 @@ def _opens_quote(s, i):
 def _strip_comment(line):
     out = []
     q = None
+    skip = False  # the character after a backslash in "..." or the second ' of '' in '...'
     for i, c in enumerate(line):
         if q:
             out.append(c)
-            if c == q:
-                q = None
+            if skip:
+                skip = False
+            elif q == '"' and c == '\\':
+                skip = True
+            elif c == q:
+                if q == "'" and line[i + 1:i + 2] == "'":
+                    skip = True
+                else:
+                    q = None
         elif c in ('"', "'") and _opens_quote(line, i):
             q = c
             out.append(c)
