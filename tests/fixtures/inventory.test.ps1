@@ -125,10 +125,12 @@ try {
   }
   function Remove-VenvPython([string]$Venv) { Remove-Item -LiteralPath (Join-Path $venvsDir "$Venv\bin\python") -Force -ErrorAction SilentlyContinue }
 
-  # Fake pipx: runpip show reads the fixture .meta files; inject succeeds; with
-  # COOP_TEST_FIX_INSTALL=1 an `install ... ms-fabric-cli==` creates the venv's
-  # fab and metadata; any argv containing COOP_TEST_PIPX_FAIL fails; every call
-  # is logged to COOP_TEST_CALLS as "PIPX <argv>".
+  # Fake pipx: runpip show reads the fixture .meta files and `list` reports
+  # them (the convergence units' probe); inject succeeds; with
+  # COOP_TEST_FIX_INSTALL=1 an `install <dist>==<version>` writes that metadata
+  # and, for ms-fabric-cli, the venv's fab; any argv containing
+  # COOP_TEST_PIPX_FAIL fails; every call is logged to COOP_TEST_CALLS as
+  # "PIPX <argv>".
   $pipx = New-PyStub $fakeBin 'pipx' @'
 import os, sys
 args = sys.argv[1:]
@@ -145,7 +147,26 @@ if args[:1] == ['inject']:
     sys.exit(0)
 if args[:2] == ['install', '--help']:
     print('usage: pipx install [--fetch-python=missing] ...'); sys.exit(0)
+if args[:1] == ['list']:
+    for f in sorted(os.listdir(fix)) if os.path.isdir(fix) else []:
+        if not f.endswith('.meta'):
+            continue
+        venv, dist = f[:-5].split('--', 1)
+        if venv != dist:
+            continue
+        version = ''
+        for line in open(os.path.join(fix, f)):
+            if line.startswith('Version:'):
+                version = line.split(':', 1)[1].strip()
+        if version:
+            print('   package ' + dist + ' ' + version + ', installed using Python 3.13.1')
+    sys.exit(0)
 if args[:1] == ['install'] and os.environ.get('COOP_TEST_FIX_INSTALL', '0') == '1':
+    for a in args[1:]:
+        if '==' in a and not a.startswith('-'):
+            name, version = a.split('==', 1)
+            with open(os.path.join(fix, name + '--' + name + '.meta'), 'w') as f:
+                f.write('Name: ' + name + '\nVersion: ' + version + '\n')
     spec = [a for a in args[1:] if a.startswith('ms-fabric-cli==')]
     if spec:
         home = os.environ['COOP_PIPX_HOME']
@@ -155,8 +176,6 @@ if args[:1] == ['install'] and os.environ.get('COOP_TEST_FIX_INSTALL', '0') == '
         with open(fab, 'w') as f:
             f.write('#!/bin/sh\n[ "$1" = "--version" ] && { echo "fab version 1.7.0"; exit 0; }\nexit 1\n')
         os.chmod(fab, 0o755)
-        with open(os.path.join(fix, 'ms-fabric-cli--ms-fabric-cli.meta'), 'w') as f:
-            f.write('Name: ms-fabric-cli\nVersion: 1.7.0\n')
     sys.exit(0)
 if args[:1] == ['runpip'] and len(args) >= 4 and args[2] == 'show':
     f = os.path.join(fix, args[1] + '--' + args[3] + '.meta')
@@ -199,8 +218,9 @@ sys.exit(1)
   $rows = Get-InventoryRows
   if (@(Find-Rows $rows 'ms-fabric-cli not installed' -Hint).Count -gt 0) { Ok 'missing distribution reported' } else { Ko 'missing ms-fabric-cli not reported' (Show-Rows $rows 'ms-fabric-cli') }
 
-  # F2b: doctor --fix installs the exact CLI spec, then delegates the injected
-  # libraries and Driver readiness to the managed convergence helpers.
+  # F2b: doctor --fix runs the pipx convergence unit, which installs the exact
+  # CLI spec, then delegates the injected libraries and Driver readiness to the
+  # managed convergence helpers.
   if ($isWindowsHost) { Skipped 'doctor --fix Fabric runtime convergence (F2b)' } else {
     [System.IO.File]::WriteAllText($calls, '')
     $env:COOP_TEST_CALLS = $calls; $env:COOP_TEST_FIX_INSTALL = '1'
