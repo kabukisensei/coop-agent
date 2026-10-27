@@ -140,6 +140,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   and the helper run share one supervised child-process routine (bounded time and
   output, abortable, force-killed and reaped on a stop) instead of two copies.
 
+- **One convergence path for the pipx tools (suite review 2026-10-26, pick 8).**
+  `coop doctor --fix` repaired the Coop tools and the Fabric CLI with its own
+  `pipx install` lines beside the convergence unit install and update run; it
+  now runs that unit (`Invoke-CoopPipxConverge`: skip at the manifest pin,
+  rebuild an environment on the wrong interpreter, install the pin, never
+  PyPI's latest), so a repair cannot drift from an install. `coop bootstrap`,
+  an alias of bare `coop install`, is retired so "bootstrap" names only the
+  `irm | iex` window bootstrapper. `lib/common.ps1` defined
+  `ConvertTo-CoopComparablePath` twice (the second, loaded last, kept the
+  separator the first normalised away); one definition remains, and three
+  functions nothing called are gone.
+
 - **The window defines itself (suite review 2026-10-26, pick 11).**
   `desktop/PARITY.md` is now the coop window's own contract, written from its
   lists in `desktop/renderer/commands.mjs`: the Pi built-ins it runs, its
