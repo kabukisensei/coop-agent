@@ -99,11 +99,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   when every step passed (`coop doctor` shows it any time). A terminal launch
   says which of the two `coop update` would do.
 
-- **Pins.** coop-sql-source-control 1.0.8 (`sqlsc sqlproj` and `init --sqlproj` write
-  an SDK-style SQL project for a `dotnet build` compile check; `commit` and `checkin`
-  add the `Prepared-by:` trailer; the drift pipeline and the exit-path docs). The
-  sourced wheel's tag, asset and SHA-256 follow the v1.0.8 release (the
-  fixtures read the manifest).
+- **Pins.** coop-sql-source-control 1.0.10 (1.0.8: `sqlsc sqlproj` and `init --sqlproj`
+  write an SDK-style SQL project for a `dotnet build` compile check; `commit` and
+  `checkin` add the `Prepared-by:` trailer; the drift pipeline and the exit-path docs.
+  1.0.9 and 1.0.10: SSMS 22's Database DevOps alongside sqlsc. A second repo layout,
+  `schema`, is the one SSMS's Create Project from Database writes
+  (`<schema>/Tables|Views|Functions|StoredProcedures/<name>.sql`, `Security/<schema>.sql`,
+  DML triggers inside their table's file), chosen with `layout:` in sqlsc.yml or
+  `init --layout`, or detected from the files; a repo mixing both layouts stops every
+  writing command before it touches anything. The SQL project pins Microsoft.Build.Sql
+  2.3.0, which SSMS opens. A `.sql` file's BOM is kept on rewrite.) The sourced wheel's
+  tag, asset and SHA-256 follow the v1.0.10 release (the fixtures read the manifest).
 
 - **Release in two steps (suite review 2026-10-26, pick 5).** The version bump
   is a pull request: Actions -> release-pr -> Run workflow (`patch`, `minor`,
