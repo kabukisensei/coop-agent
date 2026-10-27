@@ -2385,7 +2385,7 @@ export function buildStartMenu(): MenuItem[] {
       label: "📝  Write today's log or a handoff",
       run: async (pi) => {
         pi.sendUserMessage(
-          "Help me write up my work. Ask whether it's today's log (/daily-log), a weekly log (/weekly-log) or a handoff for whoever picks this up next (/handoff), then help me capture what I worked on and turn it into a clean entry.",
+          "Help me write up my work. Ask whether it's today's log or the weekly roll-up (the daily-logger skill) or a handoff for whoever picks this up next (/handoff), then help me capture what I worked on and turn it into a clean entry.",
         );
       },
     },
@@ -3533,7 +3533,7 @@ export default function coopTools(pi: ExtensionAPI) {
         return;
       }
       if (!run.meaningful) return;
-      const warning = `Required daily log wasn't updated: ${run.requirement.displayPath}. Ask Coop to finish the log or run /daily-log.`;
+      const warning = `Required daily log wasn't updated: ${run.requirement.displayPath}. Ask Coop to finish the log (the daily-logger skill).`;
       missedLogAt.set(run.requirement.logPath, Date.now());
       try { ctx.ui.setStatus("coop-daily-log", `daily log missing · ${run.requirement.date}`); } catch { /* best effort */ }
       notify(ctx, warning, "warning");

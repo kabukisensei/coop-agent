@@ -98,7 +98,7 @@ MD
 ```
 
 It shows up as a prompt/command in Pi automatically. (Daily/weekly logging already
-ships — see the `daily-logger` skill and the `/daily-log` and `/weekly-log` prompts.)
+ships — see the `daily-logger` skill.)
 
 ## 3. Add or tweak the theme
 

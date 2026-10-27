@@ -1,6 +1,6 @@
 # data-doc — in-agent documentation, lineage, impact, and portal tips
 Run /setup-docs to configure and build lineage docs without leaving Coop.
-Use /impact-analysis before changing a shared table, measure, or schema.
+Use /impact before changing a shared table, measure, or schema.
 Ask Coop to look up an object's lineage before proposing a change.
 Ask Coop to build Markdown docs and the offline lineage portal for this project.
 Ask Coop to scan SQL and Power BI together for cross-estate lineage.
