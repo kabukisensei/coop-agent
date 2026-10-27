@@ -85,7 +85,7 @@ try {
   Write-Skill (Join-Path $client '.coop\skills\contoso-naming') "---`nname: contoso-naming`ndescription: Contoso naming rules`n---`n# Contoso naming`n"
   Write-Skill (Join-Path $client '.coop\skills\azure-devops') "---`nname: azure-devops`ndescription: Clashes with the shipped folder`n---`n# Clash`n"
   Write-Prompt (Join-Path $client '.coop\prompts') 'contoso-release'
-  Write-Prompt (Join-Path $client '.coop\prompts') 'daily-log'
+  Write-Prompt (Join-Path $client '.coop\prompts') 'handoff'
   # Personal tier: one valid skill, one whose frontmatter name clashes with the
   # client skill, one prompt, one prompt that clashes with the client one.
   Write-Skill (Join-Path $profileDir 'skills\my-dataverse') "---`nname: my-dataverse`ndescription: Personal Dataverse notes`n---`n# Mine`n"
@@ -130,7 +130,7 @@ try {
   if (Test-RowContains $rows 'personal tier: 2 skill(s), 2 prompt(s)' 'ok') { Ok 'doctor counts the personal tier' } else { Ko 'personal tier row wrong' ($rows | ConvertTo-Json -Depth 3) }
   if (Test-RowContains $rows "client skill 'azure-devops' is not loaded: the shipped tier already has 'azure-devops'" 'warn') { Ok 'doctor warns on the client skill shadowed by a shipped one' } else { Ko 'client skill clash warning missing' ($rows | ConvertTo-Json -Depth 3) }
   if (Test-RowContains $rows "personal skill 'naming-again' is not loaded: the client tier already has 'contoso-naming'" 'warn') { Ok 'doctor warns on the personal skill shadowed by a client one' } else { Ko 'personal skill clash warning missing' ($rows | ConvertTo-Json -Depth 3) }
-  if (Test-RowContains $rows "client prompt '/daily-log' is not loaded: the shipped tier already has it" 'warn') { Ok 'doctor warns on the client prompt shadowed by a shipped one' } else { Ko 'client prompt clash warning missing' ($rows | ConvertTo-Json -Depth 3) }
+  if (Test-RowContains $rows "client prompt '/handoff' is not loaded: the shipped tier already has it" 'warn') { Ok 'doctor warns on the client prompt shadowed by a shipped one' } else { Ko 'client prompt clash warning missing' ($rows | ConvertTo-Json -Depth 3) }
   if (Test-RowContains $rows "personal prompt '/contoso-release' is not loaded: the client tier already has it" 'warn') { Ok 'doctor warns on the personal prompt shadowed by a client one' } else { Ko 'personal prompt clash warning missing' ($rows | ConvertTo-Json -Depth 3) }
   $rowsPlain = Get-TierRows $plain
   if (Test-RowContains $rowsPlain 'client tier: no committed .coop/project.yml' 'ok') { Ok 'doctor says there is no client tier outside a contract' } else { Ko 'no-contract client row missing' ($rowsPlain | ConvertTo-Json -Depth 3) }

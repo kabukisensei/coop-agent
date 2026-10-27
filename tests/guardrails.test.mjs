@@ -75,8 +75,7 @@ const handleSessionStart = handlers["session_start"];
 const handleSessionShutdown = handlers["session_shutdown"];
 assert.ok(typeof handle === "function", "registers a tool_call handler");
 assert.ok(typeof handleSessionShutdown === "function", "registers a session_shutdown handler");
-assert.ok(cmds["coop-guardrails"], "registers the /coop-guardrails command");
-assert.ok(cmds["coop-live-read"], "registers the /coop-live-read command");
+assert.ok(cmds["approvals"], "registers the /approvals command");
 
 const ctx = { cwd: "/tmp/no-such-repo-xyz", hasUI: true, ui: { confirm: async (_title, message) => { confirmCount++; lastConfirm = String(message); return confirmAnswer; }, input: async (title) => { inputCount++; lastInput = String(title); return inputAnswer; }, notify: () => {} } };
 const call = async (command, { stagedFiles = "", modifiedFiles = "", untrackedFiles = "", confirm = false, toolName = "bash" } = {}) => {
@@ -958,14 +957,14 @@ await t("an edit approval can last for the session; deletes and other servers st
   // Headless never gains an approval it did not have.
   assert.equal(blocked(await handle(write("core_create-item"), { cwd: ctx.cwd, hasUI: false })), true);
 });
-await t("/coop-approvals shows and revokes session edit approvals (#156)", async () => {
+await t("/approvals shows and revokes session edit approvals (#156)", async () => {
   await handleSessionStart({}, ctx);
   const notes = [];
   const ui = { notify: (m) => notes.push(m), confirm: async () => true, select: async (_t, options) => options[1] };
   assert.equal(blocked(await handle({ toolName: "mcp", input: { server: "fabric", tool: "core_create-item", args: {} } }, { ...ctx, ui })), false);
-  await cmds["coop-approvals"].handler("status", { ...ctx, ui });
+  await cmds["approvals"].handler("status", { ...ctx, ui });
   assert.match(notes.at(-1), /active for this session[\s\S]*fabric/);
-  await cmds["coop-approvals"].handler("revoke", { ...ctx, ui });
+  await cmds["approvals"].handler("revoke", { ...ctx, ui });
   let asked = 0;
   const ask = { notify: () => {}, confirm: async () => true, select: async (_t, options) => { asked++; return options[2]; } };
   assert.equal(blocked(await handle({ toolName: "mcp", input: { server: "fabric", tool: "core_create-item", args: {} } }, { ...ctx, ui: ask })), true);
@@ -1869,7 +1868,7 @@ await t("one plain bounded SELECT on the resolved dev target runs without a prom
     assert.equal(e.detail, "dev-read-only");
   }
   assert.equal(JSON.stringify(entries).includes("Account"), false, "audit never carries SQL");
-  const status = cmds["coop-live-read"];
+  const status = cmds["approvals"];
   let shown = "";
   await status.handler([], { ...liveCtx, ui: { notify: (m) => { shown = m; } } });
   assert.ok(shown.includes("none active"), "dev reads create no session grant");
@@ -2062,10 +2061,10 @@ await t("reads need no grant: shutdown and revoke change nothing", async () => {
   assert.equal(blocked(await handle(sqlRead(), liveCtx)), false, "after shutdown");
   let shown = "";
   const commandCtx = { ...liveCtx, ui: { ...liveCtx.ui, notify: (message) => { shown = String(message); } } };
-  await cmds["coop-live-read"].handler("revoke", commandCtx);
+  await cmds["approvals"].handler("revoke", commandCtx);
   assert.match(shown, /revoked/i);
   assert.equal(blocked(await handle(sqlRead(), liveCtx)), false, "after revoke");
-  await cmds["coop-live-read"].handler("status", commandCtx);
+  await cmds["approvals"].handler("status", commandCtx);
   assert.match(shown, /none active/);
   assert.equal(confirmCount, 0);
 });
@@ -2078,7 +2077,7 @@ await t("status and fixed audit labels contain no token, forged scope, or SQL", 
   confirmAnswer = true;
   await handle(sqlRead(undefined, { coopLiveReadScope: { client: "scope-secret", token: "model-secret" } }), liveCtx);
   let shown = "";
-  await cmds["coop-live-read"].handler("status", { ...liveCtx, ui: { notify: (message) => { shown = String(message); } } });
+  await cmds["approvals"].handler("status", { ...liveCtx, ui: { notify: (message) => { shown = String(message); } } });
   const blob = `${shown}\n${JSON.stringify(readAudit())}`;
   for (const forbidden of ["launch-token-secret", "scope-secret", "model-secret", "SELECT TOP", "dbo.Customer"]) assert.equal(blob.includes(forbidden), false, forbidden);
   assert.match(shown, /none active/, "reads create no grant");
@@ -2184,12 +2183,12 @@ await t("audit: writes never throw even when the log dir is unwritable (fail-ope
     process.env.PI_CODING_AGENT_DIR = prev;
   }
 });
-await t("/coop-guardrails output mentions the audit log path", async () => {
+await t("/approvals output mentions the audit log path", async () => {
   clearAudit();
   await call("git commit -m x", { stagedFiles: "src/app.py" }); // one entry to list
   let shown = "";
   const ctx2 = { ...ctx, ui: { confirm: async () => false, notify: (msg) => { shown = String(msg); } } };
-  await cmds["coop-guardrails"].handler([], ctx2);
+  await cmds["approvals"].handler([], ctx2);
   assert.ok(shown.includes("guardrails-audit.jsonl"), "prints the audit log path");
   assert.ok(shown.includes("commit-block"), "lists the recent decision");
   assert.ok(shown.includes("Pi self-update prompts suppressed"), "shows the managed update policy");
@@ -2215,7 +2214,7 @@ await t("audit: command canaries never enter new records or the audit display", 
     assert.equal(entries.length, 1, "one decision recorded");
     assert.ok(!readFileSync(AUDIT_FILE, "utf8").includes(canary), "command arguments must not persist");
     let shown = "";
-    await cmds["coop-guardrails"].handler([], { ...probeCtx, ui: { notify: (value) => { shown = value; } } });
+    await cmds["approvals"].handler([], { ...probeCtx, ui: { notify: (value) => { shown = value; } } });
     assert.ok(!shown.includes(canary), "audit display must not expose arguments");
     assert.ok(shown.includes(entries[0].kind), "decision classification remains visible");
   }
@@ -2232,7 +2231,7 @@ await t("audit: old command-bearing records are safe to display without rewritin
   const original = legacy.map((entry) => JSON.stringify(entry)).join("\n") + "\n";
   writeFileSync(AUDIT_FILE, original);
   let shown = "";
-  await cmds["coop-guardrails"].handler([], { ...ctx, ui: { notify: (value) => { shown = value; } } });
+  await cmds["approvals"].handler([], { ...ctx, ui: { notify: (value) => { shown = value; } } });
   assert.ok(!shown.includes(canary), "legacy command details must not be redisplayed");
   for (const entry of legacy) assert.ok(shown.includes(entry.label));
   assert.equal(readFileSync(AUDIT_FILE, "utf8"), original, "stored history is untouched");
@@ -2286,7 +2285,7 @@ await t("unexpected enforcement faults block, while harmless calls and optional 
   assert.equal(blocked(await call("echo hello")), false);
   assert.equal(blocked(await callFile("read", "README.md")), false);
   assert.equal(blocked(await handle({ toolName: "mcp", input: { server: "fabric", tool: "fabric_list_workspaces" } }, ctx)), false);
-  await cmds["coop-guardrails"].handler([], { ...ctx, ui: { notify: () => { throw new Error("optional display failed"); } } });
+  await cmds["approvals"].handler([], { ...ctx, ui: { notify: () => { throw new Error("optional display failed"); } } });
 });
 
 
@@ -2774,12 +2773,12 @@ await t("G1: under a human unlock a production write is a desk yes/no, audited w
     const fab = readAudit().filter((e) => e.kind === "danger-confirm").pop();
     // danger-confirm records never carry command text, so the grant id rides the fixed label.
     assert.deepEqual([fab.decision, fab.label, fab.detail], ["allowed", "production write (prod-unlock:a1b2c3d4)", "production write (prod-unlock:a1b2c3d4)"]);
-    // /coop-approvals status names the unlock; without it, says production writes are blocked.
+    // /approvals names the unlock; without it, says production writes are blocked.
     let shown = "";
-    await cmds["coop-approvals"].handler("status", { ...liveCtx, ui: { notify: (m) => { shown = m; } } });
+    await cmds["approvals"].handler("status", { ...liveCtx, ui: { notify: (m) => { shown = m; } } });
     assert.match(shown, /PRODUCTION WRITES UNLOCKED by a human for Contoso \(grant a1b2c3d4/);
     removeUnlock();
-    await cmds["coop-approvals"].handler("status", { ...liveCtx, ui: { notify: (m) => { shown = m; } } });
+    await cmds["approvals"].handler("status", { ...liveCtx, ui: { notify: (m) => { shown = m; } } });
     assert.match(shown, /Production writes: blocked\./);
   } finally {
     removeUnlock();

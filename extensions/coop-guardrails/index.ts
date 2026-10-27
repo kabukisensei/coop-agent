@@ -3871,96 +3871,70 @@ export default function coopGuardrails(pi: ExtensionAPI) {
     return checkInOrder(rawEvent, ctx, signal);
   });
 
-  pi.registerCommand("coop-live-read", {
-    description: "Show or revoke this session's bounded live-read grant",
-    handler: async (args: any, ctx: ExtensionContext) => {
-      const action = (Array.isArray(args) ? args.join(" ") : String(args || "")).trim().toLowerCase() || "status";
-      let message: string;
-      if (action === "revoke") {
-        session.liveReadGrant = null;
-        message = "coop live-read grant: revoked for this session.";
-      } else if (action !== "status") {
-        message = "Usage: /coop-live-read status|revoke";
-      } else if (!session.liveReadGrant) {
-        message = "coop live-read grant: none active for this session.";
-      } else {
-        const s = session.liveReadGrant.scope;
-        // Closed, non-secret scope only: never show SQL, arguments, credentials,
-        // transport, or results. Targets are explicit consent identifiers.
-        message = [
-          "coop live-read grant: active for this session",
-          `  client/tenant/principal: ${s.client} / ${s.tenant} / ${s.principal}`,
-          `  environment/operation: ${s.environment} / ${s.operationClass}`,
-          `  targets: ${s.targets.join(", ")}`,
-          `  bounds: ${s.resultLimit} result rows; ${s.timeoutMs} ms`,
-        ].join("\n");
-      }
-      try { if (typeof ctx.ui?.notify === "function") ctx.ui.notify(message, "info"); } catch { /* ignore */ }
-    },
-  });
-
-  pi.registerCommand("coop-approvals", {
-    description: "Show or revoke this session's edit approvals (/coop-approvals status|revoke)",
+  // One place for "what has this session been allowed" (suite review
+  // 2026-10-26, pick 9; it replaces /coop-approvals, /coop-live-read and
+  // /coop-guardrails): the edit approvals, the live-read grant, the production
+  // unlock, whether enforcement is on, and the last decisions. `/approvals
+  // revoke` ends the session's own grants; the production unlock is a person's
+  // (`coop unlock-prod --revoke`, or it expires) and is only shown.
+  pi.registerCommand("approvals", {
+    description: "What this session may do without asking: edit approvals, the live-read grant, the production unlock, the last decisions (/approvals revoke ends the session grants)",
     handler: async (args: any, ctx: ExtensionContext) => {
       const action = (Array.isArray(args) ? args.join(" ") : String(args || "")).trim().toLowerCase() || "status";
       let message: string;
       if (action === "revoke") {
         editApprovals.clear();
-        message = "coop edit approvals: revoked for this session. The next edit asks again.";
+        session.liveReadGrant = null;
+        message = "coop approvals: edit approvals and the live-read grant revoked for this session. The next edit or live read asks again.";
       } else if (action !== "status") {
-        message = "Usage: /coop-approvals status|revoke";
-      } else if (!editApprovals.size) {
-        message = "coop edit approvals: none active. Each edit asks; pick \"for this session\" to approve a server once.";
+        message = "Usage: /approvals [revoke]";
       } else {
-        message = [
-          "coop edit approvals: active for this session",
-          ...[...editApprovals].sort().map((key) => `  • ${sessionApprovalLabel(key)}${key.startsWith("sql:") ? " (single INSERT/UPDATE/CREATE/ALTER statements)" : ""}`),
-          "Deletes and drops still ask every time; production writes are blocked. Ends at /new or exit; /coop-approvals revoke ends it now.",
-        ].join("\n");
-      }
-      if (action === "status") {
+        const lines = [
+          `coop guardrails: ${enabled() ? "ON" : "OFF (COOP_NO_GUARDRAILS=1)"}; ${showUpstreamUpdates() ? "Pi self-update prompts shown (maintainer mode)" : "Pi self-update prompts suppressed; use coop update"}`,
+        ];
+        if (editApprovals.size) {
+          lines.push(
+            "Edit approvals: active for this session",
+            ...[...editApprovals].sort().map((key) => `  • ${sessionApprovalLabel(key)}${key.startsWith("sql:") ? " (single INSERT/UPDATE/CREATE/ALTER statements)" : ""}`),
+            "  Deletes and drops still ask every time. Ends at /new or exit; /approvals revoke ends it now.",
+          );
+        } else {
+          lines.push("Edit approvals: none. Each edit asks; pick \"for this session\" to approve a server once.");
+        }
+        if (session.liveReadGrant) {
+          const s = session.liveReadGrant.scope;
+          // Closed, non-secret scope only: never show SQL, arguments, credentials,
+          // transport, or results. Targets are explicit consent identifiers.
+          lines.push(
+            "Live-read grant: active for this session",
+            `  client/tenant/principal: ${s.client} / ${s.tenant} / ${s.principal}`,
+            `  environment/operation: ${s.environment} / ${s.operationClass}`,
+            `  targets: ${s.targets.join(", ")}`,
+            `  bounds: ${s.resultLimit} result rows; ${s.timeoutMs} ms`,
+          );
+        } else {
+          lines.push("Live-read grant: none active for this session.");
+        }
         const unlock = activeProdUnlock(ctx);
-        message += unlock
-          ? `\nPRODUCTION WRITES UNLOCKED by a human for ${unlock.client} (grant ${unlock.id}, ${prodUnlockMinutesLeft(unlock)} min left): each production write asks yes/no at the desk and is audited.`
-          : "\nProduction writes: blocked.";
+        lines.push(unlock
+          ? `PRODUCTION WRITES UNLOCKED by a human for ${unlock.client} (grant ${unlock.id}, ${prodUnlockMinutesLeft(unlock)} min left): each production write asks yes/no at the desk and is audited.`
+          : "Production writes: blocked.");
+        lines.push(
+          "What is enforced: docs/guardrails.md (never commit source, destructive commands, secret files, live data, mutating MCP actions, production writes, Power BI Desktop reloads).",
+          `Audit log (append-only; secrets/file contents never written): ${auditPath()}`,
+        );
+        const recent = readAuditTail(10);
+        if (recent.length) {
+          lines.push(`Last ${recent.length} decision(s):`);
+          for (const e of recent) {
+            lines.push(`  ${e.ts || "?"}  ${e.kind}/${e.decision}  ${e.label}${e.detail && e.detail !== e.label ? `  (${e.detail})` : ""}`);
+          }
+        } else {
+          lines.push("No guardrail decisions recorded yet.");
+        }
+        message = lines.join("\n");
       }
       try { if (typeof ctx.ui?.notify === "function") ctx.ui.notify(message, "info"); } catch { /* ignore */ }
-    },
-  });
-
-  pi.registerCommand("coop-guardrails", {
-    description: "Show what coop's runtime guardrails enforce (and whether they're on)",
-    handler: async (_args, ctx) => {
-      const lines = [
-        `coop-guardrails: ${enabled() ? "ON" : "OFF (COOP_NO_GUARDRAILS=1)"}`,
-        `coop update policy: ${showUpstreamUpdates() ? "UPSTREAM NOTICES ENABLED (maintainer mode)" : "ON — Pi self-update prompts suppressed; use coop update"}`,
-        "Enforced on the agent's tool calls (your own shell is never intercepted):",
-        "  • never commit source — blocks `git commit` (incl. -a/-am, `git -C`, `git commit <path>`, and `cd <dir> && git commit`) of anything outside docs/logs/site; merge / cherry-pick / revert / am / commit-tree take the same gate (sql_source commit is the approved path under SQL source control: it asks per commit)",
-        "  • destructive commands — confirms rm -rf / git push --force (incl. +refspec) or --delete / reset --hard / git clean -f / branch -D / stash drop·clear / checkout -- / restore / find -delete / az … delete / DROP·TRUNCATE",
-        "  • secret files — confirms read/edit/write AND bash access (cat .env etc.) of .env / keys / credentials; printing the environment, `az account get-access-token`, `az login|logout`, `az account clear|set` ask too",
-        "  • live data — metadata and plain SQL reads run on every target, production included; reads coop cannot classify ask once",
-        "  • mutating MCP actions — confirms create/update/delete/deploy/publish-looking Fabric/Power BI/MCP tool calls (best-effort)",
-        `  • production writes — SQL on a production target, model edits after a production connection, Fabric writes naming prod: blocked and audited; never session-wide${activeProdUnlock(ctx) ? " (unlock active)" : ""}`,
-        "  • Power BI Desktop reloads — reads `powerbi-desktop status` before `powerbi-desktop reload` / `powerbi-report-author preview`; asks on unsaved changes, blocks when the instance can't be verified",
-        `  • edit approvals — approving an edit can cover that server for the session; deletes and drops still ask (${editApprovals.size ? `${editApprovals.size} active` : "none"}; /coop-approvals status|revoke)`,
-        "Advisory rules live in docs/guardrails.md. Disable with COOP_NO_GUARDRAILS=1.",
-        "",
-        `Audit log (append-only; secrets/file contents never written): ${auditPath()}`,
-      ];
-      const recent = readAuditTail(10);
-      if (recent.length) {
-        lines.push(`Last ${recent.length} decision(s):`);
-        for (const e of recent) {
-          lines.push(`  ${e.ts || "?"}  ${e.kind}/${e.decision}  ${e.label}${e.detail && e.detail !== e.label ? `  (${e.detail})` : ""}`);
-        }
-      } else {
-        lines.push("No guardrail decisions recorded yet.");
-      }
-      try {
-        if (typeof ctx.ui?.notify === "function") ctx.ui.notify(lines.join("\n"), "info");
-      } catch {
-        /* ignore */
-      }
     },
   });
 }
