@@ -2,8 +2,8 @@
   "schema_version": 1,
   "repository": "https://github.com/cooptimize/coop-standards.git",
   "branch": "main",
-  "revision": "add1c5daa89f680474e2ccd9ef85725ce3ab3f15",
-  "captured_ms": 1792781032064,
+  "revision": "b7c856125817179133f44263b0eedd30cef5dc13",
+  "captured_ms": 1793117747861,
   "articles": [
     {
       "file": "Power BI/File Types.md",
@@ -97,7 +97,7 @@
     },
     {
       "file": "SQL/SQL Conventions.md",
-      "sha256": "4dbebb5efa42ac8c2fe2ac1f1d9a4f6033cb3189c9d08ba1d6f24a3ae801c772",
+      "sha256": "b3927aa8e1b4db6d54929caca3b083b82678b21a4f3c096d67f3a425d9c19739",
       "id": "sql_conventions",
       "domain": "sql"
     },
