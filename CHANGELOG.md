@@ -189,6 +189,34 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   No contract shape changed; `project_health.py` keeps its block scan because
   its migration needs the block's line positions.
 
+- **One project-file reader per language (suite review 2026-10-26, pick 7).**
+  `.coop/project.yml` was read by nine hand-rolled line scanners beside the one
+  parser, with slightly different rules each. Now every JS reader goes through
+  `lib/project-contract.mjs` (the guardrails' repository globs, SQL scope and
+  production names, coop-tools' review scope, the standards overrides), every
+  Python reader through `lib/_yaml.py` (`coop_paths.contract_repositories`,
+  `onboard.py`'s legacy consultant name, `context-budget.py`'s defaults) and
+  the launch-time PowerShell through one `Get-CoopContractRepositories` line
+  scan. The JS reader follows the file's own indentation, so a hand-indented
+  contract reads the same everywhere. One contract finder per language too:
+  the guardrails use `findProjectContract` (the launcher's answer, the
+  remembered client file, the sibling and child lookups the tools already
+  use), and `coop_paths.find_project_yml` replaces the copies in
+  `sql_targets.py` and `warehouse_mcp.py`; `findGitRoot` is `gitRootAbove`.
+  No contract shape changed; `project_health.py` keeps its block scan because
+  its migration needs the block's line positions.
+
+- **One guardrails dispatcher (suite review 2026-10-26, pick 12).** The
+  `tool_call` handler in `extensions/coop-guardrails` is now one `enforce()`
+  over `RULES` in a declared order (seventeen named rules: the native tools
+  first, then the shell rules over one alias-expanded command), each answering
+  with one `Decision` (pass, allow or block), and every question to the person
+  goes through one `Session.ask()` that fails closed headlessly, offers the
+  session approval, audits and blocks on a no; the per-session state
+  (live-read grant, edit approvals, production connection, unscripted dev
+  writes) lives in one `Session`. No rule, message or audit row changed: the
+  existing 175-case corpus is the gate, plus a test that pins the order.
+
 ### Fixed
 
 - **`/setup-project` edits a project file written with inline mappings.** The
