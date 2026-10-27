@@ -258,7 +258,7 @@ terminal capability with its phone status:
 
 | Capability | Status | What closes it |
 | --- | --- | --- |
-| Extension commands, prompt templates and skills (`/start`, `/standards-status`, `/todos`, `/memory-*`, `/rename`, `/websearch`, `/search`, `/coop-approvals`, `/coop-live-read`, prompt templates such as `/spec-first`, `/skill:name`) | phone (MC6) | Typing `/` lists the commands Pi returned (`get_commands`) and sends the ones the window maps to **Pi** as typed; their dialogs and notices reach the phone. `/coop-approvals` and `/coop-live-read` only show or revoke, so they narrow access. |
+| Extension commands, prompt templates and skills (`/start`, `/standards-status`, `/todos`, `/memory-*`, `/rename`, `/websearch`, `/search`, `/approvals`, prompt templates such as `/spec-first`, `/skill:name`) | phone (MC6) | Typing `/` lists the commands Pi returned (`get_commands`) and sends the ones the window maps to **Pi** as typed; their dialogs and notices reach the phone. `/approvals` only shows or revokes, so it narrows access. |
 | Steer while coop works (Enter) and pull back queued messages (`clear_queue`, Alt+Up) | phone (MC6) | Send now and Queue while coop works; the queued messages show above the text box, and Edit queued brings them back into it. |
 | `/model`, `/thinking` (and Ctrl+P, Shift+Tab) | phone (MC7) | The menu's Model and Thinking sheets (`get_available_models`, `set_model`, `set_thinking_level`); a model must be one Pi lists. Typing `/model` or `/thinking` points to the menu. |
 | `/compact`, `/session`, `/name`, `/copy` | phone (MC7) | The menu's Compact (with optional instructions, when coop is idle), Session details (`get_state`, `get_session_stats`, without file paths) and Name this session sheets, and Copy under every answer. |
@@ -279,7 +279,7 @@ terminal capability with its phone status:
 | Capability | Status | Why |
 | --- | --- | --- |
 | Approving a production action (`PRODUCTION` confirms, the G1 production-write unlock) | desk only | MC1 contract: production stays at the desk; the phone can decline. |
-| Options that allow more than the one action ("Allow … for this session", "always", "don't ask again") and `/trust` | desk only | MC1 contract: the phone answers for the exact action in front of it. Grants only ever come from those options; `/coop-approvals` and `/coop-live-read` show or revoke and work on the phone (MC6). |
+| Options that allow more than the one action ("Allow … for this session", "always", "don't ask again") and `/trust` | desk only | MC1 contract: the phone answers for the exact action in front of it. Grants only ever come from those options; `/approvals` shows or revokes and works on the phone (MC6). |
 | `!command` and `!!command` (a shell on the VM) | desk only | MC1 contract, confirmed by Aaron 2026-10-06 03:34: the phone is not a remote shell; coop's own tools still run commands under the guardrails when asked in chat. |
 
 ### Not on a phone
