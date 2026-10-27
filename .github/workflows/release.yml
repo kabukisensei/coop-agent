@@ -191,14 +191,18 @@ jobs:
           fail_on_unmatched_files: true
 
   website:
-    # Open the coop-website pull request that moves the site's badge, pins and
-    # changelog to this release (coop-website/.github/workflows/sync-release.yml;
-    # needs the COOP_WEBSITE_TOKEN secret here, else it prints the command to run
-    # by hand and succeeds). A person reviews and merges that PR and pulls on the VPS.
+    # The coop-website sync (its .github/workflows/sync-release.yml, which moves the
+    # site's badge, pins and changelog and opens the PR) is a reusable workflow in a
+    # PRIVATE repository, and GitHub lets only private repositories call those; this
+    # repository is public, so a `uses:` of it fails at planning and the tag run
+    # never starts (v0.38.7, 2026-10-27; coop-sql-source-control hit the same in its
+    # #60). Until the site repository is public (or the sync is a dispatchable
+    # workflow), this job prints the command a person runs in a coop-website clone.
     needs: [release]
-    uses: kabukisensei/coop-website/.github/workflows/sync-release.yml@main
-    with:
-      product: coop-agent
-      version: ${{ needs.release.outputs.version }}
-      notes: ${{ needs.release.outputs.notes }}
-    secrets: inherit
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Say how to sync the site
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          echo "::warning::sync the site by hand in a coop-website clone:  bash scripts/sync-release.sh coop-agent $VERSION"
