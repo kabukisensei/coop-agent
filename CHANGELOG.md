@@ -243,6 +243,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **/setup-project looks ids up by name on Windows too.** The wizard's Fabric
+  lookup (pick 10) minted its token with `pi.exec("az", …)`; Pi spawns without a
+  shell and az on Windows is `az.cmd`, so the spawn failed, the lookup swallowed
+  it and every name typed where an id is asked stayed a name, ending the wizard
+  with "Fabric workspace and SQL endpoint IDs must be lowercase canonical UUIDs
+  or blank" (the dev VM, 2026-10-27). `lib/fabric-discovery.mjs` now runs az
+  through cmd.exe on Windows (`azureCliInvocation`), as the person's own shell
+  does, and as it is elsewhere.
+
 - **Azure SQL sign-in no longer depends on the Fabric MCP entry.** The launch
   token helper decided what to mint by the managed `fabric-sqlendpoint` entry,
   which a non-Fabric project still gets (the global endpoint) unless it disables

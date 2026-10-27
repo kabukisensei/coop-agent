@@ -710,7 +710,8 @@ await t("Fabric ids are looked up by name from the Azure sign-in: Enter keeps th
   assert.ok(idLabels.length >= 3, idLabels.join(" | "));
   assert.equal(defaults[idLabels.find((l) => l.startsWith("Default Fabric workspace ID"))], WS, "the id question proposes the resolved id");
   assert.equal(azCalls.length, 1, "one az token mint for the whole wizard");
-  assert.ok(azCalls[0].includes("--tenant") && azCalls[0].includes("contoso.onmicrosoft.com"), "the tenant just answered pins the mint");
+  // One line on every platform: a bare az argv, or the cmd.exe line Windows runs az.cmd through.
+  assert.ok(azCalls[0].join(" ").includes("--tenant contoso.onmicrosoft.com"), "the tenant just answered pins the mint");
 });
 
 await t("native wizard can create a repository-free discovery project", async () => {
