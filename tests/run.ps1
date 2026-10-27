@@ -651,7 +651,7 @@ print("resume verdict contract OK")
     @{ Name = 'install-pipx-unit';      Lane = 'gate';     Head = 'install pipx unit (bootstrap verdict, no-result job diagnostics, parent-side verify)' },
     @{ Name = 'fabric-python-finder';   Lane = 'gate';     Head = 'fabric-compatible Python discovery' },
     @{ Name = 'fabric-mcp-launch';      Lane = 'extended'; Head = 'Fabric MCP launch-time bearer isolation'; Needle = 'FABRIC_MCP_FIXTURE_INJECTION_REACHED' },
-    @{ Name = 'release';                Lane = 'gate';     Head = 'release transaction consistency' },
+    @{ Name = 'release';                Lane = 'gate';     Head = 'coop release forwards to scripts/release.sh (the release itself: tests/release-gate.test.sh)' },
     @{ Name = 'search-knowledge';       Lane = 'gate';     Head = 'team knowledge local recall helper' },
     @{ Name = 'install-python-prereq';  Lane = 'extended'; Head = 'fresh-install Fabric Python prerequisite' },
     @{ Name = 'install-prereq-gate';    Lane = 'gate';     Head = 'install prerequisite gate (and the D1k offer: --yes, continue after a passing re-check)' },

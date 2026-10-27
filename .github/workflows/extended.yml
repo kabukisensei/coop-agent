@@ -5,10 +5,10 @@ name: extended
 # network). COOP_TEST_EXTENDED=1 is the whole switch; with it unset, tests/run.sh
 # and tests/run.ps1 run only the gate lane that ci.yml runs on every PR.
 # Runs nightly, on demand (Actions -> extended -> Run workflow, any branch), and
-# on a PR only when this file changes. See docs/ci.md, "coop-agent's own CI
-# (maintainers): gate and extended lanes". The Windows Git Bash leg of
-# tests/run.sh runs only here (the suites are platform-neutral logic; ci.yml
-# runs them on ubuntu and the product itself under Windows PowerShell 5.1).
+# on a PR only when this file or VERSION changes (a release PR). See docs/ci.md,
+# "coop-agent's own CI (maintainers): gate and extended lanes". The Windows Git
+# Bash leg of tests/run.sh runs only here (the suites are platform-neutral logic;
+# ci.yml runs them on ubuntu and the product itself under Windows PowerShell 5.1).
 
 on:
   schedule:
@@ -17,6 +17,7 @@ on:
   pull_request:
     paths:
       - .github/workflows/extended.yml
+      - VERSION   # a release pull request (release-pr.yml): the full suite before the tag
 
 permissions:
   contents: read
