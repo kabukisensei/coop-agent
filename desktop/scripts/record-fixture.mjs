@@ -199,8 +199,10 @@ async function record() {
 }
 
 // Pi's own slash commands and keybinding actions, from the docs its package
-// ships: the parity test checks the window's lists against them, so a Pi
-// upgrade that adds either fails until desktop/PARITY.md maps it.
+// ships: the parity test checks that every Pi slash command is a window
+// built-in or terminal-only, and that each window shortcut stands for a Pi
+// action; a Pi upgrade that adds a slash command fails until commands.mjs
+// decides it (desktop/PARITY.md).
 function piSurface(piDir) {
   const doc = (name) => readFileSync(join(piDir, "docs", name), "utf8");
   const column = (text, pattern) => [...new Set([...text.matchAll(pattern)].map((m) => m[1]))].sort();
