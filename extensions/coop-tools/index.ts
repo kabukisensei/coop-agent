@@ -392,6 +392,16 @@ export function sqlStateHint(details: any): string {
   return "";
 }
 
+/** The pinned coop-schema-compare package reads the catalogs for catalog_snapshot
+ *  and schema_compare (lib/compare_tool.py): its absence or silence is one state. */
+export function compareToolHint(details: any): string {
+  const state = String(details?.state || "");
+  if (state === "tool_unavailable") return " The coop-schema-compare command (the pinned package) is not installed on this machine: run coop update, or coop doctor for the row that names it.";
+  if (state === "tool_timeout") return " coop-schema-compare did not answer within its time limit; try again, or narrow the compare with schemas.";
+  if (state === "tool_failed") return " coop-schema-compare ended without a result; run coop doctor to check its install.";
+  return "";
+}
+
 /** How long a helper may run. One bounded query or one object's trace answers
  *  in seconds; a catalog snapshot reads every object's definition (hundreds on
  *  a real warehouse, which took over a minute on the client VM), and a schema
@@ -2099,7 +2109,7 @@ export function teamKnowledgeNote(coopDir?: string, homeDir?: string): string | 
  *  The approval prompt before Warehouse SQL is unchanged — this only removes
  *  the detour, never the gate. */
 /* --- Committed dev catalog snapshot (master plan SQ9) --------------------------
- * lib/catalog_snapshot.py writes the dev/test catalog as one file per object
+ * lib/catalog_snapshot.py (the pinned coop-schema-compare) writes the dev/test catalog as one file per object
  * under the contract's snapshot folder; this reads the same folder rule and the
  * manifest it wrote, with no Python and no connection, for the session-start
  * note and the tool's status text. */
@@ -2654,7 +2664,7 @@ export default function coopTools(pi: ExtensionAPI) {
           lines,
           "see manifest.json in the snapshot folder",
         )
-        : `catalog_snapshot unavailable: ${String(details?.state || "internal_error")}.${sqlStateHint(details)}${details?.state === "output_not_snapshot" ? ` The folder ${details.path} holds files that are not a coop snapshot; move them or set catalog.path in .coop/project.yml.` : ""}`;
+        : `catalog_snapshot unavailable: ${String(details?.state || "internal_error")}.${sqlStateHint(details)}${compareToolHint(details)}${details?.state === "output_not_snapshot" ? ` The folder ${details.path} holds files that are not a coop snapshot; move them or set catalog.path in .coop/project.yml.` : ""}`;
       return { content: [{ type: "text" as const, text }], details };
     },
   });
@@ -2699,7 +2709,7 @@ export default function coopTools(pi: ExtensionAPI) {
           lines,
           "see report.md",
         )
-        : `schema_compare unavailable: ${String(details?.state || "internal_error")}${details?.side ? ` (side: ${details.side})` : ""}.${sqlStateHint(details)}${details?.state === "snapshot_missing" ? " No committed catalog snapshot exists; run catalog_snapshot (command=\"snapshot\") first or compare a live entry." : ""}${details?.state === "snapshot_incomplete" ? " The committed snapshot is damaged (a file its manifest lists is missing or unreadable); take it again with catalog_snapshot (command=\"snapshot\")." : ""}${details?.state === "target_invalid" ? " That side is not a ready sql_targets entry in .coop/project.yml: add sql_targets.<env> (or sql_targets.named.<set>.<env> for <env>@<set>) with /setup-project or the Project pane, then /new." : ""}${details?.state === "repo_missing" ? " No repositories entry with role sql or mixed and a local_path matches; name one as repo:<name>." : ""}${details?.state === "repo_ambiguous" ? " Several sql or mixed repositories exist; name one as repo:<name>." : ""}${details?.state === "repo_unavailable" ? " That repository folder (or its sql_root/subfolder) does not exist on this machine." : ""}${details?.state === "setting_invalid" ? ` ${details.setting} in .coop/project.yml is not valid.` : ""}`;
+        : `schema_compare unavailable: ${String(details?.state || "internal_error")}${details?.side ? ` (side: ${details.side})` : ""}.${sqlStateHint(details)}${compareToolHint(details)}${details?.state === "snapshot_missing" ? " No committed catalog snapshot exists; run catalog_snapshot (command=\"snapshot\") first or compare a live entry." : ""}${details?.state === "snapshot_incomplete" ? " The committed snapshot is damaged (a file its manifest lists is missing or unreadable); take it again with catalog_snapshot (command=\"snapshot\")." : ""}${details?.state === "target_invalid" ? " That side is not a ready sql_targets entry in .coop/project.yml: add sql_targets.<env> (or sql_targets.named.<set>.<env> for <env>@<set>) with /setup-project or the Project pane, then /new." : ""}${details?.state === "repo_missing" ? " No repositories entry with role sql or mixed and a local_path matches; name one as repo:<name>." : ""}${details?.state === "repo_ambiguous" ? " Several sql or mixed repositories exist; name one as repo:<name>." : ""}${details?.state === "repo_unavailable" ? " That repository folder (or its sql_root/subfolder) does not exist on this machine." : ""}${details?.state === "setting_invalid" ? ` ${details.setting} in .coop/project.yml is not valid.` : ""}`;
       return { content: [{ type: "text" as const, text }], details };
     },
   });
