@@ -166,8 +166,8 @@ bash tests/run.sh               # gate lane; expect: "✓ all tests passed (gate
 ```
 
 `bash tests/run.sh` is the gate lane that every PR runs. The extended lane (timing
-and process fixtures) is optional per change and runs before every release;
-`coop release` runs it itself:
+and process fixtures) is optional per change and runs on every release pull
+request (`extended.yml` runs on a PR that changes `VERSION`):
 
 ```bash
 COOP_TEST_EXTENDED=1 bash tests/run.sh   # expect: "✓ all tests passed (gate + extended lanes)", exit 0
