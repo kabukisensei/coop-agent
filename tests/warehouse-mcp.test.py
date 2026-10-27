@@ -1128,9 +1128,12 @@ with tempfile.TemporaryDirectory() as tmp:
     assert launch_token() == HOME_TENANT
     assert az_calls(az_state)[-1] == FABRIC_ARGV
 
-    # SQ2: no managed Warehouse server at all (an Azure SQL-only install). With a
-    # contract whose default sql_targets entry names its host, the launcher mints
-    # the SQL audience for the same tenant chain; without one it stays silent.
+    # SQ2: the contract's ready default sql_targets entry decides the launch
+    # mint, before the managed Warehouse server does (2026-10-27: an Azure SQL
+    # sign-in never depends on the Fabric MCP entry). A kind that names its host
+    # mints the SQL audience for the same tenant chain, with or without a managed
+    # Warehouse server; a discovered kind mints the Fabric audience; with no ready
+    # default entry and no managed server the launcher stays silent.
     unmanaged_path = tmp_path / "mcp-unmanaged.json"
     unmanaged_path.write_text(json.dumps({"mcpServers": {}, "_coop": {"managed_servers": []}}), encoding="utf-8")
     SQL_ARGV = "account get-access-token --resource https://database.windows.net/ --output json"
@@ -1143,24 +1146,47 @@ with tempfile.TemporaryDirectory() as tmp:
         assert result.returncode == 0 and result.stderr == b"", result
         return result.stdout.decode("ascii")
 
+    def token_frame_tid(frame):
+        assert frame.startswith("token\t") and frame.endswith("\tend"), frame
+        return tid_of(frame[len("token\t") : -len("\tend")])
+
     (repo / ".coop" / "project.yml").write_text(f"fabric:\n  tenant_id: {CLIENT_TENANT}\n", encoding="utf-8")
     assert launch_token_raw(unmanaged_path) == ""
-    (repo / ".coop" / "project.yml").write_text(
-        f"fabric:\n  tenant_id: {CLIENT_TENANT}\n"
-        "sql_targets:\n  default_environment: dev\n  dev:\n    kind: azure_sql\n    server: contoso-dev.database.windows.net\n    database: ContosoDW\n",
-        encoding="utf-8",
+    azure_sql_contract = (
+        "sql_targets:\n  default_environment: dev\n  dev:\n    kind: azure_sql\n    server: contoso-dev.database.windows.net\n    database: ContosoDW\n"
     )
-    frame = launch_token_raw(unmanaged_path)
-    assert frame.startswith("token\t") and frame.endswith("\tend"), frame
-    assert tid_of(frame[len("token\t") : -len("\tend")]) == CLIENT_TENANT
+    (repo / ".coop" / "project.yml").write_text(f"fabric:\n  tenant_id: {CLIENT_TENANT}\n" + azure_sql_contract, encoding="utf-8")
+    assert token_frame_tid(launch_token_raw(unmanaged_path)) == CLIENT_TENANT
     assert az_calls(az_state)[-1] == f"{SQL_ARGV} --tenant {CLIENT_TENANT}"
-    # A discovered kind (Fabric Warehouse by ids) is the managed server's job, not this path's.
+    # The same contract on a machine whose config still registers the managed
+    # Warehouse server (the global endpoint a non-Fabric project gets by default):
+    # the SQL target still decides, so a Fabric mint is never in the way.
+    assert token_frame_tid(launch_token_raw(mcp_path)) == CLIENT_TENANT
+    assert az_calls(az_state)[-1] == f"{SQL_ARGV} --tenant {CLIENT_TENANT}"
+    # A non-Fabric contract (no fabric block at all, the wizard's Azure SQL-only
+    # shape) mints the SQL audience through the config's tenant chain.
+    config_file.write_text(json.dumps({"azure": {"tenant_id": CLIENT_TENANT}}), encoding="utf-8")
+    (repo / ".coop" / "project.yml").write_text(azure_sql_contract, encoding="utf-8")
+    assert token_frame_tid(launch_token_raw(mcp_path)) == CLIENT_TENANT
+    assert az_calls(az_state)[-1] == f"{SQL_ARGV} --tenant {CLIENT_TENANT}"
+    config_file.write_text(json.dumps({"azure": {"tenant_id": HOME_TENANT}}), encoding="utf-8")
+    # A discovered kind (Fabric Warehouse by ids) mints the Fabric audience, with
+    # or without the managed server.
     (repo / ".coop" / "project.yml").write_text(
         f"fabric:\n  tenant_id: {CLIENT_TENANT}\n"
         f"sql_targets:\n  default_environment: dev\n  dev:\n    kind: fabric_warehouse\n    workspace_id: {CLIENT_TENANT}\n    item_id: {HOME_TENANT}\n    database: W\n",
         encoding="utf-8",
     )
+    assert token_frame_tid(launch_token_raw(unmanaged_path)) == CLIENT_TENANT
+    assert az_calls(az_state)[-1] == f"{FABRIC_ARGV} --tenant {CLIENT_TENANT}"
+    # An unconfigured default entry decides nothing: the managed server does.
+    (repo / ".coop" / "project.yml").write_text(
+        f"fabric:\n  tenant_id: {CLIENT_TENANT}\nsql_targets:\n  default_environment: dev\n  dev:\n    kind: azure_sql\n",
+        encoding="utf-8",
+    )
     assert launch_token_raw(unmanaged_path) == ""
+    assert token_frame_tid(launch_token_raw(mcp_path)) == CLIENT_TENANT
+    assert az_calls(az_state)[-1] == f"{FABRIC_ARGV} --tenant {CLIENT_TENANT}"
 
     # doctor-json reports the tenant it mints for, from the same contract and chain.
     def doctor_json(*extra):

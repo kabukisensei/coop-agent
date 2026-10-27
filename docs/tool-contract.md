@@ -996,15 +996,21 @@ adds `ApplicationIntent=ReadOnly`. A discovered kind (`fabric_warehouse`,
 the contract's ids. A production entry is never selected, and a contract whose
 default entry is unconfigured or invalid returns `target_invalid` before any mint.
 A session launched when the contract named no SQL target and no Fabric SQL
-endpoint has no launch token at all; every native SQL tool then returns
-`launch_identity_missing` (not `identity_mismatch`, which is reserved for a
-signed-in account other than the launch one), and the tool text says to fix the
-file and exit and start coop again, because `/new` re-reads the contract but
-cannot mint the token the launch skipped. Without `sql_targets:` the executor falls back to the canonical project/managed MCP
+endpoint, or whose launch sign-in failed (the launch prints one `live SQL sign-in
+unavailable: <reason>` line), has no launch token at all; every native SQL tool
+then returns `launch_identity_missing` (not `identity_mismatch`, which is reserved
+for a signed-in account other than the launch one), and the tool text says to fix
+the file or the sign-in and exit and start coop again, because `/new` re-reads the
+contract but cannot mint the token the launch skipped. Without `sql_targets:` the executor falls back to the canonical project/managed MCP
 snapshot as before. The `ok` result carries a `target` summary (`environment`,
-`kind`, `database`; never the host). On a machine with no managed Warehouse server
-(an Azure SQL-only install), the launch token helper mints the SQL audience for the
-contract's tenant chain so the executor still has a launch identity to pin to.
+`kind`, `database`; never the host). The contract's ready default entry decides what the
+launch token helper mints, before the managed Warehouse MCP entry does: a kind that
+names its host mints the `database.windows.net` audience and a discovered kind the
+Fabric one, both for the contract's tenant chain, so an Azure SQL session has a
+launch identity to pin to whether or not the Fabric MCP entry exists or its mint
+would succeed (every consumer reads only the token's identity and mints its own
+audience). Only a contract with no ready default entry leaves the mint to the
+managed entry.
 It never cascades from MCP automatically. It accepts one plain literal-`TOP` `SELECT`, rejects mutations,
 batches, cross-database names, and unbounded reads before authentication, and returns
 capped structured JSON. Its text shows the column names, then one JSON array per

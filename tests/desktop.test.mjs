@@ -332,7 +332,7 @@ await check("composer: / completion lists built-ins, then Pi's commands from the
 await check("welcome: set-up items come from the sign-in flag and the launch notices, with their command", () => {
   const items = setupItems({ loginPresent: false, notices: [
     "COOP onboarding is incomplete (user.json or config missing). Run: coop onboard",
-    "Fabric Warehouse MCP unavailable: Azure authentication is required; run az login",
+    "live SQL sign-in unavailable: Azure authentication is required; run az login",
     "  ", "Standards wiki offline; using the bundled copy",
   ] });
   assert.deepEqual(items.map((item) => item.id), ["login", "onboard", "azure", "notice:Standards wiki offline; using the bundled copy"]);
@@ -355,7 +355,7 @@ await check("welcome: the MCP adapter's 401 report is the Azure sign-in item, an
   assert.equal(item.detail, report);
   assert.equal(setupItem("   "), null);
   assert.equal(setupItem("Standards wiki offline; using the bundled copy").command, "");
-  assert.deepEqual(setupItems({ notices: [report, "Fabric Warehouse MCP unavailable: Azure authentication is required; run az login"] }).map((i) => i.id), ["azure"]);
+  assert.deepEqual(setupItems({ notices: [report, "live SQL sign-in unavailable: Azure authentication is required; run az login"] }).map((i) => i.id), ["azure"]);
   // The renderer decides "conversation has content" by prompts and answers, not
   // by notices, so a report Pi posts at start leaves the welcome and the
   // first-run Start menu alone.

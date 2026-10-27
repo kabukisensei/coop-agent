@@ -454,7 +454,7 @@ export function contractChangedSince(snapshot: { path: string | null; text: stri
 
 export const CONTRACT_CHANGED_HINT = "the project contract (.coop/project.yml) changed during this session; coop keeps native SQL on the target the session started with. Start a new session (/new) to use the edited contract; if the change added or changed a SQL target or Fabric SQL endpoint, exit and start coop again so the launch sign-in covers it.";
 /** The one-line fix for a launch-identity state (deployment call 2026-10-23): /new is not enough. */
-export const LAUNCH_IDENTITY_MISSING_HINT = "coop was launched when .coop/project.yml named no SQL target or Fabric SQL endpoint, so no sign-in token exists for this launch. Fix the file (sql_targets, with /setup-project or the Project pane), then exit and start coop again; a new session (/new) is not enough.";
+export const LAUNCH_IDENTITY_MISSING_HINT = "coop was launched when .coop/project.yml named no SQL target or Fabric SQL endpoint, or the launch sign-in failed (a 'live SQL sign-in unavailable' line at launch), so no sign-in token exists for this launch. Fix the file (sql_targets, with /setup-project or the Project pane) or the sign-in it named, then exit and start coop again; a new session (/new) is not enough.";
 export const IDENTITY_MISMATCH_HINT = "the signed-in Azure account is not the one coop was launched with: sign in with that account (az login), or exit and start coop again.";
 /** The shared hint suffix for a native SQL tool's unavailable states. */
 export function sqlStateHint(details: any): string {

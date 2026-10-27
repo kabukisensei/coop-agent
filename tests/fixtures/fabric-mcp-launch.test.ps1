@@ -509,7 +509,7 @@ if (
   $ErrorActionPreference = $priorEap
   Assert-HelperModeExecuted 'failure'
   if ($helperFailedRc -ne 0) { throw "helper-process fail-soft launch failed rc=$helperFailedRc output=$helperFailedOutput" }
-  if (-not $helperFailedOutput.Contains('Fabric Warehouse MCP unavailable: token helper failed')) { throw 'sanitized helper warning missing' }
+  if (-not $helperFailedOutput.Contains('live SQL sign-in unavailable: token helper failed')) { throw 'sanitized helper warning missing' }
   if ($helperFailedOutput.Contains($helperDiagnostic)) { throw 'untrusted helper diagnostic leaked to output' }
   if (-not (Test-Path -LiteralPath (Join-Path $marker 'pi-state'))) { throw 'Pi did not launch after helper-process failure' }
 
@@ -524,7 +524,7 @@ if (
   $ErrorActionPreference = $priorEap
   Assert-HelperModeExecuted 'success-stderr'
   if ($helperStderrRc -ne 0) { throw "helper-stderr fail-soft launch failed rc=$helperStderrRc output=$helperStderrOutput" }
-  if (-not $helperStderrOutput.Contains('Fabric Warehouse MCP unavailable: token helper failed')) { throw 'helper-failure warning missing' }
+  if (-not $helperStderrOutput.Contains('live SQL sign-in unavailable: token helper failed')) { throw 'helper-failure warning missing' }
   if ($helperStderrOutput.Contains($helperDiagnostic)) { throw 'successful helper stderr leaked to output' }
   if ($helperStderrOutput.Contains($helperTokenlike)) { throw 'successful helper token-like stdout leaked to output' }
   if (-not (Test-Path -LiteralPath (Join-Path $marker 'pi-state'))) { throw 'Pi did not launch after successful helper stderr' }
@@ -540,7 +540,7 @@ if (
     $ErrorActionPreference = $priorEap
     Assert-HelperModeExecuted $mode
     if ($contaminatedRc -ne 0) { throw "$mode fail-soft launch failed rc=$contaminatedRc output=$contaminatedOutput" }
-    if (-not $contaminatedOutput.Contains('Fabric Warehouse MCP unavailable:')) { throw "$mode warning missing" }
+    if (-not $contaminatedOutput.Contains('live SQL sign-in unavailable:')) { throw "$mode warning missing" }
     if (-not (Test-Path -LiteralPath (Join-Path $marker 'pi-state'))) { throw "Pi did not launch after $mode" }
   }
 

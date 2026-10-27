@@ -262,7 +262,7 @@ function Invoke-CoopSchema {
     'tool_unavailable' { ' - the coop-schema-compare command is not installed (coop update, or coop doctor for the row that names it)' }
     'tool_timeout' { ' - coop-schema-compare did not answer within its time limit; try again or narrow the compare with --schema' }
     'target_invalid' { " - side $($info.side) is not a ready sql_targets entry in .coop/project.yml (add it with /setup-project or the Project pane; <env>@<set> needs sql_targets.named.<set>.<env>)" }
-    'launch_identity_missing' { ' - coop was launched when .coop/project.yml named no SQL target or Fabric SQL endpoint, so no sign-in token exists for this launch: fix the file, then exit and start coop again (a new session is not enough)' }
+    'launch_identity_missing' { ' - coop was launched when .coop/project.yml named no SQL target or Fabric SQL endpoint, or the launch sign-in failed (a "live SQL sign-in unavailable" line at launch), so no sign-in token exists for this launch: fix the file or the sign-in, then exit and start coop again (a new session is not enough)' }
     'identity_mismatch' { ' - the signed-in Azure account is not the one coop was launched with: sign in with that account (az login) or exit and start coop again' }
     'snapshot_missing' { ' - no committed catalog snapshot; run: coop catalog snapshot' }
     'snapshot_incomplete' { ' - the catalog snapshot is damaged (a listed file is missing or unreadable); run: coop catalog snapshot' }
@@ -814,7 +814,7 @@ function Get-CoopFabricMcpToken {
   $config = Join-Path $agentDir 'mcp-adapter.json'
   if ($script:CoopMcpConfig -and (Test-Path -LiteralPath $script:CoopMcpConfig -PathType Leaf)) { $config = $script:CoopMcpConfig }
   if (-not (Test-Have 'node')) {
-    Coop-Warn 'Fabric Warehouse MCP unavailable: token helper supervisor is unavailable'
+    Coop-Warn 'live SQL sign-in unavailable: token helper supervisor is unavailable'
     return ''
   }
   $previousEap = $ErrorActionPreference
@@ -834,7 +834,7 @@ function Get-CoopFabricMcpToken {
     $ErrorActionPreference = $previousEap
   }
   if ($rc -ne 0) {
-    Coop-Warn 'Fabric Warehouse MCP unavailable: token helper failed'
+    Coop-Warn 'live SQL sign-in unavailable: token helper failed'
     return ''
   }
   $stdout = @()
@@ -847,7 +847,7 @@ function Get-CoopFabricMcpToken {
     }
   }
   if ($stderrFound) {
-    Coop-Warn 'Fabric Warehouse MCP unavailable: token helper returned invalid output'
+    Coop-Warn 'live SQL sign-in unavailable: token helper returned invalid output'
     return ''
   }
   $protocol = ($stdout -join "`n")
@@ -872,10 +872,10 @@ function Get-CoopFabricMcpToken {
       # checks again (and signs in) instead of trusting the marker.
       Remove-Item -LiteralPath (Join-Path $agentDir '.az-ok') -Force -ErrorAction SilentlyContinue
     }
-    Coop-Warn "Fabric Warehouse MCP unavailable: $message"
+    Coop-Warn "live SQL sign-in unavailable: $message"
     return ''
   }
-  Coop-Warn 'Fabric Warehouse MCP unavailable: token helper returned invalid output'
+  Coop-Warn 'live SQL sign-in unavailable: token helper returned invalid output'
   return ''
 }
 
