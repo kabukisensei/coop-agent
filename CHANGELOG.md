@@ -95,6 +95,23 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   sourced wheel's tag, asset and SHA-256 follow the v1.0.8 release (the
   fixtures read the manifest).
 
+- **Release in two steps (suite review 2026-10-26, pick 5).** The version bump
+  is a pull request: Actions -> release-pr -> Run workflow (`patch`, `minor`,
+  `major` or `X.Y.Z`; by hand, `scripts/bump-version.sh`) moves `VERSION`, the
+  manifest, every extension and CHANGELOG on a `release/vX.Y.Z` branch and opens
+  the PR, on which CI runs both lanes (`extended.yml` now runs on a PR that
+  changes `VERSION`). `coop release` no longer bumps, commits or runs the suites:
+  it verifies a clean `main` at `origin/main` with one `X.Y.Z` across the tree,
+  CI green on the commit, the coop-tool pins and the bundled standards, then
+  tags and pushes the tag (`--no-push` and the bump levels are gone).
+  `release.yml` then runs the whole installer acceptance on the tag build and,
+  after the GitHub Release, calls coop-website's `sync-release.yml`, which
+  opens the site's sync pull request (needs a `COOP_WEBSITE_TOKEN` secret). The
+  PowerShell twin of the release (`Invoke-CoopRelease` and its gates, ~340
+  lines) is gone: `coop release` on Windows forwards to Git's bash. The
+  release is tested in disposable repositories by `tests/release-gate.test.sh`;
+  the PowerShell fixture now proves only the forwarder.
+
 - **One project wizard, fewer typed ids (suite review 2026-10-26, pick 10).**
   `/setup-project` (and the coop window's Project pane, which runs the same
   code) is the one project wizard. It now looks Fabric ids up by name from the

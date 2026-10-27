@@ -119,6 +119,9 @@ jobs:
     name: GitHub Release
     needs: [installer]
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.notes.outputs.version }}
+      notes: ${{ steps.notes.outputs.notes }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -145,6 +148,7 @@ jobs:
           echo "tag $GITHUB_REF_NAME matches VERSION and is on origin/main"
 
       - name: Extract changelog section for this tag
+        id: notes
         run: |
           ver="${GITHUB_REF_NAME#v}"
           # Print lines under "## [<ver>]" up to (not including) the next "## [" heading.
@@ -157,6 +161,8 @@ jobs:
             printf "Release %s. See CHANGELOG.md.\n" "$GITHUB_REF_NAME" > RELEASE_NOTES.md
           fi
           echo "----- notes for $GITHUB_REF_NAME -----"; cat RELEASE_NOTES.md
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          { echo "notes<<COOP_NOTES_EOF"; cat RELEASE_NOTES.md; echo "COOP_NOTES_EOF"; } >> "$GITHUB_OUTPUT"
 
       - uses: actions/download-artifact@v4
         with:
@@ -183,3 +189,16 @@ jobs:
             installer/coop-window-*.exe
             installer/installer-acceptance.json
           fail_on_unmatched_files: true
+
+  website:
+    # Open the coop-website pull request that moves the site's badge, pins and
+    # changelog to this release (coop-website/.github/workflows/sync-release.yml;
+    # needs the COOP_WEBSITE_TOKEN secret here, else it prints the command to run
+    # by hand and succeeds). A person reviews and merges that PR and pulls on the VPS.
+    needs: [release]
+    uses: kabukisensei/coop-website/.github/workflows/sync-release.yml@main
+    with:
+      product: coop-agent
+      version: ${{ needs.release.outputs.version }}
+      notes: ${{ needs.release.outputs.notes }}
+    secrets: inherit
