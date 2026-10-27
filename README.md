@@ -368,7 +368,7 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop dev teamai <status\|install\|init\|pull\|skills\|maintenance\|recall --query <text>\|compare --query <text>\|contribute --file <draft.md> [--title <text>] [--approve]>` | TeamAI shared-knowledge trial (master plan K1, K2, K3): the pinned `teamai-cli` isolated under `~/.coop/teamai`, explicit and bounded, one JSON document per call; `contribute` previews, and stages a review branch only with `--approve`; `skills`, `maintenance` and `compare` are read-only lifecycle views; off until `knowledge.teamai.enabled` is true |
 | `coop dev sync` | Ensure core Pi extensions are installed, place the governed MCP config non-destructively, refresh managed catalogs/team knowledge, and verify brand assets |
 | `coop dev fabric [args]` | Pass through to the Microsoft Fabric CLI (`fab`) |
-| `coop dev init [dir] [--seed-docs] [--template] [--ci github|ado] [--yes]` | Guided minimal project-contract wizard (default `.`); beside several repositories it creates the client home repository `<client>-coop` and puts the file there; `--template` explicitly selects the full legacy template and `--seed-docs` generates/patches `coop-data-doc.yml` |
+| `coop dev init [dir] --seed-docs \| --template \| --ci github\|ado [--yes]` | The jobs around the project file (default `.`): `--seed-docs` generates/patches `coop-data-doc.yml` from the contract's `repositories:`, `--template` copies the full documented example (beside several repositories into the client home repository `<client>-coop`), `--ci` scaffolds a pipeline. The project wizard itself is `/setup-project` inside coop (or the window's Project pane) |
 | `coop dev new-skill <name> [--client\|--personal]` | Scaffold `skills/<name>/SKILL.md` here, or in the client tier (`.coop/skills/` beside the committed contract) or your personal tier (`~/.coop/skills/`) |
 | `coop dev new-prompt <name> [--client\|--personal]` | Scaffold `prompts/<name>.md` here, or in the client tier (`.coop/prompts/`) or your personal tier (`~/.coop/prompts/`) |
 | `coop dev release [--yes] [--no-check]` | Tag the release a merged release PR prepared (Actions -> release-pr bumps `VERSION`, the manifests and CHANGELOG): verifies a clean `main` at `origin/main`, one `X.Y.Z` across the tree, CI green on the commit and the pins, then tags `vX.Y.Z` and pushes the tag; `--yes` skips the confirm, `--no-check` the gates |
@@ -432,9 +432,13 @@ the window's Project pane do the same any time; `/project-get` brings the team's
 version in). Each session start says one line when the team's copy is newer or
 yours is unshared. A repository is not required: the wizard can start an engagement
 in discovery mode, record SQL-only or Power-BI-only coverage, and add sources later.
+Fabric ids are looked up by name from the Azure sign-in the launch already made
+(read-only): name the workspace and the SQL item and Enter keeps the ids the
+wizard found, or type a name where an id is asked; without a sign-in you can
+still paste the ids.
 Edits make a backup and preserve comments, custom policies, and fields the wizard
 does not own. After an edit, run `/new` (or restart Coop) so the guardrails take a fresh trusted
-snapshot of the contract. From a shell, `coop init` creates a new contract.
+snapshot of the contract. There is no shell wizard: `/setup-project` (or the window's Project pane) is the one project wizard; `coop init --template` copies the raw example.
 
 ---
 
@@ -637,7 +641,7 @@ is `.coop/project.yml`. It may provide deliberate project standards overrides;
 otherwise COOP's resolved standards task authority is authoritative. It is one
 committed team file per client, in the repository root or the client home
 repository `<client>-coop` beside several repositories: run **`/setup-project`**
-inside Coop or `coop init` (both edit a contract found above the folder, in the
+inside Coop, or the window's Project pane (both edit a contract found above the folder, in the
 home repository beside it, or, opened in the folder that holds the client's
 repositories or the folder above it (your user folder over `devops\fabric`), in
 the one repository up to two levels down that has one, instead of creating a
