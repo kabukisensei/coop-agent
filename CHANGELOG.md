@@ -217,6 +217,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   writes) lives in one `Session`. No rule, message or audit row changed: the
   existing 175-case corpus is the gate, plus a test that pins the order.
 
+- **One project wizard, fewer typed ids (suite review 2026-10-26, pick 10).**
+  `/setup-project` (and the coop window's Project pane, which runs the same
+  code) is the one project wizard. It now looks Fabric ids up by name from the
+  Azure sign-in the launch already made, with read-only Fabric REST reads
+  (`lib/fabric-discovery.mjs`): name the workspace and the SQL item and Enter
+  keeps the ids it found (the Lakehouse SQL endpoint id too), a name typed where
+  an id is asked resolves (the prod and test targets as well), and the
+  same-named Power BI workspace takes the Fabric id. Without `az`, a sign-in or
+  a network the questions keep their typed answers. The Project pane still
+  takes typed ids.
+
 ### Fixed
 
 - **`/setup-project` edits a project file written with inline mappings.** The
@@ -258,6 +269,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `daily-log` and `weekly-log` prompts, which only restated it (the Start menu's
   log item asks for today's log or the weekly roll-up in words). Fewer templates
   in the slash-command list and in every session's context budget.
+
+- **The `coop init` Python wizard.** `lib/init_wizard.py` (a second, 722-line
+  implementation of the project wizard) is gone. `coop init` keeps the jobs
+  around the project file: `--template` copies the documented example (into
+  the client home repository beside several repositories, as before),
+  `--seed-docs`, `--ci` and `--migrate-legacy`; the bare command points at
+  `/setup-project`.
 
 ## [0.38.6] — 2026-10-26
 

@@ -112,6 +112,7 @@ import {
   scalarValue,
   writeProjectContract,
 } from "../../lib/project-contract.mjs";
+import { fabricDiscovery, isUuid as isFabricUuid } from "../../lib/fabric-discovery.mjs";
 import {
   CONTRACT_FILE as PROJECT_FILE,
   HOME_TEMPLATE_DIR,
@@ -1418,8 +1419,8 @@ async function runSetupDocs(pi: ExtensionAPI, ctx: any): Promise<boolean> {
 }
 
 // --- Project contract wizard (.coop/project.yml) ----------------------------
-// This is the in-Coop counterpart to `coop init`: newcomers discover it from the
-// startup menu or /setup-project, and existing contracts can be safely edited
+// The one project wizard (the window's Project pane runs the same code): newcomers
+// discover it from the startup menu or /setup-project, and existing contracts can be safely edited
 // without replacing fields the wizard does not own. The text patcher deliberately
 // touches only scalar paths exposed below; comments, custom sections, policies,
 // and future/unknown keys stay byte-for-byte intact.
@@ -1630,7 +1631,7 @@ async function editRepository(ctx: any, root: string, repo: ProjectRepositorySet
 /** Native UI project setup/edit flow. Returns true only after a contract write. */
 export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<boolean> {
   if (!ctx.hasUI || typeof ctx.ui?.input !== "function" || typeof ctx.ui?.confirm !== "function") {
-    notify(ctx, "Project setup needs an interactive Coop UI. In a shell, run: coop init", "warning");
+    notify(ctx, "Project setup needs an interactive Coop UI: run /setup-project in the terminal coop, or use the coop window's Project pane.", "warning");
     return false;
   }
   let existing = findProjectYml(ctx.cwd);
@@ -1739,24 +1740,39 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
       ? ` This machine is set up as a ${platform === "both" ? "Fabric and Azure SQL" : "Fabric"} client.`
       : "";
   settings.fabricEnabled = await askConfirm(ctx, "Microsoft Fabric / Power BI", `Does this project use Microsoft Fabric or Power BI?${platformHint}`);
+  // Fabric ids are looked up by name from the Azure sign-in the launch already
+  // made (lib/fabric-discovery.mjs): each id question proposes what the name
+  // resolves to, and a name typed where an id is asked resolves too. Without
+  // az, a sign-in or a network, the questions keep their typed answers.
+  const makeDiscovery = (tenant: string) => fabricDiscovery({
+    exec: typeof pi?.exec === "function" ? (command: string, args: string[], options: any) => pi.exec(command, args, { ...options, cwd: ctx.cwd, signal: ctx.signal }) : undefined,
+    tenant,
+  });
+  let discovery = makeDiscovery(settings.tenantId);
   if (settings.fabricEnabled) {
     const tenant = await askText(ctx, "Azure tenant ID (optional)", settings.tenantId);
     if (tenant === null) return false;
+    if (tenant !== settings.tenantId) discovery = makeDiscovery(tenant);
     const fwName = await askText(ctx, "Default Fabric workspace name (optional)", settings.fabricWorkspaceName);
     if (fwName === null) return false;
-    const fwId = await askText(ctx, "Default Fabric workspace ID (optional)", settings.fabricWorkspaceId);
-    if (fwId === null) return false;
-    const endpointType = await askText(ctx, "Default SQL endpoint item type: Warehouse or Lakehouse (optional)", settings.sqlEndpointItemType || "");
+    const fwIdTyped = await askText(ctx, "Default Fabric workspace ID (optional; Enter keeps the id the name resolves to)", settings.fabricWorkspaceId || await discovery.workspaceId(fwName));
+    if (fwIdTyped === null) return false;
+    const fwId = (await discovery.resolveWorkspace(fwIdTyped)) || fwIdTyped;
+    const sqlItems = await discovery.sqlItems(fwId);
+    const onlyItem = sqlItems.length === 1 ? sqlItems[0] : null;
+    const endpointType = await askText(ctx, "Default SQL endpoint item type: Warehouse or Lakehouse (optional)", settings.sqlEndpointItemType || (onlyItem && onlyItem.type !== "SQLDatabase" ? onlyItem.type : ""));
     if (endpointType === null) return false;
     if (endpointType && endpointType !== "Warehouse" && endpointType !== "Lakehouse") {
       notify(ctx, PROJECT_MESSAGES.endpointType, "error");
       return false;
     }
-    const endpointName = await askText(ctx, "Default SQL endpoint item name (optional)", settings.sqlEndpointItemName || "");
+    const typed = sqlItems.filter((item) => !endpointType || item.type === endpointType);
+    const endpointName = await askText(ctx, "Default SQL endpoint item name (optional)", settings.sqlEndpointItemName || (typed.length === 1 ? typed[0].name : ""));
     if (endpointName === null) return false;
-    const endpointId = await askText(ctx, "Default SQL endpoint item ID (canonical UUID; optional)", settings.sqlEndpointItemId || "");
-    if (endpointId === null) return false;
-    const endpointPropertiesId = await askText(ctx, "Lakehouse sqlEndpointProperties.id (canonical UUID; required for Lakehouse)", settings.sqlEndpointPropertiesId || "");
+    const endpointIdTyped = await askText(ctx, "Default SQL endpoint item ID (canonical UUID; optional; Enter keeps the id the name resolves to)", settings.sqlEndpointItemId || (await discovery.resolveItem(fwId, endpointName, endpointType)));
+    if (endpointIdTyped === null) return false;
+    const endpointId = (await discovery.resolveItem(fwId, endpointIdTyped, endpointType)) || endpointIdTyped;
+    const endpointPropertiesId = await askText(ctx, "Lakehouse sqlEndpointProperties.id (canonical UUID; required for Lakehouse)", settings.sqlEndpointPropertiesId || (endpointType === "Lakehouse" ? await discovery.lakehouseEndpointId(fwId, endpointId) : ""));
     if (endpointPropertiesId === null) return false;
     if ([fwId, endpointId, endpointPropertiesId].some((id) => id && !CANONICAL_UUID.test(id))) {
       notify(ctx, PROJECT_MESSAGES.uuids, "error");
@@ -1768,8 +1784,9 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
     }
     const pbiName = await askText(ctx, "Default Power BI workspace name (optional)", settings.powerBiWorkspaceName || fwName);
     if (pbiName === null) return false;
-    const pbiId = await askText(ctx, "Default Power BI workspace ID (optional)", settings.powerBiWorkspaceId);
-    if (pbiId === null) return false;
+    const pbiIdTyped = await askText(ctx, "Default Power BI workspace ID (optional; Enter keeps the id the name resolves to)", settings.powerBiWorkspaceId || (pbiName && pbiName === fwName ? fwId : await discovery.workspaceId(pbiName)));
+    if (pbiIdTyped === null) return false;
+    const pbiId = (await discovery.resolveWorkspace(pbiIdTyped)) || pbiIdTyped;
     // The declared layout and mapping (C2): the contract states what coop would
     // otherwise assume, and lineage checks it.
     const layout = await askText(ctx, `Fabric layout: which items hold the SQL (${FABRIC_LAYOUTS.join(", ")}; optional)`, settings.fabricLayout || proposedFabricLayout(endpointType, settings.sqlTargetKind));
@@ -1855,13 +1872,16 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
       (settings as Record<string, unknown>)[`${prefix}Database`] = envDatabase.trim();
       if (!envDatabase.trim()) continue;
       if (SQL_TARGET_DISCOVERED_KINDS.has(kindValue)) {
-        const ws = await askText(ctx, `${label} Fabric workspace ID (canonical UUID)`, ((settings as Record<string, unknown>)[`${prefix}WorkspaceId`] as string) || "");
-        if (ws === null) return false;
-        const item = await askText(ctx, `${label} ${kindValue === "fabric_lakehouse" ? "Lakehouse" : "Warehouse"} item ID (canonical UUID)`, ((settings as Record<string, unknown>)[`${prefix}ItemId`] as string) || "");
-        if (item === null) return false;
+        const itemType = kindValue === "fabric_lakehouse" ? "Lakehouse" : "Warehouse";
+        const wsTyped = await askText(ctx, `${label} Fabric workspace ID (canonical UUID, or the workspace name)`, ((settings as Record<string, unknown>)[`${prefix}WorkspaceId`] as string) || "");
+        if (wsTyped === null) return false;
+        const ws = (await discovery.resolveWorkspace(wsTyped)) || wsTyped;
+        const itemTyped = await askText(ctx, `${label} ${itemType} item ID (canonical UUID, or the item name)`, ((settings as Record<string, unknown>)[`${prefix}ItemId`] as string) || "");
+        if (itemTyped === null) return false;
+        const item = (await discovery.resolveItem(ws, itemTyped, itemType)) || itemTyped;
         let endpoint = "";
         if (kindValue === "fabric_lakehouse") {
-          const answer = await askText(ctx, `${label} Lakehouse sqlEndpointProperties.id (canonical UUID)`, ((settings as Record<string, unknown>)[`${prefix}EndpointId`] as string) || "");
+          const answer = await askText(ctx, `${label} Lakehouse sqlEndpointProperties.id (canonical UUID)`, ((settings as Record<string, unknown>)[`${prefix}EndpointId`] as string) || (isFabricUuid(ws) && isFabricUuid(item) ? await discovery.lakehouseEndpointId(ws, item) : ""));
           if (answer === null) return false;
           endpoint = answer.trim();
         }

@@ -42,7 +42,7 @@ touches an object — see [Start Here menu](#start-here-menu-start),
 
 ## Project setup (`/setup-project`)
 
-Users do not need to know `coop init` or manually edit YAML. Run `/setup-project`
+Users never edit YAML by hand: `/setup-project` is the one project wizard (the window's Project pane runs the same code). Run `/setup-project`
 or choose *Start a client project* from `/start` whenever the project is ready to
 configure. Normal Coop startup does not open the wizard. The contract is one
 committed team file per client, in a repository the team clones (master plan C1):

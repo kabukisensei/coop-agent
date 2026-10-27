@@ -276,7 +276,7 @@ function Invoke-CoopSchema {
 # coop project status|get|share [--root <dir>] [--force]: the shared project file
 # (master plan C1). `share` is the one Git write coop performs on its own: it
 # stages and commits .coop/project.yml alone and pushes the current branch, after
-# the yes `coop init` or the user gave; everything runs in lib/project-share.mjs.
+# the yes `coop init --template` or the user gave; everything runs in lib/project-share.mjs.
 # `coop project home [<folder>]`: show, or set, this Windows user's client folder
 # record (~/.coop/client.json, F1): the client, the client folder coop opens in
 # every time, and the one .coop\project.yml, which every launch from any folder
@@ -362,7 +362,7 @@ function Invoke-CoopProject {
         'not-shared'  { Coop-Warn "$($json.path) differs from the team's copy (not shared yet). Share it: coop project share" }
         'team-newer'  { Coop-Warn "The team's project file on origin is newer than your unmodified copy. Get it: coop project get" }
         'team-has-it' { Coop-Warn "The team already has a project file on origin and this checkout does not. Get it: coop project get" }
-        'none'        { Coop-Info 'No project file here or on origin yet: coop init creates one.' }
+        'none'        { Coop-Info 'No project file here or on origin yet: /setup-project inside coop creates one.' }
         'no-remote'   { Coop-Info "$($json.root) has no origin remote: the project file cannot be shared from here." }
         default       { Coop-Info "Not a Git repository: $($json.root). The team's project file belongs in a repository the team clones." }
       }
@@ -537,9 +537,11 @@ $(Coop-Bold)coop dev <cmd>$(Coop-Rst) — maintainer commands (each also runs as
 
   coop dev sync             Ensure Pi extensions + place read-only MCP config + verify assets
                             (coop update and coop doctor --fix run this themselves)
-  coop dev init [dir]       Scaffold .coop/project.yml into a work repo (default: .)
-                            (--seed-docs: generate coop-data-doc.yml from repositories:;
-                            --migrate-legacy: inspect legacy project configuration, --apply to confirm)
+  coop dev init --seed-docs [dir]
+                            Generate coop-data-doc.yml from the project file's repositories:
+                            (the project file itself: /setup-project inside coop; --template copies the example)
+  coop dev init --migrate-legacy [dir]
+                            Inspect legacy project configuration (dry run; add --apply to confirm changes)
   coop dev new-skill <name> Scaffold skills/<name>/SKILL.md (shipped tier)
                             (--client: .coop/skills beside the contract; --personal: ~/.coop/skills)
   coop dev new-prompt <name>
@@ -1305,7 +1307,9 @@ function Test-CoopValidName { param([string]$Name) if ($Name -in @('.', '..') -o
 
 function Invoke-CoopInit {
   param([string[]]$RestArgs = @())
-  # coop init [dir]              run the guided project wizard
+  # The project wizard is /setup-project inside coop (and the window's Project
+  # pane), the one wizard (suite review 2026-10-26, pick 10). `coop init` keeps the
+  # jobs that are not the wizard:
   # coop init --template [dir]   copy the full documented example (legacy raw template)
   # coop init --migrate-legacy [dir] [--apply] [--archive .pi/path]
   #                              inspect first; apply only exact safe cleanup
@@ -1332,7 +1336,7 @@ function Invoke-CoopInit {
       '^--yes$'       { $env:COOP_ASSUME_YES = '1' }
       '^-y$'          { $env:COOP_ASSUME_YES = '1' }
       default {
-        if ($a -like '-*') { Coop-Die "unknown flag '$a' — usage: coop init [dir] [--seed-docs] [--template] [--migrate-legacy] [--apply] [--archive .pi/path] [--ci github|ado] [--yes]" }
+        if ($a -like '-*') { Coop-Die "unknown flag '$a' — usage: coop init [dir] --template | --seed-docs | --migrate-legacy [--apply] [--archive .pi/path] | --ci github|ado  [--yes]" }
         $dir = $a
       }
     }
@@ -1350,6 +1354,9 @@ function Invoke-CoopInit {
   }
   if ($seed) { Invoke-CoopInitSeedDocs $dir; return }
   if ($ciType) { Invoke-CoopInitCi $dir $ciType; return }
+  if (-not $template) {
+    Coop-Die "the project wizard runs inside coop: open coop at the client's Git root and run /setup-project (or use the coop window's Project pane). It asks only what applies, finds a contract the team already has, and never writes a second copy. coop init keeps --template, --seed-docs, --ci and --migrate-legacy."
+  }
   $dst = Join-Path $dir '.coop\project.yml'
   if (Test-Path -LiteralPath $dst) { Coop-Die "$dst already exists — not overwriting.  (seed coop-data-doc.yml from it with: coop init --seed-docs)" }
   # C1: one committed contract at the client's Git root. A contract above this
@@ -1359,7 +1366,6 @@ function Invoke-CoopInit {
   if ($where.Kind -eq 'existing') {
     Coop-Die "a contract already covers this folder: $($where.Path). One project file per client: edit it with /setup-project inside coop (or edit the file) instead of creating a second one."
   }
-  $client = ''
   $interactive = ($env:COOP_ASSUME_YES -eq '1' -or -not [Console]::IsInputRedirected)
   if ($where.Kind -eq 'home-repo') {
     # The team's project file goes in the client home repository beside the
@@ -1390,28 +1396,13 @@ function Invoke-CoopInit {
       }
     }
   }
-  $py = Get-CoopPython
-  if (-not $py) { Coop-Die 'python3 is required for: coop init' }
-  $wizard = Join-Path (Join-Path $script:CoopRoot 'lib') 'init_wizard.py'
-  if ($client) { $env:COOP_INIT_CLIENT = $client }
-  $env:COOP_INIT_REPOS = ''
-  if ($where.Kind -eq 'home-repo' -and $dir -eq $where.Root) { $env:COOP_INIT_REPOS = ($where.Repos -join ',') }
-  if ($template) {
-    New-Item -ItemType Directory -Force -Path (Join-Path $dir '.coop') | Out-Null
-    # Capture and write the text ourselves: under Windows PowerShell 5.1 the `>`
-    # operator is Out-File with its UTF-16 default, which lib/_yaml.py (utf-8-sig)
-    # and the Node contract readers cannot parse.
-    $templateText = [string](& $py $wizard "$dir" --template | Out-String)
-    if ($LASTEXITCODE -ne 0) {
-      # Never leave an empty contract behind and report success.
-      Remove-Item -LiteralPath $dst -Force -ErrorAction SilentlyContinue
-      exit $LASTEXITCODE
-    }
-    [System.IO.File]::WriteAllText($dst, $templateText, (New-Object System.Text.UTF8Encoding($false)))
-  } else {
-    & $py $wizard "$dir"
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-  }
+  $example = Join-Path (Join-Path $script:CoopRoot '.coop') 'project.example.yml'
+  if (-not (Test-Path -LiteralPath $example -PathType Leaf)) { Coop-Die "template not found: $example" }
+  New-Item -ItemType Directory -Force -Path (Join-Path $dir '.coop') | Out-Null
+  # Write the bytes ourselves: under Windows PowerShell 5.1 the `>` operator is
+  # Out-File with its UTF-16 default, which lib/_yaml.py (utf-8-sig) and the Node
+  # contract readers cannot parse.
+  [System.IO.File]::WriteAllText($dst, [System.IO.File]::ReadAllText($example, [System.Text.Encoding]::UTF8), (New-Object System.Text.UTF8Encoding($false)))
   Coop-Ok "Wrote $dst"
   Coop-Info "Open coop at or below $dir, or in a repository the file lists, so it is found."
   # The share offer: the one Git write coop performs on its own, after a yes.
@@ -1429,9 +1420,7 @@ function Invoke-CoopInit {
   } else {
     Coop-Info "Not shared yet: $dir is not a Git repository, and the team's project file belongs in a repository the team clones."
   }
-  if ($template) {
-    Coop-Info 'Fill in the TODOs (repo paths, Fabric/Power BI workspaces, tenant), then: coop doctor'
-  }
+  Coop-Info 'Fill in the TODOs (repo paths, Fabric/Power BI workspaces, tenant), then: coop doctor'
   Coop-Info 'Once repositories: is filled, seed the lineage-docs config from it: coop init --seed-docs'
   Coop-Info 'Run the same native lineage wizard via `coop data-doc setup` or /setup-docs inside coop.'
 }
@@ -1444,7 +1433,7 @@ function Invoke-CoopInit {
 function Invoke-CoopInitSeedDocs {
   param([string]$Dir)
   $proj = Join-Path $Dir '.coop\project.yml'
-  if (-not (Test-Path -LiteralPath $proj -PathType Leaf)) { Coop-Die "no $proj — run 'coop init' first, then fill repositories:." }
+  if (-not (Test-Path -LiteralPath $proj -PathType Leaf)) { Coop-Die "no $proj — create it with /setup-project inside coop first, with its repositories: filled." }
   $py = Get-CoopPython
   if (-not $py) { Coop-Die 'python is required for: coop init --seed-docs' }
   if (-not (Test-Have 'coop-data-doc')) { Coop-Die 'coop-data-doc is not installed. Run: coop install' }
