@@ -300,6 +300,71 @@ def _discover_server(target: wmcp.SqlEndpointTarget, token: str) -> tuple[str, s
     return server, "ok"
 
 
+def resolve_target(
+    *, cwd: Path | None = None, environment: str | None = None
+) -> tuple[ResolvedTarget | None, dict[str, Any] | None]:
+    """The contract target a read names: (target, None) or (None, error result).
+
+    The ready default `sql_targets` entry (dev or test, never prod) unless
+    `environment` names another ready entry; without `sql_targets`, the legacy
+    Fabric SQL endpoint. Nothing is minted here."""
+    project_path = wmcp.find_project_yml(cwd or Path.cwd())
+    if not project_path:
+        return None, result("project_unavailable")
+    project = wmcp.load_project(project_path)
+    if targets_lib.parse_sql_targets(project).configured:
+        target, state = _contract_target(project, environment)
+    elif environment is not None:
+        # Without sql_targets there is one target; naming another is not possible.
+        return None, result("target_invalid")
+    else:
+        target, state = _legacy_target(project_path)
+    if state != "ok" or target is None:
+        return None, result(state)
+    return target, None
+
+
+def resolve_connection(target: ResolvedTarget) -> tuple[str, str, dict[str, Any] | None]:
+    """(server, database token, None) for a resolved target, or ("", "", error).
+
+    Every mint is pinned to the launch token's tenant (its tid), not to
+    whichever account az treats as the default; no launch identity, no mint.
+    A session with no launch token at all (coop launched when the project file
+    named no SQL target or Fabric SQL endpoint, so nothing was minted) is its
+    own state: the fix is to edit the file and relaunch coop, not to sign in.
+    A Fabric Warehouse or Lakehouse host is discovered through the Fabric REST
+    API with a second pinned token; a contract-named host is taken as named.
+    Shared by open_connection() and the helpers that hand the host and the token
+    to the pinned coop-schema-compare (lib/schema_compare.py,
+    lib/catalog_snapshot.py), so every path reaches the same target under the
+    same identity rules."""
+    launch_identity = wmcp.jwt_identity(os.environ.get(wmcp.FABRIC_TOKEN_ENV, ""))
+    if not launch_identity:
+        return "", "", result("launch_identity_missing")
+    tenant = launch_identity[0]
+    if target.fabric is not None:
+        fabric_token, state = wmcp.az_access_token(
+            resource=wmcp.FABRIC_RESOURCE, tenant=tenant
+        )
+        if state != "ok":
+            return "", "", result(state, stage="fabric_rest_token")
+        if wmcp.jwt_identity(fabric_token) != launch_identity:
+            return "", "", result("identity_mismatch")
+        server, state = _discover_server(target.fabric, fabric_token)
+        if state != "ok":
+            return "", "", result(state, stage="endpoint_discovery")
+    else:
+        # A host the contract named: it already matched its kind's pattern in
+        # lib/sql_targets.py, so a production or Fabric host cannot hide here.
+        server = target.server
+    sql_token, state = wmcp.az_access_token(resource=SQL_RESOURCE, tenant=tenant)
+    if state != "ok":
+        return "", "", result(state, stage="database_token")
+    if wmcp.jwt_identity(sql_token) != launch_identity:
+        return "", "", result("identity_mismatch")
+    return server, sql_token, None
+
+
 def open_connection(
     *, cwd: Path | None = None, environment: str | None = None
 ) -> tuple[Any, ResolvedTarget | None, str, dict[str, Any] | None]:
@@ -310,19 +375,9 @@ def open_connection(
     by execute() and lib/sql_impact.py so both reach exactly the same target
     with the same identity rules.
     """
-    project_path = wmcp.find_project_yml(cwd or Path.cwd())
-    if not project_path:
-        return None, None, "", result("project_unavailable")
-    project = wmcp.load_project(project_path)
-    if targets_lib.parse_sql_targets(project).configured:
-        target, state = _contract_target(project, environment)
-    elif environment is not None:
-        # Without sql_targets there is one target; naming another is not possible.
-        return None, None, "", result("target_invalid")
-    else:
-        target, state = _legacy_target(project_path)
-    if state != "ok" or target is None:
-        return None, None, "", result(state)
+    target, error = resolve_target(cwd=cwd, environment=environment)
+    if error is not None or target is None:
+        return None, None, "", error or result("target_invalid")
     try:
         import pyodbc  # type: ignore[import-not-found]
     except (ImportError, OSError):
@@ -330,35 +385,9 @@ def open_connection(
     driver = select_driver(list(pyodbc.drivers()))
     if not driver:
         return None, None, "", result("odbc_driver_unavailable", minimum_version=18)
-    # Every mint is pinned to the launch token's tenant (its tid), not to
-    # whichever account az treats as the default; no launch identity, no mint.
-    # A session with no launch token at all (coop launched when the project file
-    # named no SQL target or Fabric SQL endpoint, so nothing was minted) is its
-    # own state: the fix is to edit the file and relaunch coop, not to sign in.
-    launch_identity = wmcp.jwt_identity(os.environ.get(wmcp.FABRIC_TOKEN_ENV, ""))
-    if not launch_identity:
-        return None, None, "", result("launch_identity_missing")
-    tenant = launch_identity[0]
-    if target.fabric is not None:
-        fabric_token, state = wmcp.az_access_token(
-            resource=wmcp.FABRIC_RESOURCE, tenant=tenant
-        )
-        if state != "ok":
-            return None, None, "", result(state, stage="fabric_rest_token")
-        if wmcp.jwt_identity(fabric_token) != launch_identity:
-            return None, None, "", result("identity_mismatch")
-        server, state = _discover_server(target.fabric, fabric_token)
-        if state != "ok":
-            return None, None, "", result(state, stage="endpoint_discovery")
-    else:
-        # A host the contract named: it already matched its kind's pattern in
-        # lib/sql_targets.py, so a production or Fabric host cannot hide here.
-        server = target.server
-    sql_token, state = wmcp.az_access_token(resource=SQL_RESOURCE, tenant=tenant)
-    if state != "ok":
-        return None, None, "", result(state, stage="database_token")
-    if wmcp.jwt_identity(sql_token) != launch_identity:
-        return None, None, "", result("identity_mismatch")
+    server, sql_token, error = resolve_connection(target)
+    if error is not None:
+        return None, None, "", error
     connection_string = (
         f"DRIVER={{{driver}}};SERVER={server},1433;DATABASE={{{target.database.replace('}', '}}')}}};"
         "Encrypt=yes;TrustServerCertificate=no;"
