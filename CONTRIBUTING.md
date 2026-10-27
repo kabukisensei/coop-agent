@@ -196,18 +196,17 @@ on any branch).
 > finished task is never a release trigger — see
 > [RELEASE.md](RELEASE.md#when-to-release--explicit-instruction-only).
 
-From a clean working tree on an attached `main` that equals `origin/main` (all changes
-committed and pushed, `CHANGELOG.md` updated under `## [Unreleased]`; `coop release`
-fetches `origin` and refuses anything else):
+A release is a pull request, then a tag. Actions -> release-pr -> Run workflow
+(`patch`, `minor`, `major` or `X.Y.Z`; by hand: `bash scripts/bump-version.sh` on a
+`release/vX.Y.Z` branch and a PR) bumps `VERSION` + the manifests and rolls
+`[Unreleased]` into a dated `## [X.Y.Z]` (leaving a fresh `[Unreleased]`); CI runs
+both lanes on it. After it merges, from a clean `main` at `origin/main`:
 
 ```bash
-coop release minor        # or: patch | major  (default: patch)
+coop release              # verifies the tree, CI and the pins, then tags vX.Y.Z and pushes the tag
 ```
 
-`coop release` bumps `VERSION` + the extension manifests, rolls `[Unreleased]` into a
-dated `## [X.Y.Z]` section (leaving a fresh `[Unreleased]`), commits, tags `vX.Y.Z`,
-and pushes `main` and the tag in one atomic push (both land or neither does). Use
-`--no-push` to stop at the local tag, `--yes` to skip the confirm. SemVer in 0.x:
+`--yes` skips the confirm, `--no-check` the pins, bundle and CI gates. SemVer in 0.x:
 **minor** for features/notable changes, **patch** for fixes.
 
 Pushing the tag is the fleet deployment: `coop update` moves teammates to the newest

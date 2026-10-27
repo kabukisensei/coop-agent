@@ -1,0 +1,71 @@
+name: release-pr
+
+# The release pull request (suite review 2026-10-26, pick 5): Actions ->
+# release-pr -> Run workflow with patch, minor, major or an explicit X.Y.Z. It
+# runs scripts/bump-version.sh on main (VERSION, the manifest's coop_version,
+# every extensions/*/package.json, CHANGELOG's [Unreleased] rolled into a dated
+# [X.Y.Z]) on a release/vX.Y.Z branch and opens the PR. CI runs the gate lane on
+# it and extended.yml runs too (a PR that changes VERSION). Merge it under the
+# usual rule, then `coop release` verifies and pushes the tag (RELEASE.md).
+#
+# The branch is pushed with COOP_RELEASE_TOKEN (a fine-grained token on this
+# repository: Contents and Pull requests read/write), because a push made with
+# the workflow's own GITHUB_TOKEN starts no CI on the PR. Without the secret the
+# run stops with the by-hand steps.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: patch, minor, major, or an explicit X.Y.Z
+        required: true
+        default: patch
+        type: string
+
+permissions: {}
+
+jobs:
+  release-pr:
+    name: open the release pull request
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: token present?
+        env:
+          TOKEN: ${{ secrets.COOP_RELEASE_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::no COOP_RELEASE_TOKEN secret: a branch pushed with GITHUB_TOKEN gets no CI on its PR. Add the secret (a fine-grained token on this repository with Contents and Pull requests read/write), or by hand: git switch -c release/vX.Y.Z main; bash scripts/bump-version.sh ${{ inputs.bump }}; git commit -am 'Release vX.Y.Z'; push and open the PR."
+            exit 1
+          fi
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          token: ${{ secrets.COOP_RELEASE_TOKEN }}
+      - name: bump VERSION, the manifests and CHANGELOG
+        id: bump
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          case "$BUMP" in patch|minor|major) ;; *[!0-9.]*|'') echo "::error::bump must be patch, minor, major or X.Y.Z (got '$BUMP')"; exit 1 ;; esac
+          new="$(bash scripts/bump-version.sh "$BUMP")"
+          echo "version=$new" >> "$GITHUB_OUTPUT"
+          git diff --stat
+      - name: push release/v${{ steps.bump.outputs.version }} and open the pull request
+        env:
+          GH_TOKEN: ${{ secrets.COOP_RELEASE_TOKEN }}
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          branch="release/v$VERSION"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "::error::branch $branch already exists on origin: a release PR for v$VERSION is already open or was closed; finish or delete it first."
+            exit 1
+          fi
+          git config user.name "coop release"
+          git config user.email "noreply@cooptimize.org"
+          git switch -c "$branch"
+          git add VERSION CHANGELOG.md config/release-manifest.json extensions/*/package.json
+          git commit -m "Release v$VERSION"
+          git push --set-upstream origin "$branch"
+          gh pr create --base main --head "$branch" --title "Release v$VERSION" \
+            --body "$(printf 'Release pull request from Actions -> release-pr (%s).\n\n- VERSION, config/release-manifest.json coop_version and every extensions/*/package.json move to %s.\n- CHANGELOG.md: [Unreleased] rolled into [%s].\n\nMerge when the gate and extended checks are green, then tag from main: `./bin/coop release` (RELEASE.md).' "${{ inputs.bump }}" "$VERSION" "$VERSION")"
