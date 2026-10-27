@@ -1647,7 +1647,6 @@ switch -CaseSensitive ($cmd) {
   '--no-launch' { Invoke-CoopLaunchPreflight; Invoke-CoopLaunchSpec $rest; break }
   'doctor' { & (Join-Path $script:CoopRoot 'scripts\doctor.ps1') @rest; exit $LASTEXITCODE }
   'update' { & (Join-Path $script:CoopRoot 'scripts\update.ps1') @rest; exit $LASTEXITCODE }
-  'bootstrap' { & (Join-Path $script:CoopRoot 'scripts\install.ps1') @rest; exit $LASTEXITCODE }
   'install' {
     # Bare `coop install` (or with bootstrap flags) bootstraps the whole stack.
     # `coop install <source>` adds a Pi extension (alias of `coop add`).
@@ -1655,7 +1654,7 @@ switch -CaseSensitive ($cmd) {
       & (Join-Path $script:CoopRoot 'scripts\install.ps1') @rest
       exit $LASTEXITCODE
     }
-    if (-not (Test-Have 'pi')) { Coop-Die 'pi not installed. Run: coop bootstrap' }
+    if (-not (Test-Have 'pi')) { Coop-Die 'pi not installed. Run: coop install' }
     & pi install @rest
     exit $LASTEXITCODE
   }
@@ -1685,7 +1684,7 @@ switch -CaseSensitive ($cmd) {
   }
   # --- Pi management, aliased under coop ---
   'add' {
-    if (-not (Test-Have 'pi')) { Coop-Die 'pi not installed. Run: coop bootstrap' }
+    if (-not (Test-Have 'pi')) { Coop-Die 'pi not installed. Run: coop install' }
     & pi install @rest
     exit $LASTEXITCODE
   }
