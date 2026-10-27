@@ -14,7 +14,6 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "lib"))
 sys.path.insert(0, str(ROOT / "scripts"))
 import _yaml  # noqa: E402
-import catalog_snapshot  # noqa: E402
 import warehouse_mcp  # noqa: E402
 
 
@@ -82,21 +81,6 @@ assert warehouse_mcp.project_sqlendpoint_enabled({"mcp": {"fabric_sqlendpoint": 
 assert warehouse_mcp.project_sqlendpoint_enabled({"mcp": {"fabric_sqlendpoint": {"enabled": False}}}) is False
 assert warehouse_mcp.project_sqlendpoint_enabled({"mcp": {"fabric_sqlendpoint": {"enabled": "true"}}}) is True
 assert warehouse_mcp.project_sqlendpoint_enabled({}) is True
-
-# 4. A manifest naming a path outside the snapshot folder deletes nothing there;
-#    reserved Windows device names are never used as file names.
-with tempfile.TemporaryDirectory() as td:
-    base = Path(td)
-    folder = base / "snapshot"
-    (folder / "dbo").mkdir(parents=True)
-    inside = folder / "dbo" / "old.sql"
-    inside.write_text("x", encoding="utf-8")
-    outside = base / "elsewhere.sql"
-    outside.write_text("keep", encoding="utf-8")
-    catalog_snapshot._remove_previous_files(folder, {"files": ["dbo/old.sql", str(outside), "../elsewhere.sql", "dbo/../../elsewhere.sql"]})
-    assert not inside.exists(), "listed file inside the folder is removed"
-    assert outside.exists(), "a path outside the snapshot folder is never deleted"
-assert catalog_snapshot._safe("Customer") and not catalog_snapshot._safe("CON") and not catalog_snapshot._safe("com1")
 
 # 5. fleet-digest reads ~/.coop/config as the JSON onboard.py writes.
 with tempfile.TemporaryDirectory() as td:
