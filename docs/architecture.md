@@ -365,9 +365,11 @@ show all of it. Task logs stay in the repository.
    removes the `coop` link and "coop" shortcuts a per-user first launch wrote
    only when they point into the package, then `machine-install.ps1 -Remove`
    (shim, PATH entry, task, marker). What only the terminal can show (model sign-in, `custom()` screens,
-   `/trust`) opens the same session in a terminal; `desktop/PARITY.md` maps every
-   Pi command, keybinding and extension command, and `tests/desktop.test.mjs`
-   checks it against a recorded session.
+   `/trust`) opens the same session in a terminal, by default and with no row
+   to write; `desktop/PARITY.md` is the window's own contract (its built-ins,
+   shortcuts and terminal-only exceptions from `desktop/renderer/commands.mjs`),
+   and `tests/desktop.test.mjs` checks it against those lists, Pi's surface and
+   a recorded session.
 
    The window's side pane (master plan D1b2) adds views over what coop already
    has, never a second policy path: the folder's git diff, the standards

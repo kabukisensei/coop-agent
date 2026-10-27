@@ -228,6 +228,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   a network the questions keep their typed answers. The Project pane still
   takes typed ids.
 
+- **The window defines itself (suite review 2026-10-26, pick 11).**
+  `desktop/PARITY.md` is now the coop window's own contract, written from its
+  lists in `desktop/renderer/commands.mjs`: the Pi built-ins it runs, its
+  keyboard shortcuts, and the few terminal-only extension screens. Everything
+  else goes to Pi as typed, and anything only a terminal can show opens in the
+  terminal by default, so a Pi or extension upgrade no longer needs a row per
+  new command or keybinding; the test asks one thing of a new Pi slash command,
+  whether the window runs it or opens the terminal, decided in `BUILTINS` or
+  `TERMINAL_ONLY`. `KEYS` holds the window's real shortcuts only (the 61
+  native and terminal placeholders are gone; `/hotkeys` shows the same table),
+  and the terminal-only commands appear in `/` completion even when Pi did not
+  list them.
+
 ### Removed
 
 - **Unreferenced repo weight (suite review 2026-10-26, pick 9).** `.specify/`
