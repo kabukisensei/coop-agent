@@ -127,6 +127,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   the package answers `tool_unavailable` and the tools say to run `coop update`.
   The manifest pins `coop-schema-compare` 0.1.8 (the flags coop passes).
 
+- **The Fabric Python is found once per session (suite review 2026-10-26, pick 6).**
+  Every native SQL call (`fabric_sql_query`, `sql_impact`, `schema_compare`,
+  `catalog_snapshot`) started PowerShell, dot-sourced `lib/common.ps1` and asked
+  pipx where its venvs are, to find an interpreter path that does not move. The
+  coop-tools extension now looks in the same places itself (`COOP_FABRIC_PYTHON`,
+  then the `ms-fabric-cli` venv under `COOP_PIPX_HOME`, `PIPX_HOME` and the
+  platform's pipx default), probes the first one that exists, and keeps the answer
+  while the environment names it and the file is still there; a miss falls back to
+  `Get-CoopFabricPython` as before, and only a success is kept, so a runtime
+  installed later (`coop update`) is found on the next call. The resolver probes
+  and the helper run share one supervised child-process routine (bounded time and
+  output, abortable, force-killed and reaped on a stop) instead of two copies.
+
 - **One project wizard, fewer typed ids (suite review 2026-10-26, pick 10).**
   `/setup-project` (and the coop window's Project pane, which runs the same
   code) is the one project wizard. It now looks Fabric ids up by name from the
