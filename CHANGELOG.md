@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.38.7] — 2026-10-27
+
 ### Added
 
 - **No unnecessary functions in SQL** (team feedback of 2026-10-27). `docs/guardrails.md`
