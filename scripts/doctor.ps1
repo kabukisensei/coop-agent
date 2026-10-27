@@ -340,7 +340,7 @@ if (Test-Have 'pi') {
   if ((Test-CoopAuthHasCredential $authA) -or (Test-CoopAuthHasCredential $authB)) {
     D-Ok 'Pi login present'
   } else {
-    D-Warn 'no Pi login found yet' "your first 'coop' run will prompt you to sign in — see docs/onboarding.md §3.5 (OpenAI/Codex provider, Cooptimize BUSINESS account)"
+    D-Warn 'no Pi login found yet' "your first 'coop' run will prompt you to sign in — see the coop site's Onboarding, step 3 (OpenAI/Codex provider, Cooptimize BUSINESS account)"
   }
 }
 

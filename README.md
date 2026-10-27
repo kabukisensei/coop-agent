@@ -45,7 +45,7 @@ coop                   # launch the ready, branded Pi agent (after install + new
 > **Cooptimize business account**. If setup ran non-interactively, the first plain
 > `coop` launch prepares the same one-time sign-in automatically
 > (the no-training-on-our-data terms attach to the business subscription). Details:
-> [docs/onboarding.md §3.5](docs/onboarding.md#35-first-launch--sign-in-one-time).
+> [Onboarding, step 3](https://coop.aaron-jennings.cloud/docs/onboarding.html#step-3-sign-in-once).
 
 `coop install` installs `%LOCALAPPDATA%\coop\bin\coop.cmd`, adds that directory
 to the user `PATH`, and asks for a new terminal before the change appears (an
@@ -414,7 +414,7 @@ The built docs live beside the committed project file (in the client home
 repository `<client>-coop` when the client has several repositories; master plan
 DR1): `/setup-docs` proposes that `data-docs` folder as the output from any of the
 client's repositories and offers coop's `coop-data-doc check` workflow for it
-(`templates/client-home/`). Layout: `docs/onboarding.md`.
+(`templates/client-home/`). Layout: [Onboarding, step 5](https://coop.aaron-jennings.cloud/docs/onboarding.html#step-5-start-in-your-repo).
 
 Project configuration has the same no-shell path: run **`/setup-project`** or
 choose **Start a client project** from `/start`. Every client has one
@@ -476,7 +476,7 @@ first**, not read-only-only, and all are optional.
 | Server | Provides | Enablement and policy |
 | --- | --- | --- |
 | `fabric` | Manifest-pinned Microsoft Fabric MCP | follows the active Azure CLI login (az's default account; coop cannot set its tenant); metadata reads by default, mutations approval-gated |
-| `fabric-sqlendpoint` | Microsoft-managed Fabric SQL endpoint over direct Streamable HTTP with a launch-time Azure CLI bearer token | every call approval-gated; valid project IDs select an item-scoped endpoint; with no explicit target, global; malformed explicit targets fail closed |
+| `fabric-sqlendpoint` | Microsoft-managed Fabric SQL endpoint over direct Streamable HTTP with a launch-time Azure CLI bearer token | a plain read on the resolved dev/test target runs without a prompt, writes and SQL coop cannot classify ask, a production write needs the human unlock; valid project IDs select an item-scoped endpoint; with no explicit target, global; malformed explicit targets fail closed |
 | `powerbi-modeling-mcp` | Microsoft Power BI Modeling MCP with `--start --readwrite --accept-eula` | no tenant/workspace required; reads run, edits ask (an approval can cover the session), deletes, imports and deploys always ask, production edits need your typed permit |
 | `azure-devops` | Manifest-pinned Azure DevOps MCP for one organization | requires enabled toggle + valid organization; mutations approval-gated |
 | `microsoft-learn` | `learn.microsoft.com/api/mcp` | requires only its enabled toggle; always-current Microsoft docs |
@@ -536,7 +536,7 @@ once, with no question and a 5-minute limit. Any failure prints one line with th
 exact command, and the launch continues. A success is cached for 30 minutes. `coop
 doctor` has a matching **Azure sign-in** row (signed in to tenant X / not signed in,
 with the command / no client tenant configured). The row only probes: doctor never
-signs in. `COOP_SKIP_AZ=1` skips both. Details: [docs/onboarding.md](docs/onboarding.md#azure-sign-in-at-launch).
+signs in. `COOP_SKIP_AZ=1` skips both. Details: [Onboarding](https://coop.aaron-jennings.cloud/docs/onboarding.html#azure-sign-in-at-launch).
 
 For live estate discovery, Coop labels repo versus live evidence and reports drift. Actual
 row reads ask first; production row reads require a bounded target, columns, filters, and
@@ -594,7 +594,7 @@ launch.
    Only docs / logs / diagrams / glossary / site may be committed, after approval.
 5. Reads need no approval on any environment, production included; only changes ask.
 6. Production changes only with your go-ahead: each production write then asks you at the desk and is audited.
-7. Managed integrations are read-only first; mutation and Warehouse SQL calls are approval-gated.
+7. Managed integrations are read-only first; mutations and Warehouse SQL writes ask, plain reads run.
 8. Never expose secrets.
 
 **Audit trail.** Every guardrail decision the runtime `coop-guardrails` extension makes —
@@ -851,7 +851,7 @@ impact before it touches an object — without you running anything by hand:
   **Lineage impact**).
 - **Degrade gracefully.** If the folder has **no** `coop-data-doc.yml` or no built
   graph, lineage is silent and optional — the agent proceeds without it and may
-  suggest **`/setup-docs`**. The docs are an aid, not a gate.
+  suggest **`/setup-docs`**: the built docs are an aid, not a gate; the one gate is the live catalog (master plan SQ8): before a SQL object is edited, `sql_impact` must have been asked when a live dev/test target can answer.
 
 This policy lives in [`docs/guardrails.md`](docs/guardrails.md) (lineage-grounding +
 auto-detect/degrade) and the `coop-workflow` skill. To create or refresh the docs,
@@ -1118,8 +1118,8 @@ maintainer running an `--edge` Pi on purpose sets `COOP_ALLOW_UNPINNED_PI=1`.
 
 ## Sharing with your team
 
-> New teammate? Hand them **[docs/onboarding.md](docs/onboarding.md)** — a one-page
-> clone → install → verify → use guide.
+> New teammate? Hand them **[Onboarding](https://coop.aaron-jennings.cloud/docs/onboarding.html)** on the coop site: install,
+> open, sign in, check, start, with a safe first task.
 > On Windows, start them on **[docs/install-windows.md](docs/install-windows.md)**.
 
 coop is distributed as **this Git repo**. Put it on a host your coworkers can reach

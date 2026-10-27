@@ -128,9 +128,10 @@ rule-path handling and the result shape are in
 
 ### `fabric_sql_query`
 
-Governed pyodbc fallback for one bounded `SELECT TOP` read against the
-contract's Fabric SQL target, used only after the managed `fabric-sqlendpoint` MCP
-actually failed. Executes **sequentially**. Contract in
+Governed pyodbc read of one bounded `SELECT TOP` against the contract's SQL target:
+the route for `sql_targets:` entries (the workflow's "Verify with data" step) and
+the fallback when the managed `fabric-sqlendpoint` MCP cannot answer. Executes
+**sequentially**. Contract in
 [docs/tool-contract.md](../../docs/tool-contract.md).
 
 ### `data_doc`
@@ -210,7 +211,7 @@ doc (located via `manifest.json`) plus its immediate neighbors — and to run
 "Built" means the markdown output dir (from `coop-data-doc.yml`'s `output.dir`,
 defaulting to `./data-docs`) contains a built `graph.json`. The
 hook **degrades silently** when there's no `coop-data-doc.yml`, or when a config
-exists but hasn't been built yet — the docs are an aid, not a gate, and the whole
+exists but hasn't been built yet: the built docs are an aid, not a gate; the one gate is the live catalog (master plan SQ8): before a SQL object is edited, `sql_impact` must have been asked when a live dev/test target can answer. The whole
 hook is wrapped so it can never break a turn.
 
 ## Required daily logging
