@@ -5,6 +5,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **The tag run's upgrade acceptance has its own runner.** `release.yml` ran the
+  upgrade, shortcut and one-liner acceptance in the installer job, right after
+  that job's own install and uninstall cycle, which leaves `C:\Program Files\coop`
+  behind; `verify-upgrade.mjs` refuses such a runner, so the v0.38.8 tag run
+  failed there and published nothing. It is now an `upgrade` job on a fresh
+  Windows runner that tests the installer job's artifact, as `ci.yml` does, and
+  the release needs both jobs.
+
 ## [0.38.8] — 2026-10-27
 
 v0.38.7 was tagged but never published (its release run could not start, see

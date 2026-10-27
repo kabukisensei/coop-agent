@@ -61,20 +61,36 @@ jobs:
           path: ${{ runner.temp }}/installer-acceptance.json
           if-no-files-found: error
           retention-days: 90
-      # The upgrade, shortcut-launch and one-liner acceptance ci.yml runs on every
-      # push to main, on the release bytes: the previous release (the latest one
-      # published) upgraded to this build, this build over a terminal install,
-      # the Desktop "coop" shortcut opening a window, and the `irm | iex`
-      # one-liner installing the latest release. A failure here also keeps the
-      # release from being published.
+  upgrade:
+    # The upgrade, shortcut-launch and one-liner acceptance ci.yml runs on every
+    # push to main, on the release bytes: the previous release (the latest one
+    # published) upgraded to this build, this build over a terminal install, the
+    # Desktop "coop" shortcut opening a window, and the `irm | iex` one-liner
+    # installing the latest release. Its own runner, as in ci.yml: the install
+    # cycle in `installer` leaves C:\Program Files\coop behind, and
+    # verify-upgrade.mjs refuses a runner where coop was ever installed (the
+    # v0.38.8 tag run failed exactly there). A failure here also keeps the
+    # release from being published.
+    name: upgrade, shortcut and one-liner acceptance
+    needs: [installer]
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.19.0'
+      - uses: actions/download-artifact@v4
+        with:
+          name: coop-window-installer
+          path: ${{ runner.temp }}/current
       - name: download the latest release's installer and acceptance report
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\current" | Out-Null
-          Copy-Item desktop\installer\dist\coop-window-*.exe "$env:RUNNER_TEMP\current"
-          gh release download --repo "$env:GITHUB_REPOSITORY" --pattern 'coop-window-*.exe' --pattern 'installer-acceptance.json' --dir "$env:RUNNER_TEMP\previous"
+        run: gh release download --repo "$env:GITHUB_REPOSITORY" --pattern 'coop-window-*.exe' --pattern 'installer-acceptance.json' --dir "$env:RUNNER_TEMP\previous"
       - name: previous release, then this build over it; this build over a terminal install
         shell: pwsh
         env:
@@ -117,7 +133,7 @@ jobs:
 
   release:
     name: GitHub Release
-    needs: [installer]
+    needs: [installer, upgrade]
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.notes.outputs.version }}

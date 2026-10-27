@@ -646,7 +646,15 @@ await check("release.yml: the tag build runs the acceptance on the release bytes
   assert.doesNotMatch(installer, /continue-on-error/, "a failed acceptance fails the installer job");
   assert.match(installer, /if: always\(\)\s+with:\s+name: coop-window-installer-acceptance\s+path: \$\{\{ runner\.temp \}\}\/installer-acceptance\.json\s+if-no-files-found: error/, "the report is uploaded on success and failure");
   // The release job depends on the installer job, so a failed acceptance publishes nothing.
-  assert.match(publish, /needs: \[installer\]/, "release needs the installer job");
+  assert.match(publish, /needs: \[installer, upgrade\]/, "release needs the installer and upgrade jobs");
+  // The upgrade acceptance runs on a fresh runner: verify-upgrade.mjs refuses one
+  // the installer job already installed coop on (the v0.38.8 tag run failed so).
+  const upgradeJob = jobs.find((job) => job.startsWith("upgrade:"));
+  assert.ok(upgradeJob, "release.yml has an upgrade job");
+  assert.match(upgradeJob, /needs: \[installer\]\s+runs-on: windows-latest/, "the upgrade job has its own Windows runner");
+  assert.match(upgradeJob, /name: coop-window-installer\s+path: \$\{\{ runner\.temp \}\}\/current/, "it tests the installer job's bytes");
+  assert.match(upgradeJob, /verify-upgrade\.mjs/, "it runs the upgrade verifier");
+  assert.doesNotMatch(installer, /verify-upgrade\.mjs/, "the installer job no longer runs the upgrade verifier after its own install cycle");
   assert.doesNotMatch(publish, /if: always\(\)|if: \$\{\{ always/, "release does not run past a failed installer job");
   assert.match(publish, /name: coop-window-installer-acceptance\s+path: installer/, "release downloads the report beside the exe");
   const order = [publish.indexOf("name: coop-window-installer\n"), publish.indexOf("check-installer-report.mjs installer/installer-acceptance.json installer"), publish.indexOf("Create GitHub Release")];
