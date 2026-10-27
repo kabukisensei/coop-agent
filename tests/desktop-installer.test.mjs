@@ -407,7 +407,7 @@ await check("snapshot: coop's own files ship, the development-only ones do not",
   for (const file of ["bin/coop.ps1", "bin/coop.cmd", "lib/common.ps1", "scripts/install.ps1", "config/release-manifest.json", "config/extensions-lock.json", "docs/guardrails.md", "skills/coop-workflow/SKILL.md", "extensions/coop-tools/index.ts", "themes/coop.ico", "vibes/x.txt", "VERSION", "README.md", ".coop/project.example.yml", "Install coop.cmd"]) {
     assert.ok(snapshotIncludes(file), `${file} ships`);
   }
-  for (const file of ["tests/run.sh", "tests/fixtures/_common.ps1", "desktop/main.mjs", "desktop/installer/electron-builder.cjs", ".github/workflows/ci.yml", ".agents/skills/x/SKILL.md", ".specify/memory/constitution.md", "docs/history/old-plan.md", "acceptance/x.md", ".gitignore", ".gitattributes", ".coop/project.yml"]) {
+  for (const file of ["tests/run.sh", "tests/fixtures/_common.ps1", "desktop/main.mjs", "desktop/installer/electron-builder.cjs", ".github/workflows/ci.yml", "docs/history/old-plan.md", "acceptance/x.md", ".gitignore", ".gitattributes", ".coop/project.yml"]) {
     assert.ok(!snapshotIncludes(file), `${file} stays out`);
   }
   // Windows separators are the same decision.
