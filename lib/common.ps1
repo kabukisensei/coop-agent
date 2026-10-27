@@ -1944,19 +1944,11 @@ function Get-CoopRepositoryName {
   if ($contract) {
     $root = Split-Path -Parent (Split-Path -Parent $contract)
     $target = [System.IO.Path]::GetFullPath($gitRoot).TrimEnd('\', '/')
-    $inRepos = $false; $name = ''
-    foreach ($line in (Get-Content -LiteralPath $contract -ErrorAction SilentlyContinue)) {
-      if ($line -match '^\S') { $inRepos = ($line -match '^repositories:\s*(#.*)?$'); $name = ''; continue }
-      if (-not $inRepos) { continue }
-      if ($line -match '^  ([A-Za-z0-9_.-]+):\s*(#.*)?$') { $name = $Matches[1]; continue }
-      if ($name -and $line -match '^\s+local_path:\s*(.+?)\s*$') {
-        $value = $Matches[1].Trim()
-        if ($value.Length -ge 2 -and (($value[0] -eq '"' -and $value[-1] -eq '"') -or ($value[0] -eq "'" -and $value[-1] -eq "'"))) { $value = $value.Substring(1, $value.Length - 2) }
-        if (-not $value -or $value -match '^TODO') { continue }
-        if ($value -match '^~([\\/]|$)') { $value = (Join-Path $HOME $value.Substring(1).TrimStart('\', '/')) }
-        $resolved = [System.IO.Path]::GetFullPath((Join-Path $root $value)).TrimEnd('\', '/')
-        if ([string]::Equals($resolved, $target, [System.StringComparison]::OrdinalIgnoreCase)) { return $name }
-      }
+    foreach ($entry in @(Get-CoopContractRepositories $contract)) {
+      $value = [string]$entry.LocalPath
+      if ($value -match '^~([\\/]|$)') { $value = (Join-Path $HOME $value.Substring(1).TrimStart('\', '/')) }
+      $resolved = [System.IO.Path]::GetFullPath((Join-Path $root $value)).TrimEnd('\', '/')
+      if ([string]::Equals($resolved, $target, [System.StringComparison]::OrdinalIgnoreCase)) { return [string]$entry.Name }
     }
   }
   $leaf = Split-Path -Leaf $gitRoot
@@ -3974,22 +3966,37 @@ function Find-CoopGitRoot {
   return ''
 }
 
-# The `repositories.*.local_path` values of a block-YAML contract (a line scan:
-# no Python needed at launch), quotes stripped.
-function Get-CoopContractLocalPaths {
+# The `repositories:` entries of a block-YAML contract as @{ Name; LocalPath }
+# objects, quotes stripped, TODO placeholders and entries without a local_path
+# skipped. The ONE PowerShell line scan of the contract (no Python needed at
+# launch): Get-CoopRepositoryName and Get-CoopContractLocalPaths read through it.
+function Get-CoopContractRepositories {
   param([string]$File)
-  $paths = @()
+  $entries = @()
   $inRepos = $false
+  $name = ''
+  $nameIndent = 0
   foreach ($line in (Get-Content -LiteralPath $File -ErrorAction SilentlyContinue)) {
-    if ($line -match '^\S') { $inRepos = ($line -match '^repositories:\s*(#.*)?$'); continue }
+    if ($line -match '^\S') { $inRepos = ($line -match '^repositories:\s*(#.*)?$'); $name = ''; continue }
     if (-not $inRepos) { continue }
-    if ($line -match '^\s+local_path:\s*(.+?)\s*$') {
+    if ($line -match '^\s+([A-Za-z0-9_.-]+):\s*(#.*)?$' -and $line -notmatch '^\s+-') {
+      $keyIndent = $line.Length - $line.TrimStart().Length
+      if (-not $name -or $keyIndent -le $nameIndent) { $name = $Matches[1]; $nameIndent = $keyIndent }
+      continue
+    }
+    if ($name -and $line -match '^\s+local_path:\s*(.+?)\s*$') {
       $value = $Matches[1].Trim()
       if ($value.Length -ge 2 -and (($value[0] -eq '"' -and $value[-1] -eq '"') -or ($value[0] -eq "'" -and $value[-1] -eq "'"))) { $value = $value.Substring(1, $value.Length - 2) }
-      if ($value -and $value -notmatch '^TODO') { $paths += $value }
+      if ($value -and $value -notmatch '^TODO') { $entries += New-Object PSObject -Property @{ Name = $name; LocalPath = $value } }
     }
   }
-  return $paths
+  return $entries
+}
+
+# The `repositories.*.local_path` values of a contract (Get-CoopContractRepositories).
+function Get-CoopContractLocalPaths {
+  param([string]$File)
+  return @(@(Get-CoopContractRepositories $File) | ForEach-Object { [string]$_.LocalPath })
 }
 
 # True when $Dir is a coop-agent checkout (coop's own install, by default
