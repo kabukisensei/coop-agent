@@ -91,7 +91,7 @@ $npmStub = $stubPrelude + @'
 if args[:2] == ['prefix', '-g']:
     print(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))); sys.exit(0)
 if args[:1] == ['view']:
-    print('1.2.0'); sys.exit(0)
+    print('1.4.0'); sys.exit(0)
 if args[:1] == ['--version']:
     print('10.9.0'); sys.exit(0)
 log('NPM ' + ' '.join(args))
@@ -173,7 +173,7 @@ function Get-MachineFabricPython {
   return ''
 }
 function New-Machine {
-  param([string]$Name, [string]$PiVersion = '1.2.0', [bool]$HonestPi = $true, [string[]]$PipxList = @(), [string]$FabVersion = '1.6.1', [bool]$LogPi = $true)
+  param([string]$Name, [string]$PiVersion = '1.4.0', [bool]$HonestPi = $true, [string[]]$PipxList = @(), [string]$FabVersion = '1.6.1', [bool]$LogPi = $true)
   $d = Join-Path $t "m-$Name"
   $mHome = Join-Path $d 'home'
   $bin = Join-Path $mHome '.local\bin'
@@ -413,11 +413,11 @@ try {
   if ($frRc -eq 0) { $frOut | ForEach-Object { Write-Host $_ } } else { Ko 'fabric-runtime-convergence fixture failed' ($frOut -join "`n") }
 
   # --- 4. NORMAL-mode drift convergence (no --force): round-2 review item #1 -------
-  # Deliberate drift: installed Pi 0.81.0 (manifest 1.2.0) and coop-data-doc 1.1.0
+  # Deliberate drift: installed Pi 0.81.0 (manifest 1.4.0) and coop-data-doc 1.1.0
   # (manifest 1.3.1); ms-fabric-cli matches its pin.
   $m2 = New-Machine 'drift' -PiVersion '0.81.0' -HonestPi $false -PipxList @('package coop-data-doc 1.1.0', "package ms-fabric-cli $pinFab")
   $out = Invoke-Fleet 'install.ps1'
-  if (-not (Test-CallLiteral $m2 'NPM install -g @earendil-works/pi-coding-agent@1.2.0')) { Ko 'drifted Pi NOT converged to manifest' (Get-Calls $m2) }
+  if (-not (Test-CallLiteral $m2 'NPM install -g @earendil-works/pi-coding-agent@1.4.0')) { Ko 'drifted Pi NOT converged to manifest' (Get-Calls $m2) }
   else { Ok 'normal install converges a drifted Pi to the manifest without --force' }
   if (-not (Test-CallLiteral $m2 'PIPX install --force coop-data-doc')) { Ko 'drifted coop-data-doc NOT force-installed' (Get-Calls $m2) }
   elseif (-not (Test-CallLiteral $m2 "PIPX install --force coop-data-doc==$pinDoc")) { Ko 'drifted coop-data-doc NOT force-installed to its manifest pin' (Get-Calls $m2) }

@@ -28,7 +28,7 @@ try {
 
   # --- manifest helpers --------------------------------------------------------
   $pins = ([System.IO.File]::ReadAllText((Join-Path $root 'config\release-manifest.json')) | ConvertFrom-Json).python_tools
-  if ((Coop-ManifestGet -Key 'pi.version') -ceq '1.2.0') { Ok 'Coop-ManifestGet pi.version' } else { Ko "Coop-ManifestGet pi.version (got '$(Coop-ManifestGet -Key 'pi.version')')" }
+  if ((Coop-ManifestGet -Key 'pi.version') -ceq '1.4.0') { Ok 'Coop-ManifestGet pi.version' } else { Ko "Coop-ManifestGet pi.version (got '$(Coop-ManifestGet -Key 'pi.version')')" }
   if ((Coop-ManifestGet -Key 'node.min') -ceq '22.19.0') { Ok 'Coop-ManifestGet node.min' } else { Ko 'Coop-ManifestGet node.min' }
   if ((Coop-ManifestGet -Key 'extensions.pi-mcp-adapter') -ceq '5.4.0') { Ok 'Coop-ManifestGet extensions.pi-mcp-adapter' } else { Ko 'Coop-ManifestGet extensions.pi-mcp-adapter' }
   if ((Coop-ManifestGet -Key 'python_tools.coop-data-doc') -ceq [string]$pins.'coop-data-doc') { Ok 'Coop-ManifestGet python_tools.coop-data-doc' } else { Ko 'Coop-ManifestGet python_tools.coop-data-doc' }

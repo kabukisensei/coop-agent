@@ -101,19 +101,19 @@ $ErrorActionPreference = $bomEap
 if ($bomRc -eq 0) { Ok 'every .ps1 keeps its UTF-8 BOM (scripts/check-bom.ps1)' } else { Ko "scripts/check-bom.ps1 failed: $($bomOut | Out-String)" }
 
 # --- pi/npm stubs on a scratch PATH -----------------------------------------
-# --check needs a `pi` (reporting 1.2.0) and an `npm` that Get-Command
+# --check needs a `pi` (reporting 1.4.0) and an `npm` that Get-Command
 # resolves. Windows PowerShell 5.1 finds a stub only via a PATHEXT extension
 # (.cmd), so write BOTH an extension-less Unix executable and a .cmd wrapper.
 $stub = Join-Path ([System.IO.Path]::GetTempPath()) ("coop-ps-test-" + [System.IO.Path]::GetRandomFileName())
 New-Item -ItemType Directory -Path $stub -Force | Out-Null
 try {
   # Unix executables (extension-less, +x) — resolved by Get-Command on macOS/Linux.
-  $piSh = "#!/bin/sh`n[ `"`$1`" = `"--version`" ] && { echo `"pi 1.2.0`"; exit 0; }`nexit 0`n"
+  $piSh = "#!/bin/sh`n[ `"`$1`" = `"--version`" ] && { echo `"pi 1.4.0`"; exit 0; }`nexit 0`n"
   [System.IO.File]::WriteAllText((Join-Path $stub 'pi'),  $piSh)
   [System.IO.File]::WriteAllText((Join-Path $stub 'npm'), "#!/bin/sh`nexit 0`n")
   if ($IsLinux -or $IsMacOS) { & chmod +x (Join-Path $stub 'pi') (Join-Path $stub 'npm') }
   # Windows .cmd wrappers — resolved by Get-Command on Windows PowerShell 5.1.
-  [System.IO.File]::WriteAllText((Join-Path $stub 'pi.cmd'),  "@echo off`r`nif `"%1`"==`"--version`" (echo pi 1.2.0& exit /b 0)`r`nexit /b 0`r`n")
+  [System.IO.File]::WriteAllText((Join-Path $stub 'pi.cmd'),  "@echo off`r`nif `"%1`"==`"--version`" (echo pi 1.4.0& exit /b 0)`r`nexit /b 0`r`n")
   [System.IO.File]::WriteAllText((Join-Path $stub 'npm.cmd'), "@echo off`r`nexit /b 0`r`n")
 
   $sep = [System.IO.Path]::PathSeparator
@@ -542,7 +542,7 @@ print("resume verdict contract OK")
 & '$update' --check 2>`$null
 "@ 6>$null | Out-String
   if ($LASTEXITCODE -eq 0) { Ok '--check exits 0' } else { Ko "--check exit was $LASTEXITCODE" }
-  if ($checkOut -like '*expected 1.2.0*') { Ok '--check prints the pi expected version' } else { Ko '--check missing pi expected version' }
+  if ($checkOut -like '*expected 1.4.0*') { Ok '--check prints the pi expected version' } else { Ko '--check missing pi expected version' }
   if ($checkOut -like '*status *') { Ok '--check prints a status column' } else { Ko '--check missing status column' }
   if ($checkOut -like '*@microsoft/powerbi-report-authoring-cli*') { Ok '--check lists npm authoring tools' } else { Ko '--check missing npm authoring tools' }
   # --pi-latest is a deprecated alias for --edge: it warns (stderr) and the
@@ -559,7 +559,7 @@ print("resume verdict contract OK")
 "@ 2>&1 6>$null | Out-String
   $piLatestRc = $LASTEXITCODE
   $ErrorActionPreference = $oldErrorAction
-  if ($piLatestRc -eq 0 -and ($piLatestOut -like '*--pi-latest is deprecated*') -and ($piLatestOut -like '*expected 1.2.0*')) {
+  if ($piLatestRc -eq 0 -and ($piLatestOut -like '*--pi-latest is deprecated*') -and ($piLatestOut -like '*expected 1.4.0*')) {
     Ok '--pi-latest warns that it is deprecated and still reaches the --check dry-run'
   } else { Ko "--pi-latest --check: exit $piLatestRc, output: $piLatestOut" }
 
@@ -573,7 +573,7 @@ print("resume verdict contract OK")
 `$env:PATH = '$stubPath'
 & '$coop' update --check 2>&1
 "@ 6>$null | Out-String
-  if (($wrappedCheckOut -like '*expected 1.2.0*') -and ($wrappedCheckOut -like '*status *')) {
+  if (($wrappedCheckOut -like '*expected 1.4.0*') -and ($wrappedCheckOut -like '*status *')) {
     Ok 'coop wrapper forwards --check intact to the read-only path'
   } else { Ko "coop wrapper did not reach the --check dry-run: $wrappedCheckOut" }
   if ($wrappedCheckOut -notlike '*ignoring unknown flag*') {
