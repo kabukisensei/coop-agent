@@ -63,11 +63,11 @@ exit /b 0
   Write-Shim 'winget' -Raw "#!/bin/sh`nexit 1`n" "@echo off`r`nexit /b 1`r`n"
   Write-Shim 'pi' -Raw @'
 #!/bin/sh
-[ "$1" = "--version" ] && echo 'pi 1.2.0'
+[ "$1" = "--version" ] && echo 'pi 1.4.0'
 exit 0
 '@ @'
 @echo off
-if "%1"=="--version" echo pi 1.2.0
+if "%1"=="--version" echo pi 1.4.0
 exit /b 0
 '@
   Write-Shim 'git' -Raw @'

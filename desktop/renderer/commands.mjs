@@ -9,7 +9,7 @@
 // the file matches them and that Pi's own surface (tests/fixtures/
 // desktop-pi-surface.json) leaves no Pi slash command unaccounted for.
 
-/** Pi 1.2.0 built-in slash commands (docs/slash-commands.md). */
+/** Pi 1.4.0 built-in slash commands (docs/slash-commands.md). */
 export const BUILTINS = Object.freeze([
   { name: "settings", description: "Window and session settings", action: "settings" },
   { name: "model", args: "[provider/model]", description: "Pick a model", action: "model" },
