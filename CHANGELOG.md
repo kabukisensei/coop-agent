@@ -5,6 +5,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+- **fabric-cicd deploys are gated.** A shell or PowerShell command that runs a Python deployment script calling fabric-cicd's `publish_all_items`, `unpublish_all_orphan_items` or `deploy_with_config` is now a deploy to the guardrails: dev or test asks every time, and production, or a run that does not say where it deploys, is blocked. Until now only the project file's ask-first text covered it. coop reads the script (and the local modules it imports) to tell.
+
 ## [0.38.10] — 2026-10-28
 
 ### Changed
