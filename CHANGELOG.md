@@ -10,6 +10,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 - **Window runtimes.** The window installer bundles Node.js 22.23.4 (from 22.19.0; five Node security releases since), Electron 44.10.0 (from 44.5.1; below 44.9.1 Electron trusts the compromised eMudhra intermediate certificates, GHSA-jr5w-w6x2-84p9) and Python 3.13.17 (from 3.13.16; a security release for the same CA incident, with pip 26.2.2). CI builds and tests on Node 22.23.4. The terminal install's Node minimum stays 22.19.0.
 - **Pins.** pi-mcp-adapter 5.4.0 (from 5.1.0): its MCP client SDK moves to 2.3.1, which fixes GHSA-6qxp-vccf-f47h (a malicious MCP server could collect tokens saved from an earlier sign-in) and GHSA-6prh-2h8m-c8cw (cross-origin redirects re-sent headers). It also stops Pi in RPC mode (the coop window) hanging at startup on an unapproved project MCP server, and stops re-asking a project server's approval when a Windows path is spelled with different capitalization. pi-hermes-memory 0.9.11 (from 0.9.10): its background memory helpers (`pi -p` children) now run with only the three memory tools and no MCP tools, where a fallback helper could reach shell and file tools outside coop's guardrails. The extension lock is regenerated, which also moves body-parser, fast-uri and qs past their advisories.
 
+### Changed
+- **fabric-cicd deploys are gated.** A shell or PowerShell command that runs a Python deployment script calling fabric-cicd's `publish_all_items`, `unpublish_all_orphan_items` or `deploy_with_config` is now a deploy to the guardrails: dev or test asks every time, and production, or a run that does not say where it deploys, is blocked. Until now only the project file's ask-first text covered it. coop reads the script (and the local modules it imports) to tell.
+
 ## [0.38.10] — 2026-10-28
 
 ### Changed
