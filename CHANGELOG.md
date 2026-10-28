@@ -12,6 +12,7 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 - **fabric-cicd deploys are gated.** A shell or PowerShell command that runs a Python deployment script calling fabric-cicd's `publish_all_items`, `unpublish_all_orphan_items` or `deploy_with_config` is now a deploy to the guardrails: dev or test asks every time, and production, or a run that does not say where it deploys, is blocked. Until now only the project file's ask-first text covered it. coop reads the script (and the local modules it imports) to tell.
+- **Pins.** coop-sql-source-control 1.0.12. The SQL project `sqlsc sqlproj` writes keeps a schema named Data or Migrations in the dacpac build (it removed every file under those folders, so in the SSMS layout such a schema's objects were missing and references to them failed). A project written before needs `sqlsc sqlproj --force`. The sourced wheel's tag, asset and SHA-256 follow the v1.0.12 release.
 
 ## [0.38.10] — 2026-10-28
 
