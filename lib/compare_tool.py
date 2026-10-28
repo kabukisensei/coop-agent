@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -64,6 +65,40 @@ def find_tool() -> str:
     return ""
 
 
+# The package process while it runs, so a termination of this helper ends it too.
+_running: list[subprocess.Popen[str]] = []
+
+
+class _forwarding_termination:
+    """While the package runs, SIGTERM (what coop's cancel sends on POSIX; Windows has
+    no handler to install, there the caller ends the whole tree) kills the package
+    first and then ends this helper with the conventional 128 + 15 (#477). Outside
+    the main thread, or where the signal cannot be handled, nothing is installed."""
+
+    def __enter__(self) -> None:
+        self.previous = None
+        try:
+            self.previous = signal.signal(signal.SIGTERM, self._terminate)
+        except (ValueError, OSError, AttributeError):
+            self.previous = None
+
+    def __exit__(self, *exc: object) -> None:
+        if self.previous is not None:
+            try:
+                signal.signal(signal.SIGTERM, self.previous)
+            except (ValueError, OSError):
+                pass
+
+    @staticmethod
+    def _terminate(signum: int, frame: object) -> None:
+        for proc in _running:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+        os._exit(128 + int(signum))
+
+
 def run_tool(args: list[str], *, env: dict[str, str] | None = None) -> dict[str, Any]:
     """Run `coop-schema-compare <args> --json` and return its result object.
 
@@ -76,28 +111,35 @@ def run_tool(args: list[str], *, env: dict[str, str] | None = None) -> dict[str,
         return result("tool_unavailable", tool=TOOL)
     merged = {**os.environ, **(env or {}), "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
     try:
-        completed = subprocess.run(
+        with _forwarding_termination(), subprocess.Popen(
             [tool, *args, "--json"],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="replace",
             env=merged,
-            timeout=TIMEOUT_SECONDS,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return result("tool_timeout", tool=TOOL)
+        ) as proc:
+            _running.append(proc)
+            try:
+                stdout, _ = proc.communicate(timeout=TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+                return result("tool_timeout", tool=TOOL)
+            finally:
+                _running.clear()
+            returncode = proc.returncode
     except OSError:
         return result("tool_unavailable", tool=TOOL)
-    text = (completed.stdout or "")[-MAX_OUTPUT_CHARS:].strip()
+    text = (stdout or "")[-MAX_OUTPUT_CHARS:].strip()
     line = text.rsplit("\n", 1)[-1] if text else ""
     try:
         data = json.loads(line)
     except ValueError:
         data = None
     if not isinstance(data, dict) or not isinstance(data.get("state"), str):
-        return result("tool_failed", tool=TOOL, exit_code=completed.returncode)
+        return result("tool_failed", tool=TOOL, exit_code=returncode)
     data["ok"] = data.get("ok") is True and data["state"] == "ok"
     return data
 

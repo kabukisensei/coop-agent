@@ -10,9 +10,12 @@ import importlib.util
 import io
 import json
 import os
+import signal
 import stat
+import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from unittest import mock
 
@@ -45,7 +48,7 @@ import json, os, sys, time
 from pathlib import Path
 record = os.environ.get("COOP_TEST_RECORD", "")
 if record:
-    Path(record).write_text(json.dumps({"argv": sys.argv[1:], "token": os.environ.get("SQL_ACCESS_TOKEN", "")}), encoding="utf-8")
+    Path(record).write_text(json.dumps({"argv": sys.argv[1:], "token": os.environ.get("SQL_ACCESS_TOKEN", ""), "pid": os.getpid()}), encoding="utf-8")
 if sys.argv[1:2] == ["--version"]:
     print("coop-schema-compare 0.1.8")
     sys.exit(0)
@@ -127,6 +130,23 @@ def fake_resolve_connection(target):
     return target.server, f"tok-{target.environment}", None
 
 
+def _alive(pid: int) -> bool:
+    """Whether a process still runs (a zombie awaiting its reaper counts as ended)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    stat = Path(f"/proc/{pid}/stat")
+    if stat.is_file():
+        try:
+            return stat.read_text().rsplit(")", 1)[-1].split()[0] != "Z"
+        except (OSError, IndexError):
+            return True
+    return True
+
+
 def write_stub(folder: Path, source: str) -> Path:
     """The stub as an executable: a shebang script on POSIX; on Windows a .cmd
     wrapper that runs the script with this interpreter (a shebang file cannot be
@@ -197,6 +217,25 @@ with tempfile.TemporaryDirectory() as tmp:
     with mock.patch.dict(os.environ, {"COOP_TEST_ANSWER": "hang"}), mock.patch.object(ct, "TIMEOUT_SECONDS", 1):
         out = ct.run_tool(["compare", "a", "b"])
         assert out["state"] == "tool_timeout" and not out["ok"], out
+    if os.name == "posix":
+        # #477: a termination of the helper ends the package it started, not only the helper.
+        record.path.unlink()
+        helper = subprocess.Popen(
+            [sys.executable, "-c", "import sys; sys.path.insert(0, sys.argv[1]); import compare_tool; compare_tool.run_tool(['compare', 'a', 'b'])", str(ROOT / "lib")],
+            env={**os.environ, "COOP_TEST_ANSWER": "hang"}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        for _ in range(100):
+            if record.path.is_file() and record.path.read_text(encoding="utf-8"):
+                break
+            time.sleep(0.05)
+        package_pid = record.read()["pid"]
+        helper.send_signal(signal.SIGTERM)
+        assert helper.wait(timeout=5) == 143, helper.returncode
+        for _ in range(60):
+            if not _alive(package_pid):
+                break
+            time.sleep(0.05)
+        assert not _alive(package_pid), "the package kept running after its helper was terminated"
 
     # --- input shape before anything resolves -------------------------------------------
     with mock.patch.object(sq, "resolve_target", side_effect=AssertionError("no resolution for bad input")):

@@ -64,12 +64,21 @@ if (Test-CoopMachineInstall) {
     exit 0
   }
   Coop-Info (Get-CoopMachineUpdateSummary)
+  # The full setup when this package's pins never reached this account, and
+  # (#478) when a tool the marker says was installed is not there as pinned any
+  # more: the marker records that a setup finished, not that its tools stayed, and
+  # doctor sends a missing or wrong-version tool here. Else the extensions and
+  # settings only (suite review pick 3).
+  $drifted = @()
+  if (-not (Test-CoopBundledToolsPending)) { $drifted = @(Get-CoopDriftedPythonTools -NoFabric:$NO_FABRIC) }
   if (Test-CoopBundledToolsPending) {
     Coop-Info "Bringing this account's tools to this package's pins (version $($script:CoopVersion))"
     $accountRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\install.ps1') @('--prereqs', 'auto', '--unattended')
+  } elseif ($drifted.Count -gt 0) {
+    $names = @($drifted | ForEach-Object { "$($_.Name) ($($_.Reason), pin $($_.Pin))" }) -join ', '
+    Coop-Info "Bringing this account's tools back to this package's pins: $names (version $($script:CoopVersion))"
+    $accountRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\install.ps1') @('--prereqs', 'auto', '--unattended')
   } else {
-    # The pins are the ones already installed for this account: refresh the
-    # extensions and settings only (suite review pick 3).
     Coop-Info "This package's tool pins are already installed for this account; refreshing extensions and settings (version $($script:CoopVersion))"
     $accountRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\sync.ps1')
   }

@@ -21,7 +21,7 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-machine-install-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $t | Out-Null
 
-$saved = Save-Env @('COOP_BUNDLED_RUNTIME', 'COOP_MACHINE_DIR', 'COOP_DIR', 'COOP_AUTO_UPDATE_DRY_RUN', 'COOP_AUTO_UPDATE_LATEST', 'HOME', 'USERPROFILE', 'NO_COLOR', 'COOP_SKIP_UPDATE_CHECK', 'GH_TOKEN', 'GITHUB_TOKEN')
+$saved = Save-Env @('COOP_BUNDLED_RUNTIME', 'COOP_MACHINE_DIR', 'COOP_DIR', 'COOP_AUTO_UPDATE_DRY_RUN', 'COOP_AUTO_UPDATE_LATEST', 'HOME', 'USERPROFILE', 'NO_COLOR', 'COOP_SKIP_UPDATE_CHECK', 'GH_TOKEN', 'GITHUB_TOKEN', 'COOP_PIPX_BIN', 'PIPX_STATE', 'COOP_PIPX_HOME', 'COOP_AGENT_DIR', 'PI_CODING_AGENT_DIR')
 try {
   # --- machine-install.ps1, dot-sourced --------------------------------------------
   . (Join-Path $root 'scripts\machine-install.ps1')
@@ -314,6 +314,61 @@ try {
   elseif ($installArgs -ne '--prereqs auto --unattended' -or $out -notmatch "Bringing this account's tools to this package's pins") { Ko "coop update on a machine install did not run this account's setup (install.ps1 args: '$installArgs')" $out }
   elseif (-not (Test-Path -LiteralPath $setupMarker) -or ([System.IO.File]::ReadAllText($setupMarker)).Trim() -notmatch '^0\.37\.0\+[0-9a-f]{16}$') { Ko "coop update did not record the setup marker at $setupMarker" $out }
   else { Ok 'coop update on a machine install says the task moves coop, runs install.ps1 --prereqs auto --unattended for this account and records the setup marker (B6)' }
+  # --- a second run (#478): the marker is current, so only a tool that is not installed
+  # as pinned any more sends it back to install.ps1; with every pin in place it syncs.
+  # A stand-in pipx: `list` prints $PIPX_STATE, the interpreter question has no answer.
+  # The extension lock is installed too (a `pi` at the manifest's version on PATH would
+  # otherwise keep the full setup pending, which is not what these cases are about).
+  $env:COOP_AGENT_DIR = Join-Path $home2 '.coop\agent'; $env:PI_CODING_AGENT_DIR = $env:COOP_AGENT_DIR
+  $agentNpm = Join-Path $env:COOP_AGENT_DIR 'npm'
+  New-Item -ItemType Directory -Force -Path $agentNpm | Out-Null
+  Copy-Item -LiteralPath (Join-Path $snapshot 'config\extensions-lock.json') -Destination (Join-Path $agentNpm 'package-lock.json') -Force
+  $syncArgsFile = Join-Path $t 'sync-args.txt'
+  [System.IO.File]::WriteAllText((Join-Path $snapshot 'scripts\sync.ps1'), ("[System.IO.File]::WriteAllText('" + $syncArgsFile.Replace("'", "''") + "', 'sync')`nexit 0`n"), $utf8)
+  $pipxState = Join-Path $t 'pipx-state.txt'
+  $pipxBin = Join-Path $t 'pipx-bin'
+  $env:COOP_PIPX_BIN = New-PyStub $pipxBin 'pipx' @'
+import os, sys
+args = sys.argv[1:]
+if args[:1] == ['list']:
+    p = os.environ.get('PIPX_STATE', '')
+    if p and os.path.exists(p):
+        with open(p, encoding='utf-8') as f:
+            sys.stdout.write(f.read())
+    sys.exit(0)
+if args[:3] == ['environment', '--value', 'PIPX_DEFAULT_PYTHON']:
+    print('')
+    sys.exit(0)
+sys.exit(1)
+'@
+  $env:PIPX_STATE = $pipxState
+  $env:COOP_PIPX_HOME = Join-Path $t 'pipx-home'
+  $plan = Get-CoopFleetPlan
+  $pinned = @($plan.PythonTools) + @($plan.Fabric) | Where-Object { $_ } | ForEach-Object { "package $($_.Name) $($_.Pin)" }
+  function Invoke-SecondRun([string[]]$State) {
+    [System.IO.File]::WriteAllText($pipxState, (($State -join "`n") + "`n"), $utf8)
+    Remove-Item -LiteralPath $installArgsFile, $syncArgsFile -Force -ErrorAction SilentlyContinue
+    return (Invoke-Update @())
+  }
+  $out = Invoke-SecondRun $pinned
+  if ($updRc -ne 0 -or (Test-Path -LiteralPath $installArgsFile) -or -not (Test-Path -LiteralPath $syncArgsFile) -or $out -notmatch 'already installed for this account; refreshing') { Ko "coop update with every pin installed should sync only (rc=$updRc)" $out }
+  else { Ok 'coop update on a machine install with the marker current and every pinned tool installed refreshes extensions and settings only' }
+  $missing = @($pinned | Where-Object { $_ -notmatch '^package coop-data-doc ' })
+  $out = Invoke-SecondRun $missing
+  $installArgs = if (Test-Path -LiteralPath $installArgsFile) { ([System.IO.File]::ReadAllText($installArgsFile)).Trim() } else { '' }
+  if ($updRc -ne 0 -or $installArgs -ne '--prereqs auto --unattended' -or (Test-Path -LiteralPath $syncArgsFile) -or $out -notmatch 'back to this package''s pins: coop-data-doc \(not installed, pin ') { Ko "coop update with a tool uninstalled since the marker should run install.ps1 (rc=$updRc, install.ps1 args: '$installArgs')" $out }
+  else { Ok 'coop update on a machine install runs this account''s setup again for a pinned tool that is no longer installed (#478)' }
+  $older = @($pinned | ForEach-Object { if ($_ -match '^package coop-schema-compare ') { 'package coop-schema-compare 0.0.1' } else { $_ } })
+  $out = Invoke-SecondRun $older
+  $installArgs = if (Test-Path -LiteralPath $installArgsFile) { ([System.IO.File]::ReadAllText($installArgsFile)).Trim() } else { '' }
+  if ($updRc -ne 0 -or $installArgs -ne '--prereqs auto --unattended' -or $out -notmatch 'coop-schema-compare \(0\.0\.1 installed, pin ') { Ko "coop update with a tool at another version should run install.ps1 (rc=$updRc, install.ps1 args: '$installArgs')" $out }
+  else { Ok 'coop update on a machine install runs this account''s setup again for a pinned tool at another version (#478)' }
+  $env:COOP_PIPX_BIN = Join-Path $t 'no-pipx-here'
+  $out = Invoke-SecondRun @()
+  if ($updRc -ne 0 -or (Test-Path -LiteralPath $installArgsFile) -or -not (Test-Path -LiteralPath $syncArgsFile)) { Ko "coop update without pipx should sync only, as nothing can be installed (rc=$updRc)" $out }
+  else { Ok 'coop update on a machine install without pipx judges no tool drifted and syncs' }
+  $env:COOP_PIPX_BIN = $null; $env:PIPX_STATE = $null; $env:COOP_PIPX_HOME = $null; $env:COOP_AGENT_DIR = $null; $env:PI_CODING_AGENT_DIR = $null
+
   $out = Invoke-Update @('--check')
   if ($updRc -ne 0 -or $out -notmatch 'install\s+this machine \(' -or $out -notmatch 'update task result\s+up to date' -or $out -notmatch 'installed by the task\s+0\.37\.0') { Ko "coop update --check on a machine install (rc=$updRc)" $out }
   else { Ok 'coop update --check on a machine install reports the state file' }

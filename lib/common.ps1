@@ -314,6 +314,41 @@ function Test-CoopBundledToolsPending {
   if (-not $tools) { return $true }
   return (-not (Get-CoopBundledSetupDoneStamp).EndsWith('+' + $tools))
 }
+# The Python tools this package pins that this account does not have as pinned
+# (#478): not installed, another version, or (the coop tools) an environment
+# built on another interpreter than coop's pipx default, the same judgement
+# Invoke-CoopPipxConverge makes before it reinstalls. The setup marker says the
+# pins were installed once; a tool uninstalled or moved since is found here, so
+# `coop update` on a machine install runs the full setup for it instead of a
+# sync alone. Without pipx nothing can be installed, so nothing is drifted.
+# Each row: Name, Pin, Installed ('' when absent), Reason (one short phrase).
+function Get-CoopDriftedPythonTools {
+  param([switch]$NoFabric)
+  if (-not (Test-CoopPipxAvailable)) { return @() }
+  $plan = Get-CoopFleetPlan -NoFabric:$NoFabric
+  $rows = @($plan.PythonTools)
+  if ($plan.Fabric) { $rows += $plan.Fabric }
+  $listText = Get-CoopPipxOutput @('list')
+  $defaultPython = ''
+  $out = @()
+  foreach ($row in $rows) {
+    if (-not $row.Pin) { continue }
+    $installed = Get-CoopPipxToolVersion $row.Name $listText
+    $reason = ''
+    if (-not $installed) { $reason = 'not installed' }
+    elseif ($installed -ne $row.Pin) { $reason = "$installed installed" }
+    elseif ($row.Name -ne $script:CoopFabricCliPackage) {
+      # The Fabric CLI's interpreter is the plan's (a local 3.10-3.13 or pipx's
+      # standalone one), judged by its own converge unit; the coop tools belong
+      # on coop's pipx default.
+      if ($defaultPython -eq '') { $defaultPython = [string](Get-CoopPipxDefaultPython) }
+      $venvInfo = if ($defaultPython) { Get-CoopVenvInterpreter $row.Name } else { $null }
+      if ($venvInfo -and -not (Test-CoopVenvOnPython $venvInfo $defaultPython)) { $reason = "built on $($venvInfo.Label), not coop's Python" }
+    }
+    if ($reason) { $out += [pscustomobject]@{ Name = [string]$row.Name; Pin = [string]$row.Pin; Installed = [string]$installed; Reason = $reason } }
+  }
+  return @($out)
+}
 # Record that this package (version and manifest) finished its setup on this profile.
 function Set-CoopBundledSetupDone {
   if (-not $script:CoopBundledRuntime) { return }
