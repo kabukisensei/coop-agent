@@ -44,6 +44,7 @@ import {
   sourceStatus,
 } from "../../lib/standards.mjs";
 import { agentDir as coopAgentDir, configPath as coopConfigPath } from "../../lib/paths.mjs";
+import { windowsTaskkillCommand } from "../../lib/fabric_request_headers.mjs";
 import {
   NOT_INSTALLED_TEXT as SQL_SOURCE_NOT_INSTALLED,
   NOT_SET_UP_TEXT as SQL_SOURCE_NOT_SET_UP,
@@ -337,11 +338,34 @@ function usableExecutable(path: string): boolean {
 
 interface SpawnOutcome { state: string; stdout: string; code: number | null }
 
+/** End a supervised child and everything it started (#477): the Python helpers
+ *  run the pinned packages as their own children (`coop-schema-compare` under
+ *  lib/compare_tool.py), and a cancel that reached only the helper left the
+ *  package running its live query to the end. On POSIX the child is spawned as
+ *  a process-group leader and the group is signalled; on Windows `taskkill /T`
+ *  walks the tree. Either way the child itself is signalled too, so a child
+ *  whose group or tree cannot be reached still ends as before. */
+function killProcessTree(child: ReturnType<typeof spawn>, signal: "SIGTERM" | "SIGKILL"): void {
+  const pid = child.pid;
+  if (pid && process.platform === "win32") {
+    const spec = windowsTaskkillCommand(process.env.SystemRoot, pid);
+    if (spec) {
+      try {
+        const killer = spawn(spec.command, spec.args, { env: { SystemRoot: process.env.SystemRoot as string }, shell: false, windowsHide: true, stdio: "ignore" });
+        killer.on("error", () => { /* taskkill missing: the child's own kill below still runs */ });
+      } catch { /* same */ }
+    }
+  } else if (pid) {
+    try { process.kill(-pid, signal); } catch { /* group already gone, or not a leader */ }
+  }
+  try { child.kill(signal); } catch { /* already exited */ }
+}
+
 /** One supervised child process: bounded time and output, abortable, force-killed
- *  and reaped within a second of a stop. `state` is "" when the child exited on
- *  its own (then `code` is its exit code), else why it was stopped. stdout is
- *  decoded as one UTF-8 text, so a multi-byte character split across chunks is
- *  not read as U+FFFD. */
+ *  and reaped within a second of a stop, together with the processes it started
+ *  (killProcessTree). `state` is "" when the child exited on its own (then `code`
+ *  is its exit code), else why it was stopped. stdout is decoded as one UTF-8
+ *  text, so a multi-byte character split across chunks is not read as U+FFFD. */
 function supervisedSpawn(bin: string, args: string[], options: {
   cwd?: string; env?: NodeJS.ProcessEnv; input?: string; signal?: AbortSignal;
   timeoutMs: number; maxStdout: number; launchState: string; timeoutState: string; overflowState: string;
@@ -349,6 +373,8 @@ function supervisedSpawn(bin: string, args: string[], options: {
   return new Promise((done) => {
     const child = spawn(bin, args, {
       cwd: options.cwd, stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "ignore"], shell: false, env: options.env,
+      // Its own process group on POSIX, so a stop reaches the package it starts.
+      detached: process.platform !== "win32",
     });
     child.stdout?.setEncoding("utf8");
     let stdout = "", finished = false, stopState = "";
@@ -364,8 +390,8 @@ function supervisedSpawn(bin: string, args: string[], options: {
     const stop = (state: string) => {
       if (stopState) return;
       stopState = state;
-      try { child.kill("SIGTERM"); } catch { /* already exited */ }
-      forceTimer = setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* already exited */ } }, 250);
+      killProcessTree(child, "SIGTERM");
+      forceTimer = setTimeout(() => killProcessTree(child, "SIGKILL"), 250);
       reapTimer = setTimeout(() => finish({ state, stdout, code: null }), 1_000);
     };
     const onAbort = () => stop("aborted");

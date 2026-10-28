@@ -186,6 +186,28 @@ while :; do :; done
   const cancelled = await pending;
   assert.equal(cancelled.details.state, "aborted");
   assert.ok(Date.now() - started < 2_000, "cancel must force-kill and reap within a bounded deadline");
+
+  if (process.platform !== "win32") {
+    // #477: a cancel ends what the helper started too (the pinned package under
+    // lib/compare_tool.py), not only the helper. The stub starts a grandchild that
+    // leaves a marker 1.5 s later; aborted at 100 ms, the marker never appears.
+    const grandchildMarker = join(root, "grandchild-finished");
+    writeFileSync(fakePython, `#!/bin/sh
+( sleep 1.5; touch "$COOP_SQL_TEST_GRANDCHILD" ) &
+cat >/dev/null
+wait
+`);
+    chmodSync(fakePython, 0o755);
+    process.env.COOP_SQL_TEST_GRANDCHILD = grandchildMarker;
+    const treeController = new AbortController();
+    const treePending = tool.execute("4", { query: "SELECT TOP (1) x FROM dbo.t" }, treeController.signal, undefined, { cwd: root });
+    setTimeout(() => treeController.abort(), 100);
+    const treeCancelled = await treePending;
+    assert.equal(treeCancelled.details.state, "aborted");
+    await new Promise((wake) => setTimeout(wake, 2_200));
+    assert.equal(existsSync(grandchildMarker), false, "the helper's own child must end with the cancel");
+    delete process.env.COOP_SQL_TEST_GRANDCHILD;
+  }
 } finally {
   // The abort case above intentionally leaves a TERM-ignoring busy-loop stub.
   // The tool force-kills its direct child within the bounded deadline, but the

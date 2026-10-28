@@ -5,6 +5,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- `/setup-project` and the window's project pane keep `schema_compare.destructive: commented` when no exclude or rebuild schema is answered: the one value that changes what the engine writes was dropped with the empty lists, and the next compare ran with destructive statements active (#476).
+- Cancelling a native schema compare or catalog snapshot (the tool's stop, or its time limit) ends the pinned `coop-schema-compare` process too, not only the Python helper that started it: the helper is run as its own process group (Windows: `taskkill /T`) and forwards a termination to the package (#477).
+- `coop update` on a machine install repairs a pinned Python tool that was uninstalled, moved to another version or rebuilt on another interpreter since the account's setup: the setup marker said the pins were installed once, so only the extensions and settings were refreshed, and doctor's `coop update` remedy changed nothing (#478).
+
 ## [0.38.9] — 2026-10-27
 
 v0.38.7 and v0.38.8 were tagged but never published (their release runs

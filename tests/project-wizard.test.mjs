@@ -306,9 +306,22 @@ await t("named target sets and schema_compare.destructive: render, read, apply, 
   // Removing a set from the settings never removes it from the file.
   const dropped = applyProjectWizardSettings(merged, { ...parseProjectWizardSettings(merged, "/work"), repositories: [], namedTargets: [] });
   assert.deepEqual(projectYamlKeys(dropped, ["sql_targets", "named"]), ["lakehouse", "reporting"]);
-  // A file without schema_compare and no lists answered: destructive alone is not written.
-  const noSection = applyProjectWizardSettings("profile:\n  client: 'X'\n", { ...parseProjectWizardSettings("profile:\n  client: 'X'\n", "/work"), repositories: [], schemaCompareDestructive: "commented" });
-  assert.equal(projectYamlScalar(noSection, ["schema_compare", "destructive"]), "");
+  // A file without schema_compare and no lists answered (#476): `commented` is written on
+  // its own (it changes what the engine does), `runnable` (the engine's default) is not.
+  const bare = "profile:\n  client: 'X'\n";
+  const noSection = applyProjectWizardSettings(bare, { ...parseProjectWizardSettings(bare, "/work"), repositories: [], schemaCompareDestructive: "commented" });
+  assert.equal(projectYamlScalar(noSection, ["schema_compare", "destructive"]), "commented");
+  assert.equal(parseProjectWizardSettings(noSection, "/work").schemaCompareDestructive, "commented", "the reader sees the answer again");
+  assert.deepEqual(projectYamlList(noSection, ["schema_compare", "exclude_schemas"]), [], "no list is invented");
+  const runnableOnly = applyProjectWizardSettings(bare, { ...parseProjectWizardSettings(bare, "/work"), repositories: [], schemaCompareDestructive: "runnable" });
+  assert.equal(projectYamlScalar(runnableOnly, ["schema_compare", "destructive"]), "", "the default alone adds no section");
+  // A new contract with empty lists and `commented` keeps the answer too.
+  const commentedOnly = renderProjectWizardSettings({ ...settings, schemaCompareExclude: "", schemaCompareRebuild: "", schemaCompareDestructive: "commented" });
+  assert.equal(projectYamlScalar(commentedOnly, ["schema_compare", "destructive"]), "commented");
+  assert.deepEqual(projectYamlList(commentedOnly, ["schema_compare", "exclude_schemas"]), []);
+  assert.equal(parseProjectWizardSettings(commentedOnly, "/work").schemaCompareDestructive, "commented");
+  assert.notDeepEqual(schemaCompareBlock({ schemaCompareDestructive: "commented" }), [], "commented alone is a section");
+  assert.deepEqual(schemaCompareBlock({ schemaCompareDestructive: "runnable" }), [], "runnable alone is not");
   // Validation.
   const problems = (s) => projectSettingsProblems({ ...settings, ...s }).map((p) => p.field);
   assert.deepEqual(problems({ namedTargets: [set] }), []);
