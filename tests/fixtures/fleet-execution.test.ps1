@@ -325,7 +325,7 @@ try {
   $m = New-Machine 'install' -PipxList @('package coop-data-doc 1.1.0', "package ms-fabric-cli $pinFab")
   $out = Invoke-Fleet 'install.ps1' @('--force')
   if ($out.Contains('8/8') -and -not $out.Contains('install/sync step(s) failed')) { Ok 'install --force runs through step 8/8 with no failed install/sync step' } else { Ko "install --force stopped early or reported a failed step (rc=$rc)" $out }
-  if (Test-Call $m 'PIPX install --force --python .+ ms-fabric-cli==1\.7\.0') { Ok 'Fabric CLI install selects a supported bootstrap Python explicitly' } else { Ko 'Fabric CLI install did not select a supported bootstrap Python explicitly' (Get-Calls $m) }
+  if (Test-Call $m 'PIPX install --force --python .+ ms-fabric-cli==1\.8\.0') { Ok 'Fabric CLI install selects a supported bootstrap Python explicitly' } else { Ko 'Fabric CLI install did not select a supported bootstrap Python explicitly' (Get-Calls $m) }
   if (Test-CallLiteral $m "PIPX install --force coop-data-doc==$pinDoc") { Ok 'install --force reinstalls a pipx tool at its exact pin' } else { Ko 'install --force did not reinstall coop-data-doc at its pin' (Get-Calls $m) }
   # Extensions are the sync child's (one `pi install` path, S2; fleet-manifest
   # asserts install.ps1 carries no `pi install` of its own): the child installed them.
@@ -465,7 +465,7 @@ try {
   $out = Invoke-Fleet 'update.ps1'
   $missing = @(@("coop-data-doc==$pinDoc", "ms-fabric-cli==$pinFab") | Where-Object { -not (Test-CallLiteral $m6 $_) })
   if ($missing.Count -eq 0) { Ok 'update installs missing manifest-pinned pipx tools' } else { Ko "update did not install missing $($missing -join ', ')" (Get-Calls $m6) }
-  if (Test-Call $m6 '^PIPX install --python .+ ms-fabric-cli==1\.7\.0') { Ok 'update installs a missing Fabric CLI with an explicit supported bootstrap Python' } else { Ko 'update did not select a supported bootstrap Python for the missing Fabric CLI' (Get-Calls $m6) }
+  if (Test-Call $m6 '^PIPX install --python .+ ms-fabric-cli==1\.8\.0') { Ok 'update installs a missing Fabric CLI with an explicit supported bootstrap Python' } else { Ko 'update did not select a supported bootstrap Python for the missing Fabric CLI' (Get-Calls $m6) }
   if (Test-Call $m6 '^PIPX install --force ') { Ko 'update force-reinstalled a tool that was simply missing' (Get-Calls $m6) } else { Ok 'a missing tool is installed, not force-reinstalled' }
   # The sourced tool (a release wheel, not a PyPI spec) installs from the local
   # wheel and converges to its pin: the honest stub records the distribution
