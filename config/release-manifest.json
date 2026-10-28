@@ -15,7 +15,7 @@
     "pi-mcp-adapter": "5.4.0",
     "pi-hermes-memory": "0.9.11",
     "pi-better-openai": "0.1.22",
-    "pi-web-access": "0.35.0",
+    "pi-web-access": "0.45.0",
     "@juicesharp/rpiv-ask-user-question": "2.12.0",
     "@juicesharp/rpiv-todo": "2.12.0",
     "@xl0/pi-lovely-rename": "0.1.5"
