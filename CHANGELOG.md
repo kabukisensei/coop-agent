@@ -17,6 +17,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 - **fabric-cicd deploys are gated.** A shell or PowerShell command that runs a Python deployment script calling fabric-cicd's `publish_all_items`, `unpublish_all_orphan_items` or `deploy_with_config` is now a deploy to the guardrails: dev or test asks every time, and production, or a run that does not say where it deploys, is blocked. Until now only the project file's ask-first text covered it. coop reads the script (and the local modules it imports) to tell.
 - **Pins.** coop-sql-source-control 1.0.12. The SQL project `sqlsc sqlproj` writes keeps a schema named Data or Migrations in the dacpac build (it removed every file under those folders, so in the SSMS layout such a schema's objects were missing and references to them failed). A project written before needs `sqlsc sqlproj --force`. The sourced wheel's tag, asset and SHA-256 follow the v1.0.12 release.
 
+### Fixed
+- **Sessions name themselves under coop/auto.** pi-lovely-rename 0.1.5 streams its naming request through `modelRegistry.getProvider(model.provider)`, and Pi's provider for a virtual model refuses to stream, so with `/model coop/auto` every auto-rename failed with "Virtual model coop/auto must be routed before streaming" (dev VM, 2026-10-28). coop-router now answers `getProvider("coop")` with a provider whose streams go through the registry, which routes them like any other one-off request (the build model at low thinking). Other providers are unchanged. No fixed pi-lovely-rename release exists yet; the wrap goes once one streams through the registry.
+
 ## [0.38.10] — 2026-10-28
 
 ### Changed
