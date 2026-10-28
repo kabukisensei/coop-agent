@@ -347,18 +347,27 @@ interface SpawnOutcome { state: string; stdout: string; code: number | null }
  *  whose group or tree cannot be reached still ends as before. */
 function killProcessTree(child: ReturnType<typeof spawn>, signal: "SIGTERM" | "SIGKILL"): void {
   const pid = child.pid;
+  const killChild = () => { try { child.kill(signal); } catch { /* already exited */ } };
   if (pid && process.platform === "win32") {
     const spec = windowsTaskkillCommand(process.env.SystemRoot, pid);
     if (spec) {
       try {
+        // `taskkill /T` finds the tree by walking down from the child, so the child
+        // is killed only once taskkill is done: a child killed first leaves its own
+        // children orphaned before taskkill can reach them, and they run on (the dev
+        // VM, 2026-10-28: a cancelled helper's grandchild survived every time).
         const killer = spawn(spec.command, spec.args, { env: { SystemRoot: process.env.SystemRoot as string }, shell: false, windowsHide: true, stdio: "ignore" });
-        killer.on("error", () => { /* taskkill missing: the child's own kill below still runs */ });
-      } catch { /* same */ }
+        let done = false;
+        const after = () => { if (!done) { done = true; killChild(); } };
+        killer.on("exit", after);
+        killer.on("error", after); // taskkill missing: the child's own kill still runs
+        return;
+      } catch { /* taskkill could not start: the child's own kill below */ }
     }
   } else if (pid) {
     try { process.kill(-pid, signal); } catch { /* group already gone, or not a leader */ }
   }
-  try { child.kill(signal); } catch { /* already exited */ }
+  killChild();
 }
 
 /** One supervised child process: bounded time and output, abortable, force-killed

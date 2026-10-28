@@ -9,6 +9,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 - **Pins.** coop-sql-source-control 1.0.11. Tables are scripted and read in the shape SSMS 22 / DacFx writes (Create Project from Database, Schema Compare's Update), so a table change made in SSMS is applied by get-latest and coop's table commits no longer reformat SSMS's files. The sourced wheel's tag, asset and SHA-256 follow the v1.0.11 release.
 
 ### Fixed
+
+- **A cancel ends the whole tree on Windows too (#477).** `killProcessTree` started
+  `taskkill /T` and killed the child at once; the child died before taskkill walked
+  its tree, so the package a helper started (`coop-schema-compare` under
+  `lib/compare_tool.py`) ran on to the end. The child is now killed after taskkill
+  exits (or fails to start). POSIX is unchanged (the process group is signalled).
 - `/setup-project` and the window's project pane keep `schema_compare.destructive: commented` when no exclude or rebuild schema is answered: the one value that changes what the engine writes was dropped with the empty lists, and the next compare ran with destructive statements active (#476).
 - Cancelling a native schema compare or catalog snapshot (the tool's stop, or its time limit) ends the pinned `coop-schema-compare` process too, not only the Python helper that started it: the helper is run as its own process group (Windows: `taskkill /T`) and forwards a termination to the package (#477).
 - `coop update` on a machine install repairs a pinned Python tool that was uninstalled, moved to another version or rebuilt on another interpreter since the account's setup: the setup marker said the pins were installed once, so only the extensions and settings were refreshed, and doctor's `coop update` remedy changed nothing (#478).
