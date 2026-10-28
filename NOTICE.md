@@ -47,7 +47,7 @@ readable in one place.
 | `pi-mcp-adapter` | 5.4.0 | Nico Bailon | MIT | Redistributed; upstream LICENSE kept. |
 | `pi-hermes-memory` | 0.9.11 | chandra447 | MIT | Redistributed; upstream LICENSE kept. |
 | `pi-better-openai` | 0.1.22 | mattleong | MIT | Redistributed; upstream LICENSE kept. |
-| `pi-web-access` | 0.35.0 | Nico Bailon | MIT | Redistributed; upstream LICENSE kept. |
+| `pi-web-access` | 0.45.0 | Nico Bailon | MIT | Redistributed; upstream LICENSE kept. |
 | `@juicesharp/rpiv-ask-user-question`, `@juicesharp/rpiv-todo` | 2.12.0 | juicesharp | MIT | Redistributed; upstream LICENSE kept. |
 | `@xl0/pi-lovely-rename` | 0.1.5 | Alexey Zaytsev | MIT | Redistributed; upstream LICENSE kept. |
 | `teamai-cli` | 0.26.0 | Tencent | MIT | Installed only when TeamAI is enabled; not redistributed. |

@@ -41,7 +41,7 @@ $realPy = Get-FixturePython
 if (-not $realPy) { throw 'a Python 3.10-3.13 is required for the fleet fixtures' }
 $psDir = Split-Path -Parent $psExe
 
-$extSpecs = @('npm:pi-mcp-adapter@5.4.0', 'npm:pi-hermes-memory@0.9.11', 'npm:pi-better-openai@0.1.22', 'npm:pi-web-access@0.35.0',
+$extSpecs = @('npm:pi-mcp-adapter@5.4.0', 'npm:pi-hermes-memory@0.9.11', 'npm:pi-better-openai@0.1.22', 'npm:pi-web-access@0.45.0',
               'npm:@juicesharp/rpiv-ask-user-question@2.12.0', 'npm:@juicesharp/rpiv-todo@2.12.0', 'npm:@xl0/pi-lovely-rename@0.1.5')
 
 # A Python string literal for a path (backslashes and quotes escaped).
