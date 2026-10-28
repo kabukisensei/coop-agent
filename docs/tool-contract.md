@@ -780,7 +780,7 @@ $ coop fabric workspace list      # -> whichever `fab` is first on PATH
 $ coop doctor
 Microsoft Fabric CLI
 ✗ fab is the WRONG tool — this 'fab' is Python Fabric (SSH automation), not the Microsoft Fabric CLI
-      Fix: pipx install ms-fabric-cli==1.7.0   and put pipx's bin dir first on PATH (pipx ensurepath)
+      Fix: pipx install ms-fabric-cli==1.8.0   and put pipx's bin dir first on PATH (pipx ensurepath)
            or uninstall the Python fabric package. Verify with: fab --version
 ```
 
