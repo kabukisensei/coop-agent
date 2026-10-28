@@ -44,8 +44,8 @@ readable in one place.
 | `coop-schema-compare` | the manifest pin | Copyright (c) 2026 Aaron Jennings | MIT | Cooptimize's own companion. |
 | `coop-sql-source-control` (`coop-sqlsc`) | the manifest pin | Copyright (c) 2026 Aaron Jennings | Proprietary (Cooptimize) | Cooptimize's own companion; its release wheel is bundled from its GitHub release, not PyPI. |
 | `@earendil-works/pi-coding-agent` (Pi) | 1.2.0 | Copyright (c) 2025 Mario Zechner | MIT | Redistributed in the window installer. The 1.2.0 npm tarball carries no LICENSE file, so this line is the notice that accompanies the copy: Permission is hereby granted, free of charge, to any person obtaining a copy of this software, to deal in the Software without restriction, subject to the MIT License conditions; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. |
-| `pi-mcp-adapter` | 5.1.0 | Nico Bailon | MIT | Redistributed; upstream LICENSE kept. |
-| `pi-hermes-memory` | 0.9.10 | chandra447 | MIT | Redistributed; upstream LICENSE kept. |
+| `pi-mcp-adapter` | 5.4.0 | Nico Bailon | MIT | Redistributed; upstream LICENSE kept. |
+| `pi-hermes-memory` | 0.9.11 | chandra447 | MIT | Redistributed; upstream LICENSE kept. |
 | `pi-better-openai` | 0.1.22 | mattleong | MIT | Redistributed; upstream LICENSE kept. |
 | `pi-web-access` | 0.35.0 | Nico Bailon | MIT | Redistributed; upstream LICENSE kept. |
 | `@juicesharp/rpiv-ask-user-question`, `@juicesharp/rpiv-todo` | 2.12.0 | juicesharp | MIT | Redistributed; upstream LICENSE kept. |
