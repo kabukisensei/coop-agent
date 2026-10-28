@@ -23,13 +23,15 @@ assert.ok(!windowsCommand.includes("$args["), "Windows PowerShell 5.1 binding mu
 // Pick 6 (suite review 2026-10-26): the interpreter is looked for in Node first,
 // in Get-CoopFabricPython's order, so a native SQL call pays no PowerShell start.
 assert.deepEqual(mod.fabricPythonCandidates({ COOP_FABRIC_PYTHON: "/opt/fabric/python" }, "linux", "/home/u"), ["/opt/fabric/python"], "COOP_FABRIC_PYTHON alone when set");
+// The candidates are joined with the host's separator (path.join), so the
+// expected paths are too: the extended lane also runs this on Windows Git Bash.
 assert.deepEqual(
   mod.fabricPythonCandidates({ PIPX_HOME: "/x/pipx" }, "linux", "/home/u"),
-  ["/x/pipx/venvs/ms-fabric-cli/bin/python", "/home/u/.local/pipx/venvs/ms-fabric-cli/bin/python"],
+  [join("/x/pipx", "venvs", "ms-fabric-cli", "bin", "python"), join("/home/u", ".local", "pipx", "venvs", "ms-fabric-cli", "bin", "python")],
 );
 assert.deepEqual(
   mod.fabricPythonCandidates({ COOP_PIPX_HOME: "/fixtures/pipx", PIPX_HOME: "/x/pipx" }, "linux", "/home/u")[0],
-  "/fixtures/pipx/venvs/ms-fabric-cli/bin/python", "the test hook wins over the user's PIPX_HOME",
+  join("/fixtures/pipx", "venvs", "ms-fabric-cli", "bin", "python"), "the test hook wins over the user's PIPX_HOME",
 );
 const winLocal = String.raw`C:\Users\x\AppData\Local`;
 assert.deepEqual(
