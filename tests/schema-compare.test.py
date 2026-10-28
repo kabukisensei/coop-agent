@@ -138,13 +138,14 @@ def _alive(pid: int) -> bool:
         return False
     except PermissionError:
         return True
-    stat = Path(f"/proc/{pid}/stat")
-    if stat.is_file():
-        try:
-            return stat.read_text().rsplit(")", 1)[-1].split()[0] != "Z"
-        except (OSError, IndexError):
-            return True
-    return True
+    if not Path("/proc").is_dir():
+        return True
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[-1].split()[0] != "Z"
+    except (FileNotFoundError, ProcessLookupError):
+        return False  # reaped between the signal probe and the read
+    except (OSError, IndexError):
+        return True
 
 
 def write_stub(folder: Path, source: str) -> Path:
@@ -231,11 +232,13 @@ with tempfile.TemporaryDirectory() as tmp:
         package_pid = record.read()["pid"]
         helper.send_signal(signal.SIGTERM)
         assert helper.wait(timeout=5) == 143, helper.returncode
+        ended = False
         for _ in range(60):
             if not _alive(package_pid):
+                ended = True
                 break
             time.sleep(0.05)
-        assert not _alive(package_pid), "the package kept running after its helper was terminated"
+        assert ended, "the package kept running after its helper was terminated"
 
     # --- input shape before anything resolves -------------------------------------------
     with mock.patch.object(sq, "resolve_target", side_effect=AssertionError("no resolution for bad input")):
