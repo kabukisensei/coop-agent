@@ -470,6 +470,33 @@ export function registerSessionDefault(pi: ExtensionAPI, env: NodeJS.ProcessEnv 
   });
 }
 
+/**
+ * Let a caller that streams through `modelRegistry.getProvider("coop")` reach a
+ * routed model. Pi's provider for a virtual model refuses to stream ("Virtual
+ * model coop/auto must be routed before streaming"); only the registry's own
+ * `streamSimple` routes it (as a `direct` request). pi-lovely-rename 0.1.5 names
+ * sessions through `getProvider(model.provider).streamSimple`, so under
+ * coop/auto every auto-rename failed (dev VM, 2026-10-28). The wrap answers the
+ * coop provider with one whose streams go through the registry; every other
+ * provider, and Pi's own streaming (which never calls this method), is unchanged.
+ * Drop it once pi-lovely-rename streams through the registry.
+ */
+const routedRegistries = new WeakSet<object>();
+export function routeProviderStreams(registry: any): void {
+  if (!registry || typeof registry !== "object" || routedRegistries.has(registry)) return;
+  if (typeof registry.getProvider !== "function" || typeof registry.streamSimple !== "function") return;
+  routedRegistries.add(registry);
+  const getProvider = registry.getProvider.bind(registry);
+  registry.getProvider = (providerId: string) => {
+    const provider = getProvider(providerId);
+    if (!provider || providerId !== ROUTER_PROVIDER) return provider;
+    return {
+      ...provider,
+      streamSimple: (model: any, context: any, options?: any) => registry.streamSimple(model, context, options),
+    };
+  };
+}
+
 export default function coopRouter(pi: ExtensionAPI) {
   registerSessionDefault(pi);
   if (typeof (pi as any).registerVirtualModel !== "function") return; // Pi before 0.99: no virtual models
@@ -491,6 +518,7 @@ export default function coopRouter(pi: ExtensionAPI) {
       return routeRequest(request as RouteInput, ctx.modelRegistry as unknown as Registry, process.env, typedPrompt);
     },
   });
+  if (typeof (pi as any).on === "function") pi.on("session_start", async (_event: any, ctx: any) => { routeProviderStreams(ctx?.modelRegistry); });
   pi.registerCommand("router", {
     description: "Show what coop/auto routes to: the model per tier and this session's phase",
     handler: async (_args, ctx) => {
