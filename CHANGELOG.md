@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.38.10] — 2026-10-28
+
 ### Changed
 - **Pins.** coop-sql-source-control 1.0.11. Tables are scripted and read in the shape SSMS 22 / DacFx writes (Create Project from Database, Schema Compare's Update), so a table change made in SSMS is applied by get-latest and coop's table commits no longer reformat SSMS's files. The sourced wheel's tag, asset and SHA-256 follow the v1.0.11 release.
 
