@@ -799,6 +799,13 @@ agent runs validation freely; **deploy / run-deployment is approval-gated**
 (`approval_policy.ask_first` includes "fabric-cicd deploy / run deployment", and
 deploying to test/prod is in `never_without_explicit_instruction`).
 
+The guardrails enforce it (`fabric-cicd-shell`, and the same check inside the
+PowerShell rule): a Python run whose script, `-m` module, `-c` code or heredoc
+(or a local module the script imports) calls `publish_all_items`,
+`unpublish_all_orphan_items` or `deploy_with_config` is a deploy. Dev or test asks
+every time; production, or a run that names no target, is blocked. The full rule
+is in `docs/guardrails-reference.md` ("fabric-cicd deploys").
+
 ---
 
 ## MCP read-only action policy

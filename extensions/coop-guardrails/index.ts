@@ -2624,6 +2624,153 @@ export function fabricWriteLabel(cmd: string): string | null {
   return null;
 }
 
+// --- fabric-cicd deploys from the shell -------------------------------------------
+// fabric-cicd is a Python LIBRARY (no CLI): a deployment script imports it and
+// calls publish_all_items / unpublish_all_orphan_items / deploy_with_config, so
+// none of the command-word checks above ever see a deploy. The check reads what
+// Python is about to run (the script, `-m` module, `-c` code or heredoc, and the
+// local modules the script imports, one level deep) for those calls. A deploy
+// goes to dev or test only and asks every time; anything naming production, or
+// not saying where it deploys, is blocked: production is a person's release.
+
+const FABRIC_CICD_PUBLISH = /\b(publish_all_items|unpublish_all_orphan_items|deploy_with_config)\b/;
+const FABRIC_CICD_UNPUBLISH = /\bunpublish_all_orphan_items\b/;
+const PYTHON_PROGRAM = /^(python|pythonw|py)(\d+(\.\d+)*)?$/;
+// `uv run`, `poetry run`, ... run the Python program (or `.py` file) that follows.
+const PYTHON_RUNNERS = new Set(["uv", "poetry", "pipenv", "hatch", "pdm", "conda", "pixi"]);
+const PYTHON_SOURCE_MAX_BYTES = 1024 * 1024;
+
+/** A fabric-cicd deploy found in a shell command: its label, the Python files read
+ *  to find it, their text, and whether it also deletes (unpublishes) items. */
+export type FabricCicdRun = { label: string; scripts: string[]; source: string; deletes: boolean };
+
+function readPythonSource(path: string): string | null {
+  try {
+    const st = statSync(path);
+    if (!st.isFile() || st.size > PYTHON_SOURCE_MAX_BYTES) return null;
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+/** The modules a script imports that sit beside it (`import deploy_lib`,
+ *  `from helpers.ws import publish`, `from .lib import x`). */
+function localPythonImports(source: string, dir: string): string[] {
+  const out: string[] = [];
+  for (const m of source.matchAll(/^[ \t]*(?:from[ \t]+\.*([A-Za-z_][\w.]*)[ \t]+import|import[ \t]+([A-Za-z_][\w.]*(?:[ \t]*,[ \t]*[A-Za-z_][\w.]*)*))/gm)) {
+    const names = m[1] ? [m[1]] : (m[2] || "").split(",").map((s) => s.trim());
+    for (const name of names) {
+      const rel = name.split(".").join("/");
+      for (const candidate of [join(dir, `${rel}.py`), join(dir, rel, "__init__.py")]) {
+        if (existsSync(candidate) && !out.includes(candidate)) out.push(candidate);
+      }
+    }
+  }
+  return out;
+}
+
+/** The fabric-cicd deploy a shell command runs, or null. Only a command that runs
+ *  Python (`python`, `py`, `python3.12`, a full path to one, `uv run`/`poetry run`,
+ *  or a `.py` file directly) is read; `cd <dir>` before it moves where relative
+ *  script paths resolve. Mentioning the calls (`grep publish_all_items`) is not a
+ *  deploy. A script that cannot be read is not judged by this check. */
+export function fabricCicdRun(cmd: string, cwd: string): FabricCicdRun | null {
+  let dir = cwd;
+  let runsPython = false;
+  const files: string[] = [];
+  const addFile = (raw: string, base: string) => {
+    // `.\deploy.py` from PowerShell: Windows takes either separator.
+    const path = raw.replace(/\\/g, "/");
+    const full = isAbsolute(path) || /^[A-Za-z]:[\\/]/.test(path) ? path : resolve(base, path);
+    if (!files.includes(full)) files.push(full);
+  };
+  for (const { segment } of splitShellSegments(cmd)) {
+    const word = resolveCommandWord(segment);
+    if (!word) continue;
+    const toks = tokenizeArgs(segment.slice(word.charOffset));
+    let name = word.name;
+    if (/^(cd|pushd|chdir|set-location|sl)$/.test(name)) {
+      const target = toks.slice(1).find((t) => !t.startsWith("-"));
+      if (target && !/[$~`%]/.test(target)) dir = resolve(dir, target);
+      continue;
+    }
+    let i = 0;
+    if (PYTHON_RUNNERS.has(name) && (toks[1] || "").toLowerCase() === "run") {
+      i = 2;
+      while (i < toks.length && toks[i].startsWith("-")) i++;
+      name = programName(toks[i] || "");
+    }
+    const direct = /\.py$/i.test(toks[i] || "");
+    if (!direct && !PYTHON_PROGRAM.test(name)) continue;
+    runsPython = true;
+    if (direct) { addFile(toks[i], dir); continue; }
+    for (let j = i + 1; j < toks.length; j++) {
+      const t = toks[j];
+      if (t === "-c") break; // the code is in the command text, read below
+      if (t === "-m") {
+        const rel = (toks[j + 1] || "").split(".").join("/");
+        if (rel) { addFile(`${rel}.py`, dir); addFile(join(rel, "__main__.py"), dir); }
+        break;
+      }
+      if (/^-[XW]$/.test(t)) { j++; continue; }
+      if (t.startsWith("-")) continue;
+      addFile(t, dir);
+      break; // the script; what follows are its own arguments
+    }
+  }
+  if (!runsPython) return null;
+  // `python < deploy.py`, `cat deploy.py | python`: any other .py the command names.
+  for (const t of tokenizeArgs(cmd)) if (/\.py$/i.test(t)) addFile(t.replace(/^[<>]+/, ""), cwd);
+  const scripts: string[] = [];
+  const sources: string[] = [];
+  const read = (path: string) => {
+    if (scripts.includes(path)) return null;
+    const source = readPythonSource(path);
+    if (source === null) return null;
+    scripts.push(path);
+    sources.push(source);
+    return source;
+  };
+  for (const file of files) {
+    const source = read(file);
+    if (source !== null) for (const dep of localPythonImports(source, dirname(file))) read(dep);
+  }
+  const text = [cmd, ...sources].join("\n");
+  if (!FABRIC_CICD_PUBLISH.test(text)) return null;
+  const deletes = FABRIC_CICD_UNPUBLISH.test(text);
+  return { label: deletes ? "fabric-cicd publish (also unpublishes orphan items)" : "fabric-cicd publish", scripts, source: sources.join("\n"), deletes };
+}
+
+/** Where a fabric-cicd deploy goes, judged from the command line first (a
+ *  multi-environment script takes its environment as an argument) and the
+ *  script's string literals second. Blocked: the command names production; the
+ *  script names production and the command names no dev or test; nothing says
+ *  where it deploys. Asked: the command names dev or test (or the contract's dev
+ *  workspace id), or the script names the contract's dev workspace id and no
+ *  production. */
+export function fabricCicdTarget(
+  cmd: string,
+  source: string,
+  governance: Pick<SessionGovernance, "devWorkspaceId" | "productionNames">,
+): { action: "block" | "ask"; reason: string; note: string } {
+  const values = commandValues(cmd);
+  if (PRODUCTION_WORD.test(cmd) || namesContractProduction(values, governance.productionNames)) {
+    return { action: "block", reason: "the command names production", note: "" };
+  }
+  const literals = [...source.matchAll(/"([^"\n]*)"|'([^'\n]*)'/g)].map((m) => m[1] ?? m[2] ?? "");
+  const scriptProd = literals.some((v) => PRODUCTION_WORD.test(v)) || namesContractProduction(literals, governance.productionNames);
+  const dev = governance.devWorkspaceId;
+  const named = values.map((v) => v.trim().toLowerCase()).find((v) => v === "dev" || v === "test" || (!!dev && v.includes(dev)));
+  if (named) {
+    const where = named === "dev" || named === "test" ? named : `the contract's dev workspace (${dev})`;
+    return { action: "ask", reason: "", note: `Environment on the command line: ${where}.${scriptProd ? "\nWARNING: the script also names production; check that it takes its workspace from this argument." : ""}` };
+  }
+  if (scriptProd) return { action: "block", reason: "the script names production and the command does not name dev or test", note: "" };
+  if (dev && `${cmd}\n${source}`.toLowerCase().includes(dev)) return { action: "ask", reason: "", note: `The script names the contract's dev workspace (${dev}).` };
+  return { action: "block", reason: "nothing says which workspace it deploys to; name dev or test on the command line (for example --environment dev)", note: "" };
+}
+
 // --- Power BI Desktop reload guard (S31) ------------------------------------------
 // The Desktop Bridge's `reload` discards unsaved Desktop edits unconditionally (its
 // README says so), and the Report Authoring CLI's `preview` reloads the live window
@@ -3216,6 +3363,10 @@ const powershellRule: Rule = {
       audit({ cwd: ctx.cwd, kind: "danger-confirm", tool, decision: "blocked", label: "production unlock", detail: "prod-unlock-self" });
       return block(PROD_UNLOCK_SELF_BLOCK);
     }
+    // A fabric-cicd deploy is judged the same way from PowerShell: production is
+    // blocked here too, and the deploy question replaces the generic one.
+    const cicd = await checkFabricCicd(ctx, tool, command, session);
+    if (cicd) return cicd;
     const shownCommand = command.length > 600 ? `${command.slice(0, 600)}…` : command;
     const refused = await session.ask(ctx, {
       kind: "danger-confirm", tool, label: "PowerShell command", detail: "powershell",
@@ -3724,6 +3875,39 @@ const fabricWriteRule: Rule = {
   },
 };
 
+// fabric-cicd deploy from the shell: the deployment script is read for its
+// publish calls (fabricCicdRun). Dev or test asks every time (no session
+// approval: each run moves items); production, or no named target, is blocked.
+// Null when the command runs no fabric-cicd deploy; allow once the person said yes.
+async function checkFabricCicd(ctx: ExtensionContext, tool: string, command: string, session: Session): Promise<Decision | null> {
+  const run = fabricCicdRun(command, ctx.cwd);
+  if (!run) return null;
+  const target = fabricCicdTarget(command, run.source, session.governance(ctx));
+  if (target.action === "block") {
+    audit({ cwd: ctx.cwd, kind: "danger-confirm", tool, decision: "blocked", label: run.label, detail: target.reason });
+    return block(`coop guardrails: blocked ${run.label}; ${target.reason}. coop deploys Fabric items to dev or test only, with approval each time; a production deploy is a person's, from their own terminal or the release pipeline.`);
+  }
+  const scripts = run.scripts.length ? `  Script: ${run.scripts.join(", ")}\n` : "";
+  const deletes = run.deletes ? "It also DELETES items in the workspace that are not in the repository (unpublish_all_orphan_items).\n" : "";
+  const refused = await session.ask(ctx, {
+    kind: "danger-confirm", tool, label: run.label, detail: run.label,
+    question: `Fabric deploy through fabric-cicd (${run.label}):\n  ${shown(command)}\n${scripts}${target.note}\n${deletes}coop deploys to dev or test only and asks every time. Run it?`,
+    headless: `coop guardrails: blocked ${run.label}; approval is unavailable in headless mode.`,
+    declined: `coop guardrails: blocked ${run.label} (you declined).`,
+  });
+  return refused || ALLOW;
+}
+
+const fabricCicdRule: Rule = {
+  id: "fabric-cicd-shell",
+  applies: isShell,
+  check: async ({ ctx, command }, session) => {
+    // An approved deploy still passes through the shell rules after this one.
+    const decision = await checkFabricCicd(ctx, "bash", command, session);
+    return decision === null || decision.action === "allow" ? PASS : decision;
+  },
+};
+
 // Power BI Desktop reload (S31): read `powerbi-desktop status` first; ask when
 // the targeted instance has unsaved changes (the bridge would discard them),
 // block when it cannot be verified; fail closed without UI.
@@ -3779,6 +3963,7 @@ export const RULES: readonly Rule[] = Object.freeze([
   sqlscShellRule,
   destructiveRule,
   fabricWriteRule,
+  fabricCicdRule,
   desktopReloadRule,
 ]);
 /** The rule ids in order (tests pin the order). */
