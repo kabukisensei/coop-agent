@@ -29,7 +29,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: '22.19.0'
+          node-version: '22.23.4'
       - name: install electron-builder (desktop/installer, pinned)
         shell: pwsh
         working-directory: desktop/installer
@@ -81,7 +81,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: '22.19.0'
+          node-version: '22.23.4'
       - uses: actions/download-artifact@v4
         with:
           name: coop-window-installer
@@ -144,7 +144,7 @@ jobs:
           fetch-depth: 0   # the guard below needs origin/main's history
       - uses: actions/setup-node@v5
         with:
-          node-version: '22.19.0'
+          node-version: '22.23.4'
 
       # `coop release` tags only from main == origin/main and pushes branch + tag
       # atomically, but a tag pushed by hand skips that. Teammates follow release
