@@ -5,6 +5,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Security
+
+- **Pins.** pi-mcp-adapter 5.4.0 (from 5.1.0): its MCP client SDK moves to 2.3.1, which fixes GHSA-6qxp-vccf-f47h (a malicious MCP server could collect tokens saved from an earlier sign-in) and GHSA-6prh-2h8m-c8cw (cross-origin redirects re-sent headers). It also stops Pi in RPC mode (the coop window) hanging at startup on an unapproved project MCP server, and stops re-asking a project server's approval when a Windows path is spelled with different capitalization. pi-hermes-memory 0.9.11 (from 0.9.10): its background memory helpers (`pi -p` children) now run with only the three memory tools and no MCP tools, where a fallback helper could reach shell and file tools outside coop's guardrails. The extension lock is regenerated, which also moves body-parser, fast-uri and qs past their advisories.
+
 ## [0.38.10] — 2026-10-28
 
 ### Changed
