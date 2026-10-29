@@ -23,6 +23,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { bootstrapProcess, bundledCoop, consoleTail, doctorReport, findCoop, folderArgument, launcherPath, packagedPaths, packagedRuntime } from "../desktop/lib/bootstrap.mjs";
 import { consoleProcess } from "../desktop/lib/terminal.mjs";
+import { formatElapsed, parseSetupStatus, setupView } from "../desktop/lib/setup-status.mjs";
 import { APP_ID, taskbarDetails } from "../desktop/lib/app-identity.mjs";
 import { loadSettings, saveSettings } from "../desktop/lib/settings.mjs";
 import { DOWNLOAD_HOSTS, NODE_SHIMS_DROPPED, PIPX_SHIM, bundledDownloads, fetchSourcedWheel, hasWheel, sourcedWheelUrl, longestPath, nodeDownload, prefixPackages, pythonToolSources, pythonToolSpecs, prunable, pruneTree, readVersion, runtimeMarker, shellInvocation, shippedPackage, snapshotIncludes, stage, stageEntries, stagePackage } from "../desktop/scripts/build-installer.mjs";
@@ -123,6 +124,64 @@ await check("bootstrapProcess: a console running `coop desktop --app <exe>`, pat
   assert.throws(() => bootstrapProcess({ coop: "C:\\c.cmd", app: "C:\\a.exe", cwd: "C:\\w\n", systemRoot: "C:\\Windows" }), /cwd/);
 });
 
+await check("bootstrapProcess: the setup's progress file travels in COOP_BOOT_STATUS, never an inherited phase", () => {
+  const status = "C:\\Users\\me\\.coop\\desktop\\setup-status.json";
+  const proc = bootstrapProcess({ coop: "C:\\c.cmd", app: "C:\\a.exe", cwd: "C:\\w", status, env: { COOP_BOOT_PHASE: "old", COOP_BOOT_STEP: "3", COOP_BOOT_STEPS: "8" }, systemRoot: "C:\\Windows" });
+  assert.equal(proc.options.env.COOP_BOOT_STATUS, status);
+  for (const key of ["COOP_BOOT_PHASE", "COOP_BOOT_STEP", "COOP_BOOT_STEPS"]) assert.equal(proc.options.env[key], undefined, `${key} starts empty`);
+  assert.equal(bootstrapProcess({ coop: "C:\\c.cmd", app: "C:\\a.exe", cwd: "C:\\w", env: { COOP_BOOT_STATUS: "stale" }, systemRoot: "C:\\Windows" }).options.env.COOP_BOOT_STATUS, undefined, "no status file: no stale COOP_BOOT_STATUS");
+  assert.throws(() => bootstrapProcess({ coop: "C:\\c.cmd", app: "C:\\a.exe", cwd: "C:\\w", status: "setup-status.json", systemRoot: "C:\\Windows" }), /status is not an absolute path/);
+});
+
+await check("setup progress: the status file read and worded for the setup window", () => {
+  const since = "2026-10-29T13:00:00.000Z";
+  const at = Date.parse(since);
+  const raw = JSON.stringify({ schema: 1, step: 4, steps: 8, phase: "Installing coop's Python tools", detail: "Python tools (3 of 7): coop-sql-source-control 1.0.12", since });
+  const status = parseSetupStatus(`\uFEFF${raw}`);
+  assert.deepEqual(status, { step: 4, steps: 8, phase: "Installing coop's Python tools", detail: "Python tools (3 of 7): coop-sql-source-control 1.0.12", since: at });
+  const view = setupView(status, { startedAt: at - 125000, now: at + 42000, lines: ["13:00:01 a", "", "13:00:02 b"] });
+  assert.equal(view.stepLine, "Step 4 of 8: Installing coop's Python tools");
+  assert.equal(view.detailLine, "Python tools (3 of 7): coop-sql-source-control 1.0.12 (42s)");
+  assert.equal(view.elapsed, "2m 47s");
+  assert.equal(view.fraction, 3.5 / 8);
+  assert.deepEqual(view.lines, ["13:00:01 a", "13:00:02 b"]);
+  // A phase with no count (the refresh, "Opening the coop window"): no step number, a moving bar.
+  const open = setupView(parseSetupStatus(JSON.stringify({ schema: 1, step: 0, steps: 0, phase: "Opening the coop window", detail: "", since })), { startedAt: at, now: at });
+  assert.equal(open.stepLine, "Opening the coop window");
+  assert.equal(open.detailLine, "");
+  assert.equal(open.fraction, null);
+  assert.equal(setupView(null, { startedAt: at, now: at + 1000 }).stepLine, "Starting coop");
+  // Not a status: nothing to show (the window does not open).
+  for (const bad of ["", "{", "[]", JSON.stringify({ schema: 2, phase: "x" }), JSON.stringify({ schema: 1, phase: "" }), JSON.stringify({ schema: 1, phase: 3 })]) assert.equal(parseSetupStatus(bad), null, bad);
+  // Counts are bounded and control characters never reach the page.
+  const odd = parseSetupStatus(JSON.stringify({ schema: 1, step: 9, steps: 3, phase: "a\u001b[31mb", detail: "x\ny", since: "never" }));
+  assert.deepEqual(odd, { step: 3, steps: 3, phase: "a [31mb", detail: "x y", since: 0 });
+  assert.equal(parseSetupStatus(JSON.stringify({ schema: 1, step: -1, steps: 1.5, phase: "p" })).steps, 0);
+  assert.equal(formatElapsed(0), "0s");
+  assert.equal(formatElapsed(59999), "59s");
+  assert.equal(formatElapsed(3600000 + 120000), "1h 02m");
+});
+
+await check("setup progress: the window, its page and its bridge", () => {
+  const main = readFileSync(join(ROOT, "desktop", "main.mjs"), "utf8");
+  const preload = readFileSync(join(ROOT, "desktop", "preload.cjs"), "utf8");
+  // The console gets the file to write; the window polls it and closes once the coop window opens.
+  assert.match(main, /bootstrapProcess\(\{[^}]*status: setupStatusFile/);
+  assert.match(main, /startSetupProgress\(setupStatusFile, launchLog\);\s*const child = spawn/);
+  assert.match(main, /function setupTick\(\) \{\s*if \(frames\.size\) \{ stopSetupProgress\(\); return; \}/);
+  assert.match(main, /loadURL\(`\$\{APP_ORIGIN\}\/setup\.html`\)/);
+  // Closing it early never ends the launch: the console still hands its spec over.
+  assert.match(main, /app\.on\("window-all-closed", \(\) => \{ if \(!picker\.awaitingSpec && !booting\) app\.quit\(\); \}\)/);
+  assert.match(main, /setupHandle\("coop:setup-state"/);
+  assert.match(preload, /setupState: \(\) => ipcRenderer\.invoke\("coop:setup-state"\)/);
+  assert.match(preload, /onSetupStatus: listen\("coop:setup-status"\)/);
+  const page = readFileSync(join(ROOT, "desktop", "renderer", "setup.html"), "utf8");
+  assert.match(page, /<title>coop - setting up<\/title>/);
+  assert.match(page, /<script type="module" src="setup\.mjs"><\/script>/);
+  for (const id of ["setupStep", "setupBar", "setupFill", "setupDetail", "setupElapsed", "setupLines"]) assert.match(page, new RegExp(`id="${id}"`), id);
+  assert.ok(stageEntries().includes("desktop/renderer/"), "the page ships with the window");
+});
+
 await check("Open folder from the package passes the exe through COOP_TERMINAL_APP", () => {
   const packaged = consoleProcess({ mode: "window", coop: "C:\\coop\\bin\\coop.ps1", cwd: "C:\\w", app: "C:\\p\\coop.exe", env: {}, systemRoot: "C:\\Windows" });
   assert.equal(packaged.options.env.COOP_TERMINAL_APP, "C:\\p\\coop.exe");
@@ -216,6 +275,12 @@ await check("electron-builder: NSIS per-machine with elevation (F3), data kept, 
   // F3: what the installer says.
   assert.match(nsh, /!macro customWelcomePage[\s\S]*MUI_WELCOMEPAGE_TEXT "coop installs once for every account on this computer\.\$\\r\$\\n\$\\r\$\\nEach Windows account keeps its own client's sessions, memory and backups under its user folder\.\$\\r\$\\n\$\\r\$\\nUpdates install themselves overnight\./);
   assert.match(nsh, /!macro customFinishPage[\s\S]*MUI_PAGE_FINISH/);
+  // What the installer says while it works: electron-builder starts with SetDetailsPrint none, so each step turns the status line on for itself.
+  assert.match(nsh, /!macro coopStep TEXT\s+SetDetailsPrint both\s+DetailPrint "\$\{TEXT\}"\s+SetDetailsPrint listonly\s+!macroend/);
+  const checkRunning = nsh.split("!macro customCheckAppRunning")[1].split("!macroend")[0];
+  assert.match(checkRunning, /Step 1 of 3[\s\S]*!insertmacro IS_POWERSHELL_AVAILABLE\s+!insertmacro _CHECK_APP_RUNNING[\s\S]*Step 2 of 3/, "electron-builder's own running-app check still runs, between steps 1 and 2");
+  assert.match(checkRunning, /!ifndef BUILD_UNINSTALLER/);
+  assert.match(nsh, /!macro customInstall[\s\S]*coopStep "Step 3 of 3: [^"]*"\s+SetDetailsPrint both\s+!insertmacro coopPowerShell \$R9\s+nsExec::ExecToLog[^\n]*machine-install\.ps1/);
   for (const script of ["scripts/machine-install.ps1", "scripts/auto-update.ps1"]) {
     assert.ok(existsSync(join(ROOT, script)) && snapshotIncludes(script), `${script} ships in the snapshot`);
   }

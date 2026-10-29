@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en" data-theme="modern-dark" data-style="modern">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>coop - setting up</title>
+  <link rel="stylesheet" href="styles/themes.css">
+  <link rel="stylesheet" href="styles/app.css">
+  <script type="module" src="setup.mjs"></script>
+</head>
+<body class="picker-body">
+  <main class="picker setup" aria-label="Setting up coop">
+    <header class="picker-head">
+      <span class="brand"><span class="brand-mark" aria-hidden="true"></span>coop</span>
+      <h1 class="picker-title">Setting up coop for this account</h1>
+      <p class="picker-lead">The first launch after an install or an update installs coop's tools for your Windows account. It can take several minutes; the coop window opens when it finishes.</p>
+    </header>
+    <section class="setup-now" aria-live="polite">
+      <p id="setupStep" class="setup-step">Starting coop</p>
+      <div class="setup-bar" id="setupBar" role="progressbar" aria-label="Setup progress" aria-valuemin="0" aria-valuemax="100"><span id="setupFill"></span></div>
+      <p id="setupDetail" class="setup-detail"></p>
+      <p class="setup-elapsed">Running for <span id="setupElapsed">0s</span></p>
+    </section>
+    <pre id="setupLines" class="setup-lines" aria-label="The setup's latest lines"></pre>
+    <footer class="picker-foot">
+      <span class="setup-note">Closing this window does not stop the setup.</span>
+    </footer>
+  </main>
+</body>
+</html>

@@ -5,6 +5,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+- **The install says what it is doing.** The installer's page named no step (electron-builder hides its status line); it now names three, with the longest, copying the program files, called out, and the last one shows each machine setup line as it runs (the coop command, the ODBC driver, the update task). Each account's first launch, and a new version's refresh, opens a **coop - setting up** window: the step ("Step 4 of 8: Installing coop's Python tools"), the item inside it ("Python tools (3 of 7): coop-sql-source-control 1.0.12", "Extensions (2 of 9): pi-mcp-adapter 5.4.0"), how long each has run, and the console's last lines. It closes when the coop window opens; closing it early does not stop the setup. The terminal's `coop install` counts its Python tools the same way.
+
 ### Fixed
 - **The window's first launch finishes again when a tool moves to coop's Python.** The probe install that proves a tool can move to coop's Python (#441) runs `pipx install --suffix _coopnext ...`, and coop read `_coopnext` as a package name, so it did not point pip at the window's bundled wheels. pip went to PyPI, where coop-sql-source-control is not published, the probe failed, setup ended "setup did not finish" and every launch ran the multi-minute setup again (dev VM, 2026-10-29). An offline machine failed all three tools the same way. coop now steps over the value of `--suffix` and pipx's other value-taking options before it checks the package pins.
 

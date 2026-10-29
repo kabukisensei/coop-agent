@@ -1678,6 +1678,48 @@ function Coop-Err  { param([string]$m) Coop-Emit "$($script:C_RED)$($script:G_CR
 function Coop-Die  { param([string]$m) Coop-Err $m; exit 1 }
 function Coop-Head { param([string]$m) Coop-Emit "`n$($script:C_BOLD)$($script:C_NAVY)$m$($script:C_RST)" }
 
+# --- The window's setup progress (COOP_BOOT_STATUS) ---------------------------
+# coop.exe sets COOP_BOOT_STATUS for its setup console: a small JSON file its
+# "Setting up coop" window reads twice a second, so a first launch that takes
+# minutes says what it is doing ("Step 4 of 8: Installing coop's Python tools",
+# "Python tools (3 of 7): coop-sql-source-control 1.0.12"). The phase travels
+# in COOP_BOOT_PHASE/_STEP/_STEPS too, so a child script (sync.ps1 under
+# install.ps1) names its items under its parent's step. Written whole to a temp
+# file and moved over, so the window never reads half of it; best effort and
+# silent, so nothing here can fail a setup. No file without COOP_BOOT_STATUS.
+function Write-CoopSetupStatus([string]$Detail) {
+  $path = [string]$env:COOP_BOOT_STATUS
+  if (-not $path) { return }
+  $step = 0; $steps = 0
+  [void][int]::TryParse([string]$env:COOP_BOOT_STEP, [ref]$step)
+  [void][int]::TryParse([string]$env:COOP_BOOT_STEPS, [ref]$steps)
+  $status = [ordered]@{
+    schema = 1
+    step   = $step
+    steps  = $steps
+    phase  = [string]$env:COOP_BOOT_PHASE
+    detail = $Detail
+    since  = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
+  }
+  try {
+    $json = $status | ConvertTo-Json -Compress
+    $tmp = "$path.$PID.tmp"
+    [System.IO.File]::WriteAllText($tmp, $json, (New-Object System.Text.UTF8Encoding $false))
+    try { Move-Item -LiteralPath $tmp -Destination $path -Force -ErrorAction Stop }
+    catch { [System.IO.File]::WriteAllText($path, $json, (New-Object System.Text.UTF8Encoding $false)); Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+  } catch { }
+}
+# A new step: "Step $Step of $Steps: $Phase" (0 of 0 is a phase with no count).
+function Set-CoopSetupPhase([int]$Step, [int]$Steps, [string]$Phase, [string]$Detail = '') {
+  if (-not $env:COOP_BOOT_STATUS) { return }
+  $env:COOP_BOOT_STEP = [string]$Step
+  $env:COOP_BOOT_STEPS = [string]$Steps
+  $env:COOP_BOOT_PHASE = $Phase
+  Write-CoopSetupStatus $Detail
+}
+# The item inside the current step, e.g. "Python tools (3 of 7): sqlsc 1.0.12".
+function Set-CoopSetupDetail([string]$Detail) { Write-CoopSetupStatus $Detail }
+
 # --- Small utilities ----------------------------------------------------------
 # Is a command available on PATH?
 function Test-Have { param([string]$Name) [bool](Get-Command $Name -ErrorAction SilentlyContinue) }
@@ -2387,9 +2429,14 @@ function Sync-CoopExtensionFleet {
     $failures += Remove-CoopRetiredExtensions -AgentDir $AgentDir
     # The window package ships the tree installed from the lock (D1d): seeded
     # here, every pin below is already in place and no `pi install` runs.
+    Set-CoopSetupDetail 'Extensions: copying the tested extension set from this package'
     [void](Restore-CoopBundledExtensions -AgentDir $AgentDir)
     $fleetSpecs = @(); $fleetNames = @(); $fleetPins = @(); $preVers = @{}
-    foreach ($ext in (Get-CoopFleetPlan).Extensions) {
+    $fleetPlan = @((Get-CoopFleetPlan).Extensions)
+    $fleetIndex = 0
+    foreach ($ext in $fleetPlan) {
+      $fleetIndex++
+      Set-CoopSetupDetail "Extensions ($fleetIndex of $($fleetPlan.Count)): $($ext.Name) $($ext.Pin)".TrimEnd()
       if (-not $ext.Spec -or -not $ext.Pin) { Coop-Warn "manifest pin missing for $($ext.Name)"; $failures++; continue }
       # Strip only the literal four-character `npm:` transport prefix (a longer
       # cut once produced `juicesharp/...` for scoped packages).

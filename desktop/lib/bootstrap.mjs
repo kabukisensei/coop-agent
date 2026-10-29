@@ -92,15 +92,20 @@ function checkPath(name, value) {
  * window on a folder. Windows only; the caller spawns it and waits for its
  * exit (a new console appears because the packaged app has none).
  */
-export function bootstrapProcess({ coop, app, cwd, log = "", env = process.env, systemRoot = env.SystemRoot }) {
+export function bootstrapProcess({ coop, app, cwd, log = "", status = "", env = process.env, systemRoot = env.SystemRoot }) {
   checkPath("coop", coop);
   checkPath("app", app);
   checkPath("cwd", cwd);
   checkPath("SystemRoot", systemRoot);
   if (log) checkPath("log", log);
+  if (status) checkPath("status", status);
   const powershell = win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const bootEnv = { ...env, COOP_BOOT_COOP: coop, COOP_BOOT_APP: app, COOP_BOOT_CWD: cwd };
   if (log) bootEnv.COOP_BOOT_LOG = log; else delete bootEnv.COOP_BOOT_LOG;
+  // The setup's progress file (lib/setup-status.mjs); a phase inherited from
+  // another coop's console never carries over into this one.
+  for (const key of ["COOP_BOOT_PHASE", "COOP_BOOT_STEP", "COOP_BOOT_STEPS"]) delete bootEnv[key];
+  if (status) bootEnv.COOP_BOOT_STATUS = status; else delete bootEnv.COOP_BOOT_STATUS;
   return {
     command: powershell,
     args: ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(SCRIPT, "utf16le").toString("base64")],
