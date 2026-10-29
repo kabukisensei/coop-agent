@@ -8,7 +8,7 @@
 // allowlist (lib/rpc-commands.mjs) before it reaches Pi.
 import { app, BrowserWindow, WebContentsView, ipcMain, protocol, session, dialog, shell, clipboard, nativeTheme, Menu, Notification, screen } from "electron";
 import { readFile } from "node:fs/promises";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, statSync } from "node:fs";
 import { hostname, userInfo } from "node:os";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -33,6 +33,7 @@ import { attach, forget, pruneStore, saveUpload, findPdfjs, AttachError, LIMITS 
 import { loadSplash } from "./lib/splash.mjs";
 import { vibesDir, loadVibes, vibeSets, userName, fillVibe, pickVibe } from "./lib/vibes.mjs";
 import { bootstrapProcess, consoleTail, doctorReport, findCoop, folderArgument, packagedPaths } from "./lib/bootstrap.mjs";
+import { parseSetupStatus, setupView } from "./lib/setup-status.mjs";
 import { describeProject, startFolder, windowTitle } from "./lib/projects.mjs";
 import { clientRecord, contractClientName, saveClientRecord } from "../lib/client-folder.mjs";
 import { searchProjectContract } from "../lib/standards.mjs";
@@ -148,8 +149,10 @@ function send(state, channel, payload) {
 function broadcast(channel, payload) {
   for (const state of windows.values()) send(state, channel, payload);
   for (const frame of frames.values()) sendStrip(frame, channel, payload);
-  // The project picker follows the theme too.
-  if (picker.win && !picker.win.isDestroyed()) { try { picker.win.webContents.send(channel, payload); } catch { /* gone */ } }
+  // The project picker and the setup progress follow the theme too.
+  for (const win of [picker.win, setup.win]) {
+    if (win && !win.isDestroyed()) { try { win.webContents.send(channel, payload); } catch { /* gone */ } }
+  }
 }
 
 function startPi(state, extraArgs = [], ownershipHeld = false) {
@@ -798,6 +801,92 @@ pickerHandle("coop:picker-choose", async (state) => {
 });
 pickerHandle("coop:picker-cancel", () => { finishPicker(""); return true; });
 
+// --- The first launch's progress (Aaron 2026-10-29) ---------------------------
+// While the setup console installs coop's tools for this account (minutes on a
+// first launch or a new version), a small window names the step and the item
+// it is on, how long each has run, and the console's last lines
+// (lib/setup-status.mjs). It appears only once the setup writes its status file
+// (a launch with nothing to set up never does) and closes when the coop window
+// opens; closing it early only hides it, and the setup goes on.
+const setup = { win: null, file: "", log: "", logOffset: 0, startedAt: 0, timer: null, dismissed: false };
+const SETUP_LOG_BYTES = 65536;
+
+function setupWindowState(event) {
+  if (!setup.win || setup.win.isDestroyed() || event.sender.id !== setup.win.webContents.id || !event.senderFrame || !isAppUrl(event.senderFrame.url)) throw new Error("not the setup progress window");
+  return setup;
+}
+
+/** This console's lines of the launch log (from where it started, at most the last 64 KB). */
+function setupLogText() {
+  let fd;
+  try {
+    const size = statSync(setup.log).size;
+    const from = Math.max(size < setup.logOffset ? 0 : setup.logOffset, size - SETUP_LOG_BYTES);
+    const buffer = Buffer.alloc(size - from);
+    fd = openSync(setup.log, "r");
+    readSync(fd, buffer, 0, buffer.length, from);
+    return buffer.toString("utf8");
+  } catch { return ""; } finally { if (fd !== undefined) try { closeSync(fd); } catch { /* closed */ } }
+}
+
+function readSetup() {
+  let status = null;
+  try { status = parseSetupStatus(readFileSync(setup.file, "utf8")); } catch { status = null; }
+  return { status, view: setupView(status, { startedAt: setup.startedAt, now: Date.now(), lines: consoleTail(setupLogText(), 6) }) };
+}
+
+function openSetupWindow() {
+  setup.win = new BrowserWindow({
+    width: 620,
+    height: 400,
+    minWidth: 460,
+    minHeight: 320,
+    title: "coop - setting up",
+    show: false,
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#0f1318" : "#f6f7f9",
+    autoHideMenuBar: true,
+    icon: existsSync(join(HERE, "..", "themes", "coop.ico")) ? join(HERE, "..", "themes", "coop.ico") : undefined,
+    webPreferences: { preload: join(HERE, "preload.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, devTools: process.env.COOP_DESKTOP_DEVTOOLS === "1" },
+  });
+  setTaskbarIdentity(setup.win);
+  setup.win.once("ready-to-show", () => { if (setup.win && !setup.win.isDestroyed()) setup.win.show(); });
+  setup.win.on("closed", () => { setup.win = null; setup.dismissed = true; });
+  setup.win.loadURL(`${APP_ORIGIN}/setup.html`);
+}
+
+function setupTick() {
+  if (frames.size) { stopSetupProgress(); return; }
+  const { status, view } = readSetup();
+  if (!status) return;
+  if (!setup.win && !setup.dismissed) openSetupWindow();
+  if (setup.win && !setup.win.isDestroyed()) { try { setup.win.webContents.send("coop:setup-status", view); } catch { /* loading */ } }
+}
+
+function startSetupProgress(file, log) {
+  stopSetupProgress();
+  try { rmSync(file, { force: true }); } catch { /* the console overwrites it */ }
+  let offset = 0;
+  try { offset = statSync(log).size; } catch { offset = 0; }
+  Object.assign(setup, { file, log, logOffset: offset, startedAt: Date.now(), dismissed: false });
+  setup.timer = setInterval(setupTick, 500);
+}
+
+function stopSetupProgress() {
+  if (setup.timer) clearInterval(setup.timer);
+  setup.timer = null;
+  const win = setup.win;
+  setup.win = null;
+  if (win && !win.isDestroyed()) win.close();
+}
+
+function setupHandle(channel, fn) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    try { return { success: true, data: await fn(setupWindowState(event), ...args) }; } catch (error) { return { success: false, error: error && error.message ? error.message : String(error) }; }
+  });
+}
+
+setupHandle("coop:setup-state", () => ({ theme: settings.theme, systemDark: nativeTheme.shouldUseDarkColors, view: readSetup().view }));
+
 // One restart at a time per window (#286): a second request during the
 // shutdown gets the same restart, and a window closed meanwhile starts nothing.
 handle("coop:restart", (state) => restartOnce(state, () => sessionArbiter.run(async () => {
@@ -1397,6 +1486,7 @@ async function bootstrap() {
   // VM, 2026-10-20: a second account's coop.exe exited 0 with no window and no
   // output). Cut to a fresh file past 1 MB.
   const launchLog = join(profileDir(process.env), "desktop", "launch.log");
+  const setupStatusFile = join(profileDir(process.env), "desktop", "setup-status.json");
   const logLine = (text) => {
     try {
       mkdirSync(dirname(launchLog), { recursive: true });
@@ -1407,7 +1497,7 @@ async function bootstrap() {
   const seeLog = `\n\nThe launch log: ${launchLog}`;
   let proc;
   try {
-    proc = bootstrapProcess({ coop, app: process.execPath, cwd: folder, log: launchLog, env: process.env });
+    proc = bootstrapProcess({ coop, app: process.execPath, cwd: folder, log: launchLog, status: setupStatusFile, env: process.env });
   } catch (error) {
     logLine(`could not build the setup console command: ${error.message}`);
     dialog.showErrorBox("coop", `coop could not start its window: ${error.message}${seeLog}`);
@@ -1416,10 +1506,12 @@ async function bootstrap() {
   }
   logLine(`starting coop's setup console (coop desktop) in ${folder}; its transcript follows`);
   const startedAt = Date.now();
+  startSetupProgress(setupStatusFile, launchLog);
   const child = spawn(proc.command, proc.args, proc.options);
   booting = true;
   child.on("error", (error) => {
     booting = false;
+    stopSetupProgress();
     logLine(`the setup console could not start: ${error.message}`);
     dialog.showErrorBox("coop", `coop could not start its window: ${error.message}${seeLog}`);
     app.quit();
@@ -1433,7 +1525,7 @@ async function bootstrap() {
     // clean or not, is never silent (D1k: a shortcut that "never opens"): the
     // box names the code and the log.
     setTimeout(() => {
-      if (frames.size || (picker.win && !picker.win.isDestroyed())) return;
+      if (frames.size || (picker.win && !picker.win.isDestroyed())) { stopSetupProgress(); return; }
       logLine(`no window opened after the setup console's exit (code ${code}); quitting`);
       // The console's own last lines (coop's message names the step that
       // failed), because the console closed with them.
@@ -1442,6 +1534,7 @@ async function bootstrap() {
       const saidBlock = said ? `\n\nThe setup console said:\n${said}` : "";
       if (code === 0) dialog.showErrorBox("coop", `coop finished starting but no window opened.${saidBlock}\n\nStart coop again from its shortcut. If it happens again, run coop doctor in a terminal and send its output and the launch log to your coop admin.${seeLog}`);
       else dialog.showErrorBox("coop", `coop could not start: its setup console exited with code ${code}.${saidBlock}\n\nStart coop again from its shortcut. If it happens again, send the launch log to your coop admin.${seeLog}`);
+      stopSetupProgress();
       app.quit();
     }, 5000);
   });
@@ -1460,7 +1553,11 @@ function onShortcutAgain() {
     return;
   }
   if (booting) {
-    dialog.showMessageBox({ type: "info", title: "coop", message: "coop is still starting.", detail: "The first launch after an install or an update sets up coop's tools for your account, which can take several minutes. Its console window (PowerShell, on the taskbar) shows each step; the coop window opens when it finishes." }).catch(() => {});
+    // The progress window, brought back if it was closed, once the setup has said where it is.
+    setup.dismissed = false;
+    if (setup.win && !setup.win.isDestroyed()) { setup.win.show(); setup.win.focus(); return; }
+    if (readSetup().status) { openSetupWindow(); return; }
+    dialog.showMessageBox({ type: "info", title: "coop", message: "coop is still starting.", detail: "The first launch after an install or an update sets up coop's tools for your account, which can take several minutes. The \"coop - setting up\" window shows each step; the coop window opens when it finishes." }).catch(() => {});
     return;
   }
   bootstrap();
@@ -1490,7 +1587,9 @@ if (!app.requestSingleInstanceLock({ spec: initial.spec, token: initial.token })
 
 // Closing the picker after a choice leaves no window until coop.ps1 hands
 // the spec over (bootstrap below); the child's exit timer quits if none comes.
-app.on("window-all-closed", () => { if (!picker.awaitingSpec) app.quit(); });
+// The setup progress window closed early does not end the launch either: the
+// console goes on and hands its spec over.
+app.on("window-all-closed", () => { if (!picker.awaitingSpec && !booting) app.quit(); });
 
 let stopping = false;
 app.on("before-quit", (event) => {

@@ -45,7 +45,7 @@ coop                   # launch the ready, branded Pi agent (after install + new
 > **Cooptimize business account**. If setup ran non-interactively, the first plain
 > `coop` launch prepares the same one-time sign-in automatically
 > (the no-training-on-our-data terms attach to the business subscription). Details:
-> [docs/onboarding.md §3.5](docs/onboarding.md#35-first-launch--sign-in-one-time).
+> [Onboarding, step 3](https://coop.aaron-jennings.cloud/docs/onboarding.html#step-3-sign-in-once).
 
 `coop install` installs `%LOCALAPPDATA%\coop\bin\coop.cmd`, adds that directory
 to the user `PATH`, and asks for a new terminal before the change appears (an
@@ -247,7 +247,7 @@ shows anything still missing.
 | **Pi** | installed globally via `npm` |
 | **Pi extensions** — `pi-mcp-adapter` (MCP), `pi-hermes-memory` (memory), `pi-better-openai` (plan usage limits), `pi-web-access` (web search/fetch — read-only), `@juicesharp/rpiv-ask-user-question` (structured questions), `@juicesharp/rpiv-todo` (the task list above the prompt), `@xl0/pi-lovely-rename` (automatic session names) | installed via `pi install` into coop's isolated agent dir (`~/.coop/agent`) |
 | **Coop companion extensions** — `coop-powerline` (footer/splash/vibes), `coop-tools` (native `data_doc`/`sql_impact`/`bpa_review` + standards-in-context + workflow prompts), `coop-profile`, `coop-guardrails` (policy enforcement), `coop-codemode` (Pi 1.x codemode scripts, with outside model calls off), `coop-router` (new sessions start on the newest Codex `sol` unless you picked another model, which is remembered; and the `coop/auto` model: plans on a large Codex model, implements on a small one; opt in with `/model coop/auto`) | shipped in this repo, loaded at launch via `pi -e` (nothing to install) |
-| **Standalone tools** — `coop-data-doc` (lineage docs), `coop-schema-compare` (the deterministic schema compare, the same engine as the native `schema_compare` tool, for people and CI) | installed via `pipx` from PyPI at the manifest pins |
+| **Standalone tools** — `coop-data-doc` (lineage docs), `coop-schema-compare` (the deterministic schema compare: the one engine behind the native `schema_compare` and `catalog_snapshot` tools, and a command for people and CI) | installed via `pipx` from PyPI at the manifest pins |
 | **`fabric-cicd`** (deployment validation) | a Python **library** (no CLI), injected into the Fabric CLI's env via `pipx inject ms-fabric-cli fabric-cicd` |
 | **Microsoft Fabric CLI** (`ms-fabric-cli` → `fab`) | installed via `pipx` |
 | **Power BI authoring tools** — Report Authoring CLI, Power BI Modeling MCP, and Windows-only Desktop Bridge | installed globally from manifest-pinned npm packages; Doctor requires Report Authoring and validates Modeling MCP arguments |
@@ -325,8 +325,8 @@ code with No as the default; `ask_user_question` questions are cards; three
 example prompts fill the composer; a Windows notification and taskbar flash
 arrive when coop finishes or asks while the window is in the background
 (Settings); and a File, Edit, View, Session and Help menu bar carries every
-window action (View > Menu bar hides it, Alt shows it). `desktop/PARITY.md` maps
-all of it to the terminal.
+window action (View > Menu bar hides it, Alt shows it). `desktop/PARITY.md` is
+the window's contract: what it runs itself, and what opens in the terminal.
 
 > `pi-powerline-footer` is **not** used. coop renders its own footer and splash via
 > `extensions/coop-powerline` (see [Footer & splash](#footer--splash)).
@@ -357,31 +357,29 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop onboard [--edit|--config-only|--reset|--json]` | Configure profile and managed integrations without launching the agent |
 | `coop onboard --machine [--reset|--json]` | Write the machine-level profile (your name and communication preference) once per machine, from an elevated terminal: on a VM with one Windows user per client, every user without a profile of its own starts from it, and a per-user profile wins field by field. It never holds a client, tenant, workspace or contract |
 | `coop profile [--edit|--reset|--json]` | Inspect or update the private user profile |
-| `coop context-budget [--json]` | Inspect the active model/context budget |
-| `coop teamai <status\|install\|init\|pull\|skills\|maintenance\|recall --query <text>\|compare --query <text>\|contribute --file <draft.md> [--title <text>] [--approve]>` | TeamAI shared-knowledge trial (master plan K1, K2, K3): the pinned `teamai-cli` isolated under `~/.coop/teamai`, explicit and bounded, one JSON document per call; `contribute` previews, and stages a review branch only with `--approve`; `skills`, `maintenance` and `compare` are read-only lifecycle views; off until `knowledge.teamai.enabled` is true |
 | `coop uninstall [--keep-tools] [--yes]` | Remove the launcher/shortcuts/user-PATH entry and isolated agent dir; by default also uninstall Pi, pipx tools/Fabric CLI, Power BI Report Authoring CLI, Power BI Modeling MCP, and the Windows Desktop Bridge. `--keep-tools` preserves all managed npm/pipx tools. Never touches repo clones, work repos, the rest of `~/.coop`, or personal `~/.pi/agent` |
 | `coop install [--edge] [--force] [--yes] [--prereqs auto] [--no-prereqs] [--no-fabric] [--platform fabric\|azure_sql\|both]` | Fresh-install/bootstrap (idempotent). Normal mode uses manifest pins; `--edge` deliberately takes upstream latest and is tools-only here (install never moves the repo). With a source arg, alias of `coop add` |
-| `coop bootstrap` | Same bootstrap as bare `coop install` |
-| `coop sync` | Ensure core Pi extensions are installed, place the governed MCP config non-destructively, refresh managed catalogs/team knowledge, and verify brand assets |
 | `coop data-doc [args]` | Run `coop-data-doc` (default: `build`) and summarize outputs |
 | `coop catalog snapshot\|status` | The committed dev catalog snapshot: `snapshot` reads the contract's dev/test target read-only and writes one file per table, view, procedure and function under the contract's snapshot folder (commit it); `status` says whether it exists and how old it is |
-| `coop fabric [args]` | Pass through to the Microsoft Fabric CLI (`fab`) |
 | `coop version` | Print `coop` + `pi` versions; a git checkout adds its `git describe` (for example `coop 0.23.5 (v0.23.5-21-gdf91630)`) |
 | `coop help` | Show usage |
-| **Authoring** | |
-| `coop init [dir] [--seed-docs] [--template] [--ci github|ado] [--yes]` | Guided minimal project-contract wizard (default `.`); beside several repositories it creates the client home repository `<client>-coop` and puts the file there; `--template` explicitly selects the full legacy template and `--seed-docs` generates/patches `coop-data-doc.yml` |
+| **Maintainers: `coop dev <cmd>`** (each also runs as the bare `coop <cmd>`) | |
+| `coop dev context-budget [--json]` | Inspect the active model/context budget |
+| `coop dev teamai <status\|install\|init\|pull\|skills\|maintenance\|recall --query <text>\|compare --query <text>\|contribute --file <draft.md> [--title <text>] [--approve]>` | TeamAI shared-knowledge trial (master plan K1, K2, K3): the pinned `teamai-cli` isolated under `~/.coop/teamai`, explicit and bounded, one JSON document per call; `contribute` previews, and stages a review branch only with `--approve`; `skills`, `maintenance` and `compare` are read-only lifecycle views; off until `knowledge.teamai.enabled` is true |
+| `coop dev sync` | Ensure core Pi extensions are installed, place the governed MCP config non-destructively, refresh managed catalogs/team knowledge, and verify brand assets |
+| `coop dev fabric [args]` | Pass through to the Microsoft Fabric CLI (`fab`) |
+| `coop dev init [dir] --seed-docs \| --template \| --ci github\|ado [--yes]` | The jobs around the project file (default `.`): `--seed-docs` generates/patches `coop-data-doc.yml` from the contract's `repositories:`, `--template` copies the full documented example (beside several repositories into the client home repository `<client>-coop`), `--ci` scaffolds a pipeline. The project wizard itself is `/setup-project` inside coop (or the window's Project pane) |
+| `coop dev new-skill <name> [--client\|--personal]` | Scaffold `skills/<name>/SKILL.md` here, or in the client tier (`.coop/skills/` beside the committed contract) or your personal tier (`~/.coop/skills/`) |
+| `coop dev new-prompt <name> [--client\|--personal]` | Scaffold `prompts/<name>.md` here, or in the client tier (`.coop/prompts/`) or your personal tier (`~/.coop/prompts/`) |
+| `coop dev release [--yes] [--no-check]` | Tag the release a merged release PR prepared (Actions -> release-pr bumps `VERSION`, the manifests and CHANGELOG): verifies a clean `main` at `origin/main`, one `X.Y.Z` across the tree, CI green on the commit and the pins, then tags `vX.Y.Z` and pushes the tag; `--yes` skips the confirm, `--no-check` the gates |
+| `coop dev list` | List installed Pi extensions (`pi list`) |
+| `coop dev config` | Open Pi's resource TUI (`pi config`) |
+| `coop dev add <source>` | Install a Pi extension (`pi install <source>`) |
+| `coop dev remove <source>` | Remove a Pi extension (`pi remove <source>`) |
+| `coop dev pi <args...>` | Raw escape hatch to `pi` |
 | `coop project home [<folder>]` | Show this Windows user's client folder record (client, folder, project file), or set it to `<folder>` (the folder given becomes the client folder; the project file is the one found in or above it) |
 | `coop folders` | Print the three places coop uses (this machine, this client, the repository) with their real paths; read-only |
 | `coop project status\|get\|share [--root <dir>] [--force]` | The shared project file from a shell: compare `.coop/project.yml` with the team's copy on origin, get the team's version (a fast-forward pull when nothing else would move, else only that file with a backup), or share yours (commits only that file and pushes the current branch; `--force` from a branch other than the default). Same code as `/project-get`, `/project-share` and the window's Project pane |
-| `coop new-skill <name> [--client\|--personal]` | Scaffold `skills/<name>/SKILL.md` here, or in the client tier (`.coop/skills/` beside the committed contract) or your personal tier (`~/.coop/skills/`) |
-| `coop new-prompt <name> [--client\|--personal]` | Scaffold `prompts/<name>.md` here, or in the client tier (`.coop/prompts/`) or your personal tier (`~/.coop/prompts/`) |
-| `coop release [patch\|minor\|major] [--yes] [--no-push] [--no-check]` | Cut a release — bump version, roll CHANGELOG, commit + tag, then push `main` and the tag atomically (default `patch`). Runs only on `main` at `origin/main`. Build-checks the extensions first (skip with `--no-check`); `--no-push` tags locally only; `--yes` skips the confirm |
-| **Pi management (aliased under coop)** | |
-| `coop list` | List installed Pi extensions (`pi list`) |
-| `coop config` | Open Pi's resource TUI (`pi config`) |
-| `coop add <source>` | Install a Pi extension (`pi install <source>`) |
-| `coop remove <source>` | Remove a Pi extension (`pi remove <source>`) |
-| `coop pi <args...>` | Raw escape hatch to `pi` |
 
 `coop data-doc` **flows straight through** to `coop-data-doc` — every subcommand
 (`check`, `upgrade`, the full `coop-data-doc setup` wizard, …) and the tool's own
@@ -416,7 +414,7 @@ The built docs live beside the committed project file (in the client home
 repository `<client>-coop` when the client has several repositories; master plan
 DR1): `/setup-docs` proposes that `data-docs` folder as the output from any of the
 client's repositories and offers coop's `coop-data-doc check` workflow for it
-(`templates/client-home/`). Layout: `docs/onboarding.md`.
+(`templates/client-home/`). Layout: [Onboarding, step 5](https://coop.aaron-jennings.cloud/docs/onboarding.html#step-5-start-in-your-repo).
 
 Project configuration has the same no-shell path: run **`/setup-project`** or
 choose **Start a client project** from `/start`. Every client has one
@@ -434,9 +432,13 @@ the window's Project pane do the same any time; `/project-get` brings the team's
 version in). Each session start says one line when the team's copy is newer or
 yours is unshared. A repository is not required: the wizard can start an engagement
 in discovery mode, record SQL-only or Power-BI-only coverage, and add sources later.
+Fabric ids are looked up by name from the Azure sign-in the launch already made
+(read-only): name the workspace and the SQL item and Enter keeps the ids the
+wizard found, or type a name where an id is asked; without a sign-in you can
+still paste the ids.
 Edits make a backup and preserve comments, custom policies, and fields the wizard
 does not own. After an edit, run `/new` (or restart Coop) so the guardrails take a fresh trusted
-snapshot of the contract. From a shell, `coop init` creates a new contract.
+snapshot of the contract. There is no shell wizard: `/setup-project` (or the window's Project pane) is the one project wizard; `coop init --template` copies the raw example.
 
 ---
 
@@ -474,7 +476,7 @@ first**, not read-only-only, and all are optional.
 | Server | Provides | Enablement and policy |
 | --- | --- | --- |
 | `fabric` | Manifest-pinned Microsoft Fabric MCP | follows the active Azure CLI login (az's default account; coop cannot set its tenant); metadata reads by default, mutations approval-gated |
-| `fabric-sqlendpoint` | Microsoft-managed Fabric SQL endpoint over direct Streamable HTTP with a launch-time Azure CLI bearer token | every call approval-gated; valid project IDs select an item-scoped endpoint; with no explicit target, global; malformed explicit targets fail closed |
+| `fabric-sqlendpoint` | Microsoft-managed Fabric SQL endpoint over direct Streamable HTTP with a launch-time Azure CLI bearer token | a plain read on the resolved dev/test target runs without a prompt, writes and SQL coop cannot classify ask, a production write needs the human unlock; valid project IDs select an item-scoped endpoint; with no explicit target, global; malformed explicit targets fail closed |
 | `powerbi-modeling-mcp` | Microsoft Power BI Modeling MCP with `--start --readwrite --accept-eula` | no tenant/workspace required; reads run, edits ask (an approval can cover the session), deletes, imports and deploys always ask, production edits need your typed permit |
 | `azure-devops` | Manifest-pinned Azure DevOps MCP for one organization | requires enabled toggle + valid organization; mutations approval-gated |
 | `microsoft-learn` | `learn.microsoft.com/api/mcp` | requires only its enabled toggle; always-current Microsoft docs |
@@ -534,7 +536,7 @@ once, with no question and a 5-minute limit. Any failure prints one line with th
 exact command, and the launch continues. A success is cached for 30 minutes. `coop
 doctor` has a matching **Azure sign-in** row (signed in to tenant X / not signed in,
 with the command / no client tenant configured). The row only probes: doctor never
-signs in. `COOP_SKIP_AZ=1` skips both. Details: [docs/onboarding.md](docs/onboarding.md#azure-sign-in-at-launch).
+signs in. `COOP_SKIP_AZ=1` skips both. Details: [Onboarding](https://coop.aaron-jennings.cloud/docs/onboarding.html#azure-sign-in-at-launch).
 
 For live estate discovery, Coop labels repo versus live evidence and reports drift. Actual
 row reads ask first; production row reads require a bounded target, columns, filters, and
@@ -592,7 +594,7 @@ launch.
    Only docs / logs / diagrams / glossary / site may be committed, after approval.
 5. Reads need no approval on any environment, production included; only changes ask.
 6. Production changes only with your go-ahead: each production write then asks you at the desk and is audited.
-7. Managed integrations are read-only first; mutation and Warehouse SQL calls are approval-gated.
+7. Managed integrations are read-only first; mutations and Warehouse SQL writes ask, plain reads run.
 8. Never expose secrets.
 
 **Audit trail.** Every guardrail decision the runtime `coop-guardrails` extension makes —
@@ -604,7 +606,7 @@ command classification. Command text and arguments are not persisted; the secret
 logs only the matched path, never file contents. Enforcement exceptions, including a
 throwing approval dialog, block the affected tool call with a fixed reason that excludes
 exception details. Optional audit/display failures do not change an enforcement decision.
-Run `/coop-guardrails` in a session to see the last ~10 decisions and the log path; the log
+Run `/approvals` in a session to see the last ~10 decisions and the log path; the log
 rolls to `.jsonl.1` past ~1 MB. It's the reviewable record of "the agent tried X; a human
 said yes/no" — useful for client trust and for debugging a guardrail false positive.
 Older command-bearing records are displayed without their command details. Their stored
@@ -639,7 +641,7 @@ is `.coop/project.yml`. It may provide deliberate project standards overrides;
 otherwise COOP's resolved standards task authority is authoritative. It is one
 committed team file per client, in the repository root or the client home
 repository `<client>-coop` beside several repositories: run **`/setup-project`**
-inside Coop or `coop init` (both edit a contract found above the folder, in the
+inside Coop, or the window's Project pane (both edit a contract found above the folder, in the
 home repository beside it, or, opened in the folder that holds the client's
 repositories or the folder above it (your user folder over `devops\fabric`), in
 the one repository up to two levels down that has one, instead of creating a
@@ -795,7 +797,7 @@ procedures and functions, formatting-only and column-order-only differences
 labelled, and an ordered promotion script with a note per
 object, destructive statements marked (commented out on request, or per client
 in `schema_compare:` of the project file, which `/setup-project` fills in), written under `.coop/schema-compare/`;
-`coop schema compare` is the terminal form, `/schema-compare` walks a compare and the promotion, and `/runbook <name>` walks a client's own `.coop/runbooks/<name>.md` step by step; nothing is ever applied by the compare), `sql_source` (SQL
+`coop schema compare` is the terminal form, `/schema-compare` walks a compare and the promotion, `/deploy-brief` writes the plain-English page a reviewer reads before a deployment (changes by schema, the standards check, downstream impact from the docs, who changed what from git, the destructive list), and `/runbook <name>` walks a client's own `.coop/runbooks/<name>.md` step by step; nothing is ever applied by the compare), `sql_source` (SQL
 source control through `coop-sqlsc` where the client SQL repository has an
 `sqlsc.yml` and the user has run `/sql-source on`: coop checks objects out as
 `coop-agent:<user>` before changing them, writes dev's changes into the files or
@@ -853,7 +855,7 @@ impact before it touches an object — without you running anything by hand:
   **Lineage impact**).
 - **Degrade gracefully.** If the folder has **no** `coop-data-doc.yml` or no built
   graph, lineage is silent and optional — the agent proceeds without it and may
-  suggest **`/setup-docs`**. The docs are an aid, not a gate.
+  suggest **`/setup-docs`**: the built docs are an aid, not a gate; the one gate is the live catalog (master plan SQ8): before a SQL object is edited, `sql_impact` must have been asked when a live dev/test target can answer.
 
 This policy lives in [`docs/guardrails.md`](docs/guardrails.md) (lineage-grounding +
 auto-detect/degrade) and the `coop-workflow` skill. To create or refresh the docs,
@@ -1120,8 +1122,8 @@ maintainer running an `--edge` Pi on purpose sets `COOP_ALLOW_UNPINNED_PI=1`.
 
 ## Sharing with your team
 
-> New teammate? Hand them **[docs/onboarding.md](docs/onboarding.md)** — a one-page
-> clone → install → verify → use guide.
+> New teammate? Hand them **[Onboarding](https://coop.aaron-jennings.cloud/docs/onboarding.html)** on the coop site: install,
+> open, sign in, check, start, with a safe first task.
 > On Windows, start them on **[docs/install-windows.md](docs/install-windows.md)**.
 
 coop is distributed as **this Git repo**. Put it on a host your coworkers can reach

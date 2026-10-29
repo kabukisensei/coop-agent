@@ -23,7 +23,7 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-inventory-ps-' + [guid]::NewGuid().ToString('N'))
 function Skipped([string]$m) { Write-Host "  - skipped on native Windows: $m (needs a fake venv python; covered on macOS/Linux)" }
 
-$PinFab = '1.7.0'; $PinDdd = '1.2.0'
+$PinFab = '1.8.0'; $PinDdd = '1.2.0'
 $sandboxHome = Join-Path $t 'home'
 $agent = Join-Path $t 'agent'
 $cwd = Join-Path $t 'cwd'
@@ -55,7 +55,7 @@ try {
   New-Item -ItemType Directory -Force -Path $sandboxHome, (Join-Path $t 'coop\.coop'), $agent, $cwd, $fakeBin, $fixtures, $fabVenvBin, $dddVenvBin | Out-Null
   [System.IO.File]::WriteAllText((Join-Path $agent '.coop-fetch-stamp'), '')
   $manifest = Join-Path $t 'manifest.json'
-  [System.IO.File]::WriteAllText($manifest, ('{"schema_version":1,"python_tools":{"coop-data-doc":"' + $PinDdd + '","ms-fabric-cli":"' + $PinFab + '","fabric-cicd":"1.3.0","pyodbc":"5.3.0"}}'), $utf8)
+  [System.IO.File]::WriteAllText($manifest, ('{"schema_version":1,"python_tools":{"coop-data-doc":"' + $PinDdd + '","ms-fabric-cli":"' + $PinFab + '","fabric-cicd":"1.4.0","pyodbc":"5.3.0"}}'), $utf8)
 
   $env:HOME = $sandboxHome
   $env:USERPROFILE = $sandboxHome
@@ -125,10 +125,12 @@ try {
   }
   function Remove-VenvPython([string]$Venv) { Remove-Item -LiteralPath (Join-Path $venvsDir "$Venv\bin\python") -Force -ErrorAction SilentlyContinue }
 
-  # Fake pipx: runpip show reads the fixture .meta files; inject succeeds; with
-  # COOP_TEST_FIX_INSTALL=1 an `install ... ms-fabric-cli==` creates the venv's
-  # fab and metadata; any argv containing COOP_TEST_PIPX_FAIL fails; every call
-  # is logged to COOP_TEST_CALLS as "PIPX <argv>".
+  # Fake pipx: runpip show reads the fixture .meta files and `list` reports
+  # them (the convergence units' probe); inject succeeds; with
+  # COOP_TEST_FIX_INSTALL=1 an `install <dist>==<version>` writes that metadata
+  # and, for ms-fabric-cli, the venv's fab; any argv containing
+  # COOP_TEST_PIPX_FAIL fails; every call is logged to COOP_TEST_CALLS as
+  # "PIPX <argv>".
   $pipx = New-PyStub $fakeBin 'pipx' @'
 import os, sys
 args = sys.argv[1:]
@@ -145,7 +147,26 @@ if args[:1] == ['inject']:
     sys.exit(0)
 if args[:2] == ['install', '--help']:
     print('usage: pipx install [--fetch-python=missing] ...'); sys.exit(0)
+if args[:1] == ['list']:
+    for f in sorted(os.listdir(fix)) if os.path.isdir(fix) else []:
+        if not f.endswith('.meta'):
+            continue
+        venv, dist = f[:-5].split('--', 1)
+        if venv != dist:
+            continue
+        version = ''
+        for line in open(os.path.join(fix, f)):
+            if line.startswith('Version:'):
+                version = line.split(':', 1)[1].strip()
+        if version:
+            print('   package ' + dist + ' ' + version + ', installed using Python 3.13.1')
+    sys.exit(0)
 if args[:1] == ['install'] and os.environ.get('COOP_TEST_FIX_INSTALL', '0') == '1':
+    for a in args[1:]:
+        if '==' in a and not a.startswith('-'):
+            name, version = a.split('==', 1)
+            with open(os.path.join(fix, name + '--' + name + '.meta'), 'w') as f:
+                f.write('Name: ' + name + '\nVersion: ' + version + '\n')
     spec = [a for a in args[1:] if a.startswith('ms-fabric-cli==')]
     if spec:
         home = os.environ['COOP_PIPX_HOME']
@@ -153,10 +174,8 @@ if args[:1] == ['install'] and os.environ.get('COOP_TEST_FIX_INSTALL', '0') == '
         os.makedirs(d, exist_ok=True)
         fab = os.path.join(d, 'fab')
         with open(fab, 'w') as f:
-            f.write('#!/bin/sh\n[ "$1" = "--version" ] && { echo "fab version 1.7.0"; exit 0; }\nexit 1\n')
+            f.write('#!/bin/sh\n[ "$1" = "--version" ] && { echo "fab version 1.8.0"; exit 0; }\nexit 1\n')
         os.chmod(fab, 0o755)
-        with open(os.path.join(fix, 'ms-fabric-cli--ms-fabric-cli.meta'), 'w') as f:
-            f.write('Name: ms-fabric-cli\nVersion: 1.7.0\n')
     sys.exit(0)
 if args[:1] == ['runpip'] and len(args) >= 4 and args[2] == 'show':
     f = os.path.join(fix, args[1] + '--' + args[3] + '.meta')
@@ -199,17 +218,18 @@ sys.exit(1)
   $rows = Get-InventoryRows
   if (@(Find-Rows $rows 'ms-fabric-cli not installed' -Hint).Count -gt 0) { Ok 'missing distribution reported' } else { Ko 'missing ms-fabric-cli not reported' (Show-Rows $rows 'ms-fabric-cli') }
 
-  # F2b: doctor --fix installs the exact CLI spec, then delegates the injected
-  # libraries and Driver readiness to the managed convergence helpers.
+  # F2b: doctor --fix runs the pipx convergence unit, which installs the exact
+  # CLI spec, then delegates the injected libraries and Driver readiness to the
+  # managed convergence helpers.
   if ($isWindowsHost) { Skipped 'doctor --fix Fabric runtime convergence (F2b)' } else {
     [System.IO.File]::WriteAllText($calls, '')
     $env:COOP_TEST_CALLS = $calls; $env:COOP_TEST_FIX_INSTALL = '1'
     $rows = Get-InventoryRows '' @('--fix')
     $fixRc = $script:LastDoctorRc
     $callLines = @([System.IO.File]::ReadAllLines($calls))
-    $exact = @($callLines | Where-Object { $_ -match '^PIPX install .+ms-fabric-cli==1\.7\.0(\s|$)' })
-    $loose = @($callLines | Where-Object { ($_ -match '^PIPX install .+ms-fabric-cli(\s|$)') -and ($_ -notmatch 'ms-fabric-cli==1\.7\.0') })
-    if ($exact.Count -gt 0 -and $loose.Count -eq 0 -and ($callLines -contains 'PIPX inject ms-fabric-cli fabric-cicd==1.3.0 --force') -and ($callLines -contains 'PIPX inject ms-fabric-cli pyodbc==5.3.0 --force')) {
+    $exact = @($callLines | Where-Object { $_ -match '^PIPX install .+ms-fabric-cli==1\.8\.0(\s|$)' })
+    $loose = @($callLines | Where-Object { ($_ -match '^PIPX install .+ms-fabric-cli(\s|$)') -and ($_ -notmatch 'ms-fabric-cli==1\.8\.0') })
+    if ($exact.Count -gt 0 -and $loose.Count -eq 0 -and ($callLines -contains 'PIPX inject ms-fabric-cli fabric-cicd==1.4.0 --force') -and ($callLines -contains 'PIPX inject ms-fabric-cli pyodbc==5.3.0 --force')) {
       Ok 'doctor --fix converges the exact managed Fabric runtime'
     } else { Ko 'doctor --fix did not use exact managed Fabric specs' ($callLines -join "`n") }
     if (@(Find-Rows $rows 'Fabric SQL fallback ready (pyodbc 5.3.0, ODBC Driver 18)' -Hint).Count -gt 0) { Ok 'doctor --fix re-check sees Fabric SQL readiness' } else { Ko "doctor --fix re-check did not see Fabric SQL readiness (rc=$fixRc)" (Show-Rows $rows 'Fabric SQL') }
@@ -319,7 +339,7 @@ sys.exit(1)
 import json, os, sys
 args = sys.argv[1:]
 if args[:1] == ['--version']:
-    print(os.environ.get('COOP_TEST_FAKE_PI_VERSION', '1.2.0')); sys.exit(0)
+    print(os.environ.get('COOP_TEST_FAKE_PI_VERSION', '1.4.0')); sys.exit(0)
 if args[:1] == ['install'] and len(args) >= 2:
     spec = args[1]
     rest = spec[4:] if spec.startswith('npm:') else spec
@@ -407,7 +427,7 @@ sys.exit(1)
   foreach ($lib in @('pi-ai', 'pi-tui', 'pi-coding-agent')) {
     $libDir = Join-Path $syncNpm "node_modules\@earendil-works\$lib"
     New-Item -ItemType Directory -Force -Path $libDir | Out-Null
-    [System.IO.File]::WriteAllText((Join-Path $libDir 'package.json'), ('{"name":"@earendil-works/' + $lib + '","version":"1.2.0"}'), $utf8)
+    [System.IO.File]::WriteAllText((Join-Path $libDir 'package.json'), ('{"name":"@earendil-works/' + $lib + '","version":"1.4.0"}'), $utf8)
   }
   # A retired extension left by an earlier release: in the tree and in settings.json.
   $retiredDir = Join-Path $syncNpm 'node_modules\context-mode'

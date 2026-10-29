@@ -21,6 +21,11 @@ import os
 import re
 from pathlib import Path
 
+try:
+    from _yaml import loads as _yaml_loads  # coop's one YAML parser (lib/_yaml.py)
+except Exception:  # pragma: no cover - the launcher always ships _yaml.py beside this file
+    _yaml_loads = None  # type: ignore[assignment]
+
 NO_ISOLATE_RE = re.compile(r"^(1|true|yes|on)$", re.IGNORECASE)
 
 
@@ -175,7 +180,7 @@ def git_root_above(path: Path) -> Path | None:
         at = at.parent
 
 
-def _contract_above(path: Path) -> Path | None:
+def contract_above(path: Path) -> Path | None:
     at = Path(path).resolve()
     while True:
         candidate = at / ".coop" / "project.yml"
@@ -186,29 +191,48 @@ def _contract_above(path: Path) -> Path | None:
         at = at.parent
 
 
-def _contract_repositories(text: str) -> list[tuple[str, str]]:
-    """`repositories.<name>.local_path` entries of a block-YAML contract (a line scan)."""
+def find_project_yml(start: Path | str) -> Path | None:
+    """The contract a tool run in `start` uses: the nearest .coop/project.yml walking
+    up from `start` (eight levels, the launcher's bound), else the one the launcher
+    resolved (COOP_PROJECT_YML: the client home repository beside this one, C1).
+    The one Python finder (lib/sql_targets.py, lib/warehouse_mcp.py and the native
+    SQL tools read it); lib/standards.mjs findProjectContract is its JS twin."""
+    d = Path(start).resolve()
+    for _ in range(8):
+        candidate = d / ".coop" / "project.yml"
+        if candidate.is_file():
+            return candidate
+        if d.parent == d:
+            break
+        d = d.parent
+    launched = _env("COOP_PROJECT_YML")
+    if launched and Path(launched).is_file():
+        return Path(launched)
+    return None
+
+
+def contract_repositories(text: str) -> list[tuple[str, str]]:
+    """`(name, local_path)` for every `repositories.<name>` entry of a contract with
+    a filled local_path (TODO placeholders skipped), read with lib/_yaml.py."""
+    if _yaml_loads is None:
+        return []
+    try:
+        data = _yaml_loads(text)
+    except Exception:
+        return []
+    repos = data.get("repositories") if isinstance(data, dict) else None
+    if not isinstance(repos, dict):
+        return []
     out: list[tuple[str, str]] = []
-    in_repos = False
-    name = ""
-    for line in text.splitlines():
-        if re.match(r"^\S", line):
-            in_repos = bool(re.match(r"^repositories:\s*(#.*)?$", line))
-            name = ""
+    for name, entry in repos.items():
+        if not isinstance(entry, dict):
             continue
-        if not in_repos:
+        value = entry.get("local_path")
+        if value is None or isinstance(value, (list, dict)):
             continue
-        key = re.match(r"^  ([A-Za-z0-9_.-]+):\s*(#.*)?$", line)
-        if key:
-            name = key.group(1)
-            continue
-        local = re.match(r"^\s+local_path:\s*(.+?)\s*$", line)
-        if local and name:
-            value = local.group(1)
-            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-                value = value[1:-1]
-            if value and not value.startswith("TODO"):
-                out.append((name, value))
+        text_value = str(value).strip()
+        if text_value and not text_value.startswith("TODO"):
+            out.append((str(name), text_value))
     return out
 
 
@@ -221,18 +245,18 @@ def repository_name_for(path: Path | str) -> str:
     git_root = git_root_above(directory)
     if git_root is None:
         # No git: the folder whose .coop/project.yml is nearest above, else the folder itself.
-        above = _contract_above(directory)
+        above = contract_above(directory)
         folder = above.parent.parent if above is not None else directory
         return folder.name or "root"
     configured = _env("COOP_PROJECT_YML")
-    contract = Path(configured) if configured and Path(configured).is_file() else _contract_above(git_root)
+    contract = Path(configured) if configured and Path(configured).is_file() else contract_above(git_root)
     if contract is not None:
         root = contract.resolve().parent.parent
         try:
-            text = contract.read_text(encoding="utf-8")
+            text = contract.read_text(encoding="utf-8-sig")
         except OSError:
             text = ""
-        for name, local_path in _contract_repositories(text):
+        for name, local_path in contract_repositories(text):
             expanded = Path(os.path.expanduser(local_path)) if local_path.startswith("~") else Path(local_path)
             candidate = (root / expanded).resolve()
             if os.path.normcase(str(candidate)) == os.path.normcase(str(git_root)):
@@ -258,7 +282,7 @@ def repository_coop_dir(cwd: Path | str) -> Path:
     configured = _env("COOP_PROJECT_YML")
     if configured and Path(configured).is_file():
         return Path(configured).resolve().parent
-    above = _contract_above(root)
+    above = contract_above(root)
     if above is not None:
         return above.parent
     return (git_root_above(root) or root) / ".coop"

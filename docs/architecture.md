@@ -84,16 +84,16 @@ show all of it. Task logs stay in the repository.
    - **Skills** — `skills/`, including `coop-workflow` (the principles-first
      Cooptimize workflow) that the task skills run inside: `data-doc-analysis`, `power-bi-impact-analysis`,
      `fabric-workspace-review`, `fabric-apps` (builds and deploys a Fabric App
-     with Rayfin to the dev workspace), `daily-logger`, `setup-docs` (the in-agent
-     coop-data-doc wizard driven via `ask-user-question` + coop-data-doc's
-     non-interactive commands), and `git-helper` (drafts Conventional-Commits
+     with Rayfin to the dev workspace), `daily-logger`, and `git-helper` (drafts Conventional-Commits
      messages + PR descriptions from the diff — drafts only, never commits) —
      plus a subordinate, pinned official Microsoft skills catalog refreshed by
      `coop sync` and resolved locally at launch.
    - **Prompt templates** — `prompts/` (per task skill: `discovery`,
-     `impact-analysis`, `semantic-model-review`, `fabric-architecture-review`,
-     `setup-docs`, `daily-log`, `weekly-log`; plus workflow prompts `spec-first`,
-     `annotate`, `handoff`, and `pr-description`).
+     `semantic-model-review`, `fabric-architecture-review`; plus workflow prompts
+     `spec-first`, `annotate`, `handoff`, and `pr-description`; the native
+     `/setup-docs` and `/impact` commands and the `daily-logger` skill cover what
+     the retired `setup-docs`, `impact-analysis`, `daily-log` and `weekly-log`
+     prompts restated).
    - **Theme** — `themes/cooptimize.json` (brand palette: navy `#00416B`,
      forest `#42783C`, olive `#82AA43`, lime `#B2D235`, red `#EF412D`).
    - **`coop-powerline` extension** — `extensions/coop-powerline/`: coop's OWN
@@ -113,10 +113,11 @@ show all of it. Task logs stay in the repository.
      governed `fabric_sql_query` fallback, `sql_impact` (`lib/sql_impact.py`:
      three fixed catalog queries for one object's dependents, references and
      columns on the contract's dev/test SQL target), `catalog_snapshot` and
-     `schema_compare` (`lib/schema_compare.py`: two catalogs, each read live or
-     from the repo's `.sql` files by `lib/sql_source.py`, a sorted diff and an
-     ordered promotion script under `.coop/schema-compare/`, applied by nobody
-     but a person) and `sql_source` (`lib/sqlsc.mjs`: the `coop-sqlsc` CLI for
+     `schema_compare` (`lib/schema_compare.py`: coop's sides, identity and
+     choices over the pinned `coop-schema-compare`, which reads the two
+     catalogs, live or from the repo's `.sql` files, and writes the sorted
+     diff and the ordered promotion script under `.coop/schema-compare/`,
+     applied by nobody but a person) and `sql_source` (`lib/sqlsc.mjs`: the `coop-sqlsc` CLI for
      SQL source control, off until `/sql-source on`; checkouts as `coop-agent:<user>`,
      commits with approval, never a push), which shell out and return
      JSON the model reasons over. SQL/DAX/semantic-model standards need no tool: at launch
@@ -129,7 +130,7 @@ show all of it. Task logs stay in the repository.
      of guessing. A `before_agent_start` hook injects an agent-visible,
      human-hidden (`display:false`) note — once per folder — telling the agent to
      consult that lineage **before** touching any SQL/DAX/semantic-model object;
-     it stays silent when no built docs exist (the docs are an aid, not a gate).
+     it stays silent when no built docs exist (the built docs are an aid, not a gate; the one gate is the live catalog (master plan SQ8): before a SQL object is edited, `sql_impact` must have been asked when a live dev/test target can answer).
      The same hook hands the agent the Warehouse target the project contract
      pins, so a simple read goes straight to `fabric-sqlendpoint` with the
      contract ids instead of rediscovering them (silent without a contract target).
@@ -234,10 +235,11 @@ show all of it. Task logs stay in the repository.
    - `coop-schema-compare` — the schema compare as a standalone command
      (`compare`, `snapshot`, `diff`) over live databases, `fabric://` names,
      snapshot folders and repo folders; installed at the manifest pin for people
-     and CI pipelines. The native `schema_compare` tool still runs
-     `lib/schema_compare.py` in-process (contract `sql_targets` entries, the
-     guardrails' audit and coop's own token path); the two share the compare
-     engine and the snapshot layout.
+     and CI pipelines, and the one compare engine: the native
+     `schema_compare` and `catalog_snapshot` tools run it as a child process
+     (`lib/compare_tool.py`) after coop has resolved the contract `sql_targets`
+     entries and minted its own tokens, so the guardrails' audit and coop's
+     identity rules stay coop's.
    - `coop-data-doc` — SQL + Power BI documentation and lineage.
      `scan` → `graph.json`; `build` → `manifest.json` + Markdown docs + portal;
      `lineage <object> [--depth]` → one object's up/downstream + relationships as
@@ -363,9 +365,11 @@ show all of it. Task logs stay in the repository.
    removes the `coop` link and "coop" shortcuts a per-user first launch wrote
    only when they point into the package, then `machine-install.ps1 -Remove`
    (shim, PATH entry, task, marker). What only the terminal can show (model sign-in, `custom()` screens,
-   `/trust`) opens the same session in a terminal; `desktop/PARITY.md` maps every
-   Pi command, keybinding and extension command, and `tests/desktop.test.mjs`
-   checks it against a recorded session.
+   `/trust`) opens the same session in a terminal, by default and with no row
+   to write; `desktop/PARITY.md` is the window's own contract (its built-ins,
+   shortcuts and terminal-only exceptions from `desktop/renderer/commands.mjs`),
+   and `tests/desktop.test.mjs` checks it against those lists, Pi's surface and
+   a recorded session.
 
    The window's side pane (master plan D1b2) adds views over what coop already
    has, never a second policy path: the folder's git diff, the standards
@@ -391,6 +395,42 @@ show all of it. Task logs stay in the repository.
    The timeline draws a run of assistant messages as one answer and folds the
    thinking and tool calls between two pieces of prose into one expandable
    line; the session file is untouched, only the view.
+
+## Environment variables
+
+coop's own processes hand most `COOP_*` variables to each other (the launcher to
+Pi and the extensions, install to sync, the window to the terminal); those are
+internal and not listed. The ones a person, a sandbox or a test fixture may set:
+
+| Variable | Effect |
+| --- | --- |
+| `COOP_NO_ISOLATE=1` | Run against your personal `~/.pi/agent` instead of coop's isolated `~/.coop/agent`. |
+| `COOP_NO_GUARDRAILS=1` | Turn the runtime guardrails extension off. Never on a client machine. |
+| `COOP_SHOW_UPSTREAM_UPDATE_NOTICES=1` | Show Pi's own update banner (maintainer diagnostics). |
+| `COOP_ASSUME_YES=1` | Answer yes to install-time questions (prerequisite install, the `az login` offer); CI and scripts. |
+| `COOP_NO_ONBOARD=1` | Skip the first-run profile question; the window's first launch sets it. |
+| `COOP_NO_MODEL_LOGIN=1` | Skip the model sign-in prime on the first launch. |
+| `COOP_SKIP_AZ=1` | Skip the Azure CLI tenant and token step at launch and in doctor. |
+| `COOP_SKIP_EXT_CHECK=1` | Skip the extension-tree preflight before Pi starts. |
+| `COOP_SKIP_FABRIC_SYNC=1` | `coop sync` leaves the Fabric Python runtime alone (install and update set it for their sync child). |
+| `COOP_ALLOW_UNPINNED_PI=1` | Let a maintainer's `--edge` Pi launch instead of stopping at the pin check. |
+| `COOP_PIP_ONLINE=1` | Let a pinned pipx install read the index instead of the bundled wheels only. |
+| `COOP_CLIENT_PLATFORM=fabric\|azure_sql\|both` | Answer the client platform question without a prompt (`coop install --platform` sets it). |
+| `COOP_DIR` | The profile folder's parent (default: the home folder, so `~/.coop`). |
+| `COOP_AGENT_DIR` | The isolated Pi agent dir (default `<profile dir>/agent`). |
+| `COOP_MACHINE_DIR` | The machine-level profile folder (sandboxes, tests). |
+| `COOP_ROOT` | The coop checkout; the launcher sets it for every child and tests point it at a fixture. |
+| `COOP_RELEASE_MANIFEST` | An alternate release manifest (tests, the fleet digest). |
+| `COOP_FABRIC_PYTHON` | The interpreter for live SQL (pyodbc), instead of the managed `ms-fabric-cli` environment. Operator-managed. |
+| `COOP_PIPX_HOME`, `COOP_PIPX_BIN` | The pipx venvs folder and the pipx binary to probe (fixtures, shadowed PATHs). |
+| `COOP_AZ_BIN` | The Azure CLI to run (test seam). |
+| `COOP_STANDARDS_ROOT`, `COOP_STANDARDS_STATE`, `COOP_STANDARDS_SNAPSHOT_ROOT`, `COOP_STANDARDS_BUNDLE` | Where the standards, their status file, the immutable snapshots and the shipped copy live (sandboxes, tests). |
+| `COOP_ROUTER_MODELS` | Override the router's model names (`plan=a,b;standard=c;build=d`). |
+| `COOP_PROJECT_SYNC=0` | Silence the session-start note about an unshared or newer team project file. |
+| `COOP_DATA_DOC_CONFIG` | coop-data-doc's own config selection; coop reads it the same way. |
+| `COOP_DEVOPS_CONFIG`, `COOP_GRAPH_CLIENT_SECRET` | The Azure DevOps digest's config path and Graph client secret (never logged). |
+| `COOP_KNOWLEDGE_GIT_TIMEOUT_SECONDS`, `COOP_TEAMAI_TIMEOUT_SECONDS`, `COOP_EXT_TREE_LOCK_TIMEOUT` | Deadlines: knowledge git operations (30 s), TeamAI calls (60 s), the extension-tree lock wait. |
+| `COOP_TEST_EXTENDED=1` | Run the extended test lane as well as the gate lane. |
 
 ## Diagram
 
@@ -486,3 +526,7 @@ The project contract `.coop/project.yml` (copied from
 workspaces, backup/log rules, allowed/blocked commit paths, and the approval policy.
 It may provide deliberate project standards overrides; otherwise COOP's resolved
 standards task authority is authoritative.
+One reader per language reads it: `lib/project-contract.mjs` in JS and the
+extensions (`findProjectContract` in `lib/standards.mjs` finds it), `lib/_yaml.py`
+in Python (`coop_paths.find_project_yml` finds it) and, at launch where no Python
+runs yet, the `Get-CoopContractRepositories` line scan in `lib/common.ps1`.

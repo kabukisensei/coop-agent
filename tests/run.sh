@@ -15,8 +15,8 @@
 #                  workflow, and `coop release` run it.
 # A few gate files also carry extended-only cases guarded by COOP_TEST_EXTENDED
 # inside the file (azcache, knowledge-git, warehouse-mcp, onboard,
-# standards-live-sync, and tests/fixtures/azcache.test.ps1, which tests/run.ps1
-# runs). They are invoked once, in the gate section.
+# standards-live-sync, test-approver, and tests/fixtures/azcache.test.ps1, which
+# tests/run.ps1 runs). They are invoked once, in the gate section.
 #
 set -euo pipefail
 
@@ -181,6 +181,8 @@ echo "→ lineage docs over a coop-sql-source-control repo"
 node "$ROOT/tests/sqlsc-datadoc.test.mjs"
 echo "→ coop-guardrails enforcement tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/guardrails.test.mjs"
+echo "→ dev-VM test approver (tests/test-approver.mjs): gates, answers, audit rows"
+node "$ROOT/tests/test-approver.test.mjs"
 echo "→ start-here menu tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/startmenu.test.mjs"
 echo "→ in-Coop project contract wizard tests"
@@ -209,6 +211,8 @@ echo "→ data_doc lineage branch and session lineage note tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/lineage.test.mjs"
 echo "→ session lineage context (SQ8): store, snapshot source, edit gate, coop-tools hooks"
 node "$ROOT/tests/lineage-context.test.mjs"
+echo "→ Fabric ids looked up by name for /setup-project (lib/fabric-discovery.mjs)"
+node "$ROOT/tests/fabric-discovery.test.mjs"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/lineage-context-runtime.test.mjs"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/setupbridge-integration.test.mjs"
 
@@ -241,7 +245,7 @@ COOP_TEST_DIST="$TMP" node "$ROOT/tests/powerline.test.mjs"
 echo "→ vibes & feature-discovery tips contract tests"
 node "$ROOT/tests/vibes.test.mjs"
 
-echo "→ release gate without PowerShell: CI verdict reader, pwsh probe, origin parser (scripts/release.sh)"
+echo "→ release gate: CI verdict reader, origin parser, tree check, bump and tag in disposable repositories (scripts/release.sh)"
 bash "$ROOT/tests/release-gate.test.sh"
 
 echo "→ Git Bash forwarder: bin/coop forwards to coop.ps1 (launch-spec) and release.sh"
@@ -317,7 +321,7 @@ echo "→ one profile root: COOP_DIR is the parent of .coop; one agent-dir chain
 python3 "$ROOT/tests/coop-paths.test.py"
 python3 "$ROOT/tests/p0-vertical-slice.test.py"
 bash "$ROOT/tests/onboard.test.sh"
-echo "→ Azure CLI resolution and sign-in helpers (onboarding, coop init)"
+echo "→ Azure CLI resolution and sign-in helpers (onboarding)"
 "$(command -v python3 2>/dev/null || command -v python)" "$ROOT/tests/azure-auth.test.py"
 echo "→ team knowledge config block + readers tests"
 bash "$ROOT/tests/knowledge-config.test.sh"
@@ -348,9 +352,8 @@ for prev, ok, detail in cases:
 print("  OK  resume verdict: failure sentinel / expected prev=1 / already-running / still-suspended")
 PY
 
-echo "→ coop init wizard tests"
+echo "→ coop init (the non-wizard jobs: --template, C1 placement) tests"
 bash "$ROOT/tests/init-wizard.test.sh"
-"$(command -v python3 2>/dev/null || command -v python)" "$ROOT/tests/init-wizard-windows-paths.test.py"
 echo "→ bounded legacy project diagnostics and migration tests"
 "$(command -v python3 2>/dev/null || command -v python)" "$ROOT/tests/project-health.test.py"
 

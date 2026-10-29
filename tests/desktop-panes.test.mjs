@@ -458,11 +458,14 @@ function projectFixture(name, text) {
   return root;
 }
 
+// powerBiWorkspaceId is the Fabric workspace id: the terminal wizard proposes it
+// for a same-named Power BI workspace (a Fabric workspace is one), and a blank
+// terminal answer means "keep the proposal", so the form answers the same id.
 const ANSWERS = {
   client: "Contoso",
   analytics: { description: "Warehouse SQL", role: "mixed", localPath: ".", remoteName: "origin", defaultBranch: "main" },
   added: { name: "Reports Repo", description: "Power BI reports", role: "powerbi", localPath: "../reports", remoteName: "origin", defaultBranch: "release" },
-  fabric: { tenantId: "11111111-1111-1111-1111-111111111111", fabricWorkspaceName: "Contoso WS", fabricWorkspaceId: "22222222-2222-2222-2222-222222222222", sqlEndpointItemType: "Warehouse", sqlEndpointItemName: "ContosoDW", sqlEndpointItemId: "33333333-3333-3333-3333-333333333333", sqlEndpointPropertiesId: "", powerBiWorkspaceName: "Contoso WS", powerBiWorkspaceId: "", fabricLayout: "warehouse", tableMappingRule: "prefix", tableMappingSchema: "dbo", tableMappingPrefix: "v_" },
+  fabric: { tenantId: "11111111-1111-1111-1111-111111111111", fabricWorkspaceName: "Contoso WS", fabricWorkspaceId: "22222222-2222-2222-2222-222222222222", sqlEndpointItemType: "Warehouse", sqlEndpointItemName: "ContosoDW", sqlEndpointItemId: "33333333-3333-3333-3333-333333333333", sqlEndpointPropertiesId: "", powerBiWorkspaceName: "Contoso WS", powerBiWorkspaceId: "22222222-2222-2222-2222-222222222222", fabricLayout: "warehouse", tableMappingRule: "prefix", tableMappingSchema: "dbo", tableMappingPrefix: "v_" },
   target: { sqlTargetKind: "azure_sql", sqlTargetServer: "Contoso-Dev.Database.Windows.Net", sqlTargetDatabase: "ContosoDW", sqlTargetProdServer: "Contoso-Prod.Database.Windows.Net", sqlTargetProdDatabase: "ContosoDW", sqlTargetTestDatabase: "", schemaCompareExclude: "stage, audit", schemaCompareRebuild: "dim, fact", schemaCompareDestructive: "commented" },
   te: { tabularEditorPath: "te", bpaRulesPath: "rules/bpa.json" },
 };

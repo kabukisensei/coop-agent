@@ -1,8 +1,8 @@
 /**
  * The coop window (master plan D1b): its pure modules, a replay of the recorded
  * Pi RPC session (tests/fixtures/desktop-rpc.jsonl, coop's real launch
- * arguments and release extensions), and the terminal parity checklist
- * (desktop/PARITY.md) against the window's lists and Pi's own.
+ * arguments and release extensions), and the window's contract
+ * (desktop/PARITY.md) against its own lists and Pi's surface.
  *
  * Gate lane: no Electron, no Pi, no network, no child processes.
  * Re-record the fixture with: node desktop/scripts/record-fixture.mjs
@@ -332,7 +332,7 @@ await check("composer: / completion lists built-ins, then Pi's commands from the
 await check("welcome: set-up items come from the sign-in flag and the launch notices, with their command", () => {
   const items = setupItems({ loginPresent: false, notices: [
     "COOP onboarding is incomplete (user.json or config missing). Run: coop onboard",
-    "Fabric Warehouse MCP unavailable: Azure authentication is required; run az login",
+    "live SQL sign-in unavailable: Azure authentication is required; run az login",
     "  ", "Standards wiki offline; using the bundled copy",
   ] });
   assert.deepEqual(items.map((item) => item.id), ["login", "onboard", "azure", "notice:Standards wiki offline; using the bundled copy"]);
@@ -355,7 +355,7 @@ await check("welcome: the MCP adapter's 401 report is the Azure sign-in item, an
   assert.equal(item.detail, report);
   assert.equal(setupItem("   "), null);
   assert.equal(setupItem("Standards wiki offline; using the bundled copy").command, "");
-  assert.deepEqual(setupItems({ notices: [report, "Fabric Warehouse MCP unavailable: Azure authentication is required; run az login"] }).map((i) => i.id), ["azure"]);
+  assert.deepEqual(setupItems({ notices: [report, "live SQL sign-in unavailable: Azure authentication is required; run az login"] }).map((i) => i.id), ["azure"]);
   // The renderer decides "conversation has content" by prompts and answers, not
   // by notices, so a report Pi posts at start leaves the welcome and the
   // first-run Start menu alone.
@@ -1002,10 +1002,11 @@ function paritySection(heading) {
 }
 const MAPPINGS = new Set(["rpc", "window", "Pi", "terminal", "native"]);
 
-await check("parity: every Pi built-in command has a row and a window action", () => {
+await check("parity: every Pi built-in command is a window built-in or terminal-only, and each built-in has a row", () => {
   const rows = paritySection("Pi built-in commands");
   const piCommands = new Set(SURFACE.slashCommands);
-  for (const name of piCommands) assert.ok(BUILTINS.some((c) => c.name === name) || Object.hasOwn(TERMINAL_ONLY, name), `Pi's /${name} has no window action`);
+  // The one obligation a Pi upgrade creates: decide, in commands.mjs, whether the window runs the new command or opens the terminal for it.
+  for (const name of piCommands) assert.ok(BUILTINS.some((c) => c.name === name) || Object.hasOwn(TERMINAL_ONLY, name), `Pi ${SURFACE.pi}'s /${name} is neither in BUILTINS nor in TERMINAL_ONLY (desktop/renderer/commands.mjs)`);
   for (const command of BUILTINS) {
     assert.ok(piCommands.has(command.name), `/${command.name} is not a Pi ${SURFACE.pi} command`);
     const row = rows.get(`/${command.name}`);
@@ -1016,20 +1017,20 @@ await check("parity: every Pi built-in command has a row and a window action", (
   assert.equal(rows.size, BUILTINS.length, "PARITY.md lists a built-in the window does not have");
 });
 
-await check("parity: every Pi keybinding action has a row matching the window's KEYS", () => {
-  const rows = paritySection("Keybinding actions");
-  assert.deepEqual(Object.keys(KEYS).sort(), [...SURFACE.keybindings].sort(), `KEYS differs from Pi ${SURFACE.pi}'s keybinding actions`);
+await check("parity: the window's shortcuts each stand for a Pi keybinding action and have a row", () => {
+  const rows = paritySection("Keyboard shortcuts");
+  const actions = new Set(SURFACE.keybindings);
   for (const [id, key] of Object.entries(KEYS)) {
+    assert.ok(actions.has(id), `KEYS.${id} is not a Pi ${SURFACE.pi} keybinding action`);
+    assert.ok(key.keys && !["native", "terminal"].includes(key.keys), `KEYS.${id} has no window key`);
     const row = rows.get(id);
     assert.ok(row, `PARITY.md has no row for ${id}`);
-    assert.ok(MAPPINGS.has(row[0]), `${id}: unknown mapping ${row[0]}`);
-    if (key.keys === "native" || key.keys === "terminal") assert.equal(row[0], key.keys, id);
-    else assert.notEqual(row[0], "terminal", `${id} has a window key but PARITY says terminal`);
+    assert.ok(["rpc", "window"].includes(row[0]), `${id}: a window key maps to rpc or window, not ${row[0]}`);
   }
-  assert.equal(rows.size, Object.keys(KEYS).length);
+  assert.equal(rows.size, Object.keys(KEYS).length, "PARITY.md lists a shortcut the window does not have");
 });
 
-await check("parity: every extension command in the recording has a row; terminal-only ones open the terminal", () => {
+await check("parity: extension commands go to Pi as typed; only TERMINAL_ONLY opens the terminal, with a row each", () => {
   const rows = paritySection("Extension commands");
   const [commands] = response("get_commands");
   const sources = new Set(commands.data.commands.map((c) => c.source));
@@ -1038,16 +1039,18 @@ await check("parity: every extension command in the recording has a row; termina
   assert.match(PARITY, /## Prompt templates and skills/);
   const extensionCommands = commands.data.commands.filter((c) => c.source === "extension").map((c) => c.name);
   assert.ok(extensionCommands.length >= 30);
-  for (const name of extensionCommands) {
+  for (const name of extensionCommands) assert.ok(!BUILTINS.some((c) => c.name === name), `/${name} is shadowed by a window built-in`);
+  const known = new Set([...extensionCommands, ...SURFACE.slashCommands]);
+  for (const name of Object.keys(TERMINAL_ONLY)) {
+    assert.ok(known.has(name), `TERMINAL_ONLY /${name} is neither a recorded extension command nor a Pi command`);
     const row = rows.get(`/${name}`);
-    assert.ok(row, `PARITY.md has no row for the extension command /${name}`);
-    assert.equal(row[1], Object.hasOwn(TERMINAL_ONLY, name) ? "terminal" : "Pi", `/${name}`);
-    assert.ok(!BUILTINS.some((c) => c.name === name), `/${name} is shadowed by a window built-in`);
+    assert.ok(row, `PARITY.md has no row for the terminal-only /${name}`);
+    assert.equal(row[1], "terminal", `/${name}`);
   }
-  for (const [name, row] of rows) {
-    if (row[1] === "terminal") assert.ok(Object.hasOwn(TERMINAL_ONLY, name.slice(1)), `${name} is terminal in PARITY.md but not in TERMINAL_ONLY`);
-  }
-  for (const name of Object.keys(TERMINAL_ONLY)) assert.ok(rows.has(`/${name}`), `TERMINAL_ONLY /${name} has no row`);
+  assert.equal(rows.size, Object.keys(TERMINAL_ONLY).length, "PARITY.md lists a terminal-only command the window does not have");
+  // The window never sends a terminal-only command to Pi, and lists it in completion even when Pi did not return it.
+  assert.equal(parseInput("/llama").command.action, "terminal");
+  assert.ok(completions("/", [], { limit: 500 }).some((c) => c.name === "llama" && c.source === "terminal"));
 });
 
 await check("parity: every extension UI request has a row", () => {

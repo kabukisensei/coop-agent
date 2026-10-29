@@ -49,8 +49,9 @@ policy:** BEFORE analyzing or changing any SQL object, DAX measure, or semantic
 model, look up its lineage (`data_doc` with `command="lineage"`, `object="<name>"`)
 so you know its up/downstream impact — don't re-derive it by hand. coop
 **auto-detects** built docs at session start (a hidden note when they exist) and
-**degrades gracefully** when they're absent: lineage is an aid, not a gate, so
-proceed without it and, if useful, suggest `/setup-docs`.
+**degrades gracefully** when they're absent: built docs are an aid, not a gate
+(`sql_impact` is the gate), so proceed without them and, if useful, suggest
+`/setup-docs`.
 
 Official Microsoft skills (`skills/_microsoft/`) are **subordinate**: one loads only
 if allow-listed in `microsoft_skills.allow[]` and no Cooptimize skill conflicts.
@@ -165,8 +166,8 @@ bash tests/run.sh               # gate lane; expect: "✓ all tests passed (gate
 ```
 
 `bash tests/run.sh` is the gate lane that every PR runs. The extended lane (timing
-and process fixtures) is optional per change and runs before every release;
-`coop release` runs it itself:
+and process fixtures) is optional per change and runs on every release pull
+request (`extended.yml` runs on a PR that changes `VERSION`):
 
 ```bash
 COOP_TEST_EXTENDED=1 bash tests/run.sh   # expect: "✓ all tests passed (gate + extended lanes)", exit 0
@@ -194,7 +195,7 @@ delete or re-push a tag, never commit secrets (`.env*`, keys, tokens — see
 
 - **Operational (follow these):** `AGENTS.md`, `CONTRIBUTING.md`, `RELEASE.md`,
   `README.md`, `docs/architecture.md`, `docs/ci.md`, `docs/extending.md`,
-  `docs/guardrails.md`, `docs/install-windows.md`, `docs/onboarding.md`,
+  `docs/guardrails.md`, `docs/install-windows.md`,
   `docs/tool-contract.md`, `docs/troubleshooting.md`.
 - **The one plan (each phase needs an explicit start):** `docs/COOP_MASTER_PLAN.md`.
 - **History (read-only context; never execute their steps):** everything under

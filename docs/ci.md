@@ -237,7 +237,11 @@ The run scripts are the list; this page does not repeat it.
   they stand, and its child fixtures sit in one table with a lane column
   (`gate` / `extended`); an extended row runs only with `COOP_TEST_EXTENDED=1`.
 - Some gate files keep a few extended-only cases (hang, watchdog or
-  live-process cases) behind the same variable inside the file. The header of
+  live-process cases) behind the same variable inside the file
+  (`tests/test-approver.test.mjs` keeps its one real-process run there; the
+  approver itself, `tests/test-approver.mjs`, is a host script for the
+  development VM and answers coop's approval questions only behind its three
+  gates, described in its header). The header of
   `tests/run.sh` names them; in `tests/run.ps1`'s table it is
   `extension-tree-lock` (a second process holding the extension tree's mutex).
 - `tests/repro-tmp-contamination.sh` is a manual reproducer, not a test, and no
@@ -282,13 +286,14 @@ The run scripts are the list; this page does not repeat it.
 
 - Locally: `COOP_TEST_EXTENDED=1 bash tests/run.sh`.
 - In CI: Actions -> extended -> Run workflow, on any branch.
-- `coop release` runs both lanes. Its pre-tag gate (`scripts/release.sh`, and
-  `bin/coop.ps1` on Windows) runs `COOP_TEST_EXTENDED=1 bash tests/run.sh`,
-  `tests/run.ps1` and `scripts/check-bom.ps1`, so every release keeps the full
-  suite's coverage. On a host without a working `pwsh` none of the three can
-  run, so the gate checks that GitHub's check runs for the commit being tagged
-  are all complete and green instead (`tests/release-gate.test.sh` covers the
-  verdict reader). See `RELEASE.md`.
+- On every release pull request: `extended.yml` runs on a PR that changes
+  `VERSION`, which the release PR (`release-pr.yml`, `scripts/bump-version.sh`)
+  always does, so a release carries the full suite's evidence. `coop release`
+  (`scripts/release.sh`) then tags only when GitHub's check runs for the exact
+  commit on `main` are all complete and green. `tests/release-gate.test.sh`
+  covers the verdict reader, the tree check, the bump and the tag in
+  disposable repositories; `tests/fixtures/release.test.ps1` only proves that
+  `coop.ps1 release` forwards to the script. See `RELEASE.md`.
 
 The extended block of `tests/run.sh` keeps the gate lane's temp home (#135).
 `tests/fixtures/home-guard.test.ps1` (run by `tests/run.ps1`) is the one exception: it reads the real `~/.local/bin`
@@ -324,7 +329,7 @@ list and to its result check. `extended.yml` does not feed `gate`.
 
 ## See also
 
-- [onboarding.md](onboarding.md) — get `coop` itself running on a workstation
+- [Onboarding](https://coop.aaron-jennings.cloud/docs/onboarding.html) — get `coop` itself running on a workstation
 - [tool-contract.md](tool-contract.md) — how the agent calls the same tool natively
 - The tool's own README — every flag above is documented there:
   [coop-data-doc](https://github.com/kabukisensei/coop-data-doc)

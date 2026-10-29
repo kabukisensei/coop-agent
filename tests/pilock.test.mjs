@@ -30,6 +30,15 @@ assert.equal(lock.packages[`node_modules/${PI}`].version, manifest.pi.version);
 assert.equal(wrapperPackageJson(manifest).dependencies[PI], manifest.pi.version);
 assert.ok(lock.packages["node_modules/@earendil-works/pi-codemode"], "the lock carries pi-codemode, the package that broke fresh installs");
 assert.equal(run(["check"]).code, 0);
+// Security overrides (manifest pi.overrides) travel in the lock's root entry.
+for (const [dep, ver] of Object.entries(manifest.pi.overrides || {})) {
+  assert.equal(wrapperPackageJson(manifest).overrides[dep], ver, `the wrapper overrides ${dep}`);
+  assert.equal(lock.packages[""].overrides[dep], ver, `the lock root records the ${dep} override`);
+  assert.equal(lock.packages[`node_modules/${dep}`].version, ver, `the lock resolves ${dep} at its override`);
+}
+const unOverridden = JSON.parse(JSON.stringify(lock));
+delete unOverridden.packages[""].overrides;
+if (manifest.pi.overrides) assert.ok(checkLock(manifest, unOverridden).some((p) => p.includes("lock root overrides")), "a lock missing the manifest's override is reported");
 const drifted = JSON.parse(JSON.stringify(lock));
 drifted.packages[""].dependencies[PI] = "0.0.1";
 assert.ok(checkLock(manifest, drifted).some((p) => p.includes("lock root pins")), "a root pin off the manifest is reported");

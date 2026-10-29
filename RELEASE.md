@@ -116,20 +116,24 @@ coop-agent does **not** publish to a registry. Teammates get it when
 `coop update` fast-forwards their checkout to the newest `vX.Y.Z` tag on
 `main`, so **pushing the tag is the fleet deployment**. A merge to `main`
 alone reaches only maintainers on `coop update --edge`. The whole release is
-one command; see also [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a-release).
+a pull request and then one command; see also [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a-release).
 
 Every extension or Pi pin change must already carry a regenerated
 `config/extensions-lock.json` (`node lib/extlock.js generate`, see
 `CONTRIBUTING.md`); the gate lane fails otherwise, so `coop release` stops before
 tagging a manifest whose lock drifted.
 
-If this suite release also bumped coop-data-doc (step (a)), **bump its
-`python_tools` pin in `config/release-manifest.json` first** (the one manifest;
-`config/defaults.yml` carries no pins) — the pre-tag gate below verifies that pin
-against coop-website's `versions.json` and aborts on a mismatch. (Update
-`versions.json` before or together with the pin; step (c) requires it anyway.)
-`docs/ci.md` shows the pipeline pin as a `==<version>` placeholder that points at
-the manifest, so nothing there needs editing.
+If this suite release also bumped a coop tool (step (a)), **run
+`bash scripts/bump-pins.sh`** (or `bump-pins.sh coop-data-doc=1.4.4` for one
+tool): it writes the `python_tools` pin in `config/release-manifest.json`, the
+one place a tool pin is written, and for a GitHub-release wheel the tag, asset
+and sha256 too, then prints the CHANGELOG line. Nothing else carries a literal
+pin: the fixtures, `NOTICE.md` and the client-home CI template read the
+manifest (the template keeps `coop-data-doc==<version>`, rendered at copy
+time), and `tests/pins.test.sh` fails the bump PR if a stale `<tool>==<old>`
+literal is left anywhere. The pre-tag gate below verifies the pin against
+coop-website's `versions.json` and aborts on a mismatch. (Update `versions.json`
+before or together with the pin; step (c) requires it anyway.)
 
 **Refresh the bundled standards copy** so the release ships the wiki as it is
 today (first runs and offline machines read it until `coop sync` reaches the
@@ -142,57 +146,58 @@ bundle's revision with the wiki's `main` head before tagging: a bundle behind
 the wiki stops the release (`--no-check` skips it), an unreachable wiki warns
 and asks.
 
-From a clean tree on an attached `main` that equals `origin/main` (`coop release`
-fetches `origin` and refuses anything else), with user-visible changes recorded
-under `## [Unreleased]` in `CHANGELOG.md`:
+The release is two steps: a release pull request, then the tag.
+
+**1. The release pull request.** Actions -> release-pr -> Run workflow, with
+`patch`, `minor`, `major` or an explicit `X.Y.Z` (or by hand:
+`git switch -c release/vX.Y.Z main`, `bash scripts/bump-version.sh patch`,
+commit as `Release vX.Y.Z`, push, open the PR). The workflow needs the
+`COOP_RELEASE_TOKEN` secret (a fine-grained token on this repository with
+Contents and Pull requests read/write), because a branch pushed with the
+workflow's own token gets no CI on its PR. The PR moves `VERSION`,
+`config/release-manifest.json`'s `coop_version` and every
+`extensions/*/package.json` in lockstep and rolls `## [Unreleased]` into a dated
+`## [X.Y.Z]`. CI runs the gate lane on it, and `extended.yml` runs too (it runs
+on any PR that changes `VERSION`), so the release PR carries the full suite's
+evidence. Merge it under the usual rule once both are green; the push to `main`
+runs `ci.yml` again with the installer upgrade acceptance.
+
+**2. The tag.** From a clean tree on `main` at `origin/main`:
 
 ```bash
-./bin/coop release patch        # or: minor | major   (default: patch); add --yes to skip the confirm
+./bin/coop release        # add --yes to skip the confirm
 ```
 
 What `coop release` does (`scripts/release.sh`, the one maintainer command that
-stays in bash; `./bin/coop release` runs it, and `bin/coop.ps1`'s
-`Invoke-CoopRelease` is its Windows equivalent): requires a clean tree;
-fetches `origin` and refuses unless `HEAD` is the branch `main` at exactly
-`origin/main` (a detached HEAD, another branch, or unpushed or missing commits
-stop it before anything changes); runs the pre-tag gate — esbuild-checks every
-`extensions/*/index.ts`, then `COOP_TEST_EXTENDED=1 bash tests/run.sh` (both
-test lanes, gate and extended, so a release keeps the full suite that CI splits
-between `ci.yml` and the nightly `extended.yml`; see `docs/ci.md`),
-`pwsh -File tests/run.ps1` and `pwsh -File scripts/check-bom.ps1`. All three
-need PowerShell 7 (coop is PowerShell, so `tests/run.sh` refuses to start
-without `pwsh`); on a host with no working `pwsh`, such as a Mac without
-`brew install --cask powershell`, the gate instead reads GitHub's check runs
-for the exact commit being tagged and continues only when they are all
-complete and green (still running, red, none, or GitHub unreachable stop the
-release; `--no-check` remains the explicit opt-out). CI runs every suite on
-Linux, pwsh 7 and Windows PowerShell 5.1, so it is the evidence in that case.
-The gate then verifies the coop-data-doc `python_tools` pin
-in `config/release-manifest.json` matches the sibling
-`../coop-website/versions.json` (`coop_release_check_pins`; a mismatch aborts
-with the fix named, a **missing sibling checkout warns and asks** so an
-offline/partial clone can still release deliberately — all of the gate is
-skippable with `--no-check`); bumps the `VERSION` file **and** every
-`extensions/*/package.json` in lockstep; rolls
-`## [Unreleased]` into a dated `## [X.Y.Z]`; commits `Release vX.Y.Z`; tags
-`vX.Y.Z`; pushes `main` and the tag in one atomic push
-(`git push --atomic origin main vX.Y.Z`: both land or neither does, so the tag
-can never reach origin off `main`). `--no-push` stops at the local tag. The tag
-push triggers `release.yml`, which cuts a GitHub Release whose body is that
-version's CHANGELOG section. `release.yml` first refuses a tag that is not
-`v$(cat VERSION)` or not an ancestor of `origin/main`, so a hand-pushed tag
-fails before anything is published. Its `installer` job builds the coop window
-installer from the tag and runs the installer acceptance on those exact bytes
-(`desktop/scripts/verify-installer.mjs`, as on every PR); the release job
-publishes the executable only when the acceptance report says ok and names the
-executable's SHA-256 (`desktop/scripts/check-installer-report.mjs`), and
-attaches the report to the release. A failed acceptance fails the tag run with
-no release created; fix, then release the next patch (never re-push a tag).
+stays in bash; `./bin/coop release` runs it, and on Windows `bin/coop.ps1`
+forwards to Git Bash): requires a clean tree; fetches `origin` and refuses
+unless `HEAD` is the branch `main` at exactly `origin/main`; checks that
+`VERSION`, the manifest and every extension agree on one `X.Y.Z`, that
+`CHANGELOG.md` has that section and that no `vX.Y.Z` tag exists here or on
+origin (otherwise it names the release PR as the fix: the bump is never done
+here); reads GitHub's check runs for the exact commit and continues only when
+they are all complete and green (still running, red, none, or GitHub
+unreachable stop it); verifies the coop-tool `python_tools` pins in
+`config/release-manifest.json` against the sibling `../coop-website/versions.json`
+(a mismatch aborts with the fix named; a missing sibling warns and asks) and the
+bundled standards against the wiki's head; `--no-check` skips those three
+gates. Then it tags `vX.Y.Z` and pushes the tag. There is no local test run: the
+release PR and the merge commit ran every suite on these bytes.
 
-The pre-tag gate runs both lanes on the machine you release from only. The
-Windows legs of the extended lane run in CI, so before you release, check that
-the latest `extended` run on `main` is green, or start one (Actions -> extended
--> Run workflow on `main`).
+The tag push runs `release.yml`: it refuses a tag that is not `v$(cat VERSION)`
+or not an ancestor of `origin/main`; its `installer` job builds the coop window
+installer from the tag and runs the whole acceptance on those exact bytes
+(`desktop/scripts/verify-installer.mjs`, then the upgrade from the previous
+release, the shortcut launch and the one-liner, as `ci.yml` runs on every push
+to `main`); the release job publishes the executable only when the acceptance
+report says ok and names the executable's SHA-256
+(`desktop/scripts/check-installer-report.mjs`), with that version's CHANGELOG
+section as the body; then the `website` job prints the coop-website command
+for step (c) (`bash scripts/sync-release.sh coop-agent X.Y.Z` in a site clone):
+coop-website is private, and a public repository cannot call its reusable
+`sync-release.yml`, so a `uses:` of it stops the whole tag run before it starts. A failed
+acceptance fails the tag run with no release created; fix, then release the
+next patch (never re-push a tag).
 
 Verify:
 
@@ -201,9 +206,8 @@ git describe --tags             # expect: vX.Y.Z
 gh release view vX.Y.Z          # expect: release exists, body = the CHANGELOG section
 ```
 
-If the push is rejected (for example, `main` moved on origin during the gate),
-nothing reached origin and `coop release` exits non-zero with the retry command.
-Never push the tag on its own.
+If the tag push is rejected, nothing reached origin and `coop release` exits
+non-zero with the retry command.
 
 **Deployment, rollback, and holds (coop-agent).**
 

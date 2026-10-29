@@ -12,24 +12,14 @@
 # Usage:
 #   coop                      Launch the branded Pi agent (passes extra args to pi)
 #   coop desktop [folder]     Open coop in a window on a folder (Electron over pi --mode rpc)
-#   coop doctor               Check dependencies and configuration
+#   coop doctor [--fix]       Check dependencies and configuration
 #   coop update               Update Pi, Coop tools, vibes, skills/prompts, then doctor
-#   coop install              Fresh-install / bootstrap everything (idempotent)
+#   coop install              Fresh-install everything (idempotent); `coop install <source>` adds a Pi extension
 #   coop uninstall            Remove coop from this machine (--keep-tools spares pi + tools)
-#   coop sync                 Ensure Pi extensions + place read-only MCP config + verify assets
-#   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
-#   coop support [--json]     Collect a sanitized support bundle (health, versions, events); preview + export
-#   coop fabric [args]        Pass through to the Microsoft Fabric CLI (`fab`)
-#   coop version              Print coop + pi versions
-#   coop help                 Show this help
-#
-# Pi management, aliased under coop:
-#   coop list                 List installed Pi extensions   (-> pi list)
-#   coop config               Open Pi's resource TUI         (-> pi config)
-#   coop add <source>         Install a Pi extension          (-> pi install <source>)
-#   coop install <source>     Same as `coop add` (bare `coop install` bootstraps)
-#   coop remove <source>      Remove a Pi extension           (-> pi remove <source>)
-#   coop pi <args...>         Raw escape hatch to pi          (-> pi <args...>)
+#   coop onboard | profile | project | folders | data-doc | catalog | schema | support | version | help
+#   coop dev <cmd>            Maintainer commands (sync, init, new-skill, new-prompt, release, launch-spec,
+#                             context-budget, teamai, fabric, list, config, add, remove, pi); the bare
+#                             names still dispatch
 #
 # NB: deliberately NO param() block. With `powershell -File coop.ps1 <args>`, the
 # absence of declared parameters routes EVERY token — including bare flags like
@@ -140,14 +130,15 @@ function Invoke-CoopTeamai {
 }
 
 # coop catalog snapshot|status (master plan SQ9): the committed dev catalog
-# snapshot, written by lib/catalog_snapshot.py over the same read-only
-# dev/test connection path as the native SQL tools (never production). The
+# snapshot, written by the pinned coop-schema-compare through
+# lib/catalog_snapshot.py on the same read-only dev/test target as the native
+# SQL tools (never production). The
 # launch identity token is minted the way a session mints it, so the helper's
 # tenant pinning holds outside a session too. Prints the helper's summary.
 function Invoke-CoopCatalog {
   param([string[]]$Rest)
-  # The snapshot reads the warehouse through pyodbc, which lives in the Fabric
-  # Python (the session's SQL tools use the same one); status needs none.
+  # The helper resolves the target and the token the way a session does and
+  # hands them to coop-schema-compare; status needs no connection.
   $py = Get-CoopFabricPython
   if (-not $py) { $py = Get-CoopPython }
   if (-not $py) { Coop-Die 'python3 is required for coop catalog' }
@@ -167,7 +158,7 @@ function Invoke-CoopCatalog {
   if ($cmd -eq 'snapshot') { Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue }
   $info = $null
   try { if ($raw) { $info = $raw | ConvertFrom-Json } } catch { $info = $null }
-  if (-not $info) { Coop-Die "coop catalog $cmd`: the helper printed no result (is python3 the Fabric Python with pyodbc?)" }
+  if (-not $info) { Coop-Die "coop catalog $cmd`: the helper printed no result (is python3 available?)" }
   $state = [string]$info.state
   if ($state -eq 'ok' -and $cmd -eq 'snapshot') {
     $o = $info.objects
@@ -186,7 +177,9 @@ function Invoke-CoopCatalog {
     $hint = switch ($state) {
       'output_not_snapshot' { " — $($info.path) holds files that are not a coop snapshot; move them or set catalog.path in .coop/project.yml" }
       'project_unavailable' { ' — no .coop/project.yml above this folder' }
-      'pyodbc_unavailable' { ' — pyodbc is missing in the Fabric Python (coop doctor)' }
+      'pyodbc_unavailable' { ' — pyodbc is missing in the coop-schema-compare install (coop doctor)' }
+      'tool_unavailable' { ' — the coop-schema-compare command is not installed (coop update, or coop doctor for the row that names it)' }
+      'tool_timeout' { ' — coop-schema-compare did not answer within its time limit; try again' }
       'target_not_dev_or_test' { ' — the contract default must be a dev or test entry; production is never snapshotted' }
       default { '' }
     }
@@ -196,10 +189,11 @@ function Invoke-CoopCatalog {
 }
 
 # coop schema compare [--source dev|test|prod|snapshot] [--target dev|test|prod]
-# (master plan SQ10): the deterministic schema compare, written by
-# lib/schema_compare.py over the same read-only connection path as the native SQL
-# tools (two catalog reads, production included, since reads need no approval),
-# into .coop/schema-compare/<source>-to-<target>/report.md and deploy.sql. Nothing
+# (master plan SQ10): the deterministic schema compare, run by the pinned
+# coop-schema-compare through lib/schema_compare.py, which resolves each live side
+# as the native SQL tools do (two catalog reads, production included, since reads
+# need no approval), into .coop/schema-compare/<source>-to-<target>/report.md and
+# deploy.sql. Nothing
 # is applied to either side; the script is for a person to read and carry over.
 function Invoke-CoopSchema {
   param([string[]]$Rest)
@@ -247,7 +241,7 @@ function Invoke-CoopSchema {
   Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue
   $info = $null
   try { if ($raw) { $info = $raw | ConvertFrom-Json } } catch { $info = $null }
-  if (-not $info) { Coop-Die 'coop schema compare: the helper printed no result (is python3 the Fabric Python with pyodbc?)' }
+  if (-not $info) { Coop-Die 'coop schema compare: the helper printed no result (is python3 available?)' }
   $state = [string]$info.state
   if ($state -eq 'ok') {
     $c = $info.counts
@@ -264,9 +258,11 @@ function Invoke-CoopSchema {
   }
   $hint = switch ($state) {
     'project_unavailable' { ' - no .coop/project.yml above this folder' }
-    'pyodbc_unavailable' { ' - pyodbc is missing in the Fabric Python (coop doctor)' }
+    'pyodbc_unavailable' { ' - pyodbc is missing in the coop-schema-compare install (coop doctor)' }
+    'tool_unavailable' { ' - the coop-schema-compare command is not installed (coop update, or coop doctor for the row that names it)' }
+    'tool_timeout' { ' - coop-schema-compare did not answer within its time limit; try again or narrow the compare with --schema' }
     'target_invalid' { " - side $($info.side) is not a ready sql_targets entry in .coop/project.yml (add it with /setup-project or the Project pane; <env>@<set> needs sql_targets.named.<set>.<env>)" }
-    'launch_identity_missing' { ' - coop was launched when .coop/project.yml named no SQL target or Fabric SQL endpoint, so no sign-in token exists for this launch: fix the file, then exit and start coop again (a new session is not enough)' }
+    'launch_identity_missing' { ' - coop was launched when .coop/project.yml named no SQL target or Fabric SQL endpoint, or the launch sign-in failed (a "live SQL sign-in unavailable" line at launch), so no sign-in token exists for this launch: fix the file or the sign-in, then exit and start coop again (a new session is not enough)' }
     'identity_mismatch' { ' - the signed-in Azure account is not the one coop was launched with: sign in with that account (az login) or exit and start coop again' }
     'snapshot_missing' { ' - no committed catalog snapshot; run: coop catalog snapshot' }
     'snapshot_incomplete' { ' - the catalog snapshot is damaged (a listed file is missing or unreadable); run: coop catalog snapshot' }
@@ -280,7 +276,7 @@ function Invoke-CoopSchema {
 # coop project status|get|share [--root <dir>] [--force]: the shared project file
 # (master plan C1). `share` is the one Git write coop performs on its own: it
 # stages and commits .coop/project.yml alone and pushes the current branch, after
-# the yes `coop init` or the user gave; everything runs in lib/project-share.mjs.
+# the yes `coop init --template` or the user gave; everything runs in lib/project-share.mjs.
 # `coop project home [<folder>]`: show, or set, this Windows user's client folder
 # record (~/.coop/client.json, F1): the client, the client folder coop opens in
 # every time, and the one .coop\project.yml, which every launch from any folder
@@ -366,7 +362,7 @@ function Invoke-CoopProject {
         'not-shared'  { Coop-Warn "$($json.path) differs from the team's copy (not shared yet). Share it: coop project share" }
         'team-newer'  { Coop-Warn "The team's project file on origin is newer than your unmodified copy. Get it: coop project get" }
         'team-has-it' { Coop-Warn "The team already has a project file on origin and this checkout does not. Get it: coop project get" }
-        'none'        { Coop-Info 'No project file here or on origin yet: coop init creates one.' }
+        'none'        { Coop-Info 'No project file here or on origin yet: /setup-project inside coop creates one.' }
         'no-remote'   { Coop-Info "$($json.root) has no origin remote: the project file cannot be shared from here." }
         default       { Coop-Info "Not a Git repository: $($json.root). The team's project file belongs in a repository the team clones." }
       }
@@ -500,22 +496,20 @@ $(Coop-Bold)Usage$(Coop-Rst)
   coop                      Launch the branded Pi agent
   coop desktop [folder]     Open coop in a window on a folder (default: here; installs the window on first use;
                             --app <exe> opens it in the installed coop window package instead)
-  coop doctor               Check dependencies and configuration
+  coop doctor [--fix]       Check dependencies and configuration (--fix applies the safe repairs)
   coop update               Update Pi + Coop tools + vibes/skills, then run doctor
-  coop install              Fresh-install / bootstrap everything (idempotent)
+  coop install              Fresh-install everything (idempotent)
   coop uninstall            Remove coop from this machine (--keep-tools spares pi + tools)
-  coop sync                 Ensure Pi extensions + place read-only MCP config + verify assets
   coop onboard              First-run global onboarding (creates ~/.coop/user.json)
   coop onboard --machine    Write the machine-level profile (name, communication) once per VM, from an elevated terminal
   coop onboard --platform <fabric|azure_sql|both>   Switch the client platform (a fresh machine onboards with that answer)
-  coop profile              Show your COOP user profile
-  coop profile edit         Edit your COOP user profile
-  coop profile reset        Remove your COOP user profile
-  coop teamai <cmd>         TeamAI shared-knowledge trial, isolated (status|install|init|pull|
-                            skills|maintenance|recall --query <text>|compare --query <text>|
-                            contribute --file <draft.md> [--approve]); off until
-                            knowledge.teamai.enabled is true
-  coop context-budget       Report fixed startup context sizes (use --json for machine output)
+  coop profile              Show your COOP user profile (edit | reset)
+  coop project status|get|share
+                            The team's .coop/project.yml: compare with origin, get it, or share it
+                            (share commits that one file and pushes; --force on a non-default branch)
+  coop project home [folder]
+                            Show or set this Windows user's client folder (and its project file), where coop opens every time
+  coop folders              Show the three places coop uses: this machine, this client, the repository
   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
                             (--strict: exit 2 on a failing linter; --skip-docs: linters only)
   coop catalog <cmd>        Committed dev catalog snapshot: snapshot (read the dev/test catalog
@@ -525,36 +519,48 @@ $(Coop-Bold)Usage$(Coop-Rst)
                             a side is dev|test|prod, or <env>@<set> for a sql_targets.named set)
   coop support [--json]     Collect a sanitized support bundle (health, versions, events)
                             (--incident: incident record; --export PATH: write bundle)
-  coop fabric [args]        Pass through to the Microsoft Fabric CLI (fab)
   coop version              Print coop + pi versions
   coop help                 Show this help
-
-$(Coop-Bold)Authoring$(Coop-Rst)
-  coop init [dir]           Scaffold .coop/project.yml into a work repo (default: .)
-                            (--seed-docs: generate coop-data-doc.yml from repositories:)
-  coop init --migrate-legacy [dir]
-                            Inspect legacy project configuration (dry run; add --apply to confirm changes)
-  coop project status|get|share
-                            The team's .coop/project.yml: compare with origin, get it, or share it
-                            (share commits that one file and pushes; --force on a non-default branch)
-  coop project home [folder]
-                            Show or set this Windows user's client folder (and its project file), where coop opens every time
-  coop folders              Show the three places coop uses: this machine, this client, the repository
-  coop new-skill <name>     Scaffold skills/<name>/SKILL.md (shipped tier)
-                            (--client: .coop/skills beside the contract; --personal: ~/.coop/skills)
-  coop new-prompt <name>    Scaffold prompts/<name>.md (shipped tier; --client / --personal as above)
-  coop release [level]      Cut a release: bump version + roll CHANGELOG + commit + tag + push
-                            (level = patch|minor|major, default patch; --yes, --no-push)
-
-$(Coop-Bold)Pi management (aliased under coop)$(Coop-Rst)
-  coop list                 List installed Pi extensions   (pi list)
-  coop config               Open Pi's resource TUI         (pi config)
-  coop add <source>         Install a Pi extension         (pi install <source>)
-  coop remove <source>      Remove a Pi extension          (pi remove <source>)
-  coop pi <args...>         Raw escape hatch to pi
+  coop dev <cmd>            Maintainer commands (coop dev help lists them)
 
 Anything after ``coop`` that is not a known subcommand is passed straight to pi,
 e.g. ``coop -c`` resumes the last session, ``coop @notes.md "review this"``.
+"@
+}
+
+# Maintainer commands (suite review 2026-10-26, pick 9): the worker help above
+# lists the day-to-day verbs; these sit under `coop dev <cmd>`. The bare names
+# still dispatch (release scripts and fixtures call them), they are just not shown.
+function Show-DevUsage {
+  Write-Host @"
+$(Coop-Bold)coop dev <cmd>$(Coop-Rst) — maintainer commands (each also runs as ``coop <cmd>``)
+
+  coop dev sync             Ensure Pi extensions + place read-only MCP config + verify assets
+                            (coop update and coop doctor --fix run this themselves)
+  coop dev init --seed-docs [dir]
+                            Generate coop-data-doc.yml from the project file's repositories:
+                            (the project file itself: /setup-project inside coop; --template copies the example)
+  coop dev init --migrate-legacy [dir]
+                            Inspect legacy project configuration (dry run; add --apply to confirm changes)
+  coop dev new-skill <name> Scaffold skills/<name>/SKILL.md (shipped tier)
+                            (--client: .coop/skills beside the contract; --personal: ~/.coop/skills)
+  coop dev new-prompt <name>
+                            Scaffold prompts/<name>.md (shipped tier; --client / --personal as above)
+  coop dev release [level]  Cut a release: bump version + roll CHANGELOG + commit + tag + push
+                            (level = patch|minor|major, default patch; --yes, --no-push)
+  coop dev launch-spec      Print the resolved pi invocation (--json for machine output); coop --no-launch
+                            runs the launch preflights first
+  coop dev context-budget   Report fixed startup context sizes (use --json for machine output)
+  coop dev teamai <cmd>     TeamAI shared-knowledge trial, isolated (status|install|init|pull|
+                            skills|maintenance|recall --query <text>|compare --query <text>|
+                            contribute --file <draft.md> [--approve]); off until
+                            knowledge.teamai.enabled is true
+  coop dev fabric [args]    Pass through to the Microsoft Fabric CLI (fab)
+  coop dev list             List installed Pi extensions   (pi list)
+  coop dev config           Open Pi's resource TUI         (pi config)
+  coop dev add <source>     Install a Pi extension         (pi install <source>)
+  coop dev remove <source>  Remove a Pi extension          (pi remove <source>)
+  coop dev pi <args...>     Raw escape hatch to pi
 "@
 }
 
@@ -808,7 +814,7 @@ function Get-CoopFabricMcpToken {
   $config = Join-Path $agentDir 'mcp-adapter.json'
   if ($script:CoopMcpConfig -and (Test-Path -LiteralPath $script:CoopMcpConfig -PathType Leaf)) { $config = $script:CoopMcpConfig }
   if (-not (Test-Have 'node')) {
-    Coop-Warn 'Fabric Warehouse MCP unavailable: token helper supervisor is unavailable'
+    Coop-Warn 'live SQL sign-in unavailable: token helper supervisor is unavailable'
     return ''
   }
   $previousEap = $ErrorActionPreference
@@ -828,7 +834,7 @@ function Get-CoopFabricMcpToken {
     $ErrorActionPreference = $previousEap
   }
   if ($rc -ne 0) {
-    Coop-Warn 'Fabric Warehouse MCP unavailable: token helper failed'
+    Coop-Warn 'live SQL sign-in unavailable: token helper failed'
     return ''
   }
   $stdout = @()
@@ -841,7 +847,7 @@ function Get-CoopFabricMcpToken {
     }
   }
   if ($stderrFound) {
-    Coop-Warn 'Fabric Warehouse MCP unavailable: token helper returned invalid output'
+    Coop-Warn 'live SQL sign-in unavailable: token helper returned invalid output'
     return ''
   }
   $protocol = ($stdout -join "`n")
@@ -866,10 +872,10 @@ function Get-CoopFabricMcpToken {
       # checks again (and signs in) instead of trusting the marker.
       Remove-Item -LiteralPath (Join-Path $agentDir '.az-ok') -Force -ErrorAction SilentlyContinue
     }
-    Coop-Warn "Fabric Warehouse MCP unavailable: $message"
+    Coop-Warn "live SQL sign-in unavailable: $message"
     return ''
   }
-  Coop-Warn 'Fabric Warehouse MCP unavailable: token helper returned invalid output'
+  Coop-Warn 'live SQL sign-in unavailable: token helper returned invalid output'
   return ''
 }
 
@@ -941,7 +947,8 @@ function Initialize-CoopLaunch {
   # window's first launch or `coop update` does. Say so when this package's
   # pins have not reached this account yet (B6; Aaron 2026-10-21).
   if (-not $Window -and (Test-CoopBundledSetupPending)) {
-    Coop-Warn 'new tool pins for this coop: run coop update'
+    if (Test-CoopBundledToolsPending) { Coop-Warn 'new tool pins for this coop: run coop update' }
+    else { Coop-Warn 'new coop version: run coop update   (refreshes the extensions and settings; no reinstall)' }
   }
 
   # Point the managed Warehouse MCP entry at THIS folder's project: the shared
@@ -1109,7 +1116,21 @@ function Invoke-CoopDesktop {
   # The project contract, tenant and Microsoft skill selection are read from here.
   Set-Location -LiteralPath $cwd
   if (-not $appExe -and $script:CoopWindowExe) { $appExe = $script:CoopWindowExe }
-  if (-not $printSpec -and (Test-CoopBundledSetupPending)) {
+  if (-not $printSpec -and (Test-CoopBundledSetupPending) -and -not (Test-CoopBundledToolsPending)) {
+    # A new version with the tool pins this account already has (most releases):
+    # the extensions and settings are refreshed, nothing is reinstalled, and the
+    # window opens in seconds instead of minutes (suite review pick 3).
+    Coop-Head 'New coop version: refreshing this account'
+    Coop-Info 'the tool pins are the ones already installed here, so only the extensions and settings are refreshed; the window opens once that finishes'
+    Set-CoopSetupPhase 1 1 "Refreshing this account for coop $($script:CoopVersion)" 'the extensions and settings; the tools installed here are already current'
+    $setupRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\sync.ps1')
+    if ($setupRc -ne 0) {
+      Coop-Warn ('the refresh did not finish (the lines above say why; they are also in ' + (Join-Path (Get-CoopProfileDir) 'desktop\launch.log') + '). The window opens anyway; the next launch tries again, or run: coop doctor')
+    } else {
+      Set-CoopBundledSetupDone
+    }
+  }
+  elseif (-not $printSpec -and (Test-CoopBundledSetupPending)) {
     Coop-Head 'First launch of the coop window: setting up this computer'
     # The installer is the user's "yes" (D1k): the package carries Git, Python,
     # the Azure CLI and every coop tool, so this installs from the package with
@@ -1122,7 +1143,8 @@ function Invoke-CoopDesktop {
     } else {
       Coop-Info 'anything still missing is installed below with winget (Windows may ask for permission); the window opens once setup finishes'
     }
-    $setupRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\install.ps1') @('--prereqs', 'auto')
+    Set-CoopSetupPhase 0 8 "Setting up coop $($script:CoopVersion) for this account" 'starting the setup'
+    $setupRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\install.ps1') @('--prereqs', 'auto', '--unattended')
     if ($setupRc -ne 0) {
       # Not the end of the launch (the dev VM, 2026-10-20: three tool installs
       # failed and the window never opened, with the reason in a console that
@@ -1135,6 +1157,7 @@ function Invoke-CoopDesktop {
       Set-CoopBundledSetupDone
     }
   }
+  if ($env:COOP_BOOT_STATUS -and $env:COOP_BOOT_PHASE) { Set-CoopSetupPhase 0 0 'Opening the coop window' 'the launch checks and the Warehouse sign-in' }
   if (-not (Test-Have 'pi')) { Coop-Die 'pi is not installed. Run: coop install   (installs the release''s tested Pi)' }
   # The window starts node directly (no shell), so on Windows only node.exe will do.
   $nodeCmd = Get-Command node -CommandType Application -ErrorAction SilentlyContinue |
@@ -1287,7 +1310,9 @@ function Test-CoopValidName { param([string]$Name) if ($Name -in @('.', '..') -o
 
 function Invoke-CoopInit {
   param([string[]]$RestArgs = @())
-  # coop init [dir]              run the guided project wizard
+  # The project wizard is /setup-project inside coop (and the window's Project
+  # pane), the one wizard (suite review 2026-10-26, pick 10). `coop init` keeps the
+  # jobs that are not the wizard:
   # coop init --template [dir]   copy the full documented example (legacy raw template)
   # coop init --migrate-legacy [dir] [--apply] [--archive .pi/path]
   #                              inspect first; apply only exact safe cleanup
@@ -1314,7 +1339,7 @@ function Invoke-CoopInit {
       '^--yes$'       { $env:COOP_ASSUME_YES = '1' }
       '^-y$'          { $env:COOP_ASSUME_YES = '1' }
       default {
-        if ($a -like '-*') { Coop-Die "unknown flag '$a' — usage: coop init [dir] [--seed-docs] [--template] [--migrate-legacy] [--apply] [--archive .pi/path] [--ci github|ado] [--yes]" }
+        if ($a -like '-*') { Coop-Die "unknown flag '$a' — usage: coop init [dir] --template | --seed-docs | --migrate-legacy [--apply] [--archive .pi/path] | --ci github|ado  [--yes]" }
         $dir = $a
       }
     }
@@ -1332,6 +1357,9 @@ function Invoke-CoopInit {
   }
   if ($seed) { Invoke-CoopInitSeedDocs $dir; return }
   if ($ciType) { Invoke-CoopInitCi $dir $ciType; return }
+  if (-not $template) {
+    Coop-Die "the project wizard runs inside coop: open coop at the client's Git root and run /setup-project (or use the coop window's Project pane). It asks only what applies, finds a contract the team already has, and never writes a second copy. coop init keeps --template, --seed-docs, --ci and --migrate-legacy."
+  }
   $dst = Join-Path $dir '.coop\project.yml'
   if (Test-Path -LiteralPath $dst) { Coop-Die "$dst already exists — not overwriting.  (seed coop-data-doc.yml from it with: coop init --seed-docs)" }
   # C1: one committed contract at the client's Git root. A contract above this
@@ -1341,7 +1369,6 @@ function Invoke-CoopInit {
   if ($where.Kind -eq 'existing') {
     Coop-Die "a contract already covers this folder: $($where.Path). One project file per client: edit it with /setup-project inside coop (or edit the file) instead of creating a second one."
   }
-  $client = ''
   $interactive = ($env:COOP_ASSUME_YES -eq '1' -or -not [Console]::IsInputRedirected)
   if ($where.Kind -eq 'home-repo') {
     # The team's project file goes in the client home repository beside the
@@ -1372,28 +1399,13 @@ function Invoke-CoopInit {
       }
     }
   }
-  $py = Get-CoopPython
-  if (-not $py) { Coop-Die 'python3 is required for: coop init' }
-  $wizard = Join-Path (Join-Path $script:CoopRoot 'lib') 'init_wizard.py'
-  if ($client) { $env:COOP_INIT_CLIENT = $client }
-  $env:COOP_INIT_REPOS = ''
-  if ($where.Kind -eq 'home-repo' -and $dir -eq $where.Root) { $env:COOP_INIT_REPOS = ($where.Repos -join ',') }
-  if ($template) {
-    New-Item -ItemType Directory -Force -Path (Join-Path $dir '.coop') | Out-Null
-    # Capture and write the text ourselves: under Windows PowerShell 5.1 the `>`
-    # operator is Out-File with its UTF-16 default, which lib/_yaml.py (utf-8-sig)
-    # and the Node contract readers cannot parse.
-    $templateText = [string](& $py $wizard "$dir" --template | Out-String)
-    if ($LASTEXITCODE -ne 0) {
-      # Never leave an empty contract behind and report success.
-      Remove-Item -LiteralPath $dst -Force -ErrorAction SilentlyContinue
-      exit $LASTEXITCODE
-    }
-    [System.IO.File]::WriteAllText($dst, $templateText, (New-Object System.Text.UTF8Encoding($false)))
-  } else {
-    & $py $wizard "$dir"
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-  }
+  $example = Join-Path (Join-Path $script:CoopRoot '.coop') 'project.example.yml'
+  if (-not (Test-Path -LiteralPath $example -PathType Leaf)) { Coop-Die "template not found: $example" }
+  New-Item -ItemType Directory -Force -Path (Join-Path $dir '.coop') | Out-Null
+  # Write the bytes ourselves: under Windows PowerShell 5.1 the `>` operator is
+  # Out-File with its UTF-16 default, which lib/_yaml.py (utf-8-sig) and the Node
+  # contract readers cannot parse.
+  [System.IO.File]::WriteAllText($dst, [System.IO.File]::ReadAllText($example, [System.Text.Encoding]::UTF8), (New-Object System.Text.UTF8Encoding($false)))
   Coop-Ok "Wrote $dst"
   Coop-Info "Open coop at or below $dir, or in a repository the file lists, so it is found."
   # The share offer: the one Git write coop performs on its own, after a yes.
@@ -1411,9 +1423,7 @@ function Invoke-CoopInit {
   } else {
     Coop-Info "Not shared yet: $dir is not a Git repository, and the team's project file belongs in a repository the team clones."
   }
-  if ($template) {
-    Coop-Info 'Fill in the TODOs (repo paths, Fabric/Power BI workspaces, tenant), then: coop doctor'
-  }
+  Coop-Info 'Fill in the TODOs (repo paths, Fabric/Power BI workspaces, tenant), then: coop doctor'
   Coop-Info 'Once repositories: is filled, seed the lineage-docs config from it: coop init --seed-docs'
   Coop-Info 'Run the same native lineage wizard via `coop data-doc setup` or /setup-docs inside coop.'
 }
@@ -1426,7 +1436,7 @@ function Invoke-CoopInit {
 function Invoke-CoopInitSeedDocs {
   param([string]$Dir)
   $proj = Join-Path $Dir '.coop\project.yml'
-  if (-not (Test-Path -LiteralPath $proj -PathType Leaf)) { Coop-Die "no $proj — run 'coop init' first, then fill repositories:." }
+  if (-not (Test-Path -LiteralPath $proj -PathType Leaf)) { Coop-Die "no $proj — create it with /setup-project inside coop first, with its repositories: filled." }
   $py = Get-CoopPython
   if (-not $py) { Coop-Die 'python is required for: coop init --seed-docs' }
   if (-not (Test-Have 'coop-data-doc')) { Coop-Die 'coop-data-doc is not installed. Run: coop install' }
@@ -1558,345 +1568,31 @@ Steps:
   Coop-Info "Edit it, then it loads as /$name next time you run: coop  (a shipped or client prompt of the same name wins)"
 }
 
-# --- Release gate: the manifest's coop-tool pins vs coop-website/versions.json -
-# config/release-manifest.json (python_tools) pins the coop-tool versions a release
-# installs; the sibling coop-website checkout's versions.json is the suite's single
-# source of truth for released version strings. Pins match -> $true; a mismatch
-# dies (fix the manifest, or --no-check); a missing sibling warns + confirms (--yes
-# continues with a note). Returns $false when the user declines the confirm
-# (caller cancels the release). scripts/release.sh's coop_release_check_pins is
-# the same gate for a bash release.
-function Test-CoopReleasePins {
-  param([bool]$AssumeYes = $false)
-  $vjson = Join-Path (Split-Path -Parent $script:CoopRoot) 'coop-website\versions.json'
-  if (-not (Test-Path -LiteralPath $vjson -PathType Leaf)) {
-    Coop-Warn "sibling coop-website checkout not found — can't verify config/release-manifest.json python_tools against versions.json (see RELEASE.md)."
-    if ($AssumeYes) {
-      Coop-Info 'continuing (--yes) — verify the coop-tool pins by hand.'
-      return $true
-    }
-    return (Coop-Confirm 'Release without verifying the coop-tool pins?')
-  }
-  $vraw = Get-Content -LiteralPath $vjson -Raw
-  $mismatch = $false
-  foreach ($tool in @('coop-data-doc', 'coop-schema-compare', 'coop-sql-source-control')) {
-    $pin = Coop-ManifestObjectGet 'python_tools' $tool
-    # versions.json keeps a strict one-`"key": "value"`-per-line layout (enforced
-    # by coop-website's own checker), so a regex read is safe — and python-free.
-    $rel = ''
-    if ($vraw -match ('"' + [regex]::Escape($tool) + '"\s*:\s*"([^"]*)"')) { $rel = $matches[1] }
-    if (-not $rel) {
-      Coop-Warn "could not read $tool from coop-website/versions.json — skipping its pin check."
-      continue
-    }
-    if (-not $pin) {
-      Coop-Warn "could not read python_tools.$tool from config/release-manifest.json (versions.json says $tool is $rel)."
-      $mismatch = $true
-    } elseif ($pin -ne $rel) {
-      Coop-Warn "python_tools.$tool is $pin in config/release-manifest.json but coop-website/versions.json says $rel."
-      $mismatch = $true
-    }
-  }
-  if ($mismatch) {
-    Coop-Die 'the coop-tool pins in config/release-manifest.json disagree with coop-website/versions.json — update the manifest (see RELEASE.md), or re-run with --no-check.'
-  }
-  Coop-Ok 'coop-tool pins match coop-website/versions.json'
-  return $true
-}
-
-# --- Release gate: the bundled standards copy is the wiki's current main --------
-# config/standards-bundle/bundle.json records the cooptimize/coop-standards
-# revision the bundle was captured from (first runs and offline machines read
-# that copy). bundle-check only proves the copy is internally consistent, so a
-# missed refresh shipped an older revision (issue #434): compare the bundle's
-# revision with the wiki's branch head before tagging. Same gate as
-# scripts/release.sh's coop_release_check_bundle: a different revision dies, an
-# unreachable wiki warns + confirms (--yes continues).
-function Test-CoopReleaseBundle {
-  param([bool]$AssumeYes = $false)
-  $bundle = Join-Path $script:CoopRoot 'config\standards-bundle\bundle.json'
-  $repository = ''; $branch = ''; $revision = ''
-  if (Test-Path -LiteralPath $bundle -PathType Leaf) {
-    $raw = Get-Content -LiteralPath $bundle -Raw
-    if ($raw -match '"repository"\s*:\s*"([^"]*)"') { $repository = $matches[1] }
-    if ($raw -match '"branch"\s*:\s*"([^"]*)"') { $branch = $matches[1] }
-    if ($raw -match '"revision"\s*:\s*"([^"]*)"') { $revision = $matches[1] }
-  }
-  if (-not $repository -or -not $branch -or -not $revision) {
-    Coop-Die 'config/standards-bundle/bundle.json is missing or unreadable — refresh it (node lib/standards-cli.mjs bundle-update <clone>, see RELEASE.md), or re-run with --no-check.'
-  }
-  $short = $revision.Substring(0, [Math]::Min(7, $revision.Length))
-  $head = ''
-  try {
-    $out = & git ls-remote --heads $repository "refs/heads/$branch" 2>$null
-    if ($LASTEXITCODE -eq 0 -and $out) { $head = (([string]($out | Select-Object -First 1)) -split '\s+')[0] }
-  } catch { $head = '' }
-  if (-not $head) {
-    Coop-Warn "could not read $branch of $repository — can't verify that config/standards-bundle (wiki @ $short) is current (see RELEASE.md)."
-    if ($AssumeYes) {
-      Coop-Info 'continuing (--yes) — verify the bundled standards by hand.'
-      return $true
-    }
-    return (Coop-Confirm 'Release without verifying the bundled standards?')
-  }
-  if ($head -ne $revision) {
-    $headShort = $head.Substring(0, [Math]::Min(7, $head.Length))
-    Coop-Die "config/standards-bundle is the wiki @ $short but $branch of $repository is at $headShort — refresh it (node lib/standards-cli.mjs bundle-update <clean clone>, then bundle-check; see RELEASE.md), or re-run with --no-check."
-  }
-  Coop-Ok "bundled standards are the wiki's current $branch ($short)"
-  return $true
-}
-
-# --- Release gate: an attached main that equals origin/main (#105) ------------
-# Release precondition (scripts/release.sh has the same gate). `coop update` follows only tags
-# merged into origin/main (H5), so a tag cut from a detached HEAD, another branch,
-# or a main with unpushed or missing commits never deploys: the fleet ignores it
-# silently. Fetches origin, then dies with the fix unless HEAD is the branch main
-# and points at origin/main. Runs before any file changes; the atomic push in
-# Invoke-CoopRelease covers origin moving afterwards.
-function Assert-CoopReleaseOnMain {
-  $root = $script:CoopRoot
-  $branch = Get-CoopRepoBranch
-  if (-not $branch) { Coop-Die 'HEAD is detached — release from main: git switch main; git pull --ff-only' }
-  if ($branch -cne 'main') { Coop-Die "on branch '$branch' — release from main: git switch main; git pull --ff-only" }
-  $fetchOut = @(& git -C $root fetch --quiet origin 2>&1)
-  if ($LASTEXITCODE -ne 0) {
-    $line = 'fetch failed'
-    foreach ($o in $fetchOut) { $s = ([string]$o).Trim(); if ($s) { $line = $s; break } }
-    Coop-Die "could not fetch origin (git: $line) — a release must start from the current origin/main; fix the remote or network and re-run."
-  }
-  $there = Get-CoopRepoGitLine @('rev-parse', '-q', '--verify', 'refs/remotes/origin/main')
-  if (-not $there) { Coop-Die 'no origin/main after fetching origin — a release tags origin/main; check the origin remote.' }
-  $here = Get-CoopRepoGitLine @('rev-parse', '-q', '--verify', 'HEAD')
-  if ($here -ne $there) {
-    $counts = (Get-CoopRepoGitLine @('rev-list', '--left-right', '--count', 'HEAD...refs/remotes/origin/main')) -split '\s+'
-    $ahead = if ($counts.Count -ge 2 -and $counts[0]) { $counts[0] } else { '?' }
-    $behind = if ($counts.Count -ge 2 -and $counts[1]) { $counts[1] } else { '?' }
-    Coop-Die "main differs from origin/main ($ahead ahead, $behind behind) — a release tags exactly origin/main: land or drop local commits, git pull --ff-only, then re-run."
-  }
-  Coop-Ok 'on main at origin/main'
-}
-
-# --- Release: bump version, roll CHANGELOG, commit + tag (+ push) -------------
-# coop release (scripts/release.sh is the bash dev-tooling equivalent). Bumps VERSION, release-manifest.json, and
-# the extension manifests, commits, tags, and pushes main + the tag in one atomic
-# push. Writes files with LF via [IO.File] to avoid Windows CRLF/BOM drift.
-# Requires a clean tree on an attached main that equals origin/main.
+# --- Release: the one implementation is scripts/release.sh (bash dev tooling) ----
+# The bump is a pull request (Actions -> release-pr, or scripts/bump-version.sh);
+# `coop release` verifies main and pushes the tag. Both are bash (RELEASE.md), so
+# on Windows this forwards to Git Bash's bash when there is one.
 function Invoke-CoopRelease {
-  param([string[]]$RestArgs = @())
-  $level = ''; $assumeYes = $false; $doPush = $true; $doCheck = $true
-  foreach ($a in $RestArgs) {
-    switch -Regex ($a) {
-      '^(patch|minor|major)$' { $level = $a }
-      '^(-y|--yes)$'          { $assumeYes = $true }
-      '^--no-push$'           { $doPush = $false }
-      '^--check$'             { $doCheck = $true }
-      '^--no-check$'          { $doCheck = $false }
-      '^(-h|--help)$' {
-        Coop-Say 'Usage: coop release [patch|minor|major] [--yes] [--no-push] [--no-check]'
-        Coop-Say '  Bump VERSION + release/extension manifests, roll CHANGELOG [Unreleased] into'
-        Coop-Say '  a dated release, commit, tag vX.Y.Z, and push main + the tag atomically (both'
-        Coop-Say '  or neither). Default: patch.'
-        Coop-Say '  Verifies extensions transpile + tests + the .ps1 BOM check pass, and that'
-        Coop-Say '  the manifest''s coop-tool pins match the sibling coop-website''s versions.json'
-        Coop-Say '  (--no-check to skip).'
-        Coop-Say '  Requires a clean working tree on main, equal to origin/main (it fetches origin).'
-        return
-      }
-      default { Coop-Die "unknown arg '$a' — usage: coop release [patch|minor|major] [--yes] [--no-push] [--no-check]" }
+  param([string[]]$Rest = @())
+  # Forward slashes: bash's dirname on a backslash path is '.', and release.sh
+  # finds its checkout from its own location.
+  $sh = (Join-Path $script:CoopRoot 'scripts\release.sh').Replace('\', '/')
+  $bash = $null
+  if ($env:OS -eq 'Windows_NT') {
+    # Git's own bash, not the WSL launcher that System32 puts first on PATH.
+    $git = Get-Command git.exe -ErrorAction SilentlyContinue
+    if ($git) {
+      $gitBash = Join-Path (Split-Path (Split-Path $git.Source -Parent) -Parent) 'bin\bash.exe'
+      if (Test-Path -LiteralPath $gitBash -PathType Leaf) { $bash = $gitBash }
     }
   }
-  if (-not $level) { $level = 'patch' }
-
-  if (-not (Test-Have 'git')) { Coop-Die "git is required for 'coop release'." }
-  $root = $script:CoopRoot
-  & git -C $root rev-parse --is-inside-work-tree *> $null
-  if ($LASTEXITCODE -ne 0) { Coop-Die "$root is not a git checkout." }
-  if (& git -C $root status --porcelain) { Coop-Die 'working tree not clean — commit or stash your changes before releasing.' }
-  Assert-CoopReleaseOnMain
-
-  $verFile = Join-Path $root 'VERSION'
-  if (-not (Test-Path -LiteralPath $verFile -PathType Leaf)) { Coop-Die "VERSION file missing at $verFile — fix it before releasing." }
-  $cur = (Get-Content -LiteralPath $verFile -Raw).Trim()
-  if ($cur -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { Coop-Die "VERSION ('$cur') is not X.Y.Z — fix it before releasing." }
-  $releaseManifest = Join-Path $root 'config\release-manifest.json'
-  if (-not (Test-Path -LiteralPath $releaseManifest -PathType Leaf)) { Coop-Die "release manifest missing at $releaseManifest — fix it before releasing." }
-  $manifestRaw = Get-Content -LiteralPath $releaseManifest -Raw
-  $manifestMatches = [regex]::Matches($manifestRaw, '(?m)^\s*"coop_version"\s*:\s*"([^"]*)"')
-  $manifestCur = if ($manifestMatches.Count -eq 1) { $manifestMatches[0].Groups[1].Value } else { '' }
-  if ($manifestCur -ne $cur) { Coop-Die "release manifest coop_version ('$manifestCur') does not match VERSION ('$cur') — align it before releasing." }
-  $p = $cur.Split('.'); $ma = [int]$p[0]; $mi = [int]$p[1]; $pa = [int]$p[2]
-  switch ($level) {
-    'major' { $new = "$($ma + 1).0.0" }
-    'minor' { $new = "$ma.$($mi + 1).0" }
-    'patch' { $new = "$ma.$mi.$($pa + 1)" }
+  if (-not $bash) {
+    $cmd = Get-Command bash -ErrorAction SilentlyContinue
+    if ($cmd) { $bash = $cmd.Source }
   }
-
-  & git -C $root rev-parse "v$new" *> $null
-  if ($LASTEXITCODE -eq 0) { Coop-Die "tag v$new already exists." }
-
-  # Pre-flight: never tag code that doesn't transpile. Skips when npx is unavailable;
-  # bypass with --no-check. Builds to a temp file (portable null output).
-  if ($doCheck) {
-    # Track whether the transpile/test gate actually ran. A host missing npx/node/bash
-    # skips those halves; if a push is requested we fail closed below rather than
-    # publish an unverified tag. Mirrors coop_release in bin/coop.
-    $gateSkipped = $false
-    if (Test-Have 'npx') {
-      $buildFail = $false
-      Get-ChildItem -LiteralPath (Join-Path $root 'extensions') -Directory | ForEach-Object {
-        $ext = Join-Path $_.FullName 'index.ts'
-        if (Test-Path -LiteralPath $ext) {
-          $tmpOut = [System.IO.Path]::GetTempFileName()
-          & npx -y esbuild $ext --bundle --format=esm --platform=node --packages=external --outfile=$tmpOut *> $null
-          $code = $LASTEXITCODE
-          Remove-Item -LiteralPath $tmpOut -ErrorAction SilentlyContinue
-          if ($code -ne 0) { Coop-Warn "extension does not build: $($_.Name)/index.ts"; $buildFail = $true }
-        }
-      }
-      if ($buildFail) { Coop-Die 'extension build check failed — fix it, or re-run with --no-check.' }
-      Coop-Ok 'extensions build'
-    } else {
-      Coop-Warn 'npx not found — skipping the extension build check.'; $gateSkipped = $true
-    }
-
-    # Gate on the full Node suite + the .ps1 BOM check, not just transpile.
-    # Both are bash scripts (dev tooling), so they need bash (Git Bash / WSL) on
-    # Windows. If the gate can't run on this host we fail closed before a push
-    # (below) rather than silently tagging an unverified release. scripts/release.sh
-    # tracks the same gate_skipped condition — bash is guaranteed on macOS/Linux,
-    # but node/npx are not, so a node-less host fails closed there too.
-    # COOP_TEST_EXTENDED=1 runs BOTH test lanes (gate + extended), so a release
-    # keeps the full coverage that CI splits between ci.yml (gate, every PR) and
-    # extended.yml (nightly). See docs/ci.md. Set only for the test run and then
-    # restored, the same scope as scripts/release.sh's one-command prefix.
-    $testsSh = Join-Path (Join-Path $root 'tests') 'run.sh'
-    if (Test-Path -LiteralPath $testsSh) {
-      if ((Test-Have 'bash') -and (Test-Have 'node')) {
-        # Capture combined output and echo it on failure, so a Windows test failure
-        # is diagnosable (the bash path cats its log to stderr for the same reason).
-        $prevTestExtended = $env:COOP_TEST_EXTENDED
-        $env:COOP_TEST_EXTENDED = '1'
-        try {
-          $testOut = & bash $testsSh 2>&1
-          $testCode = $LASTEXITCODE
-        } finally {
-          $env:COOP_TEST_EXTENDED = $prevTestExtended
-        }
-        if ($testCode -eq 0) { Coop-Ok 'tests pass (gate + extended lanes)' }
-        else { $testOut | Out-String | Write-Host; Coop-Die 'tests failed (COOP_TEST_EXTENDED=1 bash tests/run.sh, gate + extended lanes) — fix them, or re-run with --no-check.' }
-      } else {
-        Coop-Warn 'bash or node not found — skipping the test suite.'; $gateSkipped = $true
-      }
-    }
-    # The PowerShell suite is the product's own lane; it runs under this same host.
-    $testsPs1 = Join-Path (Join-Path $root 'tests') 'run.ps1'
-    if (Test-Path -LiteralPath $testsPs1) {
-      $psOut = & $testsPs1 2>&1
-      if ($LASTEXITCODE -eq 0) { Coop-Ok 'PowerShell tests pass (tests/run.ps1)' }
-      else { $psOut | Out-String | Write-Host; Coop-Die 'PowerShell tests failed (tests/run.ps1) — fix them, or re-run with --no-check.' }
-    }
-    # The .ps1 encoding gate is PowerShell too (scripts/check-bom.ps1): it runs
-    # under this same host, so no host can skip it.
-    $bomPs1 = Join-Path (Join-Path $root 'scripts') 'check-bom.ps1'
-    if (Test-Path -LiteralPath $bomPs1) {
-      $bomOut = & $bomPs1 2>&1
-      if ($LASTEXITCODE -eq 0) { Coop-Ok 'BOM check passes (scripts/check-bom.ps1)' }
-      else { $bomOut | Out-String | Write-Host; Coop-Die 'BOM check failed (pwsh -NoProfile -File scripts/check-bom.ps1) — fix it, or re-run with --no-check.' }
-    }
-    # Fail closed: a host that could not run the gate must not PUBLISH an unverified
-    # tag. Bumping/committing locally (--no-push) is fine; a push requires the gate
-    # to have run — or an explicit --no-check opt-out (which skips this whole block).
-    if ($gateSkipped -and $doPush) {
-      Coop-Die 'release gate could not run (npx/bash/node not found) — cut the release from macOS/Linux or a Windows host with Git Bash/WSL, use --no-push to bump locally only, or --no-check to release without gating.'
-    }
-
-    # The manifest's coop-tool pins vs the sibling coop-website's versions.json: a mismatch
-    # dies; a missing sibling warns + confirms (--yes continues). See
-    # Test-CoopReleasePins above and RELEASE.md.
-    if (-not (Test-CoopReleasePins -AssumeYes:$assumeYes)) {
-      Coop-Info 'release cancelled — nothing changed.'; return
-    }
-    # The bundled standards copy vs the wiki's branch head (issue #434): a stale
-    # bundle dies; an unreachable wiki warns + confirms. See Test-CoopReleaseBundle.
-    if (-not (Test-CoopReleaseBundle -AssumeYes:$assumeYes)) {
-      Coop-Info 'release cancelled — nothing changed.'; return
-    }
-  }
-
-  $pushMsg = if ($doPush) { ' + push' } else { '' }
-  if (-not $assumeYes) {
-    if (-not (Coop-Confirm "Release v$cur -> v$new? (bump VERSION + manifests, roll CHANGELOG, commit, tag v$new$pushMsg)")) {
-      Coop-Info 'release cancelled — nothing changed.'; return
-    }
-  }
-
-  $today = (Get-Date -Format 'yyyy-MM-dd')
-
-  # 1. VERSION (LF)
-  [System.IO.File]::WriteAllText((Join-Path $root 'VERSION'), "$new`n")
-
-  # 2. release manifest + extension manifests
-  $manifestRaw = [regex]::Replace(
-    $manifestRaw,
-    '(?m)^(\s*"coop_version"\s*:\s*")[^"]*(".*)$',
-    ('${1}' + $new + '${2}')
-  )
-  [System.IO.File]::WriteAllText($releaseManifest, ($manifestRaw -replace "`r`n", "`n"))
-  Get-ChildItem -LiteralPath (Join-Path $root 'extensions') -Directory | ForEach-Object {
-    $pkg = Join-Path $_.FullName 'package.json'
-    if (Test-Path -LiteralPath $pkg) {
-      $c = Get-Content -LiteralPath $pkg -Raw
-      $c = [regex]::Replace($c, '"version":\s*"[0-9][^"]*"', "`"version`": `"$new`"")
-      [System.IO.File]::WriteAllText($pkg, $c)
-    }
-  }
-
-  # 3. CHANGELOG: insert a dated [X.Y.Z] heading right under [Unreleased]
-  $clog = Join-Path $root 'CHANGELOG.md'
-  if (Test-Path -LiteralPath $clog) {
-    $lines = Get-Content -LiteralPath $clog
-    if ($lines -match '^## \[Unreleased\]') {
-      $out = New-Object System.Collections.Generic.List[string]
-      $done = $false
-      foreach ($ln in $lines) {
-        $out.Add($ln)
-        if (-not $done -and $ln -match '^## \[Unreleased\]') { $out.Add(''); $out.Add("## [$new] — $today"); $done = $true }
-      }
-      [System.IO.File]::WriteAllText($clog, ($out -join "`n") + "`n")
-    } else {
-      Coop-Warn "no '## [Unreleased]' heading in CHANGELOG.md — skipped the changelog roll."
-    }
-  }
-
-  # 4. commit + tag. Stage ONLY the files a release touches — never `add -A`, which
-  # would sweep in anything created during the (slow) gate window if another agent or
-  # an editor autosave shares the tree (this is how a spurious empty release got cut).
-  & git -C $root add VERSION CHANGELOG.md config/release-manifest.json
-  Get-ChildItem -LiteralPath (Join-Path $root 'extensions') -Directory | ForEach-Object {
-    $pkg = Join-Path $_.FullName 'package.json'
-    if (Test-Path -LiteralPath $pkg) { & git -C $root add $pkg }
-  }
-  & git -C $root commit -q -m "Release v$new"
-  if ($LASTEXITCODE -ne 0) { Coop-Die 'git commit failed.' }
-  & git -C $root tag -a "v$new" -m "coop-agent v$new"
-  if ($LASTEXITCODE -ne 0) { Coop-Die 'git tag failed.' }
-  Coop-Ok "released v$new (was v$cur)"
-
-  # 5. push main and the tag in ONE atomic push (#105): if origin rejects either
-  # ref (main moved during the gate, a protected branch, an existing tag), neither
-  # lands, so the tag can never reach origin off main. Fully qualified refs, so a
-  # stray tag named 'main' cannot be pushed in place of the branch.
-  if ($doPush) {
-    $pushOut = @(& git -C $root push --atomic --quiet origin refs/heads/main "refs/tags/v$new" 2>&1)
-    if ($LASTEXITCODE -eq 0) { Coop-Ok "pushed main + tag v$new" }
-    else {
-      foreach ($o in $pushOut) { $pushLine = ([string]$o).TrimEnd(); if ($pushLine) { Coop-Emit $pushLine } }
-      Coop-Die "push failed — nothing was pushed (atomic), so v$new exists only on this machine. Retry: git push --atomic origin main v$new — or, if origin/main moved, undo the local release (git tag -d v$new; git reset --keep HEAD~1), git pull --ff-only, and re-run coop release."
-    }
-  } else {
-    Coop-Info "not pushed (--no-push). When ready: git push --atomic origin main v$new"
-  }
+  if (-not $bash) { Coop-Die "coop release runs scripts/release.sh under bash (Git Bash on Windows): open Git Bash and run  ./bin/coop release" }
+  & $bash $sh @Rest
+  exit $LASTEXITCODE
 }
 
 function Invoke-CoopInitCi {
@@ -1938,6 +1634,14 @@ if ($argList.Count -gt 1) { $rest = @($argList[1..($argList.Count - 1)]) }
 # this process so a shell whose persistent PATH predates the install still finds them.
 Add-CoopRuntimePaths
 
+# `coop dev <cmd>` unwraps to the bare maintainer command (Show-DevUsage lists
+# them); `coop dev` alone, or `coop dev help`, prints that list.
+if ($cmd -ceq 'dev') {
+  if ($rest.Count -eq 0 -or $rest[0] -ceq 'help' -or $rest[0] -ceq '--help' -or $rest[0] -ceq '-h') { Show-DevUsage; exit 0 }
+  $cmd = [string]$rest[0]
+  if ($rest.Count -gt 1) { $rest = @($rest[1..($rest.Count - 1)]) } else { $rest = @() }
+}
+
 switch -CaseSensitive ($cmd) {
   '' { Invoke-LaunchPi; break }
   # --no-launch is a dry-run: run the preflights, then PRINT the resolved pi
@@ -1946,7 +1650,6 @@ switch -CaseSensitive ($cmd) {
   '--no-launch' { Invoke-CoopLaunchPreflight; Invoke-CoopLaunchSpec $rest; break }
   'doctor' { & (Join-Path $script:CoopRoot 'scripts\doctor.ps1') @rest; exit $LASTEXITCODE }
   'update' { & (Join-Path $script:CoopRoot 'scripts\update.ps1') @rest; exit $LASTEXITCODE }
-  'bootstrap' { & (Join-Path $script:CoopRoot 'scripts\install.ps1') @rest; exit $LASTEXITCODE }
   'install' {
     # Bare `coop install` (or with bootstrap flags) bootstraps the whole stack.
     # `coop install <source>` adds a Pi extension (alias of `coop add`).
@@ -1954,7 +1657,7 @@ switch -CaseSensitive ($cmd) {
       & (Join-Path $script:CoopRoot 'scripts\install.ps1') @rest
       exit $LASTEXITCODE
     }
-    if (-not (Test-Have 'pi')) { Coop-Die 'pi not installed. Run: coop bootstrap' }
+    if (-not (Test-Have 'pi')) { Coop-Die 'pi not installed. Run: coop install' }
     & pi install @rest
     exit $LASTEXITCODE
   }
@@ -1984,7 +1687,7 @@ switch -CaseSensitive ($cmd) {
   }
   # --- Pi management, aliased under coop ---
   'add' {
-    if (-not (Test-Have 'pi')) { Coop-Die 'pi not installed. Run: coop bootstrap' }
+    if (-not (Test-Have 'pi')) { Coop-Die 'pi not installed. Run: coop install' }
     & pi install @rest
     exit $LASTEXITCODE
   }

@@ -28,7 +28,7 @@ foreach ($a in $args) {
   elseif ($a -eq '--publish') { $script:PUBLISH = $true; $script:JSON = $true }
   elseif ($a -eq '-h' -or $a -eq '--help') {
     Coop-Say 'Usage: coop doctor [--fix] [--json] [--publish]'
-    Coop-Say '  --fix      apply safe remediations (sync extensions/MCP/assets, install missing Coop tools), then re-check'
+    Coop-Say '  --fix      apply safe remediations (sync extensions/MCP/assets, converge the Coop tools and the Fabric CLI at their pins), then re-check'
     Coop-Say '  --json     suppress the human report and emit one JSON document on stdout: {"checks":[{name,section,status,hint}...],"fail":N,"warn":N}'
     Coop-Say '  --publish  augment the --json payload with machine identity (hostname/user/versions/timestamp) and write to fleet.publish_dir (from ~/.coop/config or defaults.yml) instead of stdout'
     exit 0
@@ -340,7 +340,7 @@ if (Test-Have 'pi') {
   if ((Test-CoopAuthHasCredential $authA) -or (Test-CoopAuthHasCredential $authB)) {
     D-Ok 'Pi login present'
   } else {
-    D-Warn 'no Pi login found yet' "your first 'coop' run will prompt you to sign in — see docs/onboarding.md §3.5 (OpenAI/Codex provider, Cooptimize BUSINESS account)"
+    D-Warn 'no Pi login found yet' "your first 'coop' run will prompt you to sign in — see the coop site's Onboarding, step 3 (OpenAI/Codex provider, Cooptimize BUSINESS account)"
   }
 }
 
@@ -990,7 +990,7 @@ if ($proj) {
     }
   }
 } else {
-  D-Warn 'no .coop/project.yml found' "run /setup-project inside coop at the client's Git root (or coop init there), then commit the file with the repository"
+  D-Warn 'no .coop/project.yml found' "run /setup-project inside coop at the client's Git root (or the coop window's Project pane), then commit the file with the repository"
 }
 
 # F2: the three places coop keeps its files, named the way coop speaks of them
@@ -1063,59 +1063,33 @@ if ($script:FIX -and ($script:FAIL -gt 0 -or $script:WARN -gt 0)) {
     $syncRc = Invoke-CoopScript $syncScript
     if ($syncRc -eq 0) { Coop-Ok 'synced extensions / MCP / assets' } else { Coop-Warn 'sync had issues (run: coop sync)' }
   }
-  if (Test-Have 'pipx') {
-    # The Fabric CLI is (re)built when fab is missing, or when its environment
-    # runs a Python its own Requires-Python rejects (a 3.14 venv, after the
-    # default Python moved on). The interpreter comes from the same plan install
-    # and update use: a local 3.10-3.13, or pipx's standalone 3.12.
-    $fabricRebuild = 0
-    $fabricEnvPy = ''
-    if (-not (Test-Have 'fab')) { $fabricRebuild = 1 }
-    else {
-      $fabricEnvPy = [string](Get-CoopVenvPythonVersion 'ms-fabric-cli')
-      $fabricRp = if ($fabricEnvPy) { Get-CoopVenvRequiresPython 'ms-fabric-cli' 'ms-fabric-cli' } else { '' }
-      if ($fabricEnvPy -and $fabricRp -and -not (Test-CoopPythonSpec $fabricEnvPy $fabricRp)) { $fabricRebuild = 2 }
-    }
-    if ($fabricRebuild -ne 0) {
-      # Repairs install the release's pinned versions only, never PyPI's latest.
-      $fabricSpec = Coop-ManifestPythonSpec 'ms-fabric-cli'
-      $fabricPlan = if ($fabricSpec) { Get-CoopFabricPipxPlan } else { $null }
-      if (-not $fabricSpec) {
-        Coop-Warn 'no release pin for ms-fabric-cli in the manifest' 'run: coop update'
-        $repairFailed = $true
-      } elseif (-not $fabricPlan) {
+  if (Test-CoopPipxAvailable) {
+    # Repairs run the convergence units install and update run
+    # (Invoke-CoopPipxConverge: skip at the manifest pin, rebuild an environment
+    # on the wrong interpreter, install the pin, never PyPI's latest), so the
+    # repair cannot drift from the install. Each unit reports one ok/msg.
+    $fixPlan = Get-CoopFleetPlan
+    if ($fixPlan.Fabric) {
+      # The interpreter comes from the same plan install and update use: a
+      # local 3.10-3.13, or pipx's standalone 3.12.
+      $fabricPlan = Get-CoopFabricPipxPlan
+      if (-not $fabricPlan) {
         Coop-Warn 'Microsoft Fabric CLI needs Python 3.10-3.13 and this pipx cannot fetch one' "apply the Python row's fix under Prerequisites (install Python 3.12, or upgrade pipx to 1.12+), then run: coop doctor --fix"
         $repairFailed = $true
       } else {
-        $fabricArgs = @('install')
-        if ($fabricRebuild -eq 2) { $fabricArgs += '--force' }
-        if ($fabricPlan.FetchFlag) { $fabricArgs += $fabricPlan.FetchFlag }
-        $fabricArgs += @('--python', $fabricPlan.Python, $fabricSpec)
-        Coop-Info "pipx $($fabricArgs -join ' ')"
-        & pipx @fabricArgs *> $null
-        if ($LASTEXITCODE -eq 0 -and (Sync-CoopFabricPythonPackages) -and (Ensure-CoopFabricOdbcDriver $true)) {
-          if ($fabricRebuild -eq 2) { Coop-Ok "managed Fabric runtime rebuilt on Python $($fabricPlan.Python) (was $fabricEnvPy)" }
-          else { Coop-Ok "managed Fabric runtime installed (Python $($fabricPlan.Python))" }
-        } else {
-          Coop-Warn 'could not install the managed Fabric runtime' 'run: coop install'
-          $repairFailed = $true
-        }
+        $fabricUnit = Invoke-CoopPipxConverge -Package $fixPlan.Fabric.Name -Pin $fixPlan.Fabric.Pin -Python $fabricPlan.Python -FetchPython $fabricPlan.FetchFlag
+        if (-not $fabricUnit.ok) { Coop-Warn $fabricUnit.msg 'run: coop install'; $repairFailed = $true }
+        elseif ($fabricUnit.msg -like '* matches manifest') { Coop-Ok $fabricUnit.msg }
+        # A rebuilt or new environment needs its runtime libraries and the
+        # driver check (the sync child above converged only an existing one).
+        elseif ((Sync-CoopFabricPythonPackages) -and (Ensure-CoopFabricOdbcDriver $true)) { Coop-Ok "$($fabricUnit.msg); Fabric Python runtime converged" }
+        else { Coop-Warn "$($fabricUnit.msg), but its Python runtime did not converge" 'run: coop install'; $repairFailed = $true }
       }
     }
-    # The Coop tools come from the fleet plan install/update converge (the
-    # Fabric CLI is the rebuild above); repairs install the manifest pin only.
-    foreach ($t in @((Get-CoopFleetPlan).PythonTools | ForEach-Object { $_.Name })) {
-      if (-not (Test-Have $t)) {
-        $tSpec = Coop-ManifestPythonSpec $t
-        if (-not $tSpec) {
-          Coop-Warn "no release pin for $t in the manifest" 'run: coop update'
-          $repairFailed = $true
-          continue
-        }
-        Coop-Info "pipx install $tSpec"
-        & pipx install $tSpec *> $null
-        if ($LASTEXITCODE -eq 0) { Coop-Ok "$t installed" } else { Coop-Warn "could not install $t (run: pipx install $tSpec)" }
-      }
+    foreach ($tool in @($fixPlan.PythonTools)) {
+      $toolUnit = Invoke-CoopPipxConverge -Package $tool.Name -Pin $tool.Pin
+      if ($toolUnit.ok) { Coop-Ok $toolUnit.msg }
+      else { Coop-Warn $toolUnit.msg 'run: coop update'; $repairFailed = $true }
     }
   } else {
     Coop-Warn 'pipx missing — cannot auto-install tools (install pipx first: see the hint above)'

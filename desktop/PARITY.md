@@ -1,27 +1,41 @@
-# coop window: terminal parity
+# coop window: what it does, and what opens in the terminal
 
-Master plan row D1b, section 11.1: the window keeps every capability of a
-terminal coop session. Each row below maps one way of acting in the terminal to
-what the window does:
+Master plan row D1b, section 11.1: the window is one way to run the same coop
+session the terminal runs, and this file is the window's own contract. The
+window's lists in `desktop/renderer/commands.mjs` are the product:
+
+- **`BUILTINS`**: Pi's slash commands. Pi implements them in its terminal UI,
+  so they do nothing in RPC mode and the window runs each one itself, or opens
+  the terminal for it.
+- **`KEYS`**: the window's keyboard shortcuts (`/hotkeys` shows the same table).
+- **`TERMINAL_ONLY`**: the few extension commands whose screen exists only in
+  a terminal; the window opens the terminal for them instead of sending them
+  to Pi, where they would show nothing.
+
+Everything else goes to Pi as typed: coop's extension commands, prompt
+templates and skills (listed in completion from `get_commands`), and their
+dialogs and notices show as cards, lists, toasts and conversation entries
+(see Extension UI). Anything only a terminal can show, now or after a Pi or
+extension upgrade, opens coop in a terminal on the same session (Windows), the
+way "Open in terminal" does for every session; that is the default, so a new
+terminal feature needs no row here and fails no test. A row is added when the
+window takes a feature on, never because the terminal gained one.
+
+Each row maps one capability to what the window does:
 
 - **rpc**: the window sends Pi's RPC command for it.
 - **window**: a control in the window does it (named in the row).
-- **Pi**: the window sends the text to Pi as typed, and Pi's answer shows the
-  same way it does in the terminal (dialogs, notices, the conversation).
-- **terminal**: the screen exists only in the terminal, so the window opens
-  coop in a terminal on the same session (Windows), the way "Open in terminal"
-  does for every session.
+- **Pi**: the window sends the text to Pi as typed.
+- **terminal**: the window opens coop in a terminal on the same session.
 
-A row without a mapping fails D1b. `tests/desktop.test.mjs` checks this file
-against the window's own lists (`desktop/renderer/commands.mjs`: `BUILTINS`,
-`KEYS`, `TERMINAL_ONLY`), against the command list Pi returned in the
-recorded fixture (`tests/fixtures/desktop-rpc.jsonl`, coop's release extensions
-loaded) and against Pi's own slash commands and keybinding actions, read from
-the docs in Pi's package when the fixture was recorded
-(`tests/fixtures/desktop-pi-surface.json`). A Pi or extension upgrade that adds
-a command or a keybinding fails that test until it has a row here; re-record
-both files with `node desktop/scripts/record-fixture.mjs` (row U2 does this for
-Pi 1.0).
+`tests/desktop.test.mjs` checks this file against the window's lists, and the
+lists against Pi's own surface read from the docs in Pi's package when the
+fixture was recorded (`tests/fixtures/desktop-pi-surface.json`, re-recorded
+with `node desktop/scripts/record-fixture.mjs`): every Pi slash command is a
+built-in or terminal-only (so a Pi upgrade that adds one is a one-line
+decision in `commands.mjs`), every window shortcut stands for a Pi keybinding
+action, and no built-in shadows an extension command in the recorded session
+(`tests/fixtures/desktop-rpc.jsonl`, coop's release extensions loaded).
 
 The window adds nothing to Pi's launch: `coop desktop` builds the same
 arguments as `coop` (`Build-CoopPiArgs`) and the window runs them with
@@ -30,8 +44,8 @@ standards and skills behave as in the terminal.
 
 ## Pi built-in commands
 
-Pi 1.2.0, `docs/slash-commands.md`. Pi implements these in its terminal UI
-only, so the window runs each one itself.
+`BUILTINS`, one row each: Pi's `docs/slash-commands.md` (Pi 1.2.0). Pi
+implements these in its terminal UI only, so the window runs each one itself.
 
 | Command | Maps to | In the window |
 | --- | --- | --- |
@@ -86,97 +100,42 @@ window, which `coop desktop` opens on a folder.
 | `coop "message"` | rpc | Type the message (`prompt`). |
 | `coop -p` | terminal | Print mode is not a session; run it in a terminal. |
 
-## Keybinding actions
+## Keyboard shortcuts
 
-Pi 1.2.0, `docs/keybindings.md`: every action id, with the window's key.
-"native" means the text box, list or scroll area already does it.
+`KEYS`, one row each: the window's shortcuts, keyed by the Pi keybinding
+action (`docs/keybindings.md`) each one stands for. Pi's other actions need
+no key: the text box, lists and scroll areas do them natively (arrows, Home,
+End, PageUp, Ctrl+Backspace, Ctrl+Z, Ctrl+C, the mouse), the tree view's
+folds and Show list are its own controls, and the rest are terminal screens
+(scoped models, tree labels, session delete, saving defaults) reached with
+Open in terminal. The side pane's keys (Ctrl+\, Ctrl+Shift+D, Ctrl+Shift+S),
+tabs (Ctrl+N, Ctrl+Tab, Ctrl+1 to 9), zoom and Ctrl+K are the window's own.
 
 | Action | Maps to | In the window |
 | --- | --- | --- |
 | `app.interrupt` | rpc | Esc: `abort` (or `abort_bash`, `abort_retry`); queued messages come back to the prompt first (`clear_queue`). |
-| `app.clear` | native | Ctrl+C copies in a window; clear the prompt with Ctrl+A, Delete. |
 | `app.exit` | window | Ctrl+W closes the tab (the last tab closes the window). |
-| `app.suspend` | terminal | Job control has no window form (and none on Windows). |
 | `app.editor.external` | window | Ctrl+G opens a larger editor for the prompt. |
 | `app.clipboard.pasteImage` | window | Ctrl+V, drag and drop or the paperclip attaches files (up to ten a message): images go with the prompt when the model reads them (five, 4 MB each); text files are referenced by path; Word, Excel, PowerPoint and PDF are read to Markdown (pdf.js in its own time-limited process) and referenced by path, so coop reads them through its guarded read tool. |
 | `app.session.new` | rpc | Ctrl+Shift+N. |
 | `app.session.tree` | rpc | Ctrl+Shift+T. |
 | `app.session.fork` | rpc | Ctrl+Shift+F. |
 | `app.session.resume` | window | Ctrl+Shift+R. |
-| `app.session.togglePath` | native | The sessions list is per folder. |
-| `app.session.toggleSort` | native | The sessions list is newest first. |
-| `app.session.toggleNamedFilter` | native | Type in the sessions filter. |
-| `app.session.rename` | rpc | Session name in the header, or `/name`. |
-| `app.session.delete` | terminal | Deleting saved sessions is in the terminal's `/resume`. |
-| `app.session.deleteNoninvasive` | terminal | Deleting saved sessions is in the terminal's `/resume`. |
-| `app.model.select` | rpc | Ctrl+L. |
-| `app.model.cycleForward` | rpc | Ctrl+P (`cycle_model`). |
-| `app.model.cycleBackward` | rpc | Ctrl+L picks any model; Pi's RPC cycles forward only. |
-| `app.models.save` | terminal | Saving scoped model lists is in the terminal's `/scoped-models`; a model picked with Ctrl+L or Ctrl+P is remembered for new sessions anyway (coop-router, `coop-model.json`). |
-| `app.thinking.cycle` | rpc | Shift+Tab. |
-| `app.thinking.save` | terminal | Saving the default level is in the terminal's `/settings`. |
+| `app.model.select` | rpc | Ctrl+L. Pi's RPC cycles forward only, so the picker stands in for the backward cycle too. |
+| `app.model.cycleForward` | rpc | Ctrl+P (`cycle_model`). A model picked here is remembered for new sessions (coop-router, `coop-model.json`); scoped model lists are the terminal's `/scoped-models`. |
+| `app.thinking.cycle` | rpc | Shift+Tab. Saving the default level is the terminal's `/settings`. |
 | `app.thinking.toggle` | window | Ctrl+T shows or hides thinking. |
 | `app.tools.expand` | window | Ctrl+O expands or collapses tool output. |
-| `app.message.copy` | window | Copy button on every answer; `/copy` for the last. |
 | `app.message.followUp` | rpc | Alt+Enter or Ctrl+Q. |
 | `app.message.dequeue` | rpc | Alt+Up (`clear_queue`, texts back in the prompt). |
-| `app.tree.foldOrUp` | window | Click a branch fold (or Enter on it) in the tree view. |
-| `app.tree.unfoldOrDown` | window | Click a branch fold (or Enter on it) in the tree view. |
-| `app.tree.editLabel` | terminal | Tree labels are edited in the terminal's `/tree`. |
-| `app.tree.toggleLabelTimestamp` | terminal | Tree labels are edited in the terminal's `/tree`. |
-| `app.tree.filter.default` | window | Tree view Show list: Prompts and answers (the default). |
-| `app.tree.filter.noTools` | window | Tree view Show list: Everything but tool results. |
-| `app.tree.filter.userOnly` | window | Tree view Show list: Prompts only. |
-| `app.tree.filter.labeledOnly` | window | Tree view Show list: Labeled entries. |
-| `app.tree.filter.all` | window | Tree view Show list: Everything. |
-| `app.tree.filter.cycleForward` | window | Down on the tree view's Show list. |
-| `app.tree.filter.cycleBackward` | window | Up on the tree view's Show list. |
-| `app.models.enableAll` | terminal | Scoped models are set in the terminal. |
-| `app.models.clearAll` | terminal | Scoped models are set in the terminal. |
-| `app.models.toggleProvider` | terminal | Scoped models are set in the terminal. |
-| `app.models.reorderUp` | terminal | Scoped models are set in the terminal. |
-| `app.models.reorderDown` | terminal | Scoped models are set in the terminal. |
 | `tui.input.newLine` | window | Shift+Enter or Ctrl+J. |
 | `tui.input.submit` | rpc | Enter (`prompt`, or `steer` while coop works). |
 | `tui.input.tab` | window | Tab completes a `/command`, an `@file` or a path. |
-| `tui.input.copy` | native | Ctrl+C copies the selection. |
+| `tui.input.copy` | window | Ctrl+C copies the selection (Ctrl+C never interrupts in a window; Esc does). |
 | `tui.editor.historyPrevious` | window | Up in an empty prompt. |
 | `tui.editor.historyNext` | window | Down while browsing history. |
-| `tui.editor.cursorUp` | native | Arrow keys. |
-| `tui.editor.cursorDown` | native | Arrow keys. |
-| `tui.editor.cursorLeft` | native | Arrow keys. |
-| `tui.editor.cursorRight` | native | Arrow keys. |
-| `tui.editor.cursorWordLeft` | native | Ctrl+Left. |
-| `tui.editor.cursorWordRight` | native | Ctrl+Right. |
-| `tui.editor.cursorLineStart` | native | Home. |
-| `tui.editor.cursorLineEnd` | native | End. |
-| `tui.editor.jumpForward` | native | Word moves or the mouse. |
-| `tui.editor.jumpBackward` | native | Word moves or the mouse. |
-| `tui.editor.pageUp` | native | PageUp in a long prompt. |
-| `tui.editor.pageDown` | native | PageDown in a long prompt. |
-| `tui.editor.deleteCharBackward` | native | Backspace. |
-| `tui.editor.deleteCharForward` | native | Delete. |
-| `tui.editor.deleteWordBackward` | native | Ctrl+Backspace. |
-| `tui.editor.deleteWordForward` | native | Ctrl+Delete. |
-| `tui.editor.deleteToLineStart` | native | Shift+Home, then Delete. |
-| `tui.editor.deleteToLineEnd` | native | Shift+End, then Delete (Ctrl+K opens the command palette). |
-| `tui.editor.yank` | native | Ctrl+X and Ctrl+V through the clipboard. |
-| `tui.editor.yankPop` | native | Ctrl+X and Ctrl+V through the clipboard. |
-| `tui.editor.undo` | native | Ctrl+Z (Ctrl+Y redoes). |
-| `tui.select.up` | native | Up in every list. |
-| `tui.select.down` | native | Down in every list. |
-| `tui.select.pageUp` | native | PageUp in every list. |
-| `tui.select.pageDown` | native | PageDown in every list. |
-| `tui.select.confirm` | native | Enter in every list. |
-| `tui.select.cancel` | native | Esc closes every list. |
 | `tui.altScreen.pageUp` | window | PageUp from the prompt scrolls the conversation. |
 | `tui.altScreen.pageDown` | window | PageDown from the prompt scrolls the conversation. |
-| `tui.altScreen.halfPageUp` | native | Mouse wheel or scroll bar. |
-| `tui.altScreen.halfPageDown` | native | Mouse wheel or scroll bar. |
-| `tui.altScreen.lineUp` | native | Arrow keys with the conversation focused. |
-| `tui.altScreen.lineDown` | native | Arrow keys with the conversation focused. |
-| `tui.altScreen.top` | native | Home with the conversation focused. |
-| `tui.altScreen.bottom` | native | End with the conversation focused; the window follows new output while at the bottom. |
 | `tui.altScreen.previousPrompt` | window | Ctrl+Up scrolls to the previous prompt you sent. |
 | `tui.altScreen.nextPrompt` | window | Ctrl+Down scrolls to the next prompt you sent. |
 | `tui.altScreen.search` | window | Ctrl+F searches the conversation. |
@@ -186,51 +145,30 @@ Pi 1.2.0, `docs/keybindings.md`: every action id, with the window's key.
 
 ## Extension commands
 
-The commands Pi listed in the fixture with coop's release extensions loaded
-(`get_commands`, source `extension`). Each was run in RPC mode to see what it
-shows. "Pi" means the window sends it as typed and the answer shows as in the
-terminal: one-line notices as toasts, longer reports in the conversation,
-dialogs as cards and lists.
+Every extension command (`get_commands`, source `extension`: coop-tools,
+coop-guardrails, coop-powerline, pi-mcp-adapter, pi-hermes-memory,
+pi-better-openai, pi-web-access, pi-lovely-rename, rpiv-todo) maps to **Pi**:
+the window sends it as typed and the answer shows as in the terminal, one-line
+notices as toasts, longer reports in the conversation, dialogs as cards and
+lists. They need no row each; a built-in never takes an extension command's
+name (the test checks the recorded session). The exceptions are the commands
+whose screen exists only in a terminal, listed in `TERMINAL_ONLY`, one row
+each:
 
 | Command | Extension | Maps to | In the window |
 | --- | --- | --- | --- |
-| `/start` | coop-tools | Pi | The Start Here menu, as a list. The empty window offers it too, and the first launch on a profile (`COOP_FIRST_RUN`, as the terminal) opens it once. |
-| `/setup-project` | coop-tools | Pi | The project wizard's questions, one dialog each. |
-| `/project-share` | coop-tools | Pi | A yes/no naming the file and branch, then a notice with the result. |
-| `/project-get` | coop-tools | Pi | A notice with the result, or a yes/no first when this folder's file was never shared. |
-| `/setup-docs` | coop-tools | Pi | The docs wizard's questions, or a notice when coop-data-doc lacks the native wizard. |
-| `/impact` | coop-tools | Pi | The session's lineage context (`/impact <schema.name>` for one object), shown in the conversation. |
-| `/standards-status` | coop-tools | Pi | A notice and the JSON status in the conversation. The Standards pane (Ctrl+Shift+S) shows the same status's domains and its team knowledge sources (`cooptimize/incremental-bi`, `cooptimize/coop-team-knowledge`), the notes of each clone readable one at a time; the terminal reads those clones through the team-knowledge skill's search. |
-| `/coop-live-read` | coop-tools | Pi | The live-read grant, or its revocation (`/coop-live-read revoke`). |
-| `/coop-approvals` | coop-tools | Pi | Edit approvals (`status`, `revoke`). |
-| `/coop-guardrails` | coop-guardrails | Pi | What the guardrails enforce. |
-| `/coop-vibe` | coop-powerline | Pi | A vibe tip, as a notice. |
-| `/coop-splash` | coop-powerline | Pi | A notice; the window's own header and empty state stand in for the terminal splash. |
-| `/mcp` | pi-mcp-adapter | Pi | The MCP status report in the conversation. The server panel (enable, disable, reconnect) is a terminal screen: use Open in terminal. |
-| `/mcp-adapter` | pi-mcp-adapter | Pi | Same as `/mcp`. |
-| `/mcp-auth` | pi-mcp-adapter | terminal | The OAuth panel is terminal only (the extension says so). |
-| `/memory-consolidate` | pi-hermes-memory | Pi | Progress notices and the result. |
-| `/memory-insights` | pi-hermes-memory | Pi | The memory report in the conversation. |
+| `/mcp-auth` | pi-mcp-adapter | terminal | The OAuth panel is terminal only (the extension says so). `/mcp` itself answers in the conversation; its server panel (enable, disable, reconnect) is reached with Open in terminal. |
 | `/memory-skills` | pi-hermes-memory | terminal | The skills manager is a terminal component; in RPC it shows nothing. |
-| `/memory-interview` | pi-hermes-memory | Pi | The interview runs as a conversation. |
-| `/memory-switch-project` | pi-hermes-memory | Pi | A notice with the active project. |
-| `/learn-memory-tool` | pi-hermes-memory | Pi | The guide, as a list. |
-| `/memory-sync-markdown` | pi-hermes-memory | Pi | Progress notices and the result. |
-| `/memory-preview-context` | pi-hermes-memory | Pi | The preview in the conversation. |
-| `/memory-pin` | pi-hermes-memory | Pi | A notice; `/memory-pin <text>` pins. |
-| `/memory-index-sessions` | pi-hermes-memory | Pi | Progress notices and the result. |
-| `/fast` | pi-better-openai | Pi | A notice (fast mode needs an OpenAI subscription model). |
-| `/openai-usage` | pi-better-openai | Pi | A notice; the usage text also shows in the status bar. |
 | `/openai-settings` | pi-better-openai | terminal | The settings picker is terminal only (the extension says so). |
-| `/openai-image` | pi-better-openai | Pi | `/openai-image <prompt>`. |
 | `/pets` | pi-better-openai | terminal | Pets draw in the terminal footer. |
-| `/websearch` | pi-web-access | Pi | Opens the search curator in the browser, as in the terminal. |
-| `/curator` | pi-web-access | Pi | Toggles the curator workflow. |
-| `/google-account` | pi-web-access | Pi | Answers in the conversation. |
-| `/search` | pi-web-access | Pi | Stored results, as a list or a notice. |
-| `/rename` | pi-lovely-rename | Pi | Names the session from the conversation. |
-| `/todos` | rpiv-todo | Pi | The task list grouped by status, as a notice (it joins the conversation when it is longer than a line). The live panel is the window's own (see Extension UI): the extension draws it as a TUI component, which RPC drops, so the window rebuilds the same panel from the `todo` tool results in the session (`desktop/renderer/todos.mjs`). Alt+T collapses it in both. |
 | `/llama` | Pi | terminal | The llama.cpp manager is interactive-mode only (Pi says so). |
+
+Two extension screens the window draws itself: the Start Here menu (`/start`,
+offered by the empty window and opened once on a profile's first launch,
+`COOP_FIRST_RUN`, as the terminal does) and the todo panel (`rpiv-todo`, see
+`setWidget` under Extension UI). The Standards pane (Ctrl+Shift+S) shows what
+`/standards-status` reports, plus the team knowledge clones one note at a
+time.
 
 ## Prompt templates and skills
 
@@ -295,7 +233,7 @@ folder.
 ## Phone companion
 
 Master plan rows MC1–MC11 (section 12.4): what a paired phone can do with the
-same live session, measured against the terminal rows above. Aaron asked on
+same live session, measured against the window's rows above. Aaron asked on
 2026-10-06 for the phone to reach terminal parity over time. Each line is one
 terminal capability with its phone status:
 
@@ -320,7 +258,7 @@ terminal capability with its phone status:
 
 | Capability | Status | What closes it |
 | --- | --- | --- |
-| Extension commands, prompt templates and skills (`/start`, `/standards-status`, `/todos`, `/memory-*`, `/rename`, `/websearch`, `/search`, `/coop-approvals`, `/coop-live-read`, prompt templates such as `/spec-first`, `/skill:name`) | phone (MC6) | Typing `/` lists the commands Pi returned (`get_commands`) and sends the ones the window maps to **Pi** as typed; their dialogs and notices reach the phone. `/coop-approvals` and `/coop-live-read` only show or revoke, so they narrow access. |
+| Extension commands, prompt templates and skills (`/start`, `/standards-status`, `/todos`, `/memory-*`, `/rename`, `/websearch`, `/search`, `/approvals`, prompt templates such as `/spec-first`, `/skill:name`) | phone (MC6) | Typing `/` lists the commands Pi returned (`get_commands`) and sends the ones the window maps to **Pi** as typed; their dialogs and notices reach the phone. `/approvals` only shows or revokes, so it narrows access. |
 | Steer while coop works (Enter) and pull back queued messages (`clear_queue`, Alt+Up) | phone (MC6) | Send now and Queue while coop works; the queued messages show above the text box, and Edit queued brings them back into it. |
 | `/model`, `/thinking` (and Ctrl+P, Shift+Tab) | phone (MC7) | The menu's Model and Thinking sheets (`get_available_models`, `set_model`, `set_thinking_level`); a model must be one Pi lists. Typing `/model` or `/thinking` points to the menu. |
 | `/compact`, `/session`, `/name`, `/copy` | phone (MC7) | The menu's Compact (with optional instructions, when coop is idle), Session details (`get_state`, `get_session_stats`, without file paths) and Name this session sheets, and Copy under every answer. |
@@ -341,7 +279,7 @@ terminal capability with its phone status:
 | Capability | Status | Why |
 | --- | --- | --- |
 | Approving a production action (`PRODUCTION` confirms, the G1 production-write unlock) | desk only | MC1 contract: production stays at the desk; the phone can decline. |
-| Options that allow more than the one action ("Allow … for this session", "always", "don't ask again") and `/trust` | desk only | MC1 contract: the phone answers for the exact action in front of it. Grants only ever come from those options; `/coop-approvals` and `/coop-live-read` show or revoke and work on the phone (MC6). |
+| Options that allow more than the one action ("Allow … for this session", "always", "don't ask again") and `/trust` | desk only | MC1 contract: the phone answers for the exact action in front of it. Grants only ever come from those options; `/approvals` shows or revokes and works on the phone (MC6). |
 | `!command` and `!!command` (a shell on the VM) | desk only | MC1 contract, confirmed by Aaron 2026-10-06 03:34: the phone is not a remote shell; coop's own tools still run commands under the guardrails when asked in chat. |
 
 ### Not on a phone

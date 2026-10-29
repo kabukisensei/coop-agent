@@ -151,7 +151,7 @@ coop sync
 release version" line per extension and no warning; coop (terminal or window)
 starts with the extensions loaded.
 
-## 5. `Fabric Warehouse MCP unavailable: Azure CLI is not installed or not on PATH`
+## 5. `live SQL sign-in unavailable: Azure CLI is not installed or not on PATH`
 
 **Symptom.** The launch prints that line (or `coop doctor` shows
 `fabric-sqlendpoint azure_cli_unavailable`) while `az` is installed and signed
@@ -228,7 +228,7 @@ breaks it later with no warning.
 
 **Cause.** A `pipx install` run by hand from a shell whose `pipx` runs on
 another Python (the dev VM, 2026-10-23: `pipx install --force
-coop-sql-source-control==1.0.5` on pipx's own 3.12 while coop's runtime is
+coop-sql-source-control==<pin>` on pipx's own 3.12 while coop's runtime is
 3.13). Before 0.38.5 the convergence compared versions only, so the copy
 counted as converged. Note that `pipx install --force` keeps an environment's
 existing interpreter; only an uninstall followed by an install with `--python`

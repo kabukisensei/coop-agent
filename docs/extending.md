@@ -98,7 +98,7 @@ MD
 ```
 
 It shows up as a prompt/command in Pi automatically. (Daily/weekly logging already
-ships — see the `daily-logger` skill and the `/daily-log` and `/weekly-log` prompts.)
+ships — see the `daily-logger` skill.)
 
 ## 3. Add or tweak the theme
 
@@ -169,22 +169,22 @@ every machine.
 Full Pi extension API reference: run `coop pi --help`, and see the bundled examples
 under the Pi package's `examples/extensions/` (the patterns coop's extensions follow).
 
-## 5. Scaffold a work repo (`coop init`)
+## 5. Set up a work repo (`/setup-project`, then `coop init --seed-docs`)
 
 Skills and prompts lean on the project contract — `.coop/project.yml`, the one
 committed team file at the client's Git root — for repo paths, workspaces, and
-standards. Scaffolding a new work repo is
-two commands:
+standards. Setting up a new work repo is two steps:
 
 ```bash
-coop init                 # scaffolds .coop/project.yml (from .coop/project.example.yml)
+coop                      # then /setup-project: the one project wizard (the coop
+                          # window's Project pane runs the same code); it edits a
+                          # contract found above the folder, never a second copy
 coop init --seed-docs     # then, once repositories: is filled — generates a matching
                           # coop-data-doc.yml from the contract's repositories: paths
 ```
 
-`coop init --template` copies the documented template into `<Git root>/.coop/project.yml`
-(a contract found above the folder is edited, never shadowed by a second copy);
-plain `coop init` runs the safe guided wizard, and `coop onboard --edit` owns global
+`coop init --template` copies the documented example into `<Git root>/.coop/project.yml`
+for the rare case you want every section with its TODOs; `coop onboard --edit` owns global
 integration/MCP settings. Verify with `coop doctor`. `coop init --seed-docs` generates/patches `coop-data-doc.yml`
 from the contract's `repositories:` (via `coop-data-doc config-set`), so repo
 paths are typed once.
@@ -264,7 +264,7 @@ How it works:
   as a collision; a skill whose folder name or frontmatter `name:` is already
   loaded by a higher tier is skipped at launch with a warning on stderr.
 - The client tier exists only inside a repository with a committed contract
-  (`coop init` or `/setup-project`); coop's own bundled `.coop/project.yml` never
+  (`/setup-project`); coop's own bundled `.coop/project.yml` never
   counts as a client. Team-knowledge skills (section 7) stay subordinate to all
   three tiers.
 - `coop doctor` has a "Prompts and skills" section: one row per tier with its

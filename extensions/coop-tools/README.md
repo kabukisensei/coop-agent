@@ -42,7 +42,7 @@ touches an object — see [Start Here menu](#start-here-menu-start),
 
 ## Project setup (`/setup-project`)
 
-Users do not need to know `coop init` or manually edit YAML. Run `/setup-project`
+Users never edit YAML by hand: `/setup-project` is the one project wizard (the window's Project pane runs the same code). Run `/setup-project`
 or choose *Start a client project* from `/start` whenever the project is ready to
 configure. Normal Coop startup does not open the wizard. The contract is one
 committed team file per client, in a repository the team clones (master plan C1):
@@ -128,9 +128,10 @@ rule-path handling and the result shape are in
 
 ### `fabric_sql_query`
 
-Governed pyodbc fallback for one bounded `SELECT TOP` read against the
-contract's Fabric SQL target, used only after the managed `fabric-sqlendpoint` MCP
-actually failed. Executes **sequentially**. Contract in
+Governed pyodbc read of one bounded `SELECT TOP` against the contract's SQL target:
+the route for `sql_targets:` entries (the workflow's "Verify with data" step) and
+the fallback when the managed `fabric-sqlendpoint` MCP cannot answer. Executes
+**sequentially**. Contract in
 [docs/tool-contract.md](../../docs/tool-contract.md).
 
 ### `data_doc`
@@ -210,7 +211,7 @@ doc (located via `manifest.json`) plus its immediate neighbors — and to run
 "Built" means the markdown output dir (from `coop-data-doc.yml`'s `output.dir`,
 defaulting to `./data-docs`) contains a built `graph.json`. The
 hook **degrades silently** when there's no `coop-data-doc.yml`, or when a config
-exists but hasn't been built yet — the docs are an aid, not a gate, and the whole
+exists but hasn't been built yet: the built docs are an aid, not a gate; the one gate is the live catalog (master plan SQ8): before a SQL object is edited, `sql_impact` must have been asked when a live dev/test target can answer. The whole
 hook is wrapped so it can never break a turn.
 
 ## Required daily logging
@@ -233,7 +234,7 @@ is what makes the agent perform the log step, while the warning exposes a miss.
 
 ## Compaction over the configured transport (`session_before_compact`)
 
-Pi 0.87.1 (and still 1.2.0) builds its compaction request without the session's
+Pi 0.87.1 (and still 1.4.0) builds its compaction request without the session's
 `transport` setting, so the OpenAI Codex provider falls back to `auto` and opens
 a WebSocket for the summary even when `/settings` says `sse`; a large context
 then fails with `WebSocket idle timeout after 300000ms` (coop-agent #236). When

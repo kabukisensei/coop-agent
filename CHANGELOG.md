@@ -7,17 +7,150 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
-- **`/setup-project` asks about Fabric and Power BI separately.** The one
+- **The project wizard asks about Fabric and Power BI separately.** The one
   "Microsoft Fabric or Power BI?" answer turned the Fabric tools, the Warehouse
   MCP and an empty `fabric.default_sql_endpoint` on for a Power BI-only client
   (Pro or PPU workspaces beside Azure SQL, no Fabric capacity), so `coop doctor`
-  reported the Warehouse target as invalid. `/setup-project`, the window's Project pane
-  and `coop init` now take a Fabric answer (tenant, workspace, SQL
-  endpoint, layout) and a Power BI answer (workspace, table mapping): No / Yes
-  writes the `power_bi` block alone with `mcp.fabric_sqlendpoint` and
-  `fabric_cicd` off, while `fab` and the Fabric MCP stay on because they list
-  Power BI workspaces too. Older contracts read Power BI as on when they have a
-  `power_bi` block or Fabric on.
+  reported the Warehouse target as invalid. `/setup-project`, `coop init` and the
+  window's Project pane now take a Fabric answer (tenant, workspace, SQL endpoint,
+  layout) and a Power BI answer (workspace, looked up by name like the Fabric ids,
+  and the table mapping): No / Yes writes the `power_bi` block alone with
+  `mcp.fabric_sqlendpoint` and `fabric_cicd` off, while `fab` and the Fabric MCP
+  stay on because they list Power BI workspaces too. Older contracts read Power BI
+  as on when they have a `power_bi` block or Fabric on.
+
+## [0.38.12] — 2026-10-29
+
+### Changed
+- **The install says what it is doing.** The installer's page named no step (electron-builder hides its status line); it now names three, with the longest, copying the program files, called out, and the last one shows each machine setup line as it runs (the coop command, the ODBC driver, the update task). Each account's first launch, and a new version's refresh, opens a **coop - setting up** window: the step ("Step 4 of 8: Installing coop's Python tools"), the item inside it ("Python tools (3 of 7): coop-sql-source-control 1.0.12", "Extensions (2 of 9): pi-mcp-adapter 5.4.0"), how long each has run, and the console's last lines. It closes when the coop window opens; closing it early does not stop the setup. The terminal's `coop install` counts its Python tools the same way.
+- **Pins.** coop-sql-source-control 1.0.13 and coop-schema-compare 0.1.9. sqlsc: a change inside a multiline literal in a table's column list (a `DEFAULT` spread over lines) is a difference again; it compared equal, so status and get-latest missed it. schema-compare: `float(n)` keeps its precision (`float(24)` against `float(53)` was no difference, and `float(24)` against `real` scripted an `ALTER COLUMN`), a table with a column the reader could not read makes the compare partial so `--fail-on-destructive` exits 2, and a definition over the compare cap, `NOT NULL` or `IDENTITY` inside a literal, and a nested block comment no longer mislead it. The sourced sqlsc wheel's tag, asset and SHA-256 follow the v1.0.13 release.
+
+### Fixed
+- **Moving a tool to coop's Python names the version now installed.** The setup line read `coop-sql-source-control 1.0.12 reinstalled on coop's Python` after a pin bump installed 1.0.13: it printed the version the move replaced (the dev VM, 2026-10-29).
+- **The window's first launch finishes again when a tool moves to coop's Python.** The probe install that proves a tool can move to coop's Python (#441) runs `pipx install --suffix _coopnext ...`, and coop read `_coopnext` as a package name, so it did not point pip at the window's bundled wheels. pip went to PyPI, where coop-sql-source-control is not published, the probe failed, setup ended "setup did not finish" and every launch ran the multi-minute setup again (dev VM, 2026-10-29). An offline machine failed all three tools the same way. coop now steps over the value of `--suffix` and pipx's other value-taking options before it checks the package pins.
+- **`coop update --no-fabric` keeps Fabric out on a machine install (#495).** The flag kept Fabric out of the drift check only: the account setup it then ran (`install.ps1 --prereqs auto --unattended`) installed the Fabric CLI and its libraries anyway, and the extensions-only path repaired an existing Fabric runtime. The setup now gets `--no-fabric`, and the sync runs with the Fabric repair skipped. Without the flag nothing changes.
+- **A partial catalog snapshot is no full lineage answer (#494).** Before a SQL edit coop scans the committed catalog snapshot for the object's dependents. A snapshot whose manifest says a list was cut, a catalog view was unavailable, objects were skipped or a definition was too long to keep, or that misses a file its manifest lists (or holds more files than the scan reads), counted as an ordinary hit, so the edit went ahead without the live lookup it still owed. It is now `partial`: the dependents it found are kept, the reason is shown in the edit summary and `/impact`, and with a live target the edit waits for `sql_impact` as it does for a stale snapshot. With no live target the edit goes on and the summary says the snapshot is partial.
+
+## [0.38.11] — 2026-10-29
+
+### Security
+
+- **Window runtimes.** The window installer bundles Node.js 22.23.4 (from 22.19.0; five Node security releases since), Electron 44.10.0 (from 44.5.1; below 44.9.1 Electron trusts the compromised eMudhra intermediate certificates, GHSA-jr5w-w6x2-84p9) and Python 3.13.17 (from 3.13.16; a security release for the same CA incident, with pip 26.2.2). CI builds and tests on Node 22.23.4. The terminal install's Node minimum stays 22.19.0.
+- **Pi 1.4.0** (from 1.2.0). Fixes that reach coop: two extension dialogs open at once (two guardrail approvals, say) no longer leave the first one waiting forever; codemode scripts wait for a free worker instead of failing when both are busy; a session no longer breaks for good after a response cut off at the output limit; compaction and branch summaries no longer fail when reasoning fills the old fixed summary cap; `mcp.json` and `managed-install.json` written with a UTF-8 BOM (Windows PowerShell 5.1) parse; Windows shell detection finds PowerShell outside `PATH`; the openai-codex provider stops offering models that always fail for ChatGPT accounts. Pi still pins undici 8.10.2, which has advisories fixed in 8.12.2 (TLS validation bypass, cross-origin cache disclosure, denial of service), so the manifest's new `pi.overrides` pins undici 8.12.3 inside Pi's tree: `lib/pilock.js` writes the override into `config/pi-lock.json` and applies it. Both locks are regenerated and the window's RPC fixture is re-recorded on 1.4.0 (same message shapes, no new slash command). The coop-tools compaction-transport and Codex sign-in workarounds stay: 1.4.0's compaction call and Codex WebSocket cache are unchanged.
+- **Pins.** pi-mcp-adapter 5.4.0 (from 5.1.0): its MCP client SDK moves to 2.3.1, which fixes GHSA-6qxp-vccf-f47h (a malicious MCP server could collect tokens saved from an earlier sign-in) and GHSA-6prh-2h8m-c8cw (cross-origin redirects re-sent headers). It also stops Pi in RPC mode (the coop window) hanging at startup on an unapproved project MCP server, and stops re-asking a project server's approval when a Windows path is spelled with different capitalization. pi-hermes-memory 0.9.11 (from 0.9.10): its background memory helpers (`pi -p` children) now run with only the three memory tools and no MCP tools, where a fallback helper could reach shell and file tools outside coop's guardrails. The extension lock is regenerated, which also moves body-parser, fast-uri and qs past their advisories.
+
+### Changed
+- **Fabric CLI 1.8.0 and fabric-cicd 1.4.0** (from 1.7.0 and 1.3.0; Fabric CLI 1.8 requires fabric-cicd 1.4). `fab auth login --azure-cli` signs `fab` in with the existing `az login`, so one Azure sign-in covers both. fabric-cicd 1.4 pins jsonpath-ng below a release that corrupted Data Pipeline payloads during `key_value_replace` parameterization, and fixes semantic model connection binding for OneLake paths without a trailing slash.
+- **pi-web-access 0.45.0** (from 0.35.0). The web tools' definitions shrink from about 2,800 to about 1,100 tokens on every request; page answers and search summaries work when the session runs a virtual model such as coop/auto (they failed or fell back before); API keys are dropped when a search provider redirects to another site; DuckDuckGo no longer locks itself out on parallel searches. Its MCP SDK moves to 1.32.1, past the advisories 1.27.1 carried. The extension lock is regenerated and the window's RPC fixture re-recorded (same commands and tools).
+- **fabric-cicd deploys are gated.** A shell or PowerShell command that runs a Python deployment script calling fabric-cicd's `publish_all_items`, `unpublish_all_orphan_items` or `deploy_with_config` is now a deploy to the guardrails: dev or test asks every time, and production, or a run that does not say where it deploys, is blocked. Until now only the project file's ask-first text covered it. coop reads the script (and the local modules it imports) to tell.
+- **Pins.** coop-sql-source-control 1.0.12. The SQL project `sqlsc sqlproj` writes keeps a schema named Data or Migrations in the dacpac build (it removed every file under those folders, so in the SSMS layout such a schema's objects were missing and references to them failed). A project written before needs `sqlsc sqlproj --force`. The sourced wheel's tag, asset and SHA-256 follow the v1.0.12 release.
+
+### Fixed
+- **Sessions name themselves under coop/auto.** pi-lovely-rename 0.1.5 streams its naming request through `modelRegistry.getProvider(model.provider)`, and Pi's provider for a virtual model refuses to stream, so with `/model coop/auto` every auto-rename failed with "Virtual model coop/auto must be routed before streaming" (dev VM, 2026-10-28). coop-router now answers `getProvider("coop")` with a provider whose streams go through the registry, which routes them like any other one-off request (the build model at low thinking). Other providers are unchanged. No fixed pi-lovely-rename release exists yet; the wrap goes once one streams through the registry.
+
+## [0.38.10] — 2026-10-28
+
+### Changed
+- **Pins.** coop-sql-source-control 1.0.11. Tables are scripted and read in the shape SSMS 22 / DacFx writes (Create Project from Database, Schema Compare's Update), so a table change made in SSMS is applied by get-latest and coop's table commits no longer reformat SSMS's files. The sourced wheel's tag, asset and SHA-256 follow the v1.0.11 release.
+
+### Fixed
+
+- **A cancel ends the whole tree on Windows too (#477).** `killProcessTree` started
+  `taskkill /T` and killed the child at once; the child died before taskkill walked
+  its tree, so the package a helper started (`coop-schema-compare` under
+  `lib/compare_tool.py`) ran on to the end. The child is now killed after taskkill
+  exits (or fails to start). POSIX is unchanged (the process group is signalled).
+- `/setup-project` and the window's project pane keep `schema_compare.destructive: commented` when no exclude or rebuild schema is answered: the one value that changes what the engine writes was dropped with the empty lists, and the next compare ran with destructive statements active (#476).
+- Cancelling a native schema compare or catalog snapshot (the tool's stop, or its time limit) ends the pinned `coop-schema-compare` process too, not only the Python helper that started it: the helper is run as its own process group (Windows: `taskkill /T`) and forwards a termination to the package (#477).
+- `coop update` on a machine install repairs a pinned Python tool that was uninstalled, moved to another version or rebuilt on another interpreter since the account's setup: the setup marker said the pins were installed once, so only the extensions and settings were refreshed, and doctor's `coop update` remedy changed nothing (#478).
+
+## [0.38.9] — 2026-10-27
+
+v0.38.7 and v0.38.8 were tagged but never published (their release runs
+stopped, see Fixed below and under [0.38.8]), so this is the first release that
+ships the changes listed under [0.38.8] and [0.38.7]: `/deploy-brief`, the
+files-first, mark-your-edits and no-unnecessary-functions rules, one
+`/approvals`, Fabric ids looked up by name, `coop dev` for maintainer commands,
+the retired `coop bootstrap`, `coop init` wizard and prompt templates, one
+schema-compare engine, the release in two steps, and the
+coop-sql-source-control 1.0.10 and coop-schema-compare 0.1.8 pins.
+
+### Fixed
+
+- **The tag run's upgrade acceptance has its own runner.** `release.yml` ran the
+  upgrade, shortcut and one-liner acceptance in the installer job, right after
+  that job's own install and uninstall cycle, which leaves `C:\Program Files\coop`
+  behind; `verify-upgrade.mjs` refuses such a runner, so the v0.38.8 tag run
+  failed there and published nothing. It is now an `upgrade` job on a fresh
+  Windows runner that tests the installer job's artifact, as `ci.yml` does, and
+  the release needs both jobs.
+
+## [0.38.8] — 2026-10-27
+
+Tagged, never published: these changes first ship in 0.38.9.
+
+### Fixed
+
+- **The tag run starts again.** `release.yml`'s `website` job called
+  coop-website's reusable `sync-release.yml`, but coop-website is private and a
+  public repository cannot call a private repository's reusable workflow, so the
+  v0.38.7 tag run failed at planning: no installer, no GitHub Release. The job
+  now prints the site's `bash scripts/sync-release.sh coop-agent <version>`
+  command for a person to run, as coop-sql-source-control's release does.
+
+## [0.38.7] — 2026-10-27
+
+Tagged, never published: these changes first ship in 0.38.9.
+
+### Added
+
+- **No unnecessary functions in SQL** (team feedback of 2026-10-27). `docs/guardrails.md`
+  gains a short section: coop wraps a column in `CAST`, `CONVERT`, `TRY_CONVERT`,
+  `UPPER`, `TRIM` or any other function only when the column's type, collation or
+  actual values prove it is needed, never in a `JOIN` or `WHERE` predicate, and
+  comments the evidence for each one it keeps. The full rule is the new "Function
+  standards" section of the coop-standards *SQL Conventions* article (merged
+  2026-10-27, wiki b7c8561), which coop applies while writing and in the
+  self-check; the bundled offline copy under `config/standards-bundle/` is
+  refreshed to that revision. The context-budget caps grow to 6700 bytes /
+  7350 tokens for it.
+- **Team feedback of 2026-10-26.** `/deploy-brief` writes `deploy-brief.md` from a
+  `schema_compare` run or a git range: one plain-English paragraph per changed
+  object by schema, the standards self-check over those objects, downstream impact
+  from the built docs, who changed what from `git log` (with the `Prepared-by:`
+  trailer), the destructive and manual steps; nothing deployed. `sql_source commit`
+  passes `--prepared-by "coop-agent <version>"` so the commit's trailer names coop
+  and its version while the person stays the author (sqlsc 1.0.8). The guardrails
+  gain two rules: *Files first* (the SQL repository, the catalog snapshot and the
+  built docs before any live read, and say when going live) and *Mark your SQL
+  edits* (one `-- coop <date> for <user>: <what and why>` line inside every module
+  coop changes, next to the change).
+
+- **One place for a tool pin (suite review pick 2).** `config/release-manifest.json`
+  is the only file that carries a coop tool version: the client-home CI template
+  keeps `coop-data-doc==<version>` and `/setup-docs` fills it from the manifest
+  when it copies the workflow, `NOTICE.md` points at the manifest, and the
+  fixtures (`fleet-execution`, `install-python-prereq`, `bundled-tools`,
+  `fleet-manifest`, the installer test) read their pins from it. `tests/pins.test.sh`
+  fails a bump PR that leaves a stale `<tool>==<old>` literal anywhere, so the
+  nightly lane can no longer go red on a pin literal (it did on every bump from
+  2026-10-22 to 10-26). `scripts/bump-pins.sh` moves the pins to the newest
+  release of each tool (PyPI or the GitHub release, with the wheel's sha256)
+  and prints the CHANGELOG line.
+
+- **A test approver for the development VM (tests only).** `tests/test-approver.mjs`
+  is a host script that runs coop in Pi's RPC mode from a `coop desktop
+  --print-spec` launch spec and answers the guardrails' yes/no questions itself,
+  so a scripted check can drive an approval-gated flow on the dev VM without a
+  person at the desk. It answers only when all three hold: `COOP_TEST_APPROVER=1`
+  in the environment, a marker file outside every git repository (default
+  `C:\ProgramData\coop\test-approver.json`) naming this machine and the
+  fake-data client, and the nearest `.coop/project.yml` naming that same client.
+  A question that says PRODUCTION is always declined, other dialogs are
+  cancelled, and every answer is one `kind: "test-approver"` row in
+  `guardrails-audit.jsonl` with no question or command text. It is development
+  tooling under `tests/`: never installed, and coop and the guardrails are
+  unchanged, so nothing shippable gains a bypass.
 
 ### Changed
 
@@ -40,6 +173,258 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `docs/terminal-workstation-acceptance.md`, the `win-ownership-probe` fixture
   and the `jsonschema` venv steps that only they used. The `_extdeps.py` exit
   code asserts moved from the lint job into `tests/extdeps-agent-pin.test.sh`.
+
+- **Worker help and maintainer commands (suite review 2026-10-26, pick 9).**
+  `coop help` lists the day-to-day verbs; `sync`, `init`, `new-skill`,
+  `new-prompt`, `release`, `launch-spec`, `context-budget`, `teamai`, `fabric`
+  and the Pi aliases (`list`, `config`, `add`, `remove`, `pi`) sit under
+  `coop dev <cmd>` (`coop dev help` lists them). The bare names still run, so
+  release scripts and fixtures are untouched. `config/defaults.yml` keeps only
+  the keys something reads (`resources`, `tested_with`); the MCP and Fabric CLI
+  prose it carried lives in the docs that already had it. `docs/architecture.md`
+  gains the one table of the `COOP_*` environment variables a person, a sandbox
+  or a fixture may set.
+
+- **A release that moves no tool pin no longer reinstalls every tool on the
+  window's first launch (suite review pick 3).** The account's setup marker
+  now records a hash of the manifest sections the account installs (Pi, the
+  extensions, the Python and npm tools, the bundled Python) instead of the
+  whole file, so a new version with the same pins only refreshes the
+  extensions and settings (`coop sync`, seconds) and the window opens; new
+  pins still run the full setup. The unattended setup (the window's first
+  launch, the machine updater's account step) ends without the doctor report
+  when every step passed (`coop doctor` shows it any time). A terminal launch
+  says which of the two `coop update` would do.
+
+- **Pins.** coop-sql-source-control 1.0.10 (1.0.8: `sqlsc sqlproj` and `init --sqlproj`
+  write an SDK-style SQL project for a `dotnet build` compile check; `commit` and
+  `checkin` add the `Prepared-by:` trailer; the drift pipeline and the exit-path docs.
+  1.0.9 and 1.0.10: SSMS 22's Database DevOps alongside sqlsc. A second repo layout,
+  `schema`, is the one SSMS's Create Project from Database writes
+  (`<schema>/Tables|Views|Functions|StoredProcedures/<name>.sql`, `Security/<schema>.sql`,
+  DML triggers inside their table's file), chosen with `layout:` in sqlsc.yml or
+  `init --layout`, or detected from the files; a repo mixing both layouts stops every
+  writing command before it touches anything. The SQL project pins Microsoft.Build.Sql
+  2.3.0, which SSMS opens. A `.sql` file's BOM is kept on rewrite.) The sourced wheel's
+  tag, asset and SHA-256 follow the v1.0.10 release (the fixtures read the manifest).
+
+- **Release in two steps (suite review 2026-10-26, pick 5).** The version bump
+  is a pull request: Actions -> release-pr -> Run workflow (`patch`, `minor`,
+  `major` or `X.Y.Z`; by hand, `scripts/bump-version.sh`) moves `VERSION`, the
+  manifest, every extension and CHANGELOG on a `release/vX.Y.Z` branch and opens
+  the PR, on which CI runs both lanes (`extended.yml` now runs on a PR that
+  changes `VERSION`). `coop release` no longer bumps, commits or runs the suites:
+  it verifies a clean `main` at `origin/main` with one `X.Y.Z` across the tree,
+  CI green on the commit, the coop-tool pins and the bundled standards, then
+  tags and pushes the tag (`--no-push` and the bump levels are gone).
+  `release.yml` then runs the whole installer acceptance on the tag build and,
+  after the GitHub Release, calls coop-website's `sync-release.yml`, which
+  opens the site's sync pull request (needs a `COOP_WEBSITE_TOKEN` secret). The
+  PowerShell twin of the release (`Invoke-CoopRelease` and its gates, ~340
+  lines) is gone: `coop release` on Windows forwards to Git's bash. The
+  release is tested in disposable repositories by `tests/release-gate.test.sh`;
+  the PowerShell fixture now proves only the forwarder.
+
+- **One schema-compare engine (suite review 2026-10-26, pick 1).** The native
+  `schema_compare` and `catalog_snapshot` tools, `coop schema compare` and
+  `coop catalog snapshot` now run the pinned `coop-schema-compare` package
+  (0.1.8) as a child process instead of coop's own copy of the engine:
+  `lib/schema_compare.py` and `lib/sql_source.py` (about 1,900 lines of
+  catalog reading, diffing, planning and rendering, plus the SQL source reader)
+  are gone; what stays coop's is the contract's side grammar (`dev`, `prod@<set>`,
+  `snapshot`, `repo:<name>`), the identity pinning (`lib/sql_query.py` now
+  splits into `resolve_target` + `resolve_connection`, and the package receives
+  the host and the tenant-pinned token through its environment, never a command
+  line), the `schema_compare:` defaults and their provenance notes, the output
+  folders and the `sqlsc` exclusion. Results keep their shape; a machine without
+  the package answers `tool_unavailable` and the tools say to run `coop update`.
+  The manifest pins `coop-schema-compare` 0.1.8 (the flags coop passes).
+
+- **The Fabric Python is found once per session (suite review 2026-10-26, pick 6).**
+  Every native SQL call (`fabric_sql_query`, `sql_impact`, `schema_compare`,
+  `catalog_snapshot`) started PowerShell, dot-sourced `lib/common.ps1` and asked
+  pipx where its venvs are, to find an interpreter path that does not move. The
+  coop-tools extension now looks in the same places itself (`COOP_FABRIC_PYTHON`,
+  then the `ms-fabric-cli` venv under `COOP_PIPX_HOME`, `PIPX_HOME` and the
+  platform's pipx default), probes the first one that exists, and keeps the answer
+  while the environment names it and the file is still there; a miss falls back to
+  `Get-CoopFabricPython` as before, and only a success is kept, so a runtime
+  installed later (`coop update`) is found on the next call. The resolver probes
+  and the helper run share one supervised child-process routine (bounded time and
+  output, abortable, force-killed and reaped on a stop) instead of two copies.
+
+- **One convergence path for the pipx tools (suite review 2026-10-26, pick 8).**
+  `coop doctor --fix` repaired the Coop tools and the Fabric CLI with its own
+  `pipx install` lines beside the convergence unit install and update run; it
+  now runs that unit (`Invoke-CoopPipxConverge`: skip at the manifest pin,
+  rebuild an environment on the wrong interpreter, install the pin, never
+  PyPI's latest), so a repair cannot drift from an install. `coop bootstrap`,
+  an alias of bare `coop install`, is retired so "bootstrap" names only the
+  `irm | iex` window bootstrapper. `lib/common.ps1` defined
+  `ConvertTo-CoopComparablePath` twice (the second, loaded last, kept the
+  separator the first normalised away); one definition remains, and three
+  functions nothing called are gone.
+
+- **One `/approvals` command (suite review 2026-10-26, pick 9).** `/approvals`
+  shows what this session may do without asking: the edit approvals, the
+  live-read grant, the production unlock, whether enforcement is on, the audit
+  log path and the last decisions; `/approvals revoke` ends the session's own
+  grants. It replaces `/coop-approvals`, `/coop-live-read` and
+  `/coop-guardrails`, three commands for one question.
+
+- **Docs say what the code does (suite review 2026-10-26, pick 9).** Four
+  places still called every Warehouse SQL call approval-gated; the code (and
+  the rest of the docs) runs a plain read on a resolved dev/test target without
+  a prompt and asks for writes, so the guardrails prompt, the README's MCP table
+  and ground rules now say that. "Lineage is an aid, not a gate" now names the
+  one gate it does not cover (the live catalog ask before a SQL edit, SQ8), and
+  `fabric_sql_query` is described as the native bounded read (the route for
+  `sql_targets:` and the fallback when the MCP cannot answer), as the workflow
+  skill already used it. `docs/onboarding.md` is gone: the coop site's
+  Onboarding page is the one user guide, and every link points there.
+  `CHANGELOG.md` keeps the current series; 0.35.0 and earlier moved to
+  `docs/history/CHANGELOG-pre-0.36.md`.
+
+- **One project-file reader per language (suite review 2026-10-26, pick 7).**
+  `.coop/project.yml` was read by nine hand-rolled line scanners beside the one
+  parser, with slightly different rules each. Now every JS reader goes through
+  `lib/project-contract.mjs` (the guardrails' repository globs, SQL scope and
+  production names, coop-tools' review scope, the standards overrides), every
+  Python reader through `lib/_yaml.py` (`coop_paths.contract_repositories`,
+  `onboard.py`'s legacy consultant name, `context-budget.py`'s defaults) and
+  the launch-time PowerShell through one `Get-CoopContractRepositories` line
+  scan. The JS reader follows the file's own indentation, so a hand-indented
+  contract reads the same everywhere. One contract finder per language too:
+  the guardrails use `findProjectContract` (the launcher's answer, the
+  remembered client file, the sibling and child lookups the tools already
+  use), and `coop_paths.find_project_yml` replaces the copies in
+  `sql_targets.py` and `warehouse_mcp.py`; `findGitRoot` is `gitRootAbove`.
+  No contract shape changed; `project_health.py` keeps its block scan because
+  its migration needs the block's line positions.
+
+- **One project-file reader per language (suite review 2026-10-26, pick 7).**
+  `.coop/project.yml` was read by nine hand-rolled line scanners beside the one
+  parser, with slightly different rules each. Now every JS reader goes through
+  `lib/project-contract.mjs` (the guardrails' repository globs, SQL scope and
+  production names, coop-tools' review scope, the standards overrides), every
+  Python reader through `lib/_yaml.py` (`coop_paths.contract_repositories`,
+  `onboard.py`'s legacy consultant name, `context-budget.py`'s defaults) and
+  the launch-time PowerShell through one `Get-CoopContractRepositories` line
+  scan. The JS reader follows the file's own indentation, so a hand-indented
+  contract reads the same everywhere. One contract finder per language too:
+  the guardrails use `findProjectContract` (the launcher's answer, the
+  remembered client file, the sibling and child lookups the tools already
+  use), and `coop_paths.find_project_yml` replaces the copies in
+  `sql_targets.py` and `warehouse_mcp.py`; `findGitRoot` is `gitRootAbove`.
+  No contract shape changed; `project_health.py` keeps its block scan because
+  its migration needs the block's line positions.
+
+- **One guardrails dispatcher (suite review 2026-10-26, pick 12).** The
+  `tool_call` handler in `extensions/coop-guardrails` is now one `enforce()`
+  over `RULES` in a declared order (seventeen named rules: the native tools
+  first, then the shell rules over one alias-expanded command), each answering
+  with one `Decision` (pass, allow or block), and every question to the person
+  goes through one `Session.ask()` that fails closed headlessly, offers the
+  session approval, audits and blocks on a no; the per-session state
+  (live-read grant, edit approvals, production connection, unscripted dev
+  writes) lives in one `Session`. No rule, message or audit row changed: the
+  existing 175-case corpus is the gate, plus a test that pins the order.
+
+- **One project wizard, fewer typed ids (suite review 2026-10-26, pick 10).**
+  `/setup-project` (and the coop window's Project pane, which runs the same
+  code) is the one project wizard. It now looks Fabric ids up by name from the
+  Azure sign-in the launch already made, with read-only Fabric REST reads
+  (`lib/fabric-discovery.mjs`): name the workspace and the SQL item and Enter
+  keeps the ids it found (the Lakehouse SQL endpoint id too), a name typed where
+  an id is asked resolves (the prod and test targets as well), and the
+  same-named Power BI workspace takes the Fabric id. Without `az`, a sign-in or
+  a network the questions keep their typed answers. The Project pane still
+  takes typed ids.
+
+- **The window defines itself (suite review 2026-10-26, pick 11).**
+  `desktop/PARITY.md` is now the coop window's own contract, written from its
+  lists in `desktop/renderer/commands.mjs`: the Pi built-ins it runs, its
+  keyboard shortcuts, and the few terminal-only extension screens. Everything
+  else goes to Pi as typed, and anything only a terminal can show opens in the
+  terminal by default, so a Pi or extension upgrade no longer needs a row per
+  new command or keybinding; the test asks one thing of a new Pi slash command,
+  whether the window runs it or opens the terminal, decided in `BUILTINS` or
+  `TERMINAL_ONLY`. `KEYS` holds the window's real shortcuts only (the 61
+  native and terminal placeholders are gone; `/hotkeys` shows the same table),
+  and the terminal-only commands appear in `/` completion even when Pi did not
+  list them.
+
+### Fixed
+
+- **/setup-project looks ids up by name on Windows too.** The wizard's Fabric
+  lookup (pick 10) minted its token with `pi.exec("az", …)`; Pi spawns without a
+  shell and az on Windows is `az.cmd`, so the spawn failed, the lookup swallowed
+  it and every name typed where an id is asked stayed a name, ending the wizard
+  with "Fabric workspace and SQL endpoint IDs must be lowercase canonical UUIDs
+  or blank" (the dev VM, 2026-10-27). `lib/fabric-discovery.mjs` now runs az
+  through cmd.exe on Windows (`azureCliInvocation`), as the person's own shell
+  does, and as it is elsewhere.
+
+- **Azure SQL sign-in no longer depends on the Fabric MCP entry.** The launch
+  token helper decided what to mint by the managed `fabric-sqlendpoint` entry,
+  which a non-Fabric project still gets (the global endpoint) unless it disables
+  it: an Azure SQL-only teammate's launch minted a Fabric token, and when that
+  mint failed the session had no launch identity, so `catalog_snapshot`,
+  `schema_compare`, `fabric_sql_query` and `sql_impact` answered
+  `launch_identity_missing` with a hint about the project file. The contract's
+  ready default `sql_targets` entry now decides first (a named host mints the
+  `database.windows.net` audience, a discovered Fabric kind the Fabric one), the
+  launch warning reads `live SQL sign-in unavailable: <reason>` instead of
+  `Fabric Warehouse MCP unavailable`, and the `launch_identity_missing` hint
+  names that line. Every consumer reads only the launch token's identity, so the
+  audience change touches nothing else.
+
+- **`/setup-project` edits a project file written with inline mappings.** The
+  bundled `.coop/project.yml` wrote its `tools:` and `mcp:` entries as flow
+  mappings (`fabric_cli: { command: "fab", enabled: true, ... }`), and the
+  project-file writer refused to edit under one ("tools.fabric_cli is written as
+  an inline mapping") rather than lose its other keys, so anyone whose project
+  file was copied from the bundled one could not run `/setup-project`. The
+  bundled file now uses block keys, the writer converts a populated flow mapping
+  to block keys in place (every key kept, a trailing comment kept on the parent
+  line), and the reader shows the wizard the values inside one instead of its
+  defaults; only an inline mapping it cannot parse is still refused. Two more
+  things the same VM run showed: an edited line now keeps its quote style and
+  its trailing comment (`mode: "connected"  # discovery | partial | connected`
+  used to come back as `mode: 'connected'`, and a client's file lost its
+  documentation that way), and `lib/_yaml.py` no longer mistakes `\"` inside a
+  double-quoted value, or `''` inside a single-quoted one, for the end of the
+  value when a `#` follows.
+- **The wizard never swaps a repository's folder for one above it unasked.**
+  When a recorded folder is missing (`../fabric` on a fresh VM), the folder
+  picker opens at the nearest existing parent and one Enter too many recorded
+  `..` instead. `/setup-project` now asks before replacing a repository's folder
+  with a folder above it, and No keeps the recorded path.
+
+### Removed
+
+- **Unreferenced repo weight (suite review 2026-10-26, pick 9).** `.specify/`
+  (spec-kit templates and scripts) and `.agents/skills/speckit-*` were read by
+  nothing in the product, the tests, CI or the maintainer workflow; the only
+  mentions were the installer's exclusion list and its test. `CONTEXT.md` (a
+  standards glossary nothing linked) and `docs/agent/logs/` (this repo's own
+  September daily logs) go with them. Git keeps all of it.
+
+- **Prompt templates the native commands and skills already cover (suite
+  review 2026-10-26, pick 9).** `/setup-docs` is a native wizard, so the
+  `setup-docs` prompt and skill (which taught the model a transport the
+  extension speaks itself) are gone; `/impact` and the `coop-workflow` skill
+  cover the `impact-analysis` prompt; the `daily-logger` skill covers the
+  `daily-log` and `weekly-log` prompts, which only restated it (the Start menu's
+  log item asks for today's log or the weekly roll-up in words). Fewer templates
+  in the slash-command list and in every session's context budget.
+
+- **The `coop init` Python wizard.** `lib/init_wizard.py` (a second, 722-line
+  implementation of the project wizard) is gone. `coop init` keeps the jobs
+  around the project file: `--template` copies the documented example (into
+  the client home repository beside several repositories, as before),
+  `--seed-docs`, `--ci` and `--migrate-legacy`; the bare command points at
+  `/setup-project`.
 
 ## [0.38.6] — 2026-10-26
 

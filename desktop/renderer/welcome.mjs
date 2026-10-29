@@ -6,11 +6,11 @@
 /** How a launch notice from coop.ps1 is read: what to run, and where. */
 const NOTICE_RULES = [
   { test: /onboarding is incomplete/i, id: "onboard", command: "coop onboard", text: "Your COOP profile (name, client platform) is not set up yet." },
-  // The launch's own line ("Fabric Warehouse MCP unavailable: Azure authentication
+  // The launch's own line ("live SQL sign-in unavailable: Azure authentication
   // is required; run az login") and the MCP adapter's report when the Warehouse
   // endpoint answers 401 without a token ("Failed to connect to fabric-sqlendpoint:
   // ... authentication may be required ...") are the same missing sign-in.
-  { test: /az login|azure (cli )?(authentication|sign-in|login)|fabric-sqlendpoint|fabric warehouse mcp|authentication (may be|is) required/i, id: "azure", command: "az login", text: "Azure sign-in is missing or expired, so Fabric Warehouse queries are off." },
+  { test: /az login|azure (cli )?(authentication|sign-in|login)|fabric-sqlendpoint|fabric warehouse mcp|sql sign-in unavailable|authentication (may be|is) required/i, id: "azure", command: "az login", text: "Azure sign-in is missing or expired, so live SQL reads (Fabric Warehouse, Azure SQL) are off." },
   { test: /\/login|model sign-in|no stored (provider )?credential/i, id: "login", command: "/login", text: "No model sign-in yet." },
 ];
 

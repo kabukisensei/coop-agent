@@ -32,6 +32,7 @@ const {
   sqlTargetTouched,
   readNamedTargets,
   projectYamlKeys,
+  isFolderAbove,
 } = await import(pathToFileURL(`${dist}/coop-tools.mjs`).href);
 const { findProjectContract, searchProjectContract } = await import(pathToFileURL(join(REPO_ROOT, "lib", "standards.mjs")).href);
 const { clientRecord, clientRootFor } = await import(pathToFileURL(join(REPO_ROOT, "lib", "client-folder.mjs")).href);
@@ -335,9 +336,22 @@ await t("named target sets and schema_compare.destructive: render, read, apply, 
   // Removing a set from the settings never removes it from the file.
   const dropped = applyProjectWizardSettings(merged, { ...parseProjectWizardSettings(merged, "/work"), repositories: [], namedTargets: [] });
   assert.deepEqual(projectYamlKeys(dropped, ["sql_targets", "named"]), ["lakehouse", "reporting"]);
-  // A file without schema_compare and no lists answered: destructive alone is not written.
-  const noSection = applyProjectWizardSettings("profile:\n  client: 'X'\n", { ...parseProjectWizardSettings("profile:\n  client: 'X'\n", "/work"), repositories: [], schemaCompareDestructive: "commented" });
-  assert.equal(projectYamlScalar(noSection, ["schema_compare", "destructive"]), "");
+  // A file without schema_compare and no lists answered (#476): `commented` is written on
+  // its own (it changes what the engine does), `runnable` (the engine's default) is not.
+  const bare = "profile:\n  client: 'X'\n";
+  const noSection = applyProjectWizardSettings(bare, { ...parseProjectWizardSettings(bare, "/work"), repositories: [], schemaCompareDestructive: "commented" });
+  assert.equal(projectYamlScalar(noSection, ["schema_compare", "destructive"]), "commented");
+  assert.equal(parseProjectWizardSettings(noSection, "/work").schemaCompareDestructive, "commented", "the reader sees the answer again");
+  assert.deepEqual(projectYamlList(noSection, ["schema_compare", "exclude_schemas"]), [], "no list is invented");
+  const runnableOnly = applyProjectWizardSettings(bare, { ...parseProjectWizardSettings(bare, "/work"), repositories: [], schemaCompareDestructive: "runnable" });
+  assert.equal(projectYamlScalar(runnableOnly, ["schema_compare", "destructive"]), "", "the default alone adds no section");
+  // A new contract with empty lists and `commented` keeps the answer too.
+  const commentedOnly = renderProjectWizardSettings({ ...settings, schemaCompareExclude: "", schemaCompareRebuild: "", schemaCompareDestructive: "commented" });
+  assert.equal(projectYamlScalar(commentedOnly, ["schema_compare", "destructive"]), "commented");
+  assert.deepEqual(projectYamlList(commentedOnly, ["schema_compare", "exclude_schemas"]), []);
+  assert.equal(parseProjectWizardSettings(commentedOnly, "/work").schemaCompareDestructive, "commented");
+  assert.notDeepEqual(schemaCompareBlock({ schemaCompareDestructive: "commented" }), [], "commented alone is a section");
+  assert.deepEqual(schemaCompareBlock({ schemaCompareDestructive: "runnable" }), [], "runnable alone is not");
   // Validation.
   const problems = (s) => projectSettingsProblems({ ...settings, ...s }).map((p) => p.field);
   assert.deepEqual(problems({ namedTargets: [set] }), []);
@@ -514,22 +528,116 @@ tools:
   assert.equal(read.stdout.trim(), "../warehouse", "the dependency-free reader parses the written contract");
 });
 
-await t("a populated inline mapping is refused rather than losing its other keys", () => {
-  const original = "profile: {organization: 'Old', client: 'Keep'}\n";
+await t("a populated inline mapping becomes block keys on their own lines, losing none of them", () => {
+  const original = "profile: {organization: 'Old, Inc', client: 'Keep'}  # who\ntools:\n  fabric_cli:    { command: \"fab\",  enabled: true,  default_mode: \"read_only_first\" }\n";
   const parsed = parseProjectWizardSettings(original, "/work/contoso");
   parsed.client = "New";
-  assert.throws(() => applyProjectWizardSettings(original, parsed), /inline mapping/);
+  const merged = applyProjectWizardSettings(original, parsed);
+  assert.doesNotMatch(merged, /^profile: \{/m, "no flow mapping survives on an edited path");
+  assert.match(merged, /^profile:  # who\n/m, "the trailing comment stays on the parent line");
+  assert.equal(projectYamlScalar(merged, ["profile", "organization"]), "Old, Inc");
+  assert.equal(projectYamlScalar(merged, ["profile", "client"]), "New");
+  assert.equal(projectYamlScalar(merged, ["tools", "fabric_cli", "command"]), "fab");
+  assert.equal(projectYamlScalar(merged, ["tools", "fabric_cli", "default_mode"]), "read_only_first");
+  // The dependency-free reader agrees with what was written.
+  const root = trackFixture(mkdtempSync(join(tmpdir(), "coop-flowmap-")));
+  writeFileSync(join(root, "project.yml"), merged);
+  const py = ["python3", "python"].find((bin) => spawnSync(bin, ["--version"]).status === 0);
+  const read = spawnSync(py, ["-I", join(REPO_ROOT, "lib", "_yaml.py"), "get", join(root, "project.yml"), "profile.organization", "MISS"], { encoding: "utf8" });
+  assert.equal(read.status, 0, read.stderr);
+  assert.equal(read.stdout.trim(), "Old, Inc");
+  // An inline mapping the splitter cannot read is still refused, never guessed.
+  assert.throws(() => lib.upsertProjectYamlScalar("profile: {organization: 'Old' trailing\n", ["profile", "client"], "x"), /inline mapping/);
 });
 
-await t("coop init contract round-trips through /setup-project with a nested standards override intact", () => {
-  const root = trackFixture(mkdtempSync(join(tmpdir(), "coop-init-roundtrip-")));
+await t("an edited scalar keeps its quote style and its trailing comment", () => {
+  const original = [
+    "estate:",
+    "  mode: \"connected\"  # discovery | partial | connected",
+    "  word: plain # a note",
+    "  quoted: 'it''s'",
+    "  flag: true   # on by default",
+    "  text: \"x\"",
+    "",
+  ].join("\n");
+  let out = lib.upsertProjectYamlScalar(original, ["estate", "mode"], "partial");
+  out = lib.upsertProjectYamlScalar(out, ["estate", "word"], "other-word");
+  out = lib.upsertProjectYamlScalar(out, ["estate", "quoted"], "O'Brien & co");
+  out = lib.upsertProjectYamlScalar(out, ["estate", "flag"], false);
+  out = lib.upsertProjectYamlScalar(out, ["estate", "text"], "quote \" and \\ and # here");
+  assert.match(out, /^  mode: "partial"  # discovery \| partial \| connected$/m, "double quotes and the comment stay");
+  assert.match(out, /^  word: other-word  # a note$/m, "a plain word stays plain");
+  assert.match(out, /^  quoted: 'O''Brien & co'$/m, "single quotes stay single");
+  assert.match(out, /^  flag: false  # on by default$/m, "a boolean keeps its comment");
+  assert.match(out, /^  text: "quote \\" and \\\\ and # here"$/m, "double-quoted escapes are JSON's");
+  assert.equal(projectYamlScalar(out, ["estate", "text"]), 'quote " and \\ and # here');
+  assert.equal(lib.upsertProjectYamlScalar("estate:\n  word: plain\n", ["estate", "word"], "two words"), "estate:\n  word: 'two words'\n", "a value that is not a plain word gets quotes");
+  assert.equal(lib.upsertProjectYamlScalar("estate:\n  word: plain\n", ["estate", "word"], "no"), "estate:\n  word: 'no'\n", "a reserved word gets quotes");
+  // The dependency-free reader agrees with every style written.
+  const root = trackFixture(mkdtempSync(join(tmpdir(), "coop-quote-style-")));
+  writeFileSync(join(root, "project.yml"), out);
   const py = ["python3", "python"].find((bin) => spawnSync(bin, ["--version"]).status === 0);
-  const answers = ["Cooptimize", "Test Client", "", "", "", "", "", "n", "no", "no", "n"].join("\n") + "\n";
-  const init = spawnSync(py, [join(REPO_ROOT, "lib", "init_wizard.py"), join(root, "repo")], { input: answers, encoding: "utf8", env: { ...process.env, HOME: root, USERPROFILE: root } });
-  assert.equal(init.status, 0, init.stderr);
-  // Python writes CRLF on Windows; the round-trip, not the line ending, is under test.
-  const generated = readFileSync(join(root, "repo", ".coop", "project.yml"), "utf8").replace(/\r\n/g, "\n");
-  assert.match(generated, /^# standards:\n#   sql:\n#     path: /m, "coop init documents the nested override shape");
+  for (const [key, expected] of [["estate.mode", "partial"], ["estate.word", "other-word"], ["estate.quoted", "O'Brien & co"], ["estate.text", 'quote " and \\ and # here']]) {
+    const read = spawnSync(py, ["-I", join(REPO_ROOT, "lib", "_yaml.py"), "get", join(root, "project.yml"), key, "MISS"], { encoding: "utf8" });
+    assert.equal(read.status, 0, read.stderr);
+    assert.equal(read.stdout.trim(), expected, key);
+  }
+});
+
+await t("editing a repository never replaces its folder with one above it without asking", async () => {
+  const parent = trackFixture(mkdtempSync(join(tmpdir(), "coop-folder-above-")));
+  const root = join(parent, "client");
+  mkdirSync(join(root, ".coop"), { recursive: true });
+  mkdirSync(join(root, ".git"));
+  skipIfContaminated(root);
+  // The recorded folder is missing and a sibling repository sits beside this
+  // one, so the picker opens at the parent folder (the VM run of 2026-10-26).
+  mkdirSync(join(parent, "warehouse", ".git"), { recursive: true });
+  const contract = "profile:\n  organization: 'Cooptimize'\n  client: 'Contoso'\n  default_branch: 'main'\nrepositories:\n  fabric:\n    description: 'Fabric'\n    role: 'powerbi'\n    local_path: '../fabric'\n    remote_name: 'origin'\n    default_branch: 'main'\ntools:\n  fabric_cli:\n    enabled: false\n";
+  writeFileSync(join(root, ".coop", "project.yml"), contract);
+  assert.equal(isFolderAbove(root, "..", "../fabric"), true);
+  assert.equal(isFolderAbove(root, "../fabric", "../fabric"), false);
+  assert.equal(isFolderAbove(root, "../other", "../fabric"), false);
+  assert.equal(isFolderAbove(root, "../fabric/sub", "../fabric"), false);
+  for (const replace of [false, true]) {
+    const titles = [];
+    const ctx = {
+      cwd: root, hasUI: true, mode: "tui",
+      ui: {
+        input: async (_label, def) => def,
+        confirm: async (title, message) => {
+          titles.push(title);
+          if (title === "Local source folders") return true;
+          if (title === "Repository: fabric") return true;           // edit it
+          if (title === "fabric: local folder") { assert.match(message, /recorded as \.\.\/fabric; the picker chose \.\., a folder above it/); return replace; }
+          if (["Repositories", "Microsoft Fabric / Power BI", "Tabular Editor", "Share with the team"].includes(title)) return false;
+          return true;                                               // the final write
+        },
+        select: async (_label, options) => options.find((x) => x.includes("Power BI")) ?? options.find((x) => x.startsWith("✓ Use this folder:")),
+        notify: () => {},
+      },
+    };
+    assert.equal(await runProjectWizard({}, ctx), true, `replace=${replace}`);
+    assert.ok(titles.includes("fabric: local folder"), "the wizard asked before replacing the folder");
+    const text = readFileSync(join(root, ".coop", "project.yml"), "utf8");
+    assert.equal(projectYamlScalar(text, ["repositories", "fabric", "local_path"]), replace ? ".." : "../fabric", `replace=${replace}`);
+    writeFileSync(join(root, ".coop", "project.yml"), contract);
+  }
+});
+
+await t("the bundled .coop/project.yml writes no populated inline mapping, so a copied file takes /setup-project edits", () => {
+  const bundled = readFileSync(join(REPO_ROOT, ".coop", "project.yml"), "utf8");
+  const flow = bundled.split("\n").filter((line) => /^\s*[A-Za-z0-9_.-]+:\s*\{[^}]/.test(line));
+  assert.deepEqual(flow, [], "inline {...} mappings in the bundled contract");
+  const parsed = parseProjectWizardSettings(bundled, "/work/contoso");
+  parsed.client = "Contoso";
+  assert.doesNotThrow(() => applyProjectWizardSettings(bundled, parsed));
+});
+
+await t("a rendered contract round-trips through /setup-project with a nested standards override intact", () => {
+  const root = trackFixture(mkdtempSync(join(tmpdir(), "coop-init-roundtrip-")));
+  const generated = renderProjectWizardSettings({ ...settings, client: "Test Client", fabricEnabled: false, sqlTargetKind: "" });
+  assert.match(generated, /^# standards:\n#   sql:\n#     path: /m, "the renderer documents the nested override shape");
   // A deliberate project override, written the way the generated comment shows.
   const override = "standards:\n  sql:\n    path: \"docs/standards/client-sql.md\"\n    section_refs: numeric\n";
   const original = generated.replace(/^backup:$/m, `${override}\nbackup:`);
@@ -538,11 +646,11 @@ await t("coop init contract round-trips through /setup-project with a nested sta
   const merged = applyProjectWizardSettings(original, parsed);
   assert.equal(projectYamlScalar(merged, ["profile", "client"]), "Contoso");
   assert.ok(merged.includes(override), "setup-project must preserve the unowned standards block");
-  // #93: neither wizard writes the retired `powerbi` MCP policy block.
-  assert.doesNotMatch(generated, /^  powerbi:|readonly_flag/m, "coop init must not write mcp.powerbi");
+  // #93: the wizard never writes the retired `powerbi` MCP policy block.
+  assert.doesNotMatch(generated, /^  powerbi:|readonly_flag/m, "the renderer must not write mcp.powerbi");
   assert.doesNotMatch(merged, /^  powerbi:|readonly_flag/m, "setup-project must not add mcp.powerbi");
-  // #98: neither wizard writes contract policy fields that nothing enforces.
-  assert.doesNotMatch(generated, /live_discovery|allowed_default_actions|requires_approval_actions/, "coop init must not write unenforced policy fields");
+  // #98: the wizard never writes contract policy fields that nothing enforces.
+  assert.doesNotMatch(generated, /live_discovery|allowed_default_actions|requires_approval_actions/, "the renderer must not write unenforced policy fields");
   assert.doesNotMatch(merged, /live_discovery|allowed_default_actions|requires_approval_actions/, "setup-project must not add unenforced policy fields");
   assert.equal(projectYamlScalar(merged, ["standards", "sql", "path"]), "docs/standards/client-sql.md");
 });
@@ -580,6 +688,73 @@ await t("native wizard is reachable inside Coop and creates the contract", async
   assert.doesNotMatch(text, /^standards:/m, "in-app wizard must omit default standards overrides");
   assert.equal(projectYamlScalar(text, ["repositories", root.split(/[\\/]/).pop(), "local_path"]), ".");
   assert.ok(!confirmTitles.includes("Lineage documentation"), "project setup must not launch data-doc setup");
+});
+
+await t("Fabric ids are looked up by name from the Azure sign-in: Enter keeps the resolved ids, a name typed where an id is asked resolves too", async () => {
+  const root = isolatedRoot("coop-project-fabric-ids-");
+  mkdirSync(join(root, ".git"));
+  skipIfContaminated(root);
+  const WS = "11111111-1111-4111-8111-111111111111", WS2 = "22222222-2222-4222-8222-222222222222";
+  const WH = "33333333-3333-4333-8333-333333333333", WH2 = "44444444-4444-4444-8444-444444444444";
+  const FAB = "https://api.fabric.microsoft.com/v1";
+  const pages = {
+    [`${FAB}/workspaces`]: { value: [{ id: WS, displayName: "Contoso Sales Dev" }, { id: WS2, displayName: "Contoso Sales" }] },
+    [`${FAB}/workspaces/${WS}/items`]: { value: [{ id: WH, displayName: "SalesDW", type: "Warehouse" }, { id: "99999999-9999-4999-8999-999999999999", displayName: "Notes", type: "Notebook" }] },
+    [`${FAB}/workspaces/${WS2}/items`]: { value: [{ id: WH2, displayName: "SalesDW", type: "Warehouse" }] },
+  };
+  const azCalls = [];
+  const pi = { exec: async (command, args) => { azCalls.push([command, ...args]); return { code: 0, stdout: JSON.stringify({ accessToken: "tok" }), stderr: "" }; } };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    assert.equal(init.headers.Authorization, "Bearer tok");
+    const body = pages[url];
+    return body ? { ok: true, json: async () => body } : { ok: false, status: 404, json: async () => ({}) };
+  };
+  const confirms = [true, false, true, true, false, true]; // local source, add repo, Fabric YES, Power BI YES, TE, write
+  const defaults = {};
+  const notes = [];
+  const ctx = {
+    cwd: root,
+    hasUI: true,
+    mode: "tui",
+    ui: {
+      input: async (label, def) => {
+        defaults[label] = def;
+        if (label.startsWith("Client / engagement")) return "Contoso";
+        if (label.startsWith("Azure tenant ID")) return "contoso.onmicrosoft.com";
+        if (label.startsWith("Default Fabric workspace name")) return "Contoso Sales Dev";
+        if (label.startsWith("Prod database name")) return "SalesDW";
+        if (label.startsWith("Prod Fabric workspace ID")) return "Contoso Sales"; // a name, not an id
+        if (label.startsWith("Prod Warehouse item ID")) return "salesdw"; // the item's name
+        if (label.startsWith("Test database name")) return "";
+        return def;
+      },
+      confirm: async () => confirms.shift() ?? false,
+      select: async (_label, options) => options.find((x) => x.includes("General project")) ?? options.find((x) => x.startsWith("✓ Use this folder:")),
+      notify: (message) => notes.push(String(message)),
+    },
+  };
+  try {
+    assert.equal(await runProjectWizard(pi, ctx), true, notes.join("\n"));
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  const text = readFileSync(join(root, ".coop", "project.yml"), "utf8");
+  assert.equal(projectYamlScalar(text, ["fabric", "default_workspace_id"]), WS, "the workspace name resolved to its id");
+  assert.equal(projectYamlScalar(text, ["fabric", "default_sql_endpoint", "item_type"]), "Warehouse", "the one SQL item proposed its type");
+  assert.equal(projectYamlScalar(text, ["fabric", "default_sql_endpoint", "item_name"]), "SalesDW");
+  assert.equal(projectYamlScalar(text, ["fabric", "default_sql_endpoint", "item_id"]), WH);
+  assert.equal(projectYamlScalar(text, ["power_bi", "default_workspace_id"]), WS, "the same-named Power BI workspace takes the Fabric id");
+  assert.equal(projectYamlScalar(text, ["sql_targets", "dev", "workspace_id"]), WS);
+  assert.equal(projectYamlScalar(text, ["sql_targets", "dev", "item_id"]), WH);
+  assert.equal(projectYamlScalar(text, ["sql_targets", "prod", "workspace_id"]), WS2, "a workspace name typed where an id is asked resolves");
+  assert.equal(projectYamlScalar(text, ["sql_targets", "prod", "item_id"]), WH2, "an item name typed where an id is asked resolves in that workspace");
+  const idLabels = Object.keys(defaults).filter((label) => /workspace ID|item ID/.test(label));
+  assert.ok(idLabels.length >= 3, idLabels.join(" | "));
+  assert.equal(defaults[idLabels.find((l) => l.startsWith("Default Fabric workspace ID"))], WS, "the id question proposes the resolved id");
+  assert.equal(azCalls.length, 1, "one az token mint for the whole wizard");
+  // One line on every platform: a bare az argv, or the cmd.exe line Windows runs az.cmd through.
+  assert.ok(azCalls[0].join(" ").includes("--tenant contoso.onmicrosoft.com"), "the tenant just answered pins the mint");
 });
 
 await t("native wizard can create a repository-free discovery project", async () => {
@@ -672,8 +847,7 @@ repositories:
 
   const workflow = readFileSync(join(REPO_ROOT, "templates", "client-home", "github-workflow-data-docs-check.yml"), "utf8");
   assert.match(workflow, /run: coop-data-doc check/);
-  const pin = JSON.parse(readFileSync(join(REPO_ROOT, "config", "release-manifest.json"), "utf8")).python_tools["coop-data-doc"];
-  assert.ok(workflow.includes(`pipx install coop-data-doc==${pin}`), "the template pins the manifest's coop-data-doc");
+  assert.ok(workflow.includes("pipx install coop-data-doc==<version>"), "the committed template carries the placeholder, never a literal pin");
   assert.match(readFileSync(join(REPO_ROOT, "templates", "client-home", "README.md"), "utf8"), /data-docs-check\.yml/);
 });
 

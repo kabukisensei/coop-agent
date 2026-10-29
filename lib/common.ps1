@@ -128,9 +128,14 @@ function Use-CoopBundledWheels([string[]]$PipxArgs) {
   if (-not $wheels -or $env:COOP_PIP_ONLINE -eq '1' -or -not (Test-Path -LiteralPath $wheels -PathType Container)) { return $null }
   $a = @($PipxArgs)
   if ($a.Count -lt 2 -or @('install', 'inject') -notcontains $a[0]) { return $null }
+  # Options that take the next word as their value: that word is never a
+  # package. `--suffix _coopnext` (the #441 interpreter-move probe) read as a
+  # spec sent sqlsc's probe to PyPI, where sqlsc is not published, so the first
+  # launch never finished (the dev VM, 2026-10-29). `--opt=value` is one word.
+  $valued = @('--python', '--suffix', '--pip-args', '--index-url', '-i', '--preinstall', '--backend')
   $positional = @()
   for ($i = 1; $i -lt $a.Count; $i++) {
-    if ($a[$i] -eq '--python') { $i++; continue }
+    if ($valued -contains [string]$a[$i]) { $i++; continue }
     if ([string]$a[$i] -like '-*') { continue }
     $positional += [string]$a[$i]
   }
@@ -261,23 +266,93 @@ function Repair-CoopOlderCloneShortcuts([string]$CloneRoot) {
 # over an older window: its uninstaller removed the `coop` link and "coop
 # (terminal)" shortcut, and new tool pins need installing even when the
 # extension lock is unchanged), so `coop desktop` runs the install first (D1d, D1k).
-# The marker holds the package version AND a hash of its release manifest: a
-# package whose tool pins changed under the same version (a build installed over
-# another, the dev VM 2026-10-20: coop-data-doc stayed at the old pin and the new
-# tool never arrived) re-runs the setup for this account too (B6).
+# The marker holds the package version AND a hash of the manifest sections this
+# account installs (Pi, the extensions, the Python and npm tools, the bundled
+# Python): a package whose tool pins changed under the same version (a build
+# installed over another, the dev VM 2026-10-20: coop-data-doc stayed at the old
+# pin and the new tool never arrived) re-runs the setup for this account too
+# (B6). A release that moved no pin (most of them) only refreshes the
+# extensions and settings (sync) instead of reinstalling every tool: the hash
+# is of those sections, not of the whole file, so coop_version, the Electron or
+# ODBC pins and a comment never cost the account a reinstall (suite review pick 3).
 function Get-CoopBundledSetupMarker { return (Join-Path (Get-CoopProfileDir) 'desktop\window-setup-version') }
-function Get-CoopBundledSetupStamp {
-  $manifestSha = Get-CoopFileSha256 $script:CoopReleaseManifest
-  if (-not $manifestSha) { return [string]$script:CoopVersion }
-  return ([string]$script:CoopVersion + '+' + $manifestSha.Substring(0, 16).ToLower())
+function Get-CoopBundledToolsHash {
+  if (-not (Test-Path -LiteralPath $script:CoopReleaseManifest -PathType Leaf)) { return '' }
+  try { $m = [System.IO.File]::ReadAllText($script:CoopReleaseManifest) | ConvertFrom-Json } catch { return '' }
+  $parts = New-Object System.Collections.Generic.List[string]
+  foreach ($key in @('pi', 'extensions', 'python_tools', 'python_tool_sources', 'npm_tools')) {
+    $v = $m.$key
+    if ($null -ne $v) { $parts.Add($key + '=' + (ConvertTo-Json -InputObject $v -Compress -Depth 6)) }
+  }
+  if ($m.desktop -and $m.desktop.python) { $parts.Add('desktop.python=' + (ConvertTo-Json -InputObject $m.desktop.python -Compress -Depth 4)) }
+  if ($parts.Count -eq 0) { return '' }
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes(($parts -join "`n"))
+    return ([System.BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').Substring(0, 16).ToLower()
+  } finally { $sha.Dispose() }
 }
+function Get-CoopBundledSetupStamp {
+  $tools = Get-CoopBundledToolsHash
+  if (-not $tools) { return [string]$script:CoopVersion }
+  return ([string]$script:CoopVersion + '+' + $tools)
+}
+function Get-CoopBundledSetupDoneStamp {
+  $marker = Get-CoopBundledSetupMarker
+  if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) { return '' }
+  try { return ([System.IO.File]::ReadAllText($marker)).Trim() } catch { return '' }
+}
+# Something of this package has not reached this account: a new version (sync
+# refreshes the extensions and settings) or new tool pins (the full setup).
 function Test-CoopBundledSetupPending {
   if (-not $script:CoopBundledRuntime) { return $false }
   if (Test-CoopExtensionsLockPending -AgentDir (Get-CoopPiAgentDir) -PiVersion (Get-CoopPiVersion)) { return $true }
-  $marker = Get-CoopBundledSetupMarker
-  $done = ''
-  if (Test-Path -LiteralPath $marker -PathType Leaf) { try { $done = ([System.IO.File]::ReadAllText($marker)).Trim() } catch { $done = '' } }
-  return ($done -ne (Get-CoopBundledSetupStamp))
+  return ((Get-CoopBundledSetupDoneStamp) -ne (Get-CoopBundledSetupStamp))
+}
+# The tool pins this package carries differ from the ones last installed for
+# this account (or nothing was ever installed): the full setup is needed, not
+# only a sync.
+function Test-CoopBundledToolsPending {
+  if (-not $script:CoopBundledRuntime) { return $false }
+  if (Test-CoopExtensionsLockPending -AgentDir (Get-CoopPiAgentDir) -PiVersion (Get-CoopPiVersion)) { return $true }
+  $tools = Get-CoopBundledToolsHash
+  if (-not $tools) { return $true }
+  return (-not (Get-CoopBundledSetupDoneStamp).EndsWith('+' + $tools))
+}
+# The Python tools this package pins that this account does not have as pinned
+# (#478): not installed, another version, or (the coop tools) an environment
+# built on another interpreter than coop's pipx default, the same judgement
+# Invoke-CoopPipxConverge makes before it reinstalls. The setup marker says the
+# pins were installed once; a tool uninstalled or moved since is found here, so
+# `coop update` on a machine install runs the full setup for it instead of a
+# sync alone. Without pipx nothing can be installed, so nothing is drifted.
+# Each row: Name, Pin, Installed ('' when absent), Reason (one short phrase).
+function Get-CoopDriftedPythonTools {
+  param([switch]$NoFabric)
+  if (-not (Test-CoopPipxAvailable)) { return @() }
+  $plan = Get-CoopFleetPlan -NoFabric:$NoFabric
+  $rows = @($plan.PythonTools)
+  if ($plan.Fabric) { $rows += $plan.Fabric }
+  $listText = Get-CoopPipxOutput @('list')
+  $defaultPython = ''
+  $out = @()
+  foreach ($row in $rows) {
+    if (-not $row.Pin) { continue }
+    $installed = Get-CoopPipxToolVersion $row.Name $listText
+    $reason = ''
+    if (-not $installed) { $reason = 'not installed' }
+    elseif ($installed -ne $row.Pin) { $reason = "$installed installed" }
+    elseif ($row.Name -ne $script:CoopFabricCliPackage) {
+      # The Fabric CLI's interpreter is the plan's (a local 3.10-3.13 or pipx's
+      # standalone one), judged by its own converge unit; the coop tools belong
+      # on coop's pipx default.
+      if ($defaultPython -eq '') { $defaultPython = [string](Get-CoopPipxDefaultPython) }
+      $venvInfo = if ($defaultPython) { Get-CoopVenvInterpreter $row.Name } else { $null }
+      if ($venvInfo -and -not (Test-CoopVenvOnPython $venvInfo $defaultPython)) { $reason = "built on $($venvInfo.Label), not coop's Python" }
+    }
+    if ($reason) { $out += [pscustomobject]@{ Name = [string]$row.Name; Pin = [string]$row.Pin; Installed = [string]$installed; Reason = $reason } }
+  }
+  return @($out)
 }
 # Record that this package (version and manifest) finished its setup on this profile.
 function Set-CoopBundledSetupDone {
@@ -466,7 +541,6 @@ function Coop-ManifestObjectGet([string]$Object, [string]$Key, [string]$Default 
 function Coop-ManifestExtensionSpec([string]$Package) { $v = Coop-ManifestObjectGet 'extensions' $Package; if ($v) { return "npm:${Package}@${v}" }; return '' }
 function Coop-ManifestPythonSpec([string]$Package) { $v = Coop-ManifestObjectGet 'python_tools' $Package; if ($v) { return "${Package}==${v}" }; return '' }
 function Coop-ManifestNpmToolSpec([string]$Package) { $v = Coop-ManifestObjectGet 'npm_tools' $Package; if ($v) { return "${Package}@${v}" }; return '' }
-function Coop-ManifestMcpSpec([string]$Package) { $v = Coop-ManifestObjectGet 'mcp_servers' $Package; if ($v) { return "${Package}@${v}" }; return '' }
 
 # Every installed version `pi list` reports for one managed extension. Only real
 # package specs count: an extension's install path also contains its name (and
@@ -655,7 +729,7 @@ function Get-CoopVenvPythonVersion([string]$Venv) {
 
 # --- Which interpreter a pipx environment runs on (#430) ----------------------
 # A pipx tool installed by hand on another Python (the dev VM, 2026-10-23: a
-# `pipx install --force coop-sql-source-control==1.0.5` from a shell whose pipx
+# `pipx install --force coop-sql-source-control==<pin>` from a shell whose pipx
 # ran on Python 3.12) reports the right version, so a version-only convergence
 # kept it on an interpreter coop never installed or pinned. The venv's own
 # pyvenv.cfg says what it was built on: `home` (the base interpreter's folder)
@@ -928,16 +1002,6 @@ function Install-CoopBundledOdbc {
   }
   if ($p -and @(0, 3010) -notcontains $p.ExitCode) { return 'failed' }
   return 'ok'
-}
-
-# Is this process elevated (a member of the Administrators group with the token
-# to match)? False off Windows.
-function Test-CoopProcessElevated {
-  if ($env:OS -ne 'Windows_NT') { return $false }
-  try {
-    $id = [Security.Principal.WindowsIdentity]::GetCurrent()
-    return (New-Object Security.Principal.WindowsPrincipal $id).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-  } catch { return $false }
 }
 
 function Ensure-CoopFabricOdbcDriver([bool]$AllowPrereqs = $true, [bool]$Auto = $false) {
@@ -1614,6 +1678,48 @@ function Coop-Err  { param([string]$m) Coop-Emit "$($script:C_RED)$($script:G_CR
 function Coop-Die  { param([string]$m) Coop-Err $m; exit 1 }
 function Coop-Head { param([string]$m) Coop-Emit "`n$($script:C_BOLD)$($script:C_NAVY)$m$($script:C_RST)" }
 
+# --- The window's setup progress (COOP_BOOT_STATUS) ---------------------------
+# coop.exe sets COOP_BOOT_STATUS for its setup console: a small JSON file its
+# "Setting up coop" window reads twice a second, so a first launch that takes
+# minutes says what it is doing ("Step 4 of 8: Installing coop's Python tools",
+# "Python tools (3 of 7): coop-sql-source-control 1.0.12"). The phase travels
+# in COOP_BOOT_PHASE/_STEP/_STEPS too, so a child script (sync.ps1 under
+# install.ps1) names its items under its parent's step. Written whole to a temp
+# file and moved over, so the window never reads half of it; best effort and
+# silent, so nothing here can fail a setup. No file without COOP_BOOT_STATUS.
+function Write-CoopSetupStatus([string]$Detail) {
+  $path = [string]$env:COOP_BOOT_STATUS
+  if (-not $path) { return }
+  $step = 0; $steps = 0
+  [void][int]::TryParse([string]$env:COOP_BOOT_STEP, [ref]$step)
+  [void][int]::TryParse([string]$env:COOP_BOOT_STEPS, [ref]$steps)
+  $status = [ordered]@{
+    schema = 1
+    step   = $step
+    steps  = $steps
+    phase  = [string]$env:COOP_BOOT_PHASE
+    detail = $Detail
+    since  = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
+  }
+  try {
+    $json = $status | ConvertTo-Json -Compress
+    $tmp = "$path.$PID.tmp"
+    [System.IO.File]::WriteAllText($tmp, $json, (New-Object System.Text.UTF8Encoding $false))
+    try { Move-Item -LiteralPath $tmp -Destination $path -Force -ErrorAction Stop }
+    catch { [System.IO.File]::WriteAllText($path, $json, (New-Object System.Text.UTF8Encoding $false)); Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+  } catch { }
+}
+# A new step: "Step $Step of $Steps: $Phase" (0 of 0 is a phase with no count).
+function Set-CoopSetupPhase([int]$Step, [int]$Steps, [string]$Phase, [string]$Detail = '') {
+  if (-not $env:COOP_BOOT_STATUS) { return }
+  $env:COOP_BOOT_STEP = [string]$Step
+  $env:COOP_BOOT_STEPS = [string]$Steps
+  $env:COOP_BOOT_PHASE = $Phase
+  Write-CoopSetupStatus $Detail
+}
+# The item inside the current step, e.g. "Python tools (3 of 7): sqlsc 1.0.12".
+function Set-CoopSetupDetail([string]$Detail) { Write-CoopSetupStatus $Detail }
+
 # --- Small utilities ----------------------------------------------------------
 # Is a command available on PATH?
 function Test-Have { param([string]$Name) [bool](Get-Command $Name -ErrorAction SilentlyContinue) }
@@ -1920,19 +2026,11 @@ function Get-CoopRepositoryName {
   if ($contract) {
     $root = Split-Path -Parent (Split-Path -Parent $contract)
     $target = [System.IO.Path]::GetFullPath($gitRoot).TrimEnd('\', '/')
-    $inRepos = $false; $name = ''
-    foreach ($line in (Get-Content -LiteralPath $contract -ErrorAction SilentlyContinue)) {
-      if ($line -match '^\S') { $inRepos = ($line -match '^repositories:\s*(#.*)?$'); $name = ''; continue }
-      if (-not $inRepos) { continue }
-      if ($line -match '^  ([A-Za-z0-9_.-]+):\s*(#.*)?$') { $name = $Matches[1]; continue }
-      if ($name -and $line -match '^\s+local_path:\s*(.+?)\s*$') {
-        $value = $Matches[1].Trim()
-        if ($value.Length -ge 2 -and (($value[0] -eq '"' -and $value[-1] -eq '"') -or ($value[0] -eq "'" -and $value[-1] -eq "'"))) { $value = $value.Substring(1, $value.Length - 2) }
-        if (-not $value -or $value -match '^TODO') { continue }
-        if ($value -match '^~([\\/]|$)') { $value = (Join-Path $HOME $value.Substring(1).TrimStart('\', '/')) }
-        $resolved = [System.IO.Path]::GetFullPath((Join-Path $root $value)).TrimEnd('\', '/')
-        if ([string]::Equals($resolved, $target, [System.StringComparison]::OrdinalIgnoreCase)) { return $name }
-      }
+    foreach ($entry in @(Get-CoopContractRepositories $contract)) {
+      $value = [string]$entry.LocalPath
+      if ($value -match '^~([\\/]|$)') { $value = (Join-Path $HOME $value.Substring(1).TrimStart('\', '/')) }
+      $resolved = [System.IO.Path]::GetFullPath((Join-Path $root $value)).TrimEnd('\', '/')
+      if ([string]::Equals($resolved, $target, [System.StringComparison]::OrdinalIgnoreCase)) { return [string]$entry.Name }
     }
   }
   $leaf = Split-Path -Leaf $gitRoot
@@ -2331,9 +2429,14 @@ function Sync-CoopExtensionFleet {
     $failures += Remove-CoopRetiredExtensions -AgentDir $AgentDir
     # The window package ships the tree installed from the lock (D1d): seeded
     # here, every pin below is already in place and no `pi install` runs.
+    Set-CoopSetupDetail 'Extensions: copying the tested extension set from this package'
     [void](Restore-CoopBundledExtensions -AgentDir $AgentDir)
     $fleetSpecs = @(); $fleetNames = @(); $fleetPins = @(); $preVers = @{}
-    foreach ($ext in (Get-CoopFleetPlan).Extensions) {
+    $fleetPlan = @((Get-CoopFleetPlan).Extensions)
+    $fleetIndex = 0
+    foreach ($ext in $fleetPlan) {
+      $fleetIndex++
+      Set-CoopSetupDetail "Extensions ($fleetIndex of $($fleetPlan.Count)): $($ext.Name) $($ext.Pin)".TrimEnd()
       if (-not $ext.Spec -or -not $ext.Pin) { Coop-Warn "manifest pin missing for $($ext.Name)"; $failures++; continue }
       # Strip only the literal four-character `npm:` transport prefix (a longer
       # cut once produced `juicesharp/...` for scoped packages).
@@ -3595,7 +3698,10 @@ function Invoke-CoopPipxConverge {
       $tail = if ($restored) { "; it was installed again on $was, so it still runs (coop update tries the move again)" } else { "; $Package is not installed now (coop update installs it again)" }
       return (Coop-UnitResult $false "failed to reinstall $Package ($spec) on coop's Python $expectedPython$suffix$tail")
     }
-    $outcome = "$Package $(if ($installed) { $installed } else { $spec }) reinstalled on coop's Python $expectedPython (it was on $was)"
+    # Name the version now installed, not the one the move replaced (the dev
+    # VM, 2026-10-29: a pin bump read "1.0.12 reinstalled" over 1.0.13).
+    $now = Get-CoopPipxToolVersion $Package
+    $outcome = "$Package $(if ($now) { $now } elseif ($installed) { $installed } else { $spec }) reinstalled on coop's Python $expectedPython (it was on $was)"
   } elseif ($Force) {
     if ((Invoke-CoopPipx (New-PipxInstallArgs $true)) -ne 0) { return (Coop-UnitResult $false "failed to reinstall $Package ($spec)$(Get-CoopPipxFailureSuffix)") }
     $outcome = "$Package reinstalled ($spec)"
@@ -3705,14 +3811,6 @@ function Invoke-CoopNpmToolsConverge {
   }
   if ($failed -eq 0) { return (Coop-UnitResult $true "$ok Power BI/Fabric authoring tool(s) ready") }
   return (Coop-UnitResult $false "$ok ready, $failed failed: $($problems -join '; ')")
-}
-
-# True if version $A's MAJOR.MINOR is strictly newer than $B's (patch ignored).
-function Test-CoopMinorNewer {
-  param([string]$A, [string]$B)
-  $ma = [regex]::Match([string]$A, '^(\d+)\.(\d+)'); $mb = [regex]::Match([string]$B, '^(\d+)\.(\d+)')
-  if (-not $ma.Success -or -not $mb.Success) { return $false }
-  return ([version]("{0}.{1}" -f $ma.Groups[1].Value, $ma.Groups[2].Value) -gt [version]("{0}.{1}" -f $mb.Groups[1].Value, $mb.Groups[2].Value))
 }
 
 # Read a dotted scalar key from a YAML file via lib/_yaml.py (coop's own
@@ -3958,22 +4056,37 @@ function Find-CoopGitRoot {
   return ''
 }
 
-# The `repositories.*.local_path` values of a block-YAML contract (a line scan:
-# no Python needed at launch), quotes stripped.
-function Get-CoopContractLocalPaths {
+# The `repositories:` entries of a block-YAML contract as @{ Name; LocalPath }
+# objects, quotes stripped, TODO placeholders and entries without a local_path
+# skipped. The ONE PowerShell line scan of the contract (no Python needed at
+# launch): Get-CoopRepositoryName and Get-CoopContractLocalPaths read through it.
+function Get-CoopContractRepositories {
   param([string]$File)
-  $paths = @()
+  $entries = @()
   $inRepos = $false
+  $name = ''
+  $nameIndent = 0
   foreach ($line in (Get-Content -LiteralPath $File -ErrorAction SilentlyContinue)) {
-    if ($line -match '^\S') { $inRepos = ($line -match '^repositories:\s*(#.*)?$'); continue }
+    if ($line -match '^\S') { $inRepos = ($line -match '^repositories:\s*(#.*)?$'); $name = ''; continue }
     if (-not $inRepos) { continue }
-    if ($line -match '^\s+local_path:\s*(.+?)\s*$') {
+    if ($line -match '^\s+([A-Za-z0-9_.-]+):\s*(#.*)?$' -and $line -notmatch '^\s+-') {
+      $keyIndent = $line.Length - $line.TrimStart().Length
+      if (-not $name -or $keyIndent -le $nameIndent) { $name = $Matches[1]; $nameIndent = $keyIndent }
+      continue
+    }
+    if ($name -and $line -match '^\s+local_path:\s*(.+?)\s*$') {
       $value = $Matches[1].Trim()
       if ($value.Length -ge 2 -and (($value[0] -eq '"' -and $value[-1] -eq '"') -or ($value[0] -eq "'" -and $value[-1] -eq "'"))) { $value = $value.Substring(1, $value.Length - 2) }
-      if ($value -and $value -notmatch '^TODO') { $paths += $value }
+      if ($value -and $value -notmatch '^TODO') { $entries += New-Object PSObject -Property @{ Name = $name; LocalPath = $value } }
     }
   }
-  return $paths
+  return $entries
+}
+
+# The `repositories.*.local_path` values of a contract (Get-CoopContractRepositories).
+function Get-CoopContractLocalPaths {
+  param([string]$File)
+  return @(@(Get-CoopContractRepositories $File) | ForEach-Object { [string]$_.LocalPath })
 }
 
 # True when $Dir is a coop-agent checkout (coop's own install, by default
@@ -4739,21 +4852,15 @@ function Get-CoopProfileInUse {
 function Get-CoopRegisteredProfile {
   try { return [string][Environment]::GetFolderPath('UserProfile') } catch { return '' }
 }
-# Normalized form for comparing two paths: absolute, no trailing separator,
-# case-folded (Windows paths are case-insensitive; a sandbox is never a
-# case-variant of the real profile).
-function ConvertTo-CoopComparablePath {
-  param([string]$Path)
-  if (-not $Path) { return '' }
-  $full = try { [System.IO.Path]::GetFullPath($Path) } catch { $Path }
-  return $full.TrimEnd('\', '/').ToLowerInvariant()
-}
+# Paths compare through ConvertTo-CoopComparablePath (one separator, no
+# trailing one, case folded): a sandbox is never a case-variant of the real
+# profile.
 function Test-CoopPathInside {
   param([string]$Path, [string]$Root)
   $p = ConvertTo-CoopComparablePath $Path
   $r = ConvertTo-CoopComparablePath $Root
   if (-not $p -or -not $r) { return $false }
-  return ($p -eq $r) -or $p.StartsWith($r + '\') -or $p.StartsWith($r + '/')
+  return ($p -eq $r) -or $p.StartsWith($r + '/')
 }
 function Test-CoopProfileRedirected {
   $registered = ConvertTo-CoopComparablePath (Get-CoopRegisteredProfile)

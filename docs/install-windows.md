@@ -201,7 +201,9 @@ sign-ins under its user folder (`%USERPROFILE%\.coop`).
    the only time you see it.
 3. Click **Next** and **Install**. Windows asks for an administrator once,
    because coop installs for every account on this computer, under
-   `%ProgramFiles%\coop`.
+   `%ProgramFiles%\coop`. The line above the progress bar names each of the
+   three steps; the second, copying the program files, takes several minutes,
+   and the third shows each machine setup line as it runs.
 4. Double-click the new **coop** icon on your Desktop or Start Menu. It asks
    once, **Where is this client's code?**: click **Choose folder...** and pick
    the folder that holds the client's repositories (the home repository with the
@@ -214,7 +216,13 @@ sign-ins under its user folder (`%USERPROFILE%\.coop`).
    Windows account's name and the default settings, then the Azure and OpenAI
    sign-ins), with nothing that needs an administrator and no questions: follow
    what it prints (`coop onboard` changes the profile any time),
-   then start the window again if it stopped. If no window opens, a message
+   then start the window again if it stopped. While it runs, a **coop - setting
+   up** window shows the step (for example "Step 4 of 8: Installing coop's
+   Python tools"), the item inside it ("Python tools (3 of 7):
+   coop-sql-source-control 1.0.12") with how long each has run, and the
+   console's last lines; it closes when the coop window opens, and closing it
+   early does not stop the setup. A new version's first launch shows the same
+   window while it refreshes the extensions. If no window opens, a message
    shows the console's last lines and names the launch log
    (`%USERPROFILE%\.coop\desktop\launch.log`). After that the console only
    shows coop's launch checks and closes on its own.
@@ -238,4 +246,4 @@ saying so, with a link to the release notes; `coop doctor` shows the same on its
 install row and names the log, `%ProgramData%\coop\logs\update.log`, if a
 run failed.
 
-Next: [onboarding](onboarding.md) has a safe first task and the day-to-day commands.
+Next: [Onboarding](https://coop.aaron-jennings.cloud/docs/onboarding.html) has a safe first task and the day-to-day commands.

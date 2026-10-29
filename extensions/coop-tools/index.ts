@@ -44,12 +44,14 @@ import {
   sourceStatus,
 } from "../../lib/standards.mjs";
 import { agentDir as coopAgentDir, configPath as coopConfigPath } from "../../lib/paths.mjs";
+import { windowsTaskkillCommand } from "../../lib/fabric_request_headers.mjs";
 import {
   NOT_INSTALLED_TEXT as SQL_SOURCE_NOT_INSTALLED,
   NOT_SET_UP_TEXT as SQL_SOURCE_NOT_SET_UP,
   NO_USER_TEXT as SQL_SOURCE_NO_USER,
   OFF_TEXT as SQL_SOURCE_OFF,
   SQLSC_BIN,
+  preparedByLabel,
   agentIdentity,
   checkUpstream,
   commitLine,
@@ -111,6 +113,7 @@ import {
   scalarValue,
   writeProjectContract,
 } from "../../lib/project-contract.mjs";
+import { fabricDiscovery, isUuid as isFabricUuid } from "../../lib/fabric-discovery.mjs";
 import {
   CONTRACT_FILE as PROJECT_FILE,
   HOME_TEMPLATE_DIR,
@@ -271,6 +274,11 @@ const FABRIC_SQL_QUERY_PARAMS = Type.Object({
 
 interface FabricSqlInvocation { bin: string; args: string[]; env?: Record<string, string> }
 
+/** coop's own version (the VERSION file at the checkout root), "" when unreadable. */
+function coopVersion(root = process.env.COOP_ROOT || resolve(dirname(fileURLToPath(import.meta.url)), "..", "..")): string {
+  try { return readFileSync(join(root, "VERSION"), "utf8").trim(); } catch { return ""; }
+}
+
 export function fabricSqlPythonResolverInvocation(
   root = process.env.COOP_ROOT || resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."),
   platform = process.platform,
@@ -295,57 +303,163 @@ export function fabricSqlHelperInvocation(
   return { bin: python, args: [join(root, "lib", helper)] };
 }
 
-async function resolveFabricSqlPython(signal: AbortSignal | undefined): Promise<{ python?: string; state?: string }> {
-  if (signal?.aborted) return { state: "aborted" };
-  const invocation = fabricSqlPythonResolverInvocation();
-  return await new Promise((done) => {
-    const child = spawn(invocation.bin, invocation.args, {
-      stdio: ["ignore", "pipe", "ignore"], shell: false,
-      env: { ...process.env, ...invocation.env },
+/** Where the Fabric Python (the ms-fabric-cli pipx venv's interpreter, the one
+ *  with pyodbc) can be, in lib/common.ps1's Get-CoopFabricPython order:
+ *  COOP_FABRIC_PYTHON alone when set; else that venv under COOP_PIPX_HOME,
+ *  PIPX_HOME, then the platform's pipx default (%LOCALAPPDATA%\pipx\pipx and
+ *  ~\pipx on Windows, ~/.local/pipx elsewhere). Computed here so a native SQL
+ *  call does not start PowerShell, parse lib/common.ps1 and run a pipx probe to
+ *  find a path that does not move (suite review 2026-10-26, pick 6). */
+export function fabricPythonCandidates(env: NodeJS.ProcessEnv = process.env, platform = process.platform, home = homedir()): string[] {
+  if (env.COOP_FABRIC_PYTHON) return [env.COOP_FABRIC_PYTHON];
+  const venvs: string[] = [];
+  if (env.COOP_PIPX_HOME) venvs.push(join(env.COOP_PIPX_HOME, "venvs"));
+  if (env.PIPX_HOME) venvs.push(join(env.PIPX_HOME, "venvs"));
+  if (platform === "win32") {
+    if (env.LOCALAPPDATA) venvs.push(join(env.LOCALAPPDATA, "pipx", "pipx", "venvs"));
+    venvs.push(join(home, "pipx", "venvs"));
+  } else {
+    venvs.push(join(home, ".local", "pipx", "venvs"));
+  }
+  const inner = platform === "win32" ? ["Scripts", "python.exe"] : ["bin", "python"];
+  return venvs.map((dir) => join(dir, "ms-fabric-cli", ...inner));
+}
+
+function usableExecutable(path: string): boolean {
+  if (!path || path !== path.trim() || /[\r\n]/.test(path) || !isAbsolute(path)) return false;
+  try {
+    if (!statSync(path).isFile()) return false;
+    if (process.platform !== "win32") accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+interface SpawnOutcome { state: string; stdout: string; code: number | null }
+
+/** End a supervised child and everything it started (#477): the Python helpers
+ *  run the pinned packages as their own children (`coop-schema-compare` under
+ *  lib/compare_tool.py), and a cancel that reached only the helper left the
+ *  package running its live query to the end. On POSIX the child is spawned as
+ *  a process-group leader and the group is signalled; on Windows `taskkill /T`
+ *  walks the tree. Either way the child itself is signalled too, so a child
+ *  whose group or tree cannot be reached still ends as before. */
+function killProcessTree(child: ReturnType<typeof spawn>, signal: "SIGTERM" | "SIGKILL"): void {
+  const pid = child.pid;
+  const killChild = () => { try { child.kill(signal); } catch { /* already exited */ } };
+  if (pid && process.platform === "win32") {
+    const spec = windowsTaskkillCommand(process.env.SystemRoot, pid);
+    if (spec) {
+      try {
+        // `taskkill /T` finds the tree by walking down from the child, so the child
+        // is killed only once taskkill is done: a child killed first leaves its own
+        // children orphaned before taskkill can reach them, and they run on (the dev
+        // VM, 2026-10-28: a cancelled helper's grandchild survived every time).
+        const killer = spawn(spec.command, spec.args, { env: { SystemRoot: process.env.SystemRoot as string }, shell: false, windowsHide: true, stdio: "ignore" });
+        let done = false;
+        const after = () => { if (!done) { done = true; killChild(); } };
+        killer.on("exit", after);
+        killer.on("error", after); // taskkill missing: the child's own kill still runs
+        return;
+      } catch { /* taskkill could not start: the child's own kill below */ }
+    }
+  } else if (pid) {
+    try { process.kill(-pid, signal); } catch { /* group already gone, or not a leader */ }
+  }
+  killChild();
+}
+
+/** One supervised child process: bounded time and output, abortable, force-killed
+ *  and reaped within a second of a stop, together with the processes it started
+ *  (killProcessTree). `state` is "" when the child exited on its own (then `code`
+ *  is its exit code), else why it was stopped. stdout is decoded as one UTF-8
+ *  text, so a multi-byte character split across chunks is not read as U+FFFD. */
+function supervisedSpawn(bin: string, args: string[], options: {
+  cwd?: string; env?: NodeJS.ProcessEnv; input?: string; signal?: AbortSignal;
+  timeoutMs: number; maxStdout: number; launchState: string; timeoutState: string; overflowState: string;
+}): Promise<SpawnOutcome> {
+  return new Promise((done) => {
+    const child = spawn(bin, args, {
+      cwd: options.cwd, stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "ignore"], shell: false, env: options.env,
+      // Its own process group on POSIX, so a stop reaches the package it starts.
+      detached: process.platform !== "win32",
     });
     child.stdout?.setEncoding("utf8");
     let stdout = "", finished = false, stopState = "";
     let forceTimer: ReturnType<typeof setTimeout> | undefined;
     let reapTimer: ReturnType<typeof setTimeout> | undefined;
-    const finish = (value: { python?: string; state?: string }) => {
+    const finish = (value: SpawnOutcome) => {
       if (finished) return;
       finished = true;
-      clearTimeout(timeoutTimer); clearTimeout(forceTimer); clearTimeout(reapTimer);
-      signal?.removeEventListener("abort", onAbort);
+      clearTimeout(timer); clearTimeout(forceTimer); clearTimeout(reapTimer);
+      options.signal?.removeEventListener("abort", onAbort);
       done(value);
     };
     const stop = (state: string) => {
       if (stopState) return;
       stopState = state;
-      try { child.kill("SIGTERM"); } catch { /* already exited */ }
-      forceTimer = setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* already exited */ } }, 250);
-      reapTimer = setTimeout(() => finish({ state }), 1_000);
+      killProcessTree(child, "SIGTERM");
+      forceTimer = setTimeout(() => killProcessTree(child, "SIGKILL"), 250);
+      reapTimer = setTimeout(() => finish({ state, stdout, code: null }), 1_000);
     };
     const onAbort = () => stop("aborted");
-    const timeoutTimer = setTimeout(() => stop("python_resolver_timeout"), 30_000);
-    signal?.addEventListener("abort", onAbort, { once: true });
+    const timer = setTimeout(() => stop(options.timeoutState), options.timeoutMs);
+    options.signal?.addEventListener("abort", onAbort, { once: true });
     child.stdout?.on("data", (data: any) => {
       if (stopState) return;
-      if (data.length > 4_096 - stdout.length) return stop("selected_python_unavailable");
+      if (data.length > options.maxStdout - stdout.length) return stop(options.overflowState);
       stdout += data.toString();
     });
-    child.on("error", () => finish({ state: stopState || "selected_python_unavailable" }));
-    child.on("close", (code: number | null) => {
-      if (stopState) return finish({ state: stopState });
-      if (code !== 0) return finish({ state: "selected_python_unavailable" });
-      const python = stdout.replace(/\r?\n$/, "");
-      if (!python || python !== python.trim() || /[\r\n]/.test(python) || !isAbsolute(python)) {
-        return finish({ state: "selected_python_unavailable" });
-      }
-      try {
-        if (!statSync(python).isFile()) throw new Error("not a file");
-        if (process.platform !== "win32") accessSync(python, constants.X_OK);
-      } catch {
-        return finish({ state: "selected_python_unavailable" });
-      }
-      finish({ python });
-    });
+    child.on("error", () => finish({ state: stopState || options.launchState, stdout, code: null }));
+    child.on("close", (code: number | null) => finish({ state: stopState, stdout, code }));
+    if (options.input !== undefined) {
+      child.stdin?.on("error", () => { /* child exited before consuming input */ });
+      child.stdin?.end(options.input);
+    }
   });
+}
+
+// The interpreter is resolved once per session and kept while the same
+// environment names it and the file is still there; only a success is kept, so
+// a missing runtime is looked for again on the next call (after `coop update`).
+let fabricPythonCache: { key: string; python: string } | null = null;
+
+export function resetFabricPythonCache(): void {
+  fabricPythonCache = null;
+}
+
+function fabricPythonCacheKey(env: NodeJS.ProcessEnv = process.env): string {
+  return [env.COOP_FABRIC_PYTHON, env.COOP_PIPX_HOME, env.PIPX_HOME, env.LOCALAPPDATA].map((value) => value || "").join("\u0000");
+}
+
+const RESOLVER_SPAWN = { timeoutMs: 30_000, maxStdout: 4_096, launchState: "selected_python_unavailable", timeoutState: "python_resolver_timeout", overflowState: "selected_python_unavailable" };
+
+async function resolveFabricSqlPython(signal: AbortSignal | undefined): Promise<{ python?: string; state?: string }> {
+  if (signal?.aborted) return { state: "aborted" };
+  const key = fabricPythonCacheKey();
+  if (fabricPythonCache && fabricPythonCache.key === key && usableExecutable(fabricPythonCache.python)) return { python: fabricPythonCache.python };
+  fabricPythonCache = null;
+  // The known places first: a file that is there and starts is the interpreter.
+  for (const candidate of fabricPythonCandidates()) {
+    if (!usableExecutable(candidate)) continue;
+    const probe = await supervisedSpawn(candidate, ["-c", "import sys; raise SystemExit(0 if sys.executable else 1)"], { ...RESOLVER_SPAWN, signal });
+    if (probe.state) return { state: probe.state };
+    if (probe.code !== 0) return { state: "selected_python_unavailable" };
+    fabricPythonCache = { key, python: candidate };
+    return { python: candidate };
+  }
+  // Then lib/common.ps1's Get-CoopFabricPython, which also asks pipx itself where
+  // its venvs are (a PIPX_LOCAL_VENVS nobody exported): the one resolver on every
+  // platform (master plan S1), paid only when the known places miss.
+  const invocation = fabricSqlPythonResolverInvocation();
+  const out = await supervisedSpawn(invocation.bin, invocation.args, { ...RESOLVER_SPAWN, signal, env: { ...process.env, ...invocation.env } });
+  if (out.state) return { state: out.state };
+  if (out.code !== 0) return { state: "selected_python_unavailable" };
+  const python = out.stdout.replace(/\r?\n$/, "");
+  if (!usableExecutable(python)) return { state: "selected_python_unavailable" };
+  fabricPythonCache = { key, python };
+  return { python };
 }
 
 // The guardrails authorize native SQL from their trusted session snapshot of
@@ -375,7 +489,7 @@ export function contractChangedSince(snapshot: { path: string | null; text: stri
 
 export const CONTRACT_CHANGED_HINT = "the project contract (.coop/project.yml) changed during this session; coop keeps native SQL on the target the session started with. Start a new session (/new) to use the edited contract; if the change added or changed a SQL target or Fabric SQL endpoint, exit and start coop again so the launch sign-in covers it.";
 /** The one-line fix for a launch-identity state (deployment call 2026-10-23): /new is not enough. */
-export const LAUNCH_IDENTITY_MISSING_HINT = "coop was launched when .coop/project.yml named no SQL target or Fabric SQL endpoint, so no sign-in token exists for this launch. Fix the file (sql_targets, with /setup-project or the Project pane), then exit and start coop again; a new session (/new) is not enough.";
+export const LAUNCH_IDENTITY_MISSING_HINT = "coop was launched when .coop/project.yml named no SQL target or Fabric SQL endpoint, or the launch sign-in failed (a 'live SQL sign-in unavailable' line at launch), so no sign-in token exists for this launch. Fix the file (sql_targets, with /setup-project or the Project pane) or the sign-in it named, then exit and start coop again; a new session (/new) is not enough.";
 export const IDENTITY_MISMATCH_HINT = "the signed-in Azure account is not the one coop was launched with: sign in with that account (az login), or exit and start coop again.";
 /** The shared hint suffix for a native SQL tool's unavailable states. */
 export function sqlStateHint(details: any): string {
@@ -383,6 +497,16 @@ export function sqlStateHint(details: any): string {
   if (state === "contract_changed") return ` ${CONTRACT_CHANGED_HINT}`;
   if (state === "launch_identity_missing") return ` ${LAUNCH_IDENTITY_MISSING_HINT}`;
   if (state === "identity_mismatch") return ` ${IDENTITY_MISMATCH_HINT}`;
+  return "";
+}
+
+/** The pinned coop-schema-compare package reads the catalogs for catalog_snapshot
+ *  and schema_compare (lib/compare_tool.py): its absence or silence is one state. */
+export function compareToolHint(details: any): string {
+  const state = String(details?.state || "");
+  if (state === "tool_unavailable") return " The coop-schema-compare command (the pinned package) is not installed on this machine: run coop update, or coop doctor for the row that names it.";
+  if (state === "tool_timeout") return " coop-schema-compare did not answer within its time limit; try again, or narrow the compare with schemas.";
+  if (state === "tool_failed") return " coop-schema-compare ended without a result; run coop doctor to check its install.";
   return "";
 }
 
@@ -402,55 +526,22 @@ async function runFabricSqlHelper(params: any, signal: AbortSignal | undefined, 
   if (!selected.python) return { ok: false, state: selected.state || "selected_python_unavailable" };
   if (signal?.aborted) return { ok: false, state: "aborted" };
   const invocation = fabricSqlHelperInvocation(selected.python, undefined, helper);
-  return await new Promise((done) => {
-    // The helpers print JSON with ensure_ascii=False: pin Python's stdout to UTF-8
-    // (on Windows a pipe otherwise gets the ANSI code page and a non-ASCII value
-    // raises UnicodeEncodeError) and decode the stream as one UTF-8 text, so a
-    // multi-byte character split across chunks is not read as U+FFFD.
-    const child = spawn(invocation.bin, invocation.args, {
-      cwd, stdio: ["pipe", "pipe", "ignore"], shell: false,
-      env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" },
-    });
-    child.stdout?.setEncoding("utf8");
-    let stdout = "", finished = false, stopState = "";
-    let forceTimer: ReturnType<typeof setTimeout> | undefined;
-    let reapTimer: ReturnType<typeof setTimeout> | undefined;
-    const finish = (value: any) => {
-      if (!finished) {
-        finished = true;
-        clearTimeout(timer);
-        clearTimeout(forceTimer);
-        clearTimeout(reapTimer);
-        signal?.removeEventListener("abort", onAbort);
-        done(value);
-      }
-    };
-    const stop = (state: string) => {
-      if (stopState) return;
-      stopState = state;
-      try { child.kill("SIGTERM"); } catch { /* already exited */ }
-      forceTimer = setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* already exited */ } }, 250);
-      reapTimer = setTimeout(() => finish({ ok: false, state }), 1_000);
-    };
-    const onAbort = () => stop("aborted");
-    const timer = setTimeout(() => stop("timeout"), sqlHelperTimeoutMs(helper));
-    signal?.addEventListener("abort", onAbort, { once: true });
-    child.stdout?.on("data", (data: any) => {
-      if (stopState) return;
-      if (data.length > 2_000_000 - stdout.length) return stop("helper_output_invalid");
-      stdout += data.toString();
-    });
-    child.on("error", () => finish({ ok: false, state: stopState || "helper_launch_failed" }));
-    child.on("close", (code: number | null) => {
-      if (stopState) return finish({ ok: false, state: stopState });
-      try {
-        const parsed = JSON.parse(stdout);
-        finish(parsed && typeof parsed === "object" ? parsed : { ok: false, state: "helper_output_invalid" });
-      } catch { finish({ ok: false, state: "helper_output_invalid" }); }
-    });
-    child.stdin?.on("error", () => { /* child exited before consuming input */ });
-    child.stdin?.end(JSON.stringify(params));
+  // The helpers print JSON with ensure_ascii=False: pin Python's stdout to UTF-8
+  // (on Windows a pipe otherwise gets the ANSI code page and a non-ASCII value
+  // raises UnicodeEncodeError).
+  const out = await supervisedSpawn(invocation.bin, invocation.args, {
+    cwd, signal, input: JSON.stringify(params),
+    env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" },
+    timeoutMs: sqlHelperTimeoutMs(helper), maxStdout: 2_000_000,
+    launchState: "helper_launch_failed", timeoutState: "timeout", overflowState: "helper_output_invalid",
   });
+  if (out.state) return { ok: false, state: out.state };
+  try {
+    const parsed = JSON.parse(out.stdout);
+    return parsed && typeof parsed === "object" ? parsed : { ok: false, state: "helper_output_invalid" };
+  } catch {
+    return { ok: false, state: "helper_output_invalid" };
+  }
 }
 
 interface ReviewParams {
@@ -793,38 +884,16 @@ export function findProjectYml(cwd: string): string | null {
   return findProjectContract(cwd);
 }
 
-/** Pull `repositories.<name>.local_path` values out of a project.yml (block-style,
- *  best-effort — same spirit as classifyManagedLines). TODO/blank placeholders are
- *  returned in `todo` so the caller can note-and-skip rather than scan them. */
+/** `repositories.<name>.local_path` values of a project.yml, read with
+ *  lib/project-contract.mjs (the one JS contract reader). TODO/blank placeholders
+ *  are returned in `todo` so the caller can note-and-skip rather than scan them. */
 export function contractRepoPaths(text: string): { paths: string[]; todo: string[] } {
-  const lines = text.split("\n");
   const paths: string[] = [];
   const todo: string[] = [];
-  let inRepos = false;
-  let repoIndent: number | null = null;
-  let repo: string | null = null;
-  for (const raw of lines) {
-    const line = raw.replace(/\t/g, "  ");
-    const body = line.trim();
-    if (!body || body.startsWith("#")) continue;
-    const indent = line.length - line.trimStart().length;
-    if (indent === 0) {
-      inRepos = body === "repositories:";
-      repoIndent = null;
-      repo = null;
-      continue;
-    }
-    if (!inRepos) continue;
-    if (repoIndent === null) repoIndent = indent; // first nested key sets the repo level
-    if (indent === repoIndent) {
-      repo = body.endsWith(":") ? body.slice(0, -1).trim() : null;
-      continue;
-    }
-    if (indent > repoIndent && repo && body.startsWith("local_path:")) {
-      const v = scalarValue(body.slice(body.indexOf(":") + 1));
-      if (!v || /^TODO\b/i.test(v)) todo.push(repo);
-      else paths.push(v);
-    }
+  for (const name of repositoryNames(text)) {
+    const v = projectYamlScalar(text, ["repositories", name, "local_path"]);
+    if (!v || /^TODO\b/i.test(v)) todo.push(name);
+    else paths.push(v);
   }
   return { paths, todo };
 }
@@ -1105,6 +1174,15 @@ function nearestExistingDirectory(cwd: string, value: string): string {
   return current;
 }
 
+/** True when `candidate` (relative to `root`) is a folder strictly above `recorded`. */
+export function isFolderAbove(root: string, candidate: string, recorded: string): boolean {
+  const above = resolve(root, expandHomePath(candidate || "."));
+  const below = resolve(root, expandHomePath(recorded || "."));
+  if (samePath(above, below)) return false;
+  const rel = relative(above, below);
+  return Boolean(rel) && !rel.startsWith("..") && !isAbsolute(rel);
+}
+
 function childDirectories(path: string): string[] {
   try {
     return readdirSync(path, { withFileTypes: true })
@@ -1295,6 +1373,15 @@ export async function runJsonlSetup(_pi: ExtensionAPI, ctx: any, prefill: DataDo
  * has no check workflow yet, offer coop's template so `coop-data-doc check` runs
  * in its CI. coop writes the file; a human commits it with the docs.
  */
+/** A Python tool's pin from config/release-manifest.json (the one pin list). */
+function manifestPythonPin(name: string): string {
+  const root = process.env.COOP_ROOT || resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const manifest = JSON.parse(readFileSync(join(root, "config", "release-manifest.json"), "utf8"));
+  const pin = manifest?.python_tools?.[name];
+  if (typeof pin !== "string" || !/^\d+\.\d+\.\d+$/.test(pin)) throw new Error(`release manifest has no python_tools.${name} pin`);
+  return pin;
+}
+
 async function offerDataDocsCi(ctx: any): Promise<void> {
   const contract = findProjectContract(ctx.cwd);
   const configPath = findDataDocConfig(ctx.cwd);
@@ -1317,7 +1404,9 @@ async function offerDataDocsCi(ctx: any): Promise<void> {
   if (!addCi) return;
   try {
     mkdirSync(dirname(workflow), { recursive: true });
-    writeFileSync(workflow, safeRead(template), "utf8");
+    // The template carries `coop-data-doc==<version>`; the pin comes from the
+    // manifest at copy time, so the committed template never goes stale.
+    writeFileSync(workflow, safeRead(template).replace("coop-data-doc==<version>", `coop-data-doc==${manifestPythonPin("coop-data-doc")}`), "utf8");
     notify(ctx, `Wrote ${workflow}. Commit it with the docs (coop shares only .coop/project.yml on its own).`, "info");
   } catch (e: any) {
     notify(ctx, `Could not write the workflow: ${errMsg(e)}`, "warning");
@@ -1365,8 +1454,8 @@ async function runSetupDocs(pi: ExtensionAPI, ctx: any): Promise<boolean> {
 }
 
 // --- Project contract wizard (.coop/project.yml) ----------------------------
-// This is the in-Coop counterpart to `coop init`: newcomers discover it from the
-// startup menu or /setup-project, and existing contracts can be safely edited
+// The one project wizard (the window's Project pane runs the same code): newcomers
+// discover it from the startup menu or /setup-project, and existing contracts can be safely edited
 // without replacing fields the wizard does not own. The text patcher deliberately
 // touches only scalar paths exposed below; comments, custom sections, policies,
 // and future/unknown keys stay byte-for-byte intact.
@@ -1556,10 +1645,18 @@ async function editRepository(ctx: any, root: string, repo: ProjectRepositorySet
   if (description === null) return null;
   const role = await chooseRole(ctx, `${name}: what kind of repository is this?`, repo.role);
   if (role === null) return null;
-  const localPath = await renderPathPrompt({ ...ctx, cwd: root }, {
+  let localPath = await renderPathPrompt({ ...ctx, cwd: root }, {
     type: "prompt", id: `repo-${name}`, kind: "path", message: `${name}: choose its local folder`, default: repo.localPath,
   });
   if (localPath === null) return null;
+  // The picker opens at the nearest existing folder when the recorded one is
+  // missing, so one Enter too many turns `../fabric` into `..`. A folder above
+  // the recorded one never replaces it silently.
+  if (!askName && localPath !== repo.localPath && isFolderAbove(root, localPath, repo.localPath)) {
+    const replace = await askConfirm(ctx, `${name}: local folder`,
+      `${name}'s folder is recorded as ${repo.localPath}; the picker chose ${localPath}, a folder above it. Replace it? No keeps ${repo.localPath}.`);
+    if (!replace) localPath = repo.localPath;
+  }
   const remoteName = await askText(ctx, `${name}: Git remote name`, repo.remoteName);
   if (remoteName === null) return null;
   const defaultBranch = await askText(ctx, `${name}: default branch`, repo.defaultBranch);
@@ -1570,7 +1667,7 @@ async function editRepository(ctx: any, root: string, repo: ProjectRepositorySet
 /** Native UI project setup/edit flow. Returns true only after a contract write. */
 export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<boolean> {
   if (!ctx.hasUI || typeof ctx.ui?.input !== "function" || typeof ctx.ui?.confirm !== "function") {
-    notify(ctx, "Project setup needs an interactive Coop UI. In a shell, run: coop init", "warning");
+    notify(ctx, "Project setup needs an interactive Coop UI: run /setup-project in the terminal coop, or use the coop window's Project pane.", "warning");
     return false;
   }
   let existing = findProjectYml(ctx.cwd);
@@ -1683,24 +1780,39 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
   // client on Pro or PPU workspaces answers No / Yes and gets no empty fabric:
   // block, which would make the Warehouse target invalid.
   settings.fabricEnabled = await askConfirm(ctx, "Microsoft Fabric", `Does this project use Microsoft Fabric (a Warehouse, Lakehouse or SQL database)?${platformHint}`);
+  // Fabric ids are looked up by name from the Azure sign-in the launch already
+  // made (lib/fabric-discovery.mjs): each id question proposes what the name
+  // resolves to, and a name typed where an id is asked resolves too. Without
+  // az, a sign-in or a network, the questions keep their typed answers.
+  const makeDiscovery = (tenant: string) => fabricDiscovery({
+    exec: typeof pi?.exec === "function" ? (command: string, args: string[], options: any) => pi.exec(command, args, { ...options, cwd: ctx.cwd, signal: ctx.signal }) : undefined,
+    tenant,
+  });
+  let discovery = makeDiscovery(settings.tenantId);
   if (settings.fabricEnabled) {
     const tenant = await askText(ctx, "Azure tenant ID (optional)", settings.tenantId);
     if (tenant === null) return false;
+    if (tenant !== settings.tenantId) discovery = makeDiscovery(tenant);
     const fwName = await askText(ctx, "Default Fabric workspace name (optional)", settings.fabricWorkspaceName);
     if (fwName === null) return false;
-    const fwId = await askText(ctx, "Default Fabric workspace ID (optional)", settings.fabricWorkspaceId);
-    if (fwId === null) return false;
-    const endpointType = await askText(ctx, "Default SQL endpoint item type: Warehouse or Lakehouse (optional)", settings.sqlEndpointItemType || "");
+    const fwIdTyped = await askText(ctx, "Default Fabric workspace ID (optional; Enter keeps the id the name resolves to)", settings.fabricWorkspaceId || await discovery.workspaceId(fwName));
+    if (fwIdTyped === null) return false;
+    const fwId = (await discovery.resolveWorkspace(fwIdTyped)) || fwIdTyped;
+    const sqlItems = await discovery.sqlItems(fwId);
+    const onlyItem = sqlItems.length === 1 ? sqlItems[0] : null;
+    const endpointType = await askText(ctx, "Default SQL endpoint item type: Warehouse or Lakehouse (optional)", settings.sqlEndpointItemType || (onlyItem && onlyItem.type !== "SQLDatabase" ? onlyItem.type : ""));
     if (endpointType === null) return false;
     if (endpointType && endpointType !== "Warehouse" && endpointType !== "Lakehouse") {
       notify(ctx, PROJECT_MESSAGES.endpointType, "error");
       return false;
     }
-    const endpointName = await askText(ctx, "Default SQL endpoint item name (optional)", settings.sqlEndpointItemName || "");
+    const typed = sqlItems.filter((item) => !endpointType || item.type === endpointType);
+    const endpointName = await askText(ctx, "Default SQL endpoint item name (optional)", settings.sqlEndpointItemName || (typed.length === 1 ? typed[0].name : ""));
     if (endpointName === null) return false;
-    const endpointId = await askText(ctx, "Default SQL endpoint item ID (canonical UUID; optional)", settings.sqlEndpointItemId || "");
-    if (endpointId === null) return false;
-    const endpointPropertiesId = await askText(ctx, "Lakehouse sqlEndpointProperties.id (canonical UUID; required for Lakehouse)", settings.sqlEndpointPropertiesId || "");
+    const endpointIdTyped = await askText(ctx, "Default SQL endpoint item ID (canonical UUID; optional; Enter keeps the id the name resolves to)", settings.sqlEndpointItemId || (await discovery.resolveItem(fwId, endpointName, endpointType)));
+    if (endpointIdTyped === null) return false;
+    const endpointId = (await discovery.resolveItem(fwId, endpointIdTyped, endpointType)) || endpointIdTyped;
+    const endpointPropertiesId = await askText(ctx, "Lakehouse sqlEndpointProperties.id (canonical UUID; required for Lakehouse)", settings.sqlEndpointPropertiesId || (endpointType === "Lakehouse" ? await discovery.lakehouseEndpointId(fwId, endpointId) : ""));
     if (endpointPropertiesId === null) return false;
     if ([fwId, endpointId, endpointPropertiesId].some((id) => id && !CANONICAL_UUID.test(id))) {
       notify(ctx, PROJECT_MESSAGES.uuids, "error");
@@ -1734,8 +1846,9 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
   if (settings.powerBiEnabled) {
     const pbiName = await askText(ctx, "Default Power BI workspace name (optional)", settings.powerBiWorkspaceName || (settings.fabricEnabled ? settings.fabricWorkspaceName : ""));
     if (pbiName === null) return false;
-    const pbiId = await askText(ctx, "Default Power BI workspace ID (optional; the GUID in the workspace URL)", settings.powerBiWorkspaceId);
-    if (pbiId === null) return false;
+    const pbiIdTyped = await askText(ctx, "Default Power BI workspace ID (optional; the GUID in the workspace URL; Enter keeps the id the name resolves to)", settings.powerBiWorkspaceId || (settings.fabricEnabled && pbiName && pbiName === settings.fabricWorkspaceName ? settings.fabricWorkspaceId : await discovery.workspaceId(pbiName)));
+    if (pbiIdTyped === null) return false;
+    const pbiId = (await discovery.resolveWorkspace(pbiIdTyped)) || pbiIdTyped;
     // The declared mapping (C2): how a semantic-model table maps to the SQL
     // object it loads; lineage checks it.
     const rule = await askText(ctx, "Semantic-model table to SQL object rule: same_name (a table is named like its view) or prefix (table <name> loads <schema>.<prefix><name>)", settings.tableMappingRule || "same_name");
@@ -1804,13 +1917,16 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
       (settings as Record<string, unknown>)[`${prefix}Database`] = envDatabase.trim();
       if (!envDatabase.trim()) continue;
       if (SQL_TARGET_DISCOVERED_KINDS.has(kindValue)) {
-        const ws = await askText(ctx, `${label} Fabric workspace ID (canonical UUID)`, ((settings as Record<string, unknown>)[`${prefix}WorkspaceId`] as string) || "");
-        if (ws === null) return false;
-        const item = await askText(ctx, `${label} ${kindValue === "fabric_lakehouse" ? "Lakehouse" : "Warehouse"} item ID (canonical UUID)`, ((settings as Record<string, unknown>)[`${prefix}ItemId`] as string) || "");
-        if (item === null) return false;
+        const itemType = kindValue === "fabric_lakehouse" ? "Lakehouse" : "Warehouse";
+        const wsTyped = await askText(ctx, `${label} Fabric workspace ID (canonical UUID, or the workspace name)`, ((settings as Record<string, unknown>)[`${prefix}WorkspaceId`] as string) || "");
+        if (wsTyped === null) return false;
+        const ws = (await discovery.resolveWorkspace(wsTyped)) || wsTyped;
+        const itemTyped = await askText(ctx, `${label} ${itemType} item ID (canonical UUID, or the item name)`, ((settings as Record<string, unknown>)[`${prefix}ItemId`] as string) || "");
+        if (itemTyped === null) return false;
+        const item = (await discovery.resolveItem(ws, itemTyped, itemType)) || itemTyped;
         let endpoint = "";
         if (kindValue === "fabric_lakehouse") {
-          const answer = await askText(ctx, `${label} Lakehouse sqlEndpointProperties.id (canonical UUID)`, ((settings as Record<string, unknown>)[`${prefix}EndpointId`] as string) || "");
+          const answer = await askText(ctx, `${label} Lakehouse sqlEndpointProperties.id (canonical UUID)`, ((settings as Record<string, unknown>)[`${prefix}EndpointId`] as string) || (isFabricUuid(ws) && isFabricUuid(item) ? await discovery.lakehouseEndpointId(ws, item) : ""));
           if (answer === null) return false;
           endpoint = answer.trim();
         }
@@ -2092,7 +2208,7 @@ export function teamKnowledgeNote(coopDir?: string, homeDir?: string): string | 
  *  The approval prompt before Warehouse SQL is unchanged — this only removes
  *  the detour, never the gate. */
 /* --- Committed dev catalog snapshot (master plan SQ9) --------------------------
- * lib/catalog_snapshot.py writes the dev/test catalog as one file per object
+ * lib/catalog_snapshot.py (the pinned coop-schema-compare) writes the dev/test catalog as one file per object
  * under the contract's snapshot folder; this reads the same folder rule and the
  * manifest it wrote, with no Python and no connection, for the session-start
  * note and the tool's status text. */
@@ -2309,7 +2425,7 @@ export function buildStartMenu(): MenuItem[] {
       label: "📝  Write today's log or a handoff",
       run: async (pi) => {
         pi.sendUserMessage(
-          "Help me write up my work. Ask whether it's today's log (/daily-log), a weekly log (/weekly-log) or a handoff for whoever picks this up next (/handoff), then help me capture what I worked on and turn it into a clean entry.",
+          "Help me write up my work. Ask whether it's today's log or the weekly roll-up (the daily-logger skill) or a handoff for whoever picks this up next (/handoff), then help me capture what I worked on and turn it into a clean entry.",
         );
       },
     },
@@ -2351,7 +2467,7 @@ async function showStartMenu(pi: ExtensionAPI, ctx: any): Promise<void> {
 // ---------------------------------------------------------------------------
 // Compaction over the chosen transport (issue #236)
 //
-// Pi 0.87.1 (and still 1.2.0) builds its compaction request without the session's
+// Pi 0.87.1 (and still 1.4.0) builds its compaction request without the session's
 // `transport` setting: `AgentSession._runDefaultCompaction()` calls `compact()` with
 // no transport, so the OpenAI Codex provider falls back to "auto" and opens a
 // WebSocket for the summary request even when `/settings` says `sse`. On a large
@@ -2377,7 +2493,7 @@ export interface PiTransportSettings {
 
 const PI_DEFAULT_HTTP_IDLE_TIMEOUT_MS = 300000;
 const PI_DEFAULT_MAX_AGENT_RETRY_DELAY_MS = 60000;
-/** Provider APIs whose stream options honour `transport` (Pi 1.2.0: only Codex). */
+/** Provider APIs whose stream options honour `transport` (Pi 1.4.0: only Codex). */
 export const TRANSPORT_AWARE_APIS = new Set(["openai-codex-responses"]);
 
 function timeoutSetting(value: unknown): number | undefined {
@@ -2488,7 +2604,7 @@ export function createCompactionTransportHandler(deps: CompactionTransportDeps =
 // ---------------------------------------------------------------------------
 // Codex sign-in refresh on a long session
 //
-// Pi 0.87.1 (and still 1.2.0) caches the OpenAI Codex WebSocket per session and
+// Pi 0.87.1 (and still 1.4.0) caches the OpenAI Codex WebSocket per session and
 // account for up to 55 minutes and keeps reusing it after Pi refreshes the
 // ChatGPT sign-in token, so a long conversation keeps talking over a connection
 // opened with the previous token. The official Codex client keys its cached
@@ -2647,7 +2763,7 @@ export default function coopTools(pi: ExtensionAPI) {
           lines,
           "see manifest.json in the snapshot folder",
         )
-        : `catalog_snapshot unavailable: ${String(details?.state || "internal_error")}.${sqlStateHint(details)}${details?.state === "output_not_snapshot" ? ` The folder ${details.path} holds files that are not a coop snapshot; move them or set catalog.path in .coop/project.yml.` : ""}`;
+        : `catalog_snapshot unavailable: ${String(details?.state || "internal_error")}.${sqlStateHint(details)}${compareToolHint(details)}${details?.state === "output_not_snapshot" ? ` The folder ${details.path} holds files that are not a coop snapshot; move them or set catalog.path in .coop/project.yml.` : ""}`;
       return { content: [{ type: "text" as const, text }], details };
     },
   });
@@ -2692,7 +2808,7 @@ export default function coopTools(pi: ExtensionAPI) {
           lines,
           "see report.md",
         )
-        : `schema_compare unavailable: ${String(details?.state || "internal_error")}${details?.side ? ` (side: ${details.side})` : ""}.${sqlStateHint(details)}${details?.state === "snapshot_missing" ? " No committed catalog snapshot exists; run catalog_snapshot (command=\"snapshot\") first or compare a live entry." : ""}${details?.state === "snapshot_incomplete" ? " The committed snapshot is damaged (a file its manifest lists is missing or unreadable); take it again with catalog_snapshot (command=\"snapshot\")." : ""}${details?.state === "target_invalid" ? " That side is not a ready sql_targets entry in .coop/project.yml: add sql_targets.<env> (or sql_targets.named.<set>.<env> for <env>@<set>) with /setup-project or the Project pane, then /new." : ""}${details?.state === "repo_missing" ? " No repositories entry with role sql or mixed and a local_path matches; name one as repo:<name>." : ""}${details?.state === "repo_ambiguous" ? " Several sql or mixed repositories exist; name one as repo:<name>." : ""}${details?.state === "repo_unavailable" ? " That repository folder (or its sql_root/subfolder) does not exist on this machine." : ""}${details?.state === "setting_invalid" ? ` ${details.setting} in .coop/project.yml is not valid.` : ""}`;
+        : `schema_compare unavailable: ${String(details?.state || "internal_error")}${details?.side ? ` (side: ${details.side})` : ""}.${sqlStateHint(details)}${compareToolHint(details)}${details?.state === "snapshot_missing" ? " No committed catalog snapshot exists; run catalog_snapshot (command=\"snapshot\") first or compare a live entry." : ""}${details?.state === "snapshot_incomplete" ? " The committed snapshot is damaged (a file its manifest lists is missing or unreadable); take it again with catalog_snapshot (command=\"snapshot\")." : ""}${details?.state === "target_invalid" ? " That side is not a ready sql_targets entry in .coop/project.yml: add sql_targets.<env> (or sql_targets.named.<set>.<env> for <env>@<set>) with /setup-project or the Project pane, then /new." : ""}${details?.state === "repo_missing" ? " No repositories entry with role sql or mixed and a local_path matches; name one as repo:<name>." : ""}${details?.state === "repo_ambiguous" ? " Several sql or mixed repositories exist; name one as repo:<name>." : ""}${details?.state === "repo_unavailable" ? " That repository folder (or its sql_root/subfolder) does not exist on this machine." : ""}${details?.state === "setting_invalid" ? ` ${details.setting} in .coop/project.yml is not valid.` : ""}`;
       return { content: [{ type: "text" as const, text }], details };
     },
   });
@@ -2784,7 +2900,7 @@ export default function coopTools(pi: ExtensionAPI) {
           }
           pullNote = pull.behind ? pull.note : "";
         }
-        res = await pi.exec(SQLSC_BIN, sqlSourceArgs(input, config, agent), { cwd: dirname(config), signal });
+        res = await pi.exec(SQLSC_BIN, sqlSourceArgs(input, config, agent, input.command === "commit" ? preparedByLabel(coopVersion()) : ""), { cwd: dirname(config), signal });
       } catch (e: any) {
         return { content: [{ type: "text" as const, text: SQL_SOURCE_NOT_INSTALLED }], details: { state: "not_installed", error: errMsg(e) } };
       }
@@ -3457,7 +3573,7 @@ export default function coopTools(pi: ExtensionAPI) {
         return;
       }
       if (!run.meaningful) return;
-      const warning = `Required daily log wasn't updated: ${run.requirement.displayPath}. Ask Coop to finish the log or run /daily-log.`;
+      const warning = `Required daily log wasn't updated: ${run.requirement.displayPath}. Ask Coop to finish the log (the daily-logger skill).`;
       missedLogAt.set(run.requirement.logPath, Date.now());
       try { ctx.ui.setStatus("coop-daily-log", `daily log missing · ${run.requirement.date}`); } catch { /* best effort */ }
       notify(ctx, warning, "warning");

@@ -16,6 +16,7 @@ never intercepted**.
 | **Never commit source** | Blocks a `git commit` whenever staged files include anything outside the allow-listed docs/logs/site paths. Policy comes from a per-session snapshot of the `repositories:` entries in `.coop/project.yml` (`agent_allowed_to_commit` / `agent_never_commit`), resolved from the session directory so sibling repositories inherit their configured rules (plus conservative defaults: `docs/`, `site/`, `data-docs/`, `data-docs-site/`, any `*.md`). Editing the contract mid-session never weakens the active policy; `.coop/project.yml` itself is not agent-committable. The agent may still commit docs/logs/site; a human commits source. |
 | **Destructive commands** | Confirms (via a dialog) before `rm -rf`, `git push --force`, `git reset --hard`, `git clean -f`, and `DROP`/`TRUNCATE` SQL. Declining blocks the command. |
 | **Fabric writes from the shell** | Confirms before `az rest` with a non-GET method, `fab api -X post|patch|put|delete`, and mutating `fab` subcommands (`deploy`, `mkdir`, `rm`, `set`, `import`, `job`, ...), which the official Microsoft Fabric skills use for item create/update/deploy/delete. Reads pass. |
+| **fabric-cicd deploys** | Reads the Python a shell or PowerShell command runs (and the local modules it imports) for `publish_all_items`, `unpublish_all_orphan_items` or `deploy_with_config`. Dev or test asks every time; production, or a run that names no target, is blocked. |
 | **Power BI Desktop reloads** | Reads `powerbi-desktop status` before `powerbi-desktop reload` and before a `powerbi-report-author preview` that reloads the live Desktop window (bare, `--reload`, `--reload-with-model`; `--status`, `--screenshot`, `--close` and `--host service` pass). The bridge's reload discards unsaved Desktop edits unconditionally, so an instance with `hasUnsavedChanges: true` asks first (headless: blocked), and an instance coop cannot verify (no status, not connected, pid missing, flag unstated) is blocked. The instance is picked by `--pid`, else by the preview's `.Report` folder, else every connected instance must be clean. |
 | **Secret files** | Confirms before the agent reads/edits/writes a secret-looking file — `.env` (not `.env.example`), `*.pem`/`*.key`/`*.p12`, `id_rsa`/`id_ed25519`, `credentials`, `.npmrc`, `secrets.*`. Declining blocks. |
 | **Live environment reads** | Allows read-only dev/test metadata, schema, and artifact-code inspection. Confirms row-level reads and every production read. A confirmed, explicitly bounded read scope may be reused for matching calls in the same session; production is allowed when it is part of that exact grant. |
@@ -46,7 +47,7 @@ may still contain command text and are not sanitized exports.
 
 - Disable governance confirms/blocks: `COOP_NO_GUARDRAILS=1`.
 - Show Pi's own update banner for maintainer diagnostics: `COOP_SHOW_UPSTREAM_UPDATE_NOTICES=1` (read by the Coop launcher).
-- `/coop-guardrails` — show what's enforced and whether it's on.
+- `/approvals [revoke]` — what this session may do without asking (edit approvals, the live-read grant, the production unlock), whether enforcement is on, and the last decisions; `revoke` ends the session grants.
 
 ## Live reads
 
@@ -54,6 +55,18 @@ Reads need no approval on any environment, production included; only changes do.
 
 ## Implementation
 
-A `pi.on("tool_call", …)` handler (returns `{ block, reason }` to deny). The
-never-commit-source check runs `git diff --cached --name-only` and classifies staged
-paths; the destructive check is a conservative set of command patterns.
+A `pi.on("tool_call", …)` handler (returns `{ block, reason }` to deny) hands every
+call to one `enforce()`, which runs `RULES` in their declared order until one
+decides. Each rule answers with one `Decision`: pass (not its call, or cleared for
+the next rule), allow (the call runs, no later rule looks) or block (with the
+reason). The native rules each own a tool (`codemode`, `mcpScript`, `powershell`,
+the file tools, `sql_source`, the live-metadata tools, then every other native or
+MCP tool); the shell rules run in sequence over the one alias-expanded command
+(production unlock, secret files, environment dumps, Azure sign-in, git commits,
+sqlsc, destructive commands, Fabric writes, Desktop reloads). Every question goes
+through `Session.ask()`, the one dialog site: it fails closed without a UI, offers
+a session approval when the rule names a key, writes the audit row and turns a no
+into a block. The classifiers the rules call (`dangerLabel`, `mcpEditLabel`,
+`sqlscShellRisk`, …) are pure functions over the call, tested one by one. The
+never-commit-source check runs `git diff --cached --name-only` and classifies
+staged paths; the destructive check is a conservative set of command patterns.

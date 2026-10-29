@@ -224,6 +224,27 @@ assert.equal((await definition.route({ reason: "user", thinkingLevel: "medium", 
 await commands.get("router").handler("", ctx);
 assert.match(notices.at(-1), /plan: openai-codex\/gpt-5.6-sol/);
 assert.match(notices.at(-1), /no request routed yet/);
+// A caller streaming coop/auto through getProvider("coop") (pi-lovely-rename's
+// auto-rename) reaches the registry's routing streamSimple; other providers are untouched.
+{
+  const unrouted = () => { throw new Error("Virtual model coop/auto must be routed before streaming"); };
+  const codexProvider = { id: "openai-codex", streamSimple: () => "codex stream" };
+  const streamed = [];
+  const reg = {
+    getProvider: (id) => (id === "coop" ? { id: "coop", name: "coop", stream: unrouted, streamSimple: unrouted } : id === "openai-codex" ? codexProvider : undefined),
+    streamSimple: (m, c, o) => { streamed.push([m.id, c.messages.length, o.maxTokens]); return "routed stream"; },
+  };
+  await hooks.get("session_start")({ reason: "startup" }, { modelRegistry: reg });
+  await hooks.get("session_start")({ reason: "new" }, { modelRegistry: reg });
+  const coopProvider = reg.getProvider("coop");
+  assert.equal(coopProvider.name, "coop", "the rest of the provider is kept");
+  assert.equal(coopProvider.streamSimple({ provider: "coop", id: "auto" }, { messages: [user("name this")] }, { maxTokens: 1024 }), "routed stream");
+  assert.deepEqual(streamed, [["auto", 1, 1024]], "streamed once through the registry, wrapped once across sessions");
+  assert.equal(reg.getProvider("openai-codex"), codexProvider, "other providers are returned as they are");
+  assert.equal(reg.getProvider("nope"), undefined);
+  await hooks.get("session_start")({}, {});
+}
+console.log("  ✓ coop/auto streams through getProvider reach the router (session auto-rename)");
 // Pi before 0.99 has no registerVirtualModel: the extension registers nothing and never throws.
 mod.default({ registerCommand: () => assert.fail("registered a command on an old Pi") });
 console.log("  ✓ registers coop/auto with /router, and stays quiet on a Pi without virtual models");

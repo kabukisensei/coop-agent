@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const dist = process.env.COOP_TEST_DIST;
@@ -19,6 +19,25 @@ const windowsCommand = windows.args.at(-1);
 assert.match(windowsCommand, /Join-Path \$env:COOP_ROOT/);
 assert.ok(!windowsCommand.includes(windowsRoot), "dynamic paths must not enter PowerShell command text");
 assert.ok(!windowsCommand.includes("$args["), "Windows PowerShell 5.1 binding must not depend on $args indexing");
+
+// Pick 6 (suite review 2026-10-26): the interpreter is looked for in Node first,
+// in Get-CoopFabricPython's order, so a native SQL call pays no PowerShell start.
+assert.deepEqual(mod.fabricPythonCandidates({ COOP_FABRIC_PYTHON: "/opt/fabric/python" }, "linux", "/home/u"), ["/opt/fabric/python"], "COOP_FABRIC_PYTHON alone when set");
+// The candidates are joined with the host's separator (path.join), so the
+// expected paths are too: the extended lane also runs this on Windows Git Bash.
+assert.deepEqual(
+  mod.fabricPythonCandidates({ PIPX_HOME: "/x/pipx" }, "linux", "/home/u"),
+  [join("/x/pipx", "venvs", "ms-fabric-cli", "bin", "python"), join("/home/u", ".local", "pipx", "venvs", "ms-fabric-cli", "bin", "python")],
+);
+assert.deepEqual(
+  mod.fabricPythonCandidates({ COOP_PIPX_HOME: "/fixtures/pipx", PIPX_HOME: "/x/pipx" }, "linux", "/home/u")[0],
+  join("/fixtures/pipx", "venvs", "ms-fabric-cli", "bin", "python"), "the test hook wins over the user's PIPX_HOME",
+);
+const winLocal = String.raw`C:\Users\x\AppData\Local`;
+assert.deepEqual(
+  mod.fabricPythonCandidates({ LOCALAPPDATA: winLocal }, "win32", String.raw`C:\Users\x`),
+  [join(winLocal, "pipx", "pipx", "venvs", "ms-fabric-cli", "Scripts", "python.exe"), join(String.raw`C:\Users\x`, "pipx", "venvs", "ms-fabric-cli", "Scripts", "python.exe")],
+);
 
 const direct = mod.fabricSqlHelperInvocation("/tmp/Python With Spaces/python3", "/tmp/Coop Root");
 assert.deepEqual(direct, {
@@ -126,6 +145,28 @@ try {
   rmSync(join(root, ".coop"), { recursive: true, force: true });
   mod.noteContractSnapshot(root);
 
+  // Without COOP_FABRIC_PYTHON the venv under COOP_PIPX_HOME is found in Node
+  // (no PowerShell on this box is needed), and kept for the next call.
+  if (process.platform !== "win32") {
+    const venvPython = join(root, "pipx", "venvs", "ms-fabric-cli", "bin", "python");
+    mkdirSync(dirname(venvPython), { recursive: true });
+    cpSync(fakePython, venvPython);
+    chmodSync(venvPython, 0o755);
+    delete process.env.COOP_FABRIC_PYTHON;
+    process.env.COOP_PIPX_HOME = join(root, "pipx");
+    mod.resetFabricPythonCache();
+    rmSync(marker);
+    const viaVenv = await tool.execute("1e", { query: "SELECT TOP (1) x FROM dbo.t" }, undefined, undefined, { cwd: root });
+    assert.equal(viaVenv.details.state, "ok", "the pipx venv interpreter is resolved without PowerShell");
+    assert.equal(existsSync(marker), true);
+    rmSync(venvPython);
+    const gone = await tool.execute("1f", { query: "SELECT TOP (1) x FROM dbo.t" }, undefined, undefined, { cwd: root });
+    assert.equal(gone.details.state, "selected_python_unavailable", "a runtime that went away is looked for again, never served from the cache");
+    delete process.env.COOP_PIPX_HOME;
+    process.env.COOP_FABRIC_PYTHON = fakePython;
+    mod.resetFabricPythonCache();
+  }
+
   rmSync(marker);
   const preAborted = new AbortController();
   preAborted.abort();
@@ -147,6 +188,28 @@ while :; do :; done
   const cancelled = await pending;
   assert.equal(cancelled.details.state, "aborted");
   assert.ok(Date.now() - started < 2_000, "cancel must force-kill and reap within a bounded deadline");
+
+  if (process.platform !== "win32") {
+    // #477: a cancel ends what the helper started too (the pinned package under
+    // lib/compare_tool.py), not only the helper. The stub starts a grandchild that
+    // leaves a marker 1.5 s later; aborted at 100 ms, the marker never appears.
+    const grandchildMarker = join(root, "grandchild-finished");
+    writeFileSync(fakePython, `#!/bin/sh
+( sleep 1.5; touch "$COOP_SQL_TEST_GRANDCHILD" ) &
+cat >/dev/null
+wait
+`);
+    chmodSync(fakePython, 0o755);
+    process.env.COOP_SQL_TEST_GRANDCHILD = grandchildMarker;
+    const treeController = new AbortController();
+    const treePending = tool.execute("4", { query: "SELECT TOP (1) x FROM dbo.t" }, treeController.signal, undefined, { cwd: root });
+    setTimeout(() => treeController.abort(), 100);
+    const treeCancelled = await treePending;
+    assert.equal(treeCancelled.details.state, "aborted");
+    await new Promise((wake) => setTimeout(wake, 2_200));
+    assert.equal(existsSync(grandchildMarker), false, "the helper's own child must end with the cancel");
+    delete process.env.COOP_SQL_TEST_GRANDCHILD;
+  }
 } finally {
   // The abort case above intentionally leaves a TERM-ignoring busy-loop stub.
   // The tool force-kills its direct child within the bounded deadline, but the

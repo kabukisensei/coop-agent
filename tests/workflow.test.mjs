@@ -94,12 +94,10 @@ assert.ok(agentDocs[0][1].replace(/\s+/g, " ").includes("resolved standards task
 const authoritySurfaces = [
   "prompts/spec-first.md",
   "prompts/semantic-model-review.md",
-  "prompts/impact-analysis.md",
   "prompts/fabric-architecture-review.md",
   "prompts/discovery.md",
   "docs/guardrails-reference.md",
   "README.md",
-  "lib/init_wizard.py",
   "lib/project-contract.mjs",
   "bin/coop.ps1",
 ].map((path) => [path, readFileSync(join(ROOT, path), "utf8")]);

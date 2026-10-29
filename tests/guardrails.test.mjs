@@ -75,8 +75,7 @@ const handleSessionStart = handlers["session_start"];
 const handleSessionShutdown = handlers["session_shutdown"];
 assert.ok(typeof handle === "function", "registers a tool_call handler");
 assert.ok(typeof handleSessionShutdown === "function", "registers a session_shutdown handler");
-assert.ok(cmds["coop-guardrails"], "registers the /coop-guardrails command");
-assert.ok(cmds["coop-live-read"], "registers the /coop-live-read command");
+assert.ok(cmds["approvals"], "registers the /approvals command");
 
 const ctx = { cwd: "/tmp/no-such-repo-xyz", hasUI: true, ui: { confirm: async (_title, message) => { confirmCount++; lastConfirm = String(message); return confirmAnswer; }, input: async (title) => { inputCount++; lastInput = String(title); return inputAnswer; }, notify: () => {} } };
 const call = async (command, { stagedFiles = "", modifiedFiles = "", untrackedFiles = "", confirm = false, toolName = "bash" } = {}) => {
@@ -958,14 +957,14 @@ await t("an edit approval can last for the session; deletes and other servers st
   // Headless never gains an approval it did not have.
   assert.equal(blocked(await handle(write("core_create-item"), { cwd: ctx.cwd, hasUI: false })), true);
 });
-await t("/coop-approvals shows and revokes session edit approvals (#156)", async () => {
+await t("/approvals shows and revokes session edit approvals (#156)", async () => {
   await handleSessionStart({}, ctx);
   const notes = [];
   const ui = { notify: (m) => notes.push(m), confirm: async () => true, select: async (_t, options) => options[1] };
   assert.equal(blocked(await handle({ toolName: "mcp", input: { server: "fabric", tool: "core_create-item", args: {} } }, { ...ctx, ui })), false);
-  await cmds["coop-approvals"].handler("status", { ...ctx, ui });
+  await cmds["approvals"].handler("status", { ...ctx, ui });
   assert.match(notes.at(-1), /active for this session[\s\S]*fabric/);
-  await cmds["coop-approvals"].handler("revoke", { ...ctx, ui });
+  await cmds["approvals"].handler("revoke", { ...ctx, ui });
   let asked = 0;
   const ask = { notify: () => {}, confirm: async () => true, select: async (_t, options) => { asked++; return options[2]; } };
   assert.equal(blocked(await handle({ toolName: "mcp", input: { server: "fabric", tool: "core_create-item", args: {} } }, { ...ctx, ui: ask })), true);
@@ -1869,7 +1868,7 @@ await t("one plain bounded SELECT on the resolved dev target runs without a prom
     assert.equal(e.detail, "dev-read-only");
   }
   assert.equal(JSON.stringify(entries).includes("Account"), false, "audit never carries SQL");
-  const status = cmds["coop-live-read"];
+  const status = cmds["approvals"];
   let shown = "";
   await status.handler([], { ...liveCtx, ui: { notify: (m) => { shown = m; } } });
   assert.ok(shown.includes("none active"), "dev reads create no session grant");
@@ -2062,10 +2061,10 @@ await t("reads need no grant: shutdown and revoke change nothing", async () => {
   assert.equal(blocked(await handle(sqlRead(), liveCtx)), false, "after shutdown");
   let shown = "";
   const commandCtx = { ...liveCtx, ui: { ...liveCtx.ui, notify: (message) => { shown = String(message); } } };
-  await cmds["coop-live-read"].handler("revoke", commandCtx);
+  await cmds["approvals"].handler("revoke", commandCtx);
   assert.match(shown, /revoked/i);
   assert.equal(blocked(await handle(sqlRead(), liveCtx)), false, "after revoke");
-  await cmds["coop-live-read"].handler("status", commandCtx);
+  await cmds["approvals"].handler("status", commandCtx);
   assert.match(shown, /none active/);
   assert.equal(confirmCount, 0);
 });
@@ -2078,7 +2077,7 @@ await t("status and fixed audit labels contain no token, forged scope, or SQL", 
   confirmAnswer = true;
   await handle(sqlRead(undefined, { coopLiveReadScope: { client: "scope-secret", token: "model-secret" } }), liveCtx);
   let shown = "";
-  await cmds["coop-live-read"].handler("status", { ...liveCtx, ui: { notify: (message) => { shown = String(message); } } });
+  await cmds["approvals"].handler("status", { ...liveCtx, ui: { notify: (message) => { shown = String(message); } } });
   const blob = `${shown}\n${JSON.stringify(readAudit())}`;
   for (const forbidden of ["launch-token-secret", "scope-secret", "model-secret", "SELECT TOP", "dbo.Customer"]) assert.equal(blob.includes(forbidden), false, forbidden);
   assert.match(shown, /none active/, "reads create no grant");
@@ -2184,12 +2183,12 @@ await t("audit: writes never throw even when the log dir is unwritable (fail-ope
     process.env.PI_CODING_AGENT_DIR = prev;
   }
 });
-await t("/coop-guardrails output mentions the audit log path", async () => {
+await t("/approvals output mentions the audit log path", async () => {
   clearAudit();
   await call("git commit -m x", { stagedFiles: "src/app.py" }); // one entry to list
   let shown = "";
   const ctx2 = { ...ctx, ui: { confirm: async () => false, notify: (msg) => { shown = String(msg); } } };
-  await cmds["coop-guardrails"].handler([], ctx2);
+  await cmds["approvals"].handler([], ctx2);
   assert.ok(shown.includes("guardrails-audit.jsonl"), "prints the audit log path");
   assert.ok(shown.includes("commit-block"), "lists the recent decision");
   assert.ok(shown.includes("Pi self-update prompts suppressed"), "shows the managed update policy");
@@ -2215,7 +2214,7 @@ await t("audit: command canaries never enter new records or the audit display", 
     assert.equal(entries.length, 1, "one decision recorded");
     assert.ok(!readFileSync(AUDIT_FILE, "utf8").includes(canary), "command arguments must not persist");
     let shown = "";
-    await cmds["coop-guardrails"].handler([], { ...probeCtx, ui: { notify: (value) => { shown = value; } } });
+    await cmds["approvals"].handler([], { ...probeCtx, ui: { notify: (value) => { shown = value; } } });
     assert.ok(!shown.includes(canary), "audit display must not expose arguments");
     assert.ok(shown.includes(entries[0].kind), "decision classification remains visible");
   }
@@ -2232,7 +2231,7 @@ await t("audit: old command-bearing records are safe to display without rewritin
   const original = legacy.map((entry) => JSON.stringify(entry)).join("\n") + "\n";
   writeFileSync(AUDIT_FILE, original);
   let shown = "";
-  await cmds["coop-guardrails"].handler([], { ...ctx, ui: { notify: (value) => { shown = value; } } });
+  await cmds["approvals"].handler([], { ...ctx, ui: { notify: (value) => { shown = value; } } });
   assert.ok(!shown.includes(canary), "legacy command details must not be redisplayed");
   for (const entry of legacy) assert.ok(shown.includes(entry.label));
   assert.equal(readFileSync(AUDIT_FILE, "utf8"), original, "stored history is untouched");
@@ -2286,7 +2285,7 @@ await t("unexpected enforcement faults block, while harmless calls and optional 
   assert.equal(blocked(await call("echo hello")), false);
   assert.equal(blocked(await callFile("read", "README.md")), false);
   assert.equal(blocked(await handle({ toolName: "mcp", input: { server: "fabric", tool: "fabric_list_workspaces" } }, ctx)), false);
-  await cmds["coop-guardrails"].handler([], { ...ctx, ui: { notify: () => { throw new Error("optional display failed"); } } });
+  await cmds["approvals"].handler([], { ...ctx, ui: { notify: () => { throw new Error("optional display failed"); } } });
 });
 
 
@@ -2774,12 +2773,12 @@ await t("G1: under a human unlock a production write is a desk yes/no, audited w
     const fab = readAudit().filter((e) => e.kind === "danger-confirm").pop();
     // danger-confirm records never carry command text, so the grant id rides the fixed label.
     assert.deepEqual([fab.decision, fab.label, fab.detail], ["allowed", "production write (prod-unlock:a1b2c3d4)", "production write (prod-unlock:a1b2c3d4)"]);
-    // /coop-approvals status names the unlock; without it, says production writes are blocked.
+    // /approvals names the unlock; without it, says production writes are blocked.
     let shown = "";
-    await cmds["coop-approvals"].handler("status", { ...liveCtx, ui: { notify: (m) => { shown = m; } } });
+    await cmds["approvals"].handler("status", { ...liveCtx, ui: { notify: (m) => { shown = m; } } });
     assert.match(shown, /PRODUCTION WRITES UNLOCKED by a human for Contoso \(grant a1b2c3d4/);
     removeUnlock();
-    await cmds["coop-approvals"].handler("status", { ...liveCtx, ui: { notify: (m) => { shown = m; } } });
+    await cmds["approvals"].handler("status", { ...liveCtx, ui: { notify: (m) => { shown = m; } } });
     assert.match(shown, /Production writes: blocked\./);
   } finally {
     removeUnlock();
@@ -3613,6 +3612,107 @@ await t("merge, cherry-pick, revert, am and commit-tree take the never-commit-so
   } finally { gitAliases = {}; }
   const entries = readAudit().filter((e) => e.kind === "commit-block");
   assert.ok(entries.some((e) => e.label === "git merge") && entries.some((e) => e.label === "git cherry-pick"), "audit names the verb");
+});
+
+await t("fabric-cicd: a deployment script's publish is a deploy; dev or test asks every time, production or no target is blocked", async () => {
+  const DEV = "12121212-3434-4565-8787-909090909090";
+  const PROD = "56565656-7878-4999-8aaa-bbbbbbbbbbbb";
+  const dir = join(LIVE_ROOT, "deploy");
+  mkdirSync(join(dir, "lib"), { recursive: true });
+  const multi = [
+    "import sys", "from fabric_cicd import FabricWorkspace, publish_all_items",
+    `WS = {"dev": "${DEV}", "test": "abababab-cdcd-4efe-8a0a-121212121212", "prod": "${PROD}"}`,
+    "env = sys.argv[1]", "ws = FabricWorkspace(workspace_id=WS[env], environment=env.upper(), repository_directory='.')", "publish_all_items(ws)", "",
+  ].join("\n");
+  writeFileSync(join(dir, "deploy.py"), multi);
+  writeFileSync(join(dir, "deploy_dev.py"), `from fabric_cicd import FabricWorkspace, publish_all_items, unpublish_all_orphan_items\nws = FabricWorkspace(workspace_id="${DEV}", repository_directory=".")\npublish_all_items(ws)\nunpublish_all_orphan_items(ws)\n`);
+  writeFileSync(join(dir, "deploy_any.py"), "from fabric_cicd import FabricWorkspace, publish_all_items\nimport os\npublish_all_items(FabricWorkspace(workspace_id=os.environ['WS'], repository_directory='.'))\n");
+  writeFileSync(join(dir, "run.py"), "import helpers\nhelpers.go()\n");
+  writeFileSync(join(dir, "helpers.py"), "from fabric_cicd import deploy_with_config\ndef go():\n    deploy_with_config('config.yml', environment='dev')\n");
+  writeFileSync(join(dir, "check.py"), "from fabric_cicd import FabricWorkspace\nprint(FabricWorkspace)\n");
+  // Detection: only Python that runs a publish call; reading or grepping is not a deploy.
+  assert.equal(cg.fabricCicdRun("python check.py", dir), null);
+  assert.equal(cg.fabricCicdRun("grep -n publish_all_items deploy.py", dir), null);
+  assert.equal(cg.fabricCicdRun("cat deploy.py", dir), null);
+  assert.equal(cg.fabricCicdRun("python missing.py", dir), null);
+  assert.equal(cg.fabricCicdRun("python deploy.py dev", dir).label, "fabric-cicd publish");
+  assert.equal(cg.fabricCicdRun("python3.12 -u deploy.py dev", dir).label, "fabric-cicd publish");
+  assert.equal(cg.fabricCicdRun('"C:/Users/me/pipx/venvs/ms-fabric-cli/Scripts/python.exe" deploy.py dev', dir).label, "fabric-cicd publish");
+  assert.equal(cg.fabricCicdRun("uv run deploy.py dev", dir).label, "fabric-cicd publish");
+  assert.equal(cg.fabricCicdRun("cd deploy && python deploy.py dev", LIVE_ROOT).label, "fabric-cicd publish", "cd moves the script's folder");
+  assert.equal(cg.fabricCicdRun("python run.py", dir).label, "fabric-cicd publish", "a local module the script imports is read");
+  assert.match(cg.fabricCicdRun("python deploy_dev.py", dir).label, /unpublishes orphan items/);
+  assert.equal(cg.fabricCicdRun(`python -c "from fabric_cicd import *; publish_all_items(FabricWorkspace(workspace_id='${DEV}'))"`, dir).label, "fabric-cicd publish");
+  assert.equal(cg.fabricCicdRun("python - <<'EOF'\nfrom fabric_cicd import publish_all_items\npublish_all_items(ws)\nEOF", dir).label, "fabric-cicd publish", "a heredoc");
+  assert.equal(cg.fabricCicdRun("python < deploy.py", dir).label, "fabric-cicd publish");
+  // Target: the command line first, then the script.
+  const gov = { devWorkspaceId: DEV, productionNames: [PROD] };
+  const source = (file) => readFileSync(join(dir, file), "utf8");
+  assert.equal(cg.fabricCicdTarget("python deploy.py prod", source("deploy.py"), gov).action, "block");
+  assert.equal(cg.fabricCicdTarget(`python deploy.py --workspace ${PROD}`, "", gov).action, "block", "the contract's prod workspace id");
+  const multiDev = cg.fabricCicdTarget("python deploy.py --environment=DEV", source("deploy.py"), gov);
+  assert.equal(multiDev.action, "ask");
+  assert.match(multiDev.note, /Environment on the command line: dev\.\nWARNING: the script also names production/);
+  assert.equal(cg.fabricCicdTarget("python deploy.py", source("deploy.py"), gov).action, "block", "a multi-environment script with no environment named");
+  assert.equal(cg.fabricCicdTarget("python deploy_dev.py", source("deploy_dev.py"), gov).action, "ask", "the script names the contract's dev workspace");
+  assert.equal(cg.fabricCicdTarget("python deploy_any.py", source("deploy_any.py"), gov).action, "block", "nothing says where it deploys");
+  assert.equal(cg.fabricCicdTarget("WS=x python deploy_any.py test", source("deploy_any.py"), gov).action, "ask");
+  // Through the handler: asks every time (no session approval), headless blocks.
+  writeContract(`fabric:\n  default_workspace_id: ${DEV}\n  environment_names:\n    dev: Sales Dev\n    prod: Sales Live\n`);
+  resetSessionGovernance();
+  const c = { ...liveCtx, cwd: dir };
+  try {
+    confirmAnswer = true; confirmCount = 0; lastConfirm = "";
+    assert.equal(blocked(await handle({ toolName: "bash", input: { command: "python deploy.py dev" } }, c)), false);
+    assert.equal(blocked(await handle({ toolName: "bash", input: { command: "python deploy.py dev" } }, c)), false);
+    assert.equal(confirmCount, 2, "every run asks");
+    assert.match(lastConfirm, /Fabric deploy through fabric-cicd \(fabric-cicd publish\)/);
+    assert.match(lastConfirm, /Script: .*deploy\.py/);
+    confirmCount = 0;
+    assert.equal(blocked(await handle({ toolName: "bash", input: { command: "python deploy_dev.py" } }, c)), false);
+    assert.match(lastConfirm, /DELETES items/);
+    confirmAnswer = false;
+    assert.equal(blocked(await handle({ toolName: "bash", input: { command: "python deploy.py test" } }, c)), true, "declined");
+    confirmAnswer = true; confirmCount = 0;
+    let r = await handle({ toolName: "bash", input: { command: "python deploy.py prod" } }, c);
+    assert.equal(blocked(r), true);
+    assert.match(r.reason, /blocked fabric-cicd publish; the command names production/);
+    r = await handle({ toolName: "bash", input: { command: 'python deploy_any.py --workspace "Sales Live"' } }, c);
+    assert.equal(blocked(r), true, "the contract's prod workspace name");
+    r = await handle({ toolName: "bash", input: { command: "python deploy_any.py" } }, c);
+    assert.equal(blocked(r), true);
+    assert.match(r.reason, /nothing says which workspace/);
+    assert.equal(confirmCount, 0, "a block never asks");
+    const headless = { ...c, hasUI: false, ui: undefined };
+    assert.equal(blocked(await handle({ toolName: "bash", input: { command: "python deploy.py dev" } }, headless)), true);
+    // PowerShell: the same judgement, one deploy question instead of the generic one.
+    confirmCount = 0;
+    assert.equal(blocked(await handle({ toolName: "powershell", input: { command: "& python .\\deploy.py prod" } }, c)), true);
+    assert.equal(confirmCount, 0);
+    assert.equal(blocked(await handle({ toolName: "powershell", input: { command: "python deploy.py dev" } }, c)), false);
+    assert.equal(confirmCount, 1);
+    assert.match(lastConfirm, /Fabric deploy through fabric-cicd/);
+    assert.ok(readAudit().some((e) => e.label === "fabric-cicd publish" && e.decision === "blocked"));
+  } finally {
+    removeContract();
+    resetSessionGovernance();
+    confirmAnswer = false;
+  }
+});
+
+await t("the rules run in their declared order: native tools each own a rule, then the shell rules over one command", async () => {
+  assert.deepEqual([...cg.RULE_ORDER], [
+    "codemode", "mcp-script", "powershell", "files", "sql-source", "live-metadata", "mcp",
+    "shell-command", "prod-unlock-shell", "secret-file-shell", "environment-dump", "azure-sign-in",
+    "git-commit", "sqlsc-shell", "destructive-command", "fabric-write-shell", "fabric-cicd-shell", "desktop-reload",
+  ]);
+  // A cleared shell rule hands the command to the next: a destructive command that also touches a
+  // secret asks twice, in that order, and a no at either point blocks.
+  const asked = [];
+  const r = await handle({ toolName: "bash", input: { command: "rm -rf .env" } }, { cwd: ROOT, hasUI: true, ui: { confirm: async (title, message) => { asked.push(message.split("\n")[0]); return true; } } });
+  assert.equal(r, undefined);
+  assert.match(asked[0], /secret-looking file/);
+  assert.match(asked[1], /^Destructive command/);
 });
 
 console.log(`  ${n} guardrails tests passed`);

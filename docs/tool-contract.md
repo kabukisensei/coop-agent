@@ -283,8 +283,8 @@ coop consult lineage without the user asking:
   coop-data-doc itself would select, then its output dir has `graph.json`), it injects an
   agent-visible, **`display: false`** note (`customType: "coop-lineage"`) telling
   coop to look up an object's up/downstream via `data_doc (command="lineage")`
-  before touching it. **Silent when no built docs exist** — the docs are an aid,
-  not a gate.
+  before touching it. **Silent when no built docs exist**: the built docs are an aid, not a gate; the one gate is the live catalog (master plan SQ8): before a SQL object is edited, `sql_impact` must have been asked when a live dev/test target can answer
+  ("Session lineage context" below).
 
 The same hook also grounds **simple Fabric reads**: once per contract, when the
 nearest `.coop/project.yml` pins a Warehouse/Lakehouse target
@@ -344,7 +344,7 @@ without `sql_targets`); a production or unresolved target asks once per call (an
 is blocked headlessly); a call carrying any field beyond `object` is blocked. The
 audit records a fixed label and the environment, never the object name. The tool's
 text output adds a `data_doc` lineage hint when built docs exist in the folder, and
-the `impact-analysis` prompt and the `coop-workflow` skill call `sql_impact` before
+the `coop-workflow` skill calls `sql_impact` before
 any live SQL edit. The text lists every item in each section (`- schema.name (type)`,
 unresolved references flagged, dependents with `uses <columns>`; columns as
 `- name type NULL|NOT NULL`). With a declared `power_bi.table_mapping`, an
@@ -404,15 +404,20 @@ touches `overrides` once it holds entries.
 
 The committed dev catalog snapshot (master plan row SQ9, Joel's "schema file coop
 must follow" and "export of object definitions into a read-only folder" as one
-feature), implemented by `lib/catalog_snapshot.py` over the same connection path
-as `sql_impact` (`open_connection`: the contract's ready dev or test default,
-never production; same identity pinning, driver, encryption and timeouts). The
+feature). `lib/catalog_snapshot.py` resolves the contract's ready dev or test
+default (never production) exactly as `sql_impact` does (`lib/sql_query.py`'s
+`resolve_target` and `resolve_connection`: the same identity pinning and Fabric
+host discovery) and runs the pinned `coop-schema-compare snapshot` on it
+(`lib/compare_tool.py`; suite review 2026-10-26, pick 1: coop has no snapshot
+writer of its own). The package receives the host, the database and the
+tenant-pinned token through its `SQL_ACCESS_TOKEN` environment variable, never a
+command line, with the entry's `connect_timeout` and read-only intent. The
 tool accepts one optional field, `command`:
 
 | Command | What it does |
 | --- | --- |
 | `status` (default) | Reads the snapshot folder only, no connection: `missing`, `ok` or `stale` with the path, the time it was taken, its age and the object counts. |
-| `snapshot` | Runs three fixed, parameter-free catalog queries (`sys.objects`, `INFORMATION_SCHEMA.COLUMNS`, `sys.sql_modules`) and rewrites the folder: one `<schema>/<name>.sql` per object (tables as a `CREATE TABLE` built from their columns, types and nullability; views, procedures and functions as the definition the catalog holds), `manifest.json` (time taken, target environment, kind and database, counts, file list, anything unavailable or skipped) and a `README.md`. |
+| `snapshot` | The package runs its fixed, parameter-free catalog queries (`sys.schemas`, `sys.objects`, `INFORMATION_SCHEMA.COLUMNS`, `sys.identity_columns`, `sys.sql_modules`) and rewrites the folder: one `<schema>/<name>.sql` per object (tables as a `CREATE TABLE` built from their columns, types, nullability and identity; views, procedures and functions as the definition the catalog holds), `manifest.json` (time taken, target environment, kind and database as the contract names the entry, counts, file list, anything unavailable or skipped) and a `README.md`. |
 
 The folder is `catalog.path` from the contract (relative to the contract root),
 else `<data_docs repository>/catalog/<environment>` when the contract names a
@@ -425,7 +430,9 @@ refused (`target_not_dev_or_test`). Caps: 5000 objects, 200,000 columns, one
 million characters per definition; an object whose name is not a plain identifier,
 or whose definition the principal cannot read, is skipped and listed in the
 manifest. On a Lakehouse SQL endpoint the definitions are unavailable and the
-manifest says so; tables still land.
+manifest says so; tables still land. A machine without the package answers
+`tool_unavailable` (`coop update` installs it; `coop doctor` has its row);
+`tool_timeout` and `tool_failed` are the package not answering.
 
 Governance (`extensions/coop-guardrails`): `status` runs without a prompt or an
 audit row (it reads a folder); `snapshot` follows the `sql_impact` rule (a resolved
@@ -444,17 +451,24 @@ artifact: nothing runs from it.
 
 The deterministic schema compare (master plan row SQ10, Aaron's ask of 2026-10-12:
 compare the schemas of two Fabric workspaces, dev against prod, and help move the
-code across, because the Warehouse has no good option), implemented by
-`lib/schema_compare.py`. The same engine ships standalone as `coop-schema-compare`
-(PyPI, pinned in `config/release-manifest.json` and installed by `coop install`)
-for people and CI; the native tool keeps the in-process path below. Each live side is read over the same connection path as
-`sql_impact` (`open_connection(environment=...)`: the named ready `sql_targets`
-entry, same identity pinning, driver, encryption and timeouts; a read of production
-is a plain read), with the four fixed, parameter-free catalog queries the snapshot
-uses (`sys.schemas`, `sys.objects`, `INFORMATION_SCHEMA.COLUMNS`, `sys.sql_modules`,
-`sys.identity_columns`).
-System schemas and Fabric's internal underscore-prefixed schemas that hold no user
-object (`_rsc`) are left out, as the snapshot leaves them out.
+code across, because the Warehouse has no good option). The engine is the
+`coop-schema-compare` package (PyPI, pinned in `config/release-manifest.json`,
+installed by `coop install`), which people and CI also run on its own;
+`lib/schema_compare.py` is coop's layer over it (suite review 2026-10-26, pick 1:
+one engine, no in-process copy). coop resolves each live side exactly as
+`sql_impact` resolves a read (`lib/sql_query.py`'s `resolve_target` and
+`resolve_connection` for the named ready `sql_targets` entry: the same identity
+pinning and Fabric host discovery; a read of production is a plain read) and runs
+one `coop-schema-compare compare <source> <target> --json` (`lib/compare_tool.py`)
+with the host and database of each live side, the tenant-pinned token in the
+child's `SQL_ACCESS_TOKEN` environment variable (never a command line), the
+entries' `connect_timeout` (the larger of the two) and read-only intent, and the
+target entry's kind (`--target-kind`, for the kinds the package names). The
+package reads the catalogs with the fixed, parameter-free queries the snapshot
+uses, leaves system schemas and Fabric's internal underscore-prefixed schemas
+(`_rsc`) out, diffs, plans and writes the two files. A machine without the
+package answers `tool_unavailable` (`coop update` installs it); `tool_timeout`
+and `tool_failed` are the package not answering.
 The tool accepts these optional fields:
 
 | Field | Values | Default |
@@ -503,8 +517,8 @@ The same side on both ends, a value outside those forms, a repo side containing
 `..`, or any other field is `input_invalid` before anything connects. Any pairing
 is allowed: repo against repo, live against live, repo against live.
 
-A **repo side** is the schema as code (`lib/sql_source.py`, Aaron's ask of
-2026-10-13): the `.sql` files of one of the contract's `repositories` entries
+A **repo side** is the schema as code (Aaron's ask of 2026-10-13; the package's
+source reader, `coop_schema_compare.source`): the `.sql` files of one of the contract's `repositories` entries
 with role `sql` or `mixed` and a filled `local_path`, under its `sql_root` when
 the entry names one, or under the subfolder the side names (relative to the
 repository root, never outside it). `repo` alone picks the only such entry
@@ -539,8 +553,8 @@ A schema filter applies to both sides before the diff: `schemas` (a list) keeps
 only those schemas, `exclude` leaves those out (up to 50 plain names each,
 matched case-insensitively, by schema name only: excluding `test` never drops
 `dbo.TestLoad`), and `choices` names the filter. The `sqlsc` schema
-(SQL source control's locks) is always left out, with a note, unless `schemas`
-names it.
+(SQL source control's locks) is always left out (coop adds it to the package's
+`--exclude-schema` list), with a note, unless `schemas` names it.
 
 The result carries both sides' summaries (environment, kind, database, object
 counts; the snapshot side adds `taken_at`), `counts` (`total`, `add`, `alter`,
@@ -637,17 +651,17 @@ running the script against a target is the user's act through the write rules in
 terminal form of the same helper and prints the counts, the choices and the two
 paths.
 
-Why coop has its own compare rather than wrapping a Microsoft tool: Fabric
+Why the suite has its own compare rather than wrapping a Microsoft tool: Fabric
 deployment pipelines and Git integration deploy a Warehouse through DacFx with no
 editable script, drop and recreate a table for a column change, carry no
 permissions, and only pair workspaces inside one tenant and pipeline; SqlPackage
 supports the Warehouse but is a separate .NET tool install per machine whose
 publish is a black box rather than a script a person reviews; dbt is a
-transformation framework, not a compare. coop's tool reuses the connection path
-and the snapshot it already has, needs nothing installed beyond the Fabric Python,
-and produces a plain script the team reads before any of it runs through the
-governed write path. SqlPackage remains the right tool for a full-fidelity dacpac
-of a large estate.
+transformation framework, not a compare. The suite's tool reuses coop's
+connection path and the snapshot coop already has, is one pipx install at the
+manifest pin, and produces a plain script the team reads before any of it runs
+through the governed write path. SqlPackage remains the right tool for a
+full-fidelity dacpac of a large estate.
 
 ---
 
@@ -768,7 +782,7 @@ $ coop fabric workspace list      # -> whichever `fab` is first on PATH
 $ coop doctor
 Microsoft Fabric CLI
 ✗ fab is the WRONG tool — this 'fab' is Python Fabric (SSH automation), not the Microsoft Fabric CLI
-      Fix: pipx install ms-fabric-cli==1.7.0   and put pipx's bin dir first on PATH (pipx ensurepath)
+      Fix: pipx install ms-fabric-cli==1.8.0   and put pipx's bin dir first on PATH (pipx ensurepath)
            or uninstall the Python fabric package. Verify with: fab --version
 ```
 
@@ -786,6 +800,13 @@ In `.coop/project.yml`, `tools.fabric_cicd.default_mode` is `"validate_only"`. T
 agent runs validation freely; **deploy / run-deployment is approval-gated**
 (`approval_policy.ask_first` includes "fabric-cicd deploy / run deployment", and
 deploying to test/prod is in `never_without_explicit_instruction`).
+
+The guardrails enforce it (`fabric-cicd-shell`, and the same check inside the
+PowerShell rule): a Python run whose script, `-m` module, `-c` code or heredoc
+(or a local module the script imports) calls `publish_all_items`,
+`unpublish_all_orphan_items` or `deploy_with_config` is a deploy. Dev or test asks
+every time; production, or a run that names no target, is blocked. The full rule
+is in `docs/guardrails-reference.md` ("fabric-cicd deploys").
 
 ---
 
@@ -964,12 +985,16 @@ four-part cross-database name. Double-quoted identifiers, unfamiliar SQL, batche
 and mutations do not inherit this grant; scope expansion asks again. Rejecting an
 expansion retains the earlier grant; revocation and a new session clear it.
 
-The preferred live SQL route is that managed MCP server. Coop also registers exactly
-one explicit fallback, `fabric_sql_query`, implemented by the new consolidated
+For a managed Fabric target the live SQL route is that MCP server. `fabric_sql_query`
+is coop's native bounded read: the route for `sql_targets:` entries (the workflow's
+"Verify with data" step uses it) and the fallback when the MCP cannot answer,
+implemented by the consolidated
 `lib/sql_query.py` helper (renamed from `fabric_sql_query.py`; it also serves Azure SQL, Fabric SQL database and Synapse serverless targets declared in `sql_targets:`).
 The tool accepts only `query` plus optional `maximum_rows`; target, server, identity,
 and credentials come from the contract and the selected Fabric Python
-(`coop_fabric_python` / `Get-CoopFabricPython`). When the contract declares
+(`coop_fabric_python` / `Get-CoopFabricPython`; the extension finds it once per
+session in the same places, `COOP_FABRIC_PYTHON` then the `ms-fabric-cli` pipx
+venv, and starts PowerShell only when those miss). When the contract declares
 `sql_targets:` (row SQ2), the executor connects to its ready default entry: a
 direct kind (`azure_sql`, `fabric_sql_database`, `synapse_serverless`) connects to
 the contract's `server` with that kind's connect timeout (60 s for Azure SQL, whose
@@ -980,15 +1005,21 @@ adds `ApplicationIntent=ReadOnly`. A discovered kind (`fabric_warehouse`,
 the contract's ids. A production entry is never selected, and a contract whose
 default entry is unconfigured or invalid returns `target_invalid` before any mint.
 A session launched when the contract named no SQL target and no Fabric SQL
-endpoint has no launch token at all; every native SQL tool then returns
-`launch_identity_missing` (not `identity_mismatch`, which is reserved for a
-signed-in account other than the launch one), and the tool text says to fix the
-file and exit and start coop again, because `/new` re-reads the contract but
-cannot mint the token the launch skipped. Without `sql_targets:` the executor falls back to the canonical project/managed MCP
+endpoint, or whose launch sign-in failed (the launch prints one `live SQL sign-in
+unavailable: <reason>` line), has no launch token at all; every native SQL tool
+then returns `launch_identity_missing` (not `identity_mismatch`, which is reserved
+for a signed-in account other than the launch one), and the tool text says to fix
+the file or the sign-in and exit and start coop again, because `/new` re-reads the
+contract but cannot mint the token the launch skipped. Without `sql_targets:` the executor falls back to the canonical project/managed MCP
 snapshot as before. The `ok` result carries a `target` summary (`environment`,
-`kind`, `database`; never the host). On a machine with no managed Warehouse server
-(an Azure SQL-only install), the launch token helper mints the SQL audience for the
-contract's tenant chain so the executor still has a launch identity to pin to.
+`kind`, `database`; never the host). The contract's ready default entry decides what the
+launch token helper mints, before the managed Warehouse MCP entry does: a kind that
+names its host mints the `database.windows.net` audience and a discovered kind the
+Fabric one, both for the contract's tenant chain, so an Azure SQL session has a
+launch identity to pin to whether or not the Fabric MCP entry exists or its mint
+would succeed (every consumer reads only the token's identity and mints its own
+audience). Only a contract with no ready default entry leaves the mint to the
+managed entry.
 It never cascades from MCP automatically. It accepts one plain literal-`TOP` `SELECT`, rejects mutations,
 batches, cross-database names, and unbounded reads before authentication, and returns
 capped structured JSON. Its text shows the column names, then one JSON array per
