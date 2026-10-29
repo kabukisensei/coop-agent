@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.38.11] — 2026-10-29
+
 ### Security
 
 - **Window runtimes.** The window installer bundles Node.js 22.23.4 (from 22.19.0; five Node security releases since), Electron 44.10.0 (from 44.5.1; below 44.9.1 Electron trusts the compromised eMudhra intermediate certificates, GHSA-jr5w-w6x2-84p9) and Python 3.13.17 (from 3.13.16; a security release for the same CA incident, with pip 26.2.2). CI builds and tests on Node 22.23.4. The terminal install's Node minimum stays 22.19.0.
