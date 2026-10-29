@@ -324,7 +324,7 @@ try {
   New-Item -ItemType Directory -Force -Path $agentNpm | Out-Null
   Copy-Item -LiteralPath (Join-Path $snapshot 'config\extensions-lock.json') -Destination (Join-Path $agentNpm 'package-lock.json') -Force
   $syncArgsFile = Join-Path $t 'sync-args.txt'
-  [System.IO.File]::WriteAllText((Join-Path $snapshot 'scripts\sync.ps1'), ("[System.IO.File]::WriteAllText('" + $syncArgsFile.Replace("'", "''") + "', 'sync')`nexit 0`n"), $utf8)
+  [System.IO.File]::WriteAllText((Join-Path $snapshot 'scripts\sync.ps1'), ("[System.IO.File]::WriteAllText('" + $syncArgsFile.Replace("'", "''") + "', ('sync skip-fabric=' + `$env:COOP_SKIP_FABRIC_SYNC))`nexit 0`n"), $utf8)
   $pipxState = Join-Path $t 'pipx-state.txt'
   $pipxBin = Join-Path $t 'pipx-bin'
   $env:COOP_PIPX_BIN = New-PyStub $pipxBin 'pipx' @'
@@ -345,10 +345,10 @@ sys.exit(1)
   $env:COOP_PIPX_HOME = Join-Path $t 'pipx-home'
   $plan = Get-CoopFleetPlan
   $pinned = @($plan.PythonTools) + @($plan.Fabric) | Where-Object { $_ } | ForEach-Object { "package $($_.Name) $($_.Pin)" }
-  function Invoke-SecondRun([string[]]$State) {
+  function Invoke-SecondRun([string[]]$State, [string[]]$UpdArgs = @()) {
     [System.IO.File]::WriteAllText($pipxState, (($State -join "`n") + "`n"), $utf8)
     Remove-Item -LiteralPath $installArgsFile, $syncArgsFile -Force -ErrorAction SilentlyContinue
-    return (Invoke-Update @())
+    return (Invoke-Update $UpdArgs)
   }
   $out = Invoke-SecondRun $pinned
   if ($updRc -ne 0 -or (Test-Path -LiteralPath $installArgsFile) -or -not (Test-Path -LiteralPath $syncArgsFile) -or $out -notmatch 'already installed for this account; refreshing') { Ko "coop update with every pin installed should sync only (rc=$updRc)" $out }
@@ -363,6 +363,27 @@ sys.exit(1)
   $installArgs = if (Test-Path -LiteralPath $installArgsFile) { ([System.IO.File]::ReadAllText($installArgsFile)).Trim() } else { '' }
   if ($updRc -ne 0 -or $installArgs -ne '--prereqs auto --unattended' -or $out -notmatch 'coop-schema-compare \(0\.0\.1 installed, pin ') { Ko "coop update with a tool at another version should run install.ps1 (rc=$updRc, install.ps1 args: '$installArgs')" $out }
   else { Ok 'coop update on a machine install runs this account''s setup again for a pinned tool at another version (#478)' }
+  # --no-fabric reaches the account setup and the sync (#495): install.ps1 gets the flag,
+  # sync.ps1 runs with COOP_SKIP_FABRIC_SYNC=1, and without the flag neither changes.
+  $out = Invoke-SecondRun $older @('--no-fabric')
+  $installArgs = if (Test-Path -LiteralPath $installArgsFile) { ([System.IO.File]::ReadAllText($installArgsFile)).Trim() } else { '' }
+  if ($updRc -ne 0 -or $installArgs -ne '--prereqs auto --unattended --no-fabric') { Ko "coop update --no-fabric with a drifted tool should pass --no-fabric to install.ps1 (rc=$updRc, install.ps1 args: '$installArgs')" $out }
+  else { Ok 'coop update --no-fabric on a machine install passes --no-fabric to the account setup for a drifted tool (#495)' }
+  $priorSkip = $env:COOP_SKIP_FABRIC_SYNC; $env:COOP_SKIP_FABRIC_SYNC = $null
+  $out = Invoke-SecondRun $pinned @('--no-fabric')
+  $syncSeen = if (Test-Path -LiteralPath $syncArgsFile) { ([System.IO.File]::ReadAllText($syncArgsFile)).Trim() } else { '' }
+  if ($updRc -ne 0 -or $syncSeen -ne 'sync skip-fabric=1') { Ko "coop update --no-fabric with every pin installed should sync with the Fabric repair skipped (rc=$updRc, sync saw: '$syncSeen')" $out }
+  else { Ok 'coop update --no-fabric on a machine install syncs with the Fabric runtime repair skipped (#495)' }
+  $out = Invoke-SecondRun $pinned
+  $syncSeen = if (Test-Path -LiteralPath $syncArgsFile) { ([System.IO.File]::ReadAllText($syncArgsFile)).Trim() } else { '' }
+  if ($updRc -ne 0 -or $syncSeen -ne 'sync skip-fabric=') { Ko "coop update without --no-fabric should leave the Fabric runtime repair on (rc=$updRc, sync saw: '$syncSeen')" $out }
+  else { Ok 'coop update without --no-fabric leaves the sync''s Fabric runtime repair on' }
+  Remove-Item -LiteralPath $setupMarker -Force
+  $out = Invoke-SecondRun $pinned @('--no-fabric')
+  $installArgs = if (Test-Path -LiteralPath $installArgsFile) { ([System.IO.File]::ReadAllText($installArgsFile)).Trim() } else { '' }
+  if ($updRc -ne 0 -or $installArgs -ne '--prereqs auto --unattended --no-fabric') { Ko "coop update --no-fabric with the setup pending should pass --no-fabric to install.ps1 (rc=$updRc, install.ps1 args: '$installArgs')" $out }
+  else { Ok 'coop update --no-fabric on a machine install passes --no-fabric to the pending account setup (#495)' }
+  $env:COOP_SKIP_FABRIC_SYNC = $priorSkip
   $env:COOP_PIPX_BIN = Join-Path $t 'no-pipx-here'
   $out = Invoke-SecondRun @()
   if ($updRc -ne 0 -or (Test-Path -LiteralPath $installArgsFile) -or -not (Test-Path -LiteralPath $syncArgsFile)) { Ko "coop update without pipx should sync only, as nothing can be installed (rc=$updRc)" $out }
