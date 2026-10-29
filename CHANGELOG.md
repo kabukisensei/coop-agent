@@ -5,6 +5,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- **The window's first launch finishes again when a tool moves to coop's Python.** The probe install that proves a tool can move to coop's Python (#441) runs `pipx install --suffix _coopnext ...`, and coop read `_coopnext` as a package name, so it did not point pip at the window's bundled wheels. pip went to PyPI, where coop-sql-source-control is not published, the probe failed, setup ended "setup did not finish" and every launch ran the multi-minute setup again (dev VM, 2026-10-29). An offline machine failed all three tools the same way. coop now steps over the value of `--suffix` and pipx's other value-taking options before it checks the package pins.
+
 ## [0.38.11] — 2026-10-29
 
 ### Security
