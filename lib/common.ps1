@@ -3698,7 +3698,10 @@ function Invoke-CoopPipxConverge {
       $tail = if ($restored) { "; it was installed again on $was, so it still runs (coop update tries the move again)" } else { "; $Package is not installed now (coop update installs it again)" }
       return (Coop-UnitResult $false "failed to reinstall $Package ($spec) on coop's Python $expectedPython$suffix$tail")
     }
-    $outcome = "$Package $(if ($installed) { $installed } else { $spec }) reinstalled on coop's Python $expectedPython (it was on $was)"
+    # Name the version now installed, not the one the move replaced (the dev
+    # VM, 2026-10-29: a pin bump read "1.0.12 reinstalled" over 1.0.13).
+    $now = Get-CoopPipxToolVersion $Package
+    $outcome = "$Package $(if ($now) { $now } elseif ($installed) { $installed } else { $spec }) reinstalled on coop's Python $expectedPython (it was on $was)"
   } elseif ($Force) {
     if ((Invoke-CoopPipx (New-PipxInstallArgs $true)) -ne 0) { return (Coop-UnitResult $false "failed to reinstall $Package ($spec)$(Get-CoopPipxFailureSuffix)") }
     $outcome = "$Package reinstalled ($spec)"
