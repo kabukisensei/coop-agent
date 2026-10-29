@@ -67,6 +67,8 @@ try {
     @{ Args = @('install', "coop-data-doc==$pinDoc"); Offline = $true; Name = 'install of a pin' },
     @{ Args = @('install', '--force', '--python', 'C:\py\python.exe', "ms-fabric-cli==$pinFab"); Offline = $true; Name = 'forced install with --python' },
     @{ Args = @('inject', 'ms-fabric-cli', "pyodbc==$pinPyodbc", '--force'); Offline = $true; Name = 'inject of a pin' },
+    @{ Args = @('install', '--suffix', '_coopnext', '--python', 'C:\py\python.exe', "coop-data-doc==$pinDoc"); Offline = $true; Name = 'interpreter-move probe (--suffix)' },
+    @{ Args = @('install', '--suffix', '_coopnext', 'coop-data-doc'); Offline = $false; Name = 'unpinned probe' },
     @{ Args = @('install', 'coop-data-doc'); Offline = $false; Name = 'unpinned (--edge) install' },
     @{ Args = @('inject', 'ms-fabric-cli', 'fabric-cicd', '--force'); Offline = $false; Name = 'unpinned inject' },
     @{ Args = @('upgrade', 'coop-data-doc'); Offline = $false; Name = 'pipx upgrade' },
