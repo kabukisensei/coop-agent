@@ -69,6 +69,14 @@
   ${endIf}
 !macroend
 
+; With customCheckAppRunning defined, allowOnlyOneInstallerInstance.nsh no
+; longer includes what its _CHECK_APP_RUNNING needs (GetProcessInfo and the
+; pid variable), so they are included here (the include dir is electron-builder's).
+!ifndef GetProcessInfo
+  !include "getProcessInfo.nsh"
+!endif
+Var pid
+
 !macro coopStep TEXT
   SetDetailsPrint both
   DetailPrint "${TEXT}"
