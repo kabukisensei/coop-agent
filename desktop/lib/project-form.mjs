@@ -201,10 +201,15 @@ export function settingsFromForm(input, base, existingNames) {
   }
 
   if (typeof input.fabricEnabled === "boolean") s.fabricEnabled = input.fabricEnabled;
+  if (typeof input.powerBiEnabled === "boolean") s.powerBiEnabled = input.powerBiEnabled;
   if (s.fabricEnabled) {
-    for (const key of ["tenantId", "fabricWorkspaceName", "fabricWorkspaceId", "sqlEndpointItemType", "sqlEndpointItemName", "sqlEndpointItemId", "sqlEndpointPropertiesId", "powerBiWorkspaceName", "powerBiWorkspaceId", "fabricLayout", "tableMappingRule", "tableMappingSchema", "tableMappingPrefix"]) take(key);
-    // The wizard lowercases the layout and the rule and keeps the prefix only for a prefix rule.
+    for (const key of ["tenantId", "fabricWorkspaceName", "fabricWorkspaceId", "sqlEndpointItemType", "sqlEndpointItemName", "sqlEndpointItemId", "sqlEndpointPropertiesId", "fabricLayout"]) take(key);
+    // The wizard lowercases the layout.
     s.fabricLayout = (s.fabricLayout || "").toLowerCase();
+  }
+  if (s.powerBiEnabled) {
+    for (const key of ["powerBiWorkspaceName", "powerBiWorkspaceId", "tableMappingRule", "tableMappingSchema", "tableMappingPrefix"]) take(key);
+    // The wizard lowercases the rule and keeps the prefix only for a prefix rule.
     s.tableMappingRule = (s.tableMappingRule || "same_name").toLowerCase();
     s.tableMappingSchema = s.tableMappingSchema || "dbo";
     if (s.tableMappingRule !== "prefix") s.tableMappingPrefix = "";

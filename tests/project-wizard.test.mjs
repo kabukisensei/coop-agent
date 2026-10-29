@@ -228,6 +228,36 @@ await t("sql_targets: the dev kind follows the machine platform and an Azure SQL
   assert.equal(projectYamlScalar(untouched, ["sql_targets", "dev", "kind"]), "", "no kind chosen: sql_targets is left alone");
 });
 
+await t("Power BI-only client (2026-10-26): No to Fabric, Yes to Power BI writes power_bi: without an empty fabric: block", () => {
+  const pbiOnly = { ...settings, fabricEnabled: false, powerBiEnabled: true, sqlTargetKind: "azure_sql", sqlTargetServer: "contoso-dev.database.windows.net", sqlTargetDatabase: "ContosoDW" };
+  const fresh = renderProjectWizardSettings(pbiOnly);
+  assert.doesNotMatch(fresh, /^fabric:/m, "no fabric: block, so the Warehouse target is not invalid");
+  assert.equal(projectYamlScalar(fresh, ["power_bi", "default_workspace_name"]), "Contoso Dev");
+  assert.equal(projectYamlScalar(fresh, ["power_bi", "table_mapping", "rule"]), "same_name");
+  assert.equal(projectYamlScalar(fresh, ["mcp", "fabric_sqlendpoint", "enabled"]), "false");
+  assert.equal(projectYamlScalar(fresh, ["tools", "fabric_cicd", "enabled"]), "false");
+  // fab and the Fabric MCP list Pro / PPU workspaces too, so they stay on.
+  assert.equal(projectYamlScalar(fresh, ["tools", "fabric_cli", "enabled"]), "true");
+  assert.equal(projectYamlScalar(fresh, ["mcp", "fabric", "enabled"]), "true");
+  assert.equal(projectYamlScalar(fresh, ["fabric_skills", "policy"]), "baseline");
+  assert.deepEqual(projectSettingsProblems({ ...pbiOnly, tableMappingRule: "bogus" }).map((p) => p.field), ["tableMappingRule"], "the mapping is checked when Power BI is on");
+  assert.deepEqual(projectSettingsProblems({ ...pbiOnly, powerBiEnabled: false, tableMappingRule: "bogus" }), [], "and not when it is off");
+  // Editing an existing Azure SQL-only contract the same way adds power_bi: only.
+  const existing = "profile:\n  client: 'Contoso'\nsql_targets:\n  dev:\n    kind: azure_sql\n    server: 'd.database.windows.net'\n    database: 'D'\n";
+  const parsed = parseProjectWizardSettings(existing, "/work");
+  assert.equal(parsed.fabricEnabled, false);
+  assert.equal(parsed.powerBiEnabled, false, "no power_bi: block and Fabric off reads as Power BI off");
+  const merged = applyProjectWizardSettings(existing, { ...parsed, repositories: [], powerBiEnabled: true, powerBiWorkspaceName: "Contoso Dev", powerBiWorkspaceId: "" });
+  assert.equal(projectYamlScalar(merged, ["power_bi", "default_workspace_name"]), "Contoso Dev");
+  assert.equal(projectYamlScalar(merged, ["power_bi", "table_mapping", "default_schema"]), "dbo");
+  assert.equal(lib.projectYamlHas(merged, ["fabric"]), false, "no fabric: block is added");
+  assert.equal(projectYamlScalar(merged, ["mcp", "fabric_sqlendpoint", "enabled"]), "false");
+  assert.equal(parseProjectWizardSettings(merged, "/work").powerBiEnabled, true, "a power_bi: block reads as Power BI on");
+  // Older contracts (Fabric on, no separate answer) keep Power BI on with Fabric.
+  assert.equal(parseProjectWizardSettings(renderProjectWizardSettings(settings), "/work").powerBiEnabled, true);
+  assert.equal(parseProjectWizardSettings("fabric:\n  tenant_id: 't'\n", "/work").powerBiEnabled, true);
+});
+
 await t("A1: the wizard writes the prod and test entries and the schema_compare lists (deployment call 2026-10-23)", () => {
   const WS2 = "44444444-4444-4444-4444-444444444444";
   const ITEM2 = "55555555-5555-5555-5555-555555555555";
@@ -383,7 +413,7 @@ await t("native wizard proposes the Azure SQL dev target on an Azure SQL machine
   const savedCoopDir = process.env.COOP_DIR;
   process.env.COOP_DIR = coopDir;
   try {
-    const confirms = [true, false, false, false, true]; // local source, add repo, Fabric, TE, write
+    const confirms = [true, false, false, false, false, true]; // local source, add repo, Fabric, Power BI, TE, write
     const labels = [];
     const ctx = {
       cwd: root,
@@ -397,7 +427,7 @@ await t("native wizard proposes the Azure SQL dev target on an Azure SQL machine
           return def;
         },
         confirm: async (_title, message) => {
-          if (_title === "Microsoft Fabric / Power BI") assert.match(message, /Azure SQL client/);
+          if (_title === "Microsoft Fabric") assert.match(message, /Azure SQL client/);
           return confirms.shift() ?? false;
         },
         select: async (_label, options) => options.find((x) => x.includes("General project")) ?? options.find((x) => x.startsWith("✓ Use this folder:")),
@@ -629,7 +659,7 @@ await t("native wizard is reachable inside Coop and creates the contract", async
   const root = isolatedRoot("coop-project-wizard-");
   mkdirSync(join(root, ".git"));
   skipIfContaminated(root);
-  const confirms = [true, false, false, false, true]; // local source, add repo, Fabric, TE, write
+  const confirms = [true, false, false, false, false, true]; // local source, add repo, Fabric, Power BI, TE, write
   const confirmTitles = [];
   let selectCount = 0;
   const ctx = {
@@ -680,7 +710,7 @@ await t("Fabric ids are looked up by name from the Azure sign-in: Enter keeps th
     const body = pages[url];
     return body ? { ok: true, json: async () => body } : { ok: false, status: 404, json: async () => ({}) };
   };
-  const confirms = [true, false, true, false, true]; // local source, add repo, Fabric YES, TE, write
+  const confirms = [true, false, true, true, false, true]; // local source, add repo, Fabric YES, Power BI YES, TE, write
   const defaults = {};
   const notes = [];
   const ctx = {
@@ -730,7 +760,7 @@ await t("Fabric ids are looked up by name from the Azure sign-in: Enter keeps th
 await t("native wizard can create a repository-free discovery project", async () => {
   const root = trackFixture(mkdtempSync(join(tmpdir(), "coop-project-discovery-")));
   skipIfContaminated(root);
-  const confirms = [false, false, false, false, true]; // no local source, add repo, Fabric, TE, write
+  const confirms = [false, false, false, false, false, true]; // no local source, add repo, Fabric, Power BI, TE, write
   const notices = [];
   const ctx = {
     cwd: root,
@@ -1043,7 +1073,7 @@ await t("C1: /setup-project below a committed root contract edits that contract 
   mkdirSync(join(client, ".coop"));
   const contract = join(client, ".coop", "project.yml");
   writeFileSync(contract, `profile:\n  organization: 'Cooptimize'\n  client: 'Contoso'\n  default_branch: 'main'\nrepositories:\n  analytics:\n    description: 'Warehouse'\n    role: 'sql'\n    local_path: 'analytics'\n    remote_name: 'origin'\n    default_branch: 'main'\ntools:\n  fabric_cli:\n    enabled: false\n  tabular_editor_cli:\n    enabled: false\n`);
-  const confirms = [false, false, false, false, true]; // edit repo, add repo, Fabric, TE, write
+  const confirms = [false, false, false, false, false, true]; // edit repo, add repo, Fabric, Power BI, TE, write
   const titles = [];
   const notes = [];
   const ctx = {
@@ -1070,8 +1100,8 @@ await t("C1: with no contract beside other repositories, /setup-project creates 
   const client = trackFixture(mkdtempSync(join(tmpdir(), "coop-c1-new-")));
   skipIfContaminated(client);
   for (const name of ["analytics", "reports"]) mkdirSync(join(client, name, ".git"), { recursive: true });
-  // home repo yes, local source yes, edit analytics no, edit reports no, add repo no, Fabric no, TE no, write yes
-  const confirms = [true, true, false, false, false, false, false, true];
+  // home repo yes, local source yes, edit analytics no, edit reports no, add repo no, Fabric no, Power BI no, TE no, write yes
+  const confirms = [true, true, false, false, false, false, false, false, true];
   const titles = [];
   const notes = [];
   const ctx = {
@@ -1107,7 +1137,7 @@ await t("C1: with no contract beside other repositories, /setup-project creates 
   const other = trackFixture(mkdtempSync(join(tmpdir(), "coop-c1-decline-")));
   skipIfContaminated(other);
   for (const name of ["analytics", "reports"]) mkdirSync(join(other, name, ".git"), { recursive: true });
-  const declined = [false, false, false, false, false, true];
+  const declined = [false, false, false, false, false, false, true]; // home repo, local source, add repo, Fabric, Power BI, TE, write
   const ctx2 = { ...ctx, cwd: join(other, "reports"), ui: { ...ctx.ui, confirm: async () => declined.shift() ?? false } };
   assert.equal(await runProjectWizard({}, ctx2), true);
   assert.ok(existsSync(join(other, "reports", ".coop", "project.yml")));
@@ -1122,7 +1152,7 @@ await t("editing through /setup-project writes a backup and keeps custom setting
   const contract = join(root, ".coop", "project.yml");
   const original = `profile:\n  organization: 'Cooptimize'\n  client: 'Contoso'\n  default_branch: 'main'\nrepositories:\n  app:\n    description: 'App'\n    role: 'generic'\n    local_path: '.'\n    remote_name: 'origin'\n    default_branch: 'main'\ncustom_section:\n  keep: 'yes'\ntools:\n  fabric_cli:\n    enabled: false\n  tabular_editor_cli:\n    enabled: false\n`;
   writeFileSync(contract, original);
-  const confirms = [false, false, false, false, true]; // edit repo, add repo, Fabric, TE, write
+  const confirms = [false, false, false, false, false, true]; // edit repo, add repo, Fabric, Power BI, TE, write
   const notes = [];
   const ctx = {
     cwd: root,

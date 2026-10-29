@@ -379,7 +379,9 @@ source does not exist here, or was never asked). The gate is the enforcement; th
 Master plan C2 (demo of 2026-10-05: "I don't want the tool to assume anything").
 The contract states the two things coop used to assume; `lib/project-contract.mjs`
 reads and writes both, and `/setup-project`, the window's Project form and
-`coop init` ask for them with the Fabric / Power BI questions.
+`coop init` ask for them with the Fabric and Power BI questions (`fabric.layout` under
+Fabric, `power_bi.table_mapping` under Power BI; the two are separate Yes/No answers,
+so a Power BI-only client gets no empty `fabric:` block).
 
 | Key | Values | Meaning |
 | --- | --- | --- |

@@ -509,7 +509,8 @@ function wizardCtx(root, { fresh = false, localSource = true } = {}) {
         if (title === "Local source folders") return localSource;
         if (title.startsWith("Repository: ")) return !fresh;
         if (title === "Repositories") return !fresh && addCount++ === 0;
-        if (title === "Microsoft Fabric / Power BI") return !fresh;
+        if (title === "Microsoft Fabric") return !fresh;
+        if (title === "Power BI") return !fresh;
         if (title === "Tabular Editor") return !fresh;
         return true; // the final "Create/Update .coop/project.yml?"
       },
@@ -534,7 +535,7 @@ const formAnswers = (data) => {
   values.client = ANSWERS.client;
   values.repositories[0] = { ...values.repositories[0], ...ANSWERS.analytics };
   values.repositories.push({ ...ANSWERS.added, isNew: true });
-  Object.assign(values, ANSWERS.fabric, ANSWERS.target, ANSWERS.te, { fabricEnabled: true, tabularEditorEnabled: true });
+  Object.assign(values, ANSWERS.fabric, ANSWERS.target, ANSWERS.te, { fabricEnabled: true, powerBiEnabled: true, tabularEditorEnabled: true });
   return formInput(values);
 };
 
@@ -558,7 +559,7 @@ await check("project form: loads the wizard's fields; dropped fields never reach
     assert.equal(shown.includes(dropped), false, `${dropped} reaches the window`);
   }
   const input = formInput(initialValues(data));
-  assert.deepEqual(Object.keys(input).sort(), ["bpaRulesPath", "client", "defaultBranch", "fabricEnabled", "fabricLayout", "fabricWorkspaceId", "fabricWorkspaceName", "namedTargets", "organization", "powerBiWorkspaceId", "powerBiWorkspaceName", "profileName", "repositories", "schemaCompareDestructive", "schemaCompareExclude", "schemaCompareRebuild", "sqlEndpointItemId", "sqlEndpointItemName", "sqlEndpointItemType", "sqlEndpointPropertiesId", "sqlTargetDatabase", "sqlTargetKind", "sqlTargetProdDatabase", "sqlTargetProdEndpointId", "sqlTargetProdItemId", "sqlTargetProdServer", "sqlTargetProdWorkspaceId", "sqlTargetServer", "sqlTargetTestDatabase", "sqlTargetTestEndpointId", "sqlTargetTestItemId", "sqlTargetTestServer", "sqlTargetTestWorkspaceId", "tableMappingPrefix", "tableMappingRule", "tableMappingSchema", "tabularEditorEnabled", "tabularEditorPath", "tenantId", "timezone"]);
+  assert.deepEqual(Object.keys(input).sort(), ["bpaRulesPath", "client", "defaultBranch", "fabricEnabled", "fabricLayout", "fabricWorkspaceId", "fabricWorkspaceName", "namedTargets", "organization", "powerBiEnabled", "powerBiWorkspaceId", "powerBiWorkspaceName", "profileName", "repositories", "schemaCompareDestructive", "schemaCompareExclude", "schemaCompareRebuild", "sqlEndpointItemId", "sqlEndpointItemName", "sqlEndpointItemType", "sqlEndpointPropertiesId", "sqlTargetDatabase", "sqlTargetKind", "sqlTargetProdDatabase", "sqlTargetProdEndpointId", "sqlTargetProdItemId", "sqlTargetProdServer", "sqlTargetProdWorkspaceId", "sqlTargetServer", "sqlTargetTestDatabase", "sqlTargetTestEndpointId", "sqlTargetTestItemId", "sqlTargetTestServer", "sqlTargetTestWorkspaceId", "tableMappingPrefix", "tableMappingRule", "tableMappingSchema", "tabularEditorEnabled", "tabularEditorPath", "tenantId", "timezone"]);
   assert.equal(platformHint("azure_sql"), "This machine is set up as an Azure SQL client, so No is the usual answer.");
   assert.equal(platformHint(""), "");
 });

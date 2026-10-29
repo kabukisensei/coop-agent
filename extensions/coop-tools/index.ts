@@ -1476,6 +1476,7 @@ export interface ProjectWizardSettings {
   defaultBranch: string;
   repositories: ProjectRepositorySettings[];
   fabricEnabled: boolean;
+  powerBiEnabled?: boolean;
   tenantId: string;
   fabricWorkspaceName: string;
   fabricWorkspaceId: string;
@@ -1774,7 +1775,11 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
     : platform === "both" || platform === "fabric"
       ? ` This machine is set up as a ${platform === "both" ? "Fabric and Azure SQL" : "Fabric"} client.`
       : "";
-  settings.fabricEnabled = await askConfirm(ctx, "Microsoft Fabric / Power BI", `Does this project use Microsoft Fabric or Power BI?${platformHint}`);
+  // Two answers (2026-10-26): the Fabric side (Warehouse / Lakehouse, the SQL
+  // endpoint) and the Power BI side (workspace, table mapping). A Power BI-only
+  // client on Pro or PPU workspaces answers No / Yes and gets no empty fabric:
+  // block, which would make the Warehouse target invalid.
+  settings.fabricEnabled = await askConfirm(ctx, "Microsoft Fabric", `Does this project use Microsoft Fabric (a Warehouse, Lakehouse or SQL database)?${platformHint}`);
   // Fabric ids are looked up by name from the Azure sign-in the launch already
   // made (lib/fabric-discovery.mjs): each id question proposes what the name
   // resolves to, and a name typed where an id is asked resolves too. Without
@@ -1817,13 +1822,8 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
       notify(ctx, PROJECT_MESSAGES.lakehouseId, "error");
       return false;
     }
-    const pbiName = await askText(ctx, "Default Power BI workspace name (optional)", settings.powerBiWorkspaceName || fwName);
-    if (pbiName === null) return false;
-    const pbiIdTyped = await askText(ctx, "Default Power BI workspace ID (optional; Enter keeps the id the name resolves to)", settings.powerBiWorkspaceId || (pbiName && pbiName === fwName ? fwId : await discovery.workspaceId(pbiName)));
-    if (pbiIdTyped === null) return false;
-    const pbiId = (await discovery.resolveWorkspace(pbiIdTyped)) || pbiIdTyped;
-    // The declared layout and mapping (C2): the contract states what coop would
-    // otherwise assume, and lineage checks it.
+    // The declared layout (C2): the contract states what coop would otherwise
+    // assume, and lineage checks it.
     const layout = await askText(ctx, `Fabric layout: which items hold the SQL (${FABRIC_LAYOUTS.join(", ")}; optional)`, settings.fabricLayout || proposedFabricLayout(endpointType, settings.sqlTargetKind));
     if (layout === null) return false;
     const layoutValue = layout.trim().toLowerCase();
@@ -1831,6 +1831,26 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
       notify(ctx, PROJECT_MESSAGES.fabricLayout, "error");
       return false;
     }
+    Object.assign(settings, {
+      tenantId: tenant,
+      fabricWorkspaceName: fwName,
+      fabricWorkspaceId: fwId,
+      sqlEndpointItemType: endpointType,
+      sqlEndpointItemName: endpointName,
+      sqlEndpointItemId: endpointId,
+      sqlEndpointPropertiesId: endpointPropertiesId,
+      fabricLayout: layoutValue,
+    });
+  }
+  settings.powerBiEnabled = await askConfirm(ctx, "Power BI", "Does this project use Power BI semantic models or reports? Yes for Pro and PPU workspaces too; no Fabric capacity is needed.");
+  if (settings.powerBiEnabled) {
+    const pbiName = await askText(ctx, "Default Power BI workspace name (optional)", settings.powerBiWorkspaceName || (settings.fabricEnabled ? settings.fabricWorkspaceName : ""));
+    if (pbiName === null) return false;
+    const pbiIdTyped = await askText(ctx, "Default Power BI workspace ID (optional; the GUID in the workspace URL; Enter keeps the id the name resolves to)", settings.powerBiWorkspaceId || (settings.fabricEnabled && pbiName && pbiName === settings.fabricWorkspaceName ? settings.fabricWorkspaceId : await discovery.workspaceId(pbiName)));
+    if (pbiIdTyped === null) return false;
+    const pbiId = (await discovery.resolveWorkspace(pbiIdTyped)) || pbiIdTyped;
+    // The declared mapping (C2): how a semantic-model table maps to the SQL
+    // object it loads; lineage checks it.
     const rule = await askText(ctx, "Semantic-model table to SQL object rule: same_name (a table is named like its view) or prefix (table <name> loads <schema>.<prefix><name>)", settings.tableMappingRule || "same_name");
     if (rule === null) return false;
     const ruleValue = rule.trim().toLowerCase();
@@ -1855,21 +1875,11 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
       }
     }
     Object.assign(settings, {
-      fabricLayout: layoutValue,
+      powerBiWorkspaceName: pbiName,
+      powerBiWorkspaceId: pbiId,
       tableMappingRule: ruleValue,
       tableMappingSchema: schema.trim(),
       tableMappingPrefix: ruleValue === "prefix" ? prefix : "",
-    });
-    Object.assign(settings, {
-      tenantId: tenant,
-      fabricWorkspaceName: fwName,
-      fabricWorkspaceId: fwId,
-      sqlEndpointItemType: endpointType,
-      sqlEndpointItemName: endpointName,
-      sqlEndpointItemId: endpointId,
-      sqlEndpointPropertiesId: endpointPropertiesId,
-      powerBiWorkspaceName: pbiName,
-      powerBiWorkspaceId: pbiId,
     });
   }
 

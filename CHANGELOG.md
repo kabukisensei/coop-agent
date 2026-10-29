@@ -5,6 +5,20 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **The project wizard asks about Fabric and Power BI separately.** The one
+  "Microsoft Fabric or Power BI?" answer turned the Fabric tools, the Warehouse
+  MCP and an empty `fabric.default_sql_endpoint` on for a Power BI-only client
+  (Pro or PPU workspaces beside Azure SQL, no Fabric capacity), so `coop doctor`
+  reported the Warehouse target as invalid. `/setup-project`, `coop init` and the
+  window's Project pane now take a Fabric answer (tenant, workspace, SQL endpoint,
+  layout) and a Power BI answer (workspace, looked up by name like the Fabric ids,
+  and the table mapping): No / Yes writes the `power_bi` block alone with
+  `mcp.fabric_sqlendpoint` and `fabric_cicd` off, while `fab` and the Fabric MCP
+  stay on because they list Power BI workspaces too. Older contracts read Power BI
+  as on when they have a `power_bi` block or Fabric on.
+
 ## [0.38.12] — 2026-10-29
 
 ### Changed
