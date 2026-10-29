@@ -71,16 +71,23 @@ if (Test-CoopMachineInstall) {
   # settings only (suite review pick 3).
   $drifted = @()
   if (-not (Test-CoopBundledToolsPending)) { $drifted = @(Get-CoopDriftedPythonTools -NoFabric:$NO_FABRIC) }
+  # --no-fabric reaches the child too (#495): the account setup leaves the Fabric CLI
+  # out of its plan, and the sync skips the Fabric runtime repair.
+  $setupArgs = @('--prereqs', 'auto', '--unattended')
+  if ($NO_FABRIC) { $setupArgs += '--no-fabric' }
   if (Test-CoopBundledToolsPending) {
     Coop-Info "Bringing this account's tools to this package's pins (version $($script:CoopVersion))"
-    $accountRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\install.ps1') @('--prereqs', 'auto', '--unattended')
+    $accountRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\install.ps1') $setupArgs
   } elseif ($drifted.Count -gt 0) {
     $names = @($drifted | ForEach-Object { "$($_.Name) ($($_.Reason), pin $($_.Pin))" }) -join ', '
     Coop-Info "Bringing this account's tools back to this package's pins: $names (version $($script:CoopVersion))"
-    $accountRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\install.ps1') @('--prereqs', 'auto', '--unattended')
+    $accountRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\install.ps1') $setupArgs
   } else {
     Coop-Info "This package's tool pins are already installed for this account; refreshing extensions and settings (version $($script:CoopVersion))"
+    $priorSkipFabricSync = $env:COOP_SKIP_FABRIC_SYNC
+    if ($NO_FABRIC) { $env:COOP_SKIP_FABRIC_SYNC = '1' }
     $accountRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\sync.ps1')
+    if ($null -eq $priorSkipFabricSync) { Remove-Item Env:COOP_SKIP_FABRIC_SYNC -ErrorAction SilentlyContinue } else { $env:COOP_SKIP_FABRIC_SYNC = $priorSkipFabricSync }
   }
   if ($accountRc -eq 0) { Set-CoopBundledSetupDone }
   else { Coop-Warn "this account's setup did not finish (the lines above say which tool); run: coop doctor" }

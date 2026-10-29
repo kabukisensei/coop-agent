@@ -231,6 +231,71 @@ try {
     assert.equal(lc.editGateDecision(repo, file, "", { liveTarget: false, now: NOW }).action, "allow");
     lc.clearContext();
   });
+
+  await t("a partial snapshot keeps what it found but is no full hit (#494)", () => {
+    const repo = join(tmp, "partial");
+    contract(repo);
+    const folder = join(repo, ".coop", "catalog", "dev");
+    const file = join(repo, "sql", "dbo", "Orders.sql");
+    mkdirSync(join(repo, "sql", "dbo"), { recursive: true });
+    writeFileSync(file, "CREATE TABLE dbo.Orders ([OrderId] int)");
+    const writeManifest = (extra) => writeFileSync(join(folder, "manifest.json"), JSON.stringify({ coop_catalog_snapshot: true, schema_version: 1, taken_at: "2026-10-05T22:00:00Z", objects: {}, files: [], ...extra }));
+    const cases = [
+      [{ files: ["dbo/Orders.sql", "dbo/Dependent.sql"] }, /1 file\(s\) the manifest lists are missing \(dbo\/Dependent\.sql\)/],
+      [{ unavailable: ["definitions"] }, /unavailable on the target: definitions/],
+      [{ truncated: { schemas: false, objects: true, columns: false } }, /its objects list was cut at the snapshot cap/],
+      [{ skipped: ["dbo.Dependent"] }, /1 object\(s\) skipped/],
+      [{ oversized: ["dbo.usp_Huge"] }, /1 definition\(s\) too long to keep/],
+    ];
+    for (const [extra, reason] of cases) {
+      lc.clearContext();
+      rmSync(folder, { recursive: true, force: true });
+      snapshot(folder);
+      writeManifest(extra);
+      const scan = lc.snapshotLineage(repo, "dbo.Orders", NOW);
+      assert.equal(scan.state, "ok");
+      assert.match(scan.gaps.join("; "), reason);
+      assert.equal(scan.found.downstream.length, 2, "known dependents are kept");
+      const prepared = lc.prepareEditContext(repo, file, "", { now: NOW });
+      assert.equal(prepared.entry.sources.snapshot, "partial");
+      assert.equal(lc.entryCoversEdit(prepared.entry, { liveTarget: true }), false, "a live lookup is still owed");
+      assert.equal(lc.entryCoversEdit(prepared.entry, { liveTarget: false }), true, "no live target: the edit goes on, with the limit stated");
+      const gate = lc.editGateDecision(repo, file, "", { liveTarget: true, now: NOW });
+      assert.equal(gate.action, "block");
+      assert.match(gate.reason, /snapshot partial/);
+      // The state survives the session store and reaches the summary and /impact.
+      const held = lc.getEntry("dbo.Orders");
+      assert.match(held.gaps.snapshot.join("; "), reason);
+      assert.match(lc.summaryLine(held), /The catalog snapshot is partial \(.+\), so dependents may be missing\./);
+      assert.ok(lc.detailLines(held).some((line) => line.startsWith("snapshot coverage: partial (")));
+      // The live answer settles it.
+      lc.recordLineage("dbo.Orders", "live", { kind: "table", columns: [], downstream: [] });
+      assert.equal(lc.editGateDecision(repo, file, "", { liveTarget: true, now: NOW }).action, "allow");
+      assert.doesNotMatch(lc.summaryLine(lc.getEntry("dbo.Orders")), /partial/);
+    }
+    // Stale and partial: both are said.
+    lc.clearContext();
+    writeManifest({ taken_at: "2026-09-01T00:00:00Z", skipped: ["dbo.Dependent"] });
+    const stale = lc.prepareEditContext(repo, file, "", { now: NOW });
+    assert.equal(stale.entry.sources.snapshot, "stale");
+    assert.match(lc.summaryLine(stale.entry), /partial \(1 object\(s\) skipped\), so dependents may be missing and it is older than max_age_days/);
+    // More files than the scan reads: partial, and no file is called missing.
+    lc.clearContext();
+    writeManifest({ files: ["dbo/Orders.sql"] });
+    mkdirSync(join(folder, "zz"), { recursive: true });
+    for (let i = 0; i < 5000; i++) writeFileSync(join(folder, "zz", `t${i}.sql`), "");
+    const capped = lc.snapshotLineage(repo, "dbo.Orders", NOW);
+    assert.deepEqual(capped.gaps, ["more than 5000 files: only the first 5000 were read"]);
+    rmSync(join(folder, "zz"), { recursive: true, force: true });
+    // A whole snapshot whose manifest lists every file it has is an ordinary hit.
+    lc.clearContext();
+    writeManifest({ files: ["dbo/Orders.sql", "dbo/usp_Refresh.sql", "dbo/vw_Unrelated.sql", "rpt/vw_SalesByRegion.sql"], truncated: { schemas: false, objects: false, columns: false }, unavailable: [], skipped: [], oversized: [] });
+    const whole = lc.prepareEditContext(repo, file, "", { now: NOW });
+    assert.equal(whole.entry.sources.snapshot, "hit");
+    assert.equal(whole.entry.gaps, undefined);
+    assert.doesNotMatch(lc.summaryLine(whole.entry), /partial/);
+    lc.clearContext();
+  });
 } finally {
   rmSync(tmp, { recursive: true, force: true });
 }
