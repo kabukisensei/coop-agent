@@ -128,9 +128,14 @@ function Use-CoopBundledWheels([string[]]$PipxArgs) {
   if (-not $wheels -or $env:COOP_PIP_ONLINE -eq '1' -or -not (Test-Path -LiteralPath $wheels -PathType Container)) { return $null }
   $a = @($PipxArgs)
   if ($a.Count -lt 2 -or @('install', 'inject') -notcontains $a[0]) { return $null }
+  # Options that take the next word as their value: that word is never a
+  # package. `--suffix _coopnext` (the #441 interpreter-move probe) read as a
+  # spec sent sqlsc's probe to PyPI, where sqlsc is not published, so the first
+  # launch never finished (the dev VM, 2026-10-29). `--opt=value` is one word.
+  $valued = @('--python', '--suffix', '--pip-args', '--index-url', '-i', '--preinstall', '--backend')
   $positional = @()
   for ($i = 1; $i -lt $a.Count; $i++) {
-    if ($a[$i] -eq '--python') { $i++; continue }
+    if ($valued -contains [string]$a[$i]) { $i++; continue }
     if ([string]$a[$i] -like '-*') { continue }
     $positional += [string]$a[$i]
   }
