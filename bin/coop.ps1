@@ -1122,6 +1122,7 @@ function Invoke-CoopDesktop {
     # window opens in seconds instead of minutes (suite review pick 3).
     Coop-Head 'New coop version: refreshing this account'
     Coop-Info 'the tool pins are the ones already installed here, so only the extensions and settings are refreshed; the window opens once that finishes'
+    Set-CoopSetupPhase 1 1 "Refreshing this account for coop $($script:CoopVersion)" 'the extensions and settings; the tools installed here are already current'
     $setupRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\sync.ps1')
     if ($setupRc -ne 0) {
       Coop-Warn ('the refresh did not finish (the lines above say why; they are also in ' + (Join-Path (Get-CoopProfileDir) 'desktop\launch.log') + '). The window opens anyway; the next launch tries again, or run: coop doctor')
@@ -1142,6 +1143,7 @@ function Invoke-CoopDesktop {
     } else {
       Coop-Info 'anything still missing is installed below with winget (Windows may ask for permission); the window opens once setup finishes'
     }
+    Set-CoopSetupPhase 0 8 "Setting up coop $($script:CoopVersion) for this account" 'starting the setup'
     $setupRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\install.ps1') @('--prereqs', 'auto', '--unattended')
     if ($setupRc -ne 0) {
       # Not the end of the launch (the dev VM, 2026-10-20: three tool installs
@@ -1155,6 +1157,7 @@ function Invoke-CoopDesktop {
       Set-CoopBundledSetupDone
     }
   }
+  if ($env:COOP_BOOT_STATUS -and $env:COOP_BOOT_PHASE) { Set-CoopSetupPhase 0 0 'Opening the coop window' 'the launch checks and the Warehouse sign-in' }
   if (-not (Test-Have 'pi')) { Coop-Die 'pi is not installed. Run: coop install   (installs the release''s tested Pi)' }
   # The window starts node directly (no shell), so on Windows only node.exe will do.
   $nodeCmd = Get-Command node -CommandType Application -ErrorAction SilentlyContinue |

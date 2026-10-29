@@ -840,6 +840,21 @@ pre.output.build-log { max-height: 220px; font-size: 12px; white-space: pre-wrap
 .picker-foot { display: flex; align-items: center; gap: 8px; }
 .picker-spacer { flex: 1; }
 
+/* ---------- the first launch's progress (setup.html) ---------- */
+.setup-now { display: flex; flex-direction: column; gap: 8px; }
+.setup-step { margin: 0; font-weight: 600; color: var(--text-strong); }
+.setup-detail { margin: 0; color: var(--text); overflow-wrap: anywhere; min-height: 1.4em; }
+.setup-elapsed { margin: 0; color: var(--text-muted); font-size: 12px; }
+.setup-bar { position: relative; height: 8px; border-radius: 4px; background: var(--surface); border: 1px solid var(--border); overflow: hidden; }
+.setup-bar > span { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--accent); transition: width 0.4s ease; }
+.setup-bar.indeterminate > span { width: 30%; animation: setup-slide 1.6s ease-in-out infinite; }
+@keyframes setup-slide { from { left: -30%; } to { left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .setup-bar.indeterminate > span { animation: none; left: 0; width: 100%; opacity: 0.4; } .setup-bar > span { transition: none; } }
+.setup-lines { flex: 1; margin: 0; padding: 8px 10px; min-height: 6em; overflow: auto; font-family: var(--font-mono); font-size: 11px; line-height: 1.5; color: var(--text-muted); background: var(--code-bg); border: 1px solid var(--border); border-radius: var(--radius); white-space: pre-wrap; overflow-wrap: anywhere; }
+.setup-note { color: var(--text-muted); font-size: 12px; }
+[data-style="retro"] .setup-bar { border-radius: 0; }
+[data-style="retro"] .setup-lines { border-radius: 0; }
+
 /* ---------- tab strip (several sessions at once; tabs.html) ----------
    34px tall: main.mjs TAB_STRIP_HEIGHT places the tab's page right under it. */
 .strip-body { background: var(--panel); }

@@ -59,6 +59,9 @@ contextBridge.exposeInMainWorld("coop", Object.freeze({
   pickerChoose: () => ipcRenderer.invoke("coop:picker-choose"),
   pickerCancel: () => ipcRenderer.invoke("coop:picker-cancel"),
   pickerTheme: () => ipcRenderer.invoke("coop:picker-theme"),
+  // The first launch's progress window (setup.html): its state, then a push twice a second.
+  setupState: () => ipcRenderer.invoke("coop:setup-state"),
+  onSetupStatus: listen("coop:setup-status"),
   pickFolder: (purpose, current) => ipcRenderer.invoke("coop:pick-folder", String(purpose || ""), String(current || "")),
   docsStart: () => ipcRenderer.invoke("coop:docs-start"),
   docsState: () => ipcRenderer.invoke("coop:docs-state"),

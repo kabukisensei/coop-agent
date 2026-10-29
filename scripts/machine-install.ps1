@@ -371,6 +371,7 @@ function Invoke-CoopMachineInstall {
     Coop-MachineOk "standards folder for every account: $standards"
   } catch { Coop-MachineFail "could not open the standards folder to every account: $($_.Exception.Message)" }
   # 4b. older per-account packages, in every profile
+  Coop-MachineInfo 'looking for older per-account copies of coop in every account'
   Remove-CoopPerUserPackages (Join-Path $env:SystemDrive 'Users')
   # 4c. the ODBC driver for every account: the one machine prerequisite, so no
   #     account's first launch needs an administrator.
@@ -380,7 +381,7 @@ function Invoke-CoopMachineInstall {
       $odbc = Get-CoopBundledOdbcInstallers $dir
       if (-not $odbc) { Coop-MachineInfo 'this package carries no ODBC driver installer; live SQL needs Microsoft ODBC Driver 18 for SQL Server installed by an administrator' }
       else {
-        Coop-MachineInfo "installing ODBC Driver $($odbc.Version) for SQL Server with its VC++ runtime for every account (accepts Microsoft's license for the driver)"
+        Coop-MachineInfo "installing ODBC Driver $($odbc.Version) for SQL Server with its VC++ runtime for every account (accepts Microsoft's license for the driver; about a minute)"
         Install-CoopMachineOdbc $odbc
         Coop-MachineOk "ODBC Driver $($odbc.Version) for SQL Server installed for every account"
       }
@@ -390,6 +391,7 @@ function Invoke-CoopMachineInstall {
   try {
     Register-CoopUpdateTask $TaskName (Get-CoopUpdateTaskXml $dir $machine $psExe $TaskName) $machine
     if (-not (Get-CoopRegisteredTaskXml $TaskName)) { throw "schtasks reported success but `"$TaskName`" is not registered" }
+    Coop-MachineOk "the scheduled task `"$TaskName`" installs each new release overnight"
   } catch { Coop-MachineFail "could not register the scheduled task: $($_.Exception.Message)" }
 }
 

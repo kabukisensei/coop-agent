@@ -32,7 +32,22 @@
 ;                     upgrade (the new installer runs this uninstaller with
 ;                     --updated) keeps everything: the new version installs
 ;                     into the same folder and re-runs the machine step (D1k).
+;   customCheckAppRunning   electron-builder's own "is coop running" check,
+;                     with the installer's step lines around it (below).
 ;   customWelcomePage / customFinishPage   what the installer says.
+;
+; What the installer says while it works (Aaron 2026-10-29: the install takes
+; minutes and showed only a bar). electron-builder's install section starts
+; with SetDetailsPrint none, so on its own the page names no step at all.
+; coopStep shows a step on the status line above the bar, then sends
+; electron-builder's own lines to the details list only (never shown:
+; ShowInstDetails nevershow), so the step stays readable; step 3 shows each of
+; machine-install.ps1's lines (nsExec::ExecToLog) on the status line instead:
+;   Step 1 of 3  closing coop if it is open (customCheckAppRunning)
+;   Step 2 of 3  the previous version's files out, this version's in: the
+;                longest step (electron-builder's uninstallOldVersion and
+;                installApplicationFiles; no hook between them)
+;   Step 3 of 3  machine-install.ps1 (customInstall), each of its lines shown
 ;
 ; ${APP_GUID} is electron-builder's uninstall key for this appId (the same in
 ; every mode); $installMode is "all" for a per-machine install (multiUser.nsh).
@@ -54,9 +69,30 @@
   ${endIf}
 !macroend
 
+!macro coopStep TEXT
+  SetDetailsPrint both
+  DetailPrint "${TEXT}"
+  SetDetailsPrint listonly
+!macroend
+
+!macro customCheckAppRunning
+  !ifndef BUILD_UNINSTALLER
+    !insertmacro coopStep "Step 1 of 3: checking that coop is not running"
+  !endif
+  !insertmacro IS_POWERSHELL_AVAILABLE
+  !insertmacro _CHECK_APP_RUNNING
+  !ifndef BUILD_UNINSTALLER
+    ${if} ${FileExists} "$INSTDIR\Uninstall coop.exe"
+      !insertmacro coopStep "Step 2 of 3: replacing coop's program files with this version's (the longest step: several minutes)"
+    ${else}
+      !insertmacro coopStep "Step 2 of 3: copying coop's program files: the window, Node.js, Pi, Python, Git, the Azure CLI (the longest step: several minutes)"
+    ${endIf}
+  !endif
+!macroend
+
 !macro customWelcomePage
   !define MUI_WELCOMEPAGE_TITLE "coop"
-  !define MUI_WELCOMEPAGE_TEXT "coop installs once for every account on this computer.$\r$\n$\r$\nEach Windows account keeps its own client's sessions, memory and backups under its user folder.$\r$\n$\r$\nUpdates install themselves overnight.$\r$\n$\r$\nClick Next to continue."
+  !define MUI_WELCOMEPAGE_TEXT "coop installs once for every account on this computer.$\r$\n$\r$\nEach Windows account keeps its own client's sessions, memory and backups under its user folder.$\r$\n$\r$\nUpdates install themselves overnight.$\r$\n$\r$\nInstalling takes several minutes, and the first time each account opens coop it sets up that account's tools for a few more; a window shows each step.$\r$\n$\r$\nClick Next to continue."
   !insertmacro MUI_PAGE_WELCOME
 !macroend
 
@@ -105,7 +141,8 @@
   ; The folder, for the next installer and for coop doctor (v0.37.0 wrote none).
   WriteRegStr SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_GUID}" "InstallLocation" "$INSTDIR"
   ${if} $installMode == "all"
-    DetailPrint "setting up coop for every account: the coop command, the update task, older per-account copies"
+    !insertmacro coopStep "Step 3 of 3: setting up coop for every account (the coop command, the SQL Server ODBC driver, the update task, older per-account copies)"
+    SetDetailsPrint both
     !insertmacro coopPowerShell $R9
     nsExec::ExecToLog '"$R9" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\coop\scripts\machine-install.ps1" -InstallDir "$INSTDIR"'
     Pop $0

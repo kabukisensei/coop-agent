@@ -30,6 +30,7 @@ Coop-Ok 'coop launchers and scripts are runnable'
 
 # --- 2. Isolated Pi agent dir + shared credentials ---------------------------
 Coop-Head 'Isolated Pi agent dir'
+Set-CoopSetupDetail 'the isolated Pi agent folder'
 New-Item -ItemType Directory -Force -Path $PI_AGENT | Out-Null
 Coop-Ok "coop Pi agent dir: $PI_AGENT"
 foreach ($f in @('auth.json', 'models.json')) {
@@ -131,6 +132,7 @@ if ($desktopState -eq 'stale') {
 # The Warehouse target follows the folder sync runs in; every launch rewrites it
 # for its own folder (Update-CoopManagedMcpConfig), so sync's choice is not final.
 $MCP_DST = Join-Path $PI_AGENT 'mcp-adapter.json'
+Set-CoopSetupDetail 'the MCP server settings'
 switch (Update-CoopManagedMcpConfig -OutputPath $MCP_DST) {
   'ok' { Coop-Ok "generated manifest-pinned MCP config -> $MCP_DST" }
   'no_python' { Coop-Warn 'python missing — cannot generate MCP config' }
@@ -140,6 +142,7 @@ switch (Update-CoopManagedMcpConfig -OutputPath $MCP_DST) {
 # --- 5b. Team knowledge (optional; fail-soft — never blocks sync) -------------
 if (Test-CoopKnowledgeEnabled) {
   Coop-Head 'Team knowledge'
+  Set-CoopSetupDetail 'team knowledge'
   & (Join-Path $script:CoopRoot 'scripts\sync-knowledge.ps1')
 }
 
@@ -175,6 +178,7 @@ if ($teamaiPy) {
 # F2: the standards live once on this machine (<machine dir>\standards) when that
 # folder can be made; without elevation the attempt fails quietly and this user's
 # profile folder keeps them. No prompt, no warning: both places work.
+Set-CoopSetupDetail 'the Cooptimize SQL, DAX and model standards'
 $standardsLoc = Get-CoopStandardsLocation
 if ($standardsLoc.Tier -eq 'client') {
   try { New-Item -ItemType Directory -Force -Path (Join-Path (Get-CoopMachineProfileDir) 'standards') -ErrorAction Stop | Out-Null } catch { }
@@ -190,6 +194,7 @@ if (Test-Have 'node') {
 }
 
 # --- 5d. Official Microsoft skills catalog (fail-soft; launch uses LKG only) --
+Set-CoopSetupDetail 'the Microsoft skills catalog'
 $mcpPy = Get-CoopPython
 if ($mcpPy) {
   & $mcpPy (Join-Path $script:CoopRoot 'lib\microsoft_skills.py') refresh *> $null
@@ -201,6 +206,7 @@ if ($mcpPy) {
 
 # --- 6. Brand assets ---------------------------------------------------------
 Coop-Head 'Brand assets'
+Set-CoopSetupDetail 'the theme and splash'
 if (Test-Path -LiteralPath (Join-Path $script:CoopRoot 'extensions\coop-powerline\assets\splash.ansi') -PathType Leaf) { Coop-Ok 'splash present' } else { Coop-Warn 'splash.ansi missing (regenerate from the logo)' }
 if (Test-Path -LiteralPath (Join-Path $script:CoopRoot 'themes\cooptimize.json') -PathType Leaf) { Coop-Ok 'theme present' } else { Coop-Warn 'themes/cooptimize.json missing' }
 $vibesDir = Join-Path $script:CoopRoot 'vibes'

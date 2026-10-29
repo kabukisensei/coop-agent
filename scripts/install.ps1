@@ -210,6 +210,7 @@ Coop-Head "Cooptimize agent bootstrap (v$($script:CoopVersion))  [$OS]"
 # Check every prerequisite before installing anything. A missing required row
 # stops here with the exact command, instead of failing several steps later.
 Coop-Head '1/8  Prerequisites'
+Set-CoopSetupPhase 1 8 'Checking the prerequisites' 'Git, Python, Node.js and the other tools coop needs'
 $prereqRows = Get-CoopPrereqs $NO_FABRIC
 $prereqMissing = Show-CoopPrereqs $prereqRows
 # The command that re-runs this install. A first install stops here, before step 6
@@ -282,6 +283,7 @@ if ($gatePython -and [System.IO.Path]::IsPathRooted($gatePython)) {
 # hiding the cursor and the first loop still reaches the finally.
 try {
   Coop-ProgBegin $TOTAL
+  Set-CoopSetupDetail 'pipx, which installs coop''s Python tools'
   Install-Unit 'pipx' $script:CoopConvergeUnit @($script:CoopCommonPath, 'Invoke-CoopPipxBootstrap', @{}) -Verify $VerifyPipx
   Add-CoopUserPaths    # make a just-installed pipx + its tool-bin visible this run
 
@@ -295,6 +297,7 @@ try {
   # --- 2. Pi itself ----------------------------------------------------------
   # Same busy guard as update: never converge Pi in place under a running session.
   Coop-Head "2/8  Pi ($($PLAN.PiPackage))"
+  Set-CoopSetupPhase 2 8 'Installing Pi, the agent coop runs on' "$($PLAN.PiPackage) $($PLAN.PiPin)"
   if (Test-CoopPiConvergeAllowed 'coop install') {
     Install-Unit "pi ($($PLAN.PiPackage))" $script:CoopConvergeUnit @($script:CoopCommonPath, 'Invoke-CoopPiConverge', @{ Package = $PLAN.PiPackage; Pin = $PLAN.PiPin; Edge = $EDGE; Force = $FORCE })
   } else {
@@ -305,6 +308,7 @@ try {
 
   # --- 3. Microsoft Fabric CLI ----------------------------------------------
   Coop-Head '3/8  Microsoft Fabric CLI'
+  Set-CoopSetupPhase 3 8 'Installing the Microsoft Fabric CLI' $(if ($PLAN.Fabric) { "$($PLAN.Fabric.Name) $($PLAN.Fabric.Pin), with its Python libraries" } else { 'skipped (--no-fabric)' })
   if (-not $PLAN.Fabric) { Coop-Info 'skipping Microsoft Fabric CLI (--no-fabric)' }
   else {
     Install-Unit 'Microsoft Fabric CLI' $script:CoopConvergeUnit @($script:CoopCommonPath, 'Invoke-CoopFabricCliConverge', @{ Package = $PLAN.Fabric.Name; Pin = $PLAN.Fabric.Pin; Edge = $EDGE; Force = $FORCE; Python = $fabricPython; FetchPython = $fabricFetchPython; Command = 'coop install' })
@@ -317,12 +321,20 @@ try {
 
   # --- 4. Python tools (pipx) -----------------------------------------------
   Coop-Head '4/8  Coop tools (pipx)'
+  Set-CoopSetupPhase 4 8 'Installing coop''s Python tools'
+  $toolCount = @($PLAN.PythonTools).Count
+  $toolIndex = 0
   foreach ($tool in $PLAN.PythonTools) {
-    Install-Unit $tool.Name $script:CoopConvergeUnit @($script:CoopCommonPath, 'Invoke-CoopPipxConverge', @{ Package = $tool.Name; Pin = $tool.Pin; Edge = $EDGE; Force = $FORCE })
+    $toolIndex++
+    # "Python tools (3 of 7): coop-sql-source-control 1.0.12": the console line and the window's.
+    $toolLabel = "Python tools ($toolIndex of $toolCount): $($tool.Name) $($tool.Pin)".TrimEnd()
+    Set-CoopSetupDetail $toolLabel
+    Install-Unit $toolLabel $script:CoopConvergeUnit @($script:CoopCommonPath, 'Invoke-CoopPipxConverge', @{ Package = $tool.Name; Pin = $tool.Pin; Edge = $EDGE; Force = $FORCE })
   }
 
   # --- 5. Power BI / Fabric authoring tools (npm) ----------------------------
   Coop-Head '5/8  Power BI / Fabric authoring tools'
+  Set-CoopSetupPhase 5 8 'Installing the Power BI and Fabric authoring tools' ((@($PLAN.NpmTools | ForEach-Object { "$($_.Name) $($_.Pin)".TrimEnd() })) -join ', ')
   Install-Unit 'Power BI/Fabric authoring tools' $script:CoopConvergeUnit @($script:CoopCommonPath, 'Invoke-CoopNpmToolsConverge', @{ Names = [string[]]@($PLAN.NpmTools | ForEach-Object { $_.Name }); Pins = [string[]]@($PLAN.NpmTools | ForEach-Object { $_.Pin }); Edge = $EDGE; Force = $FORCE })
 }
 finally {
@@ -331,6 +343,7 @@ finally {
 
 # --- 6. Put `coop` on PATH ---------------------------------------------------
 Coop-Head "6/8  Link 'coop' onto your PATH"
+Set-CoopSetupPhase 6 8 'Putting the coop command on your PATH'
 $LOCALBIN = Join-Path $env:LOCALAPPDATA 'coop\bin'
 New-Item -ItemType Directory -Force -Path $LOCALBIN | Out-Null
 # Drop a launcher .cmd that forwards to the repo's coop.cmd shim, so `coop` works
@@ -477,9 +490,11 @@ try {
 # the Windows account's name and the defaults instead, and says so.
 if (-not [Console]::IsInputRedirected -and $env:COOP_NO_ONBOARD -ne '1') {
   Coop-Head '7/8  Personalize Coop'
+  Set-CoopSetupPhase 7 8 'Personalizing coop for this account'
   Invoke-CoopMaybeOnboard
 } elseif ($PREREQS_AUTO -and $env:COOP_NO_ONBOARD -ne '1' -and (Test-CoopOnboardingMissing)) {
   Coop-Head '7/8  Personalize Coop'
+  Set-CoopSetupPhase 7 8 'Personalizing coop for this account'
   Invoke-CoopDefaultOnboard
 }
 # --platform is kept even when onboarding did not run (non-interactive or
@@ -497,6 +512,7 @@ if ($env:COOP_CLIENT_PLATFORM -and ((Get-CoopClientPlatform) -cne $env:COOP_CLIE
 
 # --- 8. Sync (extensions), model sign-in, and doctor ---------------------------------------
 Coop-Head '8/8  Sync extensions and assets, sign in, and run doctor'
+Set-CoopSetupPhase 8 8 'Installing coop''s extensions and checking the setup' 'the isolated Pi agent folder, then each extension at its release version'
 $priorSkipFabricSync = $env:COOP_SKIP_FABRIC_SYNC
 $env:COOP_SKIP_FABRIC_SYNC = '1' # Fabric was converged (or explicitly skipped) above.
 # The sync child is the ONE extension convergence path (Sync-CoopExtensionFleet):
@@ -544,6 +560,7 @@ $doctorRc = 0
 if ($UNATTENDED -and $script:InstallFailures -eq 0) {
   Coop-Ok 'every setup step passed (run: coop doctor   for the full report)'
 } else {
+  Set-CoopSetupDetail 'coop doctor: checking every tool'
   $doctorRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\doctor.ps1')
 }
 
