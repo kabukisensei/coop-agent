@@ -242,6 +242,21 @@ function New-Machine {
   if ($LASTEXITCODE -ne 0 -or -not ((Test-Path -LiteralPath (Join-Path $venv 'Scripts\python.exe')) -or (Test-Path -LiteralPath (Join-Path $venv 'bin/python')))) {
     throw "could not create the Fabric venv fixture under $venv with $bootPy"
   }
+  # When the scripts' pick is this machine's own python3 stub (a host with no
+  # python3.12/3.13 on the machine PATH: ubuntu-latest moved /usr/bin to 3.14,
+  # 2026-11-02), the stub forwards to $realPy and the venv records $realPy's
+  # folder. Record the stub instead, as a real python3 would have recorded
+  # itself, so the environment is on the Python the convergence expects.
+  $norm = { param($p) ([string]$p -replace '[\\/]+', '/').TrimEnd('/') }
+  if ((& $norm (Split-Path -Parent $bootPy)) -eq (& $norm $bin)) {
+    $cfgPath = Join-Path $venv 'pyvenv.cfg'
+    $cfgLines = @([System.IO.File]::ReadAllLines($cfgPath) | ForEach-Object {
+      if ($_ -match '^\s*home\s*=') { "home = $bin" }
+      elseif ($_ -match '^\s*executable\s*=') { "executable = $bootPy" }
+      else { $_ }
+    })
+    [System.IO.File]::WriteAllText($cfgPath, (($cfgLines -join "`n") + "`n"), $utf8)
+  }
   return [pscustomobject]@{ Dir = $d; Bin = $bin; Agent = $agent; Marker = $marker; Home = $mHome; PipxState = $pipxState; FabricPython = $bootPy }
 }
 # Rewrite what the stub pipx reports (a machine whose tool drifted after install).
