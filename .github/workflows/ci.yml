@@ -73,6 +73,12 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '22.23.4'
+      # coop supports Python 3.10-3.13 (3.12 recommended). Pin it, as extended.yml
+      # does, so a runner image whose only python3 is newer (3.14 from 2026-11-02)
+      # does not turn doctor's Python prerequisite row red in the fixtures.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
       - name: esbuild check of every extension (mirrors how Pi loads .ts extensions)
         run: |
           for f in extensions/*/index.ts; do
