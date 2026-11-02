@@ -5,6 +5,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Pins.** coop-sql-source-control 1.0.14, coop-schema-compare 0.1.10 and
+  coop-data-doc 1.4.5. sqlsc: a multiline column `DEFAULT` edit is planned as
+  a default replacement, not skipped as a column-order change (#74).
+  schema-compare: a name the two sides spell only in other letter case
+  compares as unknown, never a CREATE plus a DROP (#38). data-doc: `--` or `//`
+  inside a quoted DAX table name no longer drops that lineage (#90). The
+  sourced sqlsc wheel's tag, asset and SHA-256 follow the v1.0.14 release.
+
 ### Fixed
 
 - **The project wizard asks about Fabric and Power BI separately.** The one
