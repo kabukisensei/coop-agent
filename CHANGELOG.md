@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.38.13] — 2026-11-02
+
 ### Changed
 
 - **Pins.** coop-sql-source-control 1.0.14, coop-schema-compare 0.1.10 and
