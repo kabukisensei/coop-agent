@@ -611,6 +611,33 @@ await check("project form: the same answers write the same file as /setup-projec
   assert.ok(model.hunks.flatMap((h) => h.lines).some((l) => l.type === "add" && l.text.includes("Contoso")));
 });
 
+await check("project form: saving a Power BI-only project keeps Fabric off (#499)", async () => {
+  const lib = await import("../lib/project-contract.mjs");
+  const text = lib.renderProjectWizardSettings({
+    ...lib.parseProjectWizardSettings("", "/synthetic/analytics"),
+    fabricEnabled: false, powerBiEnabled: true, powerBiWorkspaceName: "Demo Dev",
+    powerBiWorkspaceId: "11111111-1111-1111-1111-111111111111",
+    sqlTargetKind: "azure_sql", sqlTargetServer: "demo.database.windows.net", sqlTargetDatabase: "Demo",
+    tableMappingRule: "same_name",
+  });
+  const root = projectFixture("pbi-only", text);
+  const data = loadProject(root, { env: process.env });
+  const values = initialValues(data);
+  assert.equal(values.fabricEnabled, false, "the pane opens with Fabric off");
+  assert.equal(values.powerBiEnabled, true);
+  values.timezone = "UTC";
+  const input = formInput(values);
+  const preview = previewProject(root, input, { env: process.env });
+  assert.deepEqual(preview.problems, []);
+  saveProject(root, input, preview.token, { env: process.env });
+  const written = readFileSync(join(root, ".coop", "project.yml"), "utf8");
+  assert.doesNotMatch(written, /^fabric:/m, "no fabric: block appears");
+  assert.equal(projectYamlScalar(written, ["mcp", "fabric_sqlendpoint", "enabled"]), "false");
+  assert.equal(projectYamlScalar(written, ["tools", "fabric_cicd", "enabled"]), "false");
+  assert.equal(projectYamlScalar(written, ["tools", "fabric_cli", "enabled"]), "true", "fab stays on for Power BI");
+  assert.equal(loadProject(root, { env: process.env }).settings.fabricEnabled, false);
+});
+
 await check("project form: named target sets and the destructive setting round-trip through the pane", () => {
   const root = projectFixture("named", ORIGINAL);
   const data = loadProject(root, { env: process.env });

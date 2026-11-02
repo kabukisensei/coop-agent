@@ -17,7 +17,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   and the table mapping): No / Yes writes the `power_bi` block alone with
   `mcp.fabric_sqlendpoint` and `fabric_cicd` off, while `fab` and the Fabric MCP
   stay on because they list Power BI workspaces too. Older contracts read Power BI
-  as on when they have a `power_bi` block or Fabric on.
+  as on when they have a `power_bi` block or Fabric on. Reopening a Power BI-only
+  project reads Fabric from the Fabric-only switches (`mcp.fabric_sqlendpoint`,
+  `fabric_cicd`), not from the shared `fab` switch, so saving it no longer turns
+  Fabric back on (#499); a contract with neither switch keeps the old reading.
 
 ## [0.38.12] — 2026-10-29
 

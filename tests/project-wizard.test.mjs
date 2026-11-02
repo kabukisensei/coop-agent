@@ -258,6 +258,45 @@ await t("Power BI-only client (2026-10-26): No to Fabric, Yes to Power BI writes
   assert.equal(parseProjectWizardSettings("fabric:\n  tenant_id: 't'\n", "/work").powerBiEnabled, true);
 });
 
+await t("#499: the Fabric and Power BI answers survive render -> parse -> apply -> parse", () => {
+  const base = { ...settings, sqlTargetKind: "azure_sql", sqlTargetServer: "demo.database.windows.net", sqlTargetDatabase: "Demo", tableMappingRule: "same_name" };
+  for (const [fabricEnabled, powerBiEnabled] of [[false, true], [true, false], [true, true], [false, false]]) {
+    const label = `fabric ${fabricEnabled}, power bi ${powerBiEnabled}`;
+    const first = renderProjectWizardSettings({ ...base, fabricEnabled, powerBiEnabled });
+    const loaded = parseProjectWizardSettings(first, "/synthetic/analytics");
+    assert.equal(loaded.fabricEnabled, fabricEnabled, `${label}: Fabric read back`);
+    assert.equal(loaded.powerBiEnabled, powerBiEnabled || fabricEnabled, `${label}: Power BI read back`);
+    // A no-change save from the Project pane changes nothing about the answers.
+    const second = applyProjectWizardSettings(first, loaded);
+    for (const path of [["mcp", "fabric_sqlendpoint", "enabled"], ["tools", "fabric_cicd", "enabled"], ["tools", "fabric_cli", "enabled"], ["mcp", "fabric", "enabled"]]) {
+      assert.equal(projectYamlScalar(second, path), projectYamlScalar(first, path), `${label}: ${path.join(".")} unchanged`);
+    }
+    assert.equal(/^fabric:/m.test(second), /^fabric:/m.test(first), `${label}: no fabric: block appears`);
+    assert.equal(parseProjectWizardSettings(second, "/synthetic/analytics").fabricEnabled, fabricEnabled, `${label}: second read`);
+  }
+  // Editing an existing Azure SQL contract into Power BI only, then an unrelated save.
+  const existing = "profile:\n  client: 'Demo'\nsql_targets:\n  dev:\n    kind: azure_sql\n    server: 'd.database.windows.net'\n    database: 'D'\n";
+  const pbi = applyProjectWizardSettings(existing, { ...parseProjectWizardSettings(existing, "/work"), repositories: [], powerBiEnabled: true, powerBiWorkspaceName: "Demo Dev", powerBiWorkspaceId: "" });
+  const reread = parseProjectWizardSettings(pbi, "/work");
+  assert.deepEqual([reread.fabricEnabled, reread.powerBiEnabled], [false, true]);
+  const saved = applyProjectWizardSettings(pbi, { ...reread, timezone: "UTC" });
+  assert.equal(projectYamlScalar(saved, ["mcp", "fabric_sqlendpoint", "enabled"]), "false");
+  assert.equal(projectYamlScalar(saved, ["tools", "fabric_cicd", "enabled"]), "false");
+  assert.equal(lib.projectYamlHas(saved, ["fabric"]), false);
+  // An explicit Fabric-only false wins over the shared fab flag; one Fabric-only true means Fabric.
+  assert.equal(lib.fabricSelected("tools:\n  fabric_cli:\n    enabled: true\nmcp:\n  fabric_sqlendpoint:\n    enabled: false\n"), false);
+  assert.equal(lib.fabricSelected("tools:\n  fabric_cli:\n    enabled: true\n  fabric_cicd:\n    enabled: false\n"), false);
+  assert.equal(lib.fabricSelected("tools:\n  fabric_cli:\n    enabled: true\n  fabric_cicd:\n    enabled: false\nmcp:\n  fabric_sqlendpoint:\n    enabled: true\n"), true);
+  // Contracts with no Fabric-only switch (hand-written, older) keep the old reading.
+  assert.equal(lib.fabricSelected("tools:\n  fabric_cli:\n    enabled: true\n"), true);
+  assert.equal(lib.fabricSelected("tools:\n  fabric_cli:\n    enabled: false\nfabric:\n  tenant_id: 't'\n"), false);
+  assert.equal(lib.fabricSelected("fabric:\n  tenant_id: 't'\n"), true);
+  assert.equal(lib.fabricSelected(""), false);
+  // Unknown fields are kept through the round trip.
+  const withExtra = `${renderProjectWizardSettings({ ...base, fabricEnabled: false, powerBiEnabled: true })}\ncustom_section:\n  keep: 'me'\n`;
+  assert.equal(projectYamlScalar(applyProjectWizardSettings(withExtra, parseProjectWizardSettings(withExtra, "/w")), ["custom_section", "keep"]), "me");
+});
+
 await t("A1: the wizard writes the prod and test entries and the schema_compare lists (deployment call 2026-10-23)", () => {
   const WS2 = "44444444-4444-4444-4444-444444444444";
   const ITEM2 = "55555555-5555-5555-5555-555555555555";
