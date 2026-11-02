@@ -40,6 +40,11 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '22.23.4'
+      # The ubuntu-latest image now ships Python 3.14 only; the doctor and
+      # fleet-install fixtures need a 3.10-3.13 interpreter, as on Windows.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
       - name: run test suite, gate + extended lanes (bash tests/run.sh)
         run: |
           if [ "${COOP_TEST_EXTENDED:-}" != "1" ]; then echo "::error::COOP_TEST_EXTENDED did not reach bash"; exit 1; fi
