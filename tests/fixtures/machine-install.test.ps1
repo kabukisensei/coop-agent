@@ -49,6 +49,24 @@ try {
   elseif (Test-CoopElectronIconOfProfile 'C:\Program Files\SomeApp\electron.exe' 'C:\Users\a') { Ko 'Test-CoopElectronIconOfProfile flags another Electron app' }
   else { Ok 'the sweep also drops an account''s duplicate "coop" to the machine exe and the early window''s "Electron" icon, nothing else' }
 
+  # The sweep retires an older terminal install's link and shortcuts in every account
+  # (2026-11-03: accounts still on 0.35.0 under a 0.38.13 machine install).
+  $sweepClone = Join-Path $t 'sweep-clone'
+  New-Item -ItemType Directory -Force -Path $sweepClone | Out-Null
+  $olderThan = @()
+  foreach ($v in @('0.35.0', 'v0.38.13', '0.39.0-rc1')) {
+    [System.IO.File]::WriteAllText((Join-Path $sweepClone 'VERSION'), "$v`n")
+    $olderThan += [bool](Test-CoopCloneOlderThan $sweepClone '0.38.13')
+  }
+  [System.IO.File]::WriteAllText((Join-Path $sweepClone 'VERSION'), "not a version`n")
+  $badVersion = Test-CoopCloneOlderThan $sweepClone '0.38.13'
+  Remove-Item -LiteralPath (Join-Path $sweepClone 'VERSION') -Force
+  if (($olderThan -join ',') -ne 'True,False,False') { Ko "Test-CoopCloneOlderThan 0.35.0 / v0.38.13 / 0.39.0-rc1 under 0.38.13: $($olderThan -join ',')" }
+  elseif ($badVersion -or (Test-CoopCloneOlderThan $sweepClone '0.38.13')) { Ko 'Test-CoopCloneOlderThan retires a checkout with no or an unreadable VERSION' }
+  elseif (-not (Test-CoopCloneOlderThan (Join-Path $t 'gone-clone') '0.38.13' -AllowMissing)) { Ko 'Test-CoopCloneOlderThan -AllowMissing misses a deleted checkout' }
+  elseif ((Test-CoopCloneOlderThan (Join-Path $t 'gone-clone') '0.38.13') -or (Test-CoopCloneOlderThan $sweepClone '')) { Ko 'Test-CoopCloneOlderThan retires a missing folder without -AllowMissing, or with no package version' }
+  else { Ok 'the every-account sweep retires a link or shortcut into a checkout older than the package (or deleted); a current, newer or unversioned checkout stays' }
+
   $users = Join-Path $t 'Users'
   foreach ($d in @('Public', 'Default', 'Default User', 'All Users', 'alice', 'bob.admin')) { New-Item -ItemType Directory -Force -Path (Join-Path $users $d) | Out-Null }
   $profiles = @(Get-CoopProfileDirs $users | ForEach-Object { Split-Path -Leaf $_ } | Sort-Object)

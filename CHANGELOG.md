@@ -15,7 +15,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   older than the machine install, or into a deleted one, is repointed at the
   machine's coop ("coop (terminal)") or removed ("coop", "coop (window)"); a
   developer's current checkout and its shortcuts stay. The machine install's
-  sweep also removes an account's own "coop" shortcut to the machine exe
+  every-account sweep (each install and each overnight update) now does the
+  same for every account, and also retires an account's `coop` link into an
+  older checkout, which the machine shim would otherwise keep running, so an
+  account still on an old release moves to the machine's coop without opening
+  it first. The sweep also removes an account's own "coop" shortcut to the machine exe
   (the all-users one already starts it, so coop showed twice) and the early
   window's "Electron" Start Menu icon into that account's
   `~\.coop\desktop\runtime`.
