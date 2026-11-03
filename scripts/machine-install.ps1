@@ -508,13 +508,14 @@ function Test-CoopCloneOlderThan([string]$Root, [string]$Version, [switch]$Allow
 # all-users "coop" already starts it, so the account would see coop twice.
 function Test-CoopShortcutDuplicatesMachine([string]$Target, [string]$InstallDir) {
   if (-not $Target -or -not $InstallDir) { return $false }
-  return ($Target.TrimEnd('\') -ieq (Join-Path $InstallDir.TrimEnd('\') 'coop.exe'))
+  # Plain '\' joins: these are Windows paths, and the tests run on any OS.
+  return ($Target.TrimEnd('\') -ieq ($InstallDir.TrimEnd('\') + '\coop.exe'))
 }
 # The "Electron" Start Menu icon the early window left: Electron's own binary
 # under that account's ~\.coop\desktop\runtime (not any other Electron app's).
 function Test-CoopElectronIconOfProfile([string]$Target, [string]$ProfileDir) {
   if (-not $Target -or -not $ProfileDir) { return $false }
-  $runtime = (Join-Path $ProfileDir.TrimEnd('\') '.coop\desktop\runtime') + '\'
+  $runtime = $ProfileDir.TrimEnd('\') + '\.coop\desktop\runtime\'
   return ($Target.StartsWith($runtime, [StringComparison]::OrdinalIgnoreCase) -and ($Target -match '(?i)\\electron\.exe$'))
 }
 
