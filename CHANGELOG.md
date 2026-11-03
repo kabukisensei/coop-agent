@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.39.0] — 2026-11-03
+
 ### Fixed
 
 - **An upgrade retires every older coop shortcut.** A "coop (terminal)"
