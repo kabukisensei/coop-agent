@@ -343,6 +343,9 @@ await check("welcome: set-up items come from the sign-in flag and the launch not
   assert.equal(setupSummary(items.slice(0, 1)), items[0].text);
   assert.equal(EXAMPLES.length, 3);
   for (const example of EXAMPLES) { assert.ok(example.label.length <= 40); assert.ok(example.prompt.length > 20); }
+  // The empty window's three buttons are the top three Start menu task guides.
+  assert.deepEqual(EXAMPLES.map((example) => example.command), ["/new-fact", "/new-dimension", "/clean-model"]);
+  for (const example of EXAMPLES) assert.ok(existsSync(join(ROOT, "prompts", `${example.command.slice(1)}.md`)), `${example.command} has its prompt template`);
 });
 
 await check("welcome: the MCP adapter's 401 report is the Azure sign-in item, and a start notice never hides the welcome", () => {

@@ -449,9 +449,9 @@ function renderEmpty({ fresh = false } = {}) {
     app.vibe ? vibeLine() : null,
     app.setup.length ? setupCard() : null,
     el("p", { class: "lead", text: ready
-      ? `coop is ready in ${app.info ? app.info.folder : "this folder"}. Try one of these, ask your own question, or pick a task from the Start menu.`
+      ? `coop is ready in ${app.info ? app.info.folder : "this folder"}. Start a guided task, ask your own question, or pick another task from the Start menu.`
       : "Finish the set-up above, then ask coop anything about this folder." }),
-    el("div", { class: "examples" }, EXAMPLES.map((example) => el("button", { type: "button", class: "btn example", title: example.prompt, onclick: () => setPrompt(example.prompt) }, icon("spark"), el("span", { text: example.label })))),
+    el("div", { class: "examples" }, EXAMPLES.map((example) => el("button", { type: "button", class: "btn example", title: example.prompt, onclick: () => (ready ? sendPrompt(example.command) : setPrompt(example.command)) }, icon("spark"), el("span", { text: example.label })))),
     start,
     el("div", { class: "empty-links" },
       link("changes", "Changes", "diff"),

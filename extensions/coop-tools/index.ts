@@ -2387,7 +2387,36 @@ export function shouldSuggestShareLearning(signals: ShareLearningSessionSignals)
   return failures >= 2;
 }
 
-/** The seven common workflows (master plan FR1, section 9), each wired to a prompt,
+/** The task guides at the top of the Start menu: what the team builds most
+ *  (a fact, a dimension, a model cleanup, ...). Each is a prompt template in
+ *  prompts/<name>.md, so the terminal also has it as /<name>; the menu sends the
+ *  template's text, which asks for the specifics first and names the
+ *  coop-standards articles that apply. The window's empty page offers the first
+ *  three (desktop/renderer/welcome.mjs EXAMPLES). */
+export const TASK_GUIDES: ReadonlyArray<{ name: string; label: string; fallback: string }> = Object.freeze([
+  { name: "new-fact", label: "\u{1F4CA}  Set up a fact table", fallback: "Guide me through setting up a new gold fact table in SQL, following the Cooptimize standards. Ask me the grain, sources, dimensions and measures first, and write a spec for my approval before editing anything." },
+  { name: "new-dimension", label: "\u{1F9E9}  Set up a dimension", fallback: "Guide me through setting up a new gold dimension table in SQL, following the Cooptimize standards. Ask me the business key, sources and attributes first, and write a spec for my approval before editing anything." },
+  { name: "clean-model", label: "\u{1F9F9}  Clean up a semantic model", fallback: "Review a Power BI semantic model against the Cooptimize semantic model standards, list what to fix most important first, and fix only what I approve." },
+  { name: "dax-measure", label: "\u{1F9EE}  Add or fix a DAX measure", fallback: "Help me add or fix a DAX measure in a Power BI semantic model, following the Cooptimize DAX and Measure Metadata standards. Ask me what it should answer first, and wait for my approval before editing." },
+  { name: "new-load", label: "\u{1F504}  Build a silver load or gold view", fallback: "Help me build or change a silver table load or a gold view or stored procedure in SQL, following the Cooptimize standards. Ask me the layer, object and sources first, and write a spec for my approval before editing anything." },
+  { name: "model-table", label: "\u{1F517}  Add a table to the model and relate it", fallback: "Help me add a SQL table to a Power BI semantic model and relate it, following the Cooptimize semantic model standards. Ask me the model and table first, and wait for my approval before editing." },
+]);
+
+/** A guide's text: prompts/<name>.md under the coop root without its `# /name`
+ *  heading, or the one-line fallback when the file cannot be read. */
+export function taskGuidePrompt(name: string, root = process.env.COOP_ROOT || resolve(dirname(fileURLToPath(import.meta.url)), "..", "..")): string {
+  const guide = TASK_GUIDES.find((g) => g.name === name);
+  try {
+    const text = readFileSync(join(root, "prompts", `${name}.md`), "utf8").replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
+    const body = text.replace(/^#\s+\/\S+[^\n]*\n+/, "").trim();
+    if (body) return body;
+  } catch {
+    // fall through to the one-line version
+  }
+  return guide ? guide.fallback : "";
+}
+
+/** The task guides, then the seven common workflows (master plan FR1, section 9), each wired to a prompt,
  *  skill or native wizard coop already ships. A choice either runs a native wizard
  *  or sends a friendly, first-person request AS the user (the menu just pre-writes
  *  the prompt a newcomer would otherwise have to compose); the agent then asks for
@@ -2395,6 +2424,10 @@ export function shouldSuggestShareLearning(signals: ShareLearningSessionSignals)
  *  self-check now (ST1), so item 1 asks for that. */
 export function buildStartMenu(): MenuItem[] {
   return [
+    ...TASK_GUIDES.map((guide) => ({
+      label: guide.label,
+      run: async (pi: ExtensionAPI) => { pi.sendUserMessage(taskGuidePrompt(guide.name)); },
+    })),
     {
       label: "🔎  Check SQL, DAX or a model against our standards",
       run: async (pi) => {

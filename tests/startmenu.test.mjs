@@ -8,9 +8,11 @@ import { pathToFileURL } from "node:url";
 const dist = process.env.COOP_TEST_DIST;
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-const { buildStartMenu, shouldOpenFirstRunMenu, saveUserProfileName } = await import(pathToFileURL(`${dist}/coop-tools.mjs`).href);
+const { buildStartMenu, shouldOpenFirstRunMenu, saveUserProfileName, TASK_GUIDES, taskGuidePrompt } = await import(pathToFileURL(`${dist}/coop-tools.mjs`).href);
 
 let n = 0;
 const t = (name, fn) => {
@@ -34,9 +36,12 @@ t("buildStartMenu returns runnable task items with unique labels", () => {
   assert.ok(labels.some((label) => label.includes("Document a warehouse or semantic model")), "data-doc setup must be discoverable from /start");
 });
 
-t("the menu is the seven common workflows of master plan section 9, in order", () => {
-  const labels = buildStartMenu().map((i) => i.label);
-  assert.equal(labels.length, 7, "one menu item per plan workflow");
+t("the menu is the six task guides, then the seven common workflows of master plan section 9, in order", () => {
+  const all = buildStartMenu().map((i) => i.label);
+  assert.equal(all.length, 13, "six guides plus one item per plan workflow");
+  const guides = ["Set up a fact table", "Set up a dimension", "Clean up a semantic model", "DAX measure", "silver load or gold view", "Add a table to the model"];
+  guides.forEach((needle, i) => assert.ok(all[i].includes(needle), `guide ${i + 1} is "${needle}", got "${all[i]}"`));
+  const labels = all.slice(guides.length);
   const expected = [
     "against our standards",
     "Trace the impact",
@@ -52,7 +57,7 @@ t("the menu is the seven common workflows of master plan section 9, in order", (
 t("prompt-sending items name the prompt or tool that does the work", async () => {
   const sent = [];
   const pi = { sendUserMessage: (m) => sent.push(m) };
-  const items = buildStartMenu();
+  const items = buildStartMenu().slice(TASK_GUIDES.length);
   for (const idx of [0, 1, 2, 5, 6]) await items[idx].run(pi, {});
   assert.equal(sent.length, 5);
   assert.match(sent[0], /standards/);
@@ -65,6 +70,38 @@ t("prompt-sending items name the prompt or tool that does the work", async () =>
   assert.match(sent[4], /coop doctor/);
   assert.match(sent[4], /az login/);
   for (const m of sent) assert.doesNotMatch(m, /sql_review|dax_review/, "the retired review tools are never requested");
+});
+
+t("each task guide sends its prompt template, which asks first, specs before writing and names its standards", () => {
+  const expectStandards = {
+    "new-fact": [/Gold Fact Tables/, /FK\{DimensionName\}/, /\/spec-first/, /sql_impact/],
+    "new-dimension": [/Gold Dimension Tables/, /\/spec-first/, /sql_impact/],
+    "clean-model": [/Model Metadata/, /Relationships/, /bpa_review/, /pick/],
+    "dax-measure": [/DAX standards/, /Measure Metadata/],
+    "new-load": [/Silver Tables/, /Gold Stored Procedures/, /\/spec-first/, /sql_impact/],
+    "model-table": [/Relationships/, /M Query/, /bpa_review/],
+  };
+  assert.deepEqual(TASK_GUIDES.map((g) => g.name), Object.keys(expectStandards));
+  const items = buildStartMenu();
+  for (const [i, guide] of TASK_GUIDES.entries()) {
+    const file = readFileSync(join(ROOT, "prompts", `${guide.name}.md`), "utf8");
+    assert.ok(file.startsWith(`# /${guide.name}\n`), `prompts/${guide.name}.md opens with its slash heading`);
+    const sent = [];
+    items[i].run({ sendUserMessage: (m) => sent.push(m) }, {});
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0], taskGuidePrompt(guide.name, ROOT), "the menu sends the template's text");
+    assert.doesNotMatch(sent[0], /^# \//, "without the slash heading");
+    assert.match(sent[0], /coop-workflow/);
+    assert.match(sent[0], /approv/i, "every guide waits for approval before writing");
+    assert.match(sent[0], /data_doc/, "every guide looks up lineage first");
+    for (const re of expectStandards[guide.name]) assert.match(sent[0].replace(/\s+/g, " "), re, `${guide.name} names ${re}`);
+  }
+  const missing = mkdtempSync(join(tmpdir(), "coop-guides-"));
+  try {
+    assert.equal(taskGuidePrompt("new-fact", missing), TASK_GUIDES[0].fallback, "an unreadable template falls back to the one-line guide");
+  } finally {
+    rmSync(missing, { recursive: true, force: true });
+  }
 });
 
 t("shouldOpenFirstRunMenu: only a TUI with COOP_FIRST_RUN set, once", () => {

@@ -390,7 +390,15 @@ machine-readable JSON through the native `data_doc` / `bpa_review` tools (in
 There is no `coop review` command: SQL/DAX standards are applied in the agent while
 it writes, and it self-checks its diff against them before presenting a change.
 
-The **first interactive launch** on a machine opens the **Start Here menu** of the
+The **first interactive launch** on a machine opens the **Start Here menu**. It
+leads with six task guides for the work the team builds most: **set up a fact
+table** (`/new-fact`), **set up a dimension** (`/new-dimension`), **clean up a
+semantic model** (`/clean-model`), **add or fix a DAX measure** (`/dax-measure`),
+**build a silver load or gold view** (`/new-load`) and **add a table to the model
+and relate it** (`/model-table`). Each guide asks for the specifics first, looks
+up lineage, names the coop-standards articles that apply and waits for approval
+before it writes; each is also a prompt template you can type. The window's empty
+page offers the first three as buttons. After the guides come the
 seven common workflows (check SQL/DAX/a model against the standards, trace the
 impact of a change, fix or edit an object on dev with approval, document a
 warehouse or semantic model, start a client project, write today's log or a
