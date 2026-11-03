@@ -16,6 +16,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `/clean-model`, `/dax-measure`, `/new-load`, `/model-table`), and the window's
   empty page offers the first three in place of the generic example buttons.
 
+### Changed
+
+- **Pins.** coop-schema-compare 0.1.11. A repo column of an alias
+  (user-defined) type, such as `Phone [s].[T]`, now reads as the base type named
+  by the folder's `CREATE TYPE ... FROM`, which is how the live catalog reports
+  it. It no longer reads as a type named after the schema, which showed up as a
+  false retype. `sysname` reads as `nvarchar(128)`. A type the folder does not
+  create leaves the column to compare by hand. Triggers are documented as out of
+  scope on both sides.
+
 ## [0.39.0] — 2026-11-03
 
 ### Fixed
