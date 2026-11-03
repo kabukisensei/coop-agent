@@ -1,6 +1,6 @@
 // The empty window's first minutes (desktop UX review, 2026-10-03): the
 // set-up items a fresh machine still owes (sign-in, the COOP profile, Azure),
-// each with the terminal command that settles it, and three example prompts a
+// each with the terminal command that settles it, and the three task guides a
 // teammate can start from. Pure functions; app.mjs renders them.
 
 /** How a launch notice from coop.ps1 is read: what to run, and where. */
@@ -55,11 +55,12 @@ export function setupSummary(items) {
 }
 
 /**
- * Example prompts for the empty window, each a task from the Start menu in
- * one sentence. The chip fills the prompt; the person edits and sends.
+ * The three task guides the empty window offers (the top of the Start menu):
+ * each button runs its prompt template (`prompts/<name>.md`), which asks for
+ * the specifics first and pulls in the matching coop-standards articles.
  */
 export const EXAMPLES = Object.freeze([
-  { label: "Check this machine is ready", prompt: "Check that this machine is ready: run coop doctor and explain anything that is not green in plain language, with the exact command to fix it." },
-  { label: "Explain a SQL view or DAX measure", prompt: "Explain what @ does, where its data comes from and what depends on it. (Replace @ with the file.)" },
-  { label: "Review changes against the standards", prompt: "Review the files changed since the last commit against the Cooptimize standards and list what needs fixing, most important first." },
+  { label: "Set up a fact table", command: "/new-fact", prompt: "Guide me through setting up a new gold fact table, following the Cooptimize standards." },
+  { label: "Set up a dimension", command: "/new-dimension", prompt: "Guide me through setting up a new gold dimension table, following the Cooptimize standards." },
+  { label: "Clean up a semantic model", command: "/clean-model", prompt: "Review a semantic model against the Cooptimize standards and fix only what I approve." },
 ]);

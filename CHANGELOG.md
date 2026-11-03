@@ -5,6 +5,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **Task guides in the Start menu.** `/start` now leads with six guides for the
+  work the team builds most: set up a fact table, set up a dimension, clean up a
+  semantic model, add or fix a DAX measure, build a silver load or gold view, and
+  add a table to the model and relate it. Each asks for the specifics first, looks
+  up lineage, names the coop-standards articles that apply and waits for approval
+  before it writes. They are prompt templates too (`/new-fact`, `/new-dimension`,
+  `/clean-model`, `/dax-measure`, `/new-load`, `/model-table`), and the window's
+  empty page offers the first three in place of the generic example buttons.
+
 ### Changed
 
 - **Pins.** coop-schema-compare 0.1.11. A repo column of an alias

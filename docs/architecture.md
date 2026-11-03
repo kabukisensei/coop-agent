@@ -90,7 +90,9 @@ show all of it. Task logs stay in the repository.
      `coop sync` and resolved locally at launch.
    - **Prompt templates** — `prompts/` (per task skill: `discovery`,
      `semantic-model-review`, `fabric-architecture-review`; plus workflow prompts
-     `spec-first`, `annotate`, `handoff`, and `pr-description`; the native
+     `spec-first`, `annotate`, `handoff`, and `pr-description`; the Start menu's
+     task guides `new-fact`, `new-dimension`, `clean-model`, `dax-measure`,
+     `new-load` and `model-table`; the native
      `/setup-docs` and `/impact` commands and the `daily-logger` skill cover what
      the retired `setup-docs`, `impact-analysis`, `daily-log` and `weekly-log`
      prompts restated).
