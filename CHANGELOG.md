@@ -5,6 +5,21 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **An upgrade retires every older coop shortcut.** A "coop (terminal)"
+  shortcut into an older git checkout kept opening that old release (0.35.0
+  over a 0.38.13 machine install) once the account's `coop` link to the
+  checkout was gone, because the first launch only found the checkout through
+  that link. It now also reads the shortcuts themselves: one into a checkout
+  older than the machine install, or into a deleted one, is repointed at the
+  machine's coop ("coop (terminal)") or removed ("coop", "coop (window)"); a
+  developer's current checkout and its shortcuts stay. The machine install's
+  sweep also removes an account's own "coop" shortcut to the machine exe
+  (the all-users one already starts it, so coop showed twice) and the early
+  window's "Electron" Start Menu icon into that account's
+  `~\.coop\desktop\runtime`.
+
 ## [0.38.13] — 2026-11-02
 
 ### Changed

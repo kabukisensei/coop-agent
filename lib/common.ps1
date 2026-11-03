@@ -219,13 +219,50 @@ function Get-CoopOlderCloneRoot {
   $target = Get-CoopLinkedLauncherTarget -LauncherDir $LauncherDir
   if (-not $target) { return '' }
   $root = Split-Path -Parent (Split-Path -Parent $target)
-  if ((ConvertTo-CoopComparablePath $root) -eq (ConvertTo-CoopComparablePath $script:CoopRoot)) { return '' }
-  $verFile = Join-Path $root 'VERSION'
-  if (-not (Test-Path -LiteralPath $verFile -PathType Leaf)) { return '' }
-  $ver = ''
-  try { $ver = ([System.IO.File]::ReadAllText($verFile)).Trim() } catch { return '' }
-  if (Test-CoopVersionNewer $script:CoopVersion $ver) { return $root }
+  if (Test-CoopOlderCloneRoot $root) { return $root }
   return ''
+}
+# A checkout older than this coop: not this coop's own root, and its VERSION is
+# older. -AllowMissing also counts a folder that is gone (a shortcut into a
+# deleted checkout); a checkout with no VERSION file is left alone.
+function Test-CoopOlderCloneRoot([string]$Root, [switch]$AllowMissing) {
+  if (-not $Root) { return $false }
+  if ((ConvertTo-CoopComparablePath $Root) -eq (ConvertTo-CoopComparablePath $script:CoopRoot)) { return $false }
+  if ($AllowMissing -and -not (Test-Path -LiteralPath $Root)) { return $true }
+  $verFile = Join-Path $Root 'VERSION'
+  if (-not (Test-Path -LiteralPath $verFile -PathType Leaf)) { return $false }
+  $ver = ''
+  try { $ver = ([System.IO.File]::ReadAllText($verFile)).Trim() } catch { return $false }
+  return [bool](Test-CoopVersionNewer $script:CoopVersion $ver)
+}
+# The checkout a terminal install's shortcut starts: <root> from its arguments
+# (-File "<root>\bin\coop-desktop.ps1"), else ''.
+function Get-CoopShortcutCloneRoot([string]$Arguments) {
+  if ([string]$Arguments -match '(?i)-File\s+"([^"]+)\\bin\\coop-desktop\.ps1"') { return $Matches[1] }
+  return ''
+}
+# The older checkouts this account's "coop" shortcuts still start, even when
+# its `coop` link is gone (Aaron's client VM, 2026-11-03: the link was retired
+# earlier, so Get-CoopOlderCloneRoot found nothing and "coop (terminal)" kept
+# opening 0.35.0 over the machine's 0.38.13). Unique roots, possibly none.
+function Get-CoopOlderCloneShortcutRoots {
+  $roots = @()
+  if ($env:OS -ne 'Windows_NT') { return $roots }
+  $ws = $null
+  foreach ($dir in (Get-CoopShortcutDirs)) {
+    if (-not $dir) { continue }
+    foreach ($name in @('coop.lnk', 'coop (window).lnk', 'coop (terminal).lnk')) {
+      $lnk = Join-Path $dir $name
+      if (-not (Test-Path -LiteralPath $lnk -PathType Leaf)) { continue }
+      try {
+        if (-not $ws) { $ws = New-Object -ComObject WScript.Shell }
+        $root = Get-CoopShortcutCloneRoot ([string]$ws.CreateShortcut($lnk).Arguments)
+      } catch { continue }
+      if (-not $root -or -not (Test-CoopOlderCloneRoot $root -AllowMissing)) { continue }
+      if (-not ($roots | Where-Object { (ConvertTo-CoopComparablePath $_) -eq (ConvertTo-CoopComparablePath $root) })) { $roots += $root }
+    }
+  }
+  return $roots
 }
 # The "coop" shortcuts this account's older terminal install wrote (Start Menu
 # and Desktop, a console running <checkout>\bin\coop-desktop.ps1): "coop" and

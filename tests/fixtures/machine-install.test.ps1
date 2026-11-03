@@ -41,6 +41,14 @@ try {
   elseif (Test-CoopLinkPointsIntoPackage '') { Ko 'Test-CoopLinkPointsIntoPackage flags an empty body' }
   else { Ok 'a link or shortcut into %LOCALAPPDATA%\Programs\coop is an older package''s; a developer clone is not' }
 
+  if (-not (Test-CoopShortcutDuplicatesMachine 'c:\program files\COOP\coop.exe' 'C:\Program Files\coop\')) { Ko 'Test-CoopShortcutDuplicatesMachine misses an account''s shortcut to the machine exe (any case, trailing slash)' }
+  elseif (Test-CoopShortcutDuplicatesMachine 'C:\Users\a\AppData\Local\Programs\coop\coop.exe' 'C:\Program Files\coop') { Ko 'Test-CoopShortcutDuplicatesMachine flags another install''s exe' }
+  elseif (Test-CoopShortcutDuplicatesMachine 'C:\Program Files\coop\coop.exe' '') { Ko 'Test-CoopShortcutDuplicatesMachine flags with no install dir' }
+  elseif (-not (Test-CoopElectronIconOfProfile 'C:\Users\a\.coop\desktop\runtime\node_modules\electron\dist\electron.exe' 'C:\Users\a')) { Ko 'Test-CoopElectronIconOfProfile misses the early window''s Electron icon' }
+  elseif (Test-CoopElectronIconOfProfile 'C:\Users\b\.coop\desktop\runtime\node_modules\electron\dist\electron.exe' 'C:\Users\a') { Ko 'Test-CoopElectronIconOfProfile flags another account''s runtime' }
+  elseif (Test-CoopElectronIconOfProfile 'C:\Program Files\SomeApp\electron.exe' 'C:\Users\a') { Ko 'Test-CoopElectronIconOfProfile flags another Electron app' }
+  else { Ok 'the sweep also drops an account''s duplicate "coop" to the machine exe and the early window''s "Electron" icon, nothing else' }
+
   $users = Join-Path $t 'Users'
   foreach ($d in @('Public', 'Default', 'Default User', 'All Users', 'alice', 'bob.admin')) { New-Item -ItemType Directory -Force -Path (Join-Path $users $d) | Out-Null }
   $profiles = @(Get-CoopProfileDirs $users | ForEach-Object { Split-Path -Leaf $_ } | Sort-Object)
@@ -286,6 +294,21 @@ try {
   elseif (Get-CoopOlderCloneRoot -LauncherDir (Join-Path $t 'nowhere')) { Ko 'Get-CoopOlderCloneRoot invents a checkout with no link' }
   else { Ok 'an account link to a checkout older than the machine install is an older terminal install (retired at first launch); a current or newer checkout is a developer''s and stays' }
   if (@(Repair-CoopOlderCloneShortcuts '').Count -ne 0) { Ko 'Repair-CoopOlderCloneShortcuts changes something with no checkout' }
+
+  # A shortcut into an older checkout whose link is already gone (Aaron's client VM,
+  # 2026-11-03: "coop (terminal)" still opened 0.35.0 over the machine's 0.38.13).
+  $lnkArgs = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$clone\bin\coop-desktop.ps1`" desktop"
+  [System.IO.File]::WriteAllText((Join-Path $clone 'VERSION'), "0.35.0`n", $utf8)
+  $gone = Join-Path $t 'deleted-clone'
+  if ((ConvertTo-CoopComparablePath (Get-CoopShortcutCloneRoot $lnkArgs)) -ne (ConvertTo-CoopComparablePath $clone)) { Ko "Get-CoopShortcutCloneRoot: '$(Get-CoopShortcutCloneRoot $lnkArgs)'" }
+  elseif (Get-CoopShortcutCloneRoot '-NoLogo -File "C:\x\other.ps1"') { Ko 'Get-CoopShortcutCloneRoot reads a root from another script' }
+  elseif (Get-CoopShortcutCloneRoot '') { Ko 'Get-CoopShortcutCloneRoot reads a root from a shortcut with no arguments (the package''s exe)' }
+  elseif (-not (Test-CoopOlderCloneRoot $clone)) { Ko 'Test-CoopOlderCloneRoot misses a 0.35.0 checkout under a 0.37.0 install' }
+  elseif (-not (Test-CoopOlderCloneRoot $gone -AllowMissing)) { Ko 'Test-CoopOlderCloneRoot -AllowMissing misses a deleted checkout' }
+  elseif (Test-CoopOlderCloneRoot $gone) { Ko 'Test-CoopOlderCloneRoot retires a missing folder without -AllowMissing' }
+  elseif (Test-CoopOlderCloneRoot $script:CoopRoot -AllowMissing) { Ko 'Test-CoopOlderCloneRoot retires this coop''s own root' }
+  else { Ok 'a "coop" shortcut into an older or deleted checkout is found from the shortcut itself, link or no link; this coop''s own and unversioned checkouts stay' }
+  Remove-Item -LiteralPath (Join-Path $clone 'VERSION') -Force
 
   # --- scripts/update.ps1 on a machine install -----------------------------------------------
   Write-CoopUpdateStateFile $stateFile (New-CoopUpdateState 'up to date' '0.37.0' '' '0.37.0' 'https://github.com/kabukisensei/coop-agent/releases/tag/v0.37.0')

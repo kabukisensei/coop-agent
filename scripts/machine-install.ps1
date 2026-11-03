@@ -19,7 +19,9 @@
 #   4b. removes every account's older per-account window package
 #      (%LOCALAPPDATA%\Programs\coop): its own uninstaller, then the "coop"
 #      shortcuts and the `coop` link that pointed into it, so no account keeps
-#      an old icon; ~\.coop is never touched;
+#      an old icon, plus an account's own "coop" to this install's exe (the
+#      all-users one already starts it) and the early window's "Electron"
+#      icon; ~\.coop is never touched;
 #   4c. installs the package's ODBC Driver 18 for SQL Server (with its VC++
 #      runtime) when no Driver 18+ is registered on the machine: the one
 #      machine prerequisite, done here, already elevated, so no account's first
@@ -372,7 +374,7 @@ function Invoke-CoopMachineInstall {
   } catch { Coop-MachineFail "could not open the standards folder to every account: $($_.Exception.Message)" }
   # 4b. older per-account packages, in every profile
   Coop-MachineInfo 'looking for older per-account copies of coop in every account'
-  Remove-CoopPerUserPackages (Join-Path $env:SystemDrive 'Users')
+  Remove-CoopPerUserPackages (Join-Path $env:SystemDrive 'Users') $dir
   # 4c. the ODBC driver for every account: the one machine prerequisite, so no
   #     account's first launch needs an administrator.
   try {
@@ -400,8 +402,9 @@ function Invoke-CoopMachineInstall {
 # shortcuts and the `coop` link that pointed into it (that account's data under
 # ~\.coop stays). A stale Add/Remove entry in that account's registry hive is
 # cleared by the account's own first launch (scripts/install.ps1, machine mode).
-function Remove-CoopPerUserPackages([string]$UsersRoot) {
+function Remove-CoopPerUserPackages([string]$UsersRoot, [string]$InstallDir = '') {
   $ws = $null
+  $allUsersIcon = $env:ProgramData -and (Test-Path -LiteralPath (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\coop.lnk') -PathType Leaf)
   foreach ($profile in (Get-CoopProfileDirs $UsersRoot)) {
     $pkg = Join-Path $profile 'AppData\Local\Programs\coop'
     $unins = Join-Path $pkg 'Uninstall coop.exe'
@@ -429,11 +432,33 @@ function Remove-CoopPerUserPackages([string]$UsersRoot) {
       if (-not (Test-Path -LiteralPath $lnk -PathType Leaf)) { continue }
       $target = ''
       try { if (-not $ws) { $ws = New-Object -ComObject WScript.Shell }; $target = [string]$ws.CreateShortcut($lnk).TargetPath } catch { $target = '' }
-      if ($target -and (Test-CoopLinkPointsIntoPackage $target)) {
+      if ($target -and ((Test-CoopLinkPointsIntoPackage $target) -or ($allUsersIcon -and (Test-CoopShortcutDuplicatesMachine $target $InstallDir)))) {
         try { Remove-Item -LiteralPath $lnk -Force -ErrorAction Stop; Coop-MachineOk "removed the old icon $lnk" } catch { Coop-MachineFail "could not remove $lnk`: $($_.Exception.Message)" }
       }
     }
+    # The early window's "Electron" icon, into this account's own runtime tree.
+    $electronLnk = Join-Path $profile 'AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Electron.lnk'
+    if (Test-Path -LiteralPath $electronLnk -PathType Leaf) {
+      $target = ''
+      try { if (-not $ws) { $ws = New-Object -ComObject WScript.Shell }; $target = [string]$ws.CreateShortcut($electronLnk).TargetPath } catch { $target = '' }
+      if (Test-CoopElectronIconOfProfile $target $profile) {
+        try { Remove-Item -LiteralPath $electronLnk -Force -ErrorAction Stop; Coop-MachineOk "removed the old icon $electronLnk" } catch { Coop-MachineFail "could not remove $electronLnk`: $($_.Exception.Message)" }
+      }
+    }
   }
+}
+# An account's own "coop" shortcut to this machine install's exe: the installer's
+# all-users "coop" already starts it, so the account would see coop twice.
+function Test-CoopShortcutDuplicatesMachine([string]$Target, [string]$InstallDir) {
+  if (-not $Target -or -not $InstallDir) { return $false }
+  return ($Target.TrimEnd('\') -ieq (Join-Path $InstallDir.TrimEnd('\') 'coop.exe'))
+}
+# The "Electron" Start Menu icon the early window left: Electron's own binary
+# under that account's ~\.coop\desktop\runtime (not any other Electron app's).
+function Test-CoopElectronIconOfProfile([string]$Target, [string]$ProfileDir) {
+  if (-not $Target -or -not $ProfileDir) { return $false }
+  $runtime = (Join-Path $ProfileDir.TrimEnd('\') '.coop\desktop\runtime') + '\'
+  return ($Target.StartsWith($runtime, [StringComparison]::OrdinalIgnoreCase) -and ($Target -match '(?i)\\electron\.exe$'))
 }
 
 # Dot-sourced (the tests) nothing runs; invoked, the step runs and the exit code
