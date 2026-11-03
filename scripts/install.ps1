@@ -391,6 +391,11 @@ if ($machineLink) {
     } catch { Coop-Warn "could not remove $launcher`: $($_.Exception.Message)" "remove it by hand so ``coop`` runs this machine's install" }
     foreach ($line in @(Repair-CoopOlderCloneShortcuts $olderClone)) { if ($line -like 'could not *') { Coop-Warn $line } else { Coop-Ok $line } }
   }
+  # Shortcuts into an older checkout whose link is already gone (retired by an
+  # earlier release, or removed by hand) still open the old release.
+  foreach ($shortcutClone in @(Get-CoopOlderCloneShortcutRoots)) {
+    foreach ($line in @(Repair-CoopOlderCloneShortcuts $shortcutClone)) { if ($line -like 'could not *') { Coop-Warn $line } else { Coop-Ok $line } }
+  }
   foreach ($hive in @('Software\Microsoft\Windows\CurrentVersion\Uninstall\com.cooptimize.coop', 'Software\com.cooptimize.coop')) {
     try {
       $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($hive, $false)

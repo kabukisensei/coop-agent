@@ -19,7 +19,9 @@
 #   4b. removes every account's older per-account window package
 #      (%LOCALAPPDATA%\Programs\coop): its own uninstaller, then the "coop"
 #      shortcuts and the `coop` link that pointed into it, so no account keeps
-#      an old icon; ~\.coop is never touched;
+#      an old icon, plus an account's own "coop" to this install's exe (the
+#      all-users one already starts it) and the early window's "Electron"
+#      icon; ~\.coop is never touched;
 #   4c. installs the package's ODBC Driver 18 for SQL Server (with its VC++
 #      runtime) when no Driver 18+ is registered on the machine: the one
 #      machine prerequisite, done here, already elevated, so no account's first
@@ -372,7 +374,7 @@ function Invoke-CoopMachineInstall {
   } catch { Coop-MachineFail "could not open the standards folder to every account: $($_.Exception.Message)" }
   # 4b. older per-account packages, in every profile
   Coop-MachineInfo 'looking for older per-account copies of coop in every account'
-  Remove-CoopPerUserPackages (Join-Path $env:SystemDrive 'Users')
+  Remove-CoopPerUserPackages (Join-Path $env:SystemDrive 'Users') $dir $version
   # 4c. the ODBC driver for every account: the one machine prerequisite, so no
   #     account's first launch needs an administrator.
   try {
@@ -400,8 +402,9 @@ function Invoke-CoopMachineInstall {
 # shortcuts and the `coop` link that pointed into it (that account's data under
 # ~\.coop stays). A stale Add/Remove entry in that account's registry hive is
 # cleared by the account's own first launch (scripts/install.ps1, machine mode).
-function Remove-CoopPerUserPackages([string]$UsersRoot) {
+function Remove-CoopPerUserPackages([string]$UsersRoot, [string]$InstallDir = '', [string]$Version = '') {
   $ws = $null
+  $allUsersIcon = $env:ProgramData -and (Test-Path -LiteralPath (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\coop.lnk') -PathType Leaf)
   foreach ($profile in (Get-CoopProfileDirs $UsersRoot)) {
     $pkg = Join-Path $profile 'AppData\Local\Programs\coop'
     $unins = Join-Path $pkg 'Uninstall coop.exe'
@@ -429,11 +432,91 @@ function Remove-CoopPerUserPackages([string]$UsersRoot) {
       if (-not (Test-Path -LiteralPath $lnk -PathType Leaf)) { continue }
       $target = ''
       try { if (-not $ws) { $ws = New-Object -ComObject WScript.Shell }; $target = [string]$ws.CreateShortcut($lnk).TargetPath } catch { $target = '' }
-      if ($target -and (Test-CoopLinkPointsIntoPackage $target)) {
+      if ($target -and ((Test-CoopLinkPointsIntoPackage $target) -or ($allUsersIcon -and (Test-CoopShortcutDuplicatesMachine $target $InstallDir)))) {
         try { Remove-Item -LiteralPath $lnk -Force -ErrorAction Stop; Coop-MachineOk "removed the old icon $lnk" } catch { Coop-MachineFail "could not remove $lnk`: $($_.Exception.Message)" }
       }
     }
+    # An older terminal install (a git checkout `coop install` linked) in this
+    # account: its link wins over the machine shim and its shortcuts open it,
+    # so the account stays on that release until it opens this one by hand
+    # (2026-11-03: accounts still on 0.35.0 under a 0.38.13 machine install).
+    # A link or shortcut into a checkout older than this package, or a deleted
+    # one, is retired; "coop (terminal)" is repointed at this package. The
+    # checkout itself stays; a developer's current checkout is left alone.
+    if ($Version -and $InstallDir) {
+      if (Test-Path -LiteralPath $link -PathType Leaf) {
+        $body = ''
+        try { $body = [System.IO.File]::ReadAllText($link) } catch { $body = '' }
+        if ($body -match 'call\s+"([^"]+)\\bin\\coop\.cmd"') {
+          $cloneRoot = $Matches[1]
+          if (Test-CoopCloneOlderThan $cloneRoot $Version) {
+            try { Remove-Item -LiteralPath $link -Force -ErrorAction Stop; Coop-MachineOk "removed the account link $link to the older coop at $cloneRoot (the folder stays; the machine shim serves this account)" } catch { Coop-MachineFail "could not remove $link`: $($_.Exception.Message)" }
+          }
+        }
+      }
+      $launcher = Join-Path $InstallDir 'resources\coop\bin\coop-desktop.ps1'
+      foreach ($dir in @((Join-Path $profile 'Desktop'), (Join-Path $profile 'AppData\Roaming\Microsoft\Windows\Start Menu\Programs'))) {
+        foreach ($name in @('coop.lnk', 'coop (window).lnk', 'coop (terminal).lnk')) {
+          $lnk = Join-Path $dir $name
+          if (-not (Test-Path -LiteralPath $lnk -PathType Leaf)) { continue }
+          try {
+            if (-not $ws) { $ws = New-Object -ComObject WScript.Shell }
+            $sc = $ws.CreateShortcut($lnk)
+            if (-not ([string]$sc.Arguments -match '(?i)-File\s+"([^"]+)\\bin\\coop-desktop\.ps1"')) { continue }
+            $cloneRoot = $Matches[1]
+            if (-not (Test-CoopCloneOlderThan $cloneRoot $Version -AllowMissing)) { continue }
+            if ($name -eq 'coop (terminal).lnk' -and (Test-Path -LiteralPath $launcher -PathType Leaf)) {
+              $sc.Arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$launcher`""
+              $icon = Join-Path $InstallDir 'resources\coop\themes\coop.ico'
+              if (Test-Path -LiteralPath $icon -PathType Leaf) { $sc.IconLocation = "$icon,0" }
+              $sc.Save()
+              Coop-MachineOk "the shortcut $lnk now opens this machine's coop (it opened the older coop at $cloneRoot)"
+            } else {
+              Remove-Item -LiteralPath $lnk -Force -ErrorAction Stop
+              Coop-MachineOk "removed the old icon $lnk (it opened the older coop at $cloneRoot)"
+            }
+          } catch { Coop-MachineFail "could not update $lnk`: $($_.Exception.Message)" }
+        }
+      }
+    }
+    # The early window's "Electron" icon, into this account's own runtime tree.
+    $electronLnk = Join-Path $profile 'AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Electron.lnk'
+    if (Test-Path -LiteralPath $electronLnk -PathType Leaf) {
+      $target = ''
+      try { if (-not $ws) { $ws = New-Object -ComObject WScript.Shell }; $target = [string]$ws.CreateShortcut($electronLnk).TargetPath } catch { $target = '' }
+      if (Test-CoopElectronIconOfProfile $target $profile) {
+        try { Remove-Item -LiteralPath $electronLnk -Force -ErrorAction Stop; Coop-MachineOk "removed the old icon $electronLnk" } catch { Coop-MachineFail "could not remove $electronLnk`: $($_.Exception.Message)" }
+      }
+    }
   }
+}
+# A git checkout older than this package: its VERSION (x.y.z) is lower than
+# $Version. -AllowMissing also counts a deleted folder (a dead shortcut); a
+# checkout with no or an unreadable VERSION is left alone.
+function Test-CoopCloneOlderThan([string]$Root, [string]$Version, [switch]$AllowMissing) {
+  if (-not $Root -or -not $Version) { return $false }
+  if (-not (Test-Path -LiteralPath $Root)) { return [bool]$AllowMissing }
+  $verFile = Join-Path $Root 'VERSION'
+  if (-not (Test-Path -LiteralPath $verFile -PathType Leaf)) { return $false }
+  $old = $null; $new = $null
+  try { $text = ([System.IO.File]::ReadAllText($verFile)).Trim() } catch { return $false }
+  if (-not [version]::TryParse(($text -replace '^v' -replace '[-+].*$', ''), [ref]$old)) { return $false }
+  if (-not [version]::TryParse(($Version.Trim() -replace '^v' -replace '[-+].*$', ''), [ref]$new)) { return $false }
+  return ($old -lt $new)
+}
+# An account's own "coop" shortcut to this machine install's exe: the installer's
+# all-users "coop" already starts it, so the account would see coop twice.
+function Test-CoopShortcutDuplicatesMachine([string]$Target, [string]$InstallDir) {
+  if (-not $Target -or -not $InstallDir) { return $false }
+  # Plain '\' joins: these are Windows paths, and the tests run on any OS.
+  return ($Target.TrimEnd('\') -ieq ($InstallDir.TrimEnd('\') + '\coop.exe'))
+}
+# The "Electron" Start Menu icon the early window left: Electron's own binary
+# under that account's ~\.coop\desktop\runtime (not any other Electron app's).
+function Test-CoopElectronIconOfProfile([string]$Target, [string]$ProfileDir) {
+  if (-not $Target -or -not $ProfileDir) { return $false }
+  $runtime = $ProfileDir.TrimEnd('\') + '\.coop\desktop\runtime\'
+  return ($Target.StartsWith($runtime, [StringComparison]::OrdinalIgnoreCase) -and ($Target -match '(?i)\\electron\.exe$'))
 }
 
 # Dot-sourced (the tests) nothing runs; invoked, the step runs and the exit code
