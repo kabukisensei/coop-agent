@@ -39,7 +39,7 @@ Every module you change (a table: in its change script) gets one comment line ne
 
 ## No unnecessary functions in SQL
 
-Do not wrap a column in `CAST`, `CONVERT`, `TRY_CONVERT`, `UPPER`, `TRIM` or any other function unless the column's type, collation or actual values prove it is needed; never in a `JOIN` or `WHERE` predicate. Each function you keep gets a `--` comment naming that evidence.
+Do not wrap a column in `CAST`, `CONVERT`, `TRY_CONVERT`, `UPPER`, `TRIM` or any other function unless the column's type, collation or actual values prove it is needed; never in a `JOIN` or `WHERE` predicate. Each function you keep gets a `--` comment naming that evidence. Never write a D365 enum or Dataverse choice value from memory.
 
 ## Read focused
 

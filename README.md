@@ -733,6 +733,14 @@ general articles (layer and technology `agnostic`, such as SQL Conventions) plus
 whose layer, artifact, technology, or title match the task, each with its path, SHA-256, and
 the repo revision. A domain with fewer than three articles (today DAX) gets all of them.
 
+Source-system articles (`domain: source`, the wiki's `Source Systems/` folder) are chosen by
+the project, not the prompt: every SQL, DAX, model or Fabric task gets the ones whose
+`technology` fits the project file's `source_systems` list. Every Cooptimize client's
+source is Dynamics 365, so a project file without the key gets both `d365_fo` (Finance and
+Operations) and `d365_dataverse` (Customer Engagement, Project Operations), plus the shared
+`d365` exports article; `source_systems: [d365_fo]` narrows it and `source_systems: []`
+turns them off.
+
 Two layers pick the domains. A keyword classifier reads the prompt. SQL wording (a Fabric
 warehouse, silver or gold objects, `dim.`/`fact.` names, a sproc) outranks "fact table" or
 "dimension table", so gold SQL work does not get the Power BI table articles unless the
