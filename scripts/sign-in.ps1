@@ -43,6 +43,17 @@ function Get-CoopSignInWaitStep([string]$Latest, $State, [datetime]$Since) {
   if ($result -eq 'up to date') { return 'stop: the update task found no newer release yet' }
   return 'wait'
 }
+# "1 minute", "12 minutes".
+function Format-CoopMinutes([int]$Count) { if ($Count -eq 1) { return '1 minute' } return "$Count minutes" }
+# The log line for the Azure check's exit code (see Invoke-CoopSignIn).
+function Get-CoopSignInAzureLine([int]$Code) {
+  switch ($Code) {
+    0 { return 'Azure: signed in for the client tenant' }
+    3 { return 'Azure: not signed in (az login was skipped or did not finish); the window says how to sign in' }
+    4 { return 'Azure: check skipped (no client tenant set, no Azure CLI, or COOP_SKIP_AZ=1)' }
+  }
+  return "Azure: the check stopped with exit $Code"
+}
 # The client folder ~\.coop\client.json records (root), or '' when none is
 # recorded or it is gone.
 function Get-CoopSignInClientRoot([string]$ProfileDir) {
@@ -69,7 +80,7 @@ function Wait-CoopSignInUpdate([string]$CoopRoot, [datetime]$Start) {
   $latest = if ($env:COOP_AUTO_UPDATE_LATEST) { [string]$env:COOP_AUTO_UPDATE_LATEST } else { Get-CoopLatestReleaseVersion 'kabukisensei/coop-agent' }
   if (-not $latest) { Write-CoopSignInLine "could not read the newest release from github.com; opening coop $installed"; return }
   if (-not (Test-CoopVersionNewer $latest $installed)) { Write-CoopSignInLine "coop $installed is the newest release"; return }
-  Write-CoopSignInLine "coop $latest is out (this machine has $installed): waiting for the update task to install it (at most $WaitMinutes minutes)"
+  Write-CoopSignInLine "coop $latest is out (this machine has $installed): waiting for the update task to install it (at most $(Format-CoopMinutes $WaitMinutes))"
   $machineDir = if ($env:COOP_MACHINE_DIR) { [string]$env:COOP_MACHINE_DIR } else { Join-Path $env:ProgramData 'coop' }
   $stateFile = Join-Path $machineDir 'update-state.json'
   # The task's sign-in run may start a little before this script does.
@@ -85,7 +96,7 @@ function Wait-CoopSignInUpdate([string]$CoopRoot, [datetime]$Start) {
     if ((Get-Date) -ge $nextNote) { Write-CoopSignInLine 'still installing...'; $nextNote = (Get-Date).AddMinutes(1) }
     Start-Sleep -Seconds 5
   }
-  Write-CoopSignInLine "coop $latest did not install within $WaitMinutes minutes; opening coop $installed (the update task tries again within the hour)"
+  Write-CoopSignInLine "coop $latest did not install within $(Format-CoopMinutes $WaitMinutes); opening coop $installed (the update task tries again within the hour)"
 }
 
 function Invoke-CoopSignIn {
@@ -115,8 +126,15 @@ function Invoke-CoopSignIn {
     $common = (Join-Path $coopRoot 'lib\common.ps1') -replace "'", "''"
     Push-Location -LiteralPath $here
     try {
-      & $ps -NoLogo -NoProfile -ExecutionPolicy Bypass -Command ". '$common'; Invoke-CoopAzPreflight"
-      Write-CoopSignInLine "Azure sign-in check finished (exit $LASTEXITCODE)"
+      # Exit 0 signed in (the marker the check writes, under 30 minutes old), 3
+      # not signed in, 4 skipped (no client tenant, no az, or COOP_SKIP_AZ=1).
+      # One line with no double quotes: Windows PowerShell 5.1 passes it to the child as one argument.
+      $check = ". '$common'; Invoke-CoopAzPreflight; " +
+        'if ($env:COOP_SKIP_AZ -eq ''1'' -or -not (Test-Have ''az'') -or (Get-CoopTenant).Rc -ne 0) { exit 4 }; ' +
+        '$m = Get-Item -LiteralPath (Join-Path (Get-CoopEffectiveAgentDir) ''.az-ok'') -Force -ErrorAction SilentlyContinue; ' +
+        'if ($m -and ((Get-Date) - $m.LastWriteTime).TotalMinutes -lt 30) { exit 0 }; exit 3'
+      & $ps -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $check
+      Write-CoopSignInLine (Get-CoopSignInAzureLine $LASTEXITCODE)
     } finally { Pop-Location }
     # 3. The window, as the Start menu's coop opens it.
     $exe = Join-Path (Split-Path -Parent (Split-Path -Parent $coopRoot)) 'coop.exe'

@@ -203,6 +203,9 @@ try {
   foreach ($c in $cases) { $got = Get-CoopSignInWaitStep '0.39.2' $c[0] $since; if ($got -ne $c[1]) { $bad += "$($c[2]): '$got' (want '$($c[1])')" } }
   if ($bad.Count) { Ko 'Get-CoopSignInWaitStep is wrong' ($bad -join "`n") }
   else { Ok 'coop at sign-in waits for this sign-in''s update run: done when it installed the release, stops when it failed, waits for an open coop or saw nothing newer; earlier runs do not count' }
+  if ((Format-CoopMinutes 1) -ne '1 minute' -or (Format-CoopMinutes 12) -ne '12 minutes') { Ko "Format-CoopMinutes: '$(Format-CoopMinutes 1)', '$(Format-CoopMinutes 12)'" }
+  elseif ((Get-CoopSignInAzureLine 0) -notmatch 'signed in' -or (Get-CoopSignInAzureLine 3) -notmatch 'not signed in' -or (Get-CoopSignInAzureLine 4) -notmatch 'skipped' -or (Get-CoopSignInAzureLine 7) -notmatch 'exit 7') { Ko 'Get-CoopSignInAzureLine does not say the Azure outcome' }
+  else { Ok 'the sign-in log says "1 minute" and names the Azure outcome (signed in, not signed in, skipped), not a bare exit code' }
   $signProfile = Join-Path $t 'sign-in-profile'
   New-Item -ItemType Directory -Force -Path $signProfile | Out-Null
   if ((Get-CoopSignInClientRoot $signProfile) -ne '') { Ko 'Get-CoopSignInClientRoot finds a client folder with no client.json' }
