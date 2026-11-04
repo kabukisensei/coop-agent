@@ -122,6 +122,13 @@ foreach ($name in @('coop.lnk', 'coop (window).lnk', 'coop (terminal).lnk')) {
 }
 if ($removedLnk.Count -gt 0) { Coop-Ok "removed $($removedLnk.Count) shortcut(s) (Start Menu / Desktop)" }
 else { Coop-Info 'no coop shortcuts found (already gone)' }
+# `coop startup on`'s sign-in entry, when this account has one.
+if ($env:OS -eq 'Windows_NT' -and (Get-CoopStartupEntry)) {
+  try {
+    Remove-ItemProperty -LiteralPath $script:CoopStartupRunKey -Name $script:CoopStartupValueName -ErrorAction Stop
+    Coop-Ok 'removed the open-at-sign-in entry (coop startup)'
+  } catch { Coop-Warn "could not remove the open-at-sign-in entry: $($_.Exception.Message)" 'run: coop startup off' }
+}
 
 # --- 3. The isolated Pi agent dir ----------------------------------------------
 # ONLY the agent dir — the rest of ~/.coop can hold private, non-coop-agent config.

@@ -515,6 +515,27 @@ function Get-CoopMachineUpdateSummary {
   $installed = if ($state -and $state.installed_version) { [string]$state.installed_version } else { [string]$script:CoopVersion }
   return "This coop updates itself (this machine): last checked $checked, installed $installed"
 }
+# --- coop at Windows sign-in (opt-in per account: `coop startup on`) ----------
+# One value in the account's Run key starts scripts\sign-in.ps1 from this coop at
+# every Windows sign-in: it waits for a newer release to install, checks the
+# Azure sign-in, then opens the window (Aaron 2026-11-04). Off until turned on.
+$script:CoopStartupRunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$script:CoopStartupValueName = 'coop at sign-in'
+# The Run value: the built-in powershell.exe (never a process from the install
+# folder, which would make the update task wait) running this coop's sign-in.ps1.
+function Get-CoopStartupCommand([string]$PowerShellExe, [string]$Root) {
+  # String concatenation, not Join-Path: the tests render Windows paths on any OS.
+  $file = $Root.TrimEnd('\') + '\scripts\sign-in.ps1'
+  return ('"' + $PowerShellExe + '" -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Minimized -File "' + $file + '"')
+}
+# The account's current Run value for coop, or ''.
+function Get-CoopStartupEntry {
+  try {
+    $item = Get-ItemProperty -LiteralPath $script:CoopStartupRunKey -Name $script:CoopStartupValueName -ErrorAction Stop
+    return [string]$item.($script:CoopStartupValueName)
+  } catch { return '' }
+}
+
 # The per-account marker of the version this account last launched.
 function Get-CoopLastSeenVersionFile { return (Join-Path (Get-CoopProfileDir) 'last-seen-version') }
 # The launch lines about updates, pure: the installed version changed since this

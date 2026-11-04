@@ -313,6 +313,41 @@ function Invoke-CoopProjectHome {
   return 0
 }
 
+# `coop startup on|off|status` (Aaron 2026-11-04, opt-in per account): open coop
+# at every Windows sign-in, after the update and the Azure sign-in check
+# (scripts\sign-in.ps1, started by one value in this account's Run key).
+function Invoke-CoopStartup {
+  param([string[]] $StartupArgs = @())
+  $usage = 'usage: coop startup [on|off|status]'
+  $verb = if ($StartupArgs.Count -gt 0) { [string]$StartupArgs[0] } else { 'status' }
+  if ($StartupArgs.Count -gt 1 -or @('on', 'off', 'status') -cnotcontains $verb) { Coop-Die $usage }
+  if ($env:OS -ne 'Windows_NT') { Coop-Die 'coop startup is for Windows: it opens coop when you sign in to Windows' }
+  $log = Join-Path (Get-CoopProfileDir) 'logs\sign-in.log'
+  $current = Get-CoopStartupEntry
+  if ($verb -ceq 'on') {
+    $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $want = Get-CoopStartupCommand $ps $script:CoopRoot
+    try {
+      if (-not (Test-Path -LiteralPath $script:CoopStartupRunKey)) { New-Item -Path $script:CoopStartupRunKey -Force | Out-Null }
+      Set-ItemProperty -LiteralPath $script:CoopStartupRunKey -Name $script:CoopStartupValueName -Value $want -ErrorAction Stop
+    } catch { Coop-Die "could not write the sign-in entry: $($_.Exception.Message)" }
+    Coop-Ok 'coop opens when you sign in to Windows (this account): it waits for a newer coop to install, checks the Azure sign-in, then opens the window'
+    Coop-Info "log: $log   turn it off: coop startup off"
+    return
+  }
+  if ($verb -ceq 'off') {
+    if (-not $current) { Coop-Info 'coop does not open at sign-in (nothing to turn off)'; return }
+    try { Remove-ItemProperty -LiteralPath $script:CoopStartupRunKey -Name $script:CoopStartupValueName -ErrorAction Stop }
+    catch { Coop-Die "could not remove the sign-in entry: $($_.Exception.Message)" }
+    Coop-Ok 'coop no longer opens when you sign in to Windows (this account)'
+    return
+  }
+  if (-not $current) { Coop-Info 'coop does not open at sign-in (turn it on: coop startup on)'; return }
+  Coop-Ok 'coop opens when you sign in to Windows (this account)'
+  Coop-Info "entry: $current"
+  Coop-Info "log: $log"
+}
+
 # `coop folders`: the three places coop uses, read-only (F1). Other rows build on it.
 function Invoke-CoopFolders {
   $record = Get-CoopClientRecord
@@ -510,6 +545,7 @@ $(Coop-Bold)Usage$(Coop-Rst)
   coop project home [folder]
                             Show or set this Windows user's client folder (and its project file), where coop opens every time
   coop folders              Show the three places coop uses: this machine, this client, the repository
+  coop startup on|off       Open coop when you sign in to Windows: update, Azure sign-in, then the window
   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
                             (--strict: exit 2 on a failing linter; --skip-docs: linters only)
   coop catalog <cmd>        Committed dev catalog snapshot: snapshot (read the dev/test catalog
@@ -1673,6 +1709,7 @@ switch -CaseSensitive ($cmd) {
   'init' { Invoke-CoopInit $rest; break }
   'project' { $projectRc = Invoke-CoopProject $rest; exit $projectRc }
   'folders' { Invoke-CoopFolders; break }
+  'startup' { Invoke-CoopStartup $rest; break }
   'new-skill' { New-CoopSkill $rest; break }
   'new-prompt' { New-CoopPrompt $rest; break }
   'release' { Invoke-CoopRelease $rest; break }

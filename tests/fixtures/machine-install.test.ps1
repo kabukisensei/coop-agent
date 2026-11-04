@@ -13,6 +13,8 @@
 #   - lib/common.ps1: Test-CoopMachineInstall and Get-CoopInstallKind from the
 #     marker, the doctor row, the update summary, the launch lines (pure and
 #     written, with the per-account last-seen marker and the warn sink);
+#   - scripts/sign-in.ps1 (coop startup): the wait for this sign-in's update
+#     run, the client folder; lib/common.ps1's Run value;
 #   - scripts/update.ps1 on a machine install: reports the task's state and
 #     exits 0; --check reads the state file; --edge refuses.
 $ErrorActionPreference = 'Stop'
@@ -183,6 +185,39 @@ try {
   elseif (-not $text.EndsWith("$filler`r`n") -or ($text -split "`r`n")[0] -notmatch '^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d x+$') { Ko 'the trimmed log does not start on a whole line or end with the newest' $text }
   else { Ok 'the log is cut to its newest half on whole lines once it passes the limit (1 MB in the task)' }
 
+  # --- sign-in.ps1 (coop startup), dot-sourced -------------------------------------------
+  . (Join-Path $root 'scripts\sign-in.ps1')
+  $since = [datetime]'2026-11-04T08:00:00'
+  $after = $since.AddMinutes(1).ToString('o')
+  $before = $since.AddHours(-5).ToString('o')
+  $mk = { param($ran, $result, $ver) [pscustomobject]@{ schema_version = 1; last_run = $ran; last_result = $result; installed_version = $ver } }
+  $cases = @(
+    @($null, 'wait', 'no state yet'),
+    @((& $mk $before 'waiting: coop is open (coop.exe)' '0.39.1'), 'wait', 'a run before this sign-in'),
+    @((& $mk $after 'installed' '0.39.2'), 'installed', 'this sign-in''s run installed the release'),
+    @((& $mk $after 'installed' '0.39.1'), 'wait', 'an install of another version'),
+    @((& $mk $after 'failed: no network' '0.39.1'), 'stop: the update task says failed: no network', 'a failed run'),
+    @((& $mk $after 'waiting: coop is open (coop.exe)' '0.39.1'), 'stop: the update task says waiting: coop is open (coop.exe)', 'a run waiting for an open coop'),
+    @((& $mk $after 'up to date' '0.39.1'), 'stop: the update task found no newer release yet', 'a run that saw no newer release'))
+  $bad = @()
+  foreach ($c in $cases) { $got = Get-CoopSignInWaitStep '0.39.2' $c[0] $since; if ($got -ne $c[1]) { $bad += "$($c[2]): '$got' (want '$($c[1])')" } }
+  if ($bad.Count) { Ko 'Get-CoopSignInWaitStep is wrong' ($bad -join "`n") }
+  else { Ok 'coop at sign-in waits for this sign-in''s update run: done when it installed the release, stops when it failed, waits for an open coop or saw nothing newer; earlier runs do not count' }
+  if ((Format-CoopMinutes 1) -ne '1 minute' -or (Format-CoopMinutes 12) -ne '12 minutes') { Ko "Format-CoopMinutes: '$(Format-CoopMinutes 1)', '$(Format-CoopMinutes 12)'" }
+  elseif ((Get-CoopSignInAzureLine 0) -notmatch 'signed in' -or (Get-CoopSignInAzureLine 3) -notmatch 'not signed in' -or (Get-CoopSignInAzureLine 4) -notmatch 'skipped' -or (Get-CoopSignInAzureLine 7) -notmatch 'exit 7') { Ko 'Get-CoopSignInAzureLine does not say the Azure outcome' }
+  else { Ok 'the sign-in log says "1 minute" and names the Azure outcome (signed in, not signed in, skipped), not a bare exit code' }
+  $signProfile = Join-Path $t 'sign-in-profile'
+  New-Item -ItemType Directory -Force -Path $signProfile | Out-Null
+  if ((Get-CoopSignInClientRoot $signProfile) -ne '') { Ko 'Get-CoopSignInClientRoot finds a client folder with no client.json' }
+  else {
+    [System.IO.File]::WriteAllText((Join-Path $signProfile 'client.json'), (@{ schema_version = 1; root = $t } | ConvertTo-Json))
+    $gotRoot = Get-CoopSignInClientRoot $signProfile
+    [System.IO.File]::WriteAllText((Join-Path $signProfile 'client.json'), (@{ schema_version = 1; root = (Join-Path $t 'gone') } | ConvertTo-Json))
+    if ($gotRoot -ne $t) { Ko "Get-CoopSignInClientRoot: '$gotRoot' (want '$t')" }
+    elseif ((Get-CoopSignInClientRoot $signProfile) -ne '') { Ko 'Get-CoopSignInClientRoot returns a folder that is gone' }
+    else { Ok 'coop at sign-in checks the Azure sign-in from the recorded client folder, and from the home folder when there is none' }
+  }
+
   # --- auto-update.ps1 as a dry run against a fake package ------------------------------
   $fakeApp = Join-Path $t 'app'
   $snapshot = Join-Path $fakeApp 'resources\coop'
@@ -248,6 +283,11 @@ try {
   elseif ((Get-CoopPackageRoot) -ne $fakeApp) { Ko "Get-CoopPackageRoot: $(Get-CoopPackageRoot)" }
   elseif ((Get-CoopMachineInstallInfo).version -ne '0.37.0') { Ko 'Get-CoopMachineInstallInfo does not read the marker' }
   else { Ok 'the snapshot knows it is this machine''s install from runtime\machine-install.json' }
+  $runValue = Get-CoopStartupCommand 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' 'C:\Program Files\coop\resources\coop\'
+  $wantRun = '"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Minimized -File "C:\Program Files\coop\resources\coop\scripts\sign-in.ps1"'
+  if ($runValue -ne $wantRun) { Ko 'the coop startup Run value is wrong' "$runValue`nwant: $wantRun" }
+  elseif ($script:CoopStartupValueName -ne 'coop at sign-in' -or $script:CoopStartupRunKey -ne 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run') { Ko 'coop startup writes another key or value name' }
+  else { Ok 'coop startup on writes one Run value: the built-in powershell.exe running the snapshot''s sign-in.ps1, minimized' }
   $row = Get-CoopInstallDoctorRow
   if ($row.Level -ne 'ok' -or $row.Message -notmatch '^install: this machine \(' -or $row.Message -notmatch 'version 0\.37\.0' -or $row.Message -notmatch 'updates itself \(last run \d{4}-\d\d-\d\d \d\d:\d\d, installed 0\.37\.0, result: up to date\)') { Ko "the doctor row: $($row | ConvertTo-Json -Compress)" }
   else { Ok 'doctor: "install: this machine (<dir>), version X, updates itself (last run <time>, installed <ver>, result: up to date)"' }

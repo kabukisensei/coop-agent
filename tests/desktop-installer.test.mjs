@@ -281,7 +281,7 @@ await check("electron-builder: NSIS per-machine with elevation (F3), data kept, 
   assert.match(checkRunning, /Step 1 of 3[\s\S]*!insertmacro IS_POWERSHELL_AVAILABLE\s+!insertmacro _CHECK_APP_RUNNING[\s\S]*Step 2 of 3/, "electron-builder's own running-app check still runs, between steps 1 and 2");
   assert.match(checkRunning, /!ifndef BUILD_UNINSTALLER/);
   assert.match(nsh, /!macro customInstall[\s\S]*coopStep "Step 3 of 3: [^"]*"\s+SetDetailsPrint both\s+!insertmacro coopPowerShell \$R9\s+nsExec::ExecToLog[^\n]*machine-install\.ps1/);
-  for (const script of ["scripts/machine-install.ps1", "scripts/auto-update.ps1"]) {
+  for (const script of ["scripts/machine-install.ps1", "scripts/auto-update.ps1", "scripts/sign-in.ps1"]) {
     assert.ok(existsSync(join(ROOT, script)) && snapshotIncludes(script), `${script} ships in the snapshot`);
   }
   for (const icon of [config.win.icon, config.nsis.installerIcon, config.nsis.uninstallerIcon]) {
