@@ -2,8 +2,8 @@
   "schema_version": 1,
   "repository": "https://github.com/cooptimize/coop-standards.git",
   "branch": "main",
-  "revision": "b7c856125817179133f44263b0eedd30cef5dc13",
-  "captured_ms": 1793117747861,
+  "revision": "5b3c9708644d8846aa65459808b9ad0ede2bb6cb",
+  "captured_ms": 1793806373997,
   "articles": [
     {
       "file": "Power BI/File Types.md",
@@ -112,6 +112,24 @@
       "sha256": "58fbcd73d4bc9428d84a8e07928d7e2c4dad74d1505768cee4ea02760e9ac4c3",
       "id": "sql_silver_overview",
       "domain": "sql"
+    },
+    {
+      "file": "Source Systems/D365 Dataverse Source Tables.md",
+      "sha256": "a4abfa754c3c12717ca28ddc3e691c72e27ef74417583800352b603d64b2b0a7",
+      "id": "source_d365_dataverse",
+      "domain": "source"
+    },
+    {
+      "file": "Source Systems/D365 Exports.md",
+      "sha256": "2a21f277135ef2b7489f1094fc5149ff21e741fab05b3e65c311eaa4f9b6a2fb",
+      "id": "source_d365_exports",
+      "domain": "source"
+    },
+    {
+      "file": "Source Systems/D365 FO Source Tables.md",
+      "sha256": "bed7050bb9af95fdf69e46d2168ce809ab073f095d92d343b5671b71dbe0b58b",
+      "id": "source_d365_fo",
+      "domain": "source"
     },
     {
       "file": "Technology/Fabric/Fabric Warehouse.md",

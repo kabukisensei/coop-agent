@@ -52,7 +52,9 @@ try {
     assert.ok(r.articles.length >= 5); assert.match(r.path, /snapshots/);
     assert.equal(resolveStandard("sql", { ...opts, authRequired: true }).canonical_state, "auth_required");
     const context = buildStandardsContext("Write a gold stored procedure for customer sales", opts);
-    assert.deepEqual(context.domains, ["sql"]);
+    // The shipped copy carries the D365 source-system articles, which ride on every SQL task.
+    assert.deepEqual(context.domains, ["sql", "source"]);
+    assert.ok(context.records.find((r) => r.resolution.domain === "source").sections.some((s) => /D365/.test(s.heading)));
     const text = provenanceText(context.records[0]);
     assert.match(text, /state=bundled/); assert.match(text, /bundled=\d{4}-\d{2}-\d{2}/); assert.match(text, /run coop sync/);
     assert.match(context.records[0].sections.map((s) => s.heading).join(" "), /Stored Procedures/);
