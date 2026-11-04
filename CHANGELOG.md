@@ -5,6 +5,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **Dynamics 365 source knowledge on every task.** coop now feeds the coop-standards
+  wiki's source-system articles (`domain: source`, `Source Systems/`) into every SQL,
+  DAX, model and Fabric task, whatever the prompt says: company and RecId joins, party
+  names, Schema Manager labels, financial dimensions, Dataverse keys and choices,
+  Project Operations and the Synapse Link, Fabric Link and BYOD differences. The
+  project file's new `source_systems` list picks them (`d365_fo`, `d365_dataverse`);
+  without it a project gets both, and `source_systems: []` turns them off. Nothing
+  changes until the articles are on coop-standards main. The guardrails add one line:
+  never write a D365 enum or Dataverse choice value from memory.
+
 ## [0.39.1] — 2026-11-04
 
 ### Added
