@@ -26,6 +26,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   without it a project gets both, and `source_systems: []` turns them off. Nothing
   changes until the articles are on coop-standards main. The guardrails add one line:
   never write a D365 enum or Dataverse choice value from memory.
+- **Bundled standards** refreshed to coop-standards `5b3c970`, which adds the three
+  D365 source-system articles, so an offline or first-run coop has them too.
 
 ## [0.39.1] — 2026-11-04
 
