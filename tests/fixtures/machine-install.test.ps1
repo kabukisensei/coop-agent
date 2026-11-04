@@ -288,6 +288,17 @@ try {
   if ($runValue -ne $wantRun) { Ko 'the coop startup Run value is wrong' "$runValue`nwant: $wantRun" }
   elseif ($script:CoopStartupValueName -ne 'coop at sign-in' -or $script:CoopStartupRunKey -ne 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run') { Ko 'coop startup writes another key or value name' }
   else { Ok 'coop startup on writes one Run value: the built-in powershell.exe running the snapshot''s sign-in.ps1, minimized' }
+  $bad = @()
+  if (-not (Test-CoopStartupDefaultWanted $true $true '' $false $false)) { $bad += 'a machine install with no entry is not turned on' }
+  if (Test-CoopStartupDefaultWanted $true $true '' $true $false) { $bad += 'an account that opted out is turned back on' }
+  if (Test-CoopStartupDefaultWanted $true $true 'x' $false $false) { $bad += 'an existing entry is rewritten' }
+  if (Test-CoopStartupDefaultWanted $true $false '' $false $false) { $bad += 'a developer clone is turned on' }
+  if (Test-CoopStartupDefaultWanted $false $true '' $false $false) { $bad += 'turned on off Windows' }
+  if (Test-CoopStartupDefaultWanted $true $true '' $false $true) { $bad += 'turned on on a CI runner' }
+  if (-not (Test-CoopStartupDefaultSkipped)) { $bad += 'a sandboxed profile (this test''s HOME) is not skipped' }
+  if ((Get-CoopStartupOptOutFile) -ne (Join-Path (Get-CoopProfileDir) 'startup-off')) { $bad += "opt-out file: $(Get-CoopStartupOptOutFile)" }
+  if ($bad.Count) { Ko 'the coop startup default is wrong' ($bad -join "`n") }
+  else { Ok 'coop startup is on by default on a machine install, once per account; an opt-out (~\.coop\startup-off) keeps it off through updates; never on a clone or a CI runner' }
   $row = Get-CoopInstallDoctorRow
   if ($row.Level -ne 'ok' -or $row.Message -notmatch '^install: this machine \(' -or $row.Message -notmatch 'version 0\.37\.0' -or $row.Message -notmatch 'updates itself \(last run \d{4}-\d\d-\d\d \d\d:\d\d, installed 0\.37\.0, result: up to date\)') { Ko "the doctor row: $($row | ConvertTo-Json -Compress)" }
   else { Ok 'doctor: "install: this machine (<dir>), version X, updates itself (last run <time>, installed <ver>, result: up to date)"' }

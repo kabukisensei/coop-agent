@@ -313,9 +313,10 @@ function Invoke-CoopProjectHome {
   return 0
 }
 
-# `coop startup on|off|status` (Aaron 2026-11-04, opt-in per account): open coop
-# at every Windows sign-in, after the update and the Azure sign-in check
-# (scripts\sign-in.ps1, started by one value in this account's Run key).
+# `coop startup on|off|status` (Aaron 2026-11-04): open coop at every Windows
+# sign-in, after the update and the Azure sign-in check (scripts\sign-in.ps1,
+# started by one value in this account's Run key). On by default on a machine
+# install (Enable-CoopStartupDefault); `off` remembers the opt-out.
 function Invoke-CoopStartup {
   param([string[]] $StartupArgs = @())
   $usage = 'usage: coop startup [on|off|status]'
@@ -323,29 +324,37 @@ function Invoke-CoopStartup {
   if ($StartupArgs.Count -gt 1 -or @('on', 'off', 'status') -cnotcontains $verb) { Coop-Die $usage }
   if ($env:OS -ne 'Windows_NT') { Coop-Die 'coop startup is for Windows: it opens coop when you sign in to Windows' }
   $log = Join-Path (Get-CoopProfileDir) 'logs\sign-in.log'
+  $optOut = Get-CoopStartupOptOutFile
   $current = Get-CoopStartupEntry
   if ($verb -ceq 'on') {
-    $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    $want = Get-CoopStartupCommand $ps $script:CoopRoot
-    try {
-      if (-not (Test-Path -LiteralPath $script:CoopStartupRunKey)) { New-Item -Path $script:CoopStartupRunKey -Force | Out-Null }
-      Set-ItemProperty -LiteralPath $script:CoopStartupRunKey -Name $script:CoopStartupValueName -Value $want -ErrorAction Stop
-    } catch { Coop-Die "could not write the sign-in entry: $($_.Exception.Message)" }
+    try { Set-CoopStartupEntry (Get-CoopStartupCommand (Get-CoopStartupPowerShell) $script:CoopRoot) }
+    catch { Coop-Die "could not write the sign-in entry: $($_.Exception.Message)" }
+    Remove-Item -LiteralPath $optOut -Force -ErrorAction SilentlyContinue
     Coop-Ok 'coop opens when you sign in to Windows (this account): it waits for a newer coop to install, checks the Azure sign-in, then opens the window'
     Coop-Info "log: $log   turn it off: coop startup off"
     return
   }
   if ($verb -ceq 'off') {
-    if (-not $current) { Coop-Info 'coop does not open at sign-in (nothing to turn off)'; return }
-    try { Remove-ItemProperty -LiteralPath $script:CoopStartupRunKey -Name $script:CoopStartupValueName -ErrorAction Stop }
-    catch { Coop-Die "could not remove the sign-in entry: $($_.Exception.Message)" }
-    Coop-Ok 'coop no longer opens when you sign in to Windows (this account)'
+    if ($current) {
+      try { Remove-ItemProperty -LiteralPath $script:CoopStartupRunKey -Name $script:CoopStartupValueName -ErrorAction Stop }
+      catch { Coop-Die "could not remove the sign-in entry: $($_.Exception.Message)" }
+    }
+    # Remembered, so a launch or an update never turns it back on.
+    try {
+      New-Item -ItemType Directory -Force -Path (Split-Path -Parent $optOut) | Out-Null
+      [System.IO.File]::WriteAllText($optOut, "coop startup off`n")
+    } catch { Coop-Die "could not record the opt-out at ${optOut}: $($_.Exception.Message)" }
+    Coop-Ok 'coop no longer opens when you sign in to Windows (this account); updates keep it off. Turn it back on: coop startup on'
     return
   }
-  if (-not $current) { Coop-Info 'coop does not open at sign-in (turn it on: coop startup on)'; return }
+  if (-not $current) {
+    if (Test-Path -LiteralPath $optOut) { Coop-Info 'coop does not open at sign-in: turned off for this account (turn it on: coop startup on)' }
+    else { Coop-Info 'coop does not open at sign-in yet (turn it on: coop startup on)' }
+    return
+  }
   Coop-Ok 'coop opens when you sign in to Windows (this account)'
   Coop-Info "entry: $current"
-  Coop-Info "log: $log"
+  Coop-Info "log: $log   turn it off: coop startup off"
 }
 
 # `coop folders`: the three places coop uses, read-only (F1). Other rows build on it.
@@ -546,6 +555,7 @@ $(Coop-Bold)Usage$(Coop-Rst)
                             Show or set this Windows user's client folder (and its project file), where coop opens every time
   coop folders              Show the three places coop uses: this machine, this client, the repository
   coop startup on|off       Open coop when you sign in to Windows: update, Azure sign-in, then the window
+                            (on by default on a machine install; off is remembered)
   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
                             (--strict: exit 2 on a failing linter; --skip-docs: linters only)
   coop catalog <cmd>        Committed dev catalog snapshot: snapshot (read the dev/test catalog
@@ -1007,6 +1017,8 @@ function Initialize-CoopLaunch {
   if ($Window) { Write-CoopSeveralContractsWarning (Get-Location).Path }
   # F3: on a machine install, the lines about an update that installed since this account's last launch, or one waiting (console and the window's notices).
   Write-CoopUpdateLines
+  # coop at Windows sign-in: on by default on a machine install, once, unless this account opted out.
+  Enable-CoopStartupDefault
   # The window's first launch wrote the profile with the account's name: say so once.
   if ($Window) { Write-CoopProfileDefaultedLine }
   $mcpState = Update-CoopManagedMcpConfig -Quiet

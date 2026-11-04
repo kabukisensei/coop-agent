@@ -7,14 +7,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
-- **Open coop ready at Windows sign-in (`coop startup on`).** An opt-in, per-account
-  entry that runs at every Windows sign-in: on a machine install it waits for the
+- **Open coop ready at Windows sign-in (`coop startup`), on by default.** A per-account
+  entry that runs at every Windows sign-in. On a machine install the first launch after
+  this update turns it on once and says so; `coop startup off` turns it off and is
+  remembered (`~/.coop/startup-off`), so later updates keep it off. The entry: on a machine install it waits for the
   "coop update" task to install a newer release (at most 12 minutes, and it stops early
   when the task fails or waits for an open coop), then runs coop's own Azure sign-in
   check for the client tenant (`az login` opens only when a token cannot be minted;
   no token is printed or logged), then opens the window on the client folder. A
-  developer clone runs `coop update --yes` first instead. `coop startup off` removes
-  it, `coop startup` shows it, and `coop uninstall` removes it too. Each run writes
+  developer clone (never turned on by itself) runs `coop update --yes` first instead.
+  `coop startup on` turns it on again, `coop startup` shows it, and `coop uninstall`
+  removes it. Each run writes
   `~/.coop/logs/sign-in.log`. The steps run one after another on purpose: the
   installer replaces the folder that az, Python and Node run from.
 - **Dynamics 365 source knowledge on every task.** coop now feeds the coop-standards

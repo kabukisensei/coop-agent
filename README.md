@@ -309,12 +309,12 @@ silently and writes `%ProgramData%\coop\update-state.json` and
 one line about an update that installed since that account's last launch (the
 window shows it in its notices); `coop update` on a machine install reports the
 task's state and brings that account's tools to the package's pins, and `coop doctor`'s install row says which install this is
-(this machine, this account only, or a developer clone). `coop startup on` (opt-in, per account) opens coop ready at
-every Windows sign-in: `scripts/sign-in.ps1`, started from the account's Run
+(this machine, this account only, or a developer clone). `coop startup` opens coop ready at every Windows sign-in (on by
+default on a machine install: the first launch turns it on once per account;
+`coop startup off` is remembered in `~/.coop/startup-off`, so updates keep it off): `scripts/sign-in.ps1`, started from the account's Run
 key in the built-in `powershell.exe`, waits for the task to install a newer
 release, runs the launch's Azure sign-in check (opening `az login` only when
-needed), then opens the window; `coop startup off` removes it, and each run
-writes `~/.coop/logs/sign-in.log`. Build it yourself with `npm ci` in
+needed), then opens the window. Each run writes `~/.coop/logs/sign-in.log`. Build it yourself with `npm ci` in
 `desktop/installer` and `node desktop/scripts/build-installer.mjs` on Windows
 (it downloads the pinned Node zip, checks its SHA-256, drops the zip's
 `npm.ps1` and `npx.ps1` so PowerShell's `& npm` reaches `npm.cmd`, stages Pi,
