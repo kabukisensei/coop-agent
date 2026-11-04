@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.39.1] — 2026-11-04
+
 ### Added
 
 - **Task guides in the Start menu.** `/start` now leads with six guides for the
