@@ -1,8 +1,8 @@
 ﻿#!/usr/bin/env pwsh
 #
-# scripts/sign-in.ps1 - coop at Windows sign-in, opt-in per account (`coop
-# startup on` writes the account's Run entry that starts this file in a
-# minimized console titled "coop: getting ready"). One run:
+# scripts/sign-in.ps1 - coop at Windows sign-in (`coop startup`: the account's
+# Run entry starts this file in a minimized console titled "coop: getting
+# ready"; on by default on a machine install, `coop startup off` opts out). One run:
 #   1. on a machine install: asks github.com for the newest release and, when
 #      it is newer than the installed one, waits (at most -WaitMinutes) for the
 #      "coop update" task, which runs at every sign-in, to install it. It stops

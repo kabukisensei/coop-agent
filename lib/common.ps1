@@ -515,10 +515,13 @@ function Get-CoopMachineUpdateSummary {
   $installed = if ($state -and $state.installed_version) { [string]$state.installed_version } else { [string]$script:CoopVersion }
   return "This coop updates itself (this machine): last checked $checked, installed $installed"
 }
-# --- coop at Windows sign-in (opt-in per account: `coop startup on`) ----------
+# --- coop at Windows sign-in (`coop startup`) ---------------------------------
 # One value in the account's Run key starts scripts\sign-in.ps1 from this coop at
 # every Windows sign-in: it waits for a newer release to install, checks the
-# Azure sign-in, then opens the window (Aaron 2026-11-04). Off until turned on.
+# Azure sign-in, then opens the window (Aaron 2026-11-04). On by default on a
+# machine install: a launch turns it on once for the account unless the account
+# opted out (`coop startup off` leaves <profile>\startup-off, which `coop startup
+# on` removes), so an update never turns it back on.
 $script:CoopStartupRunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $script:CoopStartupValueName = 'coop at sign-in'
 # The Run value: the built-in powershell.exe (never a process from the install
@@ -534,6 +537,41 @@ function Get-CoopStartupEntry {
     $item = Get-ItemProperty -LiteralPath $script:CoopStartupRunKey -Name $script:CoopStartupValueName -ErrorAction Stop
     return [string]$item.($script:CoopStartupValueName)
   } catch { return '' }
+}
+
+function Get-CoopStartupPowerShell { return (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') }
+function Get-CoopStartupOptOutFile { return (Join-Path (Get-CoopProfileDir) 'startup-off') }
+# Write the account's Run value (throws on failure).
+function Set-CoopStartupEntry([string]$Value) {
+  if (-not (Test-Path -LiteralPath $script:CoopStartupRunKey)) { New-Item -Path $script:CoopStartupRunKey -Force | Out-Null }
+  Set-ItemProperty -LiteralPath $script:CoopStartupRunKey -Name $script:CoopStartupValueName -Value $Value -ErrorAction Stop
+}
+# Does a launch turn it on by itself? Only on Windows, on a machine install (a
+# developer clone's sign-in would move its checkout), when the account has no
+# entry and did not opt out, and never on a CI runner or for a sandboxed profile
+# ($Skip): the Run key is the real account's, whatever HOME a test set.
+function Test-CoopStartupDefaultWanted([bool]$Windows, [bool]$Machine, [string]$Entry, [bool]$OptedOut, [bool]$Skip) {
+  return ($Windows -and $Machine -and -not $Entry -and -not $OptedOut -and -not $Skip)
+}
+# A CI runner, or a profile other than this Windows account's own ~\.coop (a
+# test's HOME or COOP_DIR).
+function Test-CoopStartupDefaultSkipped {
+  if ($env:CI -eq 'true') { return $true }
+  $real = [Environment]::GetFolderPath('UserProfile')
+  if (-not $real) { return $true }
+  $want = [System.IO.Path]::GetFullPath((Join-Path $real '.coop')).TrimEnd('\', '/')
+  $have = [System.IO.Path]::GetFullPath((Get-CoopProfileDir)).TrimEnd('\', '/')
+  return (-not [string]::Equals($want, $have, [System.StringComparison]::OrdinalIgnoreCase))
+}
+# At launch: the default, once per account, with one line saying how to stop it.
+# Fail-soft: never stops a launch.
+function Enable-CoopStartupDefault {
+  try {
+    $optedOut = Test-Path -LiteralPath (Get-CoopStartupOptOutFile)
+    if (-not (Test-CoopStartupDefaultWanted ($env:OS -eq 'Windows_NT') (Test-CoopMachineInstall) (Get-CoopStartupEntry) $optedOut (Test-CoopStartupDefaultSkipped))) { return }
+    Set-CoopStartupEntry (Get-CoopStartupCommand (Get-CoopStartupPowerShell) $script:CoopRoot)
+    Coop-Notice 'coop now opens ready when you sign in to Windows (the newest coop, the Azure sign-in, then the window). To stop that: coop startup off'
+  } catch { }
 }
 
 # The per-account marker of the version this account last launched.
