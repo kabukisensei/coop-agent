@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.39.2] — 2026-11-04
+
 ### Added
 
 - **Open coop ready at Windows sign-in (`coop startup`), on by default.** A per-account
