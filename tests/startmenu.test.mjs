@@ -84,7 +84,7 @@ t("each task guide sends its prompt template, which asks first, specs before wri
   assert.deepEqual(TASK_GUIDES.map((g) => g.name), Object.keys(expectStandards));
   const items = buildStartMenu();
   for (const [i, guide] of TASK_GUIDES.entries()) {
-    const file = readFileSync(join(ROOT, "prompts", `${guide.name}.md`), "utf8");
+    const file = readFileSync(join(ROOT, "prompts", `${guide.name}.md`), "utf8").replace(/\r\n/g, "\n"); // a Windows checkout has CRLF
     assert.ok(file.startsWith(`# /${guide.name}\n`), `prompts/${guide.name}.md opens with its slash heading`);
     const sent = [];
     items[i].run({ sendUserMessage: (m) => sent.push(m) }, {});
