@@ -41,7 +41,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   INSTALL_TIMEOUT_MS, UNINSTALL_TIMEOUT_MS, UPDATE_TASK, assertDisposableInstallerHost, machinePath, nsisInvocation, packagePaths, pathHasEntry,
-  ps, registryEntries, runOwned, scheduledTaskXml, sha256, writeTerminalShortcut, STARTUP_SET, STARTUP_CLEAR, startupValue,
+  ps, registryEntries, runOwned, scheduledTaskXml, sha256, writeTerminalShortcut, setStartupValue, clearStartupValue, startupValue,
 } from "./verify-installer.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -202,7 +202,7 @@ async function main(argv) {
     // Installing this build over itself (what the update task does with a newer
     // one): the uninstaller runs with --updated and keeps the machine pieces.
     // #516: an upgrade keeps "coop at sign-in"; the real uninstall below removes it.
-    await ps(STARTUP_SET, { COOP_CALL_ROOT: snapshot });
+    await setStartupValue(snapshot);
     const startupBefore = await startupValue();
     if (!startupBefore) throw new Error("could not write the \"coop at sign-in\" Run value for the upgrade check");
     seconds = await install(current, machine.installDir, "allusers");
@@ -274,7 +274,7 @@ async function main(argv) {
     if (installed === "user") { try { await uninstall(user, "currentuser"); report.cleanup = "uninstalled"; } catch (cleanupError) { report.cleanup = cleanupError.message; } }
     throw error;
   } finally {
-    try { await ps(STARTUP_CLEAR); } catch { /* best effort */ }
+    await clearStartupValue();
     cleanup();
     if (output) writeFileSync(output, JSON.stringify(report, null, 2) + "\n");
   }

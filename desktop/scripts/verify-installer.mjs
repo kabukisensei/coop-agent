@@ -146,7 +146,7 @@ export function runOwned(command, args, options = {}, timeoutMs = 180000) {
     child.on("error", (error) => { clearTimeout(timer); reject(error); });
     child.on("close", (code) => {
       clearTimeout(timer);
-      if (code !== 0) reject(new Error(`${command} exited ${code}: ${stderr.trim().split("\n").slice(-5).join(" | ")}`));
+      if (code !== 0) reject(new Error(`${command} exited ${code}: ${(stderr.trim() || stdout.trim()).split("\n").slice(-5).join(" | ")}`));
       else resolvePromise(stdout);
     });
   });
@@ -199,14 +199,25 @@ export async function writeTerminalShortcut(file, launcher) {
   if (!existsSync(file)) throw new Error(`could not write ${file}`);
 }
 
-// "coop at sign-in" in this account's Run key, written the way lib/common.ps1 does.
-const RUN_KEY = "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-// The value lib/common.ps1's Get-CoopStartupCommand writes, for the coop root in COOP_CALL_ROOT.
-export const STARTUP_SET = `$ErrorActionPreference = 'Stop'; $q = [char]34; $ps = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'; $file = $env:COOP_CALL_ROOT.TrimEnd('\\') + '\\scripts\\sign-in.ps1'; if (-not (Test-Path -LiteralPath '${RUN_KEY}')) { New-Item -Path '${RUN_KEY}' -Force | Out-Null }; Set-ItemProperty -LiteralPath '${RUN_KEY}' -Name 'coop at sign-in' -Value ($q + $ps + $q + ' -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Minimized -File ' + $q + $file + $q)`;
-export const STARTUP_CLEAR = `Remove-ItemProperty -LiteralPath '${RUN_KEY}' -Name 'coop at sign-in' -ErrorAction SilentlyContinue`;
+// "coop at sign-in" in this account's Run key, through reg.exe (no script runs).
+const RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+const STARTUP_NAME = "coop at sign-in";
+/** Write the value lib/common.ps1's Get-CoopStartupCommand writes for this coop root. */
+export async function setStartupValue(coopRoot) {
+  const value = `"${powershellExe()}" -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Minimized -File "${win32.join(coopRoot, "scripts", "sign-in.ps1")}"`;
+  await runOwned("reg.exe", ["add", RUN_KEY, "/v", STARTUP_NAME, "/t", "REG_SZ", "/d", value, "/f"], { windowsHide: true }, 60000);
+}
+/** Remove it (best effort). */
+export async function clearStartupValue() {
+  try { await runOwned("reg.exe", ["delete", RUN_KEY, "/v", STARTUP_NAME, "/f"], { windowsHide: true }, 60000); } catch { /* not there */ }
+}
 /** This account's "coop at sign-in" Run value, or "". */
 export async function startupValue() {
-  return ps(`try { [Console]::Out.Write([string](Get-ItemProperty -LiteralPath '${RUN_KEY}' -Name 'coop at sign-in' -ErrorAction Stop).'coop at sign-in') } catch { }`);
+  let out = "";
+  try { out = await runOwned("reg.exe", ["query", RUN_KEY, "/v", STARTUP_NAME], { windowsHide: true }, 60000); } catch { return ""; }
+  const line = out.split(/\r?\n/).find((l) => l.trim().startsWith(STARTUP_NAME));
+  const m = line ? /REG_(?:EXPAND_)?SZ\s+(.*)$/.exec(line) : null;
+  return m ? m[1].trim() : "";
 }
 
 export function sha256(file) {
@@ -431,7 +442,7 @@ async function main(argv) {
     step("an account's link and shortcuts written for the uninstall check");
     // #516: "coop at sign-in" (coop startup) as lib/common.ps1 writes it; CI skips
     // the automatic registration, so the check writes it here. The uninstall must remove it.
-    await ps(STARTUP_SET, { COOP_CALL_ROOT: join(paths.installDir, "resources", "coop") });
+    await setStartupValue(join(paths.installDir, "resources", "coop"));
     if (!(await startupValue()).toLowerCase().includes(join(paths.installDir, "resources", "coop", "scripts", "sign-in.ps1").toLowerCase())) throw new Error("could not write the \"coop at sign-in\" Run value for the uninstall check");
 
     const uninstall = nsisInvocation(paths.uninstaller, paths.installDir, { uninstall: true });
@@ -464,7 +475,7 @@ async function main(argv) {
   } catch (error) {
     report.error = error.message;
     for (const file of [paths.launcherLink, paths.terminalShortcut, paths.startMenuTerminalShortcut]) rmSync(file, { force: true });
-    try { await ps(STARTUP_CLEAR); } catch { /* best effort */ }
+    await clearStartupValue();
     if (installed && existsSync(paths.uninstaller)) {
       try {
         const uninstall = nsisInvocation(paths.uninstaller, paths.installDir, { uninstall: true });
