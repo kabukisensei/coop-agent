@@ -13,12 +13,15 @@
 #      account's new terminal;
 #   3. writes resources\runtime\machine-install.json beside coop-runtime.json,
 #      the marker lib/common.ps1's Test-CoopMachineInstall reads;
-#   4. creates %ProgramData%\coop\updates and \logs for the update task, and
-#      %ProgramData%\coop\standards writable by every account (F2: the
-#      standards live once on this machine);
+#   4. creates %ProgramData%\coop\updates and \logs for the update task
+#      (administrators and SYSTEM only: the update task runs the installer it
+#      downloads there), and %ProgramData%\coop\standards writable by every
+#      account (F2: the standards live once on this machine);
 #   4b. removes every account's older per-account window package
-#      (%LOCALAPPDATA%\Programs\coop): its own uninstaller, then the "coop"
-#      shortcuts and the `coop` link that pointed into it, so no account keeps
+#      (%LOCALAPPDATA%\Programs\coop): its folder (never its own uninstaller,
+#      which sits in a folder that account can change; nothing is followed
+#      through a link), then the "coop" shortcuts and the `coop` link that
+#      pointed into it, so no account keeps
 #      an old icon, plus an account's own "coop" to this install's exe (the
 #      all-users one already starts it) and the early window's "Electron"
 #      icon; ~\.coop is never touched;
@@ -315,13 +318,106 @@ function Unregister-CoopUpdateTask([string]$Name) {
   Coop-MachineOk "removed the scheduled task `"$Name`""
 }
 
+# A path that is, or sits under, a link (junction or symbolic link) between
+# $Base (not checked) and $Path itself: the per-account sweep never removes or
+# writes anything reached through one.
+function Test-CoopPathUnderReparsePoint([string]$Base, [string]$Path) {
+  $stop = $Base.TrimEnd('\', '/')
+  $cur = $Path.TrimEnd('\', '/')
+  while ($cur -and ($cur.Length -gt $stop.Length)) {
+    if (Test-Path -LiteralPath $cur) {
+      $item = Get-Item -LiteralPath $cur -Force -ErrorAction Stop
+      if ([int]($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { return $true }
+    }
+    $cur = Split-Path -Parent $cur
+  }
+  return $false
+}
+# Remove a folder tree without following any link inside it: a junction or
+# symbolic link is unlinked (never what it points to), a plain folder is
+# emptied first, a read-only file loses the flag; a folder that is itself a
+# link is unlinked only. Walked by hand: Windows PowerShell's .NET recursive
+# Directory.Delete stops at a junction.
+function Remove-CoopTreeNoFollow([string]$Path) {
+  $dir = New-Object System.IO.DirectoryInfo $Path
+  if (-not $dir.Exists) { return }
+  $link = [System.IO.FileAttributes]::ReparsePoint
+  if ([int]($dir.Attributes -band $link) -eq 0) {
+    foreach ($entry in $dir.GetFileSystemInfos()) {
+      $isLink = [int]($entry.Attributes -band $link) -ne 0
+      $isDir = [int]($entry.Attributes -band [System.IO.FileAttributes]::Directory) -ne 0
+      if ($isDir -and -not $isLink) { Remove-CoopTreeNoFollow $entry.FullName; continue }
+      if ([int]($entry.Attributes -band [System.IO.FileAttributes]::ReadOnly) -ne 0) { $entry.Attributes = $entry.Attributes -band (-bnot [System.IO.FileAttributes]::ReadOnly) }
+      # A folder link goes with RemoveDirectory on Windows, unlink elsewhere (the tests).
+      if ($isDir -and ($env:OS -eq 'Windows_NT')) { [System.IO.Directory]::Delete($entry.FullName, $false) } else { [System.IO.File]::Delete($entry.FullName) }
+    }
+  }
+  [System.IO.Directory]::Delete($dir.FullName, $false)
+}
+# Owners coop's own files have here: SYSTEM (the update task) or the
+# Administrators group (an elevated install).
+$script:CoopTrustedOwnerSids = @('S-1-5-18', 'S-1-5-32-544')
+function Test-CoopTrustedOwner([string]$Path) {
+  try { $sid = (Get-Acl -LiteralPath $Path -ErrorAction Stop).GetOwner([System.Security.Principal.SecurityIdentifier]).Value } catch { return $false }
+  return ($script:CoopTrustedOwnerSids -contains $sid)
+}
+# Make one %ProgramData%\coop folder administrators-and-SYSTEM only (every
+# account may read): a link in its place is removed, the folder is owned by
+# the Administrators group, its access list is exactly SYSTEM and
+# Administrators full, Users read, nothing inherited. A link in it is removed,
+# and so is a file not owned by SYSTEM or the Administrators group: any such
+# file with -AllFiles (logs, updates: coop's own files only), else only the
+# files named in -OwnFiles (the update state in %ProgramData%\coop itself,
+# where an administrator's `coop onboard --machine` keeps user.json). Throws
+# when a step fails.
+function Protect-CoopMachineFolder([string]$Path, [switch]$AllFiles, [string[]]$OwnFiles = @()) {
+  if (Test-Path -LiteralPath $Path) {
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if ([int]($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { [System.IO.Directory]::Delete($item.FullName, $false); Coop-MachineInfo "removed a link at $Path" }
+  }
+  New-Item -ItemType Directory -Force -Path $Path | Out-Null
+  foreach ($icaclsArgs in @(
+      @('/setowner', '*S-1-5-32-544'),
+      @('/reset'),
+      @('/grant:r', '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F', '*S-1-5-32-545:(OI)(CI)RX'),
+      @('/inheritance:r'))) {
+    $out = & icacls.exe $Path @icaclsArgs /Q 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "icacls $($icaclsArgs[0]) exited $LASTEXITCODE`: $(($out | ForEach-Object { [string]$_ }) -join ' ')" }
+  }
+  foreach ($child in @(Get-ChildItem -LiteralPath $Path -Force -ErrorAction Stop)) {
+    $isLink = [int]($child.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+    if ($child.PSIsContainer -and -not $isLink) { continue }
+    $checked = $AllFiles -or ($OwnFiles -contains $child.Name)
+    if ($isLink -or ($checked -and -not (Test-CoopTrustedOwner $child.FullName))) {
+      if ($child.PSIsContainer) { [System.IO.Directory]::Delete($child.FullName, $false) } else { [System.IO.File]::Delete($child.FullName) }
+      Coop-MachineInfo "removed $($child.FullName) (not coop's own)"
+    }
+  }
+}
+# The installer acceptance (desktop/scripts/verify-installer.mjs, on a
+# disposable CI runner only) fails one step on purpose, to check the
+# installer reports a failed machine setup.
+function Test-CoopMachineInstallInjectedFailure([string]$Step) {
+  return (($env:COOP_INSTALLER_TEST -eq '1') -and ($env:COOP_MACHINE_INSTALL_FAIL -eq $Step))
+}
+
 function Invoke-CoopMachineInstall {
   if (-not $InstallDir) { Coop-MachineFail 'usage: machine-install.ps1 -InstallDir <app dir> [-Remove]'; return }
   $dir = $InstallDir.Trim().TrimEnd('\')
   if ($env:OS -ne 'Windows_NT') { Coop-MachineFail 'the machine install step runs on Windows only'; return }
   if (-not (Test-CoopElevated)) { Write-MachineInstallLine 'x' 'this step needs an administrator (the installer runs it elevated)'; $script:MachineInstallRc = 2; return }
   $machine = if ($MachineDir) { $MachineDir } elseif ($env:COOP_MACHINE_DIR) { [string]$env:COOP_MACHINE_DIR } else { Join-Path $env:ProgramData 'coop' }
+  # %ProgramData%\coop, \logs and \updates for administrators and SYSTEM only,
+  # before anything is written there (the update task runs as SYSTEM).
+  $protectProblem = ''
+  if (-not $Remove) {
+    try {
+      Protect-CoopMachineFolder $machine -OwnFiles @('update-state.json', 'update-state.dry-run.json')
+      foreach ($sub in @('logs', 'updates')) { Protect-CoopMachineFolder (Join-Path $machine $sub) -AllFiles }
+    } catch { $protectProblem = "could not make $machine and its logs and updates folders administrators-only: $($_.Exception.Message)" }
+  }
   try { New-Item -ItemType Directory -Force -Path (Join-Path $machine 'logs') | Out-Null; $script:MachineInstallLog = Join-Path $machine 'logs\machine-install.log' } catch { $script:MachineInstallLog = '' }
+  if ($protectProblem) { $script:MachineInstallLog = ''; Coop-MachineFail $protectProblem }
   Coop-MachineInfo "machine-install.ps1 $(if ($Remove) { '-Remove ' })-InstallDir $dir (PowerShell $($PSVersionTable.PSVersion), $(if ([Environment]::Is64BitProcess) { '64-bit' } else { '32-bit' }))"
   $binDir = Join-Path $dir 'bin'
   $shim = Join-Path $binDir 'coop.cmd'
@@ -391,6 +487,8 @@ function Invoke-CoopMachineInstall {
   } catch { Coop-MachineFail "could not install the ODBC driver: $($_.Exception.Message) (live SQL needs Microsoft ODBC Driver 18 for SQL Server; an administrator can install it and run the installer again)" }
   # 5. the task
   try {
+    if ($protectProblem) { throw "not registering it while $machine is not administrators-only" }
+    if (Test-CoopMachineInstallInjectedFailure 'task') { throw 'a failure injected by the installer acceptance (COOP_MACHINE_INSTALL_FAIL=task)' }
     Register-CoopUpdateTask $TaskName (Get-CoopUpdateTaskXml $dir $machine $psExe $TaskName) $machine
     if (-not (Get-CoopRegisteredTaskXml $TaskName)) { throw "schtasks reported success but `"$TaskName`" is not registered" }
     Coop-MachineOk "the scheduled task `"$TaskName`" installs each new release overnight"
@@ -398,7 +496,7 @@ function Invoke-CoopMachineInstall {
 }
 
 # Remove an older per-account window package from every profile under $UsersRoot:
-# run its own uninstaller silently (it removes the files), then the "coop"
+# its folder (without running anything from it), then the "coop"
 # shortcuts and the `coop` link that pointed into it (that account's data under
 # ~\.coop stays). A stale Add/Remove entry in that account's registry hive is
 # cleared by the account's own first launch (scripts/install.ps1, machine mode).
@@ -407,29 +505,26 @@ function Remove-CoopPerUserPackages([string]$UsersRoot, [string]$InstallDir = ''
   $allUsersIcon = $env:ProgramData -and (Test-Path -LiteralPath (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\coop.lnk') -PathType Leaf)
   foreach ($profile in (Get-CoopProfileDirs $UsersRoot)) {
     $pkg = Join-Path $profile 'AppData\Local\Programs\coop'
-    $unins = Join-Path $pkg 'Uninstall coop.exe'
     $hadPackage = Test-Path -LiteralPath $pkg -PathType Container
-    if ($hadPackage) {
+    if ($hadPackage -and (Test-CoopPathUnderReparsePoint $profile (Split-Path -Parent $pkg))) {
+      Coop-MachineInfo "left $pkg alone: a folder above it is a link"
+    } elseif ($hadPackage) {
       Coop-MachineInfo "removing the older per-account coop of $(Split-Path -Leaf $profile): $pkg (its data under the user folder stays)"
-      if (Test-Path -LiteralPath $unins -PathType Leaf) {
-        try {
-          $p = Start-Process -FilePath $unins -ArgumentList @('/S', '/currentuser', ('_?=' + $pkg)) -Wait -PassThru -ErrorAction Stop
-          Coop-MachineInfo "its uninstaller exited $($p.ExitCode)"
-        } catch { Coop-MachineInfo "its uninstaller could not run: $($_.Exception.Message)" }
-      }
-      try { if (Test-Path -LiteralPath $pkg) { Remove-Item -LiteralPath $pkg -Recurse -Force -ErrorAction Stop }; Coop-MachineOk "removed $pkg" } catch { Coop-MachineFail "could not remove $pkg`: $($_.Exception.Message)" }
+      # Its files go directly: its own uninstaller ("Uninstall coop.exe") is
+      # not run from this elevated step, since that account can change it.
+      try { Remove-CoopTreeNoFollow $pkg; Coop-MachineOk "removed $pkg" } catch { Coop-MachineFail "could not remove $pkg`: $($_.Exception.Message)" }
     }
     # The link and shortcuts that pointed into a package (gone now, or earlier).
     $link = Join-Path $profile 'AppData\Local\coop\bin\coop.cmd'
     if (Test-Path -LiteralPath $link -PathType Leaf) {
       $body = ''
       try { $body = [System.IO.File]::ReadAllText($link) } catch { $body = '' }
-      if (Test-CoopLinkPointsIntoPackage $body) {
+      if ((Test-CoopLinkPointsIntoPackage $body) -and -not (Test-CoopPathUnderReparsePoint $profile $link)) {
         try { Remove-Item -LiteralPath $link -Force -ErrorAction Stop; Coop-MachineOk "removed the account link $link (the machine shim serves this account)" } catch { Coop-MachineFail "could not remove $link`: $($_.Exception.Message)" }
       }
     }
     foreach ($lnk in @((Join-Path $profile 'Desktop\coop.lnk'), (Join-Path $profile 'AppData\Roaming\Microsoft\Windows\Start Menu\Programs\coop.lnk'))) {
-      if (-not (Test-Path -LiteralPath $lnk -PathType Leaf)) { continue }
+      if (-not (Test-Path -LiteralPath $lnk -PathType Leaf) -or (Test-CoopPathUnderReparsePoint $profile $lnk)) { continue }
       $target = ''
       try { if (-not $ws) { $ws = New-Object -ComObject WScript.Shell }; $target = [string]$ws.CreateShortcut($lnk).TargetPath } catch { $target = '' }
       if ($target -and ((Test-CoopLinkPointsIntoPackage $target) -or ($allUsersIcon -and (Test-CoopShortcutDuplicatesMachine $target $InstallDir)))) {
@@ -449,7 +544,7 @@ function Remove-CoopPerUserPackages([string]$UsersRoot, [string]$InstallDir = ''
         try { $body = [System.IO.File]::ReadAllText($link) } catch { $body = '' }
         if ($body -match 'call\s+"([^"]+)\\bin\\coop\.cmd"') {
           $cloneRoot = $Matches[1]
-          if (Test-CoopCloneOlderThan $cloneRoot $Version) {
+          if ((Test-CoopCloneOlderThan $cloneRoot $Version) -and -not (Test-CoopPathUnderReparsePoint $profile $link)) {
             try { Remove-Item -LiteralPath $link -Force -ErrorAction Stop; Coop-MachineOk "removed the account link $link to the older coop at $cloneRoot (the folder stays; the machine shim serves this account)" } catch { Coop-MachineFail "could not remove $link`: $($_.Exception.Message)" }
           }
         }
@@ -458,7 +553,7 @@ function Remove-CoopPerUserPackages([string]$UsersRoot, [string]$InstallDir = ''
       foreach ($dir in @((Join-Path $profile 'Desktop'), (Join-Path $profile 'AppData\Roaming\Microsoft\Windows\Start Menu\Programs'))) {
         foreach ($name in @('coop.lnk', 'coop (window).lnk', 'coop (terminal).lnk')) {
           $lnk = Join-Path $dir $name
-          if (-not (Test-Path -LiteralPath $lnk -PathType Leaf)) { continue }
+          if (-not (Test-Path -LiteralPath $lnk -PathType Leaf) -or (Test-CoopPathUnderReparsePoint $profile $lnk)) { continue }
           try {
             if (-not $ws) { $ws = New-Object -ComObject WScript.Shell }
             $sc = $ws.CreateShortcut($lnk)
@@ -481,7 +576,7 @@ function Remove-CoopPerUserPackages([string]$UsersRoot, [string]$InstallDir = ''
     }
     # The early window's "Electron" icon, into this account's own runtime tree.
     $electronLnk = Join-Path $profile 'AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Electron.lnk'
-    if (Test-Path -LiteralPath $electronLnk -PathType Leaf) {
+    if ((Test-Path -LiteralPath $electronLnk -PathType Leaf) -and -not (Test-CoopPathUnderReparsePoint $profile $electronLnk)) {
       $target = ''
       try { if (-not $ws) { $ws = New-Object -ComObject WScript.Shell }; $target = [string]$ws.CreateShortcut($electronLnk).TargetPath } catch { $target = '' }
       if (Test-CoopElectronIconOfProfile $target $profile) {

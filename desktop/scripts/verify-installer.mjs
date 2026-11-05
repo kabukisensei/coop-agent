@@ -10,7 +10,9 @@
 // answers, Pi and every extension are at their pins, the lock is the shipped
 // one) and the coop snapshot (its `coop version` runs the bundled Pi),
 // uninstall silently and check nothing of the package, the shim, the PATH
-// entry or the task is left while the profile is untouched.
+// entry, the task or this install's "coop at sign-in" Run value is left while
+// the profile is untouched. First, a silent install whose machine setup fails
+// on purpose must exit 3 (#515); the real install then runs over it.
 //
 // It MUTATES the machine it runs on (an install, registry entries, the machine
 // PATH, a scheduled task, shortcuts), so it runs only on a disposable
@@ -144,7 +146,7 @@ export function runOwned(command, args, options = {}, timeoutMs = 180000) {
     child.on("error", (error) => { clearTimeout(timer); reject(error); });
     child.on("close", (code) => {
       clearTimeout(timer);
-      if (code !== 0) reject(new Error(`${command} exited ${code}: ${stderr.trim().split("\n").slice(-5).join(" | ")}`));
+      if (code !== 0) reject(new Error(`${command} exited ${code}: ${(stderr.trim() || stdout.trim()).split("\n").slice(-5).join(" | ")}`));
       else resolvePromise(stdout);
     });
   });
@@ -197,6 +199,27 @@ export async function writeTerminalShortcut(file, launcher) {
   if (!existsSync(file)) throw new Error(`could not write ${file}`);
 }
 
+// "coop at sign-in" in this account's Run key, through reg.exe (no script runs).
+const RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+const STARTUP_NAME = "coop at sign-in";
+/** Write the value lib/common.ps1's Get-CoopStartupCommand writes for this coop root. */
+export async function setStartupValue(coopRoot) {
+  const value = `"${powershellExe()}" -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Minimized -File "${win32.join(coopRoot, "scripts", "sign-in.ps1")}"`;
+  await runOwned("reg.exe", ["add", RUN_KEY, "/v", STARTUP_NAME, "/t", "REG_SZ", "/d", value, "/f"], { windowsHide: true }, 60000);
+}
+/** Remove it (best effort). */
+export async function clearStartupValue() {
+  try { await runOwned("reg.exe", ["delete", RUN_KEY, "/v", STARTUP_NAME, "/f"], { windowsHide: true }, 60000); } catch { /* not there */ }
+}
+/** This account's "coop at sign-in" Run value, or "". */
+export async function startupValue() {
+  let out = "";
+  try { out = await runOwned("reg.exe", ["query", RUN_KEY, "/v", STARTUP_NAME], { windowsHide: true }, 60000); } catch { return ""; }
+  const line = out.split(/\r?\n/).find((l) => l.trim().startsWith(STARTUP_NAME));
+  const m = line ? /REG_(?:EXPAND_)?SZ\s+(.*)$/.exec(line) : null;
+  return m ? m[1].trim() : "";
+}
+
 export function sha256(file) {
   return createHash("sha256").update(readFileSync(file)).digest("hex");
 }
@@ -239,6 +262,23 @@ async function main(argv) {
 
   let installed = false;
   try {
+    // #515: a failed machine setup must fail the silent installer. machine-install.ps1
+    // fails its task step on purpose (COOP_MACHINE_INSTALL_FAIL=task, honoured only
+    // with COOP_INSTALLER_TEST=1); the installer must exit 3 with the log naming it.
+    // The normal install below then runs over it, as a retry would.
+    const failing = nsisInvocation(installer, paths.installDir);
+    let failedCode = "0";
+    try {
+      await runOwned(failing.command, failing.args, { ...failing.options, env: { ...process.env, COOP_INSTALLER_TEST: "1", COOP_MACHINE_INSTALL_FAIL: "task" } }, INSTALL_TIMEOUT_MS);
+    } catch (error) {
+      failedCode = (/ exited (-?\d+):/.exec(error.message) || [])[1] || error.message;
+    }
+    installed = existsSync(paths.uninstaller);
+    if (failedCode !== "3") throw new Error(`a silent install whose machine setup failed exited ${failedCode}, not 3`);
+    const machineLog = join(paths.machineDir, "logs", "machine-install.log");
+    if (!existsSync(machineLog) || !readFileSync(machineLog, "utf8").includes("COOP_MACHINE_INSTALL_FAIL=task")) throw new Error(`the machine-install log does not name the failed step: ${machineLog}`);
+    step("a silent install whose machine setup fails exits 3 and the log names the step", { note: machineLog });
+
     const install = nsisInvocation(installer, paths.installDir);
     const installStarted = Date.now();
     await runOwned(install.command, install.args, install.options, INSTALL_TIMEOUT_MS);
@@ -400,6 +440,10 @@ async function main(argv) {
     const foreignLauncher = join(process.env.USERPROFILE, "coop-agent-elsewhere", "bin", "coop-desktop.ps1");
     await writeTerminalShortcut(paths.startMenuTerminalShortcut, foreignLauncher);
     step("an account's link and shortcuts written for the uninstall check");
+    // #516: "coop at sign-in" (coop startup) as lib/common.ps1 writes it; CI skips
+    // the automatic registration, so the check writes it here. The uninstall must remove it.
+    await setStartupValue(join(paths.installDir, "resources", "coop"));
+    if (!(await startupValue()).toLowerCase().includes(join(paths.installDir, "resources", "coop", "scripts", "sign-in.ps1").toLowerCase())) throw new Error("could not write the \"coop at sign-in\" Run value for the uninstall check");
 
     const uninstall = nsisInvocation(paths.uninstaller, paths.installDir, { uninstall: true });
     const uninstallStarted = Date.now();
@@ -423,12 +467,15 @@ async function main(argv) {
       if (existsSync(file)) throw new Error(`uninstall left the package's ${file}`);
     }
     if (!existsSync(paths.startMenuTerminalShortcut)) throw new Error("uninstall removed a terminal install's own \"coop (terminal)\" shortcut");
+    const startupLeft = await startupValue();
+    if (startupLeft) throw new Error(`uninstall left the "coop at sign-in" Run value: ${startupLeft}`);
     rmSync(paths.startMenuTerminalShortcut, { force: true });
     step("silent uninstall leaves no package, entry, shortcut, shim, PATH entry, task, link or first-launch shortcut; profile data and a foreign shortcut kept", { note: `${uninstallSeconds}s`, seconds: uninstallSeconds });
     report.ok = true;
   } catch (error) {
     report.error = error.message;
     for (const file of [paths.launcherLink, paths.terminalShortcut, paths.startMenuTerminalShortcut]) rmSync(file, { force: true });
+    await clearStartupValue();
     if (installed && existsSync(paths.uninstaller)) {
       try {
         const uninstall = nsisInvocation(paths.uninstaller, paths.installDir, { uninstall: true });

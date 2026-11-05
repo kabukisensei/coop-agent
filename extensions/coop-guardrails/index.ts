@@ -351,18 +351,35 @@ export function commitPolicy(repoDir: string, governance?: SessionGovernance): R
   return result;
 }
 
-/** May coop commit sqlsc's object files in this repository? The trusted
- *  project file's agent_allowed_to_commit for the repository whose local_path
- *  is the sqlsc.yml folder must cover the sqlsc folder (for example
- *  `database/**`), and agent_never_commit must not; the built-in docs globs
+/** The paths `sqlsc commit` may stage, one of each shape, relative to the
+ *  sqlsc.yml folder: an object file in every folder of both layouts (type:
+ *  `<folder>/Tables/dbo.X.sql`; schema: `<folder>/dbo/Tables/X.sql`), static
+ *  data, a migration script, Dependencies.json, and the setup files sqlsc
+ *  writes beside sqlsc.yml (coop-sql-source-control `_commit_changes`). */
+export function sqlscCommitCandidates(folder: string): string[] {
+  const type = ["Security/Schemas/dbo.sql", "Tables/dbo.Sample.sql", "Views/dbo.Sample.sql", "Functions/dbo.Sample.sql", "Stored Procedures/dbo.Sample.sql", "Triggers/dbo.Sample.sql"];
+  const schema = ["Security/dbo.sql", "dbo/Tables/Sample.sql", "dbo/Views/Sample.sql", "dbo/Functions/Sample.sql", "dbo/StoredProcedures/Sample.sql", "dbo/Triggers/Sample.sql"];
+  const own = ["Data/dbo.Sample.sql", "Migrations/20260101000000_sample.sql", "Dependencies.json"];
+  return [...[...type, ...schema, ...own].map((rel) => `${folder}/${rel}`), ...SQLSC_SETUP_FILES];
+}
+/** The files sqlsc init writes beside sqlsc.yml, which a first commit takes along. */
+export const SQLSC_SETUP_FILES = ["sqlsc.yml", ".gitattributes", ".gitignore"];
+
+/** May coop commit sqlsc's files in this repository? The trusted project
+ *  file's agent_allowed_to_commit for the repository whose local_path is the
+ *  sqlsc.yml folder must cover every path sqlsc commit may stage (the sqlsc
+ *  folder, for example `database/**`, and the setup files beside sqlsc.yml),
+ *  and agent_never_commit must cover none of them; the built-in docs globs
  *  never do. Returns the reason when not. */
 export function sqlscCommitRefusal(configFile: string, governance?: SessionGovernance): string | null {
   const repoDir = dirname(configFile);
   const folder = sqlscFolder(configFile);
-  const sample = `${folder}/dbo/Tables/Sample.sql`;
+  const candidates = sqlscCommitCandidates(folder);
   const policy = commitPolicy(repoDir, governance);
-  if (policy.denied.some((g) => matchGlob(sample, g))) return `the project file's agent_never_commit covers ${folder}/`;
-  if (!policy.allowed.some((g) => matchGlob(sample, g))) return `the project file's agent_allowed_to_commit for this repository does not cover ${folder}/ (add \`${folder}/**\` under repositories.<name>.agent_allowed_to_commit to let coop commit scripted SQL files there)`;
+  const denied = candidates.find((path) => policy.denied.some((g) => matchGlob(path, g)));
+  if (denied) return `the project file's agent_never_commit covers ${denied}, which sqlsc commit may stage`;
+  const uncovered = candidates.filter((path) => !policy.allowed.some((g) => matchGlob(path, g)));
+  if (uncovered.length) return `the project file's agent_allowed_to_commit for this repository does not cover ${uncovered.slice(0, 3).join(", ")}${uncovered.length > 3 ? " and more" : ""} (add \`["${folder}/**", "sqlsc.yml", ".gitattributes", ".gitignore"]\` under repositories.<name>.agent_allowed_to_commit to let coop commit scripted SQL files there)`;
   return null;
 }
 

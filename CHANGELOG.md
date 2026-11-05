@@ -5,6 +5,35 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Changing a SQL target between Azure SQL and Fabric saves a usable target.** The
+  Project pane and `/setup-project` now clear the other engine's fields (`server`, or
+  `workspace_id` / `item_id` / `sql_endpoint_id`, and `read_scale_replicas` outside
+  Azure SQL) for dev, test, prod and named target sets, and check the written target
+  with the runtime parser's rules before saving (#514).
+- **A failed machine setup fails the window installer.** The installer exits 3 when
+  `machine-install.ps1` does not finish, silent runs included; the one-line bootstrap
+  and the update task report it with the log path instead of success (#515).
+- **Uninstalling the window removes its "coop at sign-in" entry** for this account and
+  every signed-in account, only when it starts this install's script; an upgrade keeps
+  it (#516).
+- **CI's repeat-install check pins one release for both bootstrap runs**
+  (`COOP_BOOTSTRAP_VERSION`); the live latest-release lookup is checked on its own
+  (`COOP_BOOTSTRAP_RESOLVE_ONLY=1`) (#517).
+
+### Changed
+
+- **The machine install keeps `%ProgramData%\coop`, its logs and updates folders
+  administrators-only**, and the update task runs an installer only from such a folder.
+  Older per-account packages are removed directly, without running their uninstaller
+  and without following links; an older per-account uninstaller is run only from a
+  local folder.
+- **`sql_source` commit checks every path `sqlsc commit` may stage against the commit
+  globs** (both layouts, `Data/`, `Migrations/`, `Dependencies.json`, and `sqlsc.yml`,
+  `.gitattributes`, `.gitignore`). The project-file line it suggests is now
+  `agent_allowed_to_commit: ["database/**", "sqlsc.yml", ".gitattributes", ".gitignore"]`.
+
 ## [0.39.2] — 2026-11-04
 
 ### Added

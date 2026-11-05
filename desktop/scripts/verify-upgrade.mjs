@@ -41,7 +41,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   INSTALL_TIMEOUT_MS, UNINSTALL_TIMEOUT_MS, UPDATE_TASK, assertDisposableInstallerHost, machinePath, nsisInvocation, packagePaths, pathHasEntry,
-  ps, registryEntries, runOwned, scheduledTaskXml, sha256, writeTerminalShortcut,
+  ps, registryEntries, runOwned, scheduledTaskXml, sha256, writeTerminalShortcut, setStartupValue, clearStartupValue, startupValue,
 } from "./verify-installer.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -201,17 +201,23 @@ async function main(argv) {
 
     // Installing this build over itself (what the update task does with a newer
     // one): the uninstaller runs with --updated and keeps the machine pieces.
+    // #516: an upgrade keeps "coop at sign-in"; the real uninstall below removes it.
+    await setStartupValue(snapshot);
+    const startupBefore = await startupValue();
+    if (!startupBefore) throw new Error("could not write the \"coop at sign-in\" Run value for the upgrade check");
     seconds = await install(current, machine.installDir, "allusers");
+    if ((await startupValue()) !== startupBefore) throw new Error("installing over this build removed or changed the \"coop at sign-in\" Run value");
     const again = await registryEntries();
     if (again.length !== 1 || again[0].Hive !== "HKLM") throw new Error(`installing over this build left ${JSON.stringify(again)}`);
     if (!existsSync(machine.machineShim) || !existsSync(machine.machineMarker) || !(await scheduledTaskXml()) || !pathHasEntry(await machinePath(), machine.machineBin)) throw new Error("installing over this build removed the machine shim, marker, PATH entry or update task");
-    step("A. installing over this build keeps the shim, the marker, the PATH entry and the update task", `${seconds}s`);
+    step("A. installing over this build keeps the shim, the marker, the PATH entry, the update task and \"coop at sign-in\"", `${seconds}s`);
 
     await uninstall(machine, "allusers");
     installed = "";
     if (existsSync(machine.machineShim) || (await scheduledTaskXml()) || pathHasEntry(await machinePath(), machine.machineBin)) throw new Error("a real uninstall left the machine shim, the PATH entry or the update task");
     if ((await registryEntries()).length) throw new Error("a real uninstall left an Add/Remove entry");
-    step("A. a real uninstall removes them");
+    if (await startupValue()) throw new Error("a real uninstall left the \"coop at sign-in\" Run value");
+    step("A. a real uninstall removes them, and the account's \"coop at sign-in\" Run value");
     cleanup();
 
     // --- B. this machine over a terminal install ------------------------------------
@@ -268,6 +274,7 @@ async function main(argv) {
     if (installed === "user") { try { await uninstall(user, "currentuser"); report.cleanup = "uninstalled"; } catch (cleanupError) { report.cleanup = cleanupError.message; } }
     throw error;
   } finally {
+    await clearStartupValue();
     cleanup();
     if (output) writeFileSync(output, JSON.stringify(report, null, 2) + "\n");
   }

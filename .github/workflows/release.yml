@@ -101,19 +101,29 @@ jobs:
         env:
           COOP_INSTALLER_TEST: '1'
         run: node desktop/scripts/verify-launch.mjs --dist "$env:RUNNER_TEMP\current" --output "$env:RUNNER_TEMP\launch-acceptance.json"
-      - name: the one-liner (irm | iex form) installs the latest release, then finds it installed
+      - name: the one-liner (irm | iex form) finds the latest release once, installs it, then finds it installed
         shell: pwsh
         env:
           COOP_BOOTSTRAP_NO_LAUNCH: '1'
         run: |
           $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
           $cmd = "Invoke-Expression ([System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes('scripts\bootstrap.ps1')))"
+          # The live latest-release lookup, once (#517): a release published
+          # between the two runs below must not turn a correct upgrade into a
+          # failed repeat-install check, so both runs install this one version.
+          $env:COOP_BOOTSTRAP_RESOLVE_ONLY = '1'
+          $lookup = (& $ps -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $cmd 2>&1 | Out-String)
+          Remove-Item Env:\COOP_BOOTSTRAP_RESOLVE_ONLY
+          Write-Output $lookup
+          if ($lookup -match 'is not recognized' -or $lookup -notmatch 'the newest release is coop (\d+\.\d+\.\d+)') { throw 'the one-liner could not read the newest release from github.com' }
+          $pinned = $Matches[1]
+          $env:COOP_BOOTSTRAP_VERSION = $pinned
           $first = (& $ps -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $cmd 2>&1 | Out-String)
           Write-Output $first
-          if ($first -match 'is not recognized' -or $first -notmatch "SHA-256 matches the release's acceptance report" -or $first -notmatch 'the coop window is installed') { throw 'the one-liner did not download, verify and install the latest release' }
+          if ($first -match 'is not recognized' -or $first -notmatch "coop $([regex]::Escape($pinned)) \(pinned by COOP_BOOTSTRAP_VERSION\)" -or $first -notmatch "SHA-256 matches the release's acceptance report" -or $first -notmatch 'the coop window is installed') { throw "the one-liner did not download, verify and install release $pinned" }
           $second = (& $ps -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $cmd 2>&1 | Out-String)
           Write-Output $second
-          if ($second -notmatch 'is already installed') { throw 'a second run of the one-liner did not find the window installed' }
+          if ($second -notmatch "the coop window $([regex]::Escape($pinned)) is already installed") { throw "a second run of the one-liner did not find release $pinned installed" }
       - name: the acceptance reports in the log
         if: always()
         shell: pwsh

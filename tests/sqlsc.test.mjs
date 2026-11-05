@@ -199,9 +199,15 @@ await t("init: a schema filter only for init; it sets up the project's SQL repos
   assert.deepEqual(lib.sqlscInitRoot(join(root, "elsewhere"), contract), { root: join(root, "sql"), name: "warehouse" });
   assert.match(lib.sqlscInitRoot(mkdtempSync(join(tmpdir(), "coop-sqlsrc-nogit-")), null).error, /no SQL repository here/);
   writeFileSync(join(root, "sql", "sqlsc.yml"), "folder: database\n");
-  assert.deepEqual(lib.commitLine(join(root, "sql", "sqlsc.yml"), contract), { line: 'agent_allowed_to_commit: ["database/**"] under repositories.warehouse in .coop/project.yml', covered: false });
+  assert.deepEqual(lib.commitLine(join(root, "sql", "sqlsc.yml"), contract), { line: 'agent_allowed_to_commit: ["database/**", "sqlsc.yml", ".gitattributes", ".gitignore"] under repositories.warehouse in .coop/project.yml', covered: false });
   writeFileSync(contract, "repositories:\n  warehouse:\n    role: sql\n    local_path: sql\n    agent_allowed_to_commit:\n      - \"database/**\"\n");
+  assert.equal(lib.commitLine(join(root, "sql", "sqlsc.yml"), contract).covered, false, "database/** alone leaves the setup files sqlsc commit may stage");
+  writeFileSync(contract, "repositories:\n  warehouse:\n    role: sql\n    local_path: sql\n    agent_allowed_to_commit: [\"database/**\", \"sqlsc.yml\", \".gitattributes\", \".gitignore\"]\n");
   assert.equal(lib.commitLine(join(root, "sql", "sqlsc.yml"), contract).covered, true);
+  // An allow glob shaped like one layout's path only does not cover what sqlsc commit stages.
+  writeFileSync(contract, "repositories:\n  warehouse:\n    role: sql\n    local_path: sql\n    agent_allowed_to_commit: [\"database/dbo/Tables/*.sql\", \"sqlsc.yml\", \".gitattributes\", \".gitignore\"]\n");
+  assert.equal(lib.commitLine(join(root, "sql", "sqlsc.yml"), contract).covered, false, "database/dbo/Tables/*.sql leaves Data/, Migrations/ and the type layout");
+  assert.ok(lib.sqlscCommitCandidates("database").includes("database/Tables/dbo.Sample.sql") && lib.sqlscCommitCandidates("database").includes("database/Dependencies.json"));
   writeFileSync(contract, "repositories:\n  warehouse:\n    role: sql\n    local_path: sql\n    agent_allowed_to_commit: [\"docs/**\"]\n");
   assert.equal(lib.commitLine(join(root, "sql", "sqlsc.yml"), contract).covered, false, "docs/** does not cover database/");
 });
@@ -355,7 +361,7 @@ if (tools) {
     assert.equal(r.details.state, "ok", r.content[0].text);
     assert.deepEqual(execs[0], ["git", "init", join(home, "sql")], "not a repository yet: git init first");
     assert.deepEqual(execs[1], ["coop-sqlsc", "--json", "--config", join(home, "sql", "sqlsc.yml"), "init", "--schema", "sales"]);
-    assert.match(r.content[0].text, /baseline from dev[\s\S]*new git repository[\s\S]*agent_allowed_to_commit: \["database\/\*\*"\] under repositories\.warehouse/);
+    assert.match(r.content[0].text, /baseline from dev[\s\S]*new git repository[\s\S]*agent_allowed_to_commit: \["database\/\*\*", "sqlsc\.yml", "\.gitattributes", "\.gitignore"\] under repositories\.warehouse/);
     writeFileSync(join(home, "sql", "sqlsc.yml"), "folder: database\n");
     assert.equal((await go({ command: "init" })).details.state, "already_set_up");
     const first = await go({ command: "status" });
@@ -497,6 +503,9 @@ sql_targets:
     local_path: .
     agent_allowed_to_commit:
       - "database/**"
+      - "sqlsc.yml"
+      - ".gitattributes"
+      - ".gitignore"
 `);
     guards.resetSessionGovernance();
     const asked = await handlers.tool_call({ toolName: "sql_source", input: { command: "commit", message: "add Region" } }, ctx);

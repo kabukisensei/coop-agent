@@ -16,7 +16,7 @@ function Invoke-Bootstrap {
   return ($lines -join "`n")
 }
 
-$saved = Save-Env @('COOP_BOOTSTRAP_DRY_RUN', 'COOP_BOOTSTRAP_NO_LAUNCH')
+$saved = Save-Env @('COOP_BOOTSTRAP_DRY_RUN', 'COOP_BOOTSTRAP_NO_LAUNCH', 'COOP_BOOTSTRAP_VERSION', 'COOP_BOOTSTRAP_RESOLVE_ONLY')
 try {
   $env:COOP_BOOTSTRAP_DRY_RUN = '1'
   Remove-Item Env:\COOP_BOOTSTRAP_NO_LAUNCH -ErrorAction SilentlyContinue
@@ -43,6 +43,23 @@ try {
   $out = Invoke-Bootstrap
   if (-not $out.Contains('4. first launch: skipped (COOP_BOOTSTRAP_NO_LAUNCH=1)')) { Ko 'COOP_BOOTSTRAP_NO_LAUNCH=1 does not skip opening the window' $out }
   else { Ok 'COOP_BOOTSTRAP_NO_LAUNCH=1 installs without opening the window' }
+
+  # #517: COOP_BOOTSTRAP_VERSION pins one release, so two runs target the same
+  # release whatever github.com calls newest between them (CI's repeat-install check).
+  $env:COOP_BOOTSTRAP_VERSION = 'v0.39.1'
+  $pinA = Invoke-Bootstrap; $rcA = $bootRc
+  $pinB = Invoke-Bootstrap
+  $want = 'the release: coop 0.39.1 (pinned by COOP_BOOTSTRAP_VERSION)'
+  if ($rcA -ne 0 -or -not $pinA.Contains($want) -or -not $pinB.Contains($want)) { Ko "a pinned dry run does not name the pinned release both times (rc=$rcA)" ($pinA + "`n" + $pinB) }
+  else { Ok 'COOP_BOOTSTRAP_VERSION pins the release for every run (no lookup in between)' }
+  $env:COOP_BOOTSTRAP_VERSION = 'latest; rm'
+  $out = Invoke-Bootstrap
+  if ($bootRc -eq 0 -or -not $out.Contains('COOP_BOOTSTRAP_VERSION must be a release version')) { Ko "a malformed COOP_BOOTSTRAP_VERSION is accepted (rc=$bootRc)" $out }
+  else { Ok 'a malformed COOP_BOOTSTRAP_VERSION stops the bootstrap' }
+  Remove-Item Env:\COOP_BOOTSTRAP_VERSION -ErrorAction SilentlyContinue
+  $bootText = [System.IO.File]::ReadAllText($script)
+  if ($bootText -notmatch "COOP_BOOTSTRAP_RESOLVE_ONLY -eq '1'" -or $bootText -notmatch 'the newest release is coop \$version') { Ko 'bootstrap.ps1 has no resolve-only run for the live latest-release check' }
+  else { Ok 'COOP_BOOTSTRAP_RESOLVE_ONLY=1 checks the live latest-release lookup on its own' }
 
   if (-not $isWindowsHost) {
     Remove-Item Env:\COOP_BOOTSTRAP_DRY_RUN -ErrorAction SilentlyContinue

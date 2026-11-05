@@ -21,7 +21,7 @@ const clearAudit = () => rmSync(AUDIT_FILE, { force: true });
 const dist = process.env.COOP_TEST_DIST;
 const cg = await import(pathToFileURL(`${dist}/coop-guardrails.mjs`).href);
 const coopGuardrails = cg.default;
-const { desktopReloadTarget, decideDesktopReload, desktopStatusCommand, isSecretPath, commitStagesAll, mcpMutationLabel, mcpLiveReadRisk, sqlMcpRisk, effectiveMutationTarget, gitRepoDir, leadingCdDir, bashSecretCmdPath, parseGitCommand, parseGitCommands, hasAmbiguousGitInvocation, parseRepoEntries, commitPolicy, buildSessionGovernance, resetSessionGovernance } = cg;
+const { desktopReloadTarget, decideDesktopReload, desktopStatusCommand, isSecretPath, commitStagesAll, mcpMutationLabel, mcpLiveReadRisk, sqlMcpRisk, effectiveMutationTarget, gitRepoDir, leadingCdDir, bashSecretCmdPath, parseGitCommand, parseGitCommands, hasAmbiguousGitInvocation, parseRepoEntries, commitPolicy, buildSessionGovernance, resetSessionGovernance, sqlscCommitRefusal } = cg;
 
 // Capture the handler the extension registers.
 let staged = "";     // `git diff --cached --name-only`
@@ -405,6 +405,22 @@ await t("sibling repositories resolve policies from the session project contract
   const third = commitPolicy(thirdRepo, snap);
   assert.deepEqual(third.allowed, ["docs/**", "site/**", "data-docs/**", "data-docs-site/**"]);
   assert.deepEqual(third.denied, []);
+});
+await t("sqlsc commit: every path it may stage must be allowed and none never-commit", () => {
+  const root = mkdtempSync(join(tmpdir(), "coop-sqlsc-commit-"));
+  const repo = join(root, "sql");
+  mkdirSync(repo);
+  const cfg = join(repo, "sqlsc.yml");
+  writeFileSync(cfg, "folder: database\n");
+  const refusal = (globs) => sqlscCommitRefusal(cfg, { loaded: true, entries: parseRepoEntries(`repositories:\n  warehouse:\n    local_path: sql\n${globs}`, root) });
+  const all = '    agent_allowed_to_commit: ["database/**", "sqlsc.yml", ".gitattributes", ".gitignore"]\n';
+  assert.equal(refusal(all), null);
+  assert.match(refusal('    agent_allowed_to_commit: ["database/dbo/Tables/*.sql", "sqlsc.yml", ".gitattributes", ".gitignore"]\n'), /does not cover database\/Security/, "an allow glob shaped like the old sample path only does not allow");
+  assert.match(refusal('    agent_allowed_to_commit: ["database/**"]\n'), /does not cover sqlsc\.yml/, "the setup files beside sqlsc.yml must be covered too");
+  assert.match(refusal(all + '    agent_never_commit: ["database/Data/**"]\n'), /agent_never_commit covers database\/Data\//);
+  assert.match(refusal(all + '    agent_never_commit: ["**/sqlsc.yml"]\n'), /agent_never_commit covers sqlsc\.yml/);
+  assert.match(refusal(all + '    agent_never_commit: ["database/Migrations/**"]\n'), /agent_never_commit covers database\/Migrations\//);
+  assert.match(refusal(""), /does not cover/);
 });
 await t("defaults no longer allow committing .coop/project.yml (anti self-modification)", () => {
   resetSessionGovernance();
