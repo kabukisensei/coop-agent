@@ -36,6 +36,9 @@
 # Settings (environment variables, read once):
 #   COOP_BOOTSTRAP_NO_LAUNCH=1    install, but do not open the window
 #   COOP_BOOTSTRAP_DRY_RUN=1      print the steps and stop
+#   COOP_BOOTSTRAP_VERSION=X.Y.Z  install that release instead of the newest
+#                                 (CI pins one release across two runs)
+#   COOP_BOOTSTRAP_RESOLVE_ONLY=1 print the newest release and stop
 #
 # Runs under `irm | iex` (no $PSScriptRoot, and `exit` would close the user's
 # shell, so every failure is a `return`) and as a file (tests, `pwsh -File`),
@@ -62,6 +65,18 @@ function Get-CoopBootstrapLatestVersion {
     if ($v.Trim() -match '^\d+\.\d+\.\d+$') { return $v.Trim() }
   } catch { }
   return ''
+}
+
+# The release to install: COOP_BOOTSTRAP_VERSION when set (it must be x.y.z),
+# else the newest release. @{ Version; Pinned; Problem }.
+function Resolve-CoopBootstrapVersion {
+  $pin = ([string]$env:COOP_BOOTSTRAP_VERSION).Trim()
+  if ($pin) {
+    $pin = $pin -replace '^v', ''
+    if ($pin -notmatch '^\d+\.\d+\.\d+$') { return @{ Version = ''; Pinned = $true; Problem = "COOP_BOOTSTRAP_VERSION must be a release version such as 0.39.2, not '$($env:COOP_BOOTSTRAP_VERSION)'" } }
+    return @{ Version = $pin; Pinned = $true; Problem = '' }
+  }
+  return @{ Version = (Get-CoopBootstrapLatestVersion); Pinned = $false; Problem = '' }
 }
 
 # The folder the coop window lives in: an Add/Remove entry's InstallLocation
@@ -151,6 +166,13 @@ function Install-CoopBootstrapWindow([string]$Version) {
   $dir = Get-CoopBootstrapWindowDir
   $installArgs += "/D=$dir"
   $p = Start-Process -FilePath $exe -ArgumentList $installArgs -Wait -PassThru
+  if ($p.ExitCode -eq 3) {
+    # The installer's own code for "the files are in, the machine setup did not
+    # finish" (desktop/installer/resources/installer.nsh).
+    $log = Join-Path $env:ProgramData 'coop\logs\machine-install.log'
+    Coop-BootstrapFail "the window installer copied coop $Version but its machine setup did not finish (the coop command for every account, the SQL driver or the update task; exit 3). The log: $log. Run this command again as administrator"
+    return $false
+  }
   if ($p.ExitCode -ne 0) { Coop-BootstrapFail "the window installer exited with code $($p.ExitCode)"; return $false }
   Remove-Item -LiteralPath $exe -Force -ErrorAction SilentlyContinue
   Coop-BootstrapOk 'the coop window is installed for every account: "coop" on the Desktop and in the Start Menu, coop in a new terminal; updates install themselves'
@@ -165,7 +187,14 @@ function Invoke-CoopBootstrap {
   Coop-BootstrapInfo '3. install it once for every account on this computer (this machine; needs an administrator PowerShell); updates then install themselves'
   if ($noLaunch) { Coop-BootstrapInfo '4. first launch: skipped (COOP_BOOTSTRAP_NO_LAUNCH=1); open "coop" from the Desktop to finish setup' }
   else { Coop-BootstrapInfo '4. open the coop window: its first launch sets up this account from the package and asks for nothing (the installer''s one administrator prompt covered the SQL driver too)' }
-  if ($env:COOP_BOOTSTRAP_DRY_RUN -eq '1') { Coop-BootstrapOk 'dry run (COOP_BOOTSTRAP_DRY_RUN=1): nothing was changed'; $script:CoopBootstrapRc = 0; return }
+  if ($env:COOP_BOOTSTRAP_DRY_RUN -eq '1') {
+    $pin = Resolve-CoopBootstrapVersion
+    if ($pin.Pinned) {
+      if ($pin.Problem) { Coop-BootstrapFail $pin.Problem; $script:CoopBootstrapRc = 1; return }
+      Coop-BootstrapInfo "the release: coop $($pin.Version) (pinned by COOP_BOOTSTRAP_VERSION)"
+    }
+    Coop-BootstrapOk 'dry run (COOP_BOOTSTRAP_DRY_RUN=1): nothing was changed'; $script:CoopBootstrapRc = 0; return
+  }
   if ($env:OS -ne 'Windows_NT') {
     Coop-BootstrapFail 'this bootstrap runs on Windows only. On macOS or Linux: git clone the repository, then run ./bin/coop install'
     $script:CoopBootstrapRc = 1; return
@@ -177,9 +206,12 @@ function Invoke-CoopBootstrap {
   try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
 
   Coop-BootstrapHead '1. The release'
-  $version = Get-CoopBootstrapLatestVersion
+  $resolved = Resolve-CoopBootstrapVersion
+  if ($resolved.Problem) { Coop-BootstrapFail $resolved.Problem; $script:CoopBootstrapRc = 1; return }
+  $version = $resolved.Version
   if (-not $version) { Coop-BootstrapFail "could not read the newest release from github.com. Check this machine can open $($script:CoopBootstrapRepo)/releases/latest, then run this command again"; $script:CoopBootstrapRc = 1; return }
-  Coop-BootstrapOk "coop $version"
+  if ($resolved.Pinned) { Coop-BootstrapOk "coop $version (pinned by COOP_BOOTSTRAP_VERSION)" } else { Coop-BootstrapOk "coop $version" }
+  if ($env:COOP_BOOTSTRAP_RESOLVE_ONLY -eq '1') { Coop-BootstrapOk "the newest release is coop $version (COOP_BOOTSTRAP_RESOLVE_ONLY=1: nothing was installed)"; $script:CoopBootstrapRc = 0; return }
 
   Coop-BootstrapHead '2-3. The coop window (this machine)'
   if (-not (Install-CoopBootstrapWindow $version)) { $script:CoopBootstrapRc = 1; return }

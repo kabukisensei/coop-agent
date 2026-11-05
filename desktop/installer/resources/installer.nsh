@@ -28,6 +28,10 @@
 ;                     older package's first launch wrote, only when they point
 ;                     into this install dir; machine-install.ps1 -Remove undoes
 ;                     the shim, the PATH entry, the marker and the task.
+;                     window-uninstall.ps1 also removes the "coop at sign-in"
+;                     Run value (coop startup) of this account and of every
+;                     signed-in account, only when it starts this install's
+;                     scripts\sign-in.ps1.
 ;                     Best-effort: the scripts never fail the uninstall. An
 ;                     upgrade (the new installer runs this uninstaller with
 ;                     --updated) keeps everything: the new version installs
@@ -56,7 +60,8 @@
 ; PowerShell under file-system redirection. coopPowerShell picks the 64-bit one
 ; through Sysnative on a 64-bit Windows (schtasks and the per-account sweep run
 ; there), else the only one. machine-install.ps1 logs every step to
-; %ProgramData%\coop\logs\machine-install.log; the message box names it.
+; %ProgramData%\coop\logs\machine-install.log; the message box names it, and
+; a failed machine step makes the installer exit 3 (silent runs included).
 
 !include x64.nsh
 !include FileFunc.nsh
@@ -133,6 +138,12 @@ Var pid
     ${andIf} ${FileExists} "$LOCALAPPDATA\Programs\coop\Uninstall coop.exe"
       StrCpy $R2 "$LOCALAPPDATA\Programs\coop"
     ${endIf}
+    ; Only a local folder: an uninstaller on a network path is never run elevated.
+    StrCpy $R5 $R2 2
+    ${if} $R5 == "\\"
+      DetailPrint "not running the older coop's uninstaller from the network path $R2"
+      StrCpy $R2 ""
+    ${endIf}
     ${if} $R2 != ""
     ${andIf} ${FileExists} "$R2\Uninstall coop.exe"
       DetailPrint "removing this account's older coop at $R2 (its data under the user folder stays)"
@@ -156,6 +167,10 @@ Var pid
     Pop $0
     ${if} $0 != 0
       DetailPrint "machine-install.ps1 exited $0 (log: %ProgramData%\coop\logs\machine-install.log)"
+      ; The installer's own exit code says so too (3: the files are in, the
+      ; machine setup did not finish), so a silent run from scripts\bootstrap.ps1
+      ; or scripts\auto-update.ps1 reports the failure instead of success.
+      SetErrorLevel 3
       ${ifNot} ${Silent}
         MessageBox MB_OK|MB_ICONEXCLAMATION "coop is installed, but the coop command for every account, its update task or the removal of older per-account copies did not finish (code $0).$\r$\n$\r$\nThe log: %ProgramData%\coop\logs\machine-install.log$\r$\n$\r$\nRun this as an administrator, then try again:$\r$\npowershell -ExecutionPolicy Bypass -File $\"$INSTDIR\resources\coop\scripts\machine-install.ps1$\" -InstallDir $\"$INSTDIR$\""
       ${endIf}

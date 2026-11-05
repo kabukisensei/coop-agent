@@ -658,6 +658,7 @@ print("resume verdict contract OK")
     @{ Name = 'bootstrap';              Lane = 'gate';     Head = 'scripts/bootstrap.ps1: one command downloads and runs the window installer (D1k; dry run, Windows-only guard, no winget)' },
     @{ Name = 'bundled-tools';          Lane = 'gate';     Head = 'the window package''s bundled Git, Python, pipx, Azure CLI, wheels and ODBC (D1k)' },
     @{ Name = 'machine-install';        Lane = 'gate';     Head = 'one install per machine (F3): machine-install.ps1 and auto-update.ps1 pure parts, the dry run, the lib helpers, coop update and doctor on a machine install' },
+    @{ Name = 'installer-failure-cleanup'; Lane = 'gate';  Head = 'the installer exits 3 on a failed machine setup and its callers say so; the uninstall drops this install''s sign-in Run value; the elevated sweep follows no link' },
     @{ Name = 'azcache';                Lane = 'gate';     Head = 'Azure sign-in preflight (tenant chain, token check, automatic sign-in, .az-ok cache)' },
     @{ Name = 'doctor-warehouse';       Lane = 'gate';     Head = 'doctor.ps1 Warehouse tenant and fabric MCP rows' },
     @{ Name = 'doctor-pipx-shadow';     Lane = 'gate';     Head = 'doctor.ps1 pipx PATH-shadow rows (foreign coop-data-doc on PATH vs. stale venv)' },

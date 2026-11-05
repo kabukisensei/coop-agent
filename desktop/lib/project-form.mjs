@@ -42,6 +42,7 @@ import {
   repositoryShortName,
   saveUserProfileName,
   writeProjectContract,
+  writtenSqlTargetProblems,
 } from "../../lib/project-contract.mjs";
 import { unifiedDiff } from "./text-diff.mjs";
 
@@ -278,7 +279,13 @@ function prepare(cwd, input, options) {
   if (missing && profileName && !isSavableProfileName(profileName)) problems.push({ field: "profileName", message: PROJECT_MESSAGES.profileName });
   // The wizard lowercases the server only after checking it.
   if (settings.sqlTargetServer) settings.sqlTargetServer = settings.sqlTargetServer.toLowerCase();
-  const text = problems.length ? original : projectContractText(original, settings);
+  let text = problems.length ? original : projectContractText(original, settings);
+  // The written SQL targets are checked as they would land on disk, so a save
+  // never reports success while leaving a mix the runtime parser rejects.
+  if (!problems.length) {
+    const written = writtenSqlTargetProblems(text, settings);
+    if (written.length) { problems.push(...written); text = original; }
+  }
   return { where, original, settings, problems, text, profileName: missing ? profileName : "" };
 }
 

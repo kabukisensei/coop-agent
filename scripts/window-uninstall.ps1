@@ -7,12 +7,55 @@
 # Menu that point into the package, and NSIS knows nothing about them. Each is
 # removed only when it points into the install dir given as the one argument:
 # a terminal install's own link and shortcuts (another coop checkout) stay.
+# It also removes the "coop at sign-in" Run value (`coop startup`, lib/common.ps1)
+# of this account and of every signed-in account when it starts this install's
+# scripts\sign-in.ps1; one that starts another checkout's stays. The installer
+# runs this on a real uninstall only, never on an upgrade (installer.nsh).
 # Standalone on purpose (no lib/common.ps1): it must run with the package half
 # gone and never fail the uninstall, so every step is best-effort and the exit
 # code is always 0.
-param([string]$InstallDir)
+param(
+  [string]$InstallDir,
+  # The Run keys to clean (registry paths), for the tests; default: this account's
+  # and every signed-in account's.
+  [string[]]$RunKey = @()
+)
 
 $ErrorActionPreference = 'Continue'
+$script:CoopStartupValueName = 'coop at sign-in'
+# Does a "coop at sign-in" value start a script inside $Dir? The value is
+# `"<powershell.exe>" ... -File "<root>\scripts\sign-in.ps1"`; the -File path
+# must sit under $Dir (a path with `..` in it never counts).
+function Test-CoopStartupValueInPackage([string]$Value, [string]$Dir) {
+  if (-not $Value -or -not $Dir) { return $false }
+  $m = [regex]::Match($Value, '(?i)-File\s+"([^"]+)"')
+  if (-not $m.Success) { return $false }
+  $file = $m.Groups[1].Value
+  if ($file -match '(^|[\\/])\.\.([\\/]|$)') { return $false }
+  $prefix = $Dir.Trim().TrimEnd('\', '/') + '\'
+  return ($prefix.Length -ge 4 -and $file.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase))
+}
+# This account's Run key and every signed-in account's (HKEY_USERS\<SID>).
+function Get-CoopStartupRunKeys {
+  $keys = @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Run')
+  try {
+    foreach ($hive in @(Get-ChildItem -LiteralPath 'Registry::HKEY_USERS' -ErrorAction Stop)) {
+      if ($hive.PSChildName -match '^S-1-5-21-[\d-]+$') { $keys += ('Registry::HKEY_USERS\' + $hive.PSChildName + '\Software\Microsoft\Windows\CurrentVersion\Run') }
+    }
+  } catch { }
+  return $keys
+}
+function Remove-CoopStartupValues([string]$Dir, [string[]]$Keys) {
+  foreach ($key in $Keys) {
+    $value = ''
+    try { $value = [string](Get-ItemProperty -LiteralPath $key -Name $script:CoopStartupValueName -ErrorAction Stop).($script:CoopStartupValueName) } catch { continue }
+    if (-not (Test-CoopStartupValueInPackage $value $Dir)) { continue }
+    try { Remove-ItemProperty -LiteralPath $key -Name $script:CoopStartupValueName -ErrorAction Stop; Write-Host "removed `"$($script:CoopStartupValueName)`" from $key" } catch { Write-Host "could not remove `"$($script:CoopStartupValueName)`" from $key : $($_.Exception.Message)" }
+  }
+}
+# Dot-sourced (the tests): the functions only.
+if ($MyInvocation.InvocationName -eq '.') { return }
+
 if ([string]::IsNullOrWhiteSpace($InstallDir)) { exit 0 }
 $needle = $InstallDir.Trim().TrimEnd('\')
 if ($needle.Length -lt 4) { exit 0 }
@@ -53,5 +96,11 @@ if ($ws) {
       }
     }
   }
+}
+
+# 3. "coop at sign-in" (coop startup) values that start this install's sign-in.ps1.
+if ($env:OS -eq 'Windows_NT') {
+  $keys = if ($RunKey.Count) { $RunKey } else { Get-CoopStartupRunKeys }
+  Remove-CoopStartupValues $InstallDir $keys
 }
 exit 0

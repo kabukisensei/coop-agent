@@ -272,6 +272,30 @@ await check("electron-builder: NSIS per-machine with elevation (F3), data kept, 
   assert.match(nsh, /!macro coopPowerShell OUT[\s\S]*\$\{RunningX64\}[\s\S]*\$WINDIR\\Sysnative\\WindowsPowerShell\\v1\.0\\powershell\.exe/);
   assert.doesNotMatch(nsh, /nsExec::ExecToLog '"\$SYSDIR/);
   assert.match(nsh, /MessageBox[^\n]*%ProgramData%\\coop\\logs\\machine-install\.log/);
+  // #515: a failed machine step fails the installer itself (exit 3), silent runs included.
+  const customInstall = nsh.split("!macro customInstall")[1].split("!macroend")[0];
+  assert.match(customInstall, /\$\{if\} \$0 != 0[\s\S]*SetErrorLevel 3[\s\S]*\$\{ifNot\} \$\{Silent\}/);
+  assert.ok(customInstall.indexOf("SetErrorLevel 3") < customInstall.indexOf("${ifNot} ${Silent}"), "the exit code is set outside the interactive-only message box");
+  // #516: the real uninstall (never an upgrade) runs window-uninstall.ps1, which drops this install's "coop at sign-in".
+  const customUnInstall = nsh.split("!macro customUnInstall")[1].split("!macroend")[0];
+  assert.match(customUnInstall, /^\s*\$\{ifNot\} \$\{isUpdated\}[\s\S]*window-uninstall\.ps1/);
+  const windowUninstall = readFileSync(join(ROOT, "scripts", "window-uninstall.ps1"), "utf8");
+  assert.match(windowUninstall, /'coop at sign-in'/);
+  assert.match(windowUninstall, /Remove-CoopStartupValues \$InstallDir \$keys/);
+  // The installer acceptance injects the failure and checks the exit code and the Run value.
+  const acceptance = readFileSync(join(ROOT, "desktop", "scripts", "verify-installer.mjs"), "utf8");
+  assert.match(acceptance, /COOP_MACHINE_INSTALL_FAIL: "task"/);
+  assert.match(acceptance, /failedCode !== "3"/);
+  assert.match(acceptance, /uninstall left the "coop at sign-in" Run value/);
+  // #517: the repeat-install check pins one release for both runs; the live lookup is checked once on its own.
+  for (const workflow of ["ci.yml", "release.yml"]) {
+    const text = readFileSync(join(ROOT, ".github", "workflows", workflow), "utf8");
+    const stepText = text.split("the one-liner (irm | iex form)")[1].split("- name:")[0];
+    assert.match(stepText, /COOP_BOOTSTRAP_RESOLVE_ONLY = '1'/, workflow);
+    assert.match(stepText, /\$env:COOP_BOOTSTRAP_VERSION = \$pinned/, workflow);
+    assert.ok(stepText.indexOf("COOP_BOOTSTRAP_VERSION = $pinned") < stepText.indexOf("$first ="), `${workflow}: the pin is set before the first install`);
+    assert.match(stepText, /the coop window \$\(\[regex\]::Escape\(\$pinned\)\) is already installed/, workflow);
+  }
   // F3: what the installer says.
   assert.match(nsh, /!macro customWelcomePage[\s\S]*MUI_WELCOMEPAGE_TEXT "coop installs once for every account on this computer\.\$\\r\$\\n\$\\r\$\\nEach Windows account keeps its own client's sessions, memory and backups under its user folder\.\$\\r\$\\n\$\\r\$\\nUpdates install themselves overnight\./);
   assert.match(nsh, /!macro customFinishPage[\s\S]*MUI_PAGE_FINISH/);

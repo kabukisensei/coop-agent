@@ -112,6 +112,7 @@ import {
   saveUserProfileName,
   scalarValue,
   writeProjectContract,
+  writtenSqlTargetProblems,
 } from "../../lib/project-contract.mjs";
 import { fabricDiscovery, isUuid as isFabricUuid } from "../../lib/fabric-discovery.mjs";
 import {
@@ -1978,6 +1979,8 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
   const confirmed = await askConfirm(ctx, title, `${existing ? "Update" : "Create"} ${path} for ${client || "this project"}?\n\nMode: ${mode}\n${repoSummary}`);
   if (!confirmed) { notify(ctx, "Project setup cancelled — no files changed.", "info"); return false; }
   const output = existing ? applyProjectWizardSettings(original, settings) : renderProjectWizardSettings(settings);
+  const targetProblems = writtenSqlTargetProblems(output, settings);
+  if (targetProblems.length) { notify(ctx, `${targetProblems.map((p) => p.message).join(" ")} No files were changed.`, "error"); return false; }
   if (!existing && where.kind === "home-repo") {
     const home = createHomeRepository(root, client);
     if (home.error) { notify(ctx, `Could not create the client home repository ${root}: ${home.error}. No files were changed.`, "error"); return false; }
@@ -3734,7 +3737,7 @@ export default function coopTools(pi: ExtensionAPI) {
           if (on) {
             const contract = findProjectContract(ctx.cwd);
             const config = findSqlscConfig(ctx.cwd, contract);
-            const allowed = config ? commitLine(config, contract) : { line: 'agent_allowed_to_commit: ["database/**"] under repositories.<name> in .coop/project.yml', covered: false };
+            const allowed = config ? commitLine(config, contract) : { line: 'agent_allowed_to_commit: ["database/**", "sqlsc.yml", ".gitattributes", ".gitignore"] under repositories.<name> in .coop/project.yml', covered: false };
             notify(ctx, `First time in a repository: ask coop for sql_source status${config ? "" : " (no sqlsc.yml yet: ask coop to set it up with sql_source init; you approve it)"}. When the files are behind the dev database, coop scripts the whole database into them and commits that as the baseline (you approve the commit); from then on every dev change coop makes is scripted and committed in the same task.`, "info");
             if (!allowed.covered) notify(ctx, `coop commits SQL files only where the project file allows it: add ${allowed.line} (/setup-project or by hand), then /new.`, "info");
           }

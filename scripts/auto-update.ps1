@@ -91,6 +91,36 @@ function Test-CoopInstallerReport($Report, [string]$Version) {
   if ([string]$Report.installerSha256 -notmatch '^[0-9a-fA-F]{64}$') { return 'the acceptance report carries no installer SHA-256' }
   return ''
 }
+# Why the installer's exit code is a failure ('' for 0). 3 is the installer's
+# own "the files are in, but the machine setup did not finish"
+# (desktop/installer/resources/installer.nsh), with the log that says why.
+function Get-CoopInstallerExitProblem([int]$Code, [string]$MachineDir) {
+  if ($Code -eq 0) { return '' }
+  if ($Code -eq 3) { return "the installer copied the new version but its machine setup did not finish (exit 3; see $(Join-Path (Join-Path $MachineDir 'logs') 'machine-install.log'))" }
+  return "the installer exited with code $Code"
+}
+# Is this folder administrators-and-SYSTEM only (what scripts\machine-install.ps1
+# makes %ProgramData%\coop\updates)? Not a link, owned by SYSTEM or the
+# Administrators group, and no other account may change anything in it. The
+# installer is run from it only then.
+function Test-CoopFolderAdminOnly([string]$Path) {
+  try {
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    if ([int]($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { return $false }
+    $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+    $sidType = [System.Security.Principal.SecurityIdentifier]
+    $trusted = @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+    if (@('S-1-5-18', 'S-1-5-32-544') -notcontains $acl.GetOwner($sidType).Value) { return $false }
+    # Write, append, attributes, delete, permissions, owner, and generic write/all.
+    $write = 0x00000002 -bor 0x00000004 -bor 0x00000010 -bor 0x00000100 -bor 0x00000040 -bor 0x00010000 -bor 0x00040000 -bor 0x00080000 -bor 0x40000000 -bor 0x10000000
+    foreach ($rule in $acl.GetAccessRules($true, $true, $sidType)) {
+      if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
+      if ($trusted -contains $rule.IdentityReference.Value) { continue }
+      if (([int]$rule.FileSystemRights -band $write) -ne 0) { return $false }
+    }
+    return $true
+  } catch { return $false }
+}
 # The state document one run writes.
 function New-CoopUpdateState([string]$Result, [string]$Installed, [string]$Pending, [string]$Latest, [string]$ReleaseUrl) {
   return [ordered]@{
@@ -209,6 +239,7 @@ function Invoke-CoopAutoUpdate {
         $result = "dry run: would install v$latest"
       } else {
         New-Item -ItemType Directory -Force -Path $updates | Out-Null
+        if (-not (Test-CoopFolderAdminOnly $updates)) { throw "$updates is not administrators-only, so the installer is not run from it; run the coop installer once as an administrator to repair it" }
         $reportFile = Join-Path $updates 'installer-acceptance.json'
         $exe = Join-Path $updates $urls.Name
         Invoke-CoopDownload $urls.Report $reportFile
@@ -227,7 +258,8 @@ function Invoke-CoopAutoUpdate {
         Unblock-File -LiteralPath $exe -ErrorAction SilentlyContinue
         # NSIS reads /D only as the last argument and without quotes.
         $p = Start-Process -FilePath $exe -ArgumentList @('/S', '/allusers', "/D=$app") -Wait -PassThru
-        if ($p.ExitCode -ne 0) { throw "the installer exited with code $($p.ExitCode)" }
+        $exitProblem = Get-CoopInstallerExitProblem $p.ExitCode $machine
+        if ($exitProblem) { throw $exitProblem }
         $now = ''
         if (Test-Path -LiteralPath $verFile -PathType Leaf) { $now = ([System.IO.File]::ReadAllText($verFile)).Trim() }
         if ($now -ne $latest) { throw "the installer finished but $verFile says $now, not $latest" }
