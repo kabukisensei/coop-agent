@@ -58,26 +58,26 @@ try {
   elseif ($sweep -notmatch 'Remove-CoopTreeNoFollow \$pkg' -or $sweep -match 'Remove-Item -LiteralPath \$pkg -Recurse') { Ko 'the per-account sweep does not remove the old package without following links' }
   else { Ok 'the elevated sweep removes an older per-account package itself, running nothing from it' }
   $tree = Join-Path $t 'tree'
-  New-Item -ItemType Directory -Force -Path (Join-Path $tree 'Programs\coop') | Out-Null
-  if (Test-CoopPathUnderReparsePoint $tree (Join-Path $tree 'Programs\coop')) { Ko 'Test-CoopPathUnderReparsePoint flags a plain folder' }
+  New-Item -ItemType Directory -Force -Path (Join-Path (Join-Path $tree 'Programs') 'coop') | Out-Null
+  if (Test-CoopPathUnderReparsePoint $tree (Join-Path (Join-Path $tree 'Programs') 'coop')) { Ko 'Test-CoopPathUnderReparsePoint flags a plain folder' }
   else { Ok 'a plain folder is not under a link' }
   $outside = Join-Path $t 'outside'
   New-Item -ItemType Directory -Force -Path (Join-Path $outside 'coop') | Out-Null
-  [System.IO.File]::WriteAllText((Join-Path $outside 'coop\keep.txt'), 'keep')
+  [System.IO.File]::WriteAllText((Join-Path (Join-Path $outside 'coop') 'keep.txt'), 'keep')
   $linked = $false
   try {
     if ($isWindowsHost) { New-Item -ItemType Junction -Path (Join-Path $tree 'Linked') -Target $outside | Out-Null } else { New-Item -ItemType SymbolicLink -Path (Join-Path $tree 'Linked') -Target $outside | Out-Null }
     $linked = $true
   } catch { Ok "skipped the link checks (no junction or link here: $($_.Exception.Message))" }
   if ($linked) {
-    if (-not (Test-CoopPathUnderReparsePoint $tree (Join-Path $tree 'Linked\coop'))) { Ko 'Test-CoopPathUnderReparsePoint misses a folder reached through a link' }
+    if (-not (Test-CoopPathUnderReparsePoint $tree (Join-Path (Join-Path $tree 'Linked') 'coop'))) { Ko 'Test-CoopPathUnderReparsePoint misses a folder reached through a link' }
     else { Ok 'a folder reached through a link is under a link, so the sweep leaves it' }
     $holder = Join-Path $t 'holder'
     New-Item -ItemType Directory -Force -Path $holder | Out-Null
     if ($isWindowsHost) { New-Item -ItemType Junction -Path (Join-Path $holder 'inner') -Target $outside | Out-Null } else { New-Item -ItemType SymbolicLink -Path (Join-Path $holder 'inner') -Target $outside | Out-Null }
     Remove-CoopTreeNoFollow $holder
     if (Test-Path -LiteralPath $holder) { Ko 'Remove-CoopTreeNoFollow left the folder' }
-    elseif (-not (Test-Path -LiteralPath (Join-Path $outside 'coop\keep.txt'))) { Ko 'Remove-CoopTreeNoFollow followed a link and deleted what it points to' }
+    elseif (-not (Test-Path -LiteralPath (Join-Path (Join-Path $outside 'coop') 'keep.txt'))) { Ko 'Remove-CoopTreeNoFollow followed a link and deleted what it points to' }
     else { Ok 'removing an old package removes a link inside it, never what the link points to' }
   }
 

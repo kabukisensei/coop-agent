@@ -94,9 +94,10 @@ function Test-CoopInstallerReport($Report, [string]$Version) {
 # Why the installer's exit code is a failure ('' for 0). 3 is the installer's
 # own "the files are in, but the machine setup did not finish"
 # (desktop/installer/resources/installer.nsh), with the log that says why.
+# (String concatenation, not Join-Path: the tests render Windows paths on any OS.)
 function Get-CoopInstallerExitProblem([int]$Code, [string]$MachineDir) {
   if ($Code -eq 0) { return '' }
-  if ($Code -eq 3) { return "the installer copied the new version but its machine setup did not finish (exit 3; see $(Join-Path (Join-Path $MachineDir 'logs') 'machine-install.log'))" }
+  if ($Code -eq 3) { return "the installer copied the new version but its machine setup did not finish (exit 3; see $($MachineDir.TrimEnd('\', '/') + '\logs\machine-install.log'))" }
   return "the installer exited with code $Code"
 }
 # Is this folder administrators-and-SYSTEM only (what scripts\machine-install.ps1
