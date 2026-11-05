@@ -333,13 +333,26 @@ function Test-CoopPathUnderReparsePoint([string]$Base, [string]$Path) {
   }
   return $false
 }
-# Remove a folder tree without following any link inside it: .NET's recursive
-# Directory.Delete removes a junction or symbolic link itself, never what it
-# points to; a folder that is itself a link is unlinked only.
+# Remove a folder tree without following any link inside it: a junction or
+# symbolic link is unlinked (never what it points to), a plain folder is
+# emptied first, a read-only file loses the flag; a folder that is itself a
+# link is unlinked only. Walked by hand: Windows PowerShell's .NET recursive
+# Directory.Delete stops at a junction.
 function Remove-CoopTreeNoFollow([string]$Path) {
-  $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
-  if ([int]($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { [System.IO.Directory]::Delete($item.FullName, $false); return }
-  [System.IO.Directory]::Delete($item.FullName, $true)
+  $dir = New-Object System.IO.DirectoryInfo $Path
+  if (-not $dir.Exists) { return }
+  $link = [System.IO.FileAttributes]::ReparsePoint
+  if ([int]($dir.Attributes -band $link) -eq 0) {
+    foreach ($entry in $dir.GetFileSystemInfos()) {
+      $isLink = [int]($entry.Attributes -band $link) -ne 0
+      $isDir = [int]($entry.Attributes -band [System.IO.FileAttributes]::Directory) -ne 0
+      if ($isDir -and -not $isLink) { Remove-CoopTreeNoFollow $entry.FullName; continue }
+      if ([int]($entry.Attributes -band [System.IO.FileAttributes]::ReadOnly) -ne 0) { $entry.Attributes = $entry.Attributes -band (-bnot [System.IO.FileAttributes]::ReadOnly) }
+      # A folder link goes with RemoveDirectory on Windows, unlink elsewhere (the tests).
+      if ($isDir -and ($env:OS -eq 'Windows_NT')) { [System.IO.Directory]::Delete($entry.FullName, $false) } else { [System.IO.File]::Delete($entry.FullName) }
+    }
+  }
+  [System.IO.Directory]::Delete($dir.FullName, $false)
 }
 # Owners coop's own files have here: SYSTEM (the update task) or the
 # Administrators group (an elevated install).
