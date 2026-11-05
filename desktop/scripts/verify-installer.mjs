@@ -201,7 +201,8 @@ export async function writeTerminalShortcut(file, launcher) {
 
 // "coop at sign-in" in this account's Run key, written the way lib/common.ps1 does.
 const RUN_KEY = "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-export const STARTUP_SET = ". (Join-Path $env:COOP_CALL_ROOT 'lib\\common.ps1'); Set-CoopStartupEntry (Get-CoopStartupCommand (Get-CoopStartupPowerShell) $env:COOP_CALL_ROOT)";
+// The value lib/common.ps1's Get-CoopStartupCommand writes, for the coop root in COOP_CALL_ROOT.
+export const STARTUP_SET = `$ErrorActionPreference = 'Stop'; $q = [char]34; $ps = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'; $file = $env:COOP_CALL_ROOT.TrimEnd('\\') + '\\scripts\\sign-in.ps1'; if (-not (Test-Path -LiteralPath '${RUN_KEY}')) { New-Item -Path '${RUN_KEY}' -Force | Out-Null }; Set-ItemProperty -LiteralPath '${RUN_KEY}' -Name 'coop at sign-in' -Value ($q + $ps + $q + ' -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Minimized -File ' + $q + $file + $q)`;
 export const STARTUP_CLEAR = `Remove-ItemProperty -LiteralPath '${RUN_KEY}' -Name 'coop at sign-in' -ErrorAction SilentlyContinue`;
 /** This account's "coop at sign-in" Run value, or "". */
 export async function startupValue() {
