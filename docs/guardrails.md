@@ -31,7 +31,7 @@ Advisory tools: `data_doc`, `bpa_review`. Follow the standards in context; devia
 
 ## Live dev by default
 
-SQL source control off (the default): read definitions from live dev and apply approved edits there; touch `.sql` files only when asked. `/sql-source on`, or the user asks for files: work from the SQL repository, the snapshot and built lineage docs, go live only for rows or state, and say so in one line. Never re-read live what a file already told you.
+SQL source control off (the default): read definitions from live dev and apply approved edits there; touch `.sql` files only when asked. With `/sql-source on`, or when asked for files: work from the SQL repository, snapshot and lineage docs; go live only for rows or state and say so. Never re-read live what a file already told you.
 
 ## Mark your SQL edits
 
@@ -43,7 +43,7 @@ Do not wrap a column in `CAST`, `CONVERT`, `TRY_CONVERT`, `UPPER`, `TRIM` or any
 
 ## Read focused
 
-When built lineage docs exist, look up an object's lineage with `data_doc` (`command="lineage"`) before changing it and read **only its doc and immediate neighbors**; never run `data_doc` scan or build unasked. Widen only when the blast radius requires it.
+With built lineage docs, get an object's lineage (`data_doc`, `command="lineage"`) before a change and read **only its doc and immediate neighbors**; never run scan or build unasked. Widen only when the blast radius requires it.
 
 ## Communication
 
