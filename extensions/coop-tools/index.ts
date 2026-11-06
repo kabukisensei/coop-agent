@@ -3102,13 +3102,13 @@ export default function coopTools(pi: ExtensionAPI) {
     name: "data_doc",
     label: "Data Documentation",
     description:
-      "Understand and document whatever SQL and/or Power BI source is available with coop-data-doc. Commands: 'scan' (default) writes the lineage graph (graph.json); 'build' also writes per-object Markdown docs and a portal, indexed by manifest.json; 'check' is a CI staleness gate; 'lineage' lists ONE object's upstream inputs, downstream dependents and relationships; 'impact' lists every downstream object that changed source files feed. Any stage of source coverage is valid. Without a coop-data-doc.yml or built graph, proceed without it (an aid, not a gate) and optionally suggest /setup-docs. Outputs are committable; source is never touched.",
+      "Understand and document whatever SQL and/or Power BI source is available with coop-data-doc. Commands: 'scan' (default) writes the lineage graph (graph.json); 'build' also writes per-object Markdown docs and a portal, indexed by manifest.json; 'check' is a CI staleness gate; 'lineage' lists ONE object's upstream inputs, downstream dependents and relationships; 'impact' lists every downstream object that changed source files feed. Any stage of source coverage is valid. Without a coop-data-doc.yml or built graph, proceed without it (an aid, not a gate): never 'scan' or 'build' unasked; name /setup-docs only if the user asks. Outputs are committable; source is never touched.",
     promptSnippet: "SQL+Power BI estate: lineage graph, one object's up/downstream, what a change feeds",
     promptGuidelines: [
-      "BEFORE analyzing or changing any SQL object, DAX measure, or semantic model, call data_doc with command='lineage', object='<name>' for its upstream inputs, downstream dependents, and relationships. Don't reconstruct lineage by hand.",
+      "When built lineage docs exist, call data_doc with command='lineage', object='<name>' before changing a SQL object, DAX measure or semantic model. Don't reconstruct lineage by hand; without built docs, sql_impact is the check.",
       "After editing SQL, DAX or model source files and before presenting the change, call data_doc with command='impact', files=[the changed paths] and report every downstream object it lists.",
-      "Default to 'scan', 'lineage' and 'impact' (read-only); run 'build' only when the user wants the docs regenerated. Read the focused per-object Markdown via manifest.json, not the whole tree.",
-      "Without a coop-data-doc.yml or built graph ('no built graph'), proceed without it and, if useful, suggest /setup-docs.",
+      "Default to 'lineage' and 'impact' (read-only); 'scan' or 'build' only when the user asks. Read the focused per-object Markdown via manifest.json, not the whole tree.",
+      "Without a coop-data-doc.yml or built graph ('no built graph'), proceed without it; no scan, build or /setup-docs unless the user asks.",
     ],
     parameters: DATADOC_PARAMS,
     executionMode: "sequential",
@@ -3231,7 +3231,7 @@ export default function coopTools(pi: ExtensionAPI) {
       // No coop-data-doc.yml yet → point at the in-agent setup wizard (but it's optional).
       const missingConfig = /Config file not found|No coop-data-doc\.yml/i.test(res.stderr + res.stdout);
       const setupHint = missingConfig
-        ? `\n\nThis folder has no coop-data-doc.yml — suggest /setup-docs or \`coop data-doc setup\` (the same native wizard) to create it. You can still work without lineage docs.`
+        ? `\n\nThis folder has no coop-data-doc.yml. Work without lineage docs (sql_impact is the gate) and do not run scan or build again; the user sets docs up with /setup-docs when they want them.`
         : "";
       return {
         content: [
@@ -3371,7 +3371,7 @@ export default function coopTools(pi: ExtensionAPI) {
             display: false,
             content:
               `An observed lineage graph is available under ${relOut}: graph.json${existsSync(join(outAbs, "manifest.json")) ? ", manifest.json" : ""}. Its coverage may be partial or unknown; empty lineage does not prove zero impact. ` +
-              `BEFORE analyzing or changing any SQL object, DAX measure, or semantic model, look up its observed up/downstream impact via the data_doc tool (command="lineage", object="<name>"). ${existsSync(join(outAbs, "manifest.json")) ? "Read available object docs via manifest.json and its immediate neighbors. " : "Run data_doc (build) to generate object docs. "}If the graph looks stale, run data_doc (build) to refresh.`,
+              `BEFORE analyzing or changing any SQL object, DAX measure, or semantic model, look up its observed up/downstream impact via the data_doc tool (command="lineage", object="<name>"). ${existsSync(join(outAbs, "manifest.json")) ? "Read available object docs via manifest.json and its immediate neighbors. " : "Use the graph as it is; do not run data_doc build on your own. "}If the graph looks stale, say so once; the user decides whether to rebuild it.`,
             details: { outputDir: relOut },
           };
         }

@@ -5,6 +5,23 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Live dev is the source unless SQL source control is on.** The *Files first*
+  guardrail is now *Live dev by default*: with `/sql-source off` (the default) coop
+  reads SQL definitions from the live dev database, applies approved edits there and
+  touches `.sql` files only when asked, instead of looking for the SQL repository;
+  with `/sql-source on` the Git files are the source, kept in step through
+  `sql_source`, and live dev stays the place to test. The `coop-workflow` skill says
+  the same. Lineage: `data_doc lineage` is called only when built docs exist, and
+  coop never runs `data_doc` scan or build, or suggests `/setup-docs`, on its own
+  (the session-start note, the tool description and the no-config hint told it to
+  rebuild or set docs up). Aaron, 2026-11-05.
+- **Pins.** coop-sql-source-control 1.0.16. `sqlsc init` gives a new repo the `schema`
+  layout SSMS 22, SqlPackage and Fabric write (`dbo/Tables/Customer.sql`, triggers at the
+  end of the table file) and always writes the `layout:` key; existing repos keep their
+  layout. The sourced wheel's tag, asset and SHA-256 follow the v1.0.16 release.
+
 ### Fixed
 
 - **Changing a SQL target between Azure SQL and Fabric saves a usable target.** The

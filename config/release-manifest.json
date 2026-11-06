@@ -23,7 +23,7 @@
   "python_tools": {
     "coop-data-doc": "1.4.5",
     "coop-schema-compare": "0.1.11",
-    "coop-sql-source-control": "1.0.14",
+    "coop-sql-source-control": "1.0.16",
     "ms-fabric-cli": "1.8.0",
     "fabric-cicd": "1.4.0",
     "pyodbc": "5.3.0"
@@ -31,9 +31,9 @@
   "python_tool_sources": {
     "coop-sql-source-control": {
       "github_release": "kabukisensei/coop-sql-source-control",
-      "tag": "v1.0.14",
-      "asset": "coop_sql_source_control-1.0.14-py3-none-any.whl",
-      "sha256": "aa02b9de765b300e03c23b1a26505f1696010f97ac0993b8fe4dc64f8a179f6d",
+      "tag": "v1.0.16",
+      "asset": "coop_sql_source_control-1.0.16-py3-none-any.whl",
+      "sha256": "753b9db5d7127c55fac13efb738f769089eff5db4edc2ad6f87738aba5f20123",
       "token_env": "COOP_SQLSC_TOKEN"
     }
   },

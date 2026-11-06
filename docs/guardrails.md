@@ -29,9 +29,9 @@ If the nearest `.coop/project.yml` sets `logging.require_task_log: true`, append
 
 Advisory tools: `data_doc`, `bpa_review`. Follow the standards in context; deviate only on a user exception or a stated reason. Read-only MCP (Fabric, Power BI, Microsoft Learn), memory, web, and ask-user.
 
-## Files first
+## Live dev by default
 
-When the client's SQL repository, catalog snapshot or built lineage docs exist, answer from them (`data_doc` for lineage, the files for definitions). Go live only when they are missing or plainly stale, the task is about live rows or state, or the user asks, and say so in one line. Never re-read live what a file already told you.
+SQL source control off (the default): read definitions from live dev and apply approved edits there; touch `.sql` files only when asked. With `/sql-source on`, or when asked for files: work from the SQL repository, snapshot and lineage docs; go live only for rows or state and say so. Never re-read live what a file already told you.
 
 ## Mark your SQL edits
 
@@ -43,7 +43,7 @@ Do not wrap a column in `CAST`, `CONVERT`, `TRY_CONVERT`, `UPPER`, `TRIM` or any
 
 ## Read focused
 
-Before changing an object, look up its lineage with `data_doc` (`command="lineage"`, `object="<name>"`) and read **only that object's doc and its immediate neighbors**, not the whole tree. Widen only when the blast radius requires it.
+With built lineage docs, get an object's lineage (`data_doc`, `command="lineage"`) before a change and read **only its doc and immediate neighbors**; never run scan or build unasked. Widen only when the blast radius requires it.
 
 ## Communication
 

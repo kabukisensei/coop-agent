@@ -31,8 +31,8 @@ workflow calls at step 3 (read target + lineage) and step 9 (document).
   `data_doc` with `command="lineage"`, `object="<name>"` (optionally `depth`) to get
   that object's upstream inputs, downstream dependents, relationships, and doc path
   as JSON from the built graph — don't reconstruct lineage by hand. An ambiguous name
-  returns candidates to choose from; "no built graph" means run `build` (or
-  `/setup-docs`) first, or proceed without it.
+  returns candidates to choose from; "no built graph" means proceed without it,
+  and run `build` or mention `/setup-docs` only when the user asks for lineage docs.
 - **Scan.** Run `coop-data-doc scan` to (re)generate `graph.json` — the machine
   lineage graph of objects and their edges.
 - **Build.** Run `coop-data-doc build` to produce `manifest.json`, the Markdown
