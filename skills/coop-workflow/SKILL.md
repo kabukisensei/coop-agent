@@ -58,7 +58,8 @@ partial, or connected project without requiring the user to edit YAML.
    relationships. Before planning or editing a live SQL object (view, table, procedure,
    function), call `sql_impact` with its name for the live dependents, references and
    columns on the contract's default dev/test target, then `data_doc` lineage for the
-   same object when built docs exist; report drift between the two. Before writing or
+   same object when built docs exist (never run `data_doc` scan or build to make
+   them; the user asks for that); report drift between the two. Before writing or
    changing SQL, read the object's file in the committed catalog snapshot
    (`<schema>/<name>.sql` under the folder the session-start note names) so the
    tables and columns you use exist; when the snapshot is missing or stale, offer
@@ -71,17 +72,21 @@ partial, or connected project without requiring the user to edit YAML.
    files and a live target (`source="repo"`), call `schema_compare` first
    and work from its `deploy.sql`: it is the user's to review and run, its
    destructive statements are marked, and every statement that runs against the
-   target goes through the usual write approvals. When the client SQL repository
-   is under source control (`sql_source` does not answer "off" or "not set up"),
-   check the object out with `sql_source` (`command="checkout"`, the task as
-   `note`) before changing it, live or in its file, and stop if someone else has
-   it; after the change, `script` (a live dev change into the files; it stops
-   when the object also changed in the files: the user settles that one in
-   their own terminal) or `get_latest` (the files onto
-   dev, dry run first), show the diff, then `commit` with a message that says
-   what changed and why (the user approves it; never push). If local
-   source is missing or partial, use read-only dev/test live
-   metadata/schema/code to fill gaps. Mark each fact's provenance (repo or live
+   target goes through the usual write approvals. SQL source control is off by
+   default: then the live dev database is the source of SQL definitions; do not
+   look for an sqlsc repository or SQL Git files, and write `.sql` files only
+   when the user asks. When the user has turned it on (`/sql-source on`; the
+   `sql_source` tool exists only then), the Git files are the source: check the
+   object out with `sql_source` (`command="checkout"`, the task as `note`)
+   before changing it, live or in its file, and stop if someone else has it;
+   after the change, `script` (a live dev change into the files; it stops when
+   the object also changed in the files: the user settles that one in their own
+   terminal) or `get_latest` (the files onto dev, dry run first), show the diff,
+   then `commit` with a message that says what changed and why (the user
+   approves it; never push). The user may still have you edit dev directly, and
+   live dev data stays the place to test and validate. If local source is
+   missing or partial, use read-only dev/test live metadata/schema/code to fill
+   gaps. Mark each fact's provenance (repo or live
    environment) and report drift. Use **Microsoft Learn** for current Microsoft docs.
 4. **Plan the first slice + get approval.** For multi-step work, write a short PLAN
    for the first vertical slice (what, why, failing check before, passing check after,
