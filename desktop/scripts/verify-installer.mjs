@@ -122,6 +122,8 @@ export function packagePaths(env = process.env, mode = "machine") {
     // What a dry run writes instead (never the live state, which every launch reads).
     dryRunState: join(machineDir, "update-state.dry-run.json"),
     updateLog: join(machineDir, "logs", "update.log"),
+    // Written last by a machine setup that finished (scripts/machine-install.ps1, #515).
+    machineSetup: join(machineDir, "machine-setup.json"),
     // Electron's default appData folder for the product; the window keeps its
     // data under the coop profile instead, so this must never appear.
     electronAppData: join(env.APPDATA, "coop"),
@@ -277,7 +279,10 @@ async function main(argv) {
     if (failedCode !== "3") throw new Error(`a silent install whose machine setup failed exited ${failedCode}, not 3`);
     const machineLog = join(paths.machineDir, "logs", "machine-install.log");
     if (!existsSync(machineLog) || !readFileSync(machineLog, "utf8").includes("COOP_MACHINE_INSTALL_FAIL=task")) throw new Error(`the machine-install log does not name the failed step: ${machineLog}`);
-    step("a silent install whose machine setup fails exits 3 and the log names the step", { note: machineLog });
+    // #515: a failed setup leaves no record of a finished one, so a bootstrap retry
+    // or the update task never takes the copied files for a finished setup.
+    if (existsSync(paths.machineSetup)) throw new Error(`a failed machine setup left ${paths.machineSetup}`);
+    step("a silent install whose machine setup fails exits 3, the log names the step and no finished-setup record is left", { note: machineLog });
 
     const install = nsisInvocation(installer, paths.installDir);
     const installStarted = Date.now();
@@ -287,6 +292,10 @@ async function main(argv) {
     if (!existsSync(paths.exe) || !existsSync(paths.uninstaller)) throw new Error(`install left no ${paths.exe} or uninstaller`);
     if (existsSync(userPaths.installDir)) throw new Error(`a per-machine install also wrote ${userPaths.installDir}`);
     step("silent per-machine install (/S /allusers)", { note: `${paths.installDir} (${installSeconds}s)`, seconds: installSeconds });
+    let setupRecord = null;
+    try { setupRecord = JSON.parse(readFileSync(paths.machineSetup, "utf8").replace(/^\uFEFF/, "")); } catch { setupRecord = null; }
+    if (!setupRecord || setupRecord.complete !== true || setupRecord.version !== version) throw new Error(`the retried install left no finished-setup record for ${version} in ${paths.machineSetup}: ${JSON.stringify(setupRecord)}`);
+    step("the retried install records the finished machine setup", { note: paths.machineSetup });
 
     const entries = await registryEntries();
     if (entries.length !== 1) throw new Error(`expected one Add/Remove entry for ${PRODUCT}, found ${entries.length}: ${JSON.stringify(entries)}`);

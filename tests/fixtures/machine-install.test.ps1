@@ -251,6 +251,19 @@ try {
   elseif ($out -notmatch 'coop auto-update: dry run: would install v99\.0\.0') { Ko 'the dry run does not say what it would do' $out }
   elseif (Test-Path -LiteralPath $liveState) { Ko 'the dry run wrote the live update-state.json (every launch would announce a version nobody installs)' }
   else { Ok 'a dry run with a newer release records "dry run: would install", the pending version and the release page, downloads nothing, exits 0' }
+  # #515: copied files whose machine setup did not finish are not "up to date": no
+  # record of a finished setup (or one for another version) keeps the failure.
+  $setupRecord = Join-Path $machineDir 'machine-setup.json'
+  $out = Invoke-AutoUpdate @('-DryRun', '-LatestVersion', '0.37.0')
+  $s = Get-State
+  if ($autoRc -ne 1 -or [string]$s.last_result -notmatch '^failed: the machine setup for v0\.37\.0 did not finish' -or $s.installed_version -ne '0.37.0') { Ko "at the newest release with no finished setup: rc=$autoRc state=$($s | ConvertTo-Json -Compress)" $out }
+  else { Ok 'at the newest release with no record of a finished machine setup the task keeps "failed: the machine setup ... did not finish" and exits 1' }
+  [System.IO.File]::WriteAllText($setupRecord, (Get-CoopMachineSetupRecordJson $fakeApp '0.36.0'), $utf8)
+  $out = Invoke-AutoUpdate @('-DryRun', '-LatestVersion', '0.37.0')
+  $s = Get-State
+  if ($autoRc -ne 1 -or [string]$s.last_result -notmatch '^failed: the machine setup') { Ko "a finished setup of another version: rc=$autoRc state=$($s | ConvertTo-Json -Compress)" $out }
+  else { Ok 'a record of a finished setup for another version does not count' }
+  [System.IO.File]::WriteAllText($setupRecord, (Get-CoopMachineSetupRecordJson $fakeApp '0.37.0'), $utf8)
   $out = Invoke-AutoUpdate @('-DryRun', '-LatestVersion', '0.37.0')
   $s = Get-State
   if ($autoRc -ne 0 -or [string]$s.last_result -ne 'up to date' -or $s.pending_version -ne '' -or $s.release_url -ne 'https://github.com/kabukisensei/coop-agent/releases/tag/v0.37.0') { Ko "at the newest release: rc=$autoRc state=$($s | ConvertTo-Json -Compress)" $out }
@@ -262,7 +275,7 @@ try {
   if ($autoRc -ne 0 -or [string]$s.last_result -ne 'up to date' -or $s.latest_version -ne '0.36.0') { Ko "an older release (never backwards, through the environment switches): rc=$autoRc state=$($s | ConvertTo-Json -Compress)" $out }
   else { Ok 'an older release is "up to date" (never backwards); COOP_AUTO_UPDATE_DRY_RUN=1 and COOP_AUTO_UPDATE_LATEST work like the switches' }
   $logText = [System.IO.File]::ReadAllText((Join-Path $machineDir 'logs\update.log'))
-  if (($logText -split "`n" | Where-Object { $_ }).Count -ne 4 -or $logText -notmatch 'dry run: would install v99\.0\.0 \(installed 0\.37\.0, newest 99\.0\.0\)') { Ko 'the log does not carry one line per run' $logText }
+  if (($logText -split "`n" | Where-Object { $_ }).Count -ne 6 -or $logText -notmatch 'dry run: would install v99\.0\.0 \(installed 0\.37\.0, newest 99\.0\.0\)') { Ko 'the log does not carry one line per run' $logText }
   else { Ok 'the log carries one line per run with the result, the installed and the newest version' }
 
   # --- lib/common.ps1 on a machine install ------------------------------------------------

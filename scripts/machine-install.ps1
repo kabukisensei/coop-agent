@@ -412,7 +412,7 @@ function Invoke-CoopMachineInstall {
   $protectProblem = ''
   if (-not $Remove) {
     try {
-      Protect-CoopMachineFolder $machine -OwnFiles @('update-state.json', 'update-state.dry-run.json')
+      Protect-CoopMachineFolder $machine -OwnFiles @('update-state.json', 'update-state.dry-run.json', 'machine-setup.json')
       foreach ($sub in @('logs', 'updates')) { Protect-CoopMachineFolder (Join-Path $machine $sub) -AllFiles }
     } catch { $protectProblem = "could not make $machine and its logs and updates folders administrators-only: $($_.Exception.Message)" }
   }
@@ -428,7 +428,7 @@ function Invoke-CoopMachineInstall {
     Coop-MachineInfo "removing coop's machine-wide pieces for $dir"
     try { Unregister-CoopUpdateTask $TaskName } catch { Coop-MachineFail "could not remove the scheduled task: $($_.Exception.Message)" }
     try { if (Set-CoopMachinePathEntry $binDir $false) { Coop-MachineOk "removed $binDir from the machine PATH" } else { Coop-MachineInfo "$binDir was not on the machine PATH" } } catch { Coop-MachineFail "could not update the machine PATH: $($_.Exception.Message)" }
-    foreach ($f in @($shim, $marker)) {
+    foreach ($f in @($shim, $marker, (Join-Path $machine 'machine-setup.json'))) {
       if (Test-Path -LiteralPath $f -PathType Leaf) { try { Remove-Item -LiteralPath $f -Force -ErrorAction Stop; Coop-MachineOk "removed $f" } catch { Coop-MachineFail "could not remove $f`: $($_.Exception.Message)" } }
     }
     if (Test-Path -LiteralPath $binDir -PathType Container) { Remove-Item -LiteralPath $binDir -Recurse -Force -ErrorAction SilentlyContinue }
@@ -437,6 +437,11 @@ function Invoke-CoopMachineInstall {
     return
   }
 
+  # The setup is finished only once every step below has run without a failure:
+  # its record goes first and comes back last, so a bootstrap retry or the update
+  # task never takes copied files for a finished setup (#515).
+  $setupRecord = Join-Path $machine 'machine-setup.json'
+  try { if (Test-Path -LiteralPath $setupRecord) { Remove-Item -LiteralPath $setupRecord -Force -ErrorAction Stop } } catch { Coop-MachineFail "could not clear $setupRecord`: $($_.Exception.Message)" }
   Coop-MachineInfo "setting up coop for every account on this machine ($dir)"
   if (-not (Test-Path -LiteralPath (Join-Path $dir 'resources\coop\bin\coop.cmd') -PathType Leaf)) { Coop-MachineFail "$dir holds no resources\coop\bin\coop.cmd; is this the coop window package?"; return }
   $version = ''
@@ -493,6 +498,20 @@ function Invoke-CoopMachineInstall {
     if (-not (Get-CoopRegisteredTaskXml $TaskName)) { throw "schtasks reported success but `"$TaskName`" is not registered" }
     Coop-MachineOk "the scheduled task `"$TaskName`" installs each new release overnight"
   } catch { Coop-MachineFail "could not register the scheduled task: $($_.Exception.Message)" }
+  # 6. the record of a finished setup, only when nothing above failed
+  if ($script:MachineInstallRc -eq 0) {
+    try {
+      [System.IO.File]::WriteAllText($setupRecord, (Get-CoopMachineSetupRecordJson $dir $version), (New-Object System.Text.UTF8Encoding $false))
+      Coop-MachineOk "recorded the finished machine setup: $setupRecord"
+    } catch { Coop-MachineFail "could not write $setupRecord`: $($_.Exception.Message)" }
+  }
+}
+
+# %ProgramData%\coop\machine-setup.json: written last by a machine setup that
+# finished without a failure, removed first by the next one. scripts/bootstrap.ps1
+# and scripts/auto-update.ps1 treat the installed version as set up only with it.
+function Get-CoopMachineSetupRecordJson([string]$InstallDir, [string]$Version) {
+  return ([ordered]@{ schema_version = 1; complete = $true; version = $Version; install_dir = $InstallDir } | ConvertTo-Json -Compress)
 }
 
 # Remove an older per-account window package from every profile under $UsersRoot:
