@@ -178,6 +178,13 @@ export function nodeDownload(manifest) {
  * resources\runtime; a zip unpacks there (from its `from` subfolder when set,
  * minus `drop`), a plain file is copied in as `name`.
  */
+/** The Git for Windows release tag for a manifest pin: `2.56.0` is v2.56.0.windows.1, `2.56.0.4` is v2.56.0.windows.4. */
+export function gitForWindowsTag(version) {
+  const parts = String(version).split(".");
+  const revision = parts.length === 4 ? parts[3] : "1";
+  return `v${parts.slice(0, 3).join(".")}.windows.${revision}`;
+}
+
 export const DOWNLOAD_HOSTS = ["github.com", "api.nuget.org", "download.microsoft.com", "download.visualstudio.microsoft.com"];
 export function bundledDownloads(manifest) {
   const d = (manifest && manifest.desktop) || {};
@@ -195,13 +202,17 @@ export function bundledDownloads(manifest) {
     if (!DOWNLOAD_HOSTS.includes(host)) throw new Error(`desktop.${key}.url must be an https URL on ${DOWNLOAD_HOSTS.join(", ")}`);
     return p;
   };
-  const git = pin("git", /^\d+\.\d+\.\d+$/);
+  // Git for Windows re-releases a Git version as `2.56.0(4)`: tag
+  // v2.56.0.windows.4, file MinGit-2.56.0.4-64-bit.zip. The pin carries that
+  // fourth part when there is one; the first release of a version has none.
+  const git = pin("git", /^\d+\.\d+\.\d+(\.\d+)?$/);
+  const gitTag = gitForWindowsTag(git.version);
   const python = pin("python", /^3\.(10|11|12|13)\.\d+$/);
   const az = pin("azure_cli", /^\d+\.\d+\.\d+$/);
   const odbc = urlPin("odbc");
   const vc = urlPin("vc_redist");
   return [
-    { key: "git", version: git.version, sha256: git.sha256, file: `MinGit-${git.version}-64-bit.zip`, url: `https://github.com/git-for-windows/git/releases/download/v${git.version}.windows.1/MinGit-${git.version}-64-bit.zip`, dir: "git", check: "cmd/git.exe" },
+    { key: "git", version: git.version, sha256: git.sha256, file: `MinGit-${git.version}-64-bit.zip`, url: `https://github.com/git-for-windows/git/releases/download/${gitTag}/MinGit-${git.version}-64-bit.zip`, dir: "git", check: "cmd/git.exe" },
     { key: "python", version: python.version, sha256: python.sha256, file: `python.${python.version}.nupkg`, url: `https://api.nuget.org/v3-flatcontainer/python/${python.version}/python.${python.version}.nupkg`, dir: "python", from: "tools", check: "python.exe" },
     // The zip's Scripts\ holds pip-made launchers with the build machine's path
     // baked in, and a `fab.exe` (Python Fabric, SSH) that would shadow the
