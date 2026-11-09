@@ -1293,6 +1293,7 @@ function settingsPanel() {
     row("Follow-ups", select([["one-at-a-time", "One message at a time"], ["all", "All at once"]], s.followUpMode, async (v) => { await cmdOrToast({ type: "set_follow_up_mode", mode: v }, "Could not change follow-ups"); refreshState(); })),
     row("Show thinking", toggle(app.prefs.showThinking, (v) => { app.prefs.showThinking = v; app.prefs.thinkingOpen.clear(); rerenderAll(); }), "Ctrl+T"),
     row("Expand tool output", toggle(app.prefs.expandTools, (v) => { app.prefs.expandTools = v; app.prefs.toolOpen.clear(); rerenderAll(); }), "Ctrl+O"),
+    row("DAX opens in", select([["tabular-editor", "Tabular Editor"], ["power-bi", "Power BI Desktop"]], app.info.daxEditor || "tabular-editor", async (v) => { const r = await coop.setPref("daxEditor", v); if (r && r.success) app.info.daxEditor = v; }), "The program the Changes pane's Open in editor uses for a semantic model's files (SQL opens in SSMS)"),
     row("Notify in the background", toggle(app.info.notify !== false, async (v) => { const r = await coop.setPref("notify", v); if (r && r.success) app.info.notify = v; }), "A Windows notification and a taskbar flash when coop finishes or asks while you are elsewhere"),
     row("Menu bar", toggle(app.info.menuBar !== false, async (v) => { const r = await coop.setPref("menuBar", v); if (r && r.success) app.info.menuBar = v; }), "File, Edit, View, Session and Help above the window (Alt shows it when hidden)"),
     el("p", { class: "hint", text: "Pi's other settings (default model, scoped models, terminal display) are in the terminal's /settings." }));
@@ -1548,7 +1549,7 @@ function wire() {
 
 function registerPanes() {
   const deps = { coop, codeBlock };
-  registerPane({ id: "changes", label: "Changes", icon: "diff", description: "Files changed since the last commit", mount: (box, options) => mountChanges(box, options, { ...deps, cwd: () => (app.info ? app.info.cwd : "") }) });
+  registerPane({ id: "changes", label: "Changes", icon: "diff", description: "Files changed since the last commit", mount: (box, options) => mountChanges(box, options, { ...deps, cwd: () => (app.info ? app.info.cwd : ""), setPrompt }) });
   registerPane({ id: "standards", label: "Standards", icon: "shield", description: "The standards coop applies in this folder", mount: (box, options) => mountStandards(box, options, deps) });
   registerPane({ id: "project", label: "Project", icon: "form", description: "Project settings (.coop/project.yml)", mount: (box, options) => mountProject(box, options, { ...deps, newSession: () => runAction("new") }) });
   registerPane({ id: "docs", label: "Docs", icon: "graph", description: "Lineage docs for this folder (coop-data-doc)", mount: (box, options) => mountDocs(box, options, deps) });

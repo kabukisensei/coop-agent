@@ -1,6 +1,10 @@
 // The changes panel (master plan D1b2): every file changed in the folder
 // since the last commit, as a diff, unified or side by side. Read-only; the
-// list and each diff come from git through the main process.
+// list and each diff come from git through the main process. Two ways to act
+// on a change, neither of which writes from here: "Open in editor" opens the
+// file in the person's own program (SSMS, Tabular Editor or Power BI Desktop,
+// else Windows' app for it), and clicking a line puts a "Fix this line" note
+// in the prompt, so coop makes the edit with its usual backups and approvals.
 import { el, fill, icon, toast } from "./ui.mjs";
 import { diffModel, renderDiff } from "./diff-view.mjs";
 import { hunkStats } from "./unified-diff.mjs";
@@ -71,7 +75,17 @@ export function repoForPath(repos, path) {
   return !p.startsWith("../") && (repos || []).some((r) => r.id === "") ? { id: "", path: p } : null;
 }
 
-export function mountChanges(box, options, { coop, cwd }) {
+/**
+ * The prompt "Fix this line" puts in the composer: the file, the line number
+ * on the new side and the line's text, then the person's note.
+ */
+export function fixLinePrompt({ path, line, text, note }) {
+  const where = line ? `${path} line ${line}` : path;
+  const code = String(text || "").replace(/\s+/g, " ").trim().slice(0, 300);
+  return `Fix ${where}${code ? ` (\`${code.replace(/`/g, "'")}\`)` : ""}: ${String(note || "").trim()}`;
+}
+
+export function mountChanges(box, options, { coop, cwd, setPrompt }) {
   const state = { files: [], drafts: [], draftsDir: "", selected: "", mode: "unified", query: "", active: 0, matches: [], diff: null, loading: false, repos: [], repo: null };
   // Shown only when the open folder holds more than one repository.
   const repoPicker = el("select", { class: "field", "aria-label": "Repository to compare", title: "Which repository's changes to show", onchange: (event) => load("", event.target.value) });
@@ -163,7 +177,9 @@ export function mountChanges(box, options, { coop, cwd }) {
     renderList();
     const file = state.files.find((f) => f.path === path);
     const draft = path.startsWith("draft:") ? state.drafts.find((d) => `draft:${d.path}` === path) : null;
-    fill(fileHead, draft ? el("code", { text: `Draft (this client): ${draft.path}` }) : file ? el("code", { text: file.oldPath ? `${file.oldPath} -> ${file.path}` : file.path }) : "");
+    const canOpen = Boolean(draft || (file && file.status !== "deleted"));
+    fill(fileHead, draft ? el("code", { text: `Draft (this client): ${draft.path}` }) : file ? el("code", { text: file.oldPath ? `${file.oldPath} -> ${file.path}` : file.path }) : "",
+      canOpen ? el("button", { type: "button", class: "btn change-open", title: "Edit this file in SSMS, Tabular Editor, Power BI Desktop or your default app (Settings picks the one for DAX)", onclick: () => openInEditor(path) }, icon("file"), " Open in editor") : null);
     fill(diffBox, el("div", { class: "working" }, el("span", { class: "spinner" }), el("span", { text: "Reading the diff" })));
     const result = await coop.changeDiff(path);
     if (state.selected !== path) return;
@@ -234,6 +250,56 @@ export function mountChanges(box, options, { coop, cwd }) {
     else { state.diff = null; renderDiffView(); fill(fileHead); }
     if (want && target !== want) toast(`${asked} has no changes since the last commit.`, "info");
   }
+
+  // The panel refreshes once when the window comes back after an editor
+  // opened, so a saved edit shows in the diff.
+  let refreshOnFocus = false;
+  window.addEventListener("focus", () => { if (refreshOnFocus) { refreshOnFocus = false; load(state.selected.startsWith("draft:") ? "" : state.selected); } });
+
+  async function openInEditor(path) {
+    const result = await coop.openInEditor(path);
+    if (result && result.cancelled) return;
+    if (!result || !result.success) { toast((result && result.error) || "Could not open the file.", "warning"); return; }
+    const { editor, fallback } = result.data || {};
+    refreshOnFocus = true;
+    toast(fallback ? `${fallback} was not found, so it opened in ${editor}.` : `Opened in ${editor}. Save there; this panel shows the edit when you come back.`, fallback ? "warning" : "info");
+  }
+
+  // "Fix this line": a click on a line of the new side opens a note under it;
+  // sending puts the note in the prompt (the person sends it).
+  function openFixForm(row) {
+    const old = diffBox.querySelector(".fix-line");
+    if (old) old.remove();
+    const line = Number(row.dataset.line);
+    const text = (row.querySelector(".diff-text") || row).textContent;
+    const file = state.selected.startsWith("draft:") ? state.selected.slice(6) : state.selected;
+    const input = el("input", { class: "field", type: "text", placeholder: `What should change on line ${line}?`, "aria-label": `What should change on line ${line}` });
+    const send = () => {
+      const note = input.value.trim();
+      if (!note) { input.focus(); return; }
+      form.remove();
+      if (typeof setPrompt === "function") setPrompt(fixLinePrompt({ path: file, line, text, note }));
+    };
+    const form = el("div", { class: "fix-line", role: "group", "aria-label": "Fix this line" },
+      input,
+      el("button", { type: "button", class: "btn primary", text: "Ask coop", title: "Put this in the prompt; you send it", onclick: send }),
+      el("button", { type: "button", class: "btn icon", title: "Cancel", "aria-label": "Cancel", onclick: () => form.remove() }, icon("close")));
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") { event.preventDefault(); send(); }
+      else if (event.key === "Escape") { event.preventDefault(); form.remove(); }
+    });
+    const anchor = row.classList.contains("diff-cell") ? row.parentElement : row;
+    anchor.after(form);
+    input.focus();
+  }
+
+  diffBox.addEventListener("click", (event) => {
+    if (event.target.closest(".fix-line")) return;
+    const selection = window.getSelection ? String(window.getSelection()) : "";
+    if (selection) return;
+    const row = event.target.closest("[data-line]");
+    if (row && diffBox.contains(row)) openFixForm(row);
+  });
 
   function step(direction) {
     if (!state.matches.length) return;
