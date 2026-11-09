@@ -221,6 +221,8 @@ COOP_TEST_DIST="$TMP" node "$ROOT/tests/setupbridge-integration.test.mjs"
 
 echo "→ workflow slice tests"
 node "$ROOT/tests/workflow.test.mjs"
+echo "→ FocusTime contract tests"
+node "$ROOT/tests/focustime-contract.test.mjs"
 echo "→ sql-formatting skill tests"
 node "$ROOT/tests/sql-formatting.test.mjs"
 

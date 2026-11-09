@@ -15,3 +15,10 @@ these sections, drawn from what actually happened (do not invent):
 
 Keep it read-only: report the state, don't make new edits. Never commit source;
 never include secrets.
+
+**DevOps update (optional).** When the session worked a DevOps story or feature, end
+by offering to post the handoff's outcome as a `[Coop update v1]` comment on it, in
+the shape the `azure-devops` skill gives (prefix line, one client-readable sentence,
+up to 5 bullets; no SQL, code, paths, secrets or another client's name). Show the
+exact comment and post it only on the person's yes; FocusTime's status report reads
+it. This comment is the one write `/handoff` may make.

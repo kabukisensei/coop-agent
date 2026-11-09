@@ -15,6 +15,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   back. Click a line of the diff to type a *Fix this line* note: it goes into
   the prompt with the file and line, and coop makes the edit with its usual
   backups and approvals. The window writes no file itself.
+- **FocusTime briefs and updates (FT1).** Paste a FocusTime *Coop brief* and coop
+  proposes user stories with its repo, lineage and standards context, plus the
+  `story_proposals` v1 JSON FocusTime reads, and offers to create them and post
+  them to the feature as a `[Coop brief v1]` comment. `/handoff` now ends by
+  offering a `[Coop update v1]` comment on the DevOps item it worked, which
+  FocusTime's client status report shows. Both are confirm-first and carry no
+  code or another client's name; a contract test pins the shapes. Aaron,
+  2026-11-09.
 
 ### Changed
 
