@@ -1,0 +1,15 @@
+{
+  "_source": "cooptimize/focustime plan/stories.ts COOP_PROPOSALS_V1 at 93c36d2 (required keys, enums and limits only)",
+  "required": ["kind", "version", "feature_id", "proposals", "rationale", "set_aside"],
+  "proposal_required": ["id", "title", "description", "acceptance_criteria", "depends_on", "size", "evidence", "open_questions"],
+  "set_aside_required": ["title", "why", "existing_item_id", "reason"],
+  "kind": "story_proposals",
+  "version": 1,
+  "sizes": ["XS", "S", "M", "L", null],
+  "why": ["out_of_scope", "already_covered"],
+  "proposal_id_pattern": "^[A-Za-z0-9_-]{1,16}$",
+  "max_proposals": 10,
+  "title_max": 120,
+  "comment_block": "^\\s*\\[(Coop (?:brief|update) v1)\\]\\s*",
+  "brief_heading": "# Coop brief: "
+}
