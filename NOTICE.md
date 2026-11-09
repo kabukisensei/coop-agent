@@ -32,7 +32,7 @@ readable in one place.
 
 | Component | Pin | Copyright | License | Terms coop honors |
 | --- | --- | --- | --- | --- |
-| `@microsoft/powerbi-modeling-mcp` and `@microsoft/powerbi-modeling-mcp-win32-x64` (Microsoft Power BI Authoring MCP Server, named "Power BI Modeling MCP" in coop's docs) | 1.0.0 | Copyright (c) Microsoft Corporation | MIT in the package (`LICENSE`), plus the **Microsoft Software License Terms – Microsoft Power BI Authoring MCP Server** EULA the server requires before any tool runs (https://go.microsoft.com/fwlink/?LinkId=2381247, text in the repository's `EULA.txt`) | See "Microsoft terms" below: Cooptimize treats the package's MIT file as the license that governs its copy (Aaron, 2026-10-05), so the window installer keeps bundling it with `LICENSE` and `NOTICE.txt` in place (section 2(c)); EULA acceptance at launch; telemetry (3(a)). |
+| `@microsoft/powerbi-modeling-mcp` and `@microsoft/powerbi-modeling-mcp-win32-x64` (Microsoft Power BI Authoring MCP Server, named "Power BI Modeling MCP" in coop's docs) | 1.0.1 | Copyright (c) Microsoft Corporation | MIT in the package (`LICENSE`), plus the **Microsoft Software License Terms – Microsoft Power BI Authoring MCP Server** EULA the server requires before any tool runs (https://go.microsoft.com/fwlink/?LinkId=2381247, text in the repository's `EULA.txt`) | See "Microsoft terms" below: Cooptimize treats the package's MIT file as the license that governs its copy (Aaron, 2026-10-05), so the window installer keeps bundling it with `LICENSE` and `NOTICE.txt` in place (section 2(c)); EULA acceptance at launch; telemetry (3(a)). |
 | `@microsoft/powerbi-report-authoring-cli` (`powerbi-report-author`) | 0.4.0 | Copyright (c) Microsoft Corporation | MIT; `NOTICE` lists its third-party components | Keep `LICENSE` and `NOTICE` in redistributed copies; Microsoft trademarks used descriptively only. |
 | `@microsoft/powerbi-desktop-bridge-cli` (`powerbi-desktop`) | 1.0.0 | Copyright (c) Microsoft Corporation | MIT; `NOTICE` lists its third-party components | As above. |
 | `@microsoft/fabric-mcp` (Fabric MCP server) | 1.4.0 | Copyright 2025 (c) Microsoft Corporation | MIT | Launched, not redistributed. Its README states it may send usage telemetry to Microsoft; see "Microsoft terms". |
@@ -45,9 +45,9 @@ readable in one place.
 | `coop-sql-source-control` (`coop-sqlsc`) | the manifest pin | Copyright (c) 2026 Aaron Jennings | Proprietary (Cooptimize) | Cooptimize's own companion; its release wheel is bundled from its GitHub release, not PyPI. |
 | `@earendil-works/pi-coding-agent` (Pi) | 1.4.0 | Copyright (c) 2025 Mario Zechner | MIT | Redistributed in the window installer. The 1.4.0 npm tarball carries no LICENSE file, so this line is the notice that accompanies the copy: Permission is hereby granted, free of charge, to any person obtaining a copy of this software, to deal in the Software without restriction, subject to the MIT License conditions; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. |
 | `pi-mcp-adapter` | 5.4.0 | Nico Bailon | MIT | Redistributed; upstream LICENSE kept. |
-| `pi-hermes-memory` | 0.9.11 | chandra447 | MIT | Redistributed; upstream LICENSE kept. |
+| `pi-hermes-memory` | 0.10.0 | chandra447 | MIT | Redistributed; upstream LICENSE kept. |
 | `pi-better-openai` | 0.1.22 | mattleong | MIT | Redistributed; upstream LICENSE kept. |
-| `pi-web-access` | 0.45.0 | Nico Bailon | MIT | Redistributed; upstream LICENSE kept. |
+| `pi-web-access` | 0.47.0 | Nico Bailon | MIT | Redistributed; upstream LICENSE kept. |
 | `@juicesharp/rpiv-ask-user-question`, `@juicesharp/rpiv-todo` | 2.12.0 | juicesharp | MIT | Redistributed; upstream LICENSE kept. |
 | `@xl0/pi-lovely-rename` | 0.1.5 | Alexey Zaytsev | MIT | Redistributed; upstream LICENSE kept. |
 | `teamai-cli` | 0.26.0 | Tencent | MIT | Installed only when TeamAI is enabled; not redistributed. |
