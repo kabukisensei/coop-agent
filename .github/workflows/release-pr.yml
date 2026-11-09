@@ -38,7 +38,7 @@ jobs:
             echo "::error::no COOP_RELEASE_TOKEN secret: a branch pushed with GITHUB_TOKEN gets no CI on its PR. Add the secret (a fine-grained token on this repository with Contents and Pull requests read/write), or by hand: git switch -c release/vX.Y.Z main; bash scripts/bump-version.sh ${{ inputs.bump }}; git commit -am 'Release vX.Y.Z'; push and open the PR."
             exit 1
           fi
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: main
           token: ${{ secrets.COOP_RELEASE_TOKEN }}

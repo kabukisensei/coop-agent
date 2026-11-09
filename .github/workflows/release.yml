@@ -26,8 +26,8 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: '22.23.4'
       - name: install electron-builder (desktop/installer, pinned)
@@ -37,7 +37,7 @@ jobs:
       - name: build the installer (stage + electron-builder, unsigned)
         shell: pwsh
         run: node desktop/scripts/build-installer.mjs
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coop-window-installer
           path: desktop/installer/dist/coop-window-*.exe
@@ -54,7 +54,7 @@ jobs:
           # F3: the auto-update dry run asks api.github.com; a token keeps a shared runner address off the unauthenticated rate limit.
           GH_TOKEN: ${{ github.token }}
         run: node desktop/scripts/verify-installer.mjs --output "$env:RUNNER_TEMP\installer-acceptance.json"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: coop-window-installer-acceptance
@@ -78,11 +78,11 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: '22.23.4'
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: coop-window-installer
           path: ${{ runner.temp }}/current
@@ -131,7 +131,7 @@ jobs:
           foreach ($f in @("$env:RUNNER_TEMP\upgrade-acceptance.json", "$env:RUNNER_TEMP\launch-acceptance.json")) {
             if (Test-Path -LiteralPath $f) { Write-Output "--- $f"; Get-Content -LiteralPath $f -Raw }
           }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: coop-window-upgrade-acceptance
@@ -149,10 +149,10 @@ jobs:
       version: ${{ steps.notes.outputs.version }}
       notes: ${{ steps.notes.outputs.notes }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0   # the guard below needs origin/main's history
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: '22.23.4'
 
@@ -190,11 +190,11 @@ jobs:
           echo "version=$ver" >> "$GITHUB_OUTPUT"
           { echo "notes<<COOP_NOTES_EOF"; cat RELEASE_NOTES.md; echo "COOP_NOTES_EOF"; } >> "$GITHUB_OUTPUT"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: coop-window-installer
           path: installer
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: coop-window-installer-acceptance
           path: installer
