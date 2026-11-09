@@ -24,6 +24,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **`sql_source commit` checks the project file against every name sqlsc may stage.**
+  The check used fixed sample file names, so an `agent_allowed_to_commit` written
+  for those names passed while the real object files were not covered, and an
+  `agent_never_commit` entry naming one object's file never matched. It now also
+  checks names drawn fresh for each check and the files in the folder now, and a
+  never-commit entry that names a single file sqlsc may stage refuses the commit
+  (sqlsc commits its folder whole; the user commits there).
+- **A failed machine setup stays failed until a setup finishes.** The machine setup
+  now writes `%ProgramData%\coop\machine-setup.json` last, only when every step
+  worked, and removes it first. The bootstrap command's retry after an installer
+  that exited 3 runs the installer again instead of reporting "already installed",
+  and the update task keeps `failed: the machine setup ... did not finish` instead of
+  `up to date` until the setup is finished (#515).
 - **Changing a SQL target between Azure SQL and Fabric saves a usable target.** The
   Project pane and `/setup-project` now clear the other engine's fields (`server`, or
   `workspace_id` / `item_id` / `sql_endpoint_id`, and `read_scale_replicas` outside

@@ -421,6 +421,19 @@ await t("sqlsc commit: every path it may stage must be allowed and none never-co
   assert.match(refusal(all + '    agent_never_commit: ["**/sqlsc.yml"]\n'), /agent_never_commit covers sqlsc\.yml/);
   assert.match(refusal(all + '    agent_never_commit: ["database/Migrations/**"]\n'), /agent_never_commit covers database\/Migrations\//);
   assert.match(refusal(""), /does not cover/);
+  // Globs written for the sample names never cover the objects sqlsc really stages.
+  const sampleOnly = '    agent_allowed_to_commit: ["database/**/*Sample*", "database/**/dbo.*", "database/**/dbo/**", "database/**/*sample*", "database/Dependencies.json", "sqlsc.yml", ".gitattributes", ".gitignore"]\n';
+  assert.match(refusal(sampleOnly), /does not cover database\//, "an allow list shaped like the sample names does not allow");
+  assert.equal(refusal('    agent_allowed_to_commit: ["database/Security/**", "database/Tables/**", "database/Views/**", "database/Functions/**", "database/Stored Procedures/**", "database/Triggers/**", "database/*/Tables/**", "database/*/Views/**", "database/*/Functions/**", "database/*/StoredProcedures/**", "database/*/Triggers/**", "database/Data/**", "database/Migrations/**", "database/Dependencies.json", "sqlsc.yml", ".gitattributes", ".gitignore"]\n'), null, "per-folder globs that cover every name still allow");
+  // A never-commit glob naming single files sqlsc may stage refuses: sqlsc commits the folder whole.
+  assert.match(refusal(all + '    agent_never_commit: ["database/Tables/dbo.Payroll.sql"]\n'), /names database\/Tables\/dbo\.Payroll\.sql/);
+  assert.match(refusal(all + '    agent_never_commit: ["**/dbo.Payroll.sql"]\n'), /names \*\*\/dbo\.Payroll\.sql/);
+  assert.match(refusal(all + '    agent_never_commit: ["database/Views/*Payroll*"]\n'), /names database\/Views/);
+  mkdirSync(join(repo, "database", "Tables"), { recursive: true });
+  writeFileSync(join(repo, "database", "Tables", "dbo.Payroll.sql"), "CREATE TABLE dbo.Payroll (Id int)\n");
+  assert.match(refusal(all + '    agent_never_commit: ["**/*Payroll*"]\n'), /covers database\/Tables\/dbo\.Payroll\.sql/, "a file there now that a never-commit glob covers refuses");
+  // Never-commit globs elsewhere in the repository, or for kinds sqlsc never writes, still allow.
+  assert.equal(refusal(all + '    agent_never_commit: ["secrets/**", "**/*.pfx", ".env*", "**/*.pbip", "**/*.SemanticModel/**"]\n'), null);
 });
 await t("defaults no longer allow committing .coop/project.yml (anti self-modification)", () => {
   resetSessionGovernance();

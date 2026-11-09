@@ -121,9 +121,26 @@ function Get-CoopBootstrapWindowVersion {
   } catch { return '' }
 }
 
+# True when this machine's setup for $Version finished: the record
+# scripts/machine-install.ps1 writes last (%ProgramData%\coop\machine-setup.json)
+# names that version. Copied files alone (an installer that exited 3) are not a
+# finished setup (#515).
+function Test-CoopBootstrapMachineSetupDone([string]$Version) {
+  $machine = if ($env:COOP_MACHINE_DIR) { [string]$env:COOP_MACHINE_DIR } else { Join-Path $env:ProgramData 'coop' }
+  $record = Join-Path $machine 'machine-setup.json'
+  if (-not (Test-Path -LiteralPath $record -PathType Leaf)) { return $false }
+  try {
+    $info = [System.IO.File]::ReadAllText($record) | ConvertFrom-Json -ErrorAction Stop
+    return (($info.complete -eq $true) -and ([string]$info.version -eq $Version))
+  } catch { return $false }
+}
+
 function Install-CoopBootstrapWindow([string]$Version) {
   $have = Get-CoopBootstrapWindowVersion
-  if ($have -eq $Version) { Coop-BootstrapOk "the coop window $Version is already installed"; return $true }
+  if ($have -eq $Version) {
+    if (Test-CoopBootstrapMachineSetupDone $Version) { Coop-BootstrapOk "the coop window $Version is already installed"; return $true }
+    Coop-BootstrapInfo "the coop window $Version is installed but its machine setup did not finish; running the installer again to finish it"
+  }
   $base = "$($script:CoopBootstrapRepo)/releases/download/v$Version"
   $name = "coop-window-$Version-win-x64.exe"
   $work = Join-Path $env:TEMP 'coop-bootstrap'
@@ -170,7 +187,7 @@ function Install-CoopBootstrapWindow([string]$Version) {
     # The installer's own code for "the files are in, the machine setup did not
     # finish" (desktop/installer/resources/installer.nsh).
     $log = Join-Path $env:ProgramData 'coop\logs\machine-install.log'
-    Coop-BootstrapFail "the window installer copied coop $Version but its machine setup did not finish (the coop command for every account, the SQL driver or the update task; exit 3). The log: $log. Run this command again as administrator"
+    Coop-BootstrapFail "the window installer copied coop $Version but its machine setup did not finish (the coop command for every account, the SQL driver or the update task; exit 3). The log: $log. Fix what it names, then run this command again as administrator: it runs the machine setup again"
     return $false
   }
   if ($p.ExitCode -ne 0) { Coop-BootstrapFail "the window installer exited with code $($p.ExitCode)"; return $false }

@@ -95,6 +95,16 @@ function Test-CoopInstallerReport($Report, [string]$Version) {
 # own "the files are in, but the machine setup did not finish"
 # (desktop/installer/resources/installer.nsh), with the log that says why.
 # (String concatenation, not Join-Path: the tests render Windows paths on any OS.)
+# True when %ProgramData%\coop\machine-setup.json (written last by a machine
+# setup that finished, scripts/machine-install.ps1) names $Version.
+function Test-CoopMachineSetupDone([string]$MachineDir, [string]$Version) {
+  $record = Join-Path $MachineDir 'machine-setup.json'
+  if (-not (Test-Path -LiteralPath $record -PathType Leaf)) { return $false }
+  try {
+    $info = [System.IO.File]::ReadAllText($record) | ConvertFrom-Json -ErrorAction Stop
+    return (($info.complete -eq $true) -and ([string]$info.version -eq $Version))
+  } catch { return $false }
+}
 function Get-CoopInstallerExitProblem([int]$Code, [string]$MachineDir) {
   if ($Code -eq 0) { return '' }
   if ($Code -eq 3) { return "the installer copied the new version but its machine setup did not finish (exit 3; see $($MachineDir.TrimEnd('\', '/') + '\logs\machine-install.log'))" }
@@ -229,8 +239,13 @@ function Invoke-CoopAutoUpdate {
     $urls = Get-CoopReleaseUrls $Repo $latest
     $releaseUrl = $urls.Page
     if (-not (Test-CoopVersionNewer $latest $installed)) {
-      $result = 'up to date'
       $releaseUrl = (Get-CoopReleaseUrls $Repo $installed).Page
+      # Files copied by an installer whose machine setup failed are not up to date:
+      # keep the failure until a setup finishes (#515).
+      if (-not (Test-CoopMachineSetupDone $machine $installed)) {
+        throw "the machine setup for v$installed did not finish (no record of a finished setup in $machine; see $($machine.TrimEnd('\', '/') + '\logs\machine-install.log')). Run the coop installer once as an administrator to finish it"
+      }
+      $result = 'up to date'
     } else {
       $pending = $latest
       $inUse = @(Get-CoopInstallInUse $app (Get-CoopRunningProcesses))
