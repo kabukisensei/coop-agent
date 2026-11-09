@@ -525,11 +525,22 @@ function Get-CoopMachineUpdateSummary {
 $script:CoopStartupRunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $script:CoopStartupValueName = 'coop at sign-in'
 # The Run value: the built-in powershell.exe (never a process from the install
-# folder, which would make the update task wait) running this coop's sign-in.ps1.
+# folder, which would make the update task wait) running this coop's sign-in.ps1
+# in a normal console window, so the account sees coop starting, and updating
+# when it is (Aaron 2026-11-09; until 0.40.0 it started minimized).
 function Get-CoopStartupCommand([string]$PowerShellExe, [string]$Root) {
   # String concatenation, not Join-Path: the tests render Windows paths on any OS.
   $file = $Root.TrimEnd('\') + '\scripts\sign-in.ps1'
-  return ('"' + $PowerShellExe + '" -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Minimized -File "' + $file + '"')
+  return ('"' + $PowerShellExe + '" -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File "' + $file + '"')
+}
+# An account's entry written by an older release of THIS coop (the same
+# sign-in.ps1, other flags): a launch brings it to the current command. Another
+# checkout's entry, or none, is left alone.
+function Test-CoopStartupEntryStale([string]$Entry, [string]$Wanted) {
+  if (-not $Entry -or -not $Wanted -or ($Entry -eq $Wanted)) { return $false }
+  if (-not ($Wanted -match '-File "([^"]+)"$')) { return $false }
+  $file = $Matches[1]
+  return ($Entry -match ('(?i)-File "' + [regex]::Escape($file) + '"$'))
 }
 # The account's current Run value for coop, or ''.
 function Get-CoopStartupEntry {
@@ -568,8 +579,11 @@ function Test-CoopStartupDefaultSkipped {
 function Enable-CoopStartupDefault {
   try {
     $optedOut = Test-Path -LiteralPath (Get-CoopStartupOptOutFile)
-    if (-not (Test-CoopStartupDefaultWanted ($env:OS -eq 'Windows_NT') (Test-CoopMachineInstall) (Get-CoopStartupEntry) $optedOut (Test-CoopStartupDefaultSkipped))) { return }
-    Set-CoopStartupEntry (Get-CoopStartupCommand (Get-CoopStartupPowerShell) $script:CoopRoot)
+    $entry = Get-CoopStartupEntry
+    $wanted = Get-CoopStartupCommand (Get-CoopStartupPowerShell) $script:CoopRoot
+    if ($env:OS -eq 'Windows_NT' -and (Test-CoopStartupEntryStale $entry $wanted)) { Set-CoopStartupEntry $wanted; return }
+    if (-not (Test-CoopStartupDefaultWanted ($env:OS -eq 'Windows_NT') (Test-CoopMachineInstall) $entry $optedOut (Test-CoopStartupDefaultSkipped))) { return }
+    Set-CoopStartupEntry $wanted
     Coop-Notice 'coop now opens ready when you sign in to Windows (the newest coop, the Azure sign-in, then the window). To stop that: coop startup off'
   } catch { }
 }

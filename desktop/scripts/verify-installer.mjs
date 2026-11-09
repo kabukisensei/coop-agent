@@ -209,7 +209,7 @@ const RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const STARTUP_NAME = "coop at sign-in";
 /** Write the value lib/common.ps1's Get-CoopStartupCommand writes for this coop root. */
 export async function setStartupValue(coopRoot) {
-  const value = `"${powershellExe()}" -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Minimized -File "${win32.join(coopRoot, "scripts", "sign-in.ps1")}"`;
+  const value = `"${powershellExe()}" -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File "${win32.join(coopRoot, "scripts", "sign-in.ps1")}"`;
   await runOwned("reg.exe", ["add", RUN_KEY, "/v", STARTUP_NAME, "/t", "REG_SZ", "/d", value, "/f"], { windowsHide: true }, 60000);
 }
 /** Remove it (best effort). */

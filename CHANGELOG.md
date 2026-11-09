@@ -69,7 +69,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   copied there was no icon at all (a client VM, 2026-11-09). The installer now
   runs with `--updated` (electron-builder's update flag), so the uninstaller
   keeps the shortcuts and their pins; the upgrade acceptance checks the
-  shortcut files survive untouched. The update task also removes every
+  shortcut files survive untouched. **"coop at sign-in" is visible now:** its
+  console opens as a normal window titled "coop: starting" (it was minimized)
+  and, while an update installs, "coop: updating to vX", saying the icons open
+  nothing until the install finishes; a launch brings an account's older
+  minimized entry to the new one. The update task also removes every
   downloaded installer left in `%ProgramData%\coop\updates` after an install
   (a run cut off by the task's time limit left one each time: 1.4 GB on that
   VM), and the machine install's every-account sweep removes the early window's
