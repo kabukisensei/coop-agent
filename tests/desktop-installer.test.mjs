@@ -26,7 +26,7 @@ import { consoleProcess } from "../desktop/lib/terminal.mjs";
 import { formatElapsed, parseSetupStatus, setupView } from "../desktop/lib/setup-status.mjs";
 import { APP_ID, taskbarDetails } from "../desktop/lib/app-identity.mjs";
 import { loadSettings, saveSettings } from "../desktop/lib/settings.mjs";
-import { DOWNLOAD_HOSTS, NODE_SHIMS_DROPPED, PIPX_SHIM, bundledDownloads, fetchSourcedWheel, hasWheel, sourcedWheelUrl, longestPath, nodeDownload, prefixPackages, pythonToolSources, pythonToolSpecs, prunable, pruneTree, readVersion, runtimeMarker, shellInvocation, shippedPackage, snapshotIncludes, stage, stageEntries, stagePackage } from "../desktop/scripts/build-installer.mjs";
+import { DOWNLOAD_HOSTS, NODE_SHIMS_DROPPED, PIPX_SHIM, bundledDownloads, fetchSourcedWheel, gitForWindowsTag, hasWheel, sourcedWheelUrl, longestPath, nodeDownload, prefixPackages, pythonToolSources, pythonToolSpecs, prunable, pruneTree, readVersion, runtimeMarker, shellInvocation, shippedPackage, snapshotIncludes, stage, stageEntries, stagePackage } from "../desktop/scripts/build-installer.mjs";
 import { UPDATE_TASK, assertDisposableInstallerHost, nsisInvocation, packagePaths, pathHasEntry } from "../desktop/scripts/verify-installer.mjs";
 import { verifiedInstaller } from "../desktop/scripts/check-installer-report.mjs";
 
@@ -409,7 +409,12 @@ await check("runtime: Git, Python, the Azure CLI, ODBC 18 and its VC++ runtime c
     assert.ok(item.url.startsWith("https://"), item.url);
   }
   const by = Object.fromEntries(items.map((i) => [i.key, i]));
-  assert.equal(by.git.url, `https://github.com/git-for-windows/git/releases/download/v${MANIFEST.desktop.git.version}.windows.1/MinGit-${MANIFEST.desktop.git.version}-64-bit.zip`);
+  assert.equal(by.git.url, `https://github.com/git-for-windows/git/releases/download/${gitForWindowsTag(MANIFEST.desktop.git.version)}/MinGit-${MANIFEST.desktop.git.version}-64-bit.zip`);
+  // A Git for Windows re-release (`2.56.0(4)`) carries its fourth part in the pin.
+  assert.equal(gitForWindowsTag("2.56.0"), "v2.56.0.windows.1");
+  assert.equal(gitForWindowsTag("2.56.0.4"), "v2.56.0.windows.4");
+  assert.equal(bundledDownloads({ ...MANIFEST, desktop: { ...MANIFEST.desktop, git: { version: "2.56.0.4", sha256: "ab".repeat(32) } } }).find((i) => i.key === "git").url,
+    "https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.4/MinGit-2.56.0.4-64-bit.zip");
   assert.equal(by.python.url, `https://api.nuget.org/v3-flatcontainer/python/${MANIFEST.desktop.python.version}/python.${MANIFEST.desktop.python.version}.nupkg`);
   assert.equal(by.python.from, "tools");
   // The Fabric CLI needs 3.10-3.13.

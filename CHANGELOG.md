@@ -26,6 +26,7 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- **Window runtimes: Git 2.56.0(4) and Electron 44.10.2.** The window installer bundles MinGit 2.56.0(4) (from 2.56.0(1)): Git for Windows' security re-releases of October 2026, which distrust the compromised eMudhra intermediate CA, fix CVE-2026-111497 in the bundled brotli and move Git LFS to 3.8.1 for CVE-2026-105803. A Git for Windows re-release carries its fourth part in the manifest pin (`2.56.0.4` is tag `v2.56.0.windows.4`); `desktop/scripts/build-installer.mjs` derives the tag. Electron moves to 44.10.2 (from 44.10.0): Chromium, V8, PDFium and WebRTC backports and Node.js 24.22.2 inside the window; the runtime lock is regenerated.
 - **Live dev is the source unless SQL source control is on.** The *Files first*
   guardrail is now *Live dev by default*: with `/sql-source off` (the default) coop
   reads SQL definitions from the live dev database, applies approved edits there and

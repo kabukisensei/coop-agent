@@ -27,7 +27,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
-import { NODE_SHIMS_DROPPED, bundledDownloads, hasWheel, longestPath } from "./build-installer.mjs";
+import { NODE_SHIMS_DROPPED, bundledDownloads, gitForWindowsTag, hasWheel, longestPath } from "./build-installer.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 // F3: the Add/Remove entry is plain "coop" (electron-builder nsis.uninstallDisplayName);
@@ -392,7 +392,8 @@ async function main(argv) {
     // D1k: Git, Python with pipx, the Azure CLI, the wheel folder and the ODBC
     // installers are in the package and answer, so a teammate installs nothing else.
     const gitOut = (await runOwned(join(paths.runtime, "git", "cmd", "git.exe"), ["--version"], { windowsHide: true }, 60000)).trim();
-    if (!gitOut.includes(manifest.desktop.git.version)) throw new Error(`bundled git --version printed ${gitOut}`);
+    // `git version 2.56.0.windows.4` for the pin `2.56.0.4` (the tag without its `v`).
+    if (!gitOut.includes(gitForWindowsTag(manifest.desktop.git.version).slice(1))) throw new Error(`bundled git --version printed ${gitOut}`);
     const pyOut = (await runOwned(join(paths.runtime, "python", "python.exe"), ["--version"], { windowsHide: true }, 60000)).trim();
     if (pyOut !== `Python ${manifest.desktop.python.version}`) throw new Error(`bundled python --version printed ${pyOut}`);
     const pipxOut = (await runOwned(process.env.ComSpec || "cmd.exe", ["/d", "/c", join(paths.runtime, "python", "Scripts", "pipx.cmd"), "--version"], { windowsHide: true }, 60000)).trim();
