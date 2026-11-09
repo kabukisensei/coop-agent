@@ -31,6 +31,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   references, reads only reachable M steps as sources, and refuses to merge two
   same-named `.pbix` archives. The sourced wheel's tag, asset and SHA-256 follow the
   v1.0.17 release.
+- **Pins.** coop-sql-source-control 1.0.18 (SSMS add-in 1.0.8). A first release into an
+  empty database creates a scalar function before the view that calls it, every spelling
+  of a remote (Azure DevOps https/ssh, folder paths) is one checkout scope, a repo that
+  sets only one of `user.name`/`user.email` gets a warning, `init`/`sqlproj` write a
+  scripts-folder `.editorconfig` so SSMS saves without a byte order mark and ignore `.vs/`,
+  and an applied but uncommitted file reads "File, not committed". `sql_source commit`
+  also checks the scripts folder's `.editorconfig` against the project file. The sourced
+  wheel's tag, asset and SHA-256 follow the v1.0.18 release.
 
 ### Fixed
 

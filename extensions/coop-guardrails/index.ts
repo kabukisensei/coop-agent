@@ -360,7 +360,7 @@ export function commitPolicy(repoDir: string, governance?: SessionGovernance): R
 export function sqlscCommitCandidates(folder: string): string[] {
   const type = ["Security/Schemas/dbo.sql", "Tables/dbo.Sample.sql", "Views/dbo.Sample.sql", "Functions/dbo.Sample.sql", "Stored Procedures/dbo.Sample.sql", "Triggers/dbo.Sample.sql"];
   const schema = ["Security/dbo.sql", "dbo/Tables/Sample.sql", "dbo/Views/Sample.sql", "dbo/Functions/Sample.sql", "dbo/StoredProcedures/Sample.sql", "dbo/Triggers/Sample.sql"];
-  const own = ["Data/dbo.Sample.sql", "Migrations/20260101000000_sample.sql", "Dependencies.json"];
+  const own = ["Data/dbo.Sample.sql", "Migrations/20260101000000_sample.sql", "Dependencies.json", ".editorconfig"];
   return [...[...type, ...schema, ...own].map((rel) => `${folder}/${rel}`), ...SQLSC_SETUP_FILES];
 }
 /** The shapes of sqlscCommitCandidates under a schema and an object name drawn
