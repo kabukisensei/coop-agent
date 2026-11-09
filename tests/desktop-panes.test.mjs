@@ -44,7 +44,9 @@ const { listChanges, listDrafts, fileDiff, parseNameStatus, parseNumstat, newFil
 const { readStandards, readSnapshot, readNote, listNotes, knowledgeView, domainView, DOMAINS, KNOWLEDGE_LABELS } = await import("../desktop/lib/standards-view.mjs");
 const { loadProject, previewProject, saveProject, settingsFromForm } = await import("../desktop/lib/project-form.mjs");
 const docs = await import("../desktop/lib/docs-setup.mjs");
-const { normalizePath, relativePath, repoForPath } = await import("../desktop/renderer/pane-changes.mjs");
+const { normalizePath, relativePath, repoForPath, fixLinePrompt } = await import("../desktop/renderer/pane-changes.mjs");
+const editors = await import("../desktop/lib/editors.mjs");
+const { loadSettings } = await import("../desktop/lib/settings.mjs");
 const { articleOutline, sourceLine, noteLabel, isKnowledgeId, STATE_LABELS, KNOWLEDGE_STATE_LABELS } = await import("../desktop/renderer/pane-standards.mjs");
 const { initialValues, formInput, platformHint, folderRows, ROLE_LABELS } = await import("../desktop/renderer/pane-project.mjs");
 const { resolvePage, isDocsLink, stripFrontMatter, answerLabel, typeLabel } = await import("../desktop/renderer/pane-docs.mjs");
@@ -994,7 +996,7 @@ await check("bridge: every pane call in preload.cjs has a handler in main.mjs", 
   }
   for (const channel of invoked) assert.ok(handled.has(channel), `main handles ${channel}`);
   // Only the two forms write, and only through their writers.
-  for (const lib of ["changes.mjs", "standards-view.mjs", "text-diff.mjs"]) {
+  for (const lib of ["changes.mjs", "editors.mjs", "standards-view.mjs", "text-diff.mjs"]) {
     assert.doesNotMatch(readFileSync(join(ROOT, "desktop", "lib", lib), "utf8"), /writeFile|renameSync|rename\(|unlink|rmSync|mkdir/, `${lib} is read-only`);
   }
   const form = readFileSync(join(ROOT, "desktop", "lib", "project-form.mjs"), "utf8");
@@ -1099,6 +1101,69 @@ await check("styles: the unified diff wraps long lines instead of scrolling side
   assert.match(row[1], /minmax\(0, 1fr\)/, "the text column can shrink below its content");
   assert.match(css, /\.diff-view\.unified \.diff-text \{[^}]*overflow-wrap: anywhere/, "long tokens break too");
   assert.match(css, /\n\.diff-cell \{[^}]*white-space: pre-wrap/, "side by side keeps wrapping");
+});
+
+await check("changes: Open in editor picks SSMS for SQL, Tabular Editor for DAX by default, Power BI on request", () => {
+  const { editorKind, editorPlan, pbipFor, modelTarget } = editors;
+  assert.equal(editorKind("Views/dbo.v.sql"), "sql");
+  assert.equal(editorKind("Sales.SemanticModel/definition/tables/Fact.tmdl"), "model");
+  assert.equal(editorKind("model/Model.bim"), "model");
+  assert.equal(editorKind("Sales.SemanticModel/definition.pbism"), "model");
+  assert.equal(editorKind("Sales.Report/definition.pbir"), "other");
+  assert.equal(editorKind("README.md"), "other");
+  const te3 = "C:\\Program Files\\Tabular Editor 3\\TabularEditor3.exe";
+  const ssms = "C:\\Program Files\\Microsoft SQL Server Management Studio 21\\Release\\Common7\\IDE\\SSMS.exe";
+  const env = { ProgramFiles: "C:\\Program Files", "ProgramFiles(x86)": "C:\\Program Files (x86)" };
+  const on = (...paths) => (path) => paths.includes(path);
+  const fact = join("/r", "Sales.SemanticModel", "definition", "tables", "Fact.tmdl");
+  const definition = join("/r", "Sales.SemanticModel", "definition");
+  const exists = on(te3, ssms, join(definition, "database.tmdl"), join("/r", "Sales.pbip"));
+  // SQL: SSMS when installed, else Windows' app with a fallback note.
+  const sql = editorPlan(join("/r", "a.sql"), { env, exists, platform: "win32" });
+  assert.deepEqual([sql.editor, sql.exe, sql.args], ["SSMS", ssms, [join("/r", "a.sql")]]);
+  const noSsms = editorPlan(join("/r", "a.sql"), { env, exists: on(), platform: "win32" });
+  assert.deepEqual([noSsms.exe, noSsms.target, noSsms.fallback], ["", join("/r", "a.sql"), "SSMS"]);
+  // DAX: Tabular Editor is the default and opens the TMDL folder.
+  const te = editorPlan(fact, { env, exists, root: "/r", platform: "win32" });
+  assert.deepEqual([te.editor, te.exe, te.args], ["Tabular Editor", te3, [definition]]);
+  assert.equal(modelTarget(join("/r", "m", "Model.bim"), "/r", on(join("/r", "m", "Model.bim"))), join("/r", "m", "Model.bim"));
+  assert.equal(modelTarget(fact, "/r", on()), fact, "no model root: the file itself");
+  // Power BI Desktop: the .pbip beside the model folder, with the overwrite warning.
+  const pbi = editorPlan(fact, { env, exists, root: "/r", platform: "win32", daxEditor: "power-bi", list: () => [] });
+  assert.deepEqual([pbi.editor, pbi.exe, pbi.target], ["Power BI Desktop", "", join("/r", "Sales.pbip")]);
+  assert.match(pbi.warn, /close it first without saving/);
+  assert.equal(pbipFor(fact, { exists: on(), list: () => ["Other.pbip"] }), join("/r", "Other.pbip"), "the only .pbip there");
+  assert.equal(pbipFor(fact, { exists: on(), list: () => ["A.pbip", "B.pbip"] }), "", "never guesses between two");
+  assert.match(editorPlan(fact, { env, exists: on(), daxEditor: "power-bi", list: () => [] }).fallback, /no \.pbip/);
+  // Off Windows nothing is looked up; Windows' app (xdg here) opens the file.
+  assert.equal(editorPlan(join("/r", "a.sql"), { env, exists, platform: "linux" }).exe, "");
+  // Anything else: the default app.
+  assert.deepEqual(editorPlan(join("/r", "notes.md"), { env, exists, platform: "win32" }).editor, "the default app");
+  // The setting: Tabular Editor unless Power BI Desktop is picked.
+  const settingsFile = join(temp, "editor-settings.json");
+  writeFileSync(settingsFile, JSON.stringify({ daxEditor: "power-bi" }));
+  assert.equal(loadSettings(settingsFile).daxEditor, "power-bi");
+  writeFileSync(settingsFile, JSON.stringify({ daxEditor: "notepad" }));
+  assert.equal(loadSettings(settingsFile).daxEditor, "tabular-editor");
+  // main opens only a path from this tab's list (or its drafts), never the renderer's own.
+  const main = readFileSync(join(ROOT, "desktop", "main.mjs"), "utf8");
+  const handler = main.slice(main.indexOf('handle("coop:open-in-editor"'), main.indexOf("// F2: the three places"));
+  assert.match(handler, /state\.changes \|\| \[\]\)\.find\(\(change\) => change\.path === path\)/);
+  assert.match(handler, /entry\.status !== "deleted"/);
+  assert.match(handler, /editorPlan\(file, \{ daxEditor: settings\.daxEditor/);
+  assert.match(main, /key === "daxEditor"/);
+});
+
+await check("changes: Fix this line puts a note in the prompt, never sends it", () => {
+  assert.equal(fixLinePrompt({ path: "Views/dbo.v.sql", line: 12, text: "  INNER JOIN `x`  ON a = b", note: " make it a LEFT JOIN " }),
+    "Fix Views/dbo.v.sql line 12 (`INNER JOIN 'x' ON a = b`): make it a LEFT JOIN");
+  assert.equal(fixLinePrompt({ path: "a.sql", line: 3, text: "", note: "drop this" }), "Fix a.sql line 3: drop this");
+  const pane = readFileSync(join(ROOT, "desktop", "renderer", "pane-changes.mjs"), "utf8");
+  assert.match(pane, /setPrompt\(fixLinePrompt\(/, "the note goes to the composer");
+  assert.ok(!/coop\.command\(/.test(pane), "the panel never sends a prompt itself");
+  const view = readFileSync(join(ROOT, "desktop", "renderer", "diff-view.mjs"), "utf8");
+  assert.match(view, /"data-line": String\(line\.newNo\)/, "unified rows carry their new line number");
+  assert.match(view, /side\(row\.right, "add", row\.right \? row\.right\.newNo : null, true\)/, "side by side: only the new side");
 });
 
 rmSync(temp, { recursive: true, force: true });

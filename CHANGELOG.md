@@ -5,6 +5,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **Edit coop's changes from the window (ED1).** Each file in the Changes pane
+  has an *Open in editor* button: SQL opens in SSMS, a semantic model's files
+  (TMDL, `model.bim`, `.dax`) open in Tabular Editor, or in Power BI Desktop on
+  the project's `.pbip` when Settings > *DAX opens in* says so, and anything
+  else opens in Windows' own app for the file. The pane refreshes when you come
+  back. Click a line of the diff to type a *Fix this line* note: it goes into
+  the prompt with the file and line, and coop makes the edit with its usual
+  backups and approvals. The window writes no file itself.
+
 ### Changed
 
 - **Live dev is the source unless SQL source control is on.** The *Files first*

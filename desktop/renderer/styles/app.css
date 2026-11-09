@@ -532,7 +532,13 @@ details.standards .pane-links { margin-top: 8px; }
 .change-group { display: flex; align-items: center; margin: 6px 0 2px; padding: 2px 8px; font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; color: var(--text-muted); border-top: 1px solid var(--border); }
 .change-list > .change-group:first-child { margin-top: 0; border-top: 0; }
 .change-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 12.5px; }
-.change-head { flex: none; }
+.change-head { flex: none; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.change-head code { flex: 1 1 auto; min-width: 0; }
+.change-open { flex: none; }
+.diff-view [data-line] { cursor: pointer; }
+.diff-view [data-line]:hover { outline: 1px solid var(--border); outline-offset: -1px; }
+.fix-line { display: flex; gap: 6px; align-items: center; padding: 6px 8px; background: var(--surface-2, var(--surface)); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.fix-line .field { flex: 1 1 auto; min-width: 0; }
 .change-head code { font-size: 12.5px; color: var(--text-strong); overflow-wrap: anywhere; }
 .change-diff { flex: 1; min-height: 120px; overflow: auto; border-radius: var(--radius); background: var(--code-bg); }
 .project-form .change-diff { flex: none; min-height: 0; max-height: 60vh; }

@@ -26,6 +26,7 @@ import { readBranch } from "./lib/git.mjs";
 import { listFiles, rankFiles } from "./lib/files.mjs";
 import { fitToScreen, loadSettings, saveSettings, THEMES } from "./lib/settings.mjs";
 import { changeRepos, defaultChangeRepo, listChanges, listDrafts, fileDiff } from "./lib/changes.mjs";
+import { editorPlan } from "./lib/editors.mjs";
 import { readStandards, readSnapshot, readNote } from "./lib/standards-view.mjs";
 import { getTeamProject, loadProject, previewProject, saveProject, shareProject, teamStatus } from "./lib/project-form.mjs";
 import { DocsSetupRun, AnswerError, docsLocation, listDocsPages, pickedPathAnswer, readDocsPage, runDocsBuild } from "./lib/docs-setup.mjs";
@@ -259,6 +260,7 @@ function windowInfo(state) {
     firstRun: !state.noticesShown && /^(1|true|yes|on)$/i.test(String(spec.env.COOP_FIRST_RUN || "")),
     notify: settings.notify,
     menuBar: settings.menuBar,
+    daxEditor: settings.daxEditor,
     splash: splashArt,
     vibe: vibeFor(state),
     vibeSets: vibeSets(vibesDir(REPO)),
@@ -911,8 +913,9 @@ handle("coop:theme", (state, theme) => {
 handle("coop:pref", (state, key, value) => {
   if (key === "notify") settings = saveSettings(settingsFile, { ...settings, notify: value !== false });
   else if (key === "menuBar") setMenuBar(value !== false);
+  else if (key === "daxEditor") settings = saveSettings(settingsFile, { ...settings, daxEditor: value });
   else return { success: false, error: "unknown preference" };
-  return { success: true, data: { notify: settings.notify, menuBar: settings.menuBar } };
+  return { success: true, data: { notify: settings.notify, menuBar: settings.menuBar, daxEditor: settings.daxEditor } };
 });
 
 handle("coop:copy", (state, text) => {
@@ -981,6 +984,41 @@ handle("coop:change-diff", async (state, path) => {
   const entry = state.changes.find((file) => file.path === path);
   if (!entry) return { success: false, error: "that file is not in the list of changes; refresh it" };
   return { success: true, data: await fileDiff(state.changeDir || state.spec.cwd, entry) };
+});
+
+// "Open in editor": the person edits a changed file in their own program (SSMS
+// for SQL, Tabular Editor or Power BI Desktop for a model, else Windows' app
+// for the file). The path is one from this tab's list, never the renderer's
+// own; coop writes nothing here, and the panel shows the edit from git.
+handle("coop:open-in-editor", async (state, path) => {
+  let file = "";
+  let root = state.changeDir || state.spec.cwd;
+  if (typeof path === "string" && path.startsWith("draft:")) {
+    const draft = (state.drafts || []).find((entry) => entry.path === path.slice(6));
+    if (draft) { root = state.draftsDir; file = join(root, draft.path); }
+  } else {
+    const entry = (state.changes || []).find((change) => change.path === path);
+    if (entry && entry.status !== "deleted") file = join(root, entry.path);
+  }
+  if (!file || !existsSync(file)) return { success: false, error: "that file is not in the list of changes (or is deleted); refresh it" };
+  const plan = editorPlan(file, { daxEditor: settings.daxEditor, root });
+  if (plan.warn) {
+    const choice = await dialog.showMessageBox(state.win, { type: "warning", buttons: ["Open", "Cancel"], defaultId: 0, cancelId: 1, message: `Open in ${plan.editor}?`, detail: plan.warn });
+    if (choice.response !== 0) return { success: false, cancelled: true };
+  }
+  if (plan.exe) {
+    try {
+      const child = spawn(plan.exe, plan.args, { cwd: dirname(plan.target), detached: true, stdio: "ignore", windowsHide: false });
+      child.on("error", () => {});
+      child.unref();
+    } catch (error) {
+      return { success: false, error: `could not start ${plan.editor}: ${error && error.message ? error.message : error}` };
+    }
+  } else {
+    const error = await shell.openPath(plan.target);
+    if (error) return { success: false, error };
+  }
+  return { success: true, data: { editor: plan.editor, fallback: plan.fallback || "" } };
 });
 
 // F2: the three places coop keeps its files for this folder (the Project pane

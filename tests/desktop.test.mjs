@@ -599,7 +599,7 @@ await check("settings: unknown values fall back, the four themes and auto are ke
   assert.deepEqual(THEMES, ["auto", "modern-dark", "modern-light", "retro-dark", "retro-light"]);
   const file = join(temp, "settings", "window.json");
   assert.equal(loadSettings(file).theme, "auto");
-  assert.deepEqual(saveSettings(file, { theme: "retro-light", width: 99999, height: 900, maximized: "yes", extra: 1 }), { theme: "retro-light", width: 1280, height: 900, maximized: false, lastFolder: "", notify: true, menuBar: true, phoneAccess: false, companionOrigin: "" });
+  assert.deepEqual(saveSettings(file, { theme: "retro-light", width: 99999, height: 900, maximized: "yes", extra: 1 }), { theme: "retro-light", width: 1280, height: 900, maximized: false, lastFolder: "", notify: true, menuBar: true, daxEditor: "tabular-editor", phoneAccess: false, companionOrigin: "" });
   assert.equal(loadSettings(file).theme, "retro-light");
   assert.equal(saveSettings(file, { phoneAccess: true }).phoneAccess, true, "phone access (pair once) is kept across restarts");
   assert.equal(saveSettings(file, { phoneAccess: "yes" }).phoneAccess, false);

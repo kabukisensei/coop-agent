@@ -59,15 +59,16 @@ export function renderDiff(model, { mode = "unified", query = "", active = -1 } 
     for (const row of buildSplitRows(model.hunks)) {
       if (++rows > MAX_ROWS) break;
       if (row.kind === "hunk") { box.append(el("div", { class: "diff-hunk", role: "row", text: row.header })); continue; }
-      const side = (line, kind, no) => line
-        ? [el("span", { class: "diff-num", text: no === null ? "" : String(no) }), el("span", { class: `diff-cell ${kind}` }, lineText(line, marks(line)))]
+      // The new side's cells carry their line number for "Fix this line".
+      const side = (line, kind, no, newSide = false) => line
+        ? [el("span", { class: "diff-num", text: no === null ? "" : String(no) }), el("span", { class: `diff-cell ${kind}`, ...(newSide && no !== null ? { "data-line": String(no) } : {}) }, lineText(line, marks(line)))]
         : [el("span", { class: "diff-num" }), el("span", { class: "diff-cell blank" })];
       if (row.kind === "ctx") {
-        box.append(el("div", { class: "diff-split-row", role: "row" }, ...side(row.line, "ctx", row.oldNo), ...side(row.line, "ctx", row.newNo)));
+        box.append(el("div", { class: "diff-split-row", role: "row" }, ...side(row.line, "ctx", row.oldNo), ...side(row.line, "ctx", row.newNo, true)));
       } else {
         box.append(el("div", { class: "diff-split-row", role: "row" },
           ...side(row.left, "del", row.left ? row.left.oldNo : null),
-          ...side(row.right, "add", row.right ? row.right.newNo : null)));
+          ...side(row.right, "add", row.right ? row.right.newNo : null, true)));
       }
     }
   } else {
@@ -76,7 +77,7 @@ export function renderDiff(model, { mode = "unified", query = "", active = -1 } 
       box.append(el("div", { class: "diff-hunk", role: "row", text: hunk.header }));
       for (const line of hunk.lines) {
         if (++rows > MAX_ROWS) break;
-        box.append(el("div", { class: `diff-row ${line.type}`, role: "row" },
+        box.append(el("div", { class: `diff-row ${line.type}`, role: "row", ...(line.newNo === null ? {} : { "data-line": String(line.newNo) }) },
           el("span", { class: "diff-num", text: line.oldNo === null ? "" : String(line.oldNo) }),
           el("span", { class: "diff-num", text: line.newNo === null ? "" : String(line.newNo) }),
           el("span", { class: "diff-sign", text: sign(line.type) }),

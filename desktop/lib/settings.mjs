@@ -2,11 +2,12 @@
 // folder. Nothing here changes how Pi or coop behave.
 import { readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
+import { DAX_EDITORS } from "./editors.mjs";
 
 // "auto" follows Windows' light or dark setting with the modern pair.
 export const THEMES = Object.freeze(["auto", "modern-dark", "modern-light", "retro-dark", "retro-light"]);
 
-const DEFAULTS = Object.freeze({ theme: "auto", width: 1280, height: 860, maximized: false, lastFolder: "", notify: true, menuBar: true });
+const DEFAULTS = Object.freeze({ theme: "auto", width: 1280, height: 860, maximized: false, lastFolder: "", notify: true, menuBar: true, daxEditor: "tabular-editor" });
 
 function size(value, fallback, min, max) {
   return Number.isInteger(value) && value >= min && value <= max ? value : fallback;
@@ -27,6 +28,8 @@ function normalize(value) {
     // while the window is in the background; the menu bar's visibility.
     notify: raw.notify !== false,
     menuBar: raw.menuBar !== false,
+    // What "Open in editor" uses for a semantic model's files (DAX).
+    daxEditor: DAX_EDITORS.includes(raw.daxEditor) ? raw.daxEditor : DEFAULTS.daxEditor,
     // The phone companion's address when it is not this computer's Tailscale
     // name (MC2); "" reads it from Tailscale.
     // Phone access for the whole app (pair once): every tab on a client, kept
