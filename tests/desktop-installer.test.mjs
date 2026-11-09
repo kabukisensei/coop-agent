@@ -295,6 +295,9 @@ await check("electron-builder: NSIS per-machine with elevation (F3), data kept, 
     assert.match(stepText, /\$env:COOP_BOOTSTRAP_VERSION = \$pinned/, workflow);
     assert.ok(stepText.indexOf("COOP_BOOTSTRAP_VERSION = $pinned") < stepText.indexOf("$first ="), `${workflow}: the pin is set before the first install`);
     assert.match(stepText, /the coop window \$\(\[regex\]::Escape\(\$pinned\)\) is already installed/, workflow);
+    // A release from before #520 writes no machine-setup record: only then may the second run reinstall.
+    assert.match(stepText, /\.version\) -eq \$pinned\) \{ \$legacy = \$false \}/, workflow);
+    assert.match(stepText, /if \(-not \(\$legacy -and /, workflow);
   }
   // F3: what the installer says.
   assert.match(nsh, /!macro customWelcomePage[\s\S]*MUI_WELCOMEPAGE_TEXT "coop installs once for every account on this computer\.\$\\r\$\\n\$\\r\$\\nEach Windows account keeps its own client's sessions, memory and backups under its user folder\.\$\\r\$\\n\$\\r\$\\nUpdates install themselves overnight\./);

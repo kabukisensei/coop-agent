@@ -117,7 +117,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   worked, and removes it first. The bootstrap command's retry after an installer
   that exited 3 runs the installer again instead of reporting "already installed",
   and the update task keeps `failed: the machine setup ... did not finish` instead of
-  `up to date` until the setup is finished (#515).
+  `up to date` until the setup is finished (#515). A machine still on 0.39.x has no
+  record yet, so running the bootstrap command for that same version installs it once
+  more (harmless); the release acceptance's repeat-install check allows that one
+  reinstall only for a release from before the record.
 - **Changing a SQL target between Azure SQL and Fabric saves a usable target.** The
   Project pane and `/setup-project` now clear the other engine's fields (`server`, or
   `workspace_id` / `item_id` / `sql_endpoint_id`, and `read_scale_replicas` outside
