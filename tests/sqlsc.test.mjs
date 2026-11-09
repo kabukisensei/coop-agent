@@ -207,7 +207,7 @@ await t("init: a schema filter only for init; it sets up the project's SQL repos
   // An allow glob shaped like one layout's path only does not cover what sqlsc commit stages.
   writeFileSync(contract, "repositories:\n  warehouse:\n    role: sql\n    local_path: sql\n    agent_allowed_to_commit: [\"database/dbo/Tables/*.sql\", \"sqlsc.yml\", \".gitattributes\", \".gitignore\"]\n");
   assert.equal(lib.commitLine(join(root, "sql", "sqlsc.yml"), contract).covered, false, "database/dbo/Tables/*.sql leaves Data/, Migrations/ and the type layout");
-  assert.ok(lib.sqlscCommitCandidates("database").includes("database/Tables/dbo.Sample.sql") && lib.sqlscCommitCandidates("database").includes("database/Dependencies.json"));
+  assert.ok(lib.sqlscCommitCandidates("database").includes("database/Tables/dbo.Sample.sql") && lib.sqlscCommitCandidates("database").includes("database/Dependencies.json") && lib.sqlscCommitCandidates("database").includes("database/.editorconfig"));
   writeFileSync(contract, "repositories:\n  warehouse:\n    role: sql\n    local_path: sql\n    agent_allowed_to_commit: [\"docs/**\"]\n");
   assert.equal(lib.commitLine(join(root, "sql", "sqlsc.yml"), contract).covered, false, "docs/** does not cover database/");
 });
