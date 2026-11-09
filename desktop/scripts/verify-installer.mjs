@@ -27,7 +27,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
-import { NODE_SHIMS_DROPPED, bundledDownloads, hasWheel, longestPath } from "./build-installer.mjs";
+import { NODE_SHIMS_DROPPED, bundledDownloads, gitForWindowsTag, hasWheel, longestPath } from "./build-installer.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 // F3: the Add/Remove entry is plain "coop" (electron-builder nsis.uninstallDisplayName);
@@ -48,17 +48,20 @@ export function assertDisposableInstallerHost(env = process.env, platform = proc
 
 /**
  * NSIS: `/S`, the install mode (`/allusers`, the package's own since F3, or
- * `/currentuser` for a release before it), then `/D=` (install) or `_?=`
- * (uninstall) last and unquoted, as NSIS requires.
+ * `/currentuser` for a release before it), `--updated` when asked (what
+ * scripts/auto-update.ps1 and a bootstrap over an installed window pass: the
+ * previous version's shortcuts and pins are kept), then `/D=` (install) or
+ * `_?=` (uninstall) last and unquoted, as NSIS requires.
  */
-export function nsisInvocation(executable, directory, { uninstall = false, mode = "allusers" } = {}) {
+export function nsisInvocation(executable, directory, { uninstall = false, mode = "allusers", updated = false } = {}) {
   for (const path of [executable, directory]) {
     if (typeof path !== "string" || !win32.isAbsolute(path) || /["\0-\x1f]/.test(path)) throw new Error(`NSIS path is invalid: ${path}`);
   }
   if (mode !== "allusers" && mode !== "currentuser") throw new Error(`NSIS install mode is invalid: ${mode}`);
+  if (updated && uninstall) throw new Error("--updated is the installer's flag, not the uninstaller's");
   return {
     command: executable,
-    args: ["/S", `/${mode}`, `${uninstall ? "_?=" : "/D="}${directory}`],
+    args: ["/S", `/${mode}`, ...(updated ? ["--updated"] : []), `${uninstall ? "_?=" : "/D="}${directory}`],
     options: { shell: false, windowsVerbatimArguments: true, windowsHide: true },
   };
 }
@@ -206,7 +209,7 @@ const RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const STARTUP_NAME = "coop at sign-in";
 /** Write the value lib/common.ps1's Get-CoopStartupCommand writes for this coop root. */
 export async function setStartupValue(coopRoot) {
-  const value = `"${powershellExe()}" -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Minimized -File "${win32.join(coopRoot, "scripts", "sign-in.ps1")}"`;
+  const value = `"${powershellExe()}" -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File "${win32.join(coopRoot, "scripts", "sign-in.ps1")}"`;
   await runOwned("reg.exe", ["add", RUN_KEY, "/v", STARTUP_NAME, "/t", "REG_SZ", "/d", value, "/f"], { windowsHide: true }, 60000);
 }
 /** Remove it (best effort). */
@@ -392,7 +395,8 @@ async function main(argv) {
     // D1k: Git, Python with pipx, the Azure CLI, the wheel folder and the ODBC
     // installers are in the package and answer, so a teammate installs nothing else.
     const gitOut = (await runOwned(join(paths.runtime, "git", "cmd", "git.exe"), ["--version"], { windowsHide: true }, 60000)).trim();
-    if (!gitOut.includes(manifest.desktop.git.version)) throw new Error(`bundled git --version printed ${gitOut}`);
+    // `git version 2.56.0.windows.4` for the pin `2.56.0.4` (the tag without its `v`).
+    if (!gitOut.includes(gitForWindowsTag(manifest.desktop.git.version).slice(1))) throw new Error(`bundled git --version printed ${gitOut}`);
     const pyOut = (await runOwned(join(paths.runtime, "python", "python.exe"), ["--version"], { windowsHide: true }, 60000)).trim();
     if (pyOut !== `Python ${manifest.desktop.python.version}`) throw new Error(`bundled python --version printed ${pyOut}`);
     const pipxOut = (await runOwned(process.env.ComSpec || "cmd.exe", ["/d", "/c", join(paths.runtime, "python", "Scripts", "pipx.cmd"), "--version"], { windowsHide: true }, 60000)).trim();

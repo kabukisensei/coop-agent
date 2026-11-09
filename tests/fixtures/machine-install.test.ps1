@@ -218,6 +218,12 @@ try {
     else { Ok 'coop at sign-in checks the Azure sign-in from the recorded client folder, and from the home folder when there is none' }
   }
 
+  # The installer runs in update mode (--updated, electron-builder's flag): the
+  # previous version's uninstaller keeps the all-users shortcuts and their pins.
+  $autoCode = [System.IO.File]::ReadAllText((Join-Path $root 'scripts\auto-update.ps1'))
+  if ($autoCode -notmatch "-ArgumentList @\('/S', '/allusers', '--updated', `"/D=\`$app`"\)") { Ko 'auto-update.ps1 must run the installer with /S /allusers --updated and /D last, so the shortcuts and pins survive the update' }
+  else { Ok 'auto-update.ps1 runs the installer with --updated (shortcuts and pins kept) and /D last' }
+
   # --- auto-update.ps1 as a dry run against a fake package ------------------------------
   $fakeApp = Join-Path $t 'app'
   $snapshot = Join-Path $fakeApp 'resources\coop'
@@ -297,10 +303,14 @@ try {
   elseif ((Get-CoopMachineInstallInfo).version -ne '0.37.0') { Ko 'Get-CoopMachineInstallInfo does not read the marker' }
   else { Ok 'the snapshot knows it is this machine''s install from runtime\machine-install.json' }
   $runValue = Get-CoopStartupCommand 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' 'C:\Program Files\coop\resources\coop\'
-  $wantRun = '"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Minimized -File "C:\Program Files\coop\resources\coop\scripts\sign-in.ps1"'
+  $wantRun = '"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File "C:\Program Files\coop\resources\coop\scripts\sign-in.ps1"'
+  $oldRun = $wantRun -replace '-WindowStyle Normal', '-WindowStyle Minimized'
+  if (-not (Test-CoopStartupEntryStale $oldRun $wantRun)) { Ko 'Test-CoopStartupEntryStale misses an older release''s entry for the same sign-in.ps1 (minimized)' }
+  elseif ((Test-CoopStartupEntryStale $wantRun $wantRun) -or (Test-CoopStartupEntryStale '' $wantRun) -or (Test-CoopStartupEntryStale ($oldRun -replace 'Program Files\\coop', 'dev\coop-agent') $wantRun)) { Ko 'Test-CoopStartupEntryStale claims the current entry, no entry, or another checkout''s' }
+  else { Ok 'a launch refreshes an older release''s "coop at sign-in" entry (minimized console) for the same coop, never another checkout''s' }
   if ($runValue -ne $wantRun) { Ko 'the coop startup Run value is wrong' "$runValue`nwant: $wantRun" }
   elseif ($script:CoopStartupValueName -ne 'coop at sign-in' -or $script:CoopStartupRunKey -ne 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run') { Ko 'coop startup writes another key or value name' }
-  else { Ok 'coop startup on writes one Run value: the built-in powershell.exe running the snapshot''s sign-in.ps1, minimized' }
+  else { Ok 'coop startup on writes one Run value: the built-in powershell.exe running the snapshot''s sign-in.ps1 in a normal console' }
   $bad = @()
   if (-not (Test-CoopStartupDefaultWanted $true $true '' $false $false)) { $bad += 'a machine install with no entry is not turned on' }
   if (Test-CoopStartupDefaultWanted $true $true '' $true $false) { $bad += 'an account that opted out is turned back on' }

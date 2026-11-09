@@ -46,6 +46,7 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   this release's pins. The coop-tools compaction-transport
   and Codex sign-in workarounds stay: `_runDefaultCompaction()` still passes no
   transport and pi-ai 1.5.0 still caches the Codex WebSocket for 55 minutes.
+- **Window runtimes: Git 2.56.0(4) and Electron 44.10.2.** The window installer bundles MinGit 2.56.0(4) (from 2.56.0(1)): Git for Windows' security re-releases of October 2026, which distrust the compromised eMudhra intermediate CA, fix CVE-2026-111497 in the bundled brotli and move Git LFS to 3.8.1 for CVE-2026-105803. A Git for Windows re-release carries its fourth part in the manifest pin (`2.56.0.4` is tag `v2.56.0.windows.4`); `desktop/scripts/build-installer.mjs` derives the tag. Electron moves to 44.10.2 (from 44.10.0): Chromium, V8, PDFium and WebRTC backports and Node.js 24.22.2 inside the window; the runtime lock is regenerated.
 - **pi-web-access 0.47.0, pi-hermes-memory 0.10.0 and Power BI Modeling MCP 1.0.1.** pi-web-access (from 0.45.0): on Windows, repositories `fetch_content` clones go to `%TEMP%` instead of `C:\tmp`; a proxy set in `web-search.json` keeps working after `/reload`; mixed-case `Content-Type` headers are handled; the web tools' MCP definitions take about half the tokens on every request; new search providers are opt-in only and unused by coop. pi-hermes-memory (from 0.9.11) adds the `skillsEnabled` setting, default on, and changes nothing coop configures. `@microsoft/powerbi-modeling-mcp` 1.0.1 (from 1.0.0) restores local Power BI Desktop discovery after Windows 11 KB5127936 (build 26300.9818), retries a failed cloud reconnect once and connects to semantic models by workspace and model id. The extension lock is regenerated (transitive refreshes only; the audit result is unchanged: the known `sharp` advisory in pi-better-openai has no fix in range).
 - **Live dev is the source unless SQL source control is on.** The *Files first*
   guardrail is now *Live dev by default*: with `/sql-source off` (the default) coop
@@ -82,6 +83,24 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **An update keeps coop's icons and pins.** The update task (and a bootstrap
+  over an installed window) ran the installer the way a first install runs, so
+  the previous version's uninstaller un-pinned coop from the taskbar and Start,
+  deleted the all-users "coop" icons and wrote fresh, un-pinned ones at the end:
+  every automatic update lost a pinned coop, and for the minutes the files
+  copied there was no icon at all (a client VM, 2026-11-09). The installer now
+  runs with `--updated` (electron-builder's update flag), so the uninstaller
+  keeps the shortcuts and their pins; the upgrade acceptance checks the
+  shortcut files survive untouched. **"coop at sign-in" is visible now:** its
+  console opens as a normal window titled "coop: starting" (it was minimized)
+  and, while an update installs, "coop: updating to vX", saying the icons open
+  nothing until the install finishes; a launch brings an account's older
+  minimized entry to the new one. The update task also removes every
+  downloaded installer left in `%ProgramData%\coop\updates` after an install
+  (a run cut off by the task's time limit left one each time: 1.4 GB on that
+  VM), and the machine install's every-account sweep removes the early window's
+  updater cache (`%LOCALAPPDATA%\coop-window-updater`, a few hundred MB per
+  account).
 - **`sql_source commit` checks the project file against every name sqlsc may stage.**
   The check used fixed sample file names, so an `agent_allowed_to_commit` written
   for those names passed while the real object files were not covered, and an
