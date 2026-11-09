@@ -48,17 +48,20 @@ export function assertDisposableInstallerHost(env = process.env, platform = proc
 
 /**
  * NSIS: `/S`, the install mode (`/allusers`, the package's own since F3, or
- * `/currentuser` for a release before it), then `/D=` (install) or `_?=`
- * (uninstall) last and unquoted, as NSIS requires.
+ * `/currentuser` for a release before it), `--updated` when asked (what
+ * scripts/auto-update.ps1 and a bootstrap over an installed window pass: the
+ * previous version's shortcuts and pins are kept), then `/D=` (install) or
+ * `_?=` (uninstall) last and unquoted, as NSIS requires.
  */
-export function nsisInvocation(executable, directory, { uninstall = false, mode = "allusers" } = {}) {
+export function nsisInvocation(executable, directory, { uninstall = false, mode = "allusers", updated = false } = {}) {
   for (const path of [executable, directory]) {
     if (typeof path !== "string" || !win32.isAbsolute(path) || /["\0-\x1f]/.test(path)) throw new Error(`NSIS path is invalid: ${path}`);
   }
   if (mode !== "allusers" && mode !== "currentuser") throw new Error(`NSIS install mode is invalid: ${mode}`);
+  if (updated && uninstall) throw new Error("--updated is the installer's flag, not the uninstaller's");
   return {
     command: executable,
-    args: ["/S", `/${mode}`, `${uninstall ? "_?=" : "/D="}${directory}`],
+    args: ["/S", `/${mode}`, ...(updated ? ["--updated"] : []), `${uninstall ? "_?=" : "/D="}${directory}`],
     options: { shell: false, windowsVerbatimArguments: true, windowsHide: true },
   };
 }
@@ -206,7 +209,7 @@ const RUN_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const STARTUP_NAME = "coop at sign-in";
 /** Write the value lib/common.ps1's Get-CoopStartupCommand writes for this coop root. */
 export async function setStartupValue(coopRoot) {
-  const value = `"${powershellExe()}" -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Minimized -File "${win32.join(coopRoot, "scripts", "sign-in.ps1")}"`;
+  const value = `"${powershellExe()}" -NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File "${win32.join(coopRoot, "scripts", "sign-in.ps1")}"`;
   await runOwned("reg.exe", ["add", RUN_KEY, "/v", STARTUP_NAME, "/t", "REG_SZ", "/d", value, "/f"], { windowsHide: true }, 60000);
 }
 /** Remove it (best effort). */

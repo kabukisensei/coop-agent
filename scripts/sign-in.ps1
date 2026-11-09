@@ -1,8 +1,10 @@
 ﻿#!/usr/bin/env pwsh
 #
 # scripts/sign-in.ps1 - coop at Windows sign-in (`coop startup`: the account's
-# Run entry starts this file in a minimized console titled "coop: getting
-# ready"; on by default on a machine install, `coop startup off` opts out). One run:
+# Run entry starts this file in a console window titled "coop: starting", so
+# the account sees coop start, and "coop: updating to vX" while an update
+# installs (Aaron 2026-11-09); on by default on a machine install, `coop
+# startup off` opts out). One run:
 #   1. on a machine install: asks github.com for the newest release and, when
 #      it is newer than the installed one, waits (at most -WaitMinutes) for the
 #      "coop update" task, which runs at every sign-in, to install it. It stops
@@ -71,6 +73,22 @@ function Write-CoopSignInLine([string]$Text) {
   if ($script:SignInLog) { try { Add-CoopUpdateLogLine $script:SignInLog $Text } catch { } }
 }
 function Get-CoopSignInPowerShell { return (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') }
+# While an update installs, coop's icons lead nowhere for several minutes, so
+# the console says so in its title and, if an older release's Run entry started
+# it minimized, comes up as a normal window (a client VM, 2026-11-09: nothing
+# told the user an install was running). Best-effort.
+function Show-CoopSignInWindow([string]$Title) {
+  if ($env:OS -ne 'Windows_NT') { return }
+  try { $Host.UI.RawUI.WindowTitle = $Title } catch { }
+  try {
+    if (-not ('CoopSignIn.NativeWindow' -as [type])) {
+      Add-Type -Namespace CoopSignIn -Name NativeWindow -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow); [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();'
+    }
+    $hwnd = [CoopSignIn.NativeWindow]::GetConsoleWindow()
+    # 9 = SW_RESTORE: a minimized console back to a normal window.
+    if ($hwnd -ne [IntPtr]::Zero) { [void][CoopSignIn.NativeWindow]::ShowWindow($hwnd, 9) }
+  } catch { }
+}
 
 # Step 1 on a machine install: wait for the update task to install a newer release.
 function Wait-CoopSignInUpdate([string]$CoopRoot, [datetime]$Start) {
@@ -80,7 +98,9 @@ function Wait-CoopSignInUpdate([string]$CoopRoot, [datetime]$Start) {
   $latest = if ($env:COOP_AUTO_UPDATE_LATEST) { [string]$env:COOP_AUTO_UPDATE_LATEST } else { Get-CoopLatestReleaseVersion 'kabukisensei/coop-agent' }
   if (-not $latest) { Write-CoopSignInLine "could not read the newest release from github.com; opening coop $installed"; return }
   if (-not (Test-CoopVersionNewer $latest $installed)) { Write-CoopSignInLine "coop $installed is the newest release"; return }
+  Show-CoopSignInWindow "coop: updating to $latest (a few minutes)"
   Write-CoopSignInLine "coop $latest is out (this machine has $installed): waiting for the update task to install it (at most $(Format-CoopMinutes $WaitMinutes))"
+  Write-CoopSignInLine "coop's icons open nothing until the install finishes; this window closes when coop opens"
   $machineDir = if ($env:COOP_MACHINE_DIR) { [string]$env:COOP_MACHINE_DIR } else { Join-Path $env:ProgramData 'coop' }
   $stateFile = Join-Path $machineDir 'update-state.json'
   # The task's sign-in run may start a little before this script does.
@@ -104,8 +124,8 @@ function Invoke-CoopSignIn {
   $coopRoot = Split-Path -Parent $PSScriptRoot
   $profileDir = if ($env:COOP_DIR) { Join-Path $env:COOP_DIR '.coop' } else { Join-Path $HOME '.coop' }
   $script:SignInLog = Join-Path $profileDir 'logs\sign-in.log'
-  try { $Host.UI.RawUI.WindowTitle = 'coop: getting ready' } catch { }
-  Write-CoopSignInLine "coop at sign-in ($coopRoot): update, Azure sign-in, then the window"
+  try { $Host.UI.RawUI.WindowTitle = 'coop: starting' } catch { }
+  Write-CoopSignInLine "coop is starting ($coopRoot): the newest coop, the Azure sign-in, then the window. This window closes when coop opens."
   $ps = Get-CoopSignInPowerShell
   $runtime = Join-Path (Split-Path -Parent $coopRoot) 'runtime'
   $machine = Test-Path -LiteralPath (Join-Path $runtime 'machine-install.json') -PathType Leaf

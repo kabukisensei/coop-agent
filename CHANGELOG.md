@@ -62,6 +62,24 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **An update keeps coop's icons and pins.** The update task (and a bootstrap
+  over an installed window) ran the installer the way a first install runs, so
+  the previous version's uninstaller un-pinned coop from the taskbar and Start,
+  deleted the all-users "coop" icons and wrote fresh, un-pinned ones at the end:
+  every automatic update lost a pinned coop, and for the minutes the files
+  copied there was no icon at all (a client VM, 2026-11-09). The installer now
+  runs with `--updated` (electron-builder's update flag), so the uninstaller
+  keeps the shortcuts and their pins; the upgrade acceptance checks the
+  shortcut files survive untouched. **"coop at sign-in" is visible now:** its
+  console opens as a normal window titled "coop: starting" (it was minimized)
+  and, while an update installs, "coop: updating to vX", saying the icons open
+  nothing until the install finishes; a launch brings an account's older
+  minimized entry to the new one. The update task also removes every
+  downloaded installer left in `%ProgramData%\coop\updates` after an install
+  (a run cut off by the task's time limit left one each time: 1.4 GB on that
+  VM), and the machine install's every-account sweep removes the early window's
+  updater cache (`%LOCALAPPDATA%\coop-window-updater`, a few hundred MB per
+  account).
 - **`sql_source commit` checks the project file against every name sqlsc may stage.**
   The check used fixed sample file names, so an `agent_allowed_to_commit` written
   for those names passed while the real object files were not covered, and an

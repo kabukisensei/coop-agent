@@ -16,8 +16,15 @@
 #      to %ProgramData%\coop\updates and checks the exe's SHA-256 against the
 #      report (the check scripts/bootstrap.ps1 and check-installer-report.mjs
 #      make);
-#   5. runs the installer silently for every account (/S /allusers, into the
-#      same folder) and checks the installed VERSION moved.
+#   5. runs the installer silently for every account (/S /allusers --updated,
+#      into the same folder), checks the installed VERSION moved and removes
+#      every downloaded installer left in the updates folder. --updated
+#      is electron-builder's own update flag: the previous version's uninstaller
+#      then keeps the all-users "coop" shortcuts and every account's taskbar
+#      and Start pins (it runs with --keep-shortcuts), instead of deleting and
+#      un-pinning them and writing fresh, un-pinned shortcuts at the end
+#      (a client VM, 2026-11-09: every overnight update lost the pins, and for
+#      the minutes the files copy there was no coop icon at all).
 # Every run records %ProgramData%\coop\update-state.json (schema_version 1:
 # last_run, last_result "installed" | "up to date" | "waiting: coop is open" |
 # "failed: ...", installed_version, pending_version, latest_version,
@@ -272,14 +279,19 @@ function Invoke-CoopAutoUpdate {
           throw "the downloaded installer's SHA-256 ($have) is not the one the release's acceptance report names ($want); deleted it"
         }
         Unblock-File -LiteralPath $exe -ErrorAction SilentlyContinue
-        # NSIS reads /D only as the last argument and without quotes.
-        $p = Start-Process -FilePath $exe -ArgumentList @('/S', '/allusers', "/D=$app") -Wait -PassThru
+        # NSIS reads /D only as the last argument and without quotes. --updated
+        # keeps the shortcuts and pins of the version being replaced (see above).
+        $p = Start-Process -FilePath $exe -ArgumentList @('/S', '/allusers', '--updated', "/D=$app") -Wait -PassThru
         $exitProblem = Get-CoopInstallerExitProblem $p.ExitCode $machine
         if ($exitProblem) { throw $exitProblem }
         $now = ''
         if (Test-Path -LiteralPath $verFile -PathType Leaf) { $now = ([System.IO.File]::ReadAllText($verFile)).Trim() }
         if ($now -ne $latest) { throw "the installer finished but $verFile says $now, not $latest" }
         Remove-Item -LiteralPath $exe -Force -ErrorAction SilentlyContinue
+        # Older downloads a run left behind (a run cut off by the task's limit, a
+        # failed install) go too: each is a few hundred MB (a client VM, 2026-11-09:
+        # three of them, 1.4 GB).
+        Get-ChildItem -LiteralPath $updates -Filter 'coop-window-*.exe' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
         $installed = $latest
         $pending = ''
         $result = 'installed'

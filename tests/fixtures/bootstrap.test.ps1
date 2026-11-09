@@ -86,6 +86,7 @@ try {
   # never /currentuser), from an administrator PowerShell: a plain one stops with
   # the ask before touching anything.
   if ($code -notmatch "@\('/S', '/allusers'\)" -or $code -match '/currentuser') { Ko 'bootstrap.ps1 must install for every account (/S /allusers)' }
+  elseif ($code -notmatch "coop\.exe'\) -PathType Leaf\) \{ \`$installArgs \+= '--updated' \}") { Ko 'bootstrap.ps1 must pass --updated over an installed window, so its shortcuts and pins are kept' }
   elseif ($code -notmatch 'Test-CoopBootstrapElevated' -or $code -notmatch 'Run as administrator') { Ko 'bootstrap.ps1 must stop with the administrator ask when not elevated' }
   else { Ok 'the bootstrap installs for every account on the machine and asks for an administrator PowerShell' }
 
