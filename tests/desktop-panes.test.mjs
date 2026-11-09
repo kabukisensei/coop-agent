@@ -1115,30 +1115,33 @@ await check("changes: Open in editor picks SSMS for SQL, Tabular Editor for DAX 
   const ssms = "C:\\Program Files\\Microsoft SQL Server Management Studio 21\\Release\\Common7\\IDE\\SSMS.exe";
   const env = { ProgramFiles: "C:\\Program Files", "ProgramFiles(x86)": "C:\\Program Files (x86)" };
   const on = (...paths) => (path) => paths.includes(path);
-  const fact = join("/r", "Sales.SemanticModel", "definition", "tables", "Fact.tmdl");
-  const definition = join("/r", "Sales.SemanticModel", "definition");
-  const exists = on(te3, ssms, join(definition, "database.tmdl"), join("/r", "Sales.pbip"));
+  // The repo root in the platform's own separators: editors.mjs walks up with
+  // node:path, so on Windows join() yields "\r\..." and a "/r" root never matches.
+  const r = join("/r");
+  const fact = join(r, "Sales.SemanticModel", "definition", "tables", "Fact.tmdl");
+  const definition = join(r, "Sales.SemanticModel", "definition");
+  const exists = on(te3, ssms, join(definition, "database.tmdl"), join(r, "Sales.pbip"));
   // SQL: SSMS when installed, else Windows' app with a fallback note.
-  const sql = editorPlan(join("/r", "a.sql"), { env, exists, platform: "win32" });
-  assert.deepEqual([sql.editor, sql.exe, sql.args], ["SSMS", ssms, [join("/r", "a.sql")]]);
-  const noSsms = editorPlan(join("/r", "a.sql"), { env, exists: on(), platform: "win32" });
-  assert.deepEqual([noSsms.exe, noSsms.target, noSsms.fallback], ["", join("/r", "a.sql"), "SSMS"]);
+  const sql = editorPlan(join(r, "a.sql"), { env, exists, platform: "win32" });
+  assert.deepEqual([sql.editor, sql.exe, sql.args], ["SSMS", ssms, [join(r, "a.sql")]]);
+  const noSsms = editorPlan(join(r, "a.sql"), { env, exists: on(), platform: "win32" });
+  assert.deepEqual([noSsms.exe, noSsms.target, noSsms.fallback], ["", join(r, "a.sql"), "SSMS"]);
   // DAX: Tabular Editor is the default and opens the TMDL folder.
-  const te = editorPlan(fact, { env, exists, root: "/r", platform: "win32" });
+  const te = editorPlan(fact, { env, exists, root: r, platform: "win32" });
   assert.deepEqual([te.editor, te.exe, te.args], ["Tabular Editor", te3, [definition]]);
-  assert.equal(modelTarget(join("/r", "m", "Model.bim"), "/r", on(join("/r", "m", "Model.bim"))), join("/r", "m", "Model.bim"));
-  assert.equal(modelTarget(fact, "/r", on()), fact, "no model root: the file itself");
+  assert.equal(modelTarget(join(r, "m", "Model.bim"), r, on(join(r, "m", "Model.bim"))), join(r, "m", "Model.bim"));
+  assert.equal(modelTarget(fact, r, on()), fact, "no model root: the file itself");
   // Power BI Desktop: the .pbip beside the model folder, with the overwrite warning.
-  const pbi = editorPlan(fact, { env, exists, root: "/r", platform: "win32", daxEditor: "power-bi", list: () => [] });
-  assert.deepEqual([pbi.editor, pbi.exe, pbi.target], ["Power BI Desktop", "", join("/r", "Sales.pbip")]);
+  const pbi = editorPlan(fact, { env, exists, root: r, platform: "win32", daxEditor: "power-bi", list: () => [] });
+  assert.deepEqual([pbi.editor, pbi.exe, pbi.target], ["Power BI Desktop", "", join(r, "Sales.pbip")]);
   assert.match(pbi.warn, /close it first without saving/);
-  assert.equal(pbipFor(fact, { exists: on(), list: () => ["Other.pbip"] }), join("/r", "Other.pbip"), "the only .pbip there");
+  assert.equal(pbipFor(fact, { exists: on(), list: () => ["Other.pbip"] }), join(r, "Other.pbip"), "the only .pbip there");
   assert.equal(pbipFor(fact, { exists: on(), list: () => ["A.pbip", "B.pbip"] }), "", "never guesses between two");
   assert.match(editorPlan(fact, { env, exists: on(), daxEditor: "power-bi", list: () => [] }).fallback, /no \.pbip/);
   // Off Windows nothing is looked up; Windows' app (xdg here) opens the file.
-  assert.equal(editorPlan(join("/r", "a.sql"), { env, exists, platform: "linux" }).exe, "");
+  assert.equal(editorPlan(join(r, "a.sql"), { env, exists, platform: "linux" }).exe, "");
   // Anything else: the default app.
-  assert.deepEqual(editorPlan(join("/r", "notes.md"), { env, exists, platform: "win32" }).editor, "the default app");
+  assert.deepEqual(editorPlan(join(r, "notes.md"), { env, exists, platform: "win32" }).editor, "the default app");
   // The setting: Tabular Editor unless Power BI Desktop is picked.
   const settingsFile = join(temp, "editor-settings.json");
   writeFileSync(settingsFile, JSON.stringify({ daxEditor: "power-bi" }));
