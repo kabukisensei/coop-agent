@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const read = (p) => readFileSync(join(ROOT, p), "utf8");
+const read = (p) => readFileSync(join(ROOT, p), "utf8").replace(/\r\n/g, "\n"); // a Windows checkout has CRLF
 const c = JSON.parse(read("tests/fixtures/focustime/coop-proposals-v1.json"));
 const skill = read("skills/azure-devops/SKILL.md");
 const handoff = read("prompts/handoff.md");
