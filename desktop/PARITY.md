@@ -44,8 +44,14 @@ standards and skills behave as in the terminal.
 
 ## Pi built-in commands
 
-`BUILTINS`, one row each: Pi's `docs/slash-commands.md` (Pi 1.2.0). Pi
+`BUILTINS`, one row each: Pi's `docs/slash-commands.md` (Pi 1.5.0). Pi
 implements these in its terminal UI only, so the window runs each one itself.
+
+A Pi command that one of coop's extensions serves under the same name is that
+extension's command, never a built-in: Pi 1.5.0 documents `/mcp` for its built-in
+MCP extension, which every coop session turns off (`--no-mcp`, `-builtin:mcp`), so
+the `/mcp` the window sends to Pi as typed is pi-mcp-adapter's (its row is under
+Extension commands).
 
 | Command | Maps to | In the window |
 | --- | --- | --- |

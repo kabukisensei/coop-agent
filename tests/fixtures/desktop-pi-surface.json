@@ -1,5 +1,5 @@
 {
-  "pi": "1.4.0",
+  "pi": "1.5.0",
   "slashCommands": [
     "bug",
     "changelog",
@@ -13,6 +13,7 @@
     "llama",
     "login",
     "logout",
+    "mcp",
     "model",
     "name",
     "new",
