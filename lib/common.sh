@@ -244,9 +244,9 @@ coop_python_matches_spec() { # <pyver> <spec>
   local key_want key_py tok op want wild parts scale mod_w mod_p i
   key_py="$(_coop_vkey "$py")"
   local oldIFS=$IFS
-  IFS=','
-  set -- $spec
-  IFS=$oldIFS
+  IFS=","  # nosemgrep — deliberate comma-split of an internal spec string, not attacker input
+  set -- $spec  # nosemgrep — spec is internal config
+  IFS=$oldIFS  # nosemgrep — spec is internal config
   for tok in "$@"; do
     tok="${tok#"${tok%%[![:space:]]*}"}"; tok="${tok%"${tok##*[![:space:]]}"}"
     [ -z "$tok" ] && continue

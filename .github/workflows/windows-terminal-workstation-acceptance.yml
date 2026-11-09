@@ -34,7 +34,7 @@ jobs:
           if ($env:CANDIDATE_SHA -cnotmatch '^[0-9a-f]{40}$') { throw 'event-authorized candidate SHA must be full lowercase 40-hex' }
 
       - name: Checkout acceptance harness identity
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ env.CANDIDATE_SHA }}
           path: harness
@@ -42,7 +42,7 @@ jobs:
           persist-credentials: false
 
       - name: Checkout immutable Terminal candidate
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ env.CANDIDATE_SHA }}
           path: candidate
@@ -50,7 +50,7 @@ jobs:
           persist-credentials: false
 
       - name: Checkout immutable v0.23.1 source baseline
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: d60300780b565aabf15b172b2bc32abad12b9ca6
           path: baseline
@@ -238,7 +238,7 @@ jobs:
 
       - name: Upload fail-closed receipt
         if: always() && steps.exact_behavioral_suite.outcome == 'success' && steps.validate_artifacts.outcome == 'success' && steps.validate_artifacts.outputs.receipt_uploadable == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: terminal-workstation-receipt-${{ env.VERIFIED_CANDIDATE_SHA }}-${{ env.VERIFIED_CANDIDATE_BUILD }}
           path: ${{ env.RECEIPT_PATH }}
@@ -248,7 +248,7 @@ jobs:
 
       - name: Upload fully scanned automated evidence
         if: always() && steps.exact_behavioral_suite.outcome == 'success' && steps.validate_artifacts.outcome == 'success' && steps.validate_artifacts.outputs.evidence_uploadable == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: terminal-workstation-automated-${{ env.VERIFIED_CANDIDATE_SHA }}-${{ env.VERIFIED_CANDIDATE_BUILD }}
           path: ${{ env.EVIDENCE_PATH }}

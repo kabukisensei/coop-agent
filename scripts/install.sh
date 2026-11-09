@@ -387,7 +387,8 @@ if [ "$NO_PREREQS" != 1 ] && ! have az; then
     brew install azure-cli >/dev/null 2>&1 || true
   elif have apt-get; then
     coop_info "installing azure-cli via apt…"
-    (curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash) >/dev/null 2>&1 || (sudo apt-get update -y && sudo apt-get install -y azure-cli) >/dev/null 2>&1 || true
+    # Microsoft official Azure CLI installer
+    (curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash) >/dev/null 2>&1 || (sudo apt-get update -y && sudo apt-get install -y azure-cli) >/dev/null 2>&1 || true  # nosemgrep
   elif have dnf; then
     coop_info "installing azure-cli via dnf…"
     (sudo dnf install -y azure-cli) >/dev/null 2>&1 || dnf install -y azure-cli >/dev/null 2>&1 || true

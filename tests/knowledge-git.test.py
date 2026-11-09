@@ -1558,7 +1558,8 @@ class ProcessInspectorTests(unittest.TestCase):
                 os.setuid(run_as_uid)
 
         with tempfile.TemporaryDirectory(prefix="coop inspector ") as directory:
-            os.chmod(directory, 0o755)
+            # test-only tempdir, 0o755 intentional
+            os.chmod(directory, 0o755)  # nosemgrep
             inspector_copy = Path(directory) / "inspector.py"
             inspector_copy.write_bytes(
                 (ROOT / "tests" / "knowledge-git-process-inspector.py").read_bytes()

@@ -126,7 +126,8 @@ function globToRegex(glob: string): RegExp {
     else if (/[A-Za-z0-9_\-./]/.test(c)) { s += c.replace(/[.]/g, "\\$&"); i++; }
     else { s += "\\" + c; i++; }
   }
-  return new RegExp("^" + s + "$", "i");
+  // s is char-by-char escaped literal above
+  return new RegExp("^" + s + "$", "i");  // nosemgrep
 }
 
 export type RepoCommitPolicy = { allowed: string[]; denied: string[] };

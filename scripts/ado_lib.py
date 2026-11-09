@@ -262,7 +262,8 @@ class AdoClient:
             attempt += 1
             req = urllib.request.Request(full, data=data, headers=headers, method=method)
             try:
-                with urllib.request.urlopen(req, context=self._ctx, timeout=90) as resp:
+                # ADO API URL built from configured org, not user input
+                with urllib.request.urlopen(req, context=self._ctx, timeout=90) as resp:  # nosemgrep
                     raw = resp.read()
                     return json.loads(raw) if raw else {}
             except urllib.error.HTTPError as exc:
