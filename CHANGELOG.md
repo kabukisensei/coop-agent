@@ -21,6 +21,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   layout SSMS 22, SqlPackage and Fabric write (`dbo/Tables/Customer.sql`, triggers at the
   end of the table file) and always writes the `layout:` key; existing repos keep their
   layout. The sourced wheel's tag, asset and SHA-256 follow the v1.0.16 release.
+- **Pins.** coop-sql-source-control 1.0.17, coop-schema-compare 0.1.13, coop-data-doc
+  1.4.7. sqlsc refuses a static-data key built on a computed or timestamp column, keeps
+  objects it could not read checked out on checkin, and hands paths to Git as plain
+  names. schema-compare reads an `IDENTITY` column with no nullability as `NOT NULL`,
+  `--fail-on-destructive` also reads the final `deploy.sql` plan, UTF-16 files are read
+  whole, case-only column names compare as unknown, and snapshot writes stay inside the
+  output folder. data-doc keeps final-expression M sources and qualified DAX measure
+  references, reads only reachable M steps as sources, and refuses to merge two
+  same-named `.pbix` archives. The sourced wheel's tag, asset and SHA-256 follow the
+  v1.0.17 release.
 
 ### Fixed
 
