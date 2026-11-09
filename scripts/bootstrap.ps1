@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env pwsh
+#!/usr/bin/env pwsh
 #
 # coop bootstrap - ONE command sets up coop on a Windows machine (master plan
 # D1k). Paste this into Windows PowerShell:
