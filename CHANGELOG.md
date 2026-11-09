@@ -26,6 +26,26 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- **Pi 1.5.0** (from 1.4.0). Fixes that reach coop: glob matching no longer
+  amplifies patterns (the minimatch denial-of-service advisory, the one open
+  `npm audit` item in Pi's own tree); MCP sign-in rejects authorization and
+  metadata URLs that are not `http:` or `https:` (a server could hand Pi a
+  `file:` URL for the platform URL handler); Windows paths are compared
+  case-insensitively, so skills no longer load twice when the drive letter's
+  case differs; `pi update` no longer stops on Windows when another session
+  holds a native module open; `pi.exec()` no longer crashes on very large
+  output or hangs when a command ignores SIGTERM; large streamed tool calls parse
+  incrementally. Breaking upstream: tool argument validation runs on pi-schema,
+  which coop's tools do not notice (plain TypeBox schemas, no refinements). Both
+  locks are regenerated; the `pi.overrides` undici 8.12.3 pin stays and now
+  matches what 1.5.0 pins itself. The RPC command set is unchanged from 1.4.0
+  (docs diffed); the one new documented slash command, `/mcp`, belongs to Pi's
+  built-in MCP extension, which coop turns off, so in the window `/mcp` stays
+  pi-mcp-adapter's (desktop/PARITY.md). The window's RPC fixture is re-recorded
+  on 1.5.0: usage costs carry `totalFromProvider`, and the extension tree at
+  this release's pins. The coop-tools compaction-transport
+  and Codex sign-in workarounds stay: `_runDefaultCompaction()` still passes no
+  transport and pi-ai 1.5.0 still caches the Codex WebSocket for 55 minutes.
 - **Window runtimes: Git 2.56.0(4) and Electron 44.10.2.** The window installer bundles MinGit 2.56.0(4) (from 2.56.0(1)): Git for Windows' security re-releases of October 2026, which distrust the compromised eMudhra intermediate CA, fix CVE-2026-111497 in the bundled brotli and move Git LFS to 3.8.1 for CVE-2026-105803. A Git for Windows re-release carries its fourth part in the manifest pin (`2.56.0.4` is tag `v2.56.0.windows.4`); `desktop/scripts/build-installer.mjs` derives the tag. Electron moves to 44.10.2 (from 44.10.0): Chromium, V8, PDFium and WebRTC backports and Node.js 24.22.2 inside the window; the runtime lock is regenerated.
 - **pi-web-access 0.47.0, pi-hermes-memory 0.10.0 and Power BI Modeling MCP 1.0.1.** pi-web-access (from 0.45.0): on Windows, repositories `fetch_content` clones go to `%TEMP%` instead of `C:\tmp`; a proxy set in `web-search.json` keeps working after `/reload`; mixed-case `Content-Type` headers are handled; the web tools' MCP definitions take about half the tokens on every request; new search providers are opt-in only and unused by coop. pi-hermes-memory (from 0.9.11) adds the `skillsEnabled` setting, default on, and changes nothing coop configures. `@microsoft/powerbi-modeling-mcp` 1.0.1 (from 1.0.0) restores local Power BI Desktop discovery after Windows 11 KB5127936 (build 26300.9818), retries a failed cloud reconnect once and connects to semantic models by workspace and model id. The extension lock is regenerated (transitive refreshes only; the audit result is unchanged: the known `sharp` advisory in pi-better-openai has no fix in range).
 - **Live dev is the source unless SQL source control is on.** The *Files first*

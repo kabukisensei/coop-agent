@@ -1008,8 +1008,14 @@ const MAPPINGS = new Set(["rpc", "window", "Pi", "terminal", "native"]);
 await check("parity: every Pi built-in command is a window built-in or terminal-only, and each built-in has a row", () => {
   const rows = paritySection("Pi built-in commands");
   const piCommands = new Set(SURFACE.slashCommands);
+  // Pi's built-in MCP extension is off in every coop session (`--no-mcp`, and `-builtin:mcp` in the
+  // settings coop sync writes), so its /mcp (Pi 1.5.0) never exists there: the /mcp the window sends
+  // to Pi as typed is pi-mcp-adapter's, recorded as an extension command (PARITY.md, the /mcp-auth row).
+  // A Pi command an extension serves under the same name is that extension's, never a built-in.
+  const [recorded] = response("get_commands");
+  const extensionCommandNames = new Set(recorded.data.commands.filter((c) => c.source === "extension").map((c) => c.name));
   // The one obligation a Pi upgrade creates: decide, in commands.mjs, whether the window runs the new command or opens the terminal for it.
-  for (const name of piCommands) assert.ok(BUILTINS.some((c) => c.name === name) || Object.hasOwn(TERMINAL_ONLY, name), `Pi ${SURFACE.pi}'s /${name} is neither in BUILTINS nor in TERMINAL_ONLY (desktop/renderer/commands.mjs)`);
+  for (const name of piCommands) if (!extensionCommandNames.has(name)) assert.ok(BUILTINS.some((c) => c.name === name) || Object.hasOwn(TERMINAL_ONLY, name), `Pi ${SURFACE.pi}'s /${name} is neither in BUILTINS nor in TERMINAL_ONLY (desktop/renderer/commands.mjs)`);
   for (const command of BUILTINS) {
     assert.ok(piCommands.has(command.name), `/${command.name} is not a Pi ${SURFACE.pi} command`);
     const row = rows.get(`/${command.name}`);
