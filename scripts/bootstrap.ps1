@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 #
 # coop bootstrap - ONE command sets up coop on a Windows machine (master plan
 # D1k). Paste this into Windows PowerShell:
@@ -181,6 +181,11 @@ function Install-CoopBootstrapWindow([string]$Version) {
   # has, else %ProgramFiles%\coop.
   $installArgs = @('/S', '/allusers')
   $dir = Get-CoopBootstrapWindowDir
+  # Over an installed window, --updated (electron-builder's update flag) keeps
+  # the all-users "coop" shortcuts and every account's taskbar and Start pins
+  # instead of deleting them and writing fresh, un-pinned ones (scripts/auto-update.ps1
+  # passes it on every update). A fresh install writes the shortcuts either way.
+  if (Test-Path -LiteralPath (Join-Path $dir 'coop.exe') -PathType Leaf) { $installArgs += '--updated' }
   $installArgs += "/D=$dir"
   $p = Start-Process -FilePath $exe -ArgumentList $installArgs -Wait -PassThru
   if ($p.ExitCode -eq 3) {

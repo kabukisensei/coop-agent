@@ -354,7 +354,10 @@ show all of it. Task logs stay in the repository.
    newest release from the GitHub API (or the `releases/latest` redirect),
    downloads the exe whose SHA-256 the release's installer report names, waits
    while a process from the package is open, runs the installer with
-   `/S /allusers /D=<dir>`, and writes `%ProgramData%\coop\update-state.json`
+   `/S /allusers --updated /D=<dir>` (`--updated` is electron-builder's update
+   flag: the previous version's uninstaller keeps the all-users "coop"
+   shortcuts and every account's taskbar and Start pins instead of deleting
+   and un-pinning them), and writes `%ProgramData%\coop\update-state.json`
    (`schema_version`, `last_run`, `last_result`, `installed_version`,
    `pending_version`, `latest_version`, `release_url`) and
    `%ProgramData%\coop\logs\update.log` (trimmed under 1 MB). It never writes

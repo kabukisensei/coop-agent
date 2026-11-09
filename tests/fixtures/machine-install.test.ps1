@@ -218,6 +218,12 @@ try {
     else { Ok 'coop at sign-in checks the Azure sign-in from the recorded client folder, and from the home folder when there is none' }
   }
 
+  # The installer runs in update mode (--updated, electron-builder's flag): the
+  # previous version's uninstaller keeps the all-users shortcuts and their pins.
+  $autoCode = [System.IO.File]::ReadAllText((Join-Path $root 'scripts\auto-update.ps1'))
+  if ($autoCode -notmatch "-ArgumentList @\('/S', '/allusers', '--updated', `"/D=\`$app`"\)") { Ko 'auto-update.ps1 must run the installer with /S /allusers --updated and /D last, so the shortcuts and pins survive the update' }
+  else { Ok 'auto-update.ps1 runs the installer with --updated (shortcuts and pins kept) and /D last' }
+
   # --- auto-update.ps1 as a dry run against a fake package ------------------------------
   $fakeApp = Join-Path $t 'app'
   $snapshot = Join-Path $fakeApp 'resources\coop'

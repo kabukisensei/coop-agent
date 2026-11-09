@@ -36,6 +36,18 @@
 ;                     upgrade (the new installer runs this uninstaller with
 ;                     --updated) keeps everything: the new version installs
 ;                     into the same folder and re-runs the machine step (D1k).
+;   customRemoveFiles the uninstaller's removal of the program files. On an
+;                     upgrade coop.exe stays in place while everything else
+;                     goes and the new version is copied in (several minutes):
+;                     a taskbar pin whose target is missing when Explorer
+;                     starts is dropped by Windows for good (a client VM,
+;                     2026-11-09: a sign-in during the overnight update lost
+;                     the pin). The new coop.exe overwrites it at the end. A
+;                     real uninstall removes the folder whole, as before.
+;                     scripts/auto-update.ps1 and a bootstrap over an installed
+;                     window run the installer with --updated, so the previous
+;                     uninstaller also keeps the all-users "coop" shortcuts
+;                     and their pins (electron-builder's --keep-shortcuts).
 ;   customCheckAppRunning   electron-builder's own "is coop running" check,
 ;                     with the installer's step lines around it (below).
 ;   customWelcomePage / customFinishPage   what the installer says.
@@ -175,6 +187,33 @@ Var pid
         MessageBox MB_OK|MB_ICONEXCLAMATION "coop is installed, but the coop command for every account, its update task or the removal of older per-account copies did not finish (code $0).$\r$\n$\r$\nThe log: %ProgramData%\coop\logs\machine-install.log$\r$\n$\r$\nRun this as an administrator, then try again:$\r$\npowershell -ExecutionPolicy Bypass -File $\"$INSTDIR\resources\coop\scripts\machine-install.ps1$\" -InstallDir $\"$INSTDIR$\""
       ${endIf}
     ${endIf}
+  ${endIf}
+!macroend
+
+; The program files' removal (electron-builder inserts this in place of its
+; own RMDir /r). An upgrade keeps coop.exe (see the header); the folder's other
+; files and folders go one by one. Deleting while FindFirst/FindNext walks the
+; folder is fine on NTFS (the handle reads the names as they are).
+!macro customRemoveFiles
+  SetOutPath $TEMP
+  ${if} ${isUpdated}
+    DetailPrint "replacing coop's program files (coop.exe stays in place for the taskbar pin until the new one is written)"
+    FindFirst $R7 $R8 "$INSTDIR\*"
+    ${DoWhile} $R8 != ""
+      ${if} $R8 != "."
+      ${andIf} $R8 != ".."
+      ${andIf} $R8 != "${APP_EXECUTABLE_FILENAME}"
+        ${if} ${FileExists} "$INSTDIR\$R8\*.*"
+          RMDir /r "$INSTDIR\$R8"
+        ${else}
+          Delete "$INSTDIR\$R8"
+        ${endIf}
+      ${endIf}
+      FindNext $R7 $R8
+    ${Loop}
+    FindClose $R7
+  ${else}
+    RMDir /r $INSTDIR
   ${endIf}
 !macroend
 

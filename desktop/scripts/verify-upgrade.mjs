@@ -16,8 +16,11 @@
 //      entry and update task there. Installing this build over itself keeps
 //      them; a real uninstall removes them.
 //      From v0.38.0 the previous release is a machine install itself: A installs
-//      it for every account, then this build over it (one HKLM entry, at this
-//      version), and checks the rest the same way.
+//      it for every account, then this build over it with --updated, the way
+//      scripts/auto-update.ps1 runs it (one HKLM entry, at this version; the
+//      all-users "coop" shortcuts are the previous install's own files, kept
+//      with their pins, not deleted and written again), and checks the rest
+//      the same way.
 //   B. this machine over a terminal install: a `coop` link and "coop"/"coop
 //      (terminal)" shortcuts that start this checkout (the runner's terminal
 //      coop), then this build. The all-users "coop" opens the window; the
@@ -35,7 +38,7 @@
 //
 // <dir> holds the previous release's coop-window-*.exe and its
 // installer-acceptance.json (the exe's SHA-256 must match that report).
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,8 +63,8 @@ async function coopCall(coopRoot, expression) {
 
 function same(a, b) { return String(a || "").toLowerCase() === String(b || "").toLowerCase(); }
 
-async function install(exe, dir, mode) {
-  const call = nsisInvocation(exe, dir, { mode });
+async function install(exe, dir, mode, { updated = false } = {}) {
+  const call = nsisInvocation(exe, dir, { mode, updated });
   const started = Date.now();
   await runOwned(call.command, call.args, call.options, INSTALL_TIMEOUT_MS);
   return Math.round((Date.now() - started) / 1000);
@@ -160,8 +163,18 @@ async function main(argv) {
       step("A. the previous release installed for every account (HKLM)", `${report.previous.installer} ${prevEntries[0].DisplayVersion} (${seconds}s)`);
     }
 
-    seconds = await install(current, machine.installDir, "allusers");
+    // The update task installs with --updated: the previous version's own
+    // shortcuts (and the pins on them) survive, so each file is the same one.
+    const shortcutsBefore = prevMachine ? [machine.startMenuShortcut, machine.desktopShortcut].map((file) => [file, statSync(file).mtimeMs]) : [];
+    seconds = await install(current, machine.installDir, "allusers", { updated: prevMachine });
     installed = "machine";
+    for (const [file, before] of shortcutsBefore) {
+      if (!existsSync(file)) throw new Error(`the upgrade removed the all-users shortcut ${file}`);
+      if (statSync(file).mtimeMs !== before) throw new Error(`the upgrade rewrote the all-users shortcut ${file} instead of keeping it (its pins would be lost)`);
+      const sc = await shortcut(file);
+      if (!same(sc.target, machine.exe)) throw new Error(`after the upgrade ${file} starts ${sc.target} ${sc.args}, not the window`);
+    }
+    if (prevMachine) step("A. the upgrade (--updated) kept the all-users \"coop\" shortcuts, so their pins survive");
     const entries = await registryEntries();
     if (entries.length !== 1 || entries[0].Hive !== "HKLM" || entries[0].DisplayVersion !== version) throw new Error(`after the upgrade Add/Remove shows ${JSON.stringify(entries)}`);
     if (!existsSync(machine.exe) || !existsSync(machine.runtime)) throw new Error("the upgrade did not lay down this build's payload (no coop.exe or runtime)");
@@ -205,7 +218,21 @@ async function main(argv) {
     await setStartupValue(snapshot);
     const startupBefore = await startupValue();
     if (!startupBefore) throw new Error("could not write the \"coop at sign-in\" Run value for the upgrade check");
-    seconds = await install(current, machine.installDir, "allusers");
+    // This build's uninstaller (customRemoveFiles) keeps coop.exe in place while
+    // the rest is replaced, so a taskbar pin's target never goes missing; a
+    // stray file proves the rest still goes.
+    const strayFile = join(machine.installDir, "upgrade-acceptance-stray.txt");
+    writeFileSync(strayFile, "left by the upgrade acceptance; the upgrade removes it\n");
+    let exeMissing = 0;
+    const exeWatch = setInterval(() => { if (!existsSync(machine.exe)) exeMissing++; }, 500);
+    try {
+      seconds = await install(current, machine.installDir, "allusers", { updated: true });
+    } finally {
+      clearInterval(exeWatch);
+    }
+    if (exeMissing) throw new Error(`coop.exe was missing ${exeMissing} time(s) while this build installed over itself (a taskbar pin would be dropped)`);
+    if (existsSync(strayFile)) throw new Error("installing over this build left a file of the previous install in place");
+    step("A. installing over this build keeps coop.exe in place throughout and removes the previous files");
     if ((await startupValue()) !== startupBefore) throw new Error("installing over this build removed or changed the \"coop at sign-in\" Run value");
     const again = await registryEntries();
     if (again.length !== 1 || again[0].Hive !== "HKLM") throw new Error(`installing over this build left ${JSON.stringify(again)}`);
