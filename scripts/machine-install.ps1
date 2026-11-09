@@ -23,8 +23,9 @@
 #      through a link), then the "coop" shortcuts and the `coop` link that
 #      pointed into it, so no account keeps
 #      an old icon, plus an account's own "coop" to this install's exe (the
-#      all-users one already starts it) and the early window's "Electron"
-#      icon; ~\.coop is never touched;
+#      all-users one already starts it), the early window's "Electron"
+#      icon and its updater cache (%LOCALAPPDATA%\coop-window-updater);
+#      ~\.coop is never touched;
 #   4c. installs the package's ODBC Driver 18 for SQL Server (with its VC++
 #      runtime) when no Driver 18+ is registered on the machine: the one
 #      machine prerequisite, done here, already elevated, so no account's first
@@ -592,6 +593,13 @@ function Remove-CoopPerUserPackages([string]$UsersRoot, [string]$InstallDir = ''
           } catch { Coop-MachineFail "could not update $lnk`: $($_.Exception.Message)" }
         }
       }
+    }
+    # The early window's own updater cache (electron-updater's folder beside the
+    # per-account package; nothing reads it now): a downloaded installer of a few
+    # hundred MB per account (a client VM, 2026-11-09).
+    $updaterCache = Join-Path $profile 'AppData\Local\coop-window-updater'
+    if ((Test-Path -LiteralPath $updaterCache -PathType Container) -and -not (Test-CoopPathUnderReparsePoint $profile $updaterCache)) {
+      try { Remove-CoopTreeNoFollow $updaterCache; Coop-MachineOk "removed the early window's updater cache $updaterCache" } catch { Coop-MachineFail "could not remove $updaterCache`: $($_.Exception.Message)" }
     }
     # The early window's "Electron" icon, into this account's own runtime tree.
     $electronLnk = Join-Path $profile 'AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Electron.lnk'

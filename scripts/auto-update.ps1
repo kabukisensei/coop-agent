@@ -17,7 +17,8 @@
 #      report (the check scripts/bootstrap.ps1 and check-installer-report.mjs
 #      make);
 #   5. runs the installer silently for every account (/S /allusers --updated,
-#      into the same folder) and checks the installed VERSION moved. --updated
+#      into the same folder), checks the installed VERSION moved and removes
+#      every downloaded installer left in the updates folder. --updated
 #      is electron-builder's own update flag: the previous version's uninstaller
 #      then keeps the all-users "coop" shortcuts and every account's taskbar
 #      and Start pins (it runs with --keep-shortcuts), instead of deleting and
@@ -287,6 +288,10 @@ function Invoke-CoopAutoUpdate {
         if (Test-Path -LiteralPath $verFile -PathType Leaf) { $now = ([System.IO.File]::ReadAllText($verFile)).Trim() }
         if ($now -ne $latest) { throw "the installer finished but $verFile says $now, not $latest" }
         Remove-Item -LiteralPath $exe -Force -ErrorAction SilentlyContinue
+        # Older downloads a run left behind (a run cut off by the task's limit, a
+        # failed install) go too: each is a few hundred MB (a client VM, 2026-11-09:
+        # three of them, 1.4 GB).
+        Get-ChildItem -LiteralPath $updates -Filter 'coop-window-*.exe' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
         $installed = $latest
         $pending = ''
         $result = 'installed'
