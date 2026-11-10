@@ -87,6 +87,7 @@ export function menuTemplate({ run, setTheme, theme, themes, menuBar, toggleMenu
         action("Keyboard shortcuts", "hotkeys"),
         action("Commands (Ctrl+K)", "palette", "CmdOrCtrl+K"),
         { type: "separator" },
+        action("Report a problem or send feedback...", "feedback"),
         { label: "Install guide", click: () => openExternal(INSTALL_GUIDE_URL) },
         { label: "About coop", click: () => about() },
       ],

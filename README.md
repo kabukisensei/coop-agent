@@ -359,6 +359,7 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop doctor [--fix] [--json] [--publish]` | Check dependencies/configuration; optionally apply safe fixes, emit JSON, or publish a fleet snapshot to `fleet.publish_dir` |
 | `coop update [--check] [--edge] [--yes] [--no-fabric]` | Move coop-agent to the newest release tag (never backwards), converge tools to that release's manifest, and run Doctor. `--edge` is the maintainer channel: head of `main` plus latest upstream; `--check` fetches origin, then reports what the update would do and changes nothing; `--pi-latest` is a deprecated alias of `--edge`. On the window package installed for this machine coop itself updates through the "coop update" task, so `coop update` reports that task's state and then brings this account's tools to the package's pins (`--check` lists the task's state; `--edge` is refused, exit 1) |
 | `coop support [--json] [--incident] [--export PATH]` | Offline Support Center: sanitized diagnostics, incident timeline, preview/export, and standards status; works without Pi/model availability |
+| `coop feedback [--kind bug\|idea\|question] [--title TEXT] [--print] [--no-open]` | Report a bug or send an idea or question to the coop team from a shell (for when coop itself will not start); inside coop it is `/feedback`. See [Feedback and bug reports](#feedback-and-bug-reports) |
 | `coop onboard [--edit|--config-only|--reset|--json]` | Configure profile and managed integrations without launching the agent |
 | `coop onboard --machine [--reset|--json]` | Write the machine-level profile (your name and communication preference) once per machine, from an elevated terminal: on a VM with one Windows user per client, every user without a profile of its own starts from it, and a per-user profile wins field by field. It never holds a client, tenant, workspace or contract |
 | `coop profile [--edit|--reset|--json]` | Inspect or update the private user profile |
@@ -996,6 +997,32 @@ request on the team repository. `coop teamai compare --query <text>` runs the
 bundled local search and the isolated recall side by side on one query and reports
 the overlap, the evidence the plan asks for before the local search path could ever
 be retired (it is not).
+
+---
+
+## Feedback and bug reports
+
+`/feedback` (terminal and window), Help > Report a problem or the feedback button
+in the window header, `/bug` in the window, and `coop feedback` in a shell all do
+the same thing: coop asks bug, idea or question, a title and what happened, then
+shows the report for you to check and edit. Yes opens a pre-filled "new issue"
+page on the coop team's **private** repository (`Cooptimize/coop-feedback`) in
+your browser; nothing is filed until you press Submit there. coop sends nothing
+itself and needs no token; a copy is saved in `~/.coop/reports` and put on the
+clipboard, so you can also paste it into Teams. (In the terminal `/bug` stays
+Pi's own report, whose upload coop blocks; use `/feedback`.)
+
+- **In the report:** your words, the coop, Pi, Windows and Node versions, window
+  or terminal, the model, and the session's last five errors (one line each).
+- **Never in it:** the conversation, prompts, answers, file contents, query
+  results or the project file.
+- **Redacted before you see it:** the client, repository, folder, server,
+  database, workspace and item names from the project file and
+  `~/.coop/client.json`, your Windows user and machine names, paths, emails,
+  ids, links, servers, secrets, and, in error messages, SQL and quoted names.
+  Your edits are redacted again before the page opens.
+- **Another repository:** set `feedback.repo` (`owner/name`) in
+  `~/.coop/config`, or `COOP_FEEDBACK_REPO`.
 
 ---
 

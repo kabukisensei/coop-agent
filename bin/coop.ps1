@@ -16,7 +16,7 @@
 #   coop update               Update Pi, Coop tools, vibes, skills/prompts, then doctor
 #   coop install              Fresh-install everything (idempotent); `coop install <source>` adds a Pi extension
 #   coop uninstall            Remove coop from this machine (--keep-tools spares pi + tools)
-#   coop onboard | profile | project | folders | data-doc | catalog | schema | support | version | help
+#   coop onboard | profile | project | folders | data-doc | catalog | schema | support | feedback | version | help
 #   coop dev <cmd>            Maintainer commands (sync, init, new-skill, new-prompt, release, launch-spec,
 #                             context-budget, teamai, fabric, list, config, add, remove, pi); the bare
 #                             names still dispatch
@@ -565,6 +565,8 @@ $(Coop-Bold)Usage$(Coop-Rst)
                             a side is dev|test|prod, or <env>@<set> for a sql_targets.named set)
   coop support [--json]     Collect a sanitized support bundle (health, versions, events)
                             (--incident: incident record; --export PATH: write bundle)
+  coop feedback             Report a bug or send an idea to the coop team: a redacted report you
+                            check, then a pre-filled issue on the private feedback repo in your browser
   coop version              Print coop + pi versions
   coop help                 Show this help
   coop dev <cmd>            Maintainer commands (coop dev help lists them)
@@ -1729,6 +1731,7 @@ switch -CaseSensitive ($cmd) {
   'catalog' { Invoke-CoopCatalog $rest; break }
   'schema' { Invoke-CoopSchema $rest; break }
   'support' { & (Join-Path $script:CoopRoot 'scripts\support-center.ps1') @rest; exit $LASTEXITCODE }
+  'feedback' { & (Join-Path $script:CoopRoot 'scripts\feedback.ps1') @rest; exit $LASTEXITCODE }
   { $_ -ceq 'fabric' -or $_ -ceq 'fab' } {
     if (-not (Test-Have 'fab')) { Coop-Die 'Microsoft Fabric CLI (fab) not found. Run: coop install' }
     & fab @rest
