@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.40.0] — 2026-11-09
+
 ### Added
 
 - **Edit coop's changes from the window (ED1).** Each file in the Changes pane
@@ -91,7 +93,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   copied there was no icon at all (a client VM, 2026-11-09). The installer now
   runs with `--updated` (electron-builder's update flag), so the uninstaller
   keeps the shortcuts and their pins; the upgrade acceptance checks the
-  shortcut files survive untouched. **"coop at sign-in" is visible now:** its
+  shortcut files survive untouched. The update *to* 0.40.0 still runs 0.39.x's
+  uninstaller, so a pin can drop one last time on that upgrade; from 0.40.0 on
+  it holds. **"coop at sign-in" is visible now:** its
   console opens as a normal window titled "coop: starting" (it was minimized)
   and, while an update installs, "coop: updating to vX", saying the icons open
   nothing until the install finishes; a launch brings an account's older
@@ -113,7 +117,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   worked, and removes it first. The bootstrap command's retry after an installer
   that exited 3 runs the installer again instead of reporting "already installed",
   and the update task keeps `failed: the machine setup ... did not finish` instead of
-  `up to date` until the setup is finished (#515).
+  `up to date` until the setup is finished (#515). A machine still on 0.39.x has no
+  record yet, so running the bootstrap command for that same version installs it once
+  more (harmless); the release acceptance's repeat-install check allows that one
+  reinstall only for a release from before the record.
 - **Changing a SQL target between Azure SQL and Fabric saves a usable target.** The
   Project pane and `/setup-project` now clear the other engine's fields (`server`, or
   `workspace_id` / `item_id` / `sql_endpoint_id`, and `read_scale_replicas` outside

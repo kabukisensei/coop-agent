@@ -279,9 +279,19 @@ jobs:
           $first = (& $ps -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $cmd 2>&1 | Out-String)
           Write-Output $first
           if ($first -match 'is not recognized' -or $first -notmatch "coop $([regex]::Escape($pinned)) \(pinned by COOP_BOOTSTRAP_VERSION\)" -or $first -notmatch "SHA-256 matches the release's acceptance report" -or $first -notmatch 'the coop window is installed') { throw "the one-liner did not download, verify and install release $pinned" }
+          # A release from before #520 never writes the machine-setup record the
+          # same-version shortcut reads, so its second run finishes the setup
+          # again instead; that run must still succeed.
+          # (A record left by this build's earlier install names another version.)
+          $record = Join-Path $env:ProgramData 'coop\machine-setup.json'
+          $legacy = $true
+          try { if ([string]((Get-Content -LiteralPath $record -Raw -ErrorAction Stop | ConvertFrom-Json).version) -eq $pinned) { $legacy = $false } } catch { }
           $second = (& $ps -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $cmd 2>&1 | Out-String)
           Write-Output $second
-          if ($second -notmatch "the coop window $([regex]::Escape($pinned)) is already installed") { throw "a second run of the one-liner did not find release $pinned installed" }
+          if ($second -notmatch "the coop window $([regex]::Escape($pinned)) is already installed") {
+            if (-not ($legacy -and $second -match "the coop window $([regex]::Escape($pinned)) is installed but its machine setup did not finish" -and $second -match 'the coop window is installed')) { throw "a second run of the one-liner did not find release $pinned installed" }
+            Write-Output "release $pinned predates the machine-setup record (#520): the second run finished its setup again and succeeded"
+          }
       - name: the acceptance reports in the log (what a failed launch saw, windows and processes)
         if: always()
         shell: pwsh
