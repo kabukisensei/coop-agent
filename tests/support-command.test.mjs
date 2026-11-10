@@ -28,7 +28,7 @@ mkdirSync(join(profileDir, "support"), { recursive: true });
 // synthetic host events: one benign, one with planted credentials
 writeFileSync(join(profileDir, "support", "events.jsonl"), [
   JSON.stringify({ event: "sync", detail: "knowledge repos synced" }),
-  JSON.stringify({ event: "api-call", config: { endpoint: "https://example.invalid", api_key: "PLANTED-SECRET-123", note: "fine" } }),
+  JSON.stringify({ event: "api-call", config: { endpoint: "https://example.invalid", api_key: "planted-test-key-not-real", note: "fine" } }),
 ].join("\n") + "\n");
 
 let n = 0;
@@ -46,7 +46,7 @@ await t("export writes a sanitized bundle; planted credential redacted", async (
   execFileSync(process.execPath, [CLI, "--export", exp], { env: supportEnv({ COOP_DIR: coopDir }), encoding: "utf8" });
   const bundle = JSON.parse(readFileSync(exp, "utf8"));
   const raw = readFileSync(exp, "utf8");
-  assert.equal(raw.includes("PLANTED-SECRET-123"), false, "planted credential must not persist");
+  assert.equal(raw.includes("planted-test-key-not-real"), false, "planted credential must not persist");
   assert.match(bundle.run, /^(run|incident)-\d{4}-\d{2}-\d{2}-[0-9a-f]{8}$/);
   const ev = bundle.events.find((e) => e.event === "api-call");
   assert.equal(ev.config.api_key, "[REDACTED]");
@@ -94,11 +94,11 @@ await t("host event log is rewritten sanitized — planted credential never pers
   // self-seeding: earlier tests overwrite the shared log
   writeFileSync(join(profileDir, "support", "events.jsonl"), [
     JSON.stringify({ event: "sync", detail: "knowledge repos synced" }),
-    JSON.stringify({ event: "api-call", config: { endpoint: "https://example.invalid", api_key: "PLANTED-SECRET-123", note: "fine" } }),
+    JSON.stringify({ event: "api-call", config: { endpoint: "https://example.invalid", api_key: "planted-test-key-not-real", note: "fine" } }),
   ].join("\n") + "\n");
   spawnSync(process.execPath, [CLI], { env: supportEnv({ COOP_DIR: coopDir }), encoding: "utf8" });
   const log = readFileSync(join(profileDir, "support", "events.jsonl"), "utf8");
-  assert.equal(log.includes("PLANTED-SECRET-123"), false, "raw log must be redacted too");
+  assert.equal(log.includes("planted-test-key-not-real"), false, "raw log must be redacted too");
   const api = log.trim().split("\n").map((l) => JSON.parse(l)).find((e) => e.event === "api-call");
   assert.equal(api.config.api_key, "[REDACTED]");
 });
