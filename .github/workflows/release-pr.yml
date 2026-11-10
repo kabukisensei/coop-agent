@@ -33,9 +33,10 @@ jobs:
       - name: token present?
         env:
           TOKEN: ${{ secrets.COOP_RELEASE_TOKEN }}
+          BUMP: ${{ inputs.bump }}
         run: |
           if [ -z "$TOKEN" ]; then
-            echo "::error::no COOP_RELEASE_TOKEN secret: a branch pushed with GITHUB_TOKEN gets no CI on its PR. Add the secret (a fine-grained token on this repository with Contents and Pull requests read/write), or by hand: git switch -c release/vX.Y.Z main; bash scripts/bump-version.sh ${{ inputs.bump }}; git commit -am 'Release vX.Y.Z'; push and open the PR."
+            echo "::error::no COOP_RELEASE_TOKEN secret: a branch pushed with GITHUB_TOKEN gets no CI on its PR. Add the secret (a fine-grained token on this repository with Contents and Pull requests read/write), or by hand: git switch -c release/vX.Y.Z main; bash scripts/bump-version.sh $BUMP; git commit -am 'Release vX.Y.Z'; push and open the PR."
             exit 1
           fi
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -55,6 +56,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.COOP_RELEASE_TOKEN }}
           VERSION: ${{ steps.bump.outputs.version }}
+          BUMP: ${{ inputs.bump }}
         run: |
           branch="release/v$VERSION"
           if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
@@ -68,4 +70,4 @@ jobs:
           git commit -m "Release v$VERSION"
           git push --set-upstream origin "$branch"
           gh pr create --base main --head "$branch" --title "Release v$VERSION" \
-            --body "$(printf 'Release pull request from Actions -> release-pr (%s).\n\n- VERSION, config/release-manifest.json coop_version and every extensions/*/package.json move to %s.\n- CHANGELOG.md: [Unreleased] rolled into [%s].\n\nMerge when the gate and extended checks are green, then tag from main: `./bin/coop release` (RELEASE.md).' "${{ inputs.bump }}" "$VERSION" "$VERSION")"
+            --body "$(printf 'Release pull request from Actions -> release-pr (%s).\n\n- VERSION, config/release-manifest.json coop_version and every extensions/*/package.json move to %s.\n- CHANGELOG.md: [Unreleased] rolled into [%s].\n\nMerge when the gate and extended checks are green, then tag from main: `./bin/coop release` (RELEASE.md).' "$BUMP" "$VERSION" "$VERSION")"
