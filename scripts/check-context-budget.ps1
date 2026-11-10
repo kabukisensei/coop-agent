@@ -19,7 +19,9 @@ $GUARDRAILS_LIMIT_BYTES = 6700
 # sql_source, and its AGENTS.md mention were paid for by trimming AGENTS.md prose.
 # 7300 -> 7350 on 2026-10-27 (team feedback): the guardrails section above; Aaron
 # allowed the budget to grow for it.
-$TOTAL_LIMIT_TOKENS = 7350
+# 7350 -> 7400 on 2026-11-10 (add-silver-columns skill): one new skill whose
+# description is kept to one short line; Aaron allows growth for real capabilities.
+$TOTAL_LIMIT_TOKENS = 7400
 
 $py = Get-Command python3 -ErrorAction SilentlyContinue
 if (-not $py) { $py = Get-Command python -ErrorAction SilentlyContinue }

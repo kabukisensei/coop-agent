@@ -1,6 +1,6 @@
 ---
 name: add-silver-columns
-description: "Add source columns that are not yet in Silver through the client's Schema Manager: uncomment them in the generated Bronze view, run the pipeline that regenerates the Silver table, then the pipeline that fully reloads it, one table at a time after one approved plan. Driven by warehouse_manager in .coop/project.yml. Dev and test only."
+description: "Add source columns missing from Silver via the Schema Manager: Bronze view, regenerate, reload. Uses warehouse_manager."
 ---
 
 # Add source columns to Silver (Schema Manager)
