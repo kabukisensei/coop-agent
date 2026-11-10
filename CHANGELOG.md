@@ -7,6 +7,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- **Report a bug or send feedback.** `/feedback` in the terminal and the window,
+  Help > Report a problem and a feedback button in the window header, `/bug` in
+  the window, and `coop feedback` in a shell. coop asks bug, idea or question, a
+  title and what happened, redacts the report (client, repository, server,
+  database and workspace names from the project file, paths, emails, ids, links,
+  secrets, and SQL in error messages), shows it for editing, then opens a
+  pre-filled issue on the private `Cooptimize/coop-feedback` repository in the
+  browser. Nothing is filed until you press Submit there; coop sends nothing and
+  holds no token. The report never carries the conversation or file contents.
+  `feedback.repo` in `~/.coop/config` names another repository.
+
 - **Add source columns to Silver.** A new `add-silver-columns` skill adds source
   columns that are not yet in Silver through the client's Schema Manager: it
   uncomments them in the generated Bronze view, runs the pipeline that regenerates

@@ -73,7 +73,7 @@ Extension commands).
 | `/copy` | window | Copies the last answer; every answer and code block also has a copy button. |
 | `/export` | rpc | Save dialog, then `export_html` to the chosen file. Pi 1.2.0 has no RPC command for its JSONL export of the current branch (`/export <file>.jsonl`), so that form runs in Open in terminal. |
 | `/share` | terminal | Uploading a session is a terminal command. |
-| `/bug` | terminal | Pi's bug report flow is a terminal command. |
+| `/bug` | window | Runs coop's `/feedback` (a redacted report you check, then a pre-filled issue on the private feedback repository); Help > Report a problem and the header's feedback button do the same. In the terminal `/bug` stays Pi's (its upload is blocked); use `/feedback` there. |
 | `/trust` | terminal | Saving a project trust decision is a terminal screen; without one, the window loads no project-local Pi files, as `--mode rpc` does. |
 | `/reload` | window | Restarts coop in the window on the same session (`--session`), which reloads extensions, skills and prompts. |
 | `/hotkeys` | window | Keyboard shortcuts table (from `KEYS`). |

@@ -1354,6 +1354,7 @@ const ACTIONS = {
   switch: { label: "Switch client", run: () => switchProject() },
   folder: { label: "Open a folder in a new window", run: () => openFolder() },
   start: { label: "Start menu: common tasks", run: () => sendPrompt("/start") },
+  feedback: { label: "Report a problem or send feedback", run: (arg) => sendFeedback(arg) },
   changes: { label: "Changes since the last commit", keys: "Ctrl+Shift+D", pane: true, run: () => openPane("changes") },
   standards: { label: "Standards coop applies here", keys: "Ctrl+Shift+S", pane: true, run: () => openPane("standards") },
   project: { label: "Project settings (.coop/project.yml)", pane: true, run: () => openPane("project") },
@@ -1364,6 +1365,17 @@ const ACTIONS = {
   sidebar: { label: "Show or hide the sessions list", menu: true, run: () => document.body.classList.toggle("no-sidebar") },
   palette: { label: "Commands", keys: "Ctrl+K", menu: true, run: () => palette() },
 };
+
+// /feedback (coop-tools) asks its questions as cards and shows the redacted
+// report for editing; it runs alongside whatever is in the prompt box, so the
+// draft and its attachments stay where they are.
+async function sendFeedback(arg = "") {
+  if (!app.running) { toast("coop is not running in this window. Restart it first, or run coop feedback in a terminal.", "warning"); return; }
+  const input = { type: "prompt", message: `/feedback${arg ? ` ${arg}` : ""}` };
+  if (app.tl.busy) input.streamingBehavior = "steer";
+  const result = await cmd(input);
+  if (!result.success) toast(`Could not start feedback: ${result.error || "unknown error"}. In a terminal: coop feedback`, "error");
+}
 
 async function runAction(id, arg = "", name = "") {
   const action = ACTIONS[id];
@@ -1528,6 +1540,7 @@ function wire() {
   $("thinkingButton").addEventListener("click", () => runAction("thinking"));
   $("terminalButton").addEventListener("click", () => runAction("terminal"));
   $("menuButton").addEventListener("click", palette);
+  $("feedbackButton").addEventListener("click", () => runAction("feedback"));
   $("paneButton").addEventListener("click", () => togglePane(app.lastPane));
   initPanes({ onOpen: (id) => { app.lastPane = id; } });
   $("sessionName").addEventListener("click", () => runAction("name"));

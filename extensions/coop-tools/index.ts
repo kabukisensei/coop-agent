@@ -44,6 +44,17 @@ import {
   sourceStatus,
 } from "../../lib/standards.mjs";
 import { agentDir as coopAgentDir, configPath as coopConfigPath } from "../../lib/paths.mjs";
+import {
+  KINDS as FEEDBACK_KINDS,
+  buildReport as buildFeedbackReport,
+  collectRedactionTerms,
+  deliverReport as deliverFeedback,
+  environmentFacts as feedbackFacts,
+  feedbackRepo,
+  redactText as redactFeedback,
+  sessionErrors as feedbackSessionErrors,
+  splitPreview as splitFeedbackPreview,
+} from "../../lib/feedback.mjs";
 import { windowsTaskkillCommand } from "../../lib/fabric_request_headers.mjs";
 import {
   NOT_INSTALLED_TEXT as SQL_SOURCE_NOT_INSTALLED,
@@ -3754,6 +3765,21 @@ export default function coopTools(pi: ExtensionAPI) {
     },
   });
 
+  // Feedback and bug reports (Aaron, 2026-11-10): a redacted report the person
+  // checks and edits, then a pre-filled issue on the private feedback repository
+  // opened in their browser. coop sends nothing itself (lib/feedback.mjs). Pi
+  // owns /bug in the terminal; the window's /bug and Help menu run this command.
+  pi.registerCommand("feedback", {
+    description: "Report a bug or send an idea or question to the coop team (you check a redacted preview first)",
+    handler: async (args: string, ctx: ExtensionContext) => {
+      try {
+        await runFeedback(ctx, String(args || "").trim());
+      } catch (e: any) {
+        notify(ctx, `Feedback failed: ${errMsg(e)}. Nothing was sent.`, "error");
+      }
+    },
+  });
+
   pi.registerCommand("standards-status", {
     description: "Show effective standards and independent source states",
     handler: async (_args: string, ctx: ExtensionContext) => {
@@ -3767,3 +3793,57 @@ export default function coopTools(pi: ExtensionAPI) {
     },
   });
 }
+
+/** The /feedback flow: kind, title, description, an editable redacted preview, then the browser. */
+export async function runFeedback(ctx: any, args = "", deps: { deliver?: typeof deliverFeedback; env?: NodeJS.ProcessEnv } = {}): Promise<void> {
+  if (!ctx?.hasUI || typeof ctx.ui?.select !== "function" || typeof ctx.ui?.editor !== "function") {
+    notify(ctx, "/feedback needs an interactive session. In a shell: coop feedback", "warning");
+    return;
+  }
+  const env = deps.env || process.env;
+  const repo = feedbackRepo(env);
+  const picked = await ctx.ui.select(`Send feedback to the coop team (${repo}, private)`, FEEDBACK_KINDS.map((k: any) => k.label));
+  const kind = FEEDBACK_KINDS.find((k: any) => k.label === picked);
+  if (!kind) { notify(ctx, "No feedback sent.", "info"); return; }
+  let title = args;
+  if (!title) title = String((await ctx.ui.input("A short title", kind.id === "bug" ? "What went wrong, in a few words" : "In a few words")) || "").trim();
+  if (!title) { notify(ctx, "No feedback sent: a title is needed.", "info"); return; }
+  const description = await ctx.ui.editor(kind.heading, "");
+  if (description === undefined) { notify(ctx, "No feedback sent.", "info"); return; }
+  let projectFile = "";
+  try { projectFile = findProjectContract(ctx.cwd, env) || ""; } catch { projectFile = ""; }
+  const names = collectRedactionTerms({ projectFiles: projectFile ? [projectFile] : [], env, cwd: ctx.cwd || "" });
+  let branch: any[] = [];
+  try { branch = ctx.sessionManager?.getBranch?.() ?? []; } catch { branch = []; }
+  const model = ctx.model ? `${ctx.model.provider || ""}/${ctx.model.id || ""}`.replace(/^\//, "") : "";
+  const report = buildFeedbackReport({
+    kind: kind.id,
+    title,
+    description: String(description || ""),
+    facts: feedbackFacts({ model, env }),
+    errors: feedbackSessionErrors(branch),
+    names,
+  });
+  const edited = await ctx.ui.editor(
+    `Check this report. It goes to ${repo} (private to the coop team) only after you press Submit on GitHub. Names, paths, servers, ids, secrets and SQL were replaced with <...>; edit or delete anything else.`,
+    `# ${report.title}\n\n${report.body}`,
+  );
+  if (edited === undefined || !String(edited).trim()) { notify(ctx, "No feedback sent.", "info"); return; }
+  // The person's edits go through the same redaction again: a name pasted back in is caught too.
+  const split = splitFeedbackPreview(String(edited));
+  const counts: Record<string, number> = {};
+  const finalTitle = redactFeedback(split.title || report.title, names, { counts }).text;
+  const finalBody = redactFeedback(split.body, names, { counts }).text;
+  if (typeof ctx.ui.confirm === "function") {
+    const go = await ctx.ui.confirm("Open GitHub", `Open the new-issue page on ${repo} in your browser with this report filled in? Nothing is filed until you press Submit there.`);
+    if (!go) { notify(ctx, "No feedback sent.", "info"); return; }
+  }
+  const result = (deps.deliver || deliverFeedback)({ repo, kind: kind.id, title: finalTitle, body: finalBody, env });
+  const where = result.file ? ` A copy is saved at ${result.file}.` : "";
+  if (result.opened) {
+    notify(ctx, `Opened the new-issue page on ${repo}: check it and press Submit.${result.cut ? " The report was too long for the link, so it was cut; the full text is on your clipboard." : result.copied ? " The report is also on your clipboard." : ""}${where}`, "info");
+  } else {
+    notify(ctx, `Couldn't open the browser. ${result.copied ? "The report is on your clipboard: paste" : "Paste the saved report"} into a new issue at https://github.com/${repo}/issues/new, or send it in Teams.${where}`, "warning");
+  }
+}
+

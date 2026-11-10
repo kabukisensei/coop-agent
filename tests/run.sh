@@ -374,6 +374,8 @@ bash "$ROOT/tests/ado.test.sh"
 echo "→ support command and Support Center contract tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/support-command.test.mjs"
 node "$ROOT/tests/support-center.test.mjs"
+# /feedback and coop feedback: redaction, the preview, the link (lib/feedback.mjs).
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/feedback.test.mjs"
 echo "→ one profile root in Node (lib/paths.mjs and the bundled extensions)"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/paths.test.mjs"
 echo "→ coop window (D1b): its modules, the recorded Pi RPC session, terminal parity"

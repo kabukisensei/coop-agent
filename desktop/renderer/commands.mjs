@@ -29,7 +29,7 @@ export const BUILTINS = Object.freeze([
   { name: "copy", description: "Copy the last answer", action: "copy" },
   { name: "export", description: "Export this session as a web page", action: "export" },
   { name: "share", description: "Upload this session (opens the terminal)", action: "terminal" },
-  { name: "bug", args: "[description]", description: "Prepare a Pi bug report (opens the terminal)", action: "terminal" },
+  { name: "bug", args: "[title]", description: "Report a bug or send feedback to the coop team (same as /feedback)", action: "feedback" },
   { name: "trust", description: "Save a project trust decision (opens the terminal)", action: "terminal" },
   { name: "reload", description: "Restart coop in this window on this session", action: "reload" },
   { name: "hotkeys", description: "Keyboard shortcuts", action: "hotkeys" },
