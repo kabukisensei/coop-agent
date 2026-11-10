@@ -885,6 +885,29 @@ run **`/setup-docs`** in the agent (or `coop data-doc setup` in a shell).
 
 ---
 
+## Adding source columns to Silver
+
+Ask coop to add columns that are in the source but not yet in Silver ("add taxgroup
+and bankaccount to custtable in dev"), and the `add-silver-columns` skill runs the
+client's Schema Manager flow: it uncomments the columns in the generated Bronze view,
+runs the pipeline that regenerates the Silver table, then the pipeline that fully
+reloads it. It reads everything first, shows one plan for approval, then works one
+table at a time and verifies each one (columns, original column types, indexes, row
+counts against Bronze) before the next; it stops on any drift or failure and never
+runs parent pipelines or refreshes Gold objects and models.
+
+The client's setup lives in the optional `warehouse_manager` block of
+`.coop/project.yml` (see `.coop/project.example.yml`): the Bronze database and view
+schemas, the Silver database, the regenerate and reload pipelines with their
+parameters as templates (`TableName: "{table}"`), parent pipelines never to run, and
+the Fabric workspace or Azure Data Factory per environment. Without the block, coop
+discovers what it can read-only and proposes the block before any write. The skill
+runs on dev and test only; for production it writes a run sheet for a person. The
+guardrails are unchanged: the view `ALTER` and each pipeline run ask, and production
+writes stay blocked without a person's go-ahead.
+
+---
+
 ## Official Microsoft Skills Catalog
 
 coop can use the **official Microsoft agent skills**, but they are **subordinate to
