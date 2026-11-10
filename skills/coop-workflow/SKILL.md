@@ -227,8 +227,7 @@ with live data on the contract's default `sql_targets` entry (dev; never prod):
    you did not predict is a stop-and-ask trigger, not a footnote.
 
 Test targets ask first; production is explicit-approval only and never a verify
-target. Row reads reuse the session's bounded live-read grant; the baseline and
-the re-run must stay within the same approved scope.
+target. Row reads on dev and test never ask; production reads ask once per session.
 
 ## Other working habits
 

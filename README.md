@@ -551,9 +551,9 @@ doctor` has a matching **Azure sign-in** row (signed in to tenant X / not signed
 with the command / no client tenant configured). The row only probes: doctor never
 signs in. `COOP_SKIP_AZ=1` skips both. Details: [Onboarding](https://coop.aaron-jennings.cloud/docs/onboarding.html#azure-sign-in-at-launch).
 
-For live estate discovery, Coop labels repo versus live evidence and reports drift. Actual
-row reads ask first; production row reads require a bounded target, columns, filters, and
-row limit.
+For live estate discovery, Coop labels repo versus live evidence and reports drift. Row
+reads run without asking on dev and test; the first production read asks once and covers
+the rest of the session.
 
 > **Supply-chain note:** generated npm-backed servers use exact versions from
 > `config/release-manifest.json`. Review Coop release updates before enabling them in
