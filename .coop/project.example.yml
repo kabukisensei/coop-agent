@@ -149,6 +149,50 @@ sql_targets:
 #   rebuild_tables_in: [dim, fact]     # changed tables there: DROP + CREATE, empty
 #   destructive: runnable              # or commented: DROPs written commented out
 
+# --- Schema Manager: add source columns to Silver (optional) -----------------
+# The add-silver-columns skill reads this block to add source columns that are not
+# yet in Silver: it uncomments them in the generated Bronze view, runs the pipeline
+# that regenerates the Silver table, then the one that fully reloads it, one table at
+# a time after one approved plan, on dev or test only. Names are enough (coop resolves
+# ids live). Parameter values may use {table}, {bronze_database}, {bronze_schema},
+# {silver_database}, {silver_schema} (the view's schema when silver.schema is empty),
+# {run_id} (a new UUID per table) and {lookup} (read from the client's metadata).
+# warehouse_manager:
+#   platform: fabric                   # fabric (Fabric pipelines) | adf (Azure Data Factory)
+#   bronze:
+#     database: "TODO: Lakehouse / database with the generated Bronze views"
+#     raw_schema: "TODO: schema of the raw source tables"
+#     view_schemas:                    # generated Bronze view schema per source system
+#       d365_fo: "TODO: e.g. d365fo"
+#       d365_dataverse: "TODO: e.g. d365po"
+#   silver:
+#     database: "TODO: Warehouse / database with Silver"
+#     schema: ""
+#   pipelines:
+#     create_silver_table:             # regenerates ONE Silver table (drops + recreates)
+#       name: "TODO: pipeline name"
+#       parameters:
+#         TableSchema: "{bronze_schema}"
+#         TableName: "{table}"
+#         SchemaManagerRunId: "{run_id}"
+#     load_silver_table:               # fully reloads ONE Silver table
+#       name: "TODO: pipeline name"
+#       parameters:
+#         Incremental: "false"
+#         SourceDatabase: "{bronze_database}"
+#         SourceSchema: "{bronze_schema}"
+#         SourceTable: "{table}"
+#         TargetDatabase: "{silver_database}"
+#         TargetSchema: "{silver_schema}"
+#         TargetTable: "{table}"
+#   never_run: []                      # parent pipelines that process every table
+#   environments:                      # where the pipelines run
+#     dev:
+#       workspace: "TODO: Fabric workspace name or id"
+#     test:
+#       workspace: ""
+#     # adf: data_factory: { subscription_id: "", resource_group: "", name: "" }
+
 power_bi:
   default_workspace_name: "TODO: dev semantic-model workspace name"
   default_workspace_id: "TODO: dev semantic-model workspace id"

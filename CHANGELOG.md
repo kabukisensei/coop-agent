@@ -5,6 +5,20 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **Add source columns to Silver.** A new `add-silver-columns` skill adds source
+  columns that are not yet in Silver through the client's Schema Manager: it
+  uncomments them in the generated Bronze view, runs the pipeline that regenerates
+  the Silver table, then the one that fully reloads it, one table at a time after one
+  approved plan, and verifies each table before the next. Ask in plain words ("add
+  taxgroup to custtable in dev"). The client's setup goes in a new optional
+  `warehouse_manager` block in `.coop/project.yml` (Bronze and Silver databases, the
+  two pipelines and their parameters, parent pipelines never to run, workspace or Data
+  Factory per environment); see `.coop/project.example.yml`. It runs on dev and test
+  only and writes a run sheet for a person on production. The guardrails are
+  unchanged: the view edit and each pipeline run ask, production stays blocked.
+
 ## [0.40.1] — 2026-11-10
 
 ### Changed
