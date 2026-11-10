@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.40.1] — 2026-11-10
+
 ### Changed
 
 - **Reads stop asking.** A row read on dev or test never asks, whatever its
