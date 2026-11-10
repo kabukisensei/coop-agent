@@ -107,6 +107,20 @@ for (const [path, content] of authoritySurfaces) {
   assert.ok(!/single source of truth[\s\S]{0,120}standards[\s\S]{0,120}\.coop\/project\.yml/i.test(content), `${path} does not call the project contract the single standards authority`);
 }
 
+// Schema Manager column adds: the generic skill is driven by the contract's
+// warehouse_manager block, stays on dev/test, and carries no client bindings.
+const silverSkill = readFileSync(join(ROOT, "skills/add-silver-columns/SKILL.md"), "utf8");
+assert.match(silverSkill, /^name: add-silver-columns$/m, "add-silver-columns skill is named");
+assert.ok(silverSkill.includes("warehouse_manager"), "add-silver-columns reads the contract block");
+assert.ok(silverSkill.includes("coop-workflow"), "add-silver-columns runs inside coop-workflow");
+assert.match(silverSkill, /Only `dev` and `test`/, "add-silver-columns runs on dev and test only");
+assert.match(silverSkill, /drops and\s+recreates/, "add-silver-columns discloses the drop and recreate");
+assert.match(silverSkill, /never\s+runs?\s+(?:a\s+)?parent|`never_run` parent/i, "add-silver-columns never runs parent pipelines");
+assert.doesNotMatch(silverSkill, /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i, "add-silver-columns carries no item ids");
+for (const key of ["# warehouse_manager:", "#   pipelines:", "#     create_silver_table:", "#     load_silver_table:", "#   never_run:", "#   environments:"]) {
+  assert.ok(example.includes(key), `example project documents ${key.trim()}`);
+}
+
 const guardrails = readFileSync(join(ROOT, "docs/guardrails.md"), "utf8");
 assert.ok(guardrails.includes("vertical slices"), "guardrails reference vertical slices");
 assert.ok(guardrails.includes("tests.live_data.enabled"), "guardrails reference live-data test hook");

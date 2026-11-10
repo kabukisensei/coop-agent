@@ -83,7 +83,9 @@ show all of it. Task logs stay in the repository.
      source, MCP read-only, never expose secrets.
    - **Skills** — `skills/`, including `coop-workflow` (the principles-first
      Cooptimize workflow) that the task skills run inside: `data-doc-analysis`, `power-bi-impact-analysis`,
-     `fabric-workspace-review`, `fabric-apps` (builds and deploys a Fabric App
+     `fabric-workspace-review`, `add-silver-columns` (adds source columns to
+     Silver through the client's Schema Manager, from the project file's
+     `warehouse_manager` block), `fabric-apps` (builds and deploys a Fabric App
      with Rayfin to the dev workspace), `daily-logger`, and `git-helper` (drafts Conventional-Commits
      messages + PR descriptions from the diff — drafts only, never commits) —
      plus a subordinate, pinned official Microsoft skills catalog refreshed by
