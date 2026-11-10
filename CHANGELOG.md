@@ -5,6 +5,22 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Reads stop asking.** A row read on dev or test never asks, whatever its
+  shape: another database's tables (three-part names) and a session with no
+  Fabric sign-in token no longer raise "Read these rows once?" on every call.
+  On production (or a SQL target the project file does not label dev or test)
+  the first read asks once, "Allow production reads for the rest of this
+  session?", and one yes covers every later production read until `/new`, exit
+  or `/approvals revoke`. Before, a plain production read ran with no question
+  and every other one asked each time. Reads through other servers count too
+  when their statement is one plain `SELECT` or a DAX query. Every read is still
+  audited. Writes are unchanged: dev writes ask, deletes ask every time, and
+  production writes need a person's go-ahead. Headless runs cannot answer the
+  production question, so a production read there is blocked until a person
+  has approved it in that session.
+
 ## [0.40.0] — 2026-11-09
 
 ### Added

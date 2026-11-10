@@ -22,7 +22,7 @@ Run /coop-splash to re-display the startup header and brand banner.
 Run /approvals to see Coop's protections and what this session may do without asking.
 Run /setup-project to create or edit .coop/project.yml with a wizard instead of hand-editing YAML.
 Type /standards-status to see which standards are active, their commit, and how fresh they are.
-Type /approvals to see this session's live-read grant and edit approvals.
+Type /approvals to see this session's production-read and edit approvals.
 Type /approvals revoke to end this session's grants so the next edit asks again.
 Run /share-learning to turn a correction or reusable pattern into a reviewed team-knowledge note.
 Type /mcp-adapter to see which managed MCP servers this session is connected to.

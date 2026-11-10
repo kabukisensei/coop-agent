@@ -1904,12 +1904,15 @@ function plainReadLimit(event: any): number | null {
 /** One read statement on this database: CTEs, unions, joins and subqueries are
  *  fine; another database (three-part names), procedures, session settings,
  *  transactions and anything the classifier cannot call a read still ask. */
-export function plainDevRead(sql: string): boolean {
+export function plainDevRead(sql: string, crossDatabase = false): boolean {
   if (classifySqlOperation(sql) !== "read" || /"/.test(sql)) return false;
   const masked = sqlWithoutComments(sql, true).trim().replace(/;\s*$/, "");
   if (!masked || masked.includes("]") || masked.includes(";")) return false;
   if (!/^(?:SELECT|WITH)\b/i.test(masked)) return false;
   if (/\b(EXEC(?:UTE)?|OPENROWSET|OPENQUERY|OPENDATASOURCE|BACKUP|RESTORE|DBCC|WAITFOR|USE|SET|DECLARE|BEGIN|COMMIT|ROLLBACK|SAVE|TRANSACTION|PRINT|RAISERROR|THROW|KILL|SHUTDOWN|BULK|OPTION|INTO)\b/i.test(masked)) return false;
+  // Another database is still a read (2026-11-10); only a session grant bound to
+  // one target cared, and reads no longer need one.
+  if (crossDatabase) return true;
   return !/\b[A-Za-z_][\w$#]*\s*\.\s*(?:[A-Za-z_][\w$#]*\s*)?\.\s*[A-Za-z_][\w$#]*\b/i.test(masked);
 }
 
@@ -1972,6 +1975,32 @@ export function resolveLiveReadScope(event: any, deps: LiveReadResolverDeps): Li
     // Without sql_targets there is one target, so naming an entry cannot resolve.
     if (event?.input?.environment !== undefined) return null;
   }
+  const managedTarget = managedReadTarget(event, deps);
+  const identity = launchIdentity(deps.token());
+  if (!managedTarget || !identity || identity.tenant !== managedTarget.tenant) return null;
+  let resultLimit = boundedSelectLimit(callSqlText(event)) || plainReadLimit(event);
+  if (!resultLimit) return null;
+  if (event?.toolName === FABRIC_SQL_FALLBACK_TOOL && Number.isInteger(event?.input?.maximum_rows)) {
+    resultLimit = Math.min(resultLimit, event.input.maximum_rows);
+  }
+  return {
+    client: managedTarget.client,
+    tenant: managedTarget.tenant,
+    principal: identity.principal,
+    environment: managedTarget.environment,
+    targets: [managedTarget.target],
+    operationClass: "sql-read",
+    resultLimit,
+    timeoutMs: managedTarget.timeoutMs,
+  };
+}
+
+type ManagedReadTarget = { client: string; tenant: string; environment: string; target: string; timeoutMs: number };
+
+/** The managed Fabric SQL endpoint entry this call would reach, when the entry is
+ *  exactly the one coop generates and the call names no other item. Identity
+ *  and the SQL's shape are the caller's business. */
+function managedReadTarget(event: any, deps: LiveReadResolverDeps): ManagedReadTarget | null {
   let mcp: any;
   try { mcp = JSON.parse(deps.readText(managedMcpConfigPath(deps.agentDir))); } catch { return null; }
   // The adapter normalizes hyphens in server namespaces. An ambiguous namespace
@@ -1990,10 +2019,9 @@ export function resolveLiveReadScope(event: any, deps: LiveReadResolverDeps): Li
   const itemName = strictResolvedText(target?.item_name);
   const workspaceId = typeof target?.workspace_id === "string" ? target.workspace_id.toLowerCase() : "";
   const itemId = typeof target?.item_id === "string" ? target.item_id.toLowerCase() : "";
-  const identity = launchIdentity(deps.token());
   if (!managed || !entry || target?.scope !== "item" || !client || !tenant || !UUID.test(tenant)
       || !["dev", "test", "production"].includes(environment || "") || !itemName
-      || !UUID.test(workspaceId) || !UUID.test(itemId) || !identity || identity.tenant !== tenant) return null;
+      || !UUID.test(workspaceId) || !UUID.test(itemId)) return null;
   const args = normalizeMcpCall(event).args;
   if ((args?.workspaceId !== undefined && (typeof args.workspaceId !== "string" || args.workspaceId.toLowerCase() !== workspaceId))
       || (args?.itemId !== undefined && (typeof args.itemId !== "string" || args.itemId.toLowerCase() !== itemId))) return null;
@@ -2012,21 +2040,7 @@ export function resolveLiveReadScope(event: any, deps: LiveReadResolverDeps): Li
   if (!exactEntry || entry.url !== expectedUrl || entry.auth !== false || entry.lifecycle !== "lazy"
       || !validMcpRequestTimeoutMs(entry.requestTimeoutMs) || !exactHeaderCommand
   ) return null;
-  let resultLimit = boundedSelectLimit(callSqlText(event)) || plainReadLimit(event);
-  if (!resultLimit) return null;
-  if (event?.toolName === FABRIC_SQL_FALLBACK_TOOL && Number.isInteger(event?.input?.maximum_rows)) {
-    resultLimit = Math.min(resultLimit, event.input.maximum_rows);
-  }
-  return {
-    client,
-    tenant,
-    principal: identity.principal,
-    environment: environment!,
-    targets: [`${workspaceId}/${itemId}/${itemName}`],
-    operationClass: "sql-read",
-    resultLimit,
-    timeoutMs: entry.requestTimeoutMs,
-  };
+  return { client, tenant, environment: environment!, target: `${workspaceId}/${itemId}/${itemName}`, timeoutMs: entry.requestTimeoutMs };
 }
 
 /** Scope for a contract-driven read: the ready dev/test default entry, the
@@ -2274,6 +2288,68 @@ export function decideLiveRead(event: any, grant: LiveReadGrant | null, resolved
   // needs no approval on any environment, production included (Aaron,
   // 2026-10-07). Ambiguous SQL and every mutation keep their gates.
   return { action: "allow-read", label, kind, environment, scope: resolvedScope };
+}
+
+// --- Reads never nag (Aaron, 2026-11-10) -----------------------------------------
+// "Take away the guardrail prompts for read operations; prod requires it once,
+// then allow for the session." A row read coop can prove is a read runs without
+// a question on dev and test, and asks once per session on production (or on a
+// SQL target coop cannot confirm as dev or test, which counts as production).
+// Writes, ambiguous SQL, exports and downloads keep their own gates.
+const UNPROVEN_READ_VERB = /(^|[_\-.:/])(query|execute|run_sql|runsql|sql_query)([_\-.:/]|$)/i;
+const DAX_QUERY = /^\s*(?:EVALUATE|DEFINE)\b/i;
+
+/** True when a row-data call is provably a read: a Warehouse SQL call that is
+ *  one plain read statement (another database included) in coop's own managed
+ *  call shape; another tool's SQL text that is one such statement
+ *  or a DAX query (EVALUATE / DEFINE cannot write); or a preview/sample/rows
+ *  style tool that carries no statement at all. A query/execute tool whose
+ *  statement coop cannot see or classify is not proven and keeps its question. */
+export function provableRowRead(event: any): boolean {
+  const sql = sqlMcpRisk(event);
+  // A Warehouse SQL call must also be the exact managed shape: unknown execution
+  // controls or a forged field keep the per-call question.
+  const text = callSqlText(event);
+  if (sql) return sql.kind === "row-data" && reusableSqlSurface(event) && plainDevRead(text, true);
+  if (!mcpLiveReadRisk(event)) return false;
+  if (text.trim()) return plainDevRead(text, true) || (DAX_QUERY.test(text) && !text.includes(";"));
+  const target = effectiveMutationTarget(event);
+  return !UNPROVEN_READ_VERB.test(target.innerTool || target.outerTool);
+}
+
+/** The environment a Warehouse SQL read lands in, from coop's trusted sources
+ *  only: the project file's ready `sql_targets` entry the native executor would
+ *  use (the default, or the one the call names), else the managed Fabric entry's
+ *  label. A project default that is not a ready entry is "unresolved", which
+ *  reads as production; a managed entry coop cannot vouch for is "untrusted". */
+export function trustedReadEnvironment(event: any, deps: LiveReadResolverDeps, contract: ContractSqlScope | null): string {
+  const target = effectiveMutationTarget(event);
+  if ((target.innerTool || target.outerTool) === FABRIC_SQL_FALLBACK_TOOL && contract?.configured) {
+    const requested = event?.input?.environment;
+    const entry = requested === undefined ? contract.target : typeof requested === "string" ? contract.entries?.[requested] ?? null : null;
+    return entry ? entry.environment : "unresolved";
+  }
+  // Without sql_targets there is one target, so naming an entry cannot resolve.
+  if (event?.toolName === FABRIC_SQL_FALLBACK_TOOL && event?.input?.environment !== undefined) return "untrusted";
+  // The managed entry must be exactly coop's own and the call must name no other
+  // item; otherwise the read is not vouched for and keeps its per-call question.
+  return reusableSqlSurface(event) ? managedReadTarget(event, deps)?.environment ?? "untrusted" : "untrusted";
+}
+
+export type RowReadVerdict = "not-a-read" | "allow" | "production";
+
+/** Where a provable row read stands. `trustedSqlEnvironment` is coop's own config
+ *  for a Warehouse SQL call ("" for other tools); `namesProduction` is whether the
+ *  call's words or the project file's production names mark it production. */
+export function rowReadVerdict(event: any, decision: LiveReadDecision, trustedSqlEnvironment: string, namesProduction: boolean): RowReadVerdict {
+  if (decision.kind !== "row-data" || (decision.action !== "allow-read" && decision.action !== "prompt-once")) return "not-a-read";
+  if (!provableRowRead(event)) return "not-a-read";
+  const environment = decision.scope?.environment || trustedSqlEnvironment;
+  if (environment === "untrusted") return "not-a-read";
+  if (environment === "dev" || environment === "test") return "allow";
+  // A SQL target the project file does not confirm as dev or test is production.
+  if (sqlMcpRisk(event) || environment === "production") return "production";
+  return namesProduction || decision.environment === "production" ? "production" : "allow";
 }
 
 // --- Session edit approvals (#156) ---------------------------------------------
@@ -3298,6 +3374,8 @@ const UI_HEADLESS = (ctx: ExtensionContext): boolean => !ctx.hasUI || typeof ctx
 class Session {
   /** Closure-owned: one grant for the current session (SQL live reads). */
   liveReadGrant: LiveReadGrant | null = null;
+  /** Production row reads: one yes covers the rest of the session (2026-11-10). */
+  productionReads = false;
   /** Session edit approvals (#156): server keys only, never arguments or SQL. */
   readonly editApprovals = new Set<string>();
   /** Set once the session connects the Power BI Modeling MCP to anything naming
@@ -3320,6 +3398,7 @@ class Session {
   /** Drop every per-session grant (session_start / session_shutdown). */
   reset(): void {
     this.liveReadGrant = null;
+    this.productionReads = false;
     this.editApprovals.clear();
     this.modelingProduction = false;
   }
@@ -3637,11 +3716,37 @@ const mcpRule: Rule = {
     }
     const resolvedScope = resolveLiveReadScope(event, session.deps(ctx));
     const decision = decideLiveRead(event, session.liveReadGrant, resolvedScope);
-    if (decision.action === "allow-read") {
-      audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: "allowed", label: "live read", detail: `${decision.scope?.environment || "unresolved"}-read-only` });
+    if (decision.action === "none" || decision.action === "allow-grant") return ALLOW;
+    // Reads never nag (Aaron, 2026-11-10): a provable row read runs on dev and
+    // test, and asks once per session on production. Every read is audited.
+    const readEnvironment = sqlMcpRisk(event) ? trustedReadEnvironment(event, session.liveReadDeps, session.governance(ctx).sqlContract) : "";
+    const readVerdict = rowReadVerdict(
+      event, decision, readEnvironment,
+      PRODUCTION_WORD.test(mutationCallText(event, target)) || namesContractProduction(callStringValues(event), productionNames),
+    );
+    if (readVerdict === "allow") {
+      audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: "allowed", label: "live read", detail: `${decision.scope?.environment || readEnvironment || "unlabelled"}-read-only` });
       return ALLOW;
     }
-    if (decision.action === "none" || decision.action === "allow-grant") return ALLOW;
+    if (readVerdict === "production") {
+      const readAudit = { cwd: ctx.cwd, kind: "mcp-confirm" as const, tool: "governed-live-read", label: "live read" };
+      if (session.productionReads) {
+        audit({ ...readAudit, decision: "allowed", detail: "production-read-session" });
+        return ALLOW;
+      }
+      if (UI_HEADLESS(ctx)) {
+        audit({ ...readAudit, decision: "blocked-headless", detail: "production-read" });
+        return block(`coop guardrails: blocked a production read through ${decision.label || "the governed tool"}; production reads are approved once per session, and approval is unavailable in headless mode.`);
+      }
+      const yes = await ctx.ui.confirm("coop live-data guardrail", `PRODUCTION read:\n  ${decision.label}\nReads change nothing. Allow production reads for the rest of this session? (Writes keep their own rules.)`);
+      if (!yes) {
+        audit({ ...readAudit, decision: "declined", detail: "production-read" });
+        return block(`coop guardrails: blocked a production read through ${decision.label || "the governed tool"} (you declined).`);
+      }
+      session.productionReads = true;
+      audit({ ...readAudit, decision: "allowed", detail: "production-read-session-granted" });
+      return ALLOW;
+    }
     // A single dev/test Warehouse INSERT/UPDATE/CREATE/ALTER can ride a session
     // approval (#156); destructive SQL, batches and production always ask. The
     // environment is the trusted config's, resolved for the write itself: a
@@ -4126,19 +4231,20 @@ export default function coopGuardrails(pi: ExtensionAPI) {
 
   // One place for "what has this session been allowed" (suite review
   // 2026-10-26, pick 9; it replaces /coop-approvals, /coop-live-read and
-  // /coop-guardrails): the edit approvals, the live-read grant, the production
+  // /coop-guardrails): the edit approvals, the production-read approval, the production
   // unlock, whether enforcement is on, and the last decisions. `/approvals
   // revoke` ends the session's own grants; the production unlock is a person's
   // (`coop unlock-prod --revoke`, or it expires) and is only shown.
   pi.registerCommand("approvals", {
-    description: "What this session may do without asking: edit approvals, the live-read grant, the production unlock, the last decisions (/approvals revoke ends the session grants)",
+    description: "What this session may do without asking: edit approvals, production reads, the production unlock, the last decisions (/approvals revoke ends the session grants)",
     handler: async (args: any, ctx: ExtensionContext) => {
       const action = (Array.isArray(args) ? args.join(" ") : String(args || "")).trim().toLowerCase() || "status";
       let message: string;
       if (action === "revoke") {
         editApprovals.clear();
         session.liveReadGrant = null;
-        message = "coop approvals: edit approvals and the live-read grant revoked for this session. The next edit or live read asks again.";
+        session.productionReads = false;
+        message = "coop approvals: edit approvals and the production-read approval revoked for this session. The next edit or production read asks again.";
       } else if (action !== "status") {
         message = "Usage: /approvals [revoke]";
       } else {
@@ -4154,20 +4260,9 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         } else {
           lines.push("Edit approvals: none. Each edit asks; pick \"for this session\" to approve a server once.");
         }
-        if (session.liveReadGrant) {
-          const s = session.liveReadGrant.scope;
-          // Closed, non-secret scope only: never show SQL, arguments, credentials,
-          // transport, or results. Targets are explicit consent identifiers.
-          lines.push(
-            "Live-read grant: active for this session",
-            `  client/tenant/principal: ${s.client} / ${s.tenant} / ${s.principal}`,
-            `  environment/operation: ${s.environment} / ${s.operationClass}`,
-            `  targets: ${s.targets.join(", ")}`,
-            `  bounds: ${s.resultLimit} result rows; ${s.timeoutMs} ms`,
-          );
-        } else {
-          lines.push("Live-read grant: none active for this session.");
-        }
+        lines.push(session.productionReads
+          ? "Production reads: approved for this session (dev and test reads never ask)."
+          : "Production reads: the first one asks, then the session is covered (dev and test reads never ask).");
         const unlock = activeProdUnlock(ctx);
         lines.push(unlock
           ? `PRODUCTION WRITES UNLOCKED by a human for ${unlock.client} (grant ${unlock.id}, ${prodUnlockMinutesLeft(unlock)} min left): each production write asks yes/no at the desk and is audited.`

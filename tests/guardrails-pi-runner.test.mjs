@@ -81,10 +81,15 @@ const dispatch = async (event, expectedBlock) => {
   return result;
 };
 const fresh = async () => { await runner.emit({ type: "session_start", reason: "new" }); prompts = 0; };
-// Reading needs no approval on any environment, production included (Aaron,
-// 2026-10-07): the managed target here is production and no read prompts.
+// Reads never nag (Aaron, 2026-11-10): the managed target here is production,
+// so the first read asks once and one yes covers the session on every surface.
 await fresh(); answer = false;
+await dispatch(read(), true);
+answer = true;
 await dispatch(read(), false);
+assert.equal(prompts, 2, "declined once, approved once");
+assert.match(messages.at(-1), /PRODUCTION read[\s\S]*rest of this session/);
+answer = false; prompts = 0;
 await dispatch(read(10), false);
 await dispatch({ ...read(), input: { ...read().input, args: JSON.stringify(read().input.args) } }, false);
 await dispatch({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify(read().input.args) } }, false);
@@ -94,27 +99,30 @@ await dispatch(read(500, { query: "SELECT customer_id FROM dbo.Customer" }), fal
 const bracketed = "SELECT TOP (12) [Calendar Month Date], SUM([Accounting Amount]) AS [Revenue] FROM [finance].[Ledger Transactions] GROUP BY [Calendar Month Date]";
 await dispatch(read(12, { query: bracketed }), false);
 await dispatch({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: read(12, { query: bracketed }).input.args } }, false);
-assert.equal(prompts, 0, "reads across dispatch surfaces never prompt");
-// Cross-database, mutating and malformed SQL still ask (declined here).
+// Another database is still a read.
+for (const query of ["SELECT TOP (5) * FROM [OtherDatabase].[dbo].[Secret]", "SELECT TOP (5) * FROM [OtherDatabase]..[Secret]"]) await dispatch(read(5, { query }), false);
+assert.equal(prompts, 0, "the session approval covers reads across dispatch surfaces");
+// Mutating and malformed SQL still ask (declined here).
 for (const query of [
-  "SELECT TOP (5) * FROM [OtherDatabase].[dbo].[Secret]",
-  "SELECT TOP (5) * FROM [OtherDatabase]..[Secret]",
   "SELECT TOP (5) [Name] INTO [dbo].[NewTable] FROM [dbo].[Customer]",
   "SELECT TOP (5) [Name]; DELETE FROM [dbo].[Customer]",
   "SELECT TOP (5) [unterminated",
 ]) await dispatch(read(5, { query }), true);
-// A target or identity coop cannot resolve asks.
+// A call shape or managed entry coop cannot vouch for asks every time.
 for (const extra of [{ itemId: other }, { workspaceId: other }, { timeoutMs: 120000 }, { database: "Other" }]) await dispatch(read(10, extra), true);
 config({ client: "TODO client" }); await dispatch(read(), true);
 config({ item_id: other }); await dispatch(read(), true); config(); // the call names the old item
 const foreignTenant = [JSON.stringify({ alg: "none" }), JSON.stringify({ tid: other, oid: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }), "synthetic-only"]
   .map((s) => Buffer.from(s).toString("base64url")).join(".");
+// A read needs no launch identity: the environment comes from the managed entry.
 process.env.COOP_FABRIC_MCP_TOKEN = foreignTenant;
-await dispatch(read(), true); process.env.COOP_FABRIC_MCP_TOKEN = token();
-// Another resolved environment or principal reads too: there is no grant to match.
+await dispatch(read(), false); process.env.COOP_FABRIC_MCP_TOKEN = token();
+// Test never asks; an unlabelled target is production, which the session covers.
+prompts = 0;
 for (const change of [{ environment: "test" }, { environment: "" }]) { config(change); await dispatch(read(), false); }
 config(); process.env.COOP_FABRIC_MCP_TOKEN = token("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
 await dispatch(read(), false); process.env.COOP_FABRIC_MCP_TOKEN = token();
+assert.equal(prompts, 0);
 // A row read coop cannot classify asks.
 const askRead = { toolName: "mcp", input: { server: "fabric", tool: "query_lakehouse_rows", args: {} } };
 const mutations = [read(1, { query: "DELETE FROM dbo.Customer" }),
@@ -134,10 +142,17 @@ for (const event of mutations) await dispatch(event, true);
 assert.equal(executions, beforeMutations, "no mutation reaches even the inert executor");
 await dispatch({ toolName: "mcp__fabric__get_schema", input: { environment: "production" } }, false);
 await dispatch({ toolName: "mcp__fabric__executeSQL", input: { sql: "DELETE FROM dbo.Customer" } }, true);
+// Revoke and shutdown end the production-read approval: the next read asks again.
 await commands.get("approvals").handler("revoke", runner.createContext());
-await dispatch(read(), false);
+await dispatch(read(), true);
+answer = true; await dispatch(read(), false); answer = false;
 await runner.emit({ type: "session_shutdown", reason: "switch" });
+await dispatch(read(), true);
+// A dev read never asks.
+config({ environment: "dev" }); prompts = 0;
 await dispatch(read(), false);
+assert.equal(prompts, 0);
+config();
 for (const fail of [() => { throw new Error("SYNTHETIC_APPROVAL_SECRET"); }, () => Promise.reject(new Error("SYNTHETIC_APPROVAL_SECRET"))]) {
   await fresh(); answer = fail;
   for (const event of [askRead, ...mutations, { toolName: "bash", input: { command: "rm -rf SYNTHETIC_COMMAND_SECRET" } }]) {
@@ -148,7 +163,8 @@ for (const fail of [() => { throw new Error("SYNTHETIC_APPROVAL_SECRET"); }, () 
 }
 runner.setUIContext(undefined);
 for (const event of [askRead, ...mutations]) await dispatch(event, true);
-await dispatch(read(), false); // a read needs no UI
+await dispatch(read(), true); // a production read needs its one yes, which headless cannot give
+config({ environment: "dev" }); await dispatch(read(), false); config(); // a dev read needs no UI
 runner.setUIContext(ui); answer = true;
 await dispatch({ toolName: "bash", input: { command: "rm -rf SYNTHETIC_COMMAND_SECRET" } }, false);
 await dispatch({ toolName: "read", input: { path: "README.md" } }, false);
@@ -293,10 +309,22 @@ if (existsSync(builtinIndex) && fauxIndex) {
       tools.write({ path: ${JSON.stringify(unlockPath)}, content: "{}" }),
     ]);
     return r.map((x) => x.status).join(",");`);
-    assert.match(out, /fulfilled,rejected,rejected,rejected,rejected/, out);
-    assert.deepEqual(ran, ["fabric-sqlendpoint/execute_query"], "only the production read ran; the production write never reached the tool");
-    assert.equal(asked.length, 2, "the rm -rf and the .env read asked; the production write and the unlock were blocked outright");
+    assert.match(out, /rejected,rejected,rejected,rejected,rejected/, out);
+    assert.deepEqual(ran, [], "the production read was declined; the production write never reached the tool");
+    assert.equal(asked.length, 3, "the production read, the rm -rf and the .env read asked; the production write and the unlock were blocked outright");
     assert.equal(maxOpen, 1, "never two dialogs at once");
+    // One yes to the production read covers the script's later reads.
+    asked.length = 0; answerConfirm = true;
+    const reads = await run(`const r = await Promise.allSettled([
+      tools.mcp(${q("SELECT TOP (5) customer_id FROM dbo.Customer")}),
+      tools.mcp(${q("SELECT TOP (5) name FROM dbo.Region")}),
+    ]);
+    return r.map((x) => x.status).join(",");`);
+    answerConfirm = false;
+    assert.match(reads, /fulfilled,fulfilled/, reads);
+    assert.deepEqual(ran, ["fabric-sqlendpoint/execute_query", "fabric-sqlendpoint/execute_query"]);
+    assert.equal(asked.length, 1, "the production read asked once");
+    assert.match(asked[0], /PRODUCTION read/);
     // Dev edits: the first asks, its session approval covers the ones that waited.
     asked.length = 0; ran.length = 0;
     const m = (op) => JSON.stringify({ server: "powerbi-modeling-mcp", tool: "measure_operations", args: { request: { operation: op } } });
@@ -307,7 +335,8 @@ if (existsSync(builtinIndex) && fauxIndex) {
     assert.equal(ran.length, 3);
     const rows = readFileSync(join(agentDir, "guardrails-audit.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l))
       .filter((r) => r.kind === "codemode-script" && r.decision === "ran");
-    assert.equal(rows.at(-2).detail, "mcp:ok, mcp:error, bash:error, read:error, write:error", "each nested call is audited by name");
+    assert.equal(rows.at(-3).detail, "mcp:error, mcp:error, bash:error, read:error, write:error", "each nested call is audited by name");
+    assert.equal(rows.at(-2).detail, "mcp:ok, mcp:ok");
     assert.ok(!rows.some((r) => /DELETE|dbo\.Customer|rm -rf/.test(r.detail)), "never the arguments");
     // #373: a script with more than 20 calls keeps every call in its audit row.
     writeFileSync(join(cwd, "safe.txt"), "safe");
