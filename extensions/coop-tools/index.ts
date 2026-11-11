@@ -222,7 +222,7 @@ const REVIEW_PARAMS = Type.Object({
 });
 
 const STANDARDS_CHECK_PARAMS = Type.Object({
-  files: Type.Array(Type.String(), { description: "The SQL, DAX or semantic-model files you changed or drafted." }),
+  files: Type.Array(Type.String(), { description: "Changed SQL, DAX or model files." }),
 });
 
 const DATADOC_PARAMS = Type.Object({
@@ -3105,10 +3105,10 @@ export default function coopTools(pi: ExtensionAPI) {
   pi.registerTool({
     name: "standards_check",
     label: "Standards check (fresh look)",
-    description: "Read-only second look at files you changed: one separate model request that sees only the change and the standards articles, not this conversation. Returns problems with file, line and article, split into this change and pre-existing.",
-    promptSnippet: "Fresh-context check of your SQL, DAX or model change against the standards",
+    description: "Read-only second look at files you changed: a separate model request sees only the change and the standards.",
+    promptSnippet: "Fresh standards check of your change",
     promptGuidelines: [
-      "Before presenting a SQL, DAX or semantic-model change you wrote, call standards_check once with the changed files; fix what it finds in the change or state the reason.",
+      "Before presenting a SQL, DAX or model change, call standards_check once with the changed files; fix its findings or state why not.",
     ],
     parameters: STANDARDS_CHECK_PARAMS,
     executionMode: "sequential",

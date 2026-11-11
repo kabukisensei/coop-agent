@@ -27,7 +27,7 @@ If the nearest `.coop/project.yml` sets `logging.require_task_log: true`, append
 
 ## Tool summary
 
-Advisory tools: `data_doc`, `bpa_review`, `standards_check` (a second look at coop's own change in a separate model request). Follow the standards in context; deviate only on a user exception or a stated reason. Read-only MCP (Fabric, Power BI, Microsoft Learn), memory, web, and ask-user.
+Advisory tools: `data_doc`, `bpa_review`, `standards_check`. Follow the standards in context; deviate only on a user exception or a stated reason. Read-only MCP (Fabric, Power BI, Microsoft Learn), memory, web, and ask-user.
 
 ## Live dev by default
 
