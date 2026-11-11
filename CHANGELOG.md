@@ -7,6 +7,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- **coop cleans up after itself.** Saved sessions, backups and drafts used to be
+  kept for ever. coop now removes the ones older than 45 days, once a day when it
+  starts, so the first launch after this update clears what has built up. A file's
+  age is the newer of its creation and last-write times, emptied folders go too,
+  and links are never followed. `coop cleanup` shows what is there and what is
+  due, `coop cleanup now` runs it, `coop cleanup days <N>` changes the age and
+  `coop cleanup off` keeps everything (`cleanup.days` in `~/.coop/config`).
+  `coop doctor` shows the size of the three folders. The workflow skill also tells
+  coop to remove the scratch files and scratch tables a task created once it no
+  longer needs them; dropping a table still asks, as every destructive write does.
+
 - **Report a bug or send feedback.** `/feedback` in the terminal and the window,
   Help > Report a problem and a feedback button in the window header, `/bug` in
   the window, and `coop feedback` in a shell. coop asks bug, idea or question, a

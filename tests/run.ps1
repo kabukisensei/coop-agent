@@ -645,6 +645,7 @@ print("resume verdict contract OK")
   # it back for that child, then the gate-lane temp home returns.
   $fixtures = @(
     @{ Name = 'sync-knowledge-timeout'; Lane = 'extended'; Head = 'knowledge git timeout (PowerShell)' },
+    @{ Name = 'cleanup';                Lane = 'gate';     Head = 'cleanup of old sessions, backups and drafts' },
     @{ Name = 'update-follow';          Lane = 'gate';     Head = 'coop update follows release tags (never backwards)' },
     @{ Name = 'version-describe';       Lane = 'gate';     Head = 'coop version and doctor --publish carry git describe' },
     @{ Name = 'pipx-ownership';         Lane = 'gate';     Head = 'pipx executable ownership' },

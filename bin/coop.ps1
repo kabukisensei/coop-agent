@@ -16,7 +16,7 @@
 #   coop update               Update Pi, Coop tools, vibes, skills/prompts, then doctor
 #   coop install              Fresh-install everything (idempotent); `coop install <source>` adds a Pi extension
 #   coop uninstall            Remove coop from this machine (--keep-tools spares pi + tools)
-#   coop onboard | profile | project | folders | data-doc | catalog | schema | support | feedback | version | help
+#   coop onboard | profile | project | folders | cleanup | data-doc | catalog | schema | support | feedback | version | help
 #   coop dev <cmd>            Maintainer commands (sync, init, new-skill, new-prompt, release, launch-spec,
 #                             context-budget, teamai, fabric, list, config, add, remove, pi); the bare
 #                             names still dispatch
@@ -313,6 +313,49 @@ function Invoke-CoopProjectHome {
   return 0
 }
 
+# `coop cleanup [status|now|days <N>|off]` (Aaron 2026-11-11): the saved sessions,
+# backups and drafts older than the cleanup age (45 days by default) are removed
+# once a day at launch; this command shows what is there, runs it now, or changes
+# the age (Invoke-CoopCleanup, lib\common.ps1).
+function Invoke-CoopCleanupCommand {
+  param([string[]] $CleanupArgs = @())
+  $usage = 'usage: coop cleanup [status|now|days <N>|off]'
+  $verb = if ($CleanupArgs.Count -gt 0) { [string]$CleanupArgs[0] } else { 'status' }
+  if (@('status', 'now', 'days', 'off') -cnotcontains $verb) { Coop-Die $usage }
+  if ($verb -ceq 'days') {
+    $n = 0
+    if ($CleanupArgs.Count -ne 2 -or -not [int]::TryParse([string]$CleanupArgs[1], [ref]$n) -or $n -lt 1 -or $n -gt 3650) { Coop-Die "$usage   (N is 1 to 3650 days)" }
+    try { Set-CoopCleanupDays $n } catch { Coop-Die "could not save the setting in $(Get-CoopConfigFile): $($_.Exception.Message)" }
+    Coop-Ok "coop removes this client's sessions, backups and drafts once they are older than $n days (checked once a day when coop starts; run it now: coop cleanup now)"
+    return
+  }
+  if ($CleanupArgs.Count -gt 1) { Coop-Die $usage }
+  if ($verb -ceq 'off') {
+    try { Set-CoopCleanupDays 0 } catch { Coop-Die "could not save the setting in $(Get-CoopConfigFile): $($_.Exception.Message)" }
+    Coop-Ok "cleanup is off: coop keeps every session, backup and draft (turn it on: coop cleanup days $script:CoopCleanupDefaultDays)"
+    return
+  }
+  $days = Get-CoopCleanupDays
+  if ($verb -ceq 'now') {
+    if ($days -le 0) { Coop-Die "cleanup is off (turn it on: coop cleanup days $script:CoopCleanupDefaultDays)" }
+    $rows = @(Invoke-CoopCleanup -Days $days)
+    foreach ($r in $rows) {
+      $line = "$($r.Name): removed $($r.Files) file(s) older than $days days ($(Format-CoopBytes $r.Bytes)); $($r.Kept) kept ($(Format-CoopBytes $r.KeptBytes))   $($r.Root)"
+      if ($r.Failed -gt 0) { Coop-Warn "$line; $($r.Failed) could not be removed (in use?)" } else { Coop-Ok $line }
+    }
+    return
+  }
+  if ($days -le 0) { Coop-Info "cleanup is off: coop keeps every session, backup and draft (turn it on: coop cleanup days $script:CoopCleanupDefaultDays)" }
+  else { Coop-Info "coop removes sessions, backups and drafts older than $days days, once a day when it starts (change: coop cleanup days <N>; off: coop cleanup off)" }
+  $rows = @(Invoke-CoopCleanup -Days $days -DryRun)
+  foreach ($r in $rows) {
+    $total = $r.Files + $r.Kept
+    $bytes = $r.Bytes + $r.KeptBytes
+    $due = if ($days -gt 0) { "; $($r.Files) older than $days days ($(Format-CoopBytes $r.Bytes))" } else { '' }
+    Coop-Info "$($r.Name): $total file(s), $(Format-CoopBytes $bytes)$due   $($r.Root)"
+  }
+}
+
 # `coop startup on|off|status` (Aaron 2026-11-04): open coop at every Windows
 # sign-in, after the update and the Azure sign-in check (scripts\sign-in.ps1,
 # started by one value in this account's Run key). On by default on a machine
@@ -555,6 +598,7 @@ $(Coop-Bold)Usage$(Coop-Rst)
                             Show or set this Windows user's client folder (and its project file), where coop opens every time
   coop folders              Show the three places coop uses: this machine, this client, the repository
   coop startup on|off       Open coop when you sign in to Windows: update, Azure sign-in, then the window
+  coop cleanup [now|days N|off]  Old sessions, backups and drafts: what is there, remove them now, or change the 45-day age
                             (on by default on a machine install; off is remembered)
   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
                             (--strict: exit 2 on a failing linter; --skip-docs: linters only)
@@ -1021,6 +1065,8 @@ function Initialize-CoopLaunch {
   Write-CoopUpdateLines
   # coop at Windows sign-in: on by default on a machine install, once, unless this account opted out.
   Enable-CoopStartupDefault
+  # Sessions, backups and drafts older than the cleanup age (45 days): once a day, fail-soft.
+  Invoke-CoopDailyCleanup
   # The window's first launch wrote the profile with the account's name: say so once.
   if ($Window) { Write-CoopProfileDefaultedLine }
   $mcpState = Update-CoopManagedMcpConfig -Quiet
@@ -1724,6 +1770,7 @@ switch -CaseSensitive ($cmd) {
   'project' { $projectRc = Invoke-CoopProject $rest; exit $projectRc }
   'folders' { Invoke-CoopFolders; break }
   'startup' { Invoke-CoopStartup $rest; break }
+  'cleanup' { Invoke-CoopCleanupCommand $rest; break }
   'new-skill' { New-CoopSkill $rest; break }
   'new-prompt' { New-CoopPrompt $rest; break }
   'release' { Invoke-CoopRelease $rest; break }

@@ -120,6 +120,17 @@ partial, or connected project without requiring the user to edit YAML.
    result is not proof of zero impact).
 9. **Document.** Update Markdown docs, glossary, and lineage; regenerate the site
    (or re-run `coop-data-doc build`) if documentation changed.
+   **Clean up what you made.** Before the final response, remove the scratch work
+   this task created and no longer needs: temporary files (test scripts, query
+   output, intermediate exports) and scratch database objects (a staging or test
+   table, view or procedure you created only to get the work done). Never the
+   deliverable, a backup, or a draft the user has yet to review. Prefer `#temp`
+   tables, which the session drops by itself. Remove only what you created in this
+   task and can name, never something that was there before or that you are unsure
+   of. Dropping an object is a destructive write and goes through the same approval
+   as any other: list the objects and ask once at the end (dev and test ask every
+   time; production is never yours to drop). Say in the summary what you removed,
+   and name anything left behind and where it is.
 10. **Log.** When `logging.require_task_log` is true, explicitly use the
     `daily-logger` skill **before the final response** and append a task entry to the
     configured daily log: summary, files touched, object(s) affected, standards
