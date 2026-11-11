@@ -1009,6 +1009,15 @@ else { D-Warn "the repository: ${repoCoop}: no project file yet" '/setup-project
 D-Ok "standards ($(Get-CoopTierLabel $standardsLoc.Tier)): $($standardsLoc.Root)"
 D-Ok "backups (this client): $(Get-CoopBackupDir)"
 D-Ok "drafts (this client): $(Get-CoopDraftsDir)"
+# What the cleanup watches (Aaron 2026-11-11): the size of this client's sessions,
+# backups and drafts, and the age past which coop removes them.
+try {
+  $cleanupDays = Get-CoopCleanupDays
+  $cleanupParts = @()
+  foreach ($r in @(Invoke-CoopCleanup -Days $cleanupDays -DryRun)) { $cleanupParts += "$($r.Name) $(Format-CoopBytes ($r.Bytes + $r.KeptBytes))" }
+  $cleanupRule = if ($cleanupDays -gt 0) { "files older than $cleanupDays days are removed once a day" } else { 'cleanup is off (coop cleanup days 45 turns it on)' }
+  D-Ok "disk use (this client): $($cleanupParts -join ', '); $cleanupRule"
+} catch { }
 
 D-Head 'coop-agent repository'
 # Where this coop is installed (F3): this machine (the shared package, which
