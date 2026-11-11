@@ -85,8 +85,9 @@ which:
 - **The phone picks the session.** A paired phone uses one open tab on its own
   Windows user and client: the one it chose under *Switch session*
   (`GET`/`POST /api/tabs`), else the focused window's front tab. Tabs on
-  another client are never listed or reachable. Both screens show
-  *Windows user · client · session · device*. A tab that closes drops the phone
+  another client are never listed or reachable. The window shows
+  *Windows user · client · session · device*; the phone shows *client · session*
+  in its header and the whole line at the top of its menu. A tab that closes drops the phone
   to the next one.
 - **A new session is a new incarnation.** Each Pi start, `/new`, session
   switch, project switch or window restart gets a fresh random id. Every write

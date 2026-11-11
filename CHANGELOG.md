@@ -50,6 +50,22 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   the same words as Settings for steering and follow-ups, the session tree drops
   Markdown heading marks, and the Auto-retry setting says it turns back on each
   time the window opens.
+- **A mistyped command no longer opens a session.** One word a letter or two off
+  a coop command (`coop docter`) stops with "Did you mean: coop doctor" instead of
+  being sent to coop as a message. `coop pi <word>` still sends any word.
+- **The phone page hides what it should.** Stop and Queue no longer show while
+  coop is idle (the page's button styling cancelled the hiding), a wide table
+  scrolls sideways inside its message instead of breaking names mid-word, and the
+  message box loses its desktop resize grip. Each code block has its own Copy,
+  and the header keeps to one line (client and session); the menu shows the
+  whole line with the Windows user and the phone's name.
+- **Window polish.** The sidebar shows the Cooptimize pixel logo; Settings uses
+  on/off switches in the modern themes; the retro themes dim the window behind a
+  dialog with a dither pattern; the MCP status and memory notices use the
+  window's own line icons instead of emoji; the composer lines up with the
+  conversation in every theme; the Find bar no longer covers a banner; the empty
+  "Session backfill complete: 0 indexed" notice is gone; tips write "coop" in
+  lower case.
 
 ## [0.40.1] — 2026-11-10
 

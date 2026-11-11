@@ -1093,6 +1093,22 @@ await check("styles: one page's rules never restyle the window's dialogs, and ev
   assert.match(css, /\.md a, \.md-link \{[^}]*text-decoration: underline/, "links are told from text by more than colour");
 });
 
+await check("window: extension emoji become line icons, and the composer lines up with the conversation", async () => {
+  const { splitGlyph } = await import("../desktop/renderer/ui.mjs");
+  assert.deepEqual(splitGlyph("\u{1F50C} MCP: 4 servers enabled"), { icon: "plug", text: "MCP: 4 servers enabled" });
+  assert.deepEqual(splitGlyph("\u{1F9E0} Memory saved"), { icon: "book", text: "Memory saved" });
+  assert.deepEqual(splitGlyph("Ready"), { icon: "", text: "Ready" });
+  assert.deepEqual(splitGlyph(undefined), { icon: "", text: "" });
+  const css = readFileSync(join(ROOT, "desktop", "renderer", "styles", "app.css"), "utf8");
+  // The conversation keeps room for its scrollbar; the composer leaves the same room on the right.
+  assert.match(css, /\n\.timeline \{[^}]*scrollbar-gutter: stable/);
+  assert.match(css, /\n\.dock \{ padding: 0 calc\(24px \+ var\(--scrollbar, 10px\)\) 10px 24px; \}/);
+  assert.match(css, /\[data-style="retro"\] \.dock \{ padding: 0 calc\(6px \+ var\(--scrollbar\)\) 6px 6px; \}/);
+  assert.match(css, /body\.finding \.banner \{/, "the Find bar never covers a banner");
+  const app = readFileSync(join(ROOT, "desktop", "renderer", "app.mjs"), "utf8");
+  assert.match(app, /class: "switch", role: "switch"/, "a setting's toggle is announced as a switch");
+});
+
 await check("styles: a long session list never pushes the window past its height", () => {
   // 2026-10-05: the sidebar grew with its list, the composer sat below the fold
   // and focusing it scrolled the whole document (top bar and sidebar head gone).

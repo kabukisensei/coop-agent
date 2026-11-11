@@ -80,6 +80,7 @@ select.field { height: 32px; padding: 0 8px; }
 /* ---------- sidebar ---------- */
 .sidebar-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 2px 4px; }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 16px; letter-spacing: .02em; color: var(--text-strong); }
+.brand-logo { width: 21px; height: 24px; flex: none; shape-rendering: crispEdges; }
 .brand-mark { width: 18px; height: 18px; border-radius: 5px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
 .session-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 2px; }
 .session {
@@ -135,7 +136,7 @@ select.field { height: 32px; padding: 0 8px; }
 .banner-detail pre { max-height: 180px; overflow: auto; font-size: 12px; }
 
 /* ---------- timeline ---------- */
-.timeline { flex: 1; overflow-y: auto; padding: 24px 24px 12px; scroll-behavior: auto; }
+.timeline { flex: 1; overflow-y: auto; padding: 24px 24px 12px; scroll-behavior: auto; scrollbar-gutter: stable; }
 .timeline:focus { outline: none; }
 .timeline:focus-visible { box-shadow: inset 0 0 0 2px var(--accent-soft); }
 
@@ -146,6 +147,8 @@ select.field { height: 32px; padding: 0 8px; }
 }
 .find-bar[hidden] { display: none; }
 body.finding .toasts { top: 112px; }
+/* The search bar sits over the top of the conversation column: a banner moves below it. */
+body.finding .banner { margin-top: 58px; }
 .find-bar .field { width: 240px; }
 .find-count { min-width: 74px; font-size: 12.5px; color: var(--text-muted); text-align: right; }
 ::highlight(coop-find) { background-color: var(--accent-soft); color: var(--text-strong); }
@@ -303,7 +306,8 @@ details.divider .md { text-align: left; margin-top: 10px; padding: 10px 12px; ba
 .shell pre.output { border-radius: 0; }
 
 /* ---------- dock: widgets, queue, composer ---------- */
-.dock { padding: 0 24px 10px; }
+/* The right padding adds the conversation's scrollbar gutter, so the composer lines up with the column above it. */
+.dock { padding: 0 calc(24px + var(--scrollbar, 10px)) 10px 24px; }
 .dock > * { max-width: 860px; margin-left: auto; margin-right: auto; }
 .widgets { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
 .widget { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); font-size: 12.5px; color: var(--text-muted); }
@@ -378,6 +382,8 @@ details.divider .md { text-align: left; margin-top: 10px; padding: 10px 12px; ba
 .status-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .status-brand { font-weight: 600; color: var(--text); }
 .status-item.ext { max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+.status-item .icon { width: 14px; height: 14px; }
+.status-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .meter { display: inline-block; width: 60px; height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
 .meter-fill { display: block; height: 100%; background: var(--accent); }
 .context.high .meter-fill { background: var(--warning); }
@@ -433,6 +439,17 @@ label.setting { cursor: default; }
 .setting-label { display: flex; flex-direction: column; }
 .setting select.field { width: 220px; }
 .switch { width: 18px; height: 18px; accent-color: var(--accent); }
+/* Modern: an on/off switch. Retro keeps the Windows check box. */
+[data-style="modern"] .switch {
+  appearance: none; position: relative; flex: none; width: 36px; height: 20px; margin: 0; border-radius: 999px;
+  background: var(--surface-3); border: 1px solid var(--border-strong); cursor: pointer; transition: background .12s, border-color .12s;
+}
+[data-style="modern"] .switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--text-muted); transition: transform .12s, background .12s;
+}
+[data-style="modern"] .switch:checked { background: var(--accent); border-color: var(--accent); }
+[data-style="modern"] .switch:checked::after { transform: translateX(16px); background: var(--accent-text); }
 .tree { display: flex; flex-direction: column; gap: 2px; max-height: 56vh; overflow-y: auto; font-size: 13px; }
 .tree-tools { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .tree-children { margin-left: 14px; border-left: 1px solid var(--border); padding-left: 8px; }
@@ -456,6 +473,7 @@ label.setting { cursor: default; }
 .toast.warning { border-color: var(--warning); }
 .toast-text { flex: 1; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; }
 .toast .btn.icon { width: 22px; height: 22px; }
+.toast > .icon { margin-top: 2px; color: var(--text-muted); }
 @keyframes rise { from { transform: translateY(-6px); opacity: 0; } }
 
 /* ---------- side pane (D1b2): changes, standards, project form, docs ---------- */
@@ -650,6 +668,7 @@ pre.output.build-log { max-height: 220px; font-size: 12px; white-space: pre-wrap
   body.no-sidebar .app { grid-template-columns: 240px minmax(0, 1fr); }
   body.no-sidebar .sidebar { visibility: visible; }
   .timeline, .dock { padding-left: 14px; padding-right: 14px; }
+  .dock { padding-right: calc(14px + var(--scrollbar, 10px)); }
   #terminalButton { display: none; }
   /* A narrow window shows the pane over the conversation. */
   body.with-pane .app { grid-template-columns: 0 minmax(0, 1fr); }
@@ -742,7 +761,7 @@ pre.output.build-log { max-height: 220px; font-size: 12px; white-space: pre-wrap
 [data-style="retro"] .modal-title { padding: 4px 4px 4px 10px; font-family: var(--font-display); font-size: 13px; text-transform: uppercase; }
 [data-style="retro"] .title-close { width: 22px; height: 20px; background: var(--surface) !important; color: var(--text) !important; border: 2px solid !important; border-color: var(--bevel-hi) var(--bevel-dark) var(--bevel-dark) var(--bevel-hi) !important; }
 [data-style="retro"] .timeline { margin: 6px; background: var(--field); }
-[data-style="retro"] .dock { padding: 0 6px 6px; }
+[data-style="retro"] .dock { padding: 0 calc(6px + var(--scrollbar)) 6px 6px; }
 [data-style="retro"] .msg.user .bubble { border-radius: 0; background: var(--surface-2); border: 1px solid var(--border); }
 [data-style="retro"] .composer:focus-within { box-shadow: inset -1px -1px 0 var(--bevel-lo), inset 1px 1px 0 var(--bevel-lo); }
 [data-style="retro"] .composer textarea { background: var(--field); border: 2px solid; border-color: var(--bevel-dark) var(--bevel-hi) var(--bevel-hi) var(--bevel-dark); padding: 4px 6px; }
@@ -766,7 +785,8 @@ pre.output.build-log { max-height: 220px; font-size: 12px; white-space: pre-wrap
 [data-style="retro"] .option.active.current .option-label::after,
 [data-style="retro"] .completion.active span { color: #fff; }
 [data-style="retro"] .session-list { background: var(--field); padding: 2px; }
-[data-style="retro"] .modal-layer { background: transparent; }
+/* Retro: the window behind a dialog greys out with a Windows 95 hatch, so a card waiting on an answer reads as in front. */
+[data-style="retro"] .modal-layer { background: repeating-conic-gradient(rgba(0, 0, 0, .34) 0% 25%, transparent 0% 50%) 0 0 / 2px 2px; }
 [data-style="retro"] .modal { box-shadow: inset -1px -1px 0 var(--bevel-lo), inset 1px 1px 0 var(--bevel-lo), 3px 3px 0 rgba(0, 0, 0, .35); }
 [data-style="retro"] .spinner { border-radius: 0; animation-timing-function: steps(8); }
 [data-style="retro"] .splash { width: 126px; height: 144px; image-rendering: pixelated; }
@@ -775,6 +795,7 @@ pre.output.build-log { max-height: 220px; font-size: 12px; white-space: pre-wrap
 [data-style="retro"] .attachment { border-radius: 0; }
 [data-style="retro"] .msg-file { border-radius: 0; border: 2px solid; border-color: var(--bevel-hi) var(--bevel-dark) var(--bevel-dark) var(--bevel-hi); background: var(--surface); }
 [data-style="retro"] .attachment.file { border: 2px solid; border-color: var(--bevel-hi) var(--bevel-dark) var(--bevel-dark) var(--bevel-hi); background: var(--surface); }
+[data-style="retro"] { --scrollbar: 16px; }
 [data-style="retro"] ::-webkit-scrollbar { width: 16px; height: 16px; background: var(--surface-2); }
 [data-style="retro"] ::-webkit-scrollbar-thumb {
   background: var(--surface); border-radius: 0; border: 2px solid; border-color: var(--bevel-hi) var(--bevel-dark) var(--bevel-dark) var(--bevel-hi);

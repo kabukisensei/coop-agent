@@ -572,7 +572,10 @@ function planLeft(lines) {
 
 function setIdentity(s) {
   app.incarnation = s.incarnation;
-  $("identity").textContent = [s.windowsUser, s.client, s.sessionName || "this session", app.deviceName].filter(Boolean).join(" · ");
+  // The header keeps to one line: which client, which session. The menu holds the whole
+  // line the window shows (Windows user, client, session, this phone).
+  $("identity").textContent = [s.client, s.sessionName || "this session"].filter(Boolean).join(" · ");
+  $("menu-identity").textContent = [s.windowsUser, s.client, s.sessionName || "this session", app.deviceName].filter(Boolean).join(" · ");
 }
 
 // Each message's own text, for Find (MC8): not the buttons drawn under it.
@@ -590,7 +593,11 @@ function renderMessage(m) {
   const sent = m.role === "user" ? splitAttachmentNote(m.text) : { text: m.text, files: [] };
   texts.set(node, sent.text);
   node.replaceChildren();
-  if (m.role === "assistant") renderMarkdown(document, m.text, node);
+  if (m.role === "assistant") {
+    renderMarkdown(document, m.text, node, { codeBlock });
+    // A table that scrolls sideways is reachable from a keyboard too.
+    for (const wrap of node.querySelectorAll(".md-table")) { wrap.tabIndex = 0; wrap.setAttribute("role", "group"); wrap.setAttribute("aria-label", "Table"); }
+  }
   else if (sent.text.trim()) node.append(el("p", { text: sent.text }));
   const attached = [...(m.images ? [m.images === 1 ? "1 photo" : `${m.images} photos`] : []), ...sent.files.map((f) => `${f.name}${f.detail ? ` (${f.detail})` : ""}`)];
   if (attached.length) node.append(el("ul", { class: "msg-files" }, attached.map((text) => el("li", { text: `Attached: ${text}` }))));
@@ -601,6 +608,13 @@ function renderMessage(m) {
       m.thinking ? el("button", { type: "button", class: "link", text: "Thinking", onclick: () => showDetail(`m:${m.id}`, "Thinking") }) : null,
       el("button", { type: "button", class: "link", text: "Copy", onclick: (e) => copyText(m.text, e.currentTarget) })));
   }
+}
+
+// A fenced block carries its own Copy, so one command can be taken without the whole answer.
+function codeBlock(doc, lang, text) {
+  return el("div", { class: "code-block" },
+    el("pre", {}, el("code", { text })),
+    el("button", { type: "button", class: "link code-copy", text: "Copy", onclick: (e) => copyText(text, e.currentTarget) }));
 }
 
 async function copyText(text, button) {

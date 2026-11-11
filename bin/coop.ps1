@@ -573,6 +573,7 @@ $(Coop-Bold)Usage$(Coop-Rst)
 
 Anything after ``coop`` that is not a known subcommand is passed straight to pi,
 e.g. ``coop -c`` resumes the last session, ``coop @notes.md "review this"``.
+A single word that is a letter or two off a command (``coop docter``) is treated as a typo.
 "@
 }
 
@@ -1692,6 +1693,44 @@ if ($cmd -ceq 'dev') {
   if ($rest.Count -gt 1) { $rest = @($rest[1..($rest.Count - 1)]) } else { $rest = @() }
 }
 
+# The documented command a mistyped word most likely meant ('' when none is
+# close). Only the commands `coop help` lists are ever suggested. A short word
+# may be one edit away, a longer one two, so a one-word message such as
+# "hello" is still a message.
+function Get-CoopNearCommand([string]$Word) {
+  if ($Word -cnotmatch '^[a-z][a-z-]{2,}$') { return '' }
+  $known = @('desktop', 'doctor', 'update', 'install', 'uninstall', 'onboard', 'profile', 'project', 'folders',
+    'startup', 'data-doc', 'catalog', 'schema', 'support', 'feedback', 'version', 'help', 'sync', 'dev')
+  $best = ''
+  $bestDistance = 99
+  foreach ($name in $known) {
+    $a = $Word.Length
+    $b = $name.Length
+    if ([Math]::Abs($a - $b) -gt 2) { continue }
+    # Edit distance where swapping two neighbouring letters is one edit (`hepl`).
+    $d = New-Object 'int[,]' ($a + 1), ($b + 1)
+    for ($i = 0; $i -le $a; $i++) { $d[$i, 0] = $i }
+    for ($j = 0; $j -le $b; $j++) { $d[0, $j] = $j }
+    for ($i = 1; $i -le $a; $i++) {
+      for ($j = 1; $j -le $b; $j++) {
+        $cost = 1
+        if ($Word[$i - 1] -ceq $name[$j - 1]) { $cost = 0 }
+        $value = [Math]::Min([Math]::Min($d[($i - 1), $j] + 1, $d[$i, ($j - 1)] + 1), $d[($i - 1), ($j - 1)] + $cost)
+        if ($i -gt 1 -and $j -gt 1 -and $Word[$i - 1] -ceq $name[$j - 2] -and $Word[$i - 2] -ceq $name[$j - 1]) {
+          $value = [Math]::Min($value, $d[($i - 2), ($j - 2)] + 1)
+        }
+        $d[$i, $j] = $value
+      }
+    }
+    $distance = $d[$a, $b]
+    if ($distance -lt $bestDistance) { $bestDistance = $distance; $best = $name }
+  }
+  $allowed = 1
+  if ($Word.Length -ge 6) { $allowed = 2 }
+  if ($bestDistance -ge 1 -and $bestDistance -le $allowed) { return $best }
+  return ''
+}
+
 switch -CaseSensitive ($cmd) {
   '' { Invoke-LaunchPi; break }
   # --no-launch is a dry-run: run the preflights, then PRINT the resolved pi
@@ -1797,7 +1836,12 @@ switch -CaseSensitive ($cmd) {
   # `coop router-trial` hung on the dev VM's pre-tag check of v0.37.0).
   'router-trial' { Coop-Die 'coop router-trial was removed in v0.37.0 (the Jev classifier trial, master plan J0: no token saving over the rule). coop/auto routes by its rule alone; nothing to run. See CHANGELOG 0.37.0.' }
   default {
-    # Unknown flags (-*) or unknown subcommand: pass straight to pi (files/messages).
+    # One bare word a letter or two off a coop command is a typo, not a message:
+    # say so instead of opening a session on it (`coop docter`). Everything else
+    # (flags, files, a quoted message) goes straight to pi as before.
+    $near = ''
+    if ($argList.Count -eq 1) { $near = Get-CoopNearCommand $cmd }
+    if ($near) { Coop-Die ("unknown command '{0}'. Did you mean: coop {1}   (coop help lists the commands; to send the word to coop as a message: coop pi {0})" -f $cmd, $near) }
     Invoke-LaunchPi -PassArgs $argList
     break
   }

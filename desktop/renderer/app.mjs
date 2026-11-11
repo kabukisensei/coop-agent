@@ -1,7 +1,7 @@
 // The coop window: timeline, composer, dialogs and the actions that stand in
 // for Pi's terminal commands. Talks to coop only through window.coop
 // (preload.cjs); the main process checks every call again.
-import { el, icon, openModal, pickFrom, toast, modalOpen, relativeTime } from "./ui.mjs";
+import { el, icon, openModal, pickFrom, toast, modalOpen, relativeTime, splitGlyph } from "./ui.mjs";
 import { createTimeline, applyEvent, loadMessages, startBash, finishBash, formatTokens, textOf, notice, turnOf, turns } from "./timeline.mjs";
 import { createFinder } from "./find.mjs";
 import { renderItem, renderTurn, codeBlock } from "./view.mjs";
@@ -184,6 +184,8 @@ function onUiRequest(request) {
       const level = ["info", "warning", "error"].includes(request.notifyType) ? request.notifyType : "info";
       const text = clean(request.message).trim();
       if (!text) break;
+      // The memory extension's first-start report with nothing indexed says nothing a person can use.
+      if (/Session backfill complete: 0 indexed, 0 skipped\b/.test(text)) break;
       // Before the conversation starts, a notice that names a set-up step
       // (the MCP adapter reporting the Warehouse endpoint's 401, for one) joins
       // the set-up card with its command instead of landing as a raw report.
@@ -964,7 +966,10 @@ function renderStatus() {
   }
   if (stats && stats.tokens) parts.push(el("span", { class: "status-item", title: "Tokens this session: in / out", text: `${formatTokens(stats.tokens.input)} in, ${formatTokens(stats.tokens.output)} out` }));
   if (stats && Number(stats.cost) > 0) parts.push(el("span", { class: "status-item", text: `$${Number(stats.cost).toFixed(2)}` }));
-  for (const [key, text] of app.statuses) parts.push(el("span", { class: "status-item ext", title: key, text }));
+  for (const [key, text] of app.statuses) {
+    const lead = splitGlyph(text);
+    parts.push(el("span", { class: "status-item ext", title: key }, lead.icon ? icon(lead.icon) : null, el("span", { class: "status-text", text: lead.text })));
+  }
   const left = el("span", { class: "status-left" }, el("span", { class: "status-item status-brand", text: `coop${app.info && app.info.version ? ` v${app.info.version}` : ""}` }), el("span", { class: "status-item", text: app.running ? (app.tl.busy ? "Working" : "Ready") : "Stopped" }));
   bar.replaceChildren(left, el("span", { class: "status-right" }, parts));
 }
@@ -1296,7 +1301,7 @@ function settingsPanel() {
     const node = el("select", { class: "field", onchange: (event) => onChange(event.target.value) }, options.map(([v, l]) => el("option", { value: v, text: l, selected: v === value })));
     return node;
   };
-  const toggle = (checked, onChange) => el("input", { type: "checkbox", class: "switch", checked, onchange: (event) => onChange(event.target.checked) });
+  const toggle = (checked, onChange) => el("input", { type: "checkbox", class: "switch", role: "switch", checked, onchange: (event) => onChange(event.target.checked) });
   const body = el("div", { class: "settings" },
     row("Theme", select(Object.entries(THEME_LABELS), app.info.theme, (v) => coop.setTheme(v))),
     row("Auto-compact", toggle(Boolean(s.autoCompactionEnabled), async (v) => { await cmdOrToast({ type: "set_auto_compaction", enabled: v }, "Could not change auto-compact"); refreshState(); }), "Compact the conversation when the context is nearly full"),
@@ -1602,6 +1607,16 @@ async function boot() {
   app.info = await coop.ready();
   app.vibe = String(app.info.vibe || "");
   applyTheme(app.info);
+  // The sidebar's mark is the Cooptimize logo, the splash art drawn small.
+  const mark = document.querySelector(".sidebar .brand-mark");
+  if (mark && app.info.splash && app.info.splash.width) {
+    const logo = splashArt(app.info.splash);
+    logo.setAttribute("class", "brand-logo");
+    logo.setAttribute("aria-hidden", "true");
+    logo.removeAttribute("role");
+    logo.removeAttribute("aria-label");
+    mark.replaceWith(logo);
+  }
   renderHeader();
   renderBusy();
   renderStatus();

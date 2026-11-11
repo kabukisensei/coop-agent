@@ -666,6 +666,7 @@ print("resume verdict contract OK")
     @{ Name = 'doctor-azure-sql';       Lane = 'gate';     Head = 'doctor.ps1 on an Azure SQL-only client: Fabric-only rows are informational, never red (section 8 item 7)' },
     @{ Name = 'catalog-cli';            Lane = 'gate';     Head = 'coop catalog status from a repository the client home repository lists (SQ9, C1)' },
     @{ Name = 'classifier-keys';        Lane = 'gate';     Head = 'the doctor third-party classifier-key row; no router-trial command (J0 removed)' },
+    @{ Name = 'near-command';           Lane = 'gate';     Head = 'a mistyped coop command names the command it is close to instead of opening a session' },
     @{ Name = 'pi-lock';                Lane = 'gate';     Head = 'config/pi-lock.json: Pi dependency tree pinned at install, pending/applied marker, doctor drift row (U3)' },
     @{ Name = 'seeddocs';               Lane = 'gate';     Head = 'coop init --seed-docs shows the config-set status (not runnable = warning)' },
     @{ Name = 'data-doc-summary';       Lane = 'gate';     Head = 'coop data-doc summarizes the graph its config names (subfolder, --config, failures)' },

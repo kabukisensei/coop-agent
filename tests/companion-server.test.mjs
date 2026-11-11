@@ -918,6 +918,25 @@ await check("page: never blank before its script runs or when the phone cannot r
   assert.equal(script.type, "error", "a missing file is still a plain network error");
 });
 
+await check("page: hidden means hidden, a wide table scrolls inside its message, no desktop resize grip", () => {
+  // 2026-11-11: `.btn { display: inline-flex }` and `.pair { display: grid }` beat the
+  // browser's own [hidden] rule, so Stop and Queue showed while coop was idle.
+  const css = readFileSync(join(pageDir, "style.css"), "utf8");
+  assert.match(css, /\n\[hidden\] \{ display: none !important; \}/);
+  assert.match(css, /\n\.md-table \{[^}]*overflow-x: auto/);
+  assert.match(css, /\n\.timeline \{[^}]*grid-template-columns: minmax\(0, 1fr\)/, "a wide table cannot widen the page");
+  assert.match(css, /\.msg th, \.msg td \{[^}]*overflow-wrap: normal/, "a name in a cell is never broken mid-word");
+  assert.equal(/resize: vertical/.test(css), false);
+  // Each code block has its own Copy; the header is one line (client, session) and the
+  // menu keeps the whole identity line the contract names.
+  const app = readFileSync(join(pageDir, "app.js"), "utf8");
+  assert.match(app, /renderMarkdown\(document, m\.text, node, \{ codeBlock \}\)/);
+  assert.match(app, /class: "link code-copy", text: "Copy", onclick: \(e\) => copyText\(text, e\.currentTarget\)/);
+  assert.match(app, /\$\("identity"\)\.textContent = \[s\.client, s\.sessionName \|\| "this session"\]/);
+  assert.match(app, /\$\("menu-identity"\)\.textContent = \[s\.windowsUser, s\.client, s\.sessionName \|\| "this session", app\.deviceName\]/);
+  assert.match(readFileSync(join(pageDir, "index.html"), "utf8"), /<div id="menu-identity" class="drawer-id"><\/div>/);
+});
+
 await check("page: four themes from the menu, Retro in the coop site's look (MC5), its font from this origin under its licence", () => {
   const html = readFileSync(join(pageDir, "index.html"), "utf8");
   for (const part of ['data-style="modern"', 'data-style="retro"', 'data-mode="dark"', 'data-mode="light"']) assert.ok(html.includes(part), part);
