@@ -41,7 +41,7 @@ const tools = await import(pathToFileURL(join(dist, "coop-tools.mjs")).href);
 const { parseUnifiedDiff, pairAndEmphasize, buildSplitRows, computeMatches, hunkStats } = await import("../desktop/renderer/unified-diff.mjs");
 const { unifiedDiff } = await import("../desktop/lib/text-diff.mjs");
 const { listChanges, listDrafts, fileDiff, parseNameStatus, parseNumstat, newFileDiff, changeRepos, defaultChangeRepo } = await import("../desktop/lib/changes.mjs");
-const { readStandards, readSnapshot, readNote, listNotes, knowledgeView, domainView, DOMAINS, KNOWLEDGE_LABELS } = await import("../desktop/lib/standards-view.mjs");
+const { readStandards, readSnapshot, readNote, listNotes, knowledgeView, domainView, sourceDomainView, keepArticles, DOMAINS, KNOWLEDGE_LABELS } = await import("../desktop/lib/standards-view.mjs");
 const { loadProject, previewProject, saveProject, settingsFromForm } = await import("../desktop/lib/project-form.mjs");
 const docs = await import("../desktop/lib/docs-setup.mjs");
 const { normalizePath, relativePath, repoForPath, fixLinePrompt } = await import("../desktop/renderer/pane-changes.mjs");
@@ -346,8 +346,10 @@ await check("standards: resolve-many then status, paths stay in the main process
     setImmediate(() => callback(null, JSON.stringify(out), ""));
   };
   const result = await readStandards({ node: process.execPath, repoRoot: ROOT, cwd: temp, env: process.env, execFileImpl });
-  assert.deepEqual(calls.map((c) => c[0]), ["resolve-many", "status"]);
+  assert.deepEqual(calls.map((c) => c[0]), ["resolve-many", "status", "source-systems"]);
   assert.equal(calls[0][1], DOMAINS.join(","));
+  assert.ok(DOMAINS.includes("source"), "the D365 source articles have a tab");
+  assert.equal(calls[2][1], temp);
   assert.equal(calls[0][2], temp);
   assert.equal(result.domains.length, DOMAINS.length);
   const sql = result.domains.find((d) => d.domain === "sql");
@@ -360,9 +362,47 @@ await check("standards: resolve-many then status, paths stay in the main process
   assert.equal(text.text.startsWith("# SQL style"), true, "the provenance comment is not an article");
   assert.deepEqual(articleOutline(parseMarkdown(text.text)).map((a) => a.title), ["SQL style", "Naming"]);
   assert.equal(domainView("fabric", undefined).state, "unavailable");
-  for (const state of ["canonical", "project_override", "stale_last_known_good", "bundled", "auth_required", "unavailable"]) assert.ok(STATE_LABELS[state], state);
+  for (const state of ["canonical", "project_override", "stale_last_known_good", "bundled", "auth_required", "unavailable", "off"]) assert.ok(STATE_LABELS[state], state);
   // A resolver failure is an error the pane shows, not a crash.
   await assert.rejects(readStandards({ node: process.execPath, repoRoot: ROOT, cwd: temp, env: process.env, execFileImpl: (f, a, o, cb) => cb(new Error("x"), "", "registry unreadable\n") }), /registry unreadable/);
+});
+
+await check("standards: the D365 source tab lists what a task gets for the project's source systems", async () => {
+  const snapshot = join(temp, "source-snapshot.md");
+  writeFileSync(snapshot, "<!-- coop standards snapshot for source -->\n# D365 Dataverse Source Tables\nDataverse.\n\n# D365 Exports\n```powershell\n# not an article\n```\n\n# D365 Finance and Operations Source Tables\nF&O.\n");
+  const articles = [
+    { id: "source_d365_dataverse", title: "D365 Dataverse Source Tables", technology: "d365_dataverse" },
+    { id: "source_d365_exports", title: "D365 Exports", technology: "d365" },
+    { id: "source_d365_fo", title: "D365 Finance and Operations Source Tables", technology: "d365_fo" },
+  ];
+  const run = (systems) => readStandards({ node: process.execPath, repoRoot: ROOT, cwd: temp, env: process.env, execFileImpl: (file, args, options, callback) => {
+    const out = args[1] === "resolve-many" ? { source: { state: "canonical", authority_class: "formal_standard", revision: "0123456789abcdef", path: snapshot, articles } }
+      : args[1] === "source-systems" ? systems : {};
+    setImmediate(() => (out === undefined ? callback(new Error("unknown command"), "", "usage: standards-cli.mjs\n") : callback(null, JSON.stringify(out), "")));
+  } });
+  // No source_systems key: both D365 systems, all three articles, labelled D365.
+  let result = await run(["d365_fo", "d365_dataverse"]);
+  let source = result.domains.find((d) => d.domain === "source");
+  assert.deepEqual([source.label, source.available, source.articles.length], ["D365 source", true, 3]);
+  assert.equal(result.keep.has("source"), false, "every article fits: the snapshot reads whole");
+  assert.equal(result.snapshots.get("source"), snapshot);
+  // F&O only: the Dataverse article is left out of the list and the text.
+  result = await run(["d365_fo"]);
+  source = result.domains.find((d) => d.domain === "source");
+  assert.deepEqual(source.articles.map((a) => a.id), ["source_d365_exports", "source_d365_fo"]);
+  const text = await readSnapshot(result.snapshots.get("source"), { titles: result.keep.get("source") });
+  assert.deepEqual(articleOutline(parseMarkdown(text.text)).map((a) => a.title), ["D365 Exports", "D365 Finance and Operations Source Tables"]);
+  assert.match(text.text, /# not an article/, "a heading in a code fence stays inside its article");
+  // source_systems: [] turns the tab off.
+  result = await run([]);
+  source = result.domains.find((d) => d.domain === "source");
+  assert.deepEqual([source.state, source.available, source.articles.length, result.snapshots.has("source")], ["off", false, 0, false]);
+  // An older resolver with no source-systems command: shown unfiltered, generic label.
+  result = await run(undefined);
+  source = result.domains.find((d) => d.domain === "source");
+  assert.deepEqual([source.label, source.available, source.articles.length], ["Source systems", true, 3]);
+  assert.equal(sourceDomainView({ label: "Source systems", articles }, ["sap"]).label, "Source systems");
+  assert.equal(keepArticles("# A\nx\n", ["missing"]), "# A\nx\n", "no match: the whole text, never an empty pane");
 });
 
 await check("standards: the team knowledge repositories from status, one note at a time, paths stay in the main process", async () => {

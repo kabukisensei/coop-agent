@@ -9,13 +9,19 @@
 // cooptimize/coop-team-knowledge, the TeamAI team share): the pane lists each
 // clone's notes and reads one at a time, the clone the team-knowledge skill
 // searches, never a copy.
+//
+// The `source` domain is the wiki's Source Systems articles (D365 F&O and
+// Dataverse for every Cooptimize client): tasks get the ones that fit the
+// project's `source_systems` (both D365 systems when the key is absent, none for
+// `[]`), so the pane lists exactly those, or shows the domain as off.
 import { execFile } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { readFile, realpath } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
+import { sourceArticleFits } from "../../lib/standards.mjs";
 
-export const DOMAINS = Object.freeze(["sql", "dax", "semantic_model", "fabric", "documentation"]);
-export const DOMAIN_LABELS = Object.freeze({ sql: "SQL", dax: "DAX", semantic_model: "Semantic model", fabric: "Fabric", documentation: "Documentation" });
+export const DOMAINS = Object.freeze(["sql", "dax", "semantic_model", "fabric", "documentation", "source"]);
+export const DOMAIN_LABELS = Object.freeze({ sql: "SQL", dax: "DAX", semantic_model: "Semantic model", fabric: "Fabric", documentation: "Documentation", source: "Source systems" });
 export const KNOWLEDGE_LABELS = Object.freeze({ "cooptimize/incremental-bi": "Incremental BI", "cooptimize/coop-team-knowledge": "Team knowledge" });
 const MAX_SNAPSHOT = 2 * 1024 * 1024;
 const MAX_NOTES = 400;
@@ -49,6 +55,19 @@ export function domainView(domain, resolution) {
     available: Boolean(r.path),
     articles: articles.map((a) => ({ id: text(a.id), title: text(a.title) || text(a.file), file: text(a.file), layer: text(a.layer), technology: text(a.technology) })),
   };
+}
+
+/**
+ * The source domain as a task sees it: only the articles that fit the project's
+ * source systems, named "D365 source" when every system is a D365 one, and off
+ * (not selectable) when the project turns source systems off. `systems` is null
+ * when an older resolver could not say: the domain is then shown unfiltered.
+ */
+export function sourceDomainView(view, systems) {
+  if (!Array.isArray(systems)) return view;
+  if (!systems.length) return { ...view, state: "off", available: false, articles: [] };
+  const label = systems.every((s) => s === "d365" || s.startsWith("d365_")) ? "D365 source" : view.label;
+  return { ...view, label, articles: view.articles.filter((a) => sourceArticleFits(a, systems)) };
 }
 
 /** The pane's summary of `standards-cli.mjs status`. */
@@ -123,20 +142,31 @@ export function knowledgeView(source, listing) {
 
 /**
  * Resolve every domain for the folder. Returns { source, domains, snapshots,
- * knowledge, roots } where snapshots maps a domain to the resolved snapshot's
- * path and roots maps a knowledge repository id to its clone (both kept in
+ * keep, knowledge, roots } where snapshots maps a domain to the resolved snapshot's
+ * path, keep maps a domain shown with only some of its articles (source) to the
+ * titles to read from that snapshot, and roots maps a knowledge repository id to its clone (both kept in
  * main; the window asks for a domain's text by name and a note by its path).
  */
 export async function readStandards({ node, repoRoot, cwd, env, execFileImpl, readdirImpl }) {
   const cli = join(repoRoot, "lib", "standards-cli.mjs");
   // Resolve first: it refreshes a stale canonical copy, which status then reports.
   const resolved = await runCli({ node, cli, args: ["resolve-many", DOMAINS.join(","), cwd], cwd, env, execFileImpl });
-  const status = await runCli({ node, cli, args: ["status"], cwd, env, execFileImpl }).catch(() => ({}));
+  const [status, systems] = await Promise.all([
+    runCli({ node, cli, args: ["status"], cwd, env, execFileImpl }).catch(() => ({})),
+    runCli({ node, cli, args: ["source-systems", cwd], cwd, env, execFileImpl }).then((s) => (Array.isArray(s) ? s.filter((x) => typeof x === "string") : null), () => null),
+  ]);
   const snapshots = new Map();
+  const keep = new Map();
   const domains = DOMAINS.map((domain) => {
     const resolution = resolved[domain];
-    if (resolution && typeof resolution.path === "string" && resolution.path) snapshots.set(domain, resolution.path);
-    return domainView(domain, resolution);
+    let view = domainView(domain, resolution);
+    if (domain === "source") {
+      const all = view.articles.length;
+      view = sourceDomainView(view, systems);
+      if (view.available && view.articles.length < all) keep.set(domain, view.articles.map((a) => a.title));
+    }
+    if (view.available && resolution && typeof resolution.path === "string" && resolution.path) snapshots.set(domain, resolution.path);
+    return view;
   });
   const roots = new Map();
   const knowledge = [];
@@ -146,7 +176,7 @@ export async function readStandards({ node, repoRoot, cwd, env, execFileImpl, re
     if (root) roots.set(source.id, root);
     knowledge.push(knowledgeView(source, root ? listNotes(root, { readdirImpl }) : null));
   }
-  return { source: sourceView(status), domains, snapshots, knowledge, roots };
+  return { source: sourceView(status), domains, snapshots, keep, knowledge, roots };
 }
 
 /** One note of a knowledge clone, by its listed path; front matter dropped, bounded. */
@@ -167,10 +197,31 @@ export async function readNote(root, path, { readFileImpl = readFile } = {}) {
   return { text, truncated: bytes.length > MAX_SNAPSHOT };
 }
 
-/** One resolved snapshot's Markdown, bounded. */
-export async function readSnapshot(path, { readFileImpl = readFile } = {}) {
+/**
+ * Only the articles of a snapshot whose top-level `# ` heading is one of `titles`
+ * (headings inside code fences are not articles). When none matches, the whole
+ * text: better too much than an empty pane.
+ */
+export function keepArticles(text, titles) {
+  const wanted = new Set(titles);
+  const sections = [];
+  let current = null;
+  let fence = false;
+  for (const line of text.split("\n")) {
+    if (/^\s*(```|~~~)/.test(line)) fence = !fence;
+    const heading = !fence && /^#[ \t]+(.+?)[ \t]*\r?$/.exec(line);
+    if (heading) { current = { keep: wanted.has(heading[1]), lines: [] }; sections.push(current); }
+    if (current) current.lines.push(line);
+  }
+  const kept = sections.filter((s) => s.keep);
+  return kept.length ? kept.map((s) => s.lines.join("\n").replace(/\s+$/, "")).join("\n\n") + "\n" : text;
+}
+
+/** One resolved snapshot's Markdown, bounded; `titles` keeps only those articles. */
+export async function readSnapshot(path, { readFileImpl = readFile, titles = null } = {}) {
   const bytes = await readFileImpl(path);
   const body = bytes.length > MAX_SNAPSHOT ? bytes.subarray(0, MAX_SNAPSHOT) : bytes;
   // The first line is coop's provenance comment, not part of any article.
-  return { text: body.toString("utf8").replace(/^<!--[\s\S]*?-->\s*/, ""), truncated: bytes.length > MAX_SNAPSHOT };
+  const text = body.toString("utf8").replace(/^<!--[\s\S]*?-->\s*/, "");
+  return { text: Array.isArray(titles) ? keepArticles(text, titles) : text, truncated: bytes.length > MAX_SNAPSHOT };
 }

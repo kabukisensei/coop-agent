@@ -18,6 +18,7 @@ export const STATE_LABELS = Object.freeze({
   project_override: "This project's own standard (.coop/project.yml)",
   auth_required: "Sign-in needed to read the wiki",
   unavailable: "No articles for this domain",
+  off: "Off for this project (source_systems: [] in .coop/project.yml)",
 });
 
 export const KNOWLEDGE_STATE_LABELS = Object.freeze({
