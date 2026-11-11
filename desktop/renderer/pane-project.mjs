@@ -139,12 +139,13 @@ export function mountProject(box, options, { coop, newSession }) {
     return items.length ? items.map((item) => el("code", { text: item })) : [el("span", { class: "hint", text: "none" })];
   }
 
-  function commitRows(lists) {
+  function commitRows(lists, sqlSource) {
     if (!lists) return null;
     return el("div", { class: "commit-lists" },
       el("div", { class: "form-label" }, el("span", { text: "Commit lists" }), guard()),
       el("div", {}, el("span", { class: "commit-kind", text: "Allowed to commit: " }), ...list(lists.allowed)),
-      el("div", {}, el("span", { class: "commit-kind", text: "Never commit: " }), ...list(lists.never)));
+      el("div", {}, el("span", { class: "commit-kind", text: "Never commit: " }), ...list(lists.never)),
+      sqlSource ? el("div", { class: "sql-source-readiness" }, el("span", { class: "commit-kind", text: "SQL source control: " }), el("span", { text: sqlSource.note })) : null);
   }
 
   function repoCard(repo, index) {
@@ -167,7 +168,7 @@ export function mountProject(box, options, { coop, newSession }) {
       row({ field: at("localPath"), label: "Local folder", hint: "Relative to the project folder, or a full path.", control: path, extra: browse, guarded: true }),
       row({ field: at("remoteName"), label: "Git remote name", control: text(repo, "remoteName") }),
       row({ field: at("defaultBranch"), label: "Default branch", control: text(repo, "defaultBranch") }),
-      commitRows(lists));
+      commitRows(lists, !repo.isNew ? (state.data.sqlSource || {})[repo.name] : null));
   }
 
   function renderForm() {

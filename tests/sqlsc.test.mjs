@@ -199,7 +199,7 @@ await t("init: a schema filter only for init; it sets up the project's SQL repos
   assert.deepEqual(lib.sqlscInitRoot(join(root, "elsewhere"), contract), { root: join(root, "sql"), name: "warehouse" });
   assert.match(lib.sqlscInitRoot(mkdtempSync(join(tmpdir(), "coop-sqlsrc-nogit-")), null).error, /no SQL repository here/);
   writeFileSync(join(root, "sql", "sqlsc.yml"), "folder: database\n");
-  assert.deepEqual(lib.commitLine(join(root, "sql", "sqlsc.yml"), contract), { line: 'agent_allowed_to_commit: ["database/**", "sqlsc.yml", ".gitattributes", ".gitignore"] under repositories.warehouse in .coop/project.yml', covered: false });
+  assert.deepEqual(lib.commitLine(join(root, "sql", "sqlsc.yml"), contract), { line: 'agent_allowed_to_commit: ["database/**", "sqlsc.yml", ".gitattributes", ".gitignore"] under repositories.warehouse in .coop/project.yml (/sql-source permissions shows the change and makes it after you approve)', covered: false, conflicts: [], missing: ["database/**", "sqlsc.yml", ".gitattributes", ".gitignore"] });
   writeFileSync(contract, "repositories:\n  warehouse:\n    role: sql\n    local_path: sql\n    agent_allowed_to_commit:\n      - \"database/**\"\n");
   assert.equal(lib.commitLine(join(root, "sql", "sqlsc.yml"), contract).covered, false, "database/** alone leaves the setup files sqlsc commit may stage");
   writeFileSync(contract, "repositories:\n  warehouse:\n    role: sql\n    local_path: sql\n    agent_allowed_to_commit: [\"database/**\", \"sqlsc.yml\", \".gitattributes\", \".gitignore\"]\n");
