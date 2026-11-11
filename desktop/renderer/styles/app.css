@@ -906,6 +906,12 @@ pre.output.build-log { max-height: 220px; font-size: 12px; white-space: pre-wrap
 .tab-mark.asking { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--warning); color: var(--bg); font-size: 11px; font-weight: 700; line-height: 16px; text-align: center; }
 .tab.asking:not(.active) { color: var(--text); }
 .tab-new { flex: none; margin-bottom: 3px; }
+/* A tab being dragged along the strip, and the line where it would land. */
+.tab.dragging { opacity: 0.45; }
+.tab { position: relative; }
+.tab.drop-before::before, .tab.drop-after::after { content: ""; position: absolute; top: 2px; bottom: 0; width: 2px; background: var(--accent); border-radius: 1px; pointer-events: none; }
+.tab.drop-before::before { left: -2px; }
+.tab.drop-after::after { right: -2px; }
 @keyframes tab-pulse { 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) { .tab-mark.working { animation: none; } }
 [data-style="retro"] .tab { border-radius: 0; }

@@ -115,7 +115,7 @@ End, PageUp, Ctrl+Backspace, Ctrl+Z, Ctrl+C, the mouse), the tree view's
 folds and Show list are its own controls, and the rest are terminal screens
 (scoped models, tree labels, session delete, saving defaults) reached with
 Open in terminal. The side pane's keys (Ctrl+\, Ctrl+Shift+D, Ctrl+Shift+S),
-tabs (Ctrl+N, Ctrl+Tab, Ctrl+1 to 9), zoom and Ctrl+K are the window's own.
+tabs (Ctrl+N, Ctrl+Tab, Ctrl+1 to 9, drag to reorder), zoom and Ctrl+K are the window's own.
 
 | Action | Maps to | In the window |
 | --- | --- | --- |
@@ -226,10 +226,15 @@ console: each tab is one session with its own Pi process
 guardrails and questions are its own (phone access is one switch for the app;
 a paired phone picks among the tabs, see Phone companion). Tabs share the window's
 folder, launch spec and Warehouse target. Ctrl+N (or the strip's +) opens a
-tab on a new session; New session or a click on another saved session while
-coop works opens it in a new tab instead of refusing. Ctrl+W closes a tab,
-Ctrl+Tab and Ctrl+Shift+Tab move between them, Ctrl+1 to Ctrl+9 jump. A tab
-shows a dot while coop works and a mark while it waits on a question; a
+tab on a new session; New session while coop works opens a new tab instead
+of refusing. A click on a saved session (the sidebar list or the picker) opens
+it in a new tab too, so the current tab stays as it is; only an unused tab
+(nothing said yet, coop idle) loads it in place, and when the window holds its
+limit of tabs the session loads in the current tab. Ctrl+W closes a tab,
+Ctrl+Tab and Ctrl+Shift+Tab move between them, Ctrl+1 to Ctrl+9 jump. Tabs
+can be dragged along the strip to a new order, or moved one place with
+Ctrl+Shift+PageUp and Ctrl+Shift+PageDown; Ctrl+1 to Ctrl+9 follow the new
+order. A tab shows a dot while coop works and a mark while it waits on a question; a
 background tab's finished turn or question gets the notification. A saved
 session is open in one tab at most (`desktop/lib/session-owners.mjs`): picking
 one that another tab or window holds brings that tab forward, and the phone's

@@ -1039,8 +1039,18 @@ function renderSessions() {
 
 async function switchSession(path) {
   if (app.state && path === app.state.sessionFile) return;
-  // coop keeps working here; the other session opens in its own tab.
-  if (app.tl.busy) { await newTab(path); return; }
+  // A saved session opens in its own tab, so this one stays as it is; if a tab
+  // already holds it, that tab comes forward (coop:new-tab). Only an unused tab
+  // (nothing said yet, coop idle) loads the session in place, so a fresh
+  // window does not leave an empty tab behind. When the window is full, the
+  // session loads here, unless coop is working.
+  const inPlace = !app.tl.busy && conversationEmpty();
+  if (!inPlace) {
+    const result = await coop.newTab(path);
+    if (result.success || result.openElsewhere) { if (result.openElsewhere) toast(result.error, "info"); return; }
+    if (app.tl.busy) { toast(result.error || "Could not open a new tab.", "warning"); return; }
+    toast(`${result.error || "Could not open a new tab."} Opening it here.`, "info");
+  }
   const result = await cmdOrToastSwitch(path);
   if (result.success && !(result.data && result.data.cancelled)) await refreshAll();
 }
