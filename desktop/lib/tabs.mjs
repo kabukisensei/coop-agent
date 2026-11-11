@@ -13,7 +13,8 @@ const LABEL_MAX = 60;
  * The tab action for a key press (Electron's before-input-event `input`), or
  * null. Ctrl+N new tab, Ctrl+W close, Ctrl+Tab / Ctrl+Shift+Tab and
  * Ctrl+PageDown / Ctrl+PageUp next and previous, Ctrl+1..8 that tab, Ctrl+9
- * the last, as browsers and Windows Terminal do.
+ * the last, Ctrl+Shift+PageDown / Ctrl+Shift+PageUp move the tab one place
+ * right or left, as browsers and Windows Terminal do.
  */
 export function tabKey(input) {
   if (!input || input.type !== "keyDown") return null;
@@ -21,8 +22,8 @@ export function tabKey(input) {
   if (!ctrl || input.alt) return null;
   const key = String(input.key || "");
   if (key === "Tab") return { type: input.shift ? "prev" : "next" };
-  if (key === "PageDown" && !input.shift) return { type: "next" };
-  if (key === "PageUp" && !input.shift) return { type: "prev" };
+  if (key === "PageDown") return input.shift ? { type: "move", delta: 1 } : { type: "next" };
+  if (key === "PageUp") return input.shift ? { type: "move", delta: -1 } : { type: "prev" };
   if (input.shift) return null;
   const lower = key.toLowerCase();
   if (lower === "n") return { type: "new" };
@@ -49,6 +50,21 @@ export function afterClose(tabs, closing, active) {
   if (closing !== active) return active;
   const at = tabs.indexOf(closing);
   return rest[Math.min(at, rest.length - 1)];
+}
+
+/**
+ * `tabs` with `moving` put at position `index` (clamped to the array), as a
+ * drag on the strip or Ctrl+Shift+PageUp/PageDown asks: a new array, the
+ * same one when nothing changes. Everything else keeps its order.
+ */
+export function moveTab(tabs, moving, index) {
+  const from = tabs.indexOf(moving);
+  if (from < 0) return tabs;
+  const to = Math.max(0, Math.min(tabs.length - 1, Math.trunc(Number(index)) || 0));
+  if (to === from) return tabs;
+  const rest = tabs.filter((tab) => tab !== moving);
+  rest.splice(to, 0, moving);
+  return rest;
 }
 
 /** A tab's label from what its page reported, cut to fit the strip. */
