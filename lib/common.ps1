@@ -1731,6 +1731,21 @@ function Coop-ProgEnd {
 # --- Logging (progress-aware: lift the pinned bar, print above it, redraw) -----
 # All log lines go to stderr. When no progress region is active (the common case —
 # doctor/sync/dispatcher) this is a plain WriteLine, exactly as before.
+# How long each launch step took, for the window's launch log only (never the
+# console): "timing: <step> <ms> ms". -Watch is restarted, so consecutive calls
+# time consecutive steps. COOP_LAUNCH_TIMINGS=1 prints them in a terminal too.
+function Write-CoopLaunchTiming {
+  param([string]$Step, [System.Diagnostics.Stopwatch]$Watch)
+  if (-not $Watch) { return }
+  $ms = [int]$Watch.Elapsed.TotalMilliseconds
+  $Watch.Reset(); $Watch.Start()
+  $line = "timing: $Step $ms ms"
+  if ($env:COOP_BOOT_LOG) {
+    try { [System.IO.File]::AppendAllText($env:COOP_BOOT_LOG, ((Get-Date -Format 'HH:mm:ss') + ' ' + $line + "`r`n")) } catch { }
+  }
+  if ($env:COOP_LAUNCH_TIMINGS -eq '1') { try { [Console]::Error.WriteLine($line) } catch { } }
+}
+
 function Coop-Emit {
   param([string]$Line)
   # The window's launch log (COOP_BOOT_LOG, set by coop.exe for its setup

@@ -178,3 +178,64 @@ export function doctorReport({ version, packaged, execPath, env = process.env, r
     runtime: packagedRuntime(resources),
   };
 }
+
+/**
+ * An update installing over this package right now (scripts/auto-update.ps1
+ * writes %ProgramData%\coop\updating.json around the installer): `{ version }`,
+ * else null. A record older than `maxMinutes` is a run that was cut off. The
+ * A shortcut clicked during an update then says so and waits instead of
+ * looking uninstalled (a client VM, 2026-11-11).
+ */
+export function updateInProgress({ programData = process.env.ProgramData || "", exists = existsSync, read = (file) => readFileSync(file, "utf8"), now = Date.now(), maxMinutes = 90 } = {}) {
+  if (programData) {
+    const record = join(programData, "coop", "updating.json");
+    if (exists(record)) {
+      try {
+        const info = JSON.parse(read(record));
+        const started = Date.parse(String(info && info.started || ""));
+        if (Number.isFinite(started) && now - started >= 0 && now - started < maxMinutes * 60000) {
+          return { version: /^\d+\.\d+\.\d+$/.test(String(info.version || "")) ? String(info.version) : "" };
+        }
+      } catch { /* an unreadable record is no update */ }
+    }
+  }
+  return null;
+}
+
+// The "coop is updating" window: Windows PowerShell from System32, so nothing
+// in the install folder stays open while the installer replaces it. It waits
+// for the update to finish, then starts coop.exe again with the same folder
+// argument. Fixed text; paths travel in environment variables.
+const UPDATE_WAIT_SCRIPT = [
+  "Add-Type -AssemblyName System.Windows.Forms",
+  "Add-Type -AssemblyName System.Drawing",
+  "$record = Join-Path $env:ProgramData 'coop\\updating.json'",
+  "$what = if ($env:COOP_WAIT_VERSION) { 'coop is updating to version ' + $env:COOP_WAIT_VERSION + '.' } else { 'coop is updating.' }",
+  "$form = New-Object System.Windows.Forms.Form",
+  "$form.Text = 'coop'; $form.Width = 440; $form.Height = 170; $form.StartPosition = 'CenterScreen'; $form.FormBorderStyle = 'FixedDialog'; $form.MaximizeBox = $false; $form.MinimizeBox = $true; $form.TopMost = $true",
+  "$label = New-Object System.Windows.Forms.Label",
+  "$label.Text = $what + ' It opens by itself when the update finishes, usually within a few minutes.'; $label.Left = 16; $label.Top = 16; $label.Width = 400; $label.Height = 44",
+  "$bar = New-Object System.Windows.Forms.ProgressBar",
+  "$bar.Style = 'Marquee'; $bar.MarqueeAnimationSpeed = 30; $bar.Left = 16; $bar.Top = 70; $bar.Width = 392; $bar.Height = 18",
+  "$form.Controls.Add($label); $form.Controls.Add($bar)",
+  "$start = Get-Date",
+  "$timer = New-Object System.Windows.Forms.Timer",
+  "$timer.Interval = 2000",
+  "$timer.Add_Tick({ if (-not (Test-Path -LiteralPath $record)) { $timer.Stop(); Start-Sleep -Seconds 3; if ($env:COOP_WAIT_FOLDER) { Start-Process -FilePath $env:COOP_WAIT_EXE -ArgumentList ('\"' + $env:COOP_WAIT_FOLDER + '\"') } else { Start-Process -FilePath $env:COOP_WAIT_EXE }; $form.Close() } elseif (((Get-Date) - $start).TotalMinutes -gt 90) { $timer.Stop(); $label.Text = 'The update is taking longer than expected. Start coop again later; if it still does not open, tell your coop admin.'; $bar.Style = 'Blocks' } })",
+  "$timer.Start()",
+  "[void]$form.ShowDialog()",
+].join("\n");
+
+/** The PowerShell process that shows the "coop is updating" window (see above). Windows only. */
+export function updateWaitProcess({ app, version = "", folder = "", env = process.env, systemRoot = env.SystemRoot }) {
+  checkPath("app", app);
+  checkPath("SystemRoot", systemRoot);
+  if (folder) checkPath("folder", folder);
+  const powershell = win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const waitEnv = { ...env, COOP_WAIT_EXE: app, COOP_WAIT_VERSION: /^\d+\.\d+\.\d+$/.test(version) ? version : "", COOP_WAIT_FOLDER: folder };
+  return {
+    command: powershell,
+    args: ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-EncodedCommand", Buffer.from(UPDATE_WAIT_SCRIPT, "utf16le").toString("base64")],
+    options: { cwd: systemRoot, env: waitEnv, windowsHide: true, shell: false, stdio: "ignore", detached: true },
+  };
+}

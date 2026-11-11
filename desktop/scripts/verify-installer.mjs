@@ -413,6 +413,17 @@ async function main(argv) {
       if (!existsSync(file) || sha256(file) !== item.sha256) throw new Error(`the bundled ${item.name} is missing or not the manifest's ${item.key} ${item.version}`);
     }
     step("bundled Git, Python with pipx, the Azure CLI, the Python tool wheels and the ODBC installers", { note: `${gitOut}; ${pyOut}; pipx ${pipxOut}; az ${manifest.desktop.azure_cli.version}; ${wheels.length} wheel(s)` });
+    // Faster updates: every runtime folder came from its own pack and carries
+    // the marker naming its content, which the next update compares.
+    const runtimeInfo = JSON.parse(readFileSync(join(paths.runtime, "coop-runtime.json"), "utf8"));
+    const packs = Array.isArray(runtimeInfo.packs) ? runtimeInfo.packs : [];
+    if (!packs.length) throw new Error("coop-runtime.json lists no runtime packs");
+    for (const pack of packs) {
+      const marker = join(paths.runtime, pack.dir, ".coop-pack");
+      if (!existsSync(marker) || readFileSync(marker, "utf8") !== pack.id) throw new Error(`resources\runtime\${pack.dir} has no .coop-pack marker naming ${pack.id}`);
+      if (!existsSync(join(paths.runtime, pack.dir, pack.check))) throw new Error(`resources\runtime\${pack.dir} has no ${pack.check}`);
+    }
+    step("each runtime folder unpacked from its pack, with the marker the next update compares", { note: packs.map((p) => `${p.dir} ${p.files}`).join(", ") });
 
     // Every bundled file must fit Windows' 260-character path limit. The
     // machine install's C:\Program Files\coop\resources\ is short; measure

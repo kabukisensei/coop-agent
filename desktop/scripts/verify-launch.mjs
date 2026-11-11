@@ -15,7 +15,7 @@
 // runs only on a disposable GitHub-hosted Windows runner with COOP_INSTALLER_TEST=1.
 //
 //   node desktop/scripts/verify-launch.mjs [--dist <dir>] [--output <report.json>]
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -66,6 +66,11 @@ async function stopCoop() {
   // The window process and its setup console (a child of coop.exe).
   try { await runOwned(join(process.env.SystemRoot, "System32", "taskkill.exe"), ["/F", "/T", "/IM", "coop.exe"], { windowsHide: true }, 60000); } catch { /* none running */ }
   for (let i = 0; i < 20 && (await coopProcessCount()); i++) await sleep(1000);
+}
+
+/** The "timing: <step> <ms> ms" lines of a launch log, as "<step> <ms> ms". */
+export function launchTimings(text) {
+  return String(text || "").split(/\r?\n/).map((line) => line.match(/ timing: (.+ \d+ ms)\s*$/)).filter(Boolean).map((m) => m[1]);
 }
 
 async function main(argv) {
@@ -127,6 +132,17 @@ async function main(argv) {
     const after = await coopWindows();
     if (after.length !== before.length || !after.some((w) => w.id === opened.value.id)) throw new Error(`a second click changed the windows: ${JSON.stringify(before)} -> ${JSON.stringify(after)}`);
     step("a second click while open keeps the one window (brought forward)");
+    await stopCoop();
+
+    // 4. A warm start (this version's setup done): the everyday startup, with
+    // the time of each launch step from the launch log (Write-CoopLaunchTiming).
+    const launchLog = join(process.env.USERPROFILE, ".coop", "desktop", "launch.log");
+    const logFrom = existsSync(launchLog) ? statSync(launchLog).size : 0;
+    await openShortcut(paths.desktopShortcut, env);
+    const warm = await waitFor("the coop window on a warm start", 300000, async () => (await coopWindows()).find((w) => w.title && w.title.endsWith(win32.basename(work))));
+    const timings = existsSync(launchLog) ? launchTimings(readFileSync(launchLog).subarray(logFrom).toString("utf8")) : [];
+    step("a warm start opens the coop window", `after ${warm.seconds}s; ${timings.join("; ") || "no timing lines in the launch log"}`);
+    report.warmStart = { seconds: warm.seconds, timings };
     await stopCoop();
 
     const uninstall = nsisInvocation(paths.uninstaller, paths.installDir, { uninstall: true });

@@ -51,4 +51,6 @@ desktop/installer/stage/
 desktop/installer/dist/
 desktop/installer/runtime/
 desktop/installer/coop/
+desktop/installer/packs/
+desktop/installer/resources/packs.nsh
 desktop/installer/cache/

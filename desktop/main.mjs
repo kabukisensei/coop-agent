@@ -33,7 +33,7 @@ import { DocsSetupRun, AnswerError, docsLocation, listDocsPages, pickedPathAnswe
 import { attach, forget, pruneStore, saveUpload, findPdfjs, AttachError, LIMITS as ATTACH_LIMITS } from "./lib/attachments.mjs";
 import { loadSplash } from "./lib/splash.mjs";
 import { vibesDir, loadVibes, vibeSets, userName, fillVibe, pickVibe } from "./lib/vibes.mjs";
-import { bootstrapProcess, consoleTail, doctorReport, findCoop, folderArgument, packagedPaths } from "./lib/bootstrap.mjs";
+import { bootstrapProcess, consoleTail, doctorReport, findCoop, folderArgument, packagedPaths, updateInProgress, updateWaitProcess } from "./lib/bootstrap.mjs";
 import { parseSetupStatus, setupView } from "./lib/setup-status.mjs";
 import { describeProject, startFolder, windowTitle } from "./lib/projects.mjs";
 import { clientRecord, contractClientName, saveClientRecord } from "../lib/client-folder.mjs";
@@ -1500,6 +1500,21 @@ if (process.argv.includes("--doctor")) {
 // (second-instance below) and this one opens the window.
 let booting = false;
 async function bootstrap() {
+  // An update is installing over this package (scripts/auto-update.ps1): say
+  // so and open coop when it finishes, instead of failing on half-replaced
+  // files. The window is a System32 PowerShell, so this process quits and
+  // nothing in the install folder stays open for the installer.
+  const updating = PACKAGED && process.platform === "win32" ? updateInProgress() : null;
+  if (updating) {
+    try {
+      const wait = updateWaitProcess({ app: process.execPath, version: updating.version, folder: folderArgument(process.argv.slice(1)), env: process.env });
+      spawn(wait.command, wait.args, wait.options).unref();
+    } catch (error) {
+      dialog.showErrorBox("coop", `coop is updating${updating.version ? ` to version ${updating.version}` : ""}. Start it again in a few minutes.\n\n(${error.message})`);
+    }
+    app.quit();
+    return;
+  }
   // The package's own coop snapshot (D1d) answers first; a terminal coop only
   // for a package that carries none.
   const coop = findCoop(process.env, existsSync, process.resourcesPath);
