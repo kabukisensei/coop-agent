@@ -7,8 +7,8 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { collectChange, findingsText, parseFindings, standardsForChecker, standardsQuery } from "../lib/standards-check.mjs";
-import { identifyTaskDomains } from "../lib/standards.mjs";
+import { checkPlan, collectChange, findingsText, parseFindings, standardsForChecker, standardsQuery } from "../lib/standards-check.mjs";
+import { identifyTaskDomains, standardsMessageContent } from "../lib/standards.mjs";
 
 const dist = process.env.COOP_TEST_DIST;
 assert.ok(dist, "COOP_TEST_DIST must be set by tests/run.sh");
@@ -137,5 +137,37 @@ const before = calls.length;
 out = await createStandardsCheck(deps())("id", { files: ["sql/same.sql"] }, undefined, undefined, ctx());
 assert.equal(out.details.state, "nothing_to_check");
 assert.equal(calls.length, before, "an unchanged file costs no model request");
+
+
+// --- QL1: a small diff is read at low effort; everything is still checked -------
+assert.deepEqual(checkPlan(collectChange(["sql/load.sql"], repo)), { light: true, changedLines: 3 });
+assert.deepEqual(checkPlan(collectChange(["sql/load.sql", "sql/new.sql"], repo)), { light: false, changedLines: null }, "a new file is read at full effort");
+assert.equal(checkPlan({ checked: [{ file: "a.sql", baseline: "git" }], truncated: true, text: "" }).light, false, "a cut change is read at full effort");
+const bigDiff = { checked: [{ file: "a.sql", baseline: "git" }], truncated: false, text: ["--- a/a.sql", "+++ b/a.sql", ...Array.from({ length: 21 }, (_, i) => `+line ${i}`)].join("\n") };
+assert.deepEqual(checkPlan(bigDiff), { light: false, changedLines: 21 });
+let small = calls.length;
+out = await createStandardsCheck(deps())("id", { files: ["sql/load.sql"] }, undefined, undefined, ctx());
+assert.equal(out.details.state, "ok");
+assert.equal(calls.length, small + 1, "a small change is still checked");
+assert.equal(calls.at(-1).options.reasoning, "low", "a small change is read at low effort");
+assert.equal(out.details.effort, "low");
+out = await createStandardsCheck(deps({ getThinkingLevel: () => "minimal" }))("id", { files: ["sql/load.sql"] }, undefined, undefined, ctx());
+assert.equal(calls.at(-1).options.reasoning, "minimal", "a lower session effort is kept");
+
+
+// --- QL1: each standards article goes into the conversation once ---------------
+{
+  const rec = (domain, names) => ({ resolution: { domain, authority_class: "formal_standard", state: "available", source: "wiki", articles: names, revision: "r1", sha256: "s" }, sections: names.map((n) => ({ heading: n, file: `${n}.md`, sha256: "h", revision: "r1", content: `${n} rule` })) });
+  const first = standardsMessageContent([rec("sql", ["Views", "Layout"])]);
+  assert.match(first, /Views rule[\s\S]*Layout rule/);
+  assert.equal(standardsMessageContent([rec("sql", ["Views", "Layout"])], [], ""), first, "nothing seen: everything is sent, as before");
+  const partial = standardsMessageContent([rec("sql", ["Views", "Procs"])], [], first);
+  assert.match(partial, /Procs rule/); assert.doesNotMatch(partial, /Views rule/);
+  assert.match(partial, /1 more sql article section\(s\) for this task are unchanged/);
+  const same = standardsMessageContent([rec("sql", ["Layout", "Views"])], [], first);
+  assert.equal(same, "Cooptimize standards apply automatically to this task. The standards for sql are unchanged and already earlier in this conversation: follow those articles and validate SQL/DAX against them; they are not repeated here.");
+  const edited = standardsMessageContent([{ ...rec("sql", ["Views"]), sections: [{ heading: "Views", file: "Views.md", sha256: "h2", revision: "r2", content: "Views rule v2" }] }], [], first);
+  assert.match(edited, /Views rule v2/, "a changed article is sent again");
+}
 
 console.log("✓ standards-check: fresh-context check of the change against the standards");

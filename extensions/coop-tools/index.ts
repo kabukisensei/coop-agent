@@ -40,12 +40,13 @@ import { fileURLToPath } from "node:url";
 import {
   buildStandardsContext,
   findProjectContract,
-  provenanceText,
+  standardsMessageContent,
   sourceStatus,
 } from "../../lib/standards.mjs";
 import { agentDir as coopAgentDir, configPath as coopConfigPath } from "../../lib/paths.mjs";
 import {
   CHECKER_SYSTEM_PROMPT,
+  checkPlan,
   checkerUserPrompt,
   collectChange,
   findingsText,
@@ -2792,6 +2793,7 @@ export function createStandardsCheck(deps: StandardsCheckDeps = defaultStandards
     let change: ReturnType<typeof collectChange>;
     try { change = deps.collect(files, ctx.cwd); } catch (e: any) { return unavailable(`could not read the change (${String(e?.message || e).slice(0, 120)})`); }
     if (!change.checked.length) return reply(`standards_check: nothing to check. Not checked: ${change.skipped.join("; ") || "no files"}.`, { state: "nothing_to_check", skipped: change.skipped });
+    const plan = checkPlan(change);
     let standards: { titles: string[]; text: string };
     try {
       standards = standardsForChecker(deps.standards(standardsQuery(change.checked.map((c) => c.file), change.text), ctx.cwd).records as any[]);
@@ -2818,7 +2820,10 @@ export function createStandardsCheck(deps: StandardsCheckDeps = defaultStandards
     }
     const options: Record<string, unknown> = { signal, apiKey: auth.apiKey, headers, env: auth.env, cacheRetention: "none", sessionId: randomUUID(), timeoutMs: settings.timeoutMs, maxRetries: settings.retry.maxRetries };
     if (settings.transport === "sse" && TRANSPORT_AWARE_APIS.has(String(model.api))) options.transport = settings.transport;
-    if (model.reasoning && typeof thinkingLevel === "string" && thinkingLevel !== "off") options.reasoning = thinkingLevel;
+    if (model.reasoning && typeof thinkingLevel === "string" && thinkingLevel !== "off") {
+      // QL1: a small change (SMALL_CHANGE_LINES or fewer) is read at low effort; the checker still sees every line and article.
+      options.reasoning = plan.light && ["medium", "high", "xhigh"].includes(thinkingLevel) ? "low" : thinkingLevel;
+    }
     let response: any;
     try {
       response = await complete(requestModel, {
@@ -2831,7 +2836,7 @@ export function createStandardsCheck(deps: StandardsCheckDeps = defaultStandards
     const parsed = parseFindings(answer, { titles: standards.titles, files: change.checked.map((c) => c.file) });
     if (!parsed.ok) return unavailable("the checker's answer was not readable");
     const result = { findings: parsed.findings, dropped: parsed.dropped, checked: change.checked, skipped: change.skipped, truncated: change.truncated, titles: standards.titles };
-    return reply(findingsText(result), { state: "ok", ...result });
+    return reply(findingsText(result), { state: "ok", ...result, effort: options.reasoning ?? null, changedLines: plan.changedLines });
   };
 }
 
@@ -3452,6 +3457,26 @@ export default function coopTools(pi: ExtensionAPI) {
   const pendingDailyEffects = new Map<string, DailyLogToolEffect>();
   const missedLogAt = new Map<string, number>();
 
+  // Quick lane (row QL1): the standards articles go into the conversation once.
+  // A later prompt in the same area whose articles are already in the model's
+  // context (same text, same revision) gets a one-line reminder instead of the
+  // ~7-8K tokens again. Compaction, /new, /tree or a fork that drops the earlier
+  // message drops it from this view too, so the articles are sent again.
+  function standardsInContext(ctx: ExtensionContext): string {
+    try {
+      const entries = (ctx as any)?.sessionManager?.buildContextEntries?.();
+      if (!Array.isArray(entries)) return "";
+      return entries
+        .filter((entry: any) => entry?.type === "custom_message")
+        .map((entry: any) => typeof entry.content === "string"
+          ? entry.content
+          : Array.isArray(entry.content) ? entry.content.map((part: any) => (part && typeof part.text === "string" ? part.text : "")).join("\n") : "")
+        .join("\n");
+    } catch {
+      return ""; // no view of the context: send the articles, as before
+    }
+  }
+
   pi.on("before_agent_start", async (event, ctx: ExtensionContext) => {
     try {
       const cwd: string = ctx.cwd;
@@ -3539,14 +3564,11 @@ export default function coopTools(pi: ExtensionAPI) {
       }
 
       if (standardsContext.records.length) {
-        const content = [
-          "Cooptimize standards apply automatically to this task. Follow: identify domain → resolve authority → use only the relevant sections below → perform work → validate SQL/DAX with the same immutable authority record.",
-          ...standardsContext.records.map((record: any) => provenanceText(record)),
-          ...standardsContext.patterns.map((pattern: any) => {
-            const snippets = pattern.sections.map((section: any) => `### ${section.heading} (${section.path})\n${section.content}`).join("\n\n");
-            return `[semantic_model] optional authority=${pattern.authority_class} source=${pattern.source} root=${pattern.source_root} selective=true (relevant Incremental BI excerpts only; not mandatory)${snippets ? `\n${snippets}` : ""}`;
-          }),
-        ].join("\n\n");
+        const patternTexts = standardsContext.patterns.map((pattern: any) => {
+          const snippets = pattern.sections.map((section: any) => `### ${section.heading} (${section.path})\n${section.content}`).join("\n\n");
+          return `[semantic_model] optional authority=${pattern.authority_class} source=${pattern.source} root=${pattern.source_root} selective=true (relevant Incremental BI excerpts only; not mandatory)${snippets ? `\n${snippets}` : ""}`;
+        });
+        const content = standardsMessageContent(standardsContext.records as any[], patternTexts, standardsInContext(ctx));
         if (message) message.content = `${message.content}\n\n${content}`;
         else message = {
           customType: "coop-standards",

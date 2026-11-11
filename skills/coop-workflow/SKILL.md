@@ -35,6 +35,33 @@ Fabric/Power BI authoring skills (`powerbi-report-cli`,
 they may edit source files, but they still require plan approval, backups,
 review, diff summary, and human commit.
 
+## Quick lane (small tasks)
+
+Most tasks are small. Use the quick lane when **all** of these hold: one file or
+object; a small change (about 20 changed lines or fewer); nothing dropped, renamed
+or retyped that another object uses (`sql_impact` or lineage says so); no new
+object; not production; no destructive statement. Read-only questions are always
+quick: answer them.
+
+In the quick lane:
+
+- **No separate plan turn.** Say in one line what you will change and why, then do
+  it in the same turn. The user's request is the approval for a local file edit;
+  for a live dev write the guardrail prompt that shows the statement is the one
+  approval. Do not ask "shall I proceed?" first.
+- **Keep:** the lineage lookup (`sql_impact` before a live SQL object; the
+  guardrails hold the edit without it), the backup, the smallest edit, the step 7
+  self-check and `standards_check`, the diff, and the log when the contract requires it.
+- **Skip:** the slice template, the before/after data samples (unless the change
+  can alter rows a query returns), `data_doc impact`, docs regeneration and the
+  handoff. Name the downstream objects the edit result lists in one line.
+- **Leave the lane** the moment a condition stops holding (a dependent uses what
+  you are changing, a second object is needed, a write turns destructive or targets
+  production): stop, say why, and continue with the default sequence below.
+
+The guardrails are the same in both lanes: data write rules, destructive and
+production approvals, and desk-only production approvals never change.
+
 ## Before you start
 
 Read the project contract `.coop/project.yml` (the team's committed file at the
@@ -90,8 +117,9 @@ partial, or connected project without requiring the user to edit YAML.
    environment) and report drift. Use **Microsoft Learn** for current Microsoft docs.
 4. **Plan the first slice + get approval.** For multi-step work, write a short PLAN
    for the first vertical slice (what, why, failing check before, passing check after,
-   blast radius, rollback). For single-edit tasks, still write a short PLAN.
-   **Do not edit anything until the user approves the slice or plan.** That approval
+   blast radius, rollback). Outside the quick lane, write a short PLAN even for
+   one edit. **Do not edit anything until the user approves the slice or plan**
+   (the quick lane above is the one exception). That approval
    covers the complete stated slice; do not seek approval again at its internal steps.
 5. **Back up.** Copy every file you will change to this client's backups folder
    before you touch it: `COOP_BACKUP_DIR` (the launcher sets it to

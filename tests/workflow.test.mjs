@@ -129,4 +129,10 @@ assert.ok(guardrails.includes("/explain"), "guardrails reference /explain prompt
 assert.ok(guardrails.includes("does not expire after each internal step"), "guardrails preserve slice approval");
 assert.ok(guardrails.includes("messages are non-blocking"), "guardrails forbid progress checkpoints from ending a slice");
 
+// QL1: small tasks take the quick lane; the guardrails are the same in both lanes.
+assert.ok(skill.includes("## Quick lane (small tasks)"), "workflow has a quick lane");
+assert.ok(skill.includes("No separate plan turn"), "the quick lane drops the separate plan turn");
+assert.ok(skill.includes("desk-only production approvals never change"), "the quick lane keeps every guardrail");
+assert.ok(guardrails.includes("coop-workflow quick lane"), "guardrails name the quick lane");
+
 console.log("✓ workflow slice tests passed");

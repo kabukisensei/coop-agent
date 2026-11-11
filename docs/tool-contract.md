@@ -197,7 +197,12 @@ conversation. Helpers: `lib/standards-check.mjs`; wiring: `createStandardsCheck`
 - **The standards:** the same resolution as writing (`buildStandardsContext`, with no
   network refresh), steered by the file types and the added lines.
 - **The request:** the session's model and sign-in, a fresh routing id, no cache
-  write, the session's thinking level; the configured `sse` transport on Codex.
+  write, the session's thinking level; the configured `sse` transport on Codex. A
+  small diff of tracked files (20 added plus removed lines or fewer) is read at
+  `low` effort when the session is at `medium` or above (master plan QL1); a new
+  file, a file outside git or a cut change keeps the session's level. Every change
+  is still checked: the standards cover comments and layout too. `details.effort`
+  and `details.changedLines` say what ran.
 - **Findings:** each has `file`, `line`, `article`, `rule`, `problem`, `fix` and
   `introduced`. A finding with no line, a file outside the change, or an article the
   check was not given is **dropped** and counted, so an invented rule never reaches
