@@ -92,6 +92,7 @@ import {
   sqlSourceText,
   sqlscInitRoot,
 } from "../../lib/sqlsc.mjs";
+import { sqlscPermissionsCommand } from "../../lib/sqlsc-permissions.mjs";
 import { effectiveProfile } from "../../lib/user-profile.mjs";
 // The /setup-project contract writer and the /setup-docs wizard driver live in
 // lib/ so the coop window's forms run the same code (master plan D1b2).
@@ -3001,8 +3002,18 @@ export default function coopTools(pi: ExtensionAPI) {
         if (!out) return { content: [{ type: "text" as const, text: `sql_source init failed (exit ${res.code}): ${(res.stderr || res.stdout).trim().slice(0, 300)}` }], details: { state: "failed", exitCode: res.code } };
         const { head, lines } = sqlSourceText(input, out);
         lines.push(...notes);
-        const allowed = commitLine(file, contract);
-        if (out.ok !== false && !allowed.covered) lines.push(`- before the baseline commit the project file needs ${allowed.line} (the user adds it with /setup-project or by hand, then /new)`);
+        // The commit permissions the new repository needs (2026-11-11): the
+        // person sees the exact project-file change and approves it on its own;
+        // declined or headless, nothing is written and the line says how.
+        if (out.ok !== false) {
+          const allowed = commitLine(file, contract);
+          if (!allowed.covered) {
+            const interactive = ctx?.hasUI && typeof ctx?.ui?.confirm === "function";
+            const repair = await sqlscPermissionsCommand({ cwd: ctx.cwd, configFile: file, contractPath: contract, confirm: interactive ? (t: string, m: string) => askConfirm(ctx, t, m) : null });
+            if (repair.wrote) lines.push(`- ${repair.text} The baseline commit waits for that.`);
+            else lines.push(`- the baseline commit needs ${allowed.line}; ${repair.state === "declined" ? "the user declined the change" : repair.text.replace(/\s+/g, " ").slice(0, 600)}`);
+          }
+        }
         return { content: [{ type: "text" as const, text: modelText(head, lines, "") }], details: { state: out.ok === false ? "refused" : "ok", command: "init", config: file, result: out } };
       }
       if (!config) return { content: [{ type: "text" as const, text: SQL_SOURCE_NOT_SET_UP }], details: { state: "not_set_up" } };
@@ -3063,7 +3074,9 @@ export default function coopTools(pi: ExtensionAPI) {
       if (input.command === "status" && !commitHintShown.has(config) && out.ok !== false) {
         commitHintShown.add(config);
         const allowed = commitLine(config, contract);
-        if (!allowed.covered) lines.push(`- coop can commit these files only once the project file has ${allowed.line} (the user adds it with /setup-project or by hand, then /new)`);
+        if (!allowed.covered) lines.push(allowed.conflicts.length
+          ? `- coop cannot commit these files: agent_never_commit for this repository has ${allowed.conflicts.join(", ")}; the user narrows that rule by hand (coop never removes one), then /new`
+          : `- coop can commit these files only once the project file has ${allowed.line}, then /new`);
       }
       // A commit releases coop's own checkouts of what it committed, like a
       // person's Check in (Aaron, 2026-10-21); sqlsc refuses anyone else's.
@@ -3863,24 +3876,34 @@ export default function coopTools(pi: ExtensionAPI) {
   // plain `/sql-source` shows the state. Remembered in ~/.coop/config for this
   // Windows user; the shell guardrails for sqlsc hold whether it is on or off.
   pi.registerCommand("sql-source", {
-    description: "SQL source control (sqlsc) for this Windows user: /sql-source on | off | (show)",
+    description: "SQL source control (sqlsc) for this Windows user: /sql-source on | off | permissions | (show)",
     handler: async (args: string, ctx: ExtensionContext) => {
       const want = String(args || "").trim().toLowerCase();
       try {
+        // The commit permissions this repository needs (2026-11-11): the exact
+        // project-file change, one approval, a backup; never in headless mode.
+        if (want === "permissions") {
+          const contract = findProjectContract(ctx.cwd);
+          const config = findSqlscConfig(ctx.cwd, contract);
+          const interactive = ctx?.hasUI && typeof ctx?.ui?.confirm === "function";
+          const result = await sqlscPermissionsCommand({ cwd: ctx.cwd, configFile: config, contractPath: contract, confirm: interactive ? (t: string, m: string) => askConfirm(ctx, t, m) : null });
+          notify(ctx, result.text, result.state === "written" || result.state === "ok" || result.state === "declined" ? "info" : "warning");
+          return;
+        }
         if (want === "on" || want === "off") {
           const on = setSqlSourceEnabled(want === "on");
           notify(ctx, `${sqlSourceSwitchText(on)} (saved for this Windows user; the sql_source tool loads at the next /new or restart)`, "info");
           if (on) {
             const contract = findProjectContract(ctx.cwd);
             const config = findSqlscConfig(ctx.cwd, contract);
-            const allowed = config ? commitLine(config, contract) : { line: 'agent_allowed_to_commit: ["database/**", "sqlsc.yml", ".gitattributes", ".gitignore"] under repositories.<name> in .coop/project.yml', covered: false };
+            const allowed = config ? commitLine(config, contract) : { line: "agent_allowed_to_commit for the scripts folder and sqlsc.yml, .gitattributes, .gitignore (offered when coop sets SQL source control up)", covered: false };
             notify(ctx, `First time in a repository: ask coop for sql_source status${config ? "" : " (no sqlsc.yml yet: ask coop to set it up with sql_source init; you approve it)"}. When the files are behind the dev database, coop scripts the whole database into them and commits that as the baseline (you approve the commit); from then on every dev change coop makes is scripted and committed in the same task.`, "info");
-            if (!allowed.covered) notify(ctx, `coop commits SQL files only where the project file allows it: add ${allowed.line} (/setup-project or by hand), then /new.`, "info");
+            if (!allowed.covered) notify(ctx, `coop commits SQL files only where the project file allows it: ${allowed.line}, then /new.`, "info");
           }
           return;
         }
         if (want && want !== "status") {
-          notify(ctx, "Usage: /sql-source on | /sql-source off | /sql-source (shows the state)", "warning");
+          notify(ctx, "Usage: /sql-source on | /sql-source off | /sql-source permissions (lets coop commit sqlsc's files here, after you approve the change) | /sql-source (shows the state)", "warning");
           return;
         }
         notify(ctx, sqlSourceSwitchText(sqlSourceEnabled()), "info");

@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { findProjectContract } from "../../lib/standards.mjs";
+import { sqlSourceReadiness } from "../../lib/sqlsc-permissions.mjs";
 import { contractRepository, createHomeRepository, getTeamContract, hasOrigin, shareContract, teamFileStatus } from "../../lib/project-share.mjs";
 import { userProfilePath } from "../../lib/paths.mjs";
 import { effectiveProfile } from "../../lib/user-profile.mjs";
@@ -131,6 +132,9 @@ export function loadProject(cwd, { env } = {}) {
     folder: basename(where.root) || where.root,
     settings,
     commitLists: commitLists(original, existingNames),
+    // Read-only: can coop commit SQL source control files in each repository
+    // with a sqlsc.yml (the guard's own check)? The fix is /sql-source permissions.
+    sqlSource: where.existing ? sqlSourceReadiness(where.existing, original) : {},
     // power_bi.table_mapping.overrides is hand-edited in the file (C2): the form shows it read-only.
     mappingOverrides: projectYamlMapping(original, ["power_bi", "table_mapping", "overrides"]),
     layouts: [...FABRIC_LAYOUTS],

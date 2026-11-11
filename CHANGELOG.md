@@ -86,6 +86,20 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   is loosened: an unlabelled target is still production, such a write still asks
   every time and is still answered at the desk.
 
+- **coop sets up its own SQL source control commit permissions.** coop commits
+  scripted SQL files only where the project file allows its scripts folder and the
+  `sqlsc.yml`, `.gitattributes` and `.gitignore` beside it; nothing wrote those lines,
+  so a project that allowed only `database/**` failed its commit check after the
+  baseline. `/sql-source permissions` now shows the exact change to that one
+  repository entry (the folder comes from `sqlsc.yml`), asks once, backs the project
+  file up outside the repository and adds only the missing lines; `sql_source init`
+  offers the same change right after setting a repository up. A deny rule in the
+  way is named, never removed; no, cancel or a headless session changes nothing;
+  run `/new` afterwards. The guard, the readiness lines and the window's Project
+  pane (a new read-only line per SQL repository) share one check, and new `sql`
+  repositories from `/setup-project` no longer deny `**/*.sql` (existing entries
+  keep theirs).
+
 - **The Standards pane shows the D365 source standards.** coop has given every
   SQL, DAX and model task the Dynamics 365 Source Systems articles since v0.39.2,
   but the window's Standards pane never listed them. It now has a D365 source tab

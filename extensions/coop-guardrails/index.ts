@@ -37,11 +37,10 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { DEPLOY_ENVIRONMENTS, SQLSC_BIN, checkUpstream, classifySqlscWrite, findSqlscConfig, sqlSourceEnabled, sqlscFolder, sqlscInitRoot } from "../../lib/sqlsc.mjs";
+import { DEPLOY_ENVIRONMENTS, SQLSC_BIN, SQLSC_SETUP_FILES, checkUpstream, classifySqlscWrite, commitGlobMatches, findSqlscConfig, sqlSourceEnabled, sqlscCommitCandidates, sqlscCommitCheck, sqlscCommitProbes, sqlscFolder, sqlscFolderFiles, sqlscInitRoot } from "../../lib/sqlsc.mjs";
 import { findProjectContract } from "../../lib/standards.mjs";
 import { projectYamlHas, projectYamlKeys, projectYamlList, projectYamlMapping, projectYamlScalar, repositoryNames } from "../../lib/project-contract.mjs";
-import { appendFileSync, existsSync, lstatSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, statSync } from "node:fs";
-import { randomBytes } from "node:crypto";
+import { appendFileSync, existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { agentDir as coopAgentDir, coopAgentDir as coopIsolatedAgentDir, homeDir as coopHomeDir, personalPiAgentDir, profileDir as coopProfileDir } from "../../lib/paths.mjs";
 import { editGateDecision } from "../../lib/lineage-context.mjs";
@@ -64,28 +63,11 @@ function isAllowedCommitPath(file: string, allowedGlobs: string[], deniedGlobs: 
   return allowedGlobs.some((g) => matchGlob(file, g));
 }
 
-/** Very small glob matcher for the patterns we use in project.yml: `**` matches any
- *  number of path segments; `*` matches within a segment; `?` matches one char. */
+/** The project file's glob matcher (lib/sqlsc.mjs commitGlobMatches, shared with
+ *  the readiness lines): `**` any number of path segments, `*` within a segment,
+ *  `?` one character; case-insensitive. */
 function matchGlob(path: string, glob: string): boolean {
-  const re = globToRegex(glob);
-  return re.test(path);
-}
-
-function globToRegex(glob: string): RegExp {
-  let s = "";
-  let i = 0;
-  while (i < glob.length) {
-    const c = glob[i];
-    if (c === "*" && glob[i + 1] === "*") {
-      s += ".*";
-      i += 2;
-      if (glob[i] === "/") { s += "\\/?"; i++; }
-    } else if (c === "*") { s += "[^/]*"; i++; }
-    else if (c === "?") { s += "[^/]"; i++; }
-    else if (/[A-Za-z0-9_\-./]/.test(c)) { s += c.replace(/[.]/g, "\\$&"); i++; }
-    else { s += "\\" + c; i++; }
-  }
-  return new RegExp("^" + s + "$", "i");
+  return commitGlobMatches(path, glob);
 }
 
 export type RepoCommitPolicy = { allowed: string[]; denied: string[] };
@@ -352,60 +334,11 @@ export function commitPolicy(repoDir: string, governance?: SessionGovernance): R
   return result;
 }
 
-/** The paths `sqlsc commit` may stage, one of each shape, relative to the
- *  sqlsc.yml folder: an object file in every folder of both layouts (type:
- *  `<folder>/Tables/dbo.X.sql`; schema: `<folder>/dbo/Tables/X.sql`), static
- *  data, a migration script, Dependencies.json, and the setup files sqlsc
- *  writes beside sqlsc.yml (coop-sql-source-control `_commit_changes`). */
-export function sqlscCommitCandidates(folder: string): string[] {
-  const type = ["Security/Schemas/dbo.sql", "Tables/dbo.Sample.sql", "Views/dbo.Sample.sql", "Functions/dbo.Sample.sql", "Stored Procedures/dbo.Sample.sql", "Triggers/dbo.Sample.sql"];
-  const schema = ["Security/dbo.sql", "dbo/Tables/Sample.sql", "dbo/Views/Sample.sql", "dbo/Functions/Sample.sql", "dbo/StoredProcedures/Sample.sql", "dbo/Triggers/Sample.sql"];
-  const own = ["Data/dbo.Sample.sql", "Migrations/20260101000000_sample.sql", "Dependencies.json", ".editorconfig"];
-  return [...[...type, ...schema, ...own].map((rel) => `${folder}/${rel}`), ...SQLSC_SETUP_FILES];
-}
-/** The shapes of sqlscCommitCandidates under a schema and an object name drawn
- *  fresh each call, so no glob can be written for them. */
-export function sqlscCommitProbes(folder: string): string[] {
-  const schema = `S${randomBytes(4).toString("hex")}`;
-  const name = `O${randomBytes(4).toString("hex")} x`;
-  return sqlscCommitCandidates(folder)
-    .filter((path) => path.startsWith(`${folder}/`) && path.endsWith(".sql"))
-    .map((path) => path.replace(/dbo/g, schema).replace(/Sample/g, name).replace(/20260101000000_sample/, `20991231235959_${name}`));
-}
-
-/** True when a never-commit glob names files inside the sqlsc folder or the setup
- *  files beside sqlsc.yml: its fixed part reaches into the folder (or is a folder
- *  above it), or it ends in a fixed file name of a kind sqlsc writes. */
-function namesSqlscFiles(glob: string, folder: string): boolean {
-  const fixed = glob.split(/[*?]/)[0].toLowerCase();
-  const inside = `${folder}/`.toLowerCase();
-  if (fixed && (fixed.startsWith(inside) || inside.startsWith(fixed) || SQLSC_SETUP_FILES.some((f) => f.toLowerCase().startsWith(fixed)))) return true;
-  if (fixed) return false; // a fixed part elsewhere in the repository
-  const last = glob.split("/").pop() || "";
-  return !/[*?]/.test(last) && (/\.(sql|json)$/i.test(last) || SQLSC_SETUP_FILES.some((f) => f.toLowerCase() === last.toLowerCase()));
-}
-
-/** The files under the sqlsc folder now, relative to the repository (capped). */
-function sqlscFolderFiles(repoDir: string, folder: string, cap = 20000): string[] {
-  const out: string[] = [];
-  const walk = (dir: string, rel: string) => {
-    let names: string[];
-    try { names = readdirSync(dir); } catch { return; }
-    for (const name of names) {
-      if (out.length >= cap) return;
-      const full = join(dir, name);
-      let st;
-      try { st = lstatSync(full); } catch { continue; }
-      if (st.isDirectory()) walk(full, `${rel}/${name}`);
-      else out.push(`${rel}/${name}`);
-    }
-  };
-  walk(join(repoDir, folder), folder);
-  return out;
-}
-
-/** The files sqlsc init writes beside sqlsc.yml, which a first commit takes along. */
-export const SQLSC_SETUP_FILES = ["sqlsc.yml", ".gitattributes", ".gitignore"];
+// The paths sqlsc commit may stage, the probes and the check itself live in
+// lib/sqlsc.mjs (sqlscCommitCheck), shared with the readiness lines, the
+// /sql-source permissions repair and the window's Project pane; the guard keeps
+// only the trusted session snapshot it feeds them.
+export { SQLSC_SETUP_FILES, sqlscCommitCandidates, sqlscCommitProbes };
 
 /** May coop commit sqlsc's files in this repository? The trusted project
  *  file's agent_allowed_to_commit for the repository whose local_path is the
@@ -416,22 +349,9 @@ export const SQLSC_SETUP_FILES = ["sqlsc.yml", ".gitattributes", ".gitignore"];
 export function sqlscCommitRefusal(configFile: string, governance?: SessionGovernance): string | null {
   const repoDir = dirname(configFile);
   const folder = sqlscFolder(configFile);
-  // The fixed sample names, and the same shapes under names drawn fresh for this
-  // check: a glob written to match the sample names (`*Sample*`) never covers the
-  // objects sqlsc really stages.
-  const candidates = [...sqlscCommitCandidates(folder), ...sqlscCommitProbes(folder)];
   const policy = commitPolicy(repoDir, governance);
-  const denied = candidates.find((path) => policy.denied.some((g) => matchGlob(path, g)));
-  if (denied) return `the project file's agent_never_commit covers ${denied}, which sqlsc commit may stage`;
-  // A never-commit glob naming particular files sqlsc may stage (database/Tables/dbo.Pay.sql,
-  // **/dbo.Pay.sql) matches no probe: sqlsc commit cannot leave single files out.
-  const named = policy.denied.find((g) => namesSqlscFiles(g, folder));
-  if (named) return `the project file's agent_never_commit names ${named}, a file sqlsc commit may stage; sqlsc commits its folder whole, so the user commits there`;
-  const present = sqlscFolderFiles(repoDir, folder).find((path) => policy.denied.some((g) => matchGlob(path, g)));
-  if (present) return `the project file's agent_never_commit covers ${present}, which sqlsc commit may stage`;
-  const uncovered = candidates.filter((path) => !policy.allowed.some((g) => matchGlob(path, g)));
-  if (uncovered.length) return `the project file's agent_allowed_to_commit for this repository does not cover ${uncovered.slice(0, 3).join(", ")}${uncovered.length > 3 ? " and more" : ""} (add \`["${folder}/**", "sqlsc.yml", ".gitattributes", ".gitignore"]\` under repositories.<name>.agent_allowed_to_commit to let coop commit scripted SQL files there)`;
-  return null;
+  const check = sqlscCommitCheck({ folder, allowed: policy.allowed, denied: policy.denied, files: sqlscFolderFiles(repoDir, folder) });
+  return check.ok ? null : check.reason;
 }
 
 /** Split a command string into tokens, honoring single/double quotes. */
@@ -3613,7 +3533,7 @@ const sqlSourceRule: Rule = {
       const git = existsSync(join(where.root, ".git")) ? "" : "git init (a new repository), then ";
       const refused = await session.ask(ctx, {
         kind: "commit-block", tool, label, detail: where.root,
-        question: `SQL source control: set up ${where.root}: ${git}sqlsc init (writes sqlsc.yml, .gitattributes and .gitignore; the dev target comes from the project file). Nothing is committed or pushed. Set it up?`,
+        question: `SQL source control: set up ${where.root}: ${git}sqlsc init (writes sqlsc.yml, .gitattributes and .gitignore; the dev target comes from the project file). Nothing is committed or pushed. If the project file does not yet let coop commit these files, coop then shows you that change to approve on its own. Set it up?`,
         headless: `coop guardrails: blocked ${label}; setting a repository up needs the user's approval, which is unavailable in headless mode.`,
         declined: `coop guardrails: blocked ${label} (you declined).`,
       });
