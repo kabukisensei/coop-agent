@@ -79,6 +79,17 @@ try {
   assertCloneSafe(sqlContext.message.details, "sql details");
   const sqlRecord = sqlContext.message.details.records.find((x) => x.resolution.domain === "sql").resolution;
   assert.equal(sqlRecord.immutable, true); assert.notEqual(sqlRecord.path, sqlRecord.source_path);
+  // QL1: articles already in the model's context are named, not sent again.
+  const inContext = (content) => ({ ...ctx, sessionManager: { buildContextEntries: () => [{ type: "message" }, { type: "custom_message", customType: "coop-standards", content }] } });
+  const again = await handlers.get("before_agent_start")({ prompt: "Implement a stored SQL procedure", systemPrompt: "base" }, inContext(sqlContext.message.content));
+  assert.equal(again.message.customType, "coop-standards");
+  assert.doesNotMatch(again.message.content, /Schema qualify names/);
+  assert.match(again.message.content, /standards for sql are unchanged and already earlier in this conversation/);
+  assert.equal(again.message.details.records.length, sqlContext.message.details.records.length, "the window still sees which standards apply");
+  const compacted = await handlers.get("before_agent_start")({ prompt: "Implement a stored SQL procedure", systemPrompt: "base" }, { ...ctx, sessionManager: { buildContextEntries: () => [] } });
+  assert.match(compacted.message.content, /Schema qualify names/, "after compaction or /new the articles are sent again");
+  const noView = await handlers.get("before_agent_start")({ prompt: "Implement a stored SQL procedure", systemPrompt: "base" }, { ...ctx, sessionManager: { buildContextEntries: () => { throw new Error("x"); } } });
+  assert.match(noView.message.content, /Schema qualify names/, "no view of the context sends the articles");
   writeFileSync(sqlSource, "# MUTATED AFTER CONTEXT");
   // The snapshot the task was pinned to is immutable: mutating the source after
   // the context was built changes neither its bytes nor its hash.

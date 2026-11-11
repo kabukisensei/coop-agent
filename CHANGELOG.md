@@ -52,6 +52,20 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   unchanged: the view edit and each pipeline run ask, production stays blocked.
 
 
+### Changed
+
+- **Simple tasks move faster.** A small change (one file or object, about 20 lines,
+  nothing another object uses dropped or renamed, not production) now takes the
+  quick lane: coop says in one line what it will change and does it, with no
+  separate plan to approve first. A live dev write still asks, and that prompt is
+  the one approval. It still backs up, looks up lineage and checks the standards;
+  it skips the slice template, before-and-after data samples, impact and docs.
+  The standards articles go into the conversation once per session instead of with
+  every prompt (about 7-8K tokens each time), and come back after compaction or a
+  new session. `standards_check` reads a small diff at low effort. Data write
+  rules, destructive and production approvals and desk-only production approvals
+  are unchanged (master plan QL1).
+
 ### Fixed
 
 - **The Standards pane shows the D365 source standards.** coop has given every
