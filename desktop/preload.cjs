@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld("coop", Object.freeze({
   stripSelect: (id) => ipcRenderer.invoke("coop:strip-select", Number(id)),
   stripClose: (id) => ipcRenderer.invoke("coop:strip-close", Number(id)),
   stripNew: () => ipcRenderer.invoke("coop:strip-new"),
+  stripMove: (id, index) => ipcRenderer.invoke("coop:strip-move", Number(id), Number(index)),
   onTabs: listen("coop:tabs"),
   restart: () => ipcRenderer.invoke("coop:restart"),
   setTheme: (theme) => ipcRenderer.invoke("coop:theme", theme),

@@ -19,7 +19,7 @@ import { PiSession } from "./lib/pi-session.mjs";
 import { IMAGE_LIMITS, buildCommand } from "./lib/rpc-commands.mjs";
 import { listSessions, isSessionPath } from "./lib/sessions.mjs";
 import { ownerOf, markOpenElsewhere, SessionArbiter } from "./lib/session-owners.mjs";
-import { MAX_TABS, TAB_STRIP_HEIGHT, afterClose, stripRows, tabFor, tabKey, tabLabel } from "./lib/tabs.mjs";
+import { MAX_TABS, TAB_STRIP_HEIGHT, afterClose, moveTab, stripRows, tabFor, tabKey, tabLabel } from "./lib/tabs.mjs";
 import { consoleProcess } from "./lib/terminal.mjs";
 import { resolveAsset, isAppUrl, CSP, APP_ORIGIN } from "./lib/serve.mjs";
 import { readBranch } from "./lib/git.mjs";
@@ -405,6 +405,16 @@ function closeTab(state) {
   else pushTabs(frame);
 }
 
+/** Put a tab at `index` in its window's strip (a drag, or Ctrl+Shift+PageUp/PageDown); Ctrl+1..9 follow the new order. */
+function placeTab(state, index) {
+  const { frame } = state;
+  const tabs = moveTab(frame.tabs, state, index);
+  if (tabs === frame.tabs) return false;
+  frame.tabs = tabs;
+  pushTabs(frame);
+  return true;
+}
+
 /** Show one tab: only the active tab's view is visible, under the strip. */
 function selectTab(state) {
   const { frame } = state;
@@ -466,6 +476,7 @@ function onTabKey(frame, event, input) {
   event.preventDefault();
   if (action.type === "new") { const result = newTab(frame); if (!result.success && frame.active) send(frame.active, "pi:notice", { level: "warning", message: result.error }); return; }
   if (action.type === "close") { if (frame.active) closeTab(frame.active); return; }
+  if (action.type === "move") { if (frame.active) placeTab(frame.active, frame.tabs.indexOf(frame.active) + action.delta); return; }
   const target = tabFor(action, frame.tabs, frame.active);
   if (target && target !== frame.active) selectTab(target);
 }
@@ -627,6 +638,7 @@ stripHandle("coop:strip-ready", (frame) => {
 stripHandle("coop:strip-select", (frame, id) => { const tab = tabById(frame, id); if (tab) selectTab(tab); return { success: Boolean(tab) }; });
 stripHandle("coop:strip-close", (frame, id) => { const tab = tabById(frame, id); if (tab) closeTab(tab); return { success: Boolean(tab) }; });
 stripHandle("coop:strip-new", (frame) => newTab(frame));
+stripHandle("coop:strip-move", (frame, id, index) => { const tab = tabById(frame, id); if (tab) placeTab(tab, index); return { success: Boolean(tab) }; });
 
 // @ mentions: the folder's file list, read once and kept for 20 seconds.
 async function folderFiles(state, query) {
