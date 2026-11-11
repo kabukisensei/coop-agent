@@ -16,6 +16,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # By hand on a branch: runs every job here, the upgrade and launch acceptance
+  # included (see the installer-upgrade job).
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -232,7 +235,7 @@ jobs:
     # the installer's NSIS script, or the first-launch setup.
     name: installer upgrade (Windows)
     needs: [installer]
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
