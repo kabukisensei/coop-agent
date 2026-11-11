@@ -1708,21 +1708,29 @@ function Get-CoopNearCommand([string]$Word) {
     $b = $name.Length
     if ([Math]::Abs($a - $b) -gt 2) { continue }
     # Edit distance where swapping two neighbouring letters is one edit (`hepl`).
-    $d = New-Object 'int[,]' ($a + 1), ($b + 1)
-    for ($i = 0; $i -le $a; $i++) { $d[$i, 0] = $i }
-    for ($j = 0; $j -le $b; $j++) { $d[0, $j] = $j }
+    # A flat table (row * width + column): Windows PowerShell 5.1 cannot parse a
+    # two-index lookup inside a method call's arguments.
+    $w = $b + 1
+    $d = New-Object 'int[]' (($a + 1) * $w)
+    for ($i = 0; $i -le $a; $i++) { $d[$i * $w] = $i }
+    for ($j = 0; $j -le $b; $j++) { $d[$j] = $j }
     for ($i = 1; $i -le $a; $i++) {
       for ($j = 1; $j -le $b; $j++) {
         $cost = 1
         if ($Word[$i - 1] -ceq $name[$j - 1]) { $cost = 0 }
-        $value = [Math]::Min([Math]::Min($d[($i - 1), $j] + 1, $d[$i, ($j - 1)] + 1), $d[($i - 1), ($j - 1)] + $cost)
+        $value = $d[($i - 1) * $w + $j] + 1
+        $insert = $d[$i * $w + $j - 1] + 1
+        $swap = $d[($i - 1) * $w + $j - 1] + $cost
+        if ($insert -lt $value) { $value = $insert }
+        if ($swap -lt $value) { $value = $swap }
         if ($i -gt 1 -and $j -gt 1 -and $Word[$i - 1] -ceq $name[$j - 2] -and $Word[$i - 2] -ceq $name[$j - 1]) {
-          $value = [Math]::Min($value, $d[($i - 2), ($j - 2)] + 1)
+          $turn = $d[($i - 2) * $w + $j - 2] + 1
+          if ($turn -lt $value) { $value = $turn }
         }
-        $d[$i, $j] = $value
+        $d[$i * $w + $j] = $value
       }
     }
-    $distance = $d[$a, $b]
+    $distance = $d[$a * $w + $b]
     if ($distance -lt $bestDistance) { $bestDistance = $distance; $best = $name }
   }
   $allowed = 1
