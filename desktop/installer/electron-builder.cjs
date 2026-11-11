@@ -34,9 +34,12 @@ module.exports = {
   // default excludes (.git, caches) and the devDependencies.
   files: ["**/*"],
   // D1d: the bundled Node, Pi, extension tree (runtime/) and the coop snapshot
-  // (coop/), plain folders a child node.exe and powershell.exe read.
+  // (coop/), plain folders a child node.exe and powershell.exe read. Only the
+  // runtime's coop-runtime.json rides in the app archive: each runtime folder
+  // ships as its own pack, unpacked straight into place only when it changed
+  // (desktop/scripts/build-installer.mjs stagePacks, resources/installer.nsh coopPack).
   extraResources: [
-    { from: join(__dirname, "runtime"), to: "runtime" },
+    { from: join(__dirname, "runtime"), to: "runtime", filter: ["coop-runtime.json"] },
     { from: join(__dirname, "coop"), to: "coop" },
   ],
   asar: true,

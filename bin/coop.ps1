@@ -1031,10 +1031,16 @@ function Initialize-CoopLaunch {
   # The first interactive launch hands coop-tools COOP_FIRST_RUN=1 so the Start
   # Here menu of common workflows opens once Pi is up; `coop onboard` stays on demand.
   # -Window (`coop desktop`) counts as interactive whatever stdin is.
+  $timing = [System.Diagnostics.Stopwatch]::StartNew()
+  # The standards refresh is a network call that depends on nothing below: it
+  # starts now and is awaited where it always ran.
+  $standardsRefresh = $null
+  if (Test-Have 'node') { $standardsRefresh = Start-CoopStandardsRefresh }
   Set-CoopFirstRunLaunch -Window:$Window
 
   # Guard against launching into a known-broken extension load (agent/extension skew).
   Invoke-CoopLaunchPreflight
+  Write-CoopLaunchTiming 'extension check' $timing
 
   # A terminal launch never runs the account's setup (it takes minutes); the
   # window's first launch or `coop update` does. Say so when this package's
@@ -1062,6 +1068,7 @@ function Initialize-CoopLaunch {
   # The window shows this as a notice (its console closes); the terminal prints it
   # just before Pi starts (Invoke-CoopPiProcess).
   if ($Window) { Write-CoopSeveralContractsWarning (Get-Location).Path }
+  Write-CoopLaunchTiming 'client folder and project file' $timing
   # F3: on a machine install, the lines about an update that installed since this account's last launch, or one waiting (console and the window's notices).
   Write-CoopUpdateLines
   # coop at Windows sign-in: on by default on a machine install, once, unless this account opted out.
@@ -1070,6 +1077,7 @@ function Initialize-CoopLaunch {
   Invoke-CoopDailyCleanup
   # The window's first launch wrote the profile with the account's name: say so once.
   if ($Window) { Write-CoopProfileDefaultedLine }
+  Write-CoopLaunchTiming 'update lines, sign-in startup and daily cleanup' $timing
   $mcpState = Update-CoopManagedMcpConfig -Quiet
   if ($mcpState -eq 'failed') {
     Coop-Warn 'could not refresh the MCP config for this folder; run: coop sync   (from this folder)'
@@ -1081,19 +1089,25 @@ function Initialize-CoopLaunch {
     if ((Update-CoopManagedMcpConfig -OutputPath $folderConfig -ExistingPath $shared -Quiet) -eq 'ok') { $script:CoopMcpConfig = $folderConfig }
   }
 
+  Write-CoopLaunchTiming 'MCP config for this folder' $timing
   # Once-a-day fleet-staleness nudge: warn when this checkout is behind the next
   # release tag (throttled fetch, bounded wait — never blocks or fails the launch).
   Invoke-CoopUpdateNudge
+  Write-CoopLaunchTiming 'update nudge' $timing
 
   # Bounded, noninteractive and fail-soft. Native stderr is suppressed so
   # PowerShell 5.1 cannot turn an offline credential diagnostic into a launch error.
-  if (Test-Have 'node') {
+  if ($standardsRefresh) {
+    Wait-CoopStandardsRefresh $standardsRefresh
+  } elseif (Test-Have 'node') {
     try { & node (Join-Path $script:CoopRoot 'lib\standards-cli.mjs') refresh 2>$null | Out-Null } catch { }
   }
   # F2: one line the first time this user's launches read the standards from this machine.
   Write-CoopStandardsPlaceNote
+  Write-CoopLaunchTiming 'standards refresh' $timing
 
   Invoke-CoopAzPreflight
+  Write-CoopLaunchTiming 'Azure sign-in check' $timing
 }
 
 function Invoke-LaunchPi {
@@ -1188,6 +1202,11 @@ function Invoke-CoopLaunchSpec {
 # sign-ins, exactly as the terminal install), then opens the window.
 function Invoke-CoopDesktop {
   param([string[]] $DesktopArgs = @())
+  # PowerShell's own start and loading coop's scripts, from the process start.
+  try {
+    $since = [int]((Get-Date) - [System.Diagnostics.Process]::GetCurrentProcess().StartTime).TotalMilliseconds
+    if ($env:COOP_BOOT_LOG) { [System.IO.File]::AppendAllText($env:COOP_BOOT_LOG, ((Get-Date -Format 'HH:mm:ss') + " timing: PowerShell start and loading coop $since ms`r`n")) }
+  } catch { }
   $usage = 'usage: coop desktop [folder] [--print-spec] [--app <exe>]'
   $folder = ''
   $printSpec = $false
@@ -1213,6 +1232,7 @@ function Invoke-CoopDesktop {
   # The project contract, tenant and Microsoft skill selection are read from here.
   Set-Location -LiteralPath $cwd
   if (-not $appExe -and $script:CoopWindowExe) { $appExe = $script:CoopWindowExe }
+  $setupWatch = [System.Diagnostics.Stopwatch]::StartNew()
   if (-not $printSpec -and (Test-CoopBundledSetupPending) -and -not (Test-CoopBundledToolsPending)) {
     # A new version with the tool pins this account already has (most releases):
     # the extensions and settings are refreshed, nothing is reinstalled, and the
@@ -1221,6 +1241,7 @@ function Invoke-CoopDesktop {
     Coop-Info 'the tool pins are the ones already installed here, so only the extensions and settings are refreshed; the window opens once that finishes'
     Set-CoopSetupPhase 1 1 "Refreshing this account for coop $($script:CoopVersion)" 'the extensions and settings; the tools installed here are already current'
     $setupRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\sync.ps1')
+    Reset-CoopLaunchPiVersion
     if ($setupRc -ne 0) {
       Coop-Warn ('the refresh did not finish (the lines above say why; they are also in ' + (Join-Path (Get-CoopProfileDir) 'desktop\launch.log') + '). The window opens anyway; the next launch tries again, or run: coop doctor')
     } else {
@@ -1242,6 +1263,7 @@ function Invoke-CoopDesktop {
     }
     Set-CoopSetupPhase 0 8 "Setting up coop $($script:CoopVersion) for this account" 'starting the setup'
     $setupRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\install.ps1') @('--prereqs', 'auto', '--unattended')
+    Reset-CoopLaunchPiVersion
     if ($setupRc -ne 0) {
       # Not the end of the launch (the dev VM, 2026-10-20: three tool installs
       # failed and the window never opened, with the reason in a console that
@@ -1254,6 +1276,7 @@ function Invoke-CoopDesktop {
       Set-CoopBundledSetupDone
     }
   }
+  if (-not $printSpec) { Write-CoopLaunchTiming 'account setup for this version (none when already done)' $setupWatch }
   if ($env:COOP_BOOT_STATUS -and $env:COOP_BOOT_PHASE) { Set-CoopSetupPhase 0 0 'Opening the coop window' 'the launch checks and the Warehouse sign-in' }
   if (-not (Test-Have 'pi')) { Coop-Die 'pi is not installed. Run: coop install   (installs the release''s tested Pi)' }
   # The window starts node directly (no shell), so on Windows only node.exe will do.
@@ -1269,7 +1292,9 @@ function Invoke-CoopDesktop {
   if (-not $printSpec) {
     Initialize-CoopLaunch -Window
     Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue
+    $tokenWatch = [System.Diagnostics.Stopwatch]::StartNew()
     $token = Get-CoopFabricMcpToken
+    Write-CoopLaunchTiming 'Warehouse token' $tokenWatch
   }
   [void](Set-CoopProjectYmlEnv)
   [void](Set-CoopClientFolderEnv)

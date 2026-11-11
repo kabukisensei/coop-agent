@@ -281,7 +281,17 @@ function Invoke-CoopAutoUpdate {
         Unblock-File -LiteralPath $exe -ErrorAction SilentlyContinue
         # NSIS reads /D only as the last argument and without quotes. --updated
         # keeps the shortcuts and pins of the version being replaced (see above).
-        $p = Start-Process -FilePath $exe -ArgumentList @('/S', '/allusers', '--updated', "/D=$app") -Wait -PassThru
+        # %ProgramData%\coop\updating.json while the installer runs: a "coop"
+        # shortcut clicked meanwhile shows "coop is updating" and opens coop
+        # when it finishes, instead of looking uninstalled (desktop/lib/bootstrap.mjs
+        # updateInProgress).
+        $updating = Join-Path $machine 'updating.json'
+        try { [System.IO.File]::WriteAllText($updating, (ConvertTo-Json -Compress -InputObject ([ordered]@{ version = $latest; started = (Get-Date).ToUniversalTime().ToString('o') }))) } catch { }
+        try {
+          $p = Start-Process -FilePath $exe -ArgumentList @('/S', '/allusers', '--updated', "/D=$app") -Wait -PassThru
+        } finally {
+          Remove-Item -LiteralPath $updating -Force -ErrorAction SilentlyContinue
+        }
         $exitProblem = Get-CoopInstallerExitProblem $p.ExitCode $machine
         if ($exitProblem) { throw $exitProblem }
         $now = ''

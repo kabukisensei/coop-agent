@@ -223,6 +223,11 @@ async function main(argv) {
     // stray file proves the rest still goes.
     const strayFile = join(machine.installDir, "upgrade-acceptance-stray.txt");
     writeFileSync(strayFile, "left by the upgrade acceptance; the upgrade removes it\n");
+    // Faster updates: the runtime packs this build already unpacked are kept
+    // (their markers name the same content), so they are not written again.
+    const runtimeInfo = JSON.parse(readFileSync(join(machine.runtime, "coop-runtime.json"), "utf8"));
+    const packs = Array.isArray(runtimeInfo.packs) ? runtimeInfo.packs : [];
+    const packsBefore = packs.map((p) => [p.dir, join(machine.runtime, p.dir, ".coop-pack")]).filter(([, f]) => existsSync(f)).map(([dir, f]) => [dir, f, statSync(f).mtimeMs]);
     let exeMissing = 0;
     const exeWatch = setInterval(() => { if (!existsSync(machine.exe)) exeMissing++; }, 500);
     try {
@@ -230,6 +235,11 @@ async function main(argv) {
     } finally {
       clearInterval(exeWatch);
     }
+    if (!packs.length || packsBefore.length !== packs.length) throw new Error(`this build's runtime packs were not all in place before it installed over itself (${packsBefore.length} of ${packs.length} markers)`);
+    for (const [dir, file, before] of packsBefore) {
+      if (!existsSync(file) || statSync(file).mtimeMs !== before) throw new Error(`installing over this build unpacked resources\\runtime\\${dir} again instead of keeping it`);
+    }
+    step("A. installing over this build keeps every unchanged runtime pack in place (nothing re-unpacked)", `${packsBefore.length} pack(s): ${packsBefore.map(([dir]) => dir).join(", ")} (${seconds}s)`);
     if (exeMissing) throw new Error(`coop.exe was missing ${exeMissing} time(s) while this build installed over itself (a taskbar pin would be dropped)`);
     if (existsSync(strayFile)) throw new Error("installing over this build left a file of the previous install in place");
     step("A. installing over this build keeps coop.exe in place throughout and removes the previous files");

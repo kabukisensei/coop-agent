@@ -21,12 +21,12 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { bootstrapProcess, bundledCoop, consoleTail, doctorReport, findCoop, folderArgument, launcherPath, packagedPaths, packagedRuntime } from "../desktop/lib/bootstrap.mjs";
+import { bootstrapProcess, bundledCoop, consoleTail, doctorReport, findCoop, folderArgument, launcherPath, packagedPaths, packagedRuntime, updateInProgress, updateWaitProcess } from "../desktop/lib/bootstrap.mjs";
 import { consoleProcess } from "../desktop/lib/terminal.mjs";
 import { formatElapsed, parseSetupStatus, setupView } from "../desktop/lib/setup-status.mjs";
 import { APP_ID, taskbarDetails } from "../desktop/lib/app-identity.mjs";
 import { loadSettings, saveSettings } from "../desktop/lib/settings.mjs";
-import { DOWNLOAD_HOSTS, NODE_SHIMS_DROPPED, PIPX_SHIM, bundledDownloads, fetchSourcedWheel, gitForWindowsTag, hasWheel, sourcedWheelUrl, longestPath, nodeDownload, prefixPackages, pythonToolSources, pythonToolSpecs, prunable, pruneTree, readVersion, runtimeMarker, shellInvocation, shippedPackage, snapshotIncludes, stage, stageEntries, stagePackage } from "../desktop/scripts/build-installer.mjs";
+import { DOWNLOAD_HOSTS, NODE_SHIMS_DROPPED, PACK_CHECKS, listFiles, packIdentity, packName, packsNsh, stagePacks, PIPX_SHIM, bundledDownloads, fetchSourcedWheel, gitForWindowsTag, hasWheel, sourcedWheelUrl, longestPath, nodeDownload, prefixPackages, pythonToolSources, pythonToolSpecs, prunable, pruneTree, readVersion, runtimeMarker, shellInvocation, shippedPackage, snapshotIncludes, stage, stageEntries, stagePackage } from "../desktop/scripts/build-installer.mjs";
 import { UPDATE_TASK, assertDisposableInstallerHost, nsisInvocation, packagePaths, pathHasEntry } from "../desktop/scripts/verify-installer.mjs";
 import { verifiedInstaller } from "../desktop/scripts/check-installer-report.mjs";
 
@@ -321,9 +321,118 @@ await check("electron-builder: NSIS per-machine with elevation (F3), data kept, 
   assert.equal(config.directories.app, join(ROOT, "desktop", "installer", "stage"));
   // D1d: the runtime and the coop snapshot ride beside the asar as plain folders.
   assert.deepEqual(config.extraResources, [
-    { from: join(ROOT, "desktop", "installer", "runtime"), to: "runtime" },
+    { from: join(ROOT, "desktop", "installer", "runtime"), to: "runtime", filter: ["coop-runtime.json"] },
     { from: join(ROOT, "desktop", "installer", "coop"), to: "coop" },
   ]);
+});
+
+await check("update indicator: a shortcut clicked while an update installs shows \"coop is updating\" and reopens coop after", () => {
+  const now = Date.parse("2026-11-11T16:00:00Z");
+  const record = join("C:\\ProgramData", "coop", "updating.json");
+  const files = { [record]: JSON.stringify({ version: "0.41.0", started: "2026-11-11T15:55:00Z" }) };
+  const opts = (f) => ({ programData: "C:\\ProgramData", exists: (p) => p in f, read: (p) => f[p], now });
+  assert.deepEqual(updateInProgress(opts(files)), { version: "0.41.0" });
+  // No record, a stale one (a run that was cut off), a future one, or junk: no update.
+  assert.equal(updateInProgress(opts({})), null);
+  assert.equal(updateInProgress(opts({ [record]: JSON.stringify({ version: "0.41.0", started: "2026-11-11T12:00:00Z" }) })), null);
+  assert.equal(updateInProgress(opts({ [record]: JSON.stringify({ version: "0.41.0", started: "2026-11-11T17:00:00Z" }) })), null);
+  assert.equal(updateInProgress(opts({ [record]: "not json" })), null);
+  assert.deepEqual(updateInProgress(opts({ [record]: JSON.stringify({ version: "x; rm", started: "2026-11-11T15:59:00Z" }) })), { version: "" });
+  assert.equal(updateInProgress({ programData: "" }), null);
+  const env = { SystemRoot: "C:\\Windows", PATH: "C:\\x" };
+  const wait = updateWaitProcess({ app: "C:\\Program Files\\coop\\coop.exe", version: "0.41.0", folder: "C:\\work\\client", env });
+  assert.equal(wait.command, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+  assert.equal(wait.options.env.COOP_WAIT_EXE, "C:\\Program Files\\coop\\coop.exe");
+  assert.equal(wait.options.env.COOP_WAIT_VERSION, "0.41.0");
+  assert.equal(wait.options.env.COOP_WAIT_FOLDER, "C:\\work\\client");
+  assert.equal(wait.options.cwd, "C:\\Windows", "nothing in the install folder is held open");
+  assert.equal(wait.options.detached, true);
+  const script = Buffer.from(wait.args[wait.args.indexOf("-EncodedCommand") + 1], "base64").toString("utf16le");
+  assert.match(script, /coop\\updating\.json/);
+  assert.match(script, /coop is updating/);
+  assert.match(script, /Start-Process -FilePath \$env:COOP_WAIT_EXE/);
+  assert.doesNotMatch(script, /C:\\Program Files/, "paths travel in the environment, not the script");
+  assert.equal(updateWaitProcess({ app: "C:\\coop\\coop.exe", version: "bad", env }).options.env.COOP_WAIT_VERSION, "");
+  assert.throws(() => updateWaitProcess({ app: "relative.exe", env }), /absolute/);
+  // The CI warm-start check reads each launch step's time from the launch log.
+  const common = readFileSync(join(ROOT, "lib", "common.ps1"), "utf8");
+  assert.match(common, /function Write-CoopLaunchTiming[\s\S]*"timing: \$Step \$ms ms"[\s\S]*COOP_BOOT_LOG/);
+  const coopPs = readFileSync(join(ROOT, "bin", "coop.ps1"), "utf8");
+  for (const name of ["extension check", "standards refresh", "Azure sign-in check", "Warehouse token", "PowerShell start and loading coop"]) assert.ok(coopPs.includes(name), `coop.ps1 times the ${name}`);
+  // The launch asks Pi's version once, and the standards refresh runs beside the other checks.
+  assert.equal((common.match(/-PiVersion \(Get-CoopLaunchPiVersion\)\) \{ return \$true \}/g) || []).length, 2, "both setup checks share the launch's one `pi --version`");
+  assert.equal((coopPs.match(/Invoke-CoopScript \(Join-Path \$script:CoopRoot 'scripts\\(sync|install)\.ps1'\)[^\n]*\r?\n    Reset-CoopLaunchPiVersion/g) || []).length, 2, "the setup that can move Pi makes the launch ask its version again");
+  assert.match(coopPs, /\$standardsRefresh = Start-CoopStandardsRefresh[\s\S]*Invoke-CoopLaunchPreflight[\s\S]*Wait-CoopStandardsRefresh \$standardsRefresh[\s\S]*Write-CoopStandardsPlaceNote/, "the refresh starts first and is awaited where it always ran");
+  // auto-update.ps1 writes the record around the installer and always removes it.
+  const auto = readFileSync(join(ROOT, "scripts", "auto-update.ps1"), "utf8");
+  assert.match(auto, /\$updating = Join-Path \$machine 'updating\.json'[\s\S]*try \{\s+\$p = Start-Process[\s\S]*\} finally \{\s+Remove-Item -LiteralPath \$updating/);
+  // main.mjs checks before anything else in the packaged bootstrap and quits.
+  const main = readFileSync(join(ROOT, "desktop", "main.mjs"), "utf8");
+  const boot = main.split("async function bootstrap() {")[1];
+  assert.ok(boot.indexOf("updateInProgress()") < boot.indexOf("findCoop("), "the update check runs first");
+  // The upgrade's uninstaller keeps Electron's files and app.asar so coop.exe can start meanwhile.
+  const nsh = readFileSync(join(ROOT, "desktop", "installer", "resources", "installer.nsh"), "utf8");
+  const remove = nsh.split("!macro customRemoveFiles")[1].split("!macroend")[0];
+  assert.match(remove, /\$R8 == "locales"[\s\S]*\.dll[\s\S]*\.pak[\s\S]*keeping \$R8/);
+  assert.match(nsh.split("!macro coopRemoveResources")[1].split("!macroend")[0], /\$R6 != "app\.asar"/);
+});
+
+// --- runtime packs (faster updates) -------------------------------------------------
+await check("packs: each runtime folder is one pack with a content id; packs.nsh lists them; only coop-runtime.json rides in the app archive", async () => {
+  const temp = mkdtempSync(join(tmpdir(), "coop-packs-"));
+  try {
+    const runtime = join(temp, "runtime");
+    mkdirSync(join(runtime, "az", "bin"), { recursive: true });
+    mkdirSync(join(runtime, "python-wheels"), { recursive: true });
+    writeFileSync(join(runtime, "az", "bin", "az.cmd"), "@echo az\r\n");
+    writeFileSync(join(runtime, "az", "b.txt"), "b");
+    writeFileSync(join(runtime, "python-wheels", "x-1.0-py3-none-any.whl"), "w");
+    writeFileSync(join(runtime, "coop-runtime.json"), JSON.stringify({ schema: 1, node: { dir: "node" } }));
+    assert.deepEqual(listFiles(join(runtime, "az")), ["b.txt", "bin/az.cmd"]);
+    const a = packIdentity(join(runtime, "az"));
+    assert.match(a.id, /^[0-9a-f]{16}$/);
+    assert.equal(a.files, 2);
+    assert.equal(a.check, PACK_CHECKS.az);
+    // Same content, same id (a release that moved no pin keeps the folder); any change, a new id.
+    assert.equal(packIdentity(join(runtime, "az")).id, a.id);
+    writeFileSync(join(runtime, "az", "b.txt"), "c");
+    assert.notEqual(packIdentity(join(runtime, "az")).id, a.id);
+    // A folder with no known check file uses its first file.
+    assert.equal(packIdentity(join(runtime, "python-wheels")).check, "x-1.0-py3-none-any.whl");
+    assert.throws(() => packName("bad name"), /pack name/);
+    const packed = [];
+    const nsh = join(temp, "packs.nsh");
+    const packs = await stagePacks({ runtimeDir: runtime, packsDir: join(temp, "packs"), nshFile: nsh, pack: async (file, dir) => { packed.push([file, dir]); writeFileSync(file, "7z"); } });
+    assert.deepEqual(packs.map((p) => p.dir), ["az", "python-wheels"]);
+    assert.deepEqual(packed.map(([, dir]) => dir), [join(runtime, "az"), join(runtime, "python-wheels")]);
+    const marker = JSON.parse(readFileSync(join(runtime, "coop-runtime.json"), "utf8"));
+    assert.equal(marker.node.dir, "node", "the marker keeps what it had");
+    assert.deepEqual(marker.packs.map((p) => [p.dir, p.id, p.files, p.check]), packs.map((p) => [p.dir, p.id, p.files, p.check]));
+    const text = readFileSync(nsh, "utf8");
+    assert.equal(text, packsNsh(packs));
+    assert.match(text, /!macro coopUnpackRuntime\r\n  !insertmacro coopPack "az" "[0-9a-f]{16}" "2" "bin\\az\.cmd" "[^"]+az\.7z"\r\n/);
+    assert.match(text, /!macro coopIsPack NAME OUT[\s\S]*\$\{if\} \$\{NAME\} == "python-wheels"/);
+    // The runtime folder stays whole for the CI steps that run the staged Pi.
+    assert.ok(existsSync(join(runtime, "az", "bin", "az.cmd")));
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+  const nsh = readFileSync(join(ROOT, "desktop", "installer", "resources", "installer.nsh"), "utf8");
+  // packs.nsh is required (a build without it stops), and unpacked before the machine step.
+  assert.match(nsh, /^!include "packs\.nsh"$/m);
+  const customInstall = nsh.split("!macro customInstall")[1].split("!macroend")[0];
+  assert.ok(customInstall.indexOf("!insertmacro coopUnpackRuntime") > 0 && customInstall.indexOf("!insertmacro coopUnpackRuntime") < customInstall.indexOf("machine-install.ps1"), "the packs are in place before machine-install.ps1 runs the ODBC installers");
+  assert.match(customInstall, /\$coopPackFailed == "yes"[\s\S]*SetErrorLevel 4/);
+  // A pack is kept only when its marker names this build's id and its check file is there; the marker is written after the unpack.
+  const pack = nsh.split("!macro coopPack DIR ID FILES CHECK FILE")[1].split("!macroend")[0];
+  assert.match(pack, /\\\.coop-pack"[\s\S]*\$\{CHECK\}"[\s\S]*\$\{if\} \$R6 == "\$\{ID\}"/);
+  assert.match(pack, /RMDir \/r "\$INSTDIR\\resources\\runtime\\\$\{DIR\}"[\s\S]*Nsis7z::Extract[\s\S]*FileWrite \$R5 "\$\{ID\}"/);
+  assert.match(pack, /SetCompress off[\s\S]*File "\/oname=\$PLUGINSDIR\\coop-pack\.7z" "\$\{FILE\}"/);
+  // An upgrade's uninstaller keeps marked runtime folders (and coop.exe); a real uninstall removes the folder whole.
+  const remove = nsh.split("!macro customRemoveFiles")[1].split("!macroend")[0];
+  assert.match(remove, /\$\{if\} \$\{isUpdated\}[\s\S]*\$R8 == "resources"[\s\S]*coopRemoveResources[\s\S]*\$\{else\}\s+RMDir \/r \$INSTDIR/);
+  const keep = nsh.split("!macro coopRemoveResources")[1].split("!macroend")[0];
+  assert.match(keep, /\$R6 == "runtime"[\s\S]*\\\.coop-pack"[\s\S]*keeping/);
 });
 
 // --- the bundled runtime (D1d) ----------------------------------------------------
