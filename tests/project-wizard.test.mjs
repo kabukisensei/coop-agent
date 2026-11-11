@@ -63,8 +63,7 @@ const t = async (name, fn) => {
 // behavior is intentional and preserved. Wizard tests therefore SKIP — loudly,
 // naming the foreign marker — when a foreign `.git` or `.coop/project.yml`
 // exists between the fixture and the tmp root. Sandbox session scaffolding
-// seeds exactly such markers into TMPDIR; see tests/repro-tmp-contamination.sh
-// for a deterministic reproducer. Fixtures are tracked and removed afterward:
+// seeds exactly such markers into TMPDIR. Fixtures are tracked and removed afterward:
 // this file never deletes anything it did not create.
 const fixtureRoots = [];
 const trackFixture = (dir) => { fixtureRoots.push(dir); return dir; };

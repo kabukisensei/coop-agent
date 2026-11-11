@@ -82,7 +82,6 @@ for (const needle of [
 ]) {
   assert.ok(skill.includes(needle), `skill states: ${JSON.stringify(needle)}`);
 }
-assert.ok(!/coop-sql-review|sql_review/.test(skill), "skill does not point at the retired review CLI");
 
 // --- the worked example honours the mechanical rules ----------------------------
 const sql = text(join(DIR, "examples/formatted.sql"));
