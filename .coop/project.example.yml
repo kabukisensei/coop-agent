@@ -186,6 +186,8 @@ sql_targets:
 #         TargetSchema: "{silver_schema}"
 #         TargetTable: "{table}"
 #   never_run: []                      # parent pipelines that process every table
+#   notes: ""                          # how this client's Schema Manager variant differs
+#                                      # (no commented lines, one combined pipeline, ...)
 #   environments:                      # where the pipelines run
 #     dev:
 #       workspace: "TODO: Fabric workspace name or id"

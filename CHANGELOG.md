@@ -16,6 +16,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   (nothing said yet) still loads the session in place, and a full window loads
   it in the current tab.
 
+### Changed
+
+- **Adding Silver columns follows each client's own Schema Manager.** The
+  `add-silver-columns` skill now treats commented view lines plus two pipelines as
+  the default flow only. A new optional `warehouse_manager.notes` field records how a
+  client's variant differs, and when the live setup does not match, coop plans from
+  that client's own steps (or asks) instead of forcing the default.
+
 ## [0.41.0] — 2026-11-11
 
 ### Added

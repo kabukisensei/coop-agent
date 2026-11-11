@@ -8,10 +8,14 @@ description: "Add source columns missing from Silver via the Schema Manager: Bro
 ## When to use
 
 The user names source tables and columns that exist in the source export but not yet
-in Silver ("add taxgroup and bankaccount to custtable in dev"). Each table already has
-a generated Bronze view whose SELECT carries the extra columns as commented-out lines,
-and a Silver table that the client's Schema Manager (data warehouse manager) generates
-and loads. Run it inside `coop-workflow`.
+in Silver ("add taxgroup and bankaccount to custtable in dev"). The client's Schema
+Manager (data warehouse manager) generates and loads each Silver table. Run it inside
+`coop-workflow`.
+
+Each client runs its own variant of the Schema Manager. The default flow below
+(commented-out column lines in a generated Bronze view, one regenerate pipeline, one
+reload pipeline) is one variant, not a rule. This client's file (`warehouse_manager`,
+including `notes`) and what step 1 reads live decide the steps.
 
 Not for: new tables, new Bronze views, type or logic changes, Gold objects or models.
 Never redesign the Schema Manager (no new config tables or inclusion parameters) unless
@@ -22,7 +26,8 @@ the user asks for that.
 Read `warehouse_manager` in `.coop/project.yml` (the example contract documents every
 key). It names the Bronze database and view schemas, the Silver database, the two
 single-table pipelines and their parameters, parent pipelines never to run, and the
-workspace or Data Factory per environment. Parameter values may hold placeholders:
+workspace or Data Factory per environment, and `notes` (how this client's variant
+differs from the default flow, in the client's own words). Parameter values may hold placeholders:
 `{table}`, `{bronze_database}`, `{bronze_schema}`, `{silver_database}`,
 `{silver_schema}` (the Bronze view's schema when `silver.schema` is empty), `{run_id}`
 (one new UUID per table) and `{lookup}` (read the value from the client's own metadata
@@ -32,6 +37,12 @@ The block is missing or has blanks: discover read-only (workspace items, pipelin
 definitions, view schemas), show the user the block you would write, and edit the
 contract only with their yes (or point them to `/setup-project`). Never take values
 from another client, a remembered pilot or a different environment.
+
+The client's flow differs from the default (`notes` says so, the view has no commented
+column lines, the generator also loads, or a step is a notebook or procedure rather
+than a pipeline): do not force the default. Describe what you found, build the plan
+from this client's own steps, and offer to record them in `notes` (with the user's yes).
+Unsure how a step works: ask before any write.
 
 ## Environment
 
@@ -63,8 +74,9 @@ follows (view diff, both pipelines with resolved parameters, checks), and say so
 ### 2. One plan, one approval
 
 Present, per table: the exact view diff, both pipeline runs with every resolved
-parameter (names and ids), and the checks. State plainly that regeneration drops and
-recreates the table and that it stays empty until the reload succeeds, that downstream
+parameter (names and ids), and the checks. State plainly what regeneration does as step
+1 found it (when it drops and recreates the table, say it stays empty until the reload
+succeeds), that downstream
 Gold objects and models are not refreshed, and the stop triggers below. One approval
 covers the listed tables only; the guardrails still ask at each write.
 
