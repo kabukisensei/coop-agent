@@ -76,6 +76,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **A dev Warehouse write is no longer titled PRODUCTION because its SQL mentions
+  "prod".** The approval question for a write on a Warehouse the project file
+  labels dev or test took the word PRODUCTION from the SQL's own text (a temp
+  table named `#prod_check`, a comment), while coop's rules had already confirmed
+  the target as dev. The question now names the target it resolved ("target: dev
+  Warehouse <name> (the project file labels it dev)") and, when the SQL mentions
+  prod, adds one line asking you to check it writes only to that target. Nothing
+  is loosened: an unlabelled target is still production, such a write still asks
+  every time and is still answered at the desk.
+
 - **The Standards pane shows the D365 source standards.** coop has given every
   SQL, DAX and model task the Dynamics 365 Source Systems articles since v0.39.2,
   but the window's Standards pane never listed them. It now has a D365 source tab

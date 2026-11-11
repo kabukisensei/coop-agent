@@ -2213,6 +2213,28 @@ export function managedSqlEnvironment(deps: LiveReadResolverDeps): string {
   } catch { return ""; }
 }
 
+/** Where a confirmed dev/test Warehouse write lands, for its approval question:
+ *  the environment and the Warehouse name from coop's trusted config (the managed
+ *  entry's item, or the project file's sql_targets database for the native
+ *  executor). A call's own words never feed it (2026-11-11: a dev write whose SQL
+ *  mentioned "prod" was titled a PRODUCTION call while the config said dev). */
+export function sqlWriteTargetText(event: any, deps: LiveReadResolverDeps, contract: ContractSqlScope | null, environment: string): string {
+  const target = effectiveMutationTarget(event);
+  const name = target.innerTool || target.outerTool;
+  let item: string | null = null;
+  if (name === FABRIC_SQL_FALLBACK_TOOL && contract?.configured) {
+    const requested = event?.input?.environment;
+    const entry = requested === undefined ? contract.target : typeof requested === "string" ? contract.entries?.[requested] ?? null : null;
+    item = strictResolvedText(entry?.database);
+  } else {
+    try {
+      const mcp = JSON.parse(deps.readText(managedMcpConfigPath(deps.agentDir)));
+      item = strictResolvedText(mcp?.mcpServers?.[MANAGED_SQL_SERVER]?._coop_target?.item_name);
+    } catch { item = null; }
+  }
+  return `${environment} Warehouse${item ? ` ${item}` : ""} (the project file labels it ${environment})`;
+}
+
 /** Why coop cannot confirm a Warehouse write's target as dev or test, and what the
  *  person does about it, for the refusal (2026-10-07: a teammate who opened coop in
  *  the folder above the project repository saw only "Production writes are
@@ -3803,12 +3825,20 @@ const mcpRule: Rule = {
       `  row limit: ${decision.scope.resultLimit}`,
       `  time limit: ${decision.scope.timeoutMs} ms`,
     ].join("\n") : "";
+    // A write that reaches this question is on a target coop's config confirms as
+    // dev or test (anything else took the production permit above), so it is
+    // titled with that target, never "PRODUCTION" from the SQL's own words. Those
+    // words still keep the session option off and earn a line to check them: a
+    // three-part name can reach another database.
+    const writeTarget = mayWrite ? `\n  target: ${sqlWriteTargetText(event, session.liveReadDeps, contract, writeEnvironment)}` : "";
+    const mentionsProd = mayWrite && PRODUCTION_WORD.test(callSqlText(event))
+      ? "\nThe SQL mentions prod: check it writes only to this target, not to another database." : "";
     const prompt = decision.kind === "ddl-dml-destructive"
       ? sqlEditKey
-        ? `Warehouse SQL write (one INSERT, UPDATE, CREATE or ALTER):\n  ${decision.label}\nDeletes, drops, merges, EXEC, batches and production always ask. Run it?`
-        : `${production ? "PRODUCTION " : ""}Warehouse SQL mutation/DDL call:\n  ${decision.label}\nDDL, DML, destructive SQL, EXEC, and batches require separate explicit approval. Run it?`
+        ? `Warehouse SQL write (one INSERT, UPDATE, CREATE or ALTER):\n  ${decision.label}${writeTarget}\nDeletes, drops, merges, EXEC, batches and production always ask. Run it?`
+        : `Warehouse SQL mutation/DDL call:\n  ${decision.label}${writeTarget}${mentionsProd}\nDDL, DML, destructive SQL, EXEC, and batches require separate explicit approval. Run it?`
       : decision.kind === "ambiguous-sql"
-        ? `Ambiguous Warehouse SQL call:\n  ${decision.label}\nOnly one plain read statement runs without asking. Run this call once?`
+        ? `Ambiguous Warehouse SQL call:\n  ${decision.label}${writeTarget}${mentionsProd}\nOnly one plain read statement runs without asking. Run this call once?`
         : `${production ? "PRODUCTION " : ""}row-level data read:\n  ${decision.label}\n${scopeSummary ? `${scopeSummary}\n` : ""}${sessionGrant ? "Approve this exact bounded scope for this session?" : "Read these rows once?"}`;
     const refused = await session.ask(ctx, {
       title: "coop live-data guardrail", kind: "mcp-confirm", tool: "governed-live-read", label: auditLabel, detail: decision.kind || "live-read",

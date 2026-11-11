@@ -1325,6 +1325,30 @@ const sqlRead = (sql = "SELECT TOP (25) customer_id FROM dbo.Customer", extra = 
   input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify({ query: sql, ...extra }) },
 });
 
+await t("a dev Warehouse write whose SQL mentions prod is titled with its dev target, not PRODUCTION (2026-11-11)", async () => {
+  writeManagedTarget({ environment: "dev", item_name: "DevWarehouse" });
+  process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmAnswer = true; confirmCount = 0; lastConfirm = ""; inputCount = 0;
+  const batch = "CREATE TABLE #prod_check (a int); INSERT INTO #prod_check VALUES (1); DROP TABLE #prod_check;";
+  assert.equal(blocked(await handle(sqlRead(batch), liveCtx)), false);
+  assert.equal(inputCount, 0, "a confirmed dev target takes no production permit");
+  assert.equal(confirmCount, 1, "the batch still asks");
+  assert.doesNotMatch(lastConfirm, /PRODUCTION/);
+  assert.match(lastConfirm, /target: dev Warehouse DevWarehouse \(the project file labels it dev\)/);
+  assert.match(lastConfirm, /The SQL mentions prod: check it writes only to this target/);
+  confirmCount = 0; lastConfirm = "";
+  assert.equal(blocked(await handle(sqlRead("CREATE TABLE #t (a int); DROP TABLE #t;"), liveCtx)), false);
+  assert.doesNotMatch(lastConfirm, /mentions prod/);
+  // An unlabelled target is still production: the permit, never this question.
+  writeManagedTarget({ environment: "" });
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  confirmCount = 0; inputCount = 0; inputAnswer = undefined;
+  assert.equal(blocked(await handle(sqlRead("CREATE TABLE #t (a int); DROP TABLE #t;"), liveCtx)), true);
+  assert.equal(confirmCount, 0, "no ordinary yes/no for an unlabelled target");
+  writeManagedTarget();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+});
 await t("a production read asks once, then the session is covered; a forged scope is ignored (Aaron, 2026-11-10)", async () => {
   writeManagedTarget();
   process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
