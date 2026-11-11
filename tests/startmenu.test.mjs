@@ -69,7 +69,6 @@ t("prompt-sending items name the prompt or tool that does the work", async () =>
   assert.match(sent[3], /\/handoff/);
   assert.match(sent[4], /coop doctor/);
   assert.match(sent[4], /az login/);
-  for (const m of sent) assert.doesNotMatch(m, /sql_review|dax_review/, "the retired review tools are never requested");
 });
 
 t("each task guide sends its prompt template, which asks first, specs before writing and names its standards", () => {

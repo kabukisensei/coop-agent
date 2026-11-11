@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# coop init --seed-docs (issue #25): lib/_seeddocs.py classification, then the
-# bin/coop.ps1 flow against a shimmed coop-data-doc (tests/fixtures/seeddocs.test.ps1,
-# driven through pwsh; master plan S1 retired the bash dispatcher). Fully offline.
+# coop init --seed-docs (issue #25): lib/_seeddocs.py classification. The
+# bin/coop.ps1 flow against a shimmed coop-data-doc is tests/fixtures/seeddocs.test.ps1,
+# which tests/run.ps1 runs (master plan S1 retired the bash dispatcher). Fully offline.
 #
 set -uo pipefail
 
@@ -95,14 +95,5 @@ rc=0; out="$("$PY" "$ROOT/lib/_seeddocs.py" "$TMP/empty/.coop/project.yml" 2>/de
 [ "$rc" = 3 ] || fail "all-TODO contract should exit 3 (got $rc)"
 [ -z "$out" ] || fail "all-TODO contract must print no patch"
 pass "all-TODO contract -> exit 3, nothing to seed"
-
-# 3. End-to-end `coop init --seed-docs` through bin/coop.ps1 against a shimmed
-#    coop-data-doc: the patch is piped into config-set, the status line is shown
-#    (#102), declining without --yes and a TODO-only contract change nothing.
-PWSH="$(command -v pwsh 2>/dev/null || command -v powershell.exe 2>/dev/null || command -v powershell 2>/dev/null || true)"
-[ -n "$PWSH" ] || fail "pwsh (PowerShell 7) required: coop init --seed-docs is dispatched by bin/coop.ps1"
-FIXTURE="$ROOT/tests/fixtures/seeddocs.test.ps1"
-if command -v cygpath >/dev/null 2>&1; then FIXTURE="$(cygpath -w "$FIXTURE")"; fi
-"$PWSH" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "$FIXTURE" || fail "coop init --seed-docs end-to-end cases (tests/fixtures/seeddocs.test.ps1)"
 
 printf '  %s\n' "seed-docs tests passed"

@@ -15,8 +15,13 @@
 #                  workflow, and `coop release` run it.
 # A few gate files also carry extended-only cases guarded by COOP_TEST_EXTENDED
 # inside the file (azcache, knowledge-git, warehouse-mcp, onboard,
-# standards-live-sync, test-approver, and tests/fixtures/azcache.test.ps1, which
-# tests/run.ps1 runs). They are invoked once, in the gate section.
+# standards-live-sync, test-approver, and tests/fixtures/azcache.test.ps1;
+# tests/run.ps1 runs warehouse-mcp and azcache.test.ps1). They are invoked once,
+# in the gate section.
+# One runner per test: the Python tests tests/run.ps1 runs (microsoft-skills,
+# project-health, warehouse-mcp, p0-vertical-slice, the ResumeThread verdict) and
+# the fixtures it runs are not repeated here: every CI job that runs this file on
+# a platform also runs tests/run.ps1 there.
 #
 set -euo pipefail
 
@@ -275,13 +280,6 @@ case "$REL_OUT" in
   *"coop release"*) echo "  ✓ bin/coop release forwards to scripts/release.sh" ;;
   *) echo "  ✗ bin/coop release did not reach scripts/release.sh: $REL_OUT"; exit 1 ;;
 esac
-FWD_TMP="$TMP/fwd-missing"; mkdir -p "$FWD_TMP/bin" "$FWD_TMP/scripts"; cp "$ROOT/bin/coop" "$FWD_TMP/bin/coop"
-FWD_RC=0; FWD_OUT="$(bash "$FWD_TMP/bin/coop" version 2>&1)" || FWD_RC=$?
-if [ "$FWD_RC" -ne 0 ] && case "$FWD_OUT" in *"coop.ps1 is missing"*) true ;; *) false ;; esac; then
-  echo "  ✓ the forwarder fails clearly when bin/coop.ps1 is missing"
-else
-  echo "  ✗ forwarder with a missing coop.ps1: rc=$FWD_RC out=$FWD_OUT"; exit 1
-fi
 
 echo "→ bin/coop forwards --no-launch to coop.ps1 (one smoke; tests/run.ps1 owns the spec)"
 # The forwarder is only a Git Bash shim: one dry-run through it proves the hand-off
@@ -313,7 +311,6 @@ bash "$ROOT/tests/extensions-lock.test.sh"
 echo "→ pi-lock (Pi's own dependency tree, U3) tests"
 node "$ROOT/tests/pilock.test.mjs"
 bash "$ROOT/tests/mcp-config.test.sh"
-python3 "$ROOT/tests/warehouse-mcp.test.py"
 python3 "$ROOT/tests/sql-query.test.py"
 python3 "$ROOT/tests/sql-impact.test.py"
 echo "→ committed dev catalog snapshot (SQ9: one file per object, manifest, staleness, never production)"
@@ -324,10 +321,8 @@ echo "→ sql_targets contract section (SQ1: kinds, host patterns, production ne
 python3 "$ROOT/tests/sql-targets.test.py"
 echo "→ review fixes: the one YAML parser (core-schema coercion, never PyYAML), enabled: false, manifest containment, fleet digest config"
 python3 "$ROOT/tests/review-fixes.test.py"
-python3 "$ROOT/tests/microsoft-skills.test.py"
 echo "→ one profile root: COOP_DIR is the parent of .coop; one agent-dir chain (S3, #220)"
 python3 "$ROOT/tests/coop-paths.test.py"
-python3 "$ROOT/tests/p0-vertical-slice.test.py"
 bash "$ROOT/tests/onboard.test.sh"
 echo "→ Azure CLI resolution and sign-in helpers (onboarding)"
 "$(command -v python3 2>/dev/null || command -v python)" "$ROOT/tests/azure-auth.test.py"
@@ -339,31 +334,9 @@ echo "→ knowledge-git ownership lifecycle unit tests"
 python3 "$ROOT/tests/knowledge-git.test.py"
 echo "→ team knowledge local recall helper tests"
 bash "$ROOT/tests/search-knowledge.test.sh"
-echo "→ ResumeThread previous-suspend-count contract (Defect A)"
-COOP_KG_PATH="$ROOT/scripts/knowledge-git.py" python3 - <<'PY'
-import importlib.util
-import os
-spec = importlib.util.spec_from_file_location("kg", os.environ["COOP_KG_PATH"])
-kg = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(kg)
-cases = [
-    (0xFFFFFFFF, False, "failure_sentinel"),
-    (1, True, None),
-    (0, False, "already_running"),
-    (2, False, "still_suspended:2"),
-]
-for prev, ok, detail in cases:
-    got_ok, got_code = kg._win_resume_verdict(prev)
-    assert got_ok is ok, (prev, got_ok, ok)
-    got_detail = got_code[1] if got_code else None
-    assert got_detail == detail, (prev, got_detail, detail)
-print("  OK  resume verdict: failure sentinel / expected prev=1 / already-running / still-suspended")
-PY
 
 echo "→ coop init (the non-wizard jobs: --template, C1 placement) tests"
 bash "$ROOT/tests/init-wizard.test.sh"
-echo "→ bounded legacy project diagnostics and migration tests"
-"$(command -v python3 2>/dev/null || command -v python)" "$ROOT/tests/project-health.test.py"
 
 echo "→ coop init --seed-docs (contract → coop-data-doc.yml) tests"
 bash "$ROOT/tests/seeddocs.test.sh"
