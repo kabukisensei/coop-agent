@@ -21,7 +21,9 @@ $GUARDRAILS_LIMIT_BYTES = 6700
 # allowed the budget to grow for it.
 # 7350 -> 7400 on 2026-11-10 (add-silver-columns skill): one new skill whose
 # description is kept to one short line; Aaron allows growth for real capabilities.
-$TOTAL_LIMIT_TOKENS = 7400
+# 7400 -> 7500 on 2026-11-11 (master plan row SC1): one new native tool,
+# standards_check, with its metadata kept to three short strings.
+$TOTAL_LIMIT_TOKENS = 7500
 
 $py = Get-Command python3 -ErrorAction SilentlyContinue
 if (-not $py) { $py = Get-Command python -ErrorAction SilentlyContinue }

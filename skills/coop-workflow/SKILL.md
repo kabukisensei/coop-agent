@@ -111,7 +111,12 @@ partial, or connected project without requiring the user to edit YAML.
    standards are the rule, not advice: fix anything that does not meet them before
    you present it. Deviate only when the user has granted an exception for it or you
    can state a concrete reason it cannot or should not apply here, and say which in
-   the summary (there is no separate rule engine; this check is it). Where relevant,
+   the summary (there is no separate rule engine; this check is it). Then call
+   `standards_check` once with the files you changed: a second look in a separate
+   model request that sees only the change and the articles, not this conversation.
+   Fix what it finds in the change, or state the reason; mention pre-existing
+   problems it lists without fixing them unless asked. If it is unavailable, say so
+   and rely on your own check. Where relevant,
    run Tabular Editor BPA (`bpa_review`, the deterministic model check) and
    `fabric-cicd` in validate-only mode. Address findings.
 8. **Diff + summarize.** Show `git diff` and summarize the change in plain language.

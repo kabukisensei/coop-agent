@@ -116,6 +116,15 @@ dialogs aren't available, and is wrapped so it can never break a session.
 
 ## Tools
 
+### `standards_check`
+
+A second look at a SQL, DAX or model change coop wrote, before it presents it: one
+separate model request that sees only the change (`git diff HEAD`, or the whole file
+when it is new) and the standards articles, not the conversation. Findings name a
+file, a line and the article, split into this change and pre-existing; ungrounded
+findings are dropped. Read-only, advisory, **sequential**. Contract in
+[docs/tool-contract.md](../../docs/tool-contract.md).
+
 ### `bpa_review`
 
 Runs Tabular Editor BPA (`te bpa run --model <model> --output-format json

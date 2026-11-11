@@ -18,8 +18,10 @@ a tool call**: at launch `lib/standards.mjs` resolves the active
 `coop-tools` `before_agent_start` hook feeds the relevant articles into every SQL,
 DAX and semantic-model task. Before presenting such a change the agent
 **self-checks** its own diff against the same articles and names any rule it could
-not meet. The deterministic checks that remain are `bpa_review` (Tabular Editor
-BPA, semantic models) and `fabric-cicd` validate.
+not meet, then calls [`standards_check`](#standards_check-fresh-context-check) for a
+second look that does not share the writer's context. The deterministic checks that
+remain are `bpa_review` (Tabular Editor BPA, semantic models) and `fabric-cicd`
+validate.
 
 ---
 
@@ -177,6 +179,45 @@ limitations. Each task uses immutable content-addressed snapshots, so a task ret
 path, commit and SHA-256 even if a later refresh lands during it. Doctor and Support
 report source, branch, successful check/sync times, commit, SHA-256, freshness and
 degraded state per domain truthfully.
+
+### `standards_check` (fresh-context check)
+
+A read-only second look at a change coop wrote (master plan SC1). The self-check runs
+in the conversation that wrote the change; `standards_check` sends **one separate
+model request** that carries only the change and the standards articles, never the
+conversation. Helpers: `lib/standards-check.mjs`; wiring: `createStandardsCheck` in
+`extensions/coop-tools`.
+
+- **Parameter:** `files` (required), the SQL, DAX or semantic-model files changed or
+  drafted.
+- **The change:** for a file tracked in git, `git diff HEAD` (staged and unstaged);
+  for a new file or one outside git (a draft in the drafts folder), the whole file
+  with line numbers. A file with no change against the last commit is skipped and
+  named. The change is capped at 60,000 characters and the result says when it was cut.
+- **The standards:** the same resolution as writing (`buildStandardsContext`, with no
+  network refresh), steered by the file types and the added lines.
+- **The request:** the session's model and sign-in, a fresh routing id, no cache
+  write, the session's thinking level; the configured `sse` transport on Codex.
+- **Findings:** each has `file`, `line`, `article`, `rule`, `problem`, `fix` and
+  `introduced`. A finding with no line, a file outside the change, or an article the
+  check was not given is **dropped** and counted, so an invented rule never reaches
+  the writer. `introduced: false` marks a problem that was already there; the text
+  lists those separately as pre-existing.
+- **Text:** the count first (`standards_check: 1 problem(s) in the change, 2
+  pre-existing (...)`), one line per finding. A change with no problem of its own
+  starts `standards_check: no standards problems found in the change`, with the
+  pre-existing count after it when the file has older ones. The text lists at most
+  five pre-existing problems and counts the rest; `details.findings` has them all.
+- **One pass, not a proof:** the dev VM check of 2026-11-11 flagged the same new line
+  in one run and not in another. A clean result means the checker found nothing, not
+  that nothing is there; the writer's own rule-by-rule self-check still applies.
+- **`details.state`:** `ok`, `no_files`, `nothing_to_check`, or `unavailable` (no
+  model or sign-in, no article applies, the request failed, the answer was not JSON).
+  Unavailable never blocks: the text tells the agent to rely on its own self-check
+  and say the fresh check did not run.
+
+It is advisory, edits nothing and costs one extra model request per call. The code
+it sends goes to the same model provider the session already uses.
 
 ### `bpa_review` (Tabular Editor)
 

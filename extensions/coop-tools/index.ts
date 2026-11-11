@@ -32,7 +32,7 @@
 import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -44,6 +44,15 @@ import {
   sourceStatus,
 } from "../../lib/standards.mjs";
 import { agentDir as coopAgentDir, configPath as coopConfigPath } from "../../lib/paths.mjs";
+import {
+  CHECKER_SYSTEM_PROMPT,
+  checkerUserPrompt,
+  collectChange,
+  findingsText,
+  parseFindings,
+  standardsForChecker,
+  standardsQuery,
+} from "../../lib/standards-check.mjs";
 import {
   KINDS as FEEDBACK_KINDS,
   buildReport as buildFeedbackReport,
@@ -210,6 +219,10 @@ const REVIEW_PARAMS = Type.Object({
   strict: Type.Optional(
     Type.Boolean({ description: "Exit non-zero if findings remain (CI gate). Default false." }),
   ),
+});
+
+const STANDARDS_CHECK_PARAMS = Type.Object({
+  files: Type.Array(Type.String(), { description: "Changed SQL, DAX or model files." }),
 });
 
 const DATADOC_PARAMS = Type.Object({
@@ -2745,6 +2758,83 @@ export function createCodexAuthRecovery(deps: CodexAuthRecoveryDeps = defaultCod
   };
 }
 
+// ---------------------------------------------------------------------------
+// Fresh-context standards check (master plan SC1)
+//
+// One separate model request that sees only the change and the standards
+// articles, never the conversation that wrote it. Pure helpers: lib/standards-check.mjs.
+// ---------------------------------------------------------------------------
+
+/** Seams for tests; production loads pi-ai's `completeSimple()` lazily. */
+export interface StandardsCheckDeps {
+  readSettings: () => PiTransportSettings;
+  loadComplete: () => Promise<(model: any, context: any, options?: any) => Promise<any>>;
+  standards: (query: string, cwd: string) => { records: readonly any[] };
+  collect: (files: string[], cwd: string) => ReturnType<typeof collectChange>;
+  getThinkingLevel?: () => unknown;
+}
+
+const defaultStandardsCheckDeps: StandardsCheckDeps = {
+  readSettings: () => readPiTransportSettings(),
+  loadComplete: async () => (await import("@earendil-works/pi-ai/compat")).completeSimple,
+  // refresh:false: the task's own start already refreshed the wiki; the check never waits on the network.
+  standards: (query, cwd) => buildStandardsContext(query, { cwd, refresh: false }),
+  collect: (files, cwd) => collectChange(files, cwd),
+};
+
+/** `standards_check` execute(): never throws; an unavailable check says so and leaves the in-context self-check standing. */
+export function createStandardsCheck(deps: StandardsCheckDeps = defaultStandardsCheckDeps) {
+  const reply = (text: string, details: Record<string, unknown>) => ({ content: [{ type: "text" as const, text }], details: { tool: "standards_check", ...details } });
+  const unavailable = (why: string) => reply(`standards_check unavailable: ${why}. Do the step 7 self-check yourself, rule by rule, and say the fresh check did not run.`, { state: "unavailable", reason: why });
+  return async (_id: string, params: any, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: any) => {
+    const files: string[] = Array.isArray(params?.files) ? params.files.map((f: unknown) => String(f)) : [];
+    if (!files.length) return reply("standards_check: pass `files`, the SQL, DAX or model files you changed.", { state: "no_files" });
+    let change: ReturnType<typeof collectChange>;
+    try { change = deps.collect(files, ctx.cwd); } catch (e: any) { return unavailable(`could not read the change (${String(e?.message || e).slice(0, 120)})`); }
+    if (!change.checked.length) return reply(`standards_check: nothing to check. Not checked: ${change.skipped.join("; ") || "no files"}.`, { state: "nothing_to_check", skipped: change.skipped });
+    let standards: { titles: string[]; text: string };
+    try {
+      standards = standardsForChecker(deps.standards(standardsQuery(change.checked.map((c) => c.file), change.text), ctx.cwd).records as any[]);
+    } catch (e: any) { return unavailable(`the standards could not be resolved (${String(e?.message || e).slice(0, 120)})`); }
+    if (!standards.titles.length) return unavailable("no standards articles apply to these files");
+    const model = ctx?.model;
+    let complete: (model: any, context: any, options?: any) => Promise<any>;
+    let auth: any;
+    let settings: PiTransportSettings;
+    try {
+      if (!model) return unavailable("no model is selected");
+      settings = deps.readSettings();
+      complete = await deps.loadComplete();
+      auth = await ctx.modelRegistry?.getApiKeyAndHeaders?.(model);
+    } catch { return unavailable("this Pi does not expose a one-off model request"); }
+    if (!auth || auth.ok === false) return unavailable("the model sign-in is not available");
+    const headers: Record<string, string> | undefined = auth.headers
+      ? Object.fromEntries(Object.entries(auth.headers).filter(([, v]) => typeof v === "string") as [string, string][])
+      : undefined;
+    const requestModel = auth.baseUrl ? { ...model, baseUrl: auth.baseUrl } : model;
+    let thinkingLevel = ctx.thinkingLevel;
+    if (thinkingLevel === undefined && deps.getThinkingLevel) {
+      try { thinkingLevel = deps.getThinkingLevel(); } catch { thinkingLevel = undefined; }
+    }
+    const options: Record<string, unknown> = { signal, apiKey: auth.apiKey, headers, env: auth.env, cacheRetention: "none", sessionId: randomUUID(), timeoutMs: settings.timeoutMs, maxRetries: settings.retry.maxRetries };
+    if (settings.transport === "sse" && TRANSPORT_AWARE_APIS.has(String(model.api))) options.transport = settings.transport;
+    if (model.reasoning && typeof thinkingLevel === "string" && thinkingLevel !== "off") options.reasoning = thinkingLevel;
+    let response: any;
+    try {
+      response = await complete(requestModel, {
+        systemPrompt: CHECKER_SYSTEM_PROMPT,
+        messages: [{ role: "user", content: [{ type: "text", text: checkerUserPrompt(change.text, standards.text) }], timestamp: Date.now() }],
+      }, options);
+    } catch (e: any) { return unavailable(`the model request failed (${String(e?.message || e).slice(0, 160)})`); }
+    if (!response || response.stopReason === "error" || response.stopReason === "aborted") return unavailable(`the model request failed (${String(response?.errorMessage || response?.stopReason || "no response").slice(0, 160)})`);
+    const answer = (Array.isArray(response.content) ? response.content : []).filter((c: any) => c?.type === "text").map((c: any) => String(c.text || "")).join("");
+    const parsed = parseFindings(answer, { titles: standards.titles, files: change.checked.map((c) => c.file) });
+    if (!parsed.ok) return unavailable("the checker's answer was not readable");
+    const result = { findings: parsed.findings, dropped: parsed.dropped, checked: change.checked, skipped: change.skipped, truncated: change.truncated, titles: standards.titles };
+    return reply(findingsText(result), { state: "ok", ...result });
+  };
+}
+
 export default function coopTools(pi: ExtensionAPI) {
   // The first sql_source status of a session names a missing commit line once
   // per repository; session_start forgets them (one Pi process can carry
@@ -3010,6 +3100,19 @@ export default function coopTools(pi: ExtensionAPI) {
         : `fabric_sql_query unavailable: ${String(details?.state || "internal_error")}.${sqlStateHint(details)}`;
       return { content: [{ type: "text" as const, text }], details };
     },
+  });
+
+  pi.registerTool({
+    name: "standards_check",
+    label: "Standards check (fresh look)",
+    description: "Read-only second look at files you changed: a separate model request sees only the change and the standards.",
+    promptSnippet: "Fresh standards check of your change",
+    promptGuidelines: [
+      "Before presenting a SQL, DAX or model change, call standards_check once with the changed files; fix its findings or state why not.",
+    ],
+    parameters: STANDARDS_CHECK_PARAMS,
+    executionMode: "sequential",
+    execute: createStandardsCheck({ ...defaultStandardsCheckDeps, getThinkingLevel: () => pi.getThinkingLevel() }) as any,
   });
 
   pi.registerTool({

@@ -175,6 +175,7 @@ node "$ROOT/tests/standards-source-systems.test.mjs"
 node "$ROOT/tests/standards-bundle.test.mjs"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/standards-runtime.test.mjs"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/bpa-review.test.mjs"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/standards-check.test.mjs"
 
 echo "→ data-doc config reader and contract review-scope tests"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/review-scope.test.mjs"
