@@ -55,7 +55,7 @@ function outputBlock(text, kind, state) {
 }
 
 function diffView(rows) {
-  return el("div", { class: "diff", role: "table", "aria-label": "Changes" }, rows.map((row) => el("div", { class: `diff-row ${row.kind}`, role: "row" },
+  return el("div", { class: "diff", role: "group", "aria-label": "Changes" }, rows.map((row) => el("div", { class: `diff-row ${row.kind}` },
     el("span", { class: "diff-num", text: row.line }),
     el("span", { class: "diff-sign", text: row.kind === "add" ? "+" : row.kind === "del" ? "-" : " " }),
     el("span", { class: "diff-text", text: row.text }))));
@@ -197,7 +197,7 @@ function activityView(entries, tl, prefs, { last }) {
   const details = el("details", { class: `activity ${running ? "running" : ""} ${failed ? "failed" : ""}`, open },
     el("summary", { class: "activity-head" },
       el("span", { class: "activity-status" }, running ? el("span", { class: "spinner" }) : failed ? icon("close", "A step failed") : icon("check", "Done")),
-      el("span", { class: "activity-text", text: activitySummary(run, tl.tools, { live: running }) }),
+      el("span", { class: "activity-text", text: activitySummary(run, tl.tools, { live: running, waiting: Boolean(running && prefs.asking && prefs.asking()) }) }),
       steps ? el("span", { class: "activity-count", text: `${steps} ${steps === 1 ? "step" : "steps"}` }) : null,
       icon("chevron")),
     el("div", { class: "activity-body" }, entries.map(({ block, index, item, blocks }) => (block.type === "thinking" ? (block.text.trim() ? thinkingView(block, index, item, blocks, prefs) : null) : toolCard(block, tl, prefs)))));

@@ -1,7 +1,7 @@
 // The coop window: timeline, composer, dialogs and the actions that stand in
 // for Pi's terminal commands. Talks to coop only through window.coop
 // (preload.cjs); the main process checks every call again.
-import { el, icon, openModal, pickFrom, toast, modalOpen, relativeTime } from "./ui.mjs";
+import { el, icon, openModal, pickFrom, toast, modalOpen, relativeTime, splitGlyph } from "./ui.mjs";
 import { createTimeline, applyEvent, loadMessages, startBash, finishBash, formatTokens, textOf, notice, turnOf, turns } from "./timeline.mjs";
 import { createFinder } from "./find.mjs";
 import { renderItem, renderTurn, codeBlock } from "./view.mjs";
@@ -24,6 +24,7 @@ const $ = (id) => document.getElementById(id);
 const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
 const clean = (text) => String(text === undefined || text === null ? "" : text).replace(ANSI, "");
 const THEME_LABELS = { auto: "Match Windows", "modern-dark": "Modern dark", "modern-light": "Modern light", "retro-dark": "Retro dark", "retro-light": "Retro light" };
+const DELIVERY = { "one-at-a-time": "One message at a time", all: "All at once" };
 const THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 const app = {
@@ -67,6 +68,9 @@ const app = {
       return this.outputs.get(key);
     },
     redrawOwner(toolCallId) { const owner = app.tl.toolOwner.get(toolCallId); if (owner) redraw(owner); },
+    // A card coop is waiting on (an approval, a question): the activity line
+    // says so instead of "Running ..." for a step that has not started.
+    asking: () => openCards.size > 0,
     // The timeline's links into the side pane (a tool card's file, the standards).
     openPane: (id, options) => openPane(id, options),
   },
@@ -180,6 +184,8 @@ function onUiRequest(request) {
       const level = ["info", "warning", "error"].includes(request.notifyType) ? request.notifyType : "info";
       const text = clean(request.message).trim();
       if (!text) break;
+      // The memory extension's first-start report with nothing indexed says nothing a person can use.
+      if (/Session backfill complete: 0 indexed, 0 skipped\b/.test(text)) break;
       // Before the conversation starts, a notice that names a set-up step
       // (the MCP adapter reporting the Warehouse endpoint's 401, for one) joins
       // the set-up card with its command instead of landing as a raw report.
@@ -230,20 +236,27 @@ function answer(request, value) {
 const openCards = new Map();
 
 /** The phone answered this question, or it expired: close its card without answering. */
+/** The step a card is about shows as waiting while the card is open, and as running after. */
+function redrawLive() {
+  const last = app.tl.items.at(-1);
+  if (last) redraw(last.id);
+}
+
 function closeDialog(id) {
   const card = openCards.get(id);
   if (!card) return;
   openCards.delete(id);
   card.answered();
   card.modal.close();
+  redrawLive();
 }
 
 function showDialog(request) {
   let answered = false;
-  const reply = (value) => { if (!answered) { answered = true; openCards.delete(request.id); answer(request, value); } };
+  const reply = (value) => { if (!answered) { answered = true; openCards.delete(request.id); answer(request, value); redrawLive(); } };
   const title = clean(request.title);
   let modal;
-  const track = (m) => { modal = m; openCards.set(request.id, { modal: m, answered: () => { answered = true; } }); };
+  const track = (m) => { modal = m; openCards.set(request.id, { modal: m, answered: () => { answered = true; } }); redrawLive(); };
   if (request.method === "select") {
     const options = Array.isArray(request.options) ? request.options.map(String) : [];
     // An ask_user_question (its RPC form numbers the options): a card with the
@@ -323,7 +336,7 @@ function showDialog(request) {
   }
   if (Number(request.timeout) > 0 && modal) {
     // Pi answers for the user when the question times out.
-    setTimeout(() => { if (!answered) { answered = true; openCards.delete(request.id); modal.close(); } }, Number(request.timeout));
+    setTimeout(() => { if (!answered) { answered = true; openCards.delete(request.id); modal.close(); redrawLive(); } }, Number(request.timeout));
   }
 }
 
@@ -698,6 +711,7 @@ function renderCompletions() {
   list.replaceChildren(...items.map((item, index) => el("li", {
     class: `completion ${index === active ? "active" : ""}`,
     role: "option",
+    "aria-selected": index === active ? "true" : "false",
     onmousedown: (event) => { event.preventDefault(); acceptCompletion(index); },
   }, el("span", { class: "completion-name", text: app.completion.kind !== "file" ? `/${item.name}` : app.completion.mention.plain ? item.name : `@${item.name}` }), el("span", { class: "completion-args", text: item.args || "" }), el("span", { class: "completion-desc", text: item.description || "" }), el("span", { class: "completion-source", text: sourceLabel(item.source) }))));
   const node = list.children[active];
@@ -952,7 +966,10 @@ function renderStatus() {
   }
   if (stats && stats.tokens) parts.push(el("span", { class: "status-item", title: "Tokens this session: in / out", text: `${formatTokens(stats.tokens.input)} in, ${formatTokens(stats.tokens.output)} out` }));
   if (stats && Number(stats.cost) > 0) parts.push(el("span", { class: "status-item", text: `$${Number(stats.cost).toFixed(2)}` }));
-  for (const [key, text] of app.statuses) parts.push(el("span", { class: "status-item ext", title: key, text }));
+  for (const [key, text] of app.statuses) {
+    const lead = splitGlyph(text);
+    parts.push(el("span", { class: "status-item ext", title: key }, lead.icon ? icon(lead.icon) : null, el("span", { class: "status-text", text: lead.text })));
+  }
   const left = el("span", { class: "status-left" }, el("span", { class: "status-item status-brand", text: `coop${app.info && app.info.version ? ` v${app.info.version}` : ""}` }), el("span", { class: "status-item", text: app.running ? (app.tl.busy ? "Working" : "Ready") : "Stopped" }));
   bar.replaceChildren(left, el("span", { class: "status-right" }, parts));
 }
@@ -1138,8 +1155,8 @@ async function sessionInfo() {
     ["Cost", t.cost !== undefined ? `$${Number(t.cost).toFixed(4)}` : ""],
     ["Context", t.contextUsage ? `${formatTokens(t.contextUsage.tokens)} of ${formatTokens(t.contextUsage.contextWindow)} (${Math.round(t.contextUsage.percent || 0)}%)` : ""],
     ["Auto-compact", s.autoCompactionEnabled ? "On" : "Off"],
-    ["Steering", s.steeringMode || ""],
-    ["Follow-ups", s.followUpMode || ""],
+    ["Steering", DELIVERY[s.steeringMode] || s.steeringMode || ""],
+    ["Follow-ups", DELIVERY[s.followUpMode] || s.followUpMode || ""],
   ].filter(([, value]) => value !== undefined && value !== "");
   openModal({
     title: "This session",
@@ -1206,7 +1223,7 @@ async function showTree() {
     const message = entry.message || {};
     const role = message.role || entry.type;
     if (role === "system" || !shown(node, role)) return null;
-    const text = clean(treeEntryText(entry)).split("\n")[0].slice(0, 160);
+    const text = clean(treeEntryText(entry)).split("\n")[0].replace(/^\s{0,3}#{1,6}\s+/, "").slice(0, 160);
     if (!text && !node.label) return null;
     return el("div", { class: `tree-row ${role} ${entry.id === leaf ? "leaf" : ""}` },
       el("span", { class: "tree-role", text: role === "user" ? "You" : role === "assistant" ? "coop" : role === "toolResult" ? "tool" : role }),
@@ -1279,18 +1296,18 @@ async function cloneSession() {
 
 function settingsPanel() {
   const s = app.state || {};
-  const row = (label, control, help) => el("div", { class: "setting" }, el("div", { class: "setting-label" }, el("span", { text: label }), help ? el("span", { class: "hint", text: help }) : null), control);
+  const row = (label, control, help) => el("label", { class: "setting" }, el("div", { class: "setting-label" }, el("span", { text: label }), help ? el("span", { class: "hint", text: help }) : null), control);
   const select = (options, value, onChange) => {
     const node = el("select", { class: "field", onchange: (event) => onChange(event.target.value) }, options.map(([v, l]) => el("option", { value: v, text: l, selected: v === value })));
     return node;
   };
-  const toggle = (checked, onChange) => el("input", { type: "checkbox", class: "switch", checked, onchange: (event) => onChange(event.target.checked) });
+  const toggle = (checked, onChange) => el("input", { type: "checkbox", class: "switch", role: "switch", checked, onchange: (event) => onChange(event.target.checked) });
   const body = el("div", { class: "settings" },
     row("Theme", select(Object.entries(THEME_LABELS), app.info.theme, (v) => coop.setTheme(v))),
     row("Auto-compact", toggle(Boolean(s.autoCompactionEnabled), async (v) => { await cmdOrToast({ type: "set_auto_compaction", enabled: v }, "Could not change auto-compact"); refreshState(); }), "Compact the conversation when the context is nearly full"),
-    row("Auto-retry", toggle(app.prefs.autoRetry, async (v) => { const r = await cmdOrToast({ type: "set_auto_retry", enabled: v }, "Could not change auto-retry"); if (r.success) app.prefs.autoRetry = v; }), "Retry a failed model call (on when the window opens)"),
-    row("Steering", select([["one-at-a-time", "One message at a time"], ["all", "All at once"]], s.steeringMode, async (v) => { await cmdOrToast({ type: "set_steering_mode", mode: v }, "Could not change steering"); refreshState(); }), "How messages you send while coop works are delivered"),
-    row("Follow-ups", select([["one-at-a-time", "One message at a time"], ["all", "All at once"]], s.followUpMode, async (v) => { await cmdOrToast({ type: "set_follow_up_mode", mode: v }, "Could not change follow-ups"); refreshState(); })),
+    row("Auto-retry", toggle(app.prefs.autoRetry, async (v) => { const r = await cmdOrToast({ type: "set_auto_retry", enabled: v }, "Could not change auto-retry"); if (r.success) app.prefs.autoRetry = v; }), "Retry a failed model call. Turns back on each time the window opens"),
+    row("Steering", select(Object.entries(DELIVERY), s.steeringMode, async (v) => { await cmdOrToast({ type: "set_steering_mode", mode: v }, "Could not change steering"); refreshState(); }), "How messages you send while coop works are delivered"),
+    row("Follow-ups", select(Object.entries(DELIVERY), s.followUpMode, async (v) => { await cmdOrToast({ type: "set_follow_up_mode", mode: v }, "Could not change follow-ups"); refreshState(); })),
     row("Show thinking", toggle(app.prefs.showThinking, (v) => { app.prefs.showThinking = v; app.prefs.thinkingOpen.clear(); rerenderAll(); }), "Ctrl+T"),
     row("Expand tool output", toggle(app.prefs.expandTools, (v) => { app.prefs.expandTools = v; app.prefs.toolOpen.clear(); rerenderAll(); }), "Ctrl+O"),
     row("DAX opens in", select([["tabular-editor", "Tabular Editor"], ["power-bi", "Power BI Desktop"]], app.info.daxEditor || "tabular-editor", async (v) => { const r = await coop.setPref("daxEditor", v); if (r && r.success) app.info.daxEditor = v; }), "The program the Changes pane's Open in editor uses for a semantic model's files (SQL opens in SSMS)"),
@@ -1590,6 +1607,16 @@ async function boot() {
   app.info = await coop.ready();
   app.vibe = String(app.info.vibe || "");
   applyTheme(app.info);
+  // The sidebar's mark is the Cooptimize logo, the splash art drawn small.
+  const mark = document.querySelector(".sidebar .brand-mark");
+  if (mark && app.info.splash && app.info.splash.width) {
+    const logo = splashArt(app.info.splash);
+    logo.setAttribute("class", "brand-logo");
+    logo.setAttribute("aria-hidden", "true");
+    logo.removeAttribute("role");
+    logo.removeAttribute("aria-label");
+    mark.replaceWith(logo);
+  }
   renderHeader();
   renderBusy();
   renderStatus();

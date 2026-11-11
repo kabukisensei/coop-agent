@@ -350,7 +350,9 @@ the window's contract: what it runs itself, and what opens in the terminal.
 ## Commands
 
 Anything after `coop` that is not a known subcommand is passed straight to Pi
-(e.g. `coop -c` resumes the last session; `coop @notes.md "review this"`).
+(e.g. `coop -c` resumes the last session; `coop @notes.md "review this"`). A single word a letter
+or two off a command (`coop docter`) is treated as a typo: coop names the command
+it is close to and stops.
 
 | Command | Description |
 | --- | --- |

@@ -55,10 +55,16 @@ export function makeResizer(options) {
     return size;
   }
 
+  // A focusable separator must say where it is (ARIA): the measured size
+  // when no size is saved.
+  function report() {
+    handle.setAttribute("aria-valuenow", String(Math.round(Number(measure()) || 0)));
+  }
+
   function reset() {
     target.style.removeProperty(cssVar);
-    handle.removeAttribute("aria-valuenow");
     store(key, 0);
+    report();
   }
 
   // A saved size re-clamps when the window shrinks, without overwriting it.
@@ -91,6 +97,7 @@ export function makeResizer(options) {
   });
   handle.addEventListener("dblclick", reset);
   handle.setAttribute("aria-valuemin", String(min));
+  report();
   apply();
   return { set, reset, apply };
 }

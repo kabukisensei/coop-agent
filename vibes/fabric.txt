@@ -1,22 +1,22 @@
-# fabric — things to ask Coop about Fabric, Power BI, and deployment safety
-Ask Coop to inspect Fabric through its read-only-by-policy tools.
-Ask Coop to inspect a semantic model with the Power BI Modeling tools.
+# fabric — things to ask coop about Fabric, Power BI, and deployment safety
+Ask coop to inspect Fabric through its read-only-by-policy tools.
+Ask coop to inspect a semantic model with the Power BI Modeling tools.
 Run /fabric-architecture-review to review workspaces, OneLake, and deployment stages.
 Run /semantic-model-review to audit relationships, DAX, and star schemas.
-Ask Coop to build a Deneb visual and handle the PBIR details.
-Ask Coop to create or audit theme.json against report-theme standards.
-Ask Coop for a Power BI report review covering accessibility and usability.
-Ask Coop to run Tabular Editor BPA when the project has it configured.
-Ask Coop to validate a Fabric deployment without deploying it.
-Try asking Coop to review D365-to-OneLake mirroring before implementation.
-Ask Coop to compare Power BI performance under like-for-like cache conditions.
+Ask coop to build a Deneb visual and handle the PBIR details.
+Ask coop to create or audit theme.json against report-theme standards.
+Ask coop for a Power BI report review covering accessibility and usability.
+Ask coop to run Tabular Editor BPA when the project has it configured.
+Ask coop to validate a Fabric deployment without deploying it.
+Try asking coop to review D365-to-OneLake mirroring before implementation.
+Ask coop to compare Power BI performance under like-for-like cache conditions.
 Try Performance Analyzer evidence before calling a visual faster.
-Ask Coop to preserve Git byPath and Desktop live-connect bindings separately.
+Ask coop to preserve Git byPath and Desktop live-connect bindings separately.
 Try an opt-in compatibility path before moving facts to reporting versions.
-Ask Coop to check copied PBIR page and visual filter IDs for collisions.
-Ask Coop to preserve report identity by updating in place.
+Ask coop to check copied PBIR page and visual filter IDs for collisions.
+Ask coop to preserve report identity by updating in place.
 Try staying read-only during concurrent Fabric work until shared changes reconcile.
-Ask Coop to flag Update from Git when another worker may be using the endpoint.
+Ask coop to flag Update from Git when another worker may be using the endpoint.
 
 # --- light easter eggs (client-safe) ---
 The force is strong with this OneLake shortcut…
