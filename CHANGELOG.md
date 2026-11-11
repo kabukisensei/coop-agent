@@ -58,7 +58,9 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   `THROW`, `RAISERROR` or defensive checks unless the project's standards ask for
   them; validation goes in separate test queries it hands you instead. The rule is
   in the guardrails' Lean SQL section and the `/new-fact`, `/new-dimension` and
-  `/new-load` prompts (team feedback of 2026-11-11).
+  `/new-load` prompts (team feedback of 2026-11-11), and in the coop-standards
+  SQL Conventions and Gold Stored Procedures articles; the bundled offline copy
+  is refreshed to coop-standards `e178959`.
 
 - **Simple tasks move faster.** A small change (one file or object, about 20 lines,
   nothing another object uses dropped or renamed, not production) now takes the
