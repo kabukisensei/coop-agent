@@ -339,11 +339,14 @@ function Get-CoopBundledSetupDoneStamp {
   if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) { return '' }
   try { return ([System.IO.File]::ReadAllText($marker)).Trim() } catch { return '' }
 }
+# Both checks below ask Pi's version through Get-CoopLaunchPiVersion: `pi --version`
+# costs about a second, and a launch asks it once (Reset-CoopLaunchPiVersion after
+# anything that can move Pi).
 # Something of this package has not reached this account: a new version (sync
 # refreshes the extensions and settings) or new tool pins (the full setup).
 function Test-CoopBundledSetupPending {
   if (-not $script:CoopBundledRuntime) { return $false }
-  if (Test-CoopExtensionsLockPending -AgentDir (Get-CoopPiAgentDir) -PiVersion (Get-CoopPiVersion)) { return $true }
+  if (Test-CoopExtensionsLockPending -AgentDir (Get-CoopPiAgentDir) -PiVersion (Get-CoopLaunchPiVersion)) { return $true }
   return ((Get-CoopBundledSetupDoneStamp) -ne (Get-CoopBundledSetupStamp))
 }
 # The tool pins this package carries differ from the ones last installed for
@@ -351,7 +354,7 @@ function Test-CoopBundledSetupPending {
 # only a sync.
 function Test-CoopBundledToolsPending {
   if (-not $script:CoopBundledRuntime) { return $false }
-  if (Test-CoopExtensionsLockPending -AgentDir (Get-CoopPiAgentDir) -PiVersion (Get-CoopPiVersion)) { return $true }
+  if (Test-CoopExtensionsLockPending -AgentDir (Get-CoopPiAgentDir) -PiVersion (Get-CoopLaunchPiVersion)) { return $true }
   $tools = Get-CoopBundledToolsHash
   if (-not $tools) { return $true }
   return (-not (Get-CoopBundledSetupDoneStamp).EndsWith('+' + $tools))
@@ -3523,6 +3526,46 @@ function Get-CoopPiVersion {
 # The probe must not leak its exit code: launch-spec and --no-launch end on
 # $LASTEXITCODE, and Select-Object -First 1 in Get-CoopPiVersion stops `pi`
 # early, which Windows PowerShell 5.1 reports as -1.
+# After a step that can move Pi (sync, the first-launch setup): ask again.
+function Reset-CoopLaunchPiVersion { $script:CoopLaunchPiVersion = $null }
+
+# The launch's standards refresh, started early so it runs beside the launch's
+# other checks instead of after them: the same command, bounded by its own
+# timeout, awaited where the launch always ran it (Wait-CoopStandardsRefresh).
+# Returns the process, or $null when it could not start this way (no node.exe
+# on PATH: a shim, or no Node), and the caller then runs it in place.
+function Start-CoopStandardsRefresh {
+  try {
+    $node = Get-Command node -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $node) { return $null }
+    $exe = [string]$node.Source
+    if ($env:OS -eq 'Windows_NT' -and $exe -notlike '*.exe') { return $null }
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $exe
+    $psi.Arguments = '"' + (Join-Path $script:CoopRoot 'lib\standards-cli.mjs') + '" refresh'
+    $psi.WorkingDirectory = (Get-Location).ProviderPath
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $p = [System.Diagnostics.Process]::Start($psi)
+    # Read and drop both streams, so a full pipe can never hold the refresh.
+    $p.BeginOutputReadLine()
+    $p.BeginErrorReadLine()
+    return $p
+  } catch { return $null }
+}
+# Waits for the refresh Start-CoopStandardsRefresh started (it ends itself: a
+# 12 second network timeout; 60 seconds here is only a last resort).
+function Wait-CoopStandardsRefresh {
+  param($Process)
+  if (-not $Process) { return }
+  try {
+    if (-not $Process.WaitForExit(60000)) { try { $Process.Kill() } catch { } }
+  } catch { }
+  try { $Process.Dispose() } catch { }
+}
+
 function Get-CoopLaunchPiVersion {
   if ($null -eq $script:CoopLaunchPiVersion) {
     $rcBefore = $global:LASTEXITCODE

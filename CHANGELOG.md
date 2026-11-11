@@ -107,6 +107,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   (`~\.coop\desktop\launch.log`) records how long each launch step took
   (`timing:` lines); `COOP_LAUNCH_TIMINGS=1` prints them in a terminal.
 
+- **A shorter launch.** Every launch asked Pi for its version twice (about a
+  second each on the dev VM); it now asks once. The standards refresh, a network
+  call, now runs beside the launch's other checks instead of after them. The
+  checks themselves are unchanged.
+
 ## [0.40.1] — 2026-11-10
 
 ### Changed

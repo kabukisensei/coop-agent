@@ -1032,6 +1032,10 @@ function Initialize-CoopLaunch {
   # Here menu of common workflows opens once Pi is up; `coop onboard` stays on demand.
   # -Window (`coop desktop`) counts as interactive whatever stdin is.
   $timing = [System.Diagnostics.Stopwatch]::StartNew()
+  # The standards refresh is a network call that depends on nothing below: it
+  # starts now and is awaited where it always ran.
+  $standardsRefresh = $null
+  if (Test-Have 'node') { $standardsRefresh = Start-CoopStandardsRefresh }
   Set-CoopFirstRunLaunch -Window:$Window
 
   # Guard against launching into a known-broken extension load (agent/extension skew).
@@ -1093,7 +1097,9 @@ function Initialize-CoopLaunch {
 
   # Bounded, noninteractive and fail-soft. Native stderr is suppressed so
   # PowerShell 5.1 cannot turn an offline credential diagnostic into a launch error.
-  if (Test-Have 'node') {
+  if ($standardsRefresh) {
+    Wait-CoopStandardsRefresh $standardsRefresh
+  } elseif (Test-Have 'node') {
     try { & node (Join-Path $script:CoopRoot 'lib\standards-cli.mjs') refresh 2>$null | Out-Null } catch { }
   }
   # F2: one line the first time this user's launches read the standards from this machine.
@@ -1235,6 +1241,7 @@ function Invoke-CoopDesktop {
     Coop-Info 'the tool pins are the ones already installed here, so only the extensions and settings are refreshed; the window opens once that finishes'
     Set-CoopSetupPhase 1 1 "Refreshing this account for coop $($script:CoopVersion)" 'the extensions and settings; the tools installed here are already current'
     $setupRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\sync.ps1')
+    Reset-CoopLaunchPiVersion
     if ($setupRc -ne 0) {
       Coop-Warn ('the refresh did not finish (the lines above say why; they are also in ' + (Join-Path (Get-CoopProfileDir) 'desktop\launch.log') + '). The window opens anyway; the next launch tries again, or run: coop doctor')
     } else {
@@ -1256,6 +1263,7 @@ function Invoke-CoopDesktop {
     }
     Set-CoopSetupPhase 0 8 "Setting up coop $($script:CoopVersion) for this account" 'starting the setup'
     $setupRc = Invoke-CoopScript (Join-Path $script:CoopRoot 'scripts\install.ps1') @('--prereqs', 'auto', '--unattended')
+    Reset-CoopLaunchPiVersion
     if ($setupRc -ne 0) {
       # Not the end of the launch (the dev VM, 2026-10-20: three tool installs
       # failed and the window never opened, with the reason in a console that

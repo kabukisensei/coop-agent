@@ -359,6 +359,10 @@ await check("update indicator: a shortcut clicked while an update installs shows
   assert.match(common, /function Write-CoopLaunchTiming[\s\S]*"timing: \$Step \$ms ms"[\s\S]*COOP_BOOT_LOG/);
   const coopPs = readFileSync(join(ROOT, "bin", "coop.ps1"), "utf8");
   for (const name of ["extension check", "standards refresh", "Azure sign-in check", "Warehouse token", "PowerShell start and loading coop"]) assert.ok(coopPs.includes(name), `coop.ps1 times the ${name}`);
+  // The launch asks Pi's version once, and the standards refresh runs beside the other checks.
+  assert.equal((common.match(/-PiVersion \(Get-CoopLaunchPiVersion\)\) \{ return \$true \}/g) || []).length, 2, "both setup checks share the launch's one `pi --version`");
+  assert.equal((coopPs.match(/Invoke-CoopScript \(Join-Path \$script:CoopRoot 'scripts\\(sync|install)\.ps1'\)[^\n]*\r?\n    Reset-CoopLaunchPiVersion/g) || []).length, 2, "the setup that can move Pi makes the launch ask its version again");
+  assert.match(coopPs, /\$standardsRefresh = Start-CoopStandardsRefresh[\s\S]*Invoke-CoopLaunchPreflight[\s\S]*Wait-CoopStandardsRefresh \$standardsRefresh[\s\S]*Write-CoopStandardsPlaceNote/, "the refresh starts first and is awaited where it always ran");
   // auto-update.ps1 writes the record around the installer and always removes it.
   const auto = readFileSync(join(ROOT, "scripts", "auto-update.ps1"), "utf8");
   assert.match(auto, /\$updating = Join-Path \$machine 'updating\.json'[\s\S]*try \{\s+\$p = Start-Process[\s\S]*\} finally \{\s+Remove-Item -LiteralPath \$updating/);
