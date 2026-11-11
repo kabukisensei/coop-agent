@@ -54,6 +54,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- **Lean SQL procedures.** coop no longer wraps procedures in `TRY`/`CATCH`,
+  `THROW`, `RAISERROR` or defensive checks unless the project's standards ask for
+  them; validation goes in separate test queries it hands you instead. The rule is
+  in the guardrails' Lean SQL section and the `/new-fact`, `/new-dimension` and
+  `/new-load` prompts (team feedback of 2026-11-11).
+
 - **Simple tasks move faster.** A small change (one file or object, about 20 lines,
   nothing another object uses dropped or renamed, not production) now takes the
   quick lane: coop says in one line what it will change and does it, with no

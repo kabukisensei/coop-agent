@@ -23,7 +23,8 @@ approve the spec.
    Procedures standards you were given: `fact` schema, PascalCase names,
    `FK{DimensionName}` references, nullable columns by default, no identity column
    without a reason, non-unique indexes on join columns, and a load that never
-   leaves an empty or partial table. Mark each SQL edit with the coop comment line.
+   leaves an empty or partial table, kept lean (no `TRY`/`CATCH`, `THROW` or
+   defensive checks unless the project's standards ask). Mark each SQL edit with the coop comment line.
 5. **Self-check** the files against the same standards, name any deviation and its
-   reason, and tell me how to verify the row count and grain on dev.
+   reason, and give me separate test queries that verify the row count and grain on dev.
 6. If I want it in the model, continue with `/model-table`.

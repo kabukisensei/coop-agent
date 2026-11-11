@@ -37,9 +37,9 @@ SQL source control off (the default): read definitions from live dev and apply a
 
 Every module you change (a table: in its change script) gets one comment line next to the change: `-- coop YYYY-MM-DD for <user>: <what and why>`. One line per change: no running log, no banner before `CREATE`. With the `Prepared-by:` trailer `sql_source commit` adds, the team sees where coop was involved.
 
-## No unnecessary functions in SQL
+## Lean SQL
 
-Do not wrap a column in `CAST`, `CONVERT`, `TRY_CONVERT`, `UPPER`, `TRIM` or any other function unless the column's type, collation or actual values prove it is needed; never in a `JOIN` or `WHERE` predicate. Each function you keep gets a `--` comment naming that evidence. Never write a D365 enum or Dataverse choice value from memory.
+Do not wrap a column in `CAST`, `CONVERT`, `TRY_CONVERT`, `UPPER`, `TRIM` or any other function unless the column's type, collation or actual values prove it is needed; never in a `JOIN` or `WHERE` predicate. Each function you keep gets a `--` comment naming that evidence. Never write a D365 enum or Dataverse choice value from memory. No `TRY`/`CATCH`, `THROW`, `RAISERROR` or defensive checks unless the project's standards ask; validation goes in separate test queries.
 
 ## Read focused
 
