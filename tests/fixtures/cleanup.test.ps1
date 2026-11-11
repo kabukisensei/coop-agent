@@ -24,6 +24,10 @@ try {
   $env:NO_COLOR = '1'
   $env:COOP_SKIP_AZ = '1'
   . (Join-Path $root 'lib\common.ps1')
+  # The launch line is captured here: under Windows PowerShell 5.1 a child's stderr
+  # line is an error record in the parent (tests/run.ps1 runs this file as a child).
+  $infoLines = New-Object System.Collections.Generic.List[string]
+  function Coop-Info([string]$m) { $script:infoLines.Add($m) }
   $profile_ = Join-Path $home_ '.coop'
   $sessions = Join-Path $profile_ 'agent\sessions'
   $backups = Join-Path $profile_ 'backups'
@@ -104,31 +108,31 @@ try {
   # --- once a day at launch -----------------------------------------------------------
   Seed
   Set-CoopCleanupDays 0
-  Invoke-CoopDailyCleanup -Now $now 2>$null
-  if ((Test-Path -LiteralPath (Join-Path $sessions '--c--work--\old.jsonl')) -and -not (Test-Path -LiteralPath (Get-CoopCleanupStampFile))) { Ok 'off (0 days): the launch removes nothing' } else { Ko 'the launch cleaned up while off' }
+  Invoke-CoopDailyCleanup -Now $now
+  if ((Test-Path -LiteralPath (Join-Path $sessions '--c--work--\old.jsonl')) -and -not (Test-Path -LiteralPath (Get-CoopCleanupStampFile)) -and $infoLines.Count -eq 0) { Ok 'off (0 days): the launch removes nothing' } else { Ko 'the launch cleaned up while off' }
   Set-CoopCleanupDays 45
-  Invoke-CoopDailyCleanup -Now $now 2>$null
-  if (-not (Test-Path -LiteralPath (Join-Path $sessions '--c--work--\old.jsonl'))) { Ok 'the first launch removes what built up' } else { Ko 'the first launch left an old session' }
+  Invoke-CoopDailyCleanup -Now $now
+  if (-not (Test-Path -LiteralPath (Join-Path $sessions '--c--work--\old.jsonl')) -and $infoLines.Count -eq 1 -and $infoLines[0] -match 'removed 4 file\(s\) older than 45 days') { Ok 'the first launch removes what built up and says so in one line' } else { Ko 'the first launch left an old session' }
   New-AgedFile (Join-Path $sessions '--c--work--\later.jsonl') 80
-  Invoke-CoopDailyCleanup -Now $now 2>$null
+  Invoke-CoopDailyCleanup -Now $now
   $sameDay = Test-Path -LiteralPath (Join-Path $sessions '--c--work--\later.jsonl')
-  Invoke-CoopDailyCleanup -Now $now.AddDays(1) 2>$null
+  Invoke-CoopDailyCleanup -Now $now.AddDays(1)
   $nextDay = Test-Path -LiteralPath (Join-Path $sessions '--c--work--\later.jsonl')
   if ($sameDay -and -not $nextDay) { Ok 'a second launch the same day does nothing; the next day it runs again' } else { Ko "same day kept=$sameDay, next day kept=$nextDay" }
 
   # --- coop cleanup -------------------------------------------------------------------
   Seed
-  $out = (& $psExe -NoProfile -File $coop cleanup 2>&1 | Out-String)
+  $out = (Invoke-Native { & $psExe -NoProfile -File $coop cleanup 2>&1 } | Out-String)
   if ($LASTEXITCODE -eq 0 -and $out -match 'older than 45 days' -and $out -match 'sessions: \d+ file' -and (Test-Path -LiteralPath (Join-Path $sessions '--c--work--\old.jsonl'))) { Ok 'coop cleanup: shows the age and each folder, removes nothing' } else { Ko "coop cleanup status (rc=$LASTEXITCODE)" $out }
-  $out = (& $psExe -NoProfile -File $coop cleanup now 2>&1 | Out-String)
+  $out = (Invoke-Native { & $psExe -NoProfile -File $coop cleanup now 2>&1 } | Out-String)
   if ($LASTEXITCODE -eq 0 -and $out -match 'sessions: removed 2 file' -and -not (Test-Path -LiteralPath (Join-Path $sessions '--c--work--\old.jsonl')) -and (Test-Path -LiteralPath (Join-Path $sessions '--c--work--\new.jsonl'))) { Ok 'coop cleanup now: removes what is due' } else { Ko "coop cleanup now (rc=$LASTEXITCODE)" $out }
-  $out = (& $psExe -NoProfile -File $coop cleanup days 10 2>&1 | Out-String)
+  $out = (Invoke-Native { & $psExe -NoProfile -File $coop cleanup days 10 2>&1 } | Out-String)
   if ($LASTEXITCODE -eq 0 -and (Get-CoopCleanupDays) -eq 10) { Ok 'coop cleanup days 10: saved' } else { Ko "coop cleanup days (rc=$LASTEXITCODE)" $out }
-  $out = (& $psExe -NoProfile -File $coop cleanup off 2>&1 | Out-String)
+  $out = (Invoke-Native { & $psExe -NoProfile -File $coop cleanup off 2>&1 } | Out-String)
   if ($LASTEXITCODE -eq 0 -and (Get-CoopCleanupDays) -eq 0) { Ok 'coop cleanup off: saved as 0' } else { Ko "coop cleanup off (rc=$LASTEXITCODE)" $out }
-  $out = (& $psExe -NoProfile -File $coop cleanup now 2>&1 | Out-String)
+  $out = (Invoke-Native { & $psExe -NoProfile -File $coop cleanup now 2>&1 } | Out-String)
   if ($LASTEXITCODE -ne 0 -and $out -match 'cleanup is off') { Ok 'coop cleanup now while off: refuses' } else { Ko "coop cleanup now while off (rc=$LASTEXITCODE)" $out }
-  $out = (& $psExe -NoProfile -File $coop cleanup days 0 2>&1 | Out-String)
+  $out = (Invoke-Native { & $psExe -NoProfile -File $coop cleanup days 0 2>&1 } | Out-String)
   if ($LASTEXITCODE -ne 0 -and $out -match 'usage: coop cleanup') { Ok 'coop cleanup days 0: usage' } else { Ko "coop cleanup days 0 (rc=$LASTEXITCODE)" $out }
 } finally {
   Restore-Env $saved
