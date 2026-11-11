@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.41.1] — 2026-11-11
+
 ### Added
 
 - **Tabs you can rearrange, and saved sessions that open in their own tab.** In
