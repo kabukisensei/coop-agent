@@ -1029,6 +1029,7 @@ handle("coop:folders", (state) => ({ success: true, data: folderPlaces(state.spe
 handle("coop:standards", async (state) => {
   const result = await readStandards({ node: state.spec.node, repoRoot: repoRootFor(state.spec), cwd: state.spec.cwd, env: toolEnv(state) });
   state.snapshots = result.snapshots;
+  state.snapshotKeep = result.keep;
   state.knowledgeRoots = result.roots;
   return { success: true, data: { source: result.source, domains: result.domains, knowledge: result.knowledge } };
 });
@@ -1045,7 +1046,7 @@ handle("coop:knowledge-note", async (state, source, path) => {
 handle("coop:standards-text", async (state, domain) => {
   const path = state.snapshots.get(domain);
   if (!path) return { success: false, error: "no standards are resolved for that domain" };
-  return { success: true, data: await readSnapshot(path) };
+  return { success: true, data: await readSnapshot(path, { titles: (state.snapshotKeep && state.snapshotKeep.get(domain)) || null }) };
 });
 
 handle("coop:project-load", (state) => ({ success: true, data: loadProject(state.spec.cwd, { env: toolEnv(state) }) }));

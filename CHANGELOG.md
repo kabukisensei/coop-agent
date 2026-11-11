@@ -54,6 +54,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **The Standards pane shows the D365 source standards.** coop has given every
+  SQL, DAX and model task the Dynamics 365 Source Systems articles since v0.39.2,
+  but the window's Standards pane never listed them. It now has a D365 source tab
+  with exactly the articles a task gets for the project's `source_systems` (both
+  D365 systems unless the project file says otherwise), shown as off when the
+  project sets `source_systems: []`.
+
 - **The window's pickers fit their content.** The model, thinking, theme and
   session pickers, the command palette and coop's question cards no longer
   stretch to the full height of the window, and a shortcut or context size sits
