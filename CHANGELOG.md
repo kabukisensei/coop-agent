@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.41.0] — 2026-11-11
+
 ### Added
 
 - **A second look before coop shows you a change.** coop already checks its own
@@ -53,6 +55,29 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 
 ### Changed
+
+- **Updates install in a fraction of the time.** coop's runtime (Node, Pi and
+  the extensions, Git, Python, the Azure CLI) now ships as separate packs that
+  unpack straight into Program Files, and an update keeps every pack whose
+  content did not change. A typical update rewrites a few hundred files instead
+  of about 34,000, each written several times before (a client VM took 19
+  minutes). The first update to this version still copies everything once,
+  because the previous version's uninstaller runs that time.
+
+- **"coop is updating" instead of a missing coop.** Starting coop while an
+  update installs now shows a small "coop is updating" window, and coop opens by
+  itself when the update finishes. This works from the update after this one,
+  because the version being replaced is the one that shows it.
+
+- **Launch step timings.** The window's launch log
+  (`~\.coop\desktop\launch.log`) records how long each launch step took
+  (`timing:` lines); `COOP_LAUNCH_TIMINGS=1` prints them in a terminal.
+
+- **A shorter launch.** Every launch asked Pi for its version twice (about a
+  second each on the dev VM); it now asks once. The standards refresh, a network
+  call, now runs beside the launch's other checks instead of after them. The
+  checks themselves are unchanged.
+
 
 - **Lean SQL procedures.** coop no longer wraps procedures in `TRY`/`CATCH`,
   `THROW`, `RAISERROR` or defensive checks unless the project's standards ask for
@@ -140,30 +165,6 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   conversation in every theme; the Find bar no longer covers a banner; the empty
   "Session backfill complete: 0 indexed" notice is gone; tips write "coop" in
   lower case.
-
-### Changed
-
-- **Updates install in a fraction of the time.** coop's runtime (Node, Pi and
-  the extensions, Git, Python, the Azure CLI) now ships as separate packs that
-  unpack straight into Program Files, and an update keeps every pack whose
-  content did not change. A typical update rewrites a few hundred files instead
-  of about 34,000, each written several times before (a client VM took 19
-  minutes). The first update to this version still copies everything once,
-  because the previous version's uninstaller runs that time.
-
-- **"coop is updating" instead of a missing coop.** Starting coop while an
-  update installs now shows a small "coop is updating" window, and coop opens by
-  itself when the update finishes. This works from the update after this one,
-  because the version being replaced is the one that shows it.
-
-- **Launch step timings.** The window's launch log
-  (`~\.coop\desktop\launch.log`) records how long each launch step took
-  (`timing:` lines); `COOP_LAUNCH_TIMINGS=1` prints them in a terminal.
-
-- **A shorter launch.** Every launch asked Pi for its version twice (about a
-  second each on the dev VM); it now asks once. The standards refresh, a network
-  call, now runs beside the launch's other checks instead of after them. The
-  checks themselves are unchanged.
 
 ## [0.40.1] — 2026-11-10
 
