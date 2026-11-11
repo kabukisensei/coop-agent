@@ -95,11 +95,12 @@ export function openModal({ title, titleIcon = "", body, buttons = [], onCancel,
     text: button.label,
     onclick: () => { if (button.onClick && button.onClick() === false) return; close(); },
   }))) : null;
+  const bodyBox = el("div", { class: "modal-body" }, body);
   const box = el("div", { class: `modal ${wide ? "wide" : ""} ${className}`, role: "dialog", "aria-modal": "true", "aria-label": title || "coop" },
     el("div", { class: "modal-title" },
       el("span", { class: "modal-title-text" }, titleIcon ? icon(titleIcon) : null, el("span", { text: title || "coop" })),
       el("button", { type: "button", class: "btn icon title-close", title: "Close (Esc)", onclick: cancel }, icon("close", "Close"))),
-    el("div", { class: "modal-body" }, body),
+    bodyBox,
     footer);
   box.addEventListener("keydown", (event) => {
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancel(); }
@@ -112,6 +113,13 @@ export function openModal({ title, titleIcon = "", body, buttons = [], onCancel,
   requestAnimationFrame(() => {
     const target = ["[autofocus]", "input, textarea, select", ".option", ".modal-buttons .btn.primary", ".modal-buttons .btn", ".btn"].map((selector) => box.querySelector(selector)).find(Boolean);
     if (target) target.focus();
+    // A body taller than the window (the shortcuts list) scrolls with the
+    // keyboard too: it takes the focus when nothing inside it can.
+    if (bodyBox.scrollHeight > bodyBox.clientHeight + 1 && !bodyBox.querySelector("button, input, textarea, select, [tabindex='0']")) {
+      bodyBox.tabIndex = 0;
+      bodyBox.setAttribute("role", "group");
+      bodyBox.setAttribute("aria-label", title || "coop");
+    }
   });
   return { close, cancel, root: box };
 }
@@ -138,7 +146,7 @@ export function pickFrom({ title, items, placeholder = "Type to filter", filter 
     let done = false;
     const finish = (value) => { if (!done) { done = true; resolve(value); } };
     const input = filter ? el("input", { class: "field", type: "text", placeholder, autofocus: true, "aria-label": placeholder }) : null;
-    const list = el("ul", { class: "pick-list", role: "listbox" });
+    const list = el("ul", { class: "pick-list", role: "listbox", "aria-label": title || "Choices" });
     let shown = items;
     let active = Math.max(0, items.findIndex((item) => item.value === current));
     const render = () => {
@@ -149,7 +157,7 @@ export function pickFrom({ title, items, placeholder = "Type to filter", filter 
         "aria-selected": index === active ? "true" : "false",
         onclick: () => { finish(item.value); modal.close(); },
         onmousemove: () => { if (active !== index) { active = index; render(); } },
-      }, el("span", { class: "option-label", text: item.label }), item.detail ? el("span", { class: "option-detail", text: item.detail }) : null, item.hint ? el("span", { class: "option-hint", text: item.hint }) : null)));
+      }, el("span", { class: "option-label", text: item.label }), item.hint ? el("span", { class: "option-hint", text: item.hint }) : null, item.detail ? el("span", { class: "option-detail", text: item.detail }) : null)));
       const node = list.children[active];
       if (node) node.scrollIntoView({ block: "nearest" });
     };

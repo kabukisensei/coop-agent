@@ -1076,6 +1076,23 @@ await check("resize: every pane drags, within limits that keep the conversation 
   assert.equal(/grid-template-columns: 264px/.test(css), false, "the sidebar column follows --sidebar-width");
 });
 
+await check("styles: one page's rules never restyle the window's dialogs, and every colour token exists", () => {
+  // 2026-11-11: the client-folder page's bare `.picker { min-height: 100vh }`
+  // also matched every picker dialog (model, thinking, theme, questions) and
+  // stretched each one to the window's height.
+  const css = readFileSync(join(ROOT, "desktop", "renderer", "styles", "app.css"), "utf8");
+  const themes = readFileSync(join(ROOT, "desktop", "renderer", "styles", "themes.css"), "utf8");
+  for (const rule of css.matchAll(/\n([^\n{}]*)\{([^}]*min-height: 100vh[^}]*)\}/g)) {
+    assert.match(rule[1], /-body\b/, `a full-height rule is scoped to its own page: ${rule[1].trim()}`);
+  }
+  const defined = new Set([...`${themes}\n${css}`.matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
+  const set = new Set(["--sidebar-width", "--pane-width", "--change-list-height"]); // set from script (resize.mjs)
+  for (const use of css.matchAll(/var\((--[a-z0-9-]+)\s*[,)]/g)) {
+    assert.ok(defined.has(use[1]) || set.has(use[1]), `${use[1]} is defined in themes.css or app.css`);
+  }
+  assert.match(css, /\.md a, \.md-link \{[^}]*text-decoration: underline/, "links are told from text by more than colour");
+});
+
 await check("styles: a long session list never pushes the window past its height", () => {
   // 2026-10-05: the sidebar grew with its list, the composer sat below the fold
   // and focusing it scrolled the whole document (top bar and sidebar head gone).

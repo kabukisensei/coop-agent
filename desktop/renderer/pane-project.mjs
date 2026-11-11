@@ -100,8 +100,12 @@ export function mountProject(box, options, { coop, newSession }) {
   const guard = () => el("span", { class: "chip guard", title: GUARD_TITLE }, icon("shield"), el("span", { text: "guardrails" }));
 
   function row({ field, label, hint, control, guarded, extra }) {
+    // The label names its field for a screen reader, and a click on it lands there.
+    const input = control instanceof Element ? (control.matches("input, select, textarea") ? control : control.querySelector("input, select, textarea")) : null;
+    const id = input ? (input.id || `project-field-${String(field).replace(/[^A-Za-z0-9_-]/g, "-")}`) : "";
+    if (input) input.id = id;
     return el("div", { class: "form-row", dataset: { field } },
-      el("label", { class: "form-label" }, el("span", { text: label }), guarded ? guard() : null),
+      el("label", { class: "form-label", for: id || undefined }, el("span", { text: label }), guarded ? guard() : null),
       el("div", { class: "form-control" }, control, extra || null),
       hint ? el("div", { class: "hint", text: hint }) : null,
       el("div", { class: "form-problem", role: "alert", hidden: true }));

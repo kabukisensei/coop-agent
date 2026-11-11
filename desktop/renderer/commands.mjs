@@ -34,7 +34,7 @@ export const BUILTINS = Object.freeze([
   { name: "reload", description: "Restart coop in this window on this session", action: "reload" },
   { name: "hotkeys", description: "Keyboard shortcuts", action: "hotkeys" },
   { name: "changelog", description: "Pi's changelog (opens the terminal)", action: "terminal" },
-  { name: "quit", description: "Close this window", action: "quit" },
+  { name: "quit", description: "Close this tab (the last tab closes the window)", action: "quit" },
 ]);
 
 const BUILTIN_NAMES = new Map(BUILTINS.map((command) => [command.name, command]));
