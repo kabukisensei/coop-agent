@@ -34,7 +34,7 @@ import { parseConfirm, confirmLabels, parseQuestionSelect, parseQuestionMulti, m
 import { menuTemplate, notificationFor } from "../desktop/lib/menu.mjs";
 import { restartOnce } from "../desktop/lib/restart.mjs";
 import { markOpenElsewhere, ownerOf, sameSessionPath, SessionArbiter } from "../desktop/lib/session-owners.mjs";
-import { MAX_TABS, TAB_STRIP_HEIGHT, afterClose, stripRows, tabFor, tabKey, tabLabel } from "../desktop/lib/tabs.mjs";
+import { MAX_TABS, TAB_STRIP_HEIGHT, afterClose, moveTab, stripRows, tabFor, tabKey, tabLabel } from "../desktop/lib/tabs.mjs";
 import { imageBudgetProblem, imageBytes, restoreDraft } from "../desktop/renderer/draft.mjs";
 import { activitySummary, applyEvent, codemodeCalls, createTimeline, finishBash, loadMessages, startBash, toolSummary, turnOf, turns } from "../desktop/renderer/timeline.mjs";
 import { isSafeLink, parseMarkdown } from "../desktop/renderer/markdown.mjs";
@@ -495,6 +495,9 @@ await check("tabs: keys, order after a close, labels and the strip's rows", () =
   assert.deepEqual(key("Tab"), { type: "next" });
   assert.deepEqual(key("Tab", { shift: true }), { type: "prev" });
   assert.deepEqual(key("PageDown"), { type: "next" });
+  assert.deepEqual(key("PageUp"), { type: "prev" });
+  assert.deepEqual(key("PageDown", { shift: true }), { type: "move", delta: 1 }, "Ctrl+Shift+PageDown moves the tab right");
+  assert.deepEqual(key("PageUp", { shift: true }), { type: "move", delta: -1 }, "Ctrl+Shift+PageUp moves the tab left");
   assert.deepEqual(key("3"), { type: "index", index: 2 });
   assert.deepEqual(key("9"), { type: "last" });
   assert.equal(key("t"), null, "Ctrl+T stays Show thinking");
@@ -511,6 +514,14 @@ await check("tabs: keys, order after a close, labels and the strip's rows", () =
   assert.equal(afterClose(tabs, c, c), b, "else the one to its left");
   assert.equal(afterClose(tabs, a, c), c, "closing a tab behind keeps the one in front");
   assert.equal(afterClose([a], a, a), null);
+  assert.deepEqual(moveTab(tabs, a, 2), [b, c, a], "a drag to the end");
+  assert.deepEqual(moveTab(tabs, c, 0), [c, a, b], "a drag to the front");
+  assert.deepEqual(moveTab(tabs, b, 2), [a, c, b], "one place right");
+  assert.deepEqual(moveTab(tabs, a, 9), [b, c, a], "past the end lands last");
+  assert.deepEqual(moveTab(tabs, c, -4), [c, a, b], "before the front lands first");
+  assert.equal(moveTab(tabs, b, 1), tabs, "the same place changes nothing");
+  assert.equal(moveTab(tabs, { tabId: 9 }, 0), tabs, "a tab not on the strip changes nothing");
+  assert.deepEqual(tabs, [a, b, c], "the strip's own array is left alone");
   assert.equal(tabLabel(""), "New session");
   assert.equal(tabLabel("line one\nline two"), "line one line two");
   assert.ok(tabLabel("x".repeat(90)).length <= 60);

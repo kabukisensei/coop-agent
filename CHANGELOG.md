@@ -7,6 +7,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- **Tabs you can rearrange, and saved sessions that open in their own tab.** In
+  the coop window, drag a session tab along the strip to put it where you want
+  it (Ctrl+Shift+PageUp and Ctrl+Shift+PageDown move it one place; Ctrl+1 to
+  Ctrl+9 follow the new order). Clicking a saved session in the sidebar or the
+  session picker now opens it in a new tab instead of replacing the session in
+  front of you; if a tab already holds it, that tab comes forward. An unused tab
+  (nothing said yet) still loads the session in place, and a full window loads
+  it in the current tab.
 - **A second look before coop shows you a change.** coop already checks its own
   SQL, DAX and model changes against the standards, but in the same conversation
   that wrote them. A new read-only `standards_check` tool now sends the change and
