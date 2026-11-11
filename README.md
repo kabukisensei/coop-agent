@@ -350,7 +350,9 @@ the window's contract: what it runs itself, and what opens in the terminal.
 ## Commands
 
 Anything after `coop` that is not a known subcommand is passed straight to Pi
-(e.g. `coop -c` resumes the last session; `coop @notes.md "review this"`).
+(e.g. `coop -c` resumes the last session; `coop @notes.md "review this"`). A single word a letter
+or two off a command (`coop docter`) is treated as a typo: coop names the command
+it is close to and stops.
 
 | Command | Description |
 | --- | --- |
@@ -385,6 +387,7 @@ Anything after `coop` that is not a known subcommand is passed straight to Pi
 | `coop dev pi <args...>` | Raw escape hatch to `pi` |
 | `coop project home [<folder>]` | Show this Windows user's client folder record (client, folder, project file), or set it to `<folder>` (the folder given becomes the client folder; the project file is the one found in or above it) |
 | `coop folders` | Print the three places coop uses (this machine, this client, the repository) with their real paths; read-only |
+| `coop cleanup [status\|now\|days <N>\|off]` | This client's saved sessions, backups and drafts: coop removes the ones older than 45 days once a day when it starts. `status` (the default) shows how much is there and how much is due, `now` removes it at once, `days <N>` changes the age, `off` keeps everything. The setting is `cleanup.days` in `~/.coop/config`. Logs cap themselves and each update deletes its own download |
 | `coop project status\|get\|share [--root <dir>] [--force]` | The shared project file from a shell: compare `.coop/project.yml` with the team's copy on origin, get the team's version (a fast-forward pull when nothing else would move, else only that file with a backup), or share yours (commits only that file and pushes the current branch; `--force` from a branch other than the default). Same code as `/project-get`, `/project-share` and the window's Project pane |
 
 `coop data-doc` **flows straight through** to `coop-data-doc` — every subcommand

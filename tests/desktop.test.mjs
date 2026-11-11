@@ -894,6 +894,18 @@ await check("activity: one line for a run of tool calls, the live step while one
   assert.equal(activitySummary([block("t1", "read"), { type: "thinking", text: "" }], tools, { live: true }), "Thinking...");
   assert.equal(activitySummary([block("t4", "data_doc")], tools, { live: false }), "Used data_doc");
   assert.equal(activitySummary([{ type: "tool", toolCallId: "x", name: "bash" }], new Map([["x", { status: "running", args: { command: "pwsh -File build.ps1" } }]]), { live: true }), "Running pwsh -File build.ps1...");
+  // A step the guardrails stopped never ran, and a step behind an open card has not started.
+  const blockedTools = new Map([
+    ["b1", { name: "bash", args: { command: "rm -rf data-docs-site" }, status: "error", result: { text: "coop guardrails: blocked the rm -rf command (you declined). Propose a safer approach." } }],
+    ["b2", { name: "edit", args: { path: "sql/vSales.sql" }, status: "done" }],
+    ["b3", { name: "bash", args: { command: "false" }, status: "error", result: { text: "exit 1" } }],
+    ["b4", { name: "bash", args: { command: "rm -rf out" }, status: "running" }],
+  ]);
+  assert.equal(activitySummary([block("b1", "bash"), block("b2", "edit")], blockedTools), "Blocked rm -rf data-docs-site, edited vSales.sql");
+  assert.equal(activitySummary([block("b1", "bash"), block("b1", "bash")], blockedTools), "Blocked 2 steps");
+  assert.equal(activitySummary([block("b3", "bash")], blockedTools), "Ran false (1 step failed)", "a command that ran and failed still ran");
+  assert.equal(activitySummary([block("b4", "bash")], blockedTools, { live: true, waiting: true }), "Waiting for your answer...");
+  assert.equal(activitySummary([block("b4", "bash")], blockedTools, { live: true }), "Running rm -rf out...");
 });
 
 await check("turns: consecutive assistant messages are one turn, anything else breaks it", () => {

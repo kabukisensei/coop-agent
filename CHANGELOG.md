@@ -17,6 +17,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   It costs one extra model request per change, and when it cannot run coop says so
   and relies on its own check (master plan SC1).
 
+- **coop cleans up after itself.** Saved sessions, backups and drafts used to be
+  kept for ever. coop now removes the ones older than 45 days, once a day when it
+  starts, so the first launch after this update clears what has built up. A file's
+  age is the newer of its creation and last-write times, emptied folders go too,
+  and links are never followed. `coop cleanup` shows what is there and what is
+  due, `coop cleanup now` runs it, `coop cleanup days <N>` changes the age and
+  `coop cleanup off` keeps everything (`cleanup.days` in `~/.coop/config`).
+  `coop doctor` shows the size of the three folders. The workflow skill also tells
+  coop to remove the scratch files and scratch tables a task created once it no
+  longer needs them; dropping a table still asks, as every destructive write does.
+
 - **Report a bug or send feedback.** `/feedback` in the terminal and the window,
   Help > Report a problem and a feedback button in the window header, `/bug` in
   the window, and `coop feedback` in a shell. coop asks bug, idea or question, a
@@ -39,6 +50,43 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   Factory per environment); see `.coop/project.example.yml`. It runs on dev and test
   only and writes a run sheet for a person on production. The guardrails are
   unchanged: the view edit and each pipeline run ask, production stays blocked.
+
+
+### Fixed
+
+- **The window's pickers fit their content.** The model, thinking, theme and
+  session pickers, the command palette and coop's question cards no longer
+  stretch to the full height of the window, and a shortcut or context size sits
+  on the same line as its label instead of a line of its own.
+- **A step you declined no longer reads as done.** When coop's guardrails stop a
+  step, the conversation's activity line says "Blocked rm -rf ..." instead of
+  "Ran rm -rf ...", and while an approval or a question is open it says
+  "Waiting for your answer..." instead of "Running ...".
+- **Easier to read and to use without a mouse.** Links in answers and docs are
+  underlined; the dimmer text on a selected row meets contrast in all four
+  themes; Settings and the Project pane's fields are named for screen readers
+  (and a click on a setting's text toggles it); the keyboard shortcuts list
+  scrolls from the keyboard; the pane drag handles report their size.
+- Small wording fixes: `/quit` says it closes the tab, Session details shows
+  the same words as Settings for steering and follow-ups, the session tree drops
+  Markdown heading marks, and the Auto-retry setting says it turns back on each
+  time the window opens.
+- **A mistyped command no longer opens a session.** One word a letter or two off
+  a coop command (`coop docter`) stops with "Did you mean: coop doctor" instead of
+  being sent to coop as a message. `coop pi <word>` still sends any word.
+- **The phone page hides what it should.** Stop and Queue no longer show while
+  coop is idle (the page's button styling cancelled the hiding), a wide table
+  scrolls sideways inside its message instead of breaking names mid-word, and the
+  message box loses its desktop resize grip. Each code block has its own Copy,
+  and the header keeps to one line (client and session); the menu shows the
+  whole line with the Windows user and the phone's name.
+- **Window polish.** The sidebar shows the Cooptimize pixel logo; Settings uses
+  on/off switches in the modern themes; the retro themes dim the window behind a
+  dialog with a dither pattern; the MCP status and memory notices use the
+  window's own line icons instead of emoji; the composer lines up with the
+  conversation in every theme; the Find bar no longer covers a banner; the empty
+  "Session backfill complete: 0 indexed" notice is gone; tips write "coop" in
+  lower case.
 
 ## [0.40.1] — 2026-11-10
 

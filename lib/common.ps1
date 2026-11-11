@@ -2170,6 +2170,156 @@ function Set-CoopClientFolderEnv {
   return $name
 }
 
+# --- Cleanup (Aaron 2026-11-11) -------------------------------------------------
+# coop's own files that would otherwise grow without end: this client's saved
+# sessions (<agent dir>\sessions, Pi's *.jsonl), backups and drafts. A file goes
+# once it is older than the cleanup age (default 45 days; ~/.coop/config
+# "cleanup": {"days": N}, 0 turns it off). Its age is the NEWER of its creation
+# and last-write times, because a backup copied with Copy-Item keeps the source
+# file's old write time. Emptied folders go too; the three roots stay. Links and
+# junctions are never followed or removed. It runs once a day at launch (so the
+# first launch after the update clears what built up before it) and on demand with
+# `coop cleanup`. Logs cap themselves (Add-CoopUpdateLogLine, the guardrails audit,
+# the window's launch log) and the updates folder is emptied by each update.
+$script:CoopCleanupDefaultDays = 45
+
+# The cleanup age in days: 0 means off. A missing, unreadable or invalid setting
+# is the default.
+function Get-CoopCleanupDays {
+  $f = Get-CoopConfigFile
+  if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return $script:CoopCleanupDefaultDays }
+  try {
+    $cfg = Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($null -eq $cfg -or -not $cfg.PSObject.Properties['cleanup'] -or $null -eq $cfg.cleanup) { return $script:CoopCleanupDefaultDays }
+    if (-not $cfg.cleanup.PSObject.Properties['days']) { return $script:CoopCleanupDefaultDays }
+    $raw = [string]$cfg.cleanup.days
+    $n = 0
+    if ([int]::TryParse($raw, [ref]$n) -and $n -ge 0 -and $n -le 3650) { return $n }
+  } catch { }
+  return $script:CoopCleanupDefaultDays
+}
+
+# Save the cleanup age in ~/.coop/config, keeping every other key.
+function Set-CoopCleanupDays([int]$Days) {
+  $f = Get-CoopConfigFile
+  $cfg = $null
+  if (Test-Path -LiteralPath $f -PathType Leaf) {
+    $text = Get-Content -LiteralPath $f -Raw -Encoding UTF8
+    if ($text -and $text.Trim()) { $cfg = $text | ConvertFrom-Json }
+  }
+  if ($null -eq $cfg) { $cfg = New-Object PSObject }
+  $block = New-Object PSObject
+  $block | Add-Member -NotePropertyName 'days' -NotePropertyValue $Days
+  if ($cfg.PSObject.Properties['cleanup']) { $cfg.cleanup = $block }
+  else { $cfg | Add-Member -NotePropertyName 'cleanup' -NotePropertyValue $block }
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $f) | Out-Null
+  [System.IO.File]::WriteAllText($f, ($cfg | ConvertTo-Json -Depth 32) + "`n", (New-Object System.Text.UTF8Encoding $false))
+}
+
+# The folders the cleanup looks in, with the files it may remove there. Sessions
+# only when coop runs isolated: a personal ~/.pi agent dir is never touched.
+function Get-CoopCleanupTargets {
+  $targets = @()
+  if (-not (Test-CoopNoIsolate)) { $targets += [pscustomobject]@{ Name = 'sessions'; Root = (Join-Path (Get-CoopPiAgentDir) 'sessions'); Filter = '*.jsonl' } }
+  $targets += [pscustomobject]@{ Name = 'backups'; Root = (Get-CoopBackupsRoot); Filter = '*' }
+  $targets += [pscustomobject]@{ Name = 'drafts'; Root = (Get-CoopDraftsRoot); Filter = '*' }
+  return $targets
+}
+
+function Test-CoopReparsePoint($Item) {
+  return (($Item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)
+}
+
+# Every file under $Root matching $Filter, without following links or junctions.
+function Get-CoopCleanupFiles([string]$Root, [string]$Filter = '*') {
+  $files = New-Object System.Collections.Generic.List[object]
+  $dirs = New-Object System.Collections.Generic.List[object]
+  if (-not (Test-Path -LiteralPath $Root -PathType Container)) { return [pscustomobject]@{ Files = $files; Dirs = $dirs } }
+  $top = Get-Item -LiteralPath $Root -Force -ErrorAction SilentlyContinue
+  if ($null -eq $top -or (Test-CoopReparsePoint $top)) { return [pscustomobject]@{ Files = $files; Dirs = $dirs } }
+  $queue = New-Object System.Collections.Generic.Queue[string]
+  $queue.Enqueue($top.FullName)
+  while ($queue.Count -gt 0) {
+    $dir = $queue.Dequeue()
+    foreach ($child in @(Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue)) {
+      if (Test-CoopReparsePoint $child) { continue }
+      if ($child.PSIsContainer) { $dirs.Add($child); $queue.Enqueue($child.FullName); continue }
+      if ($child.Name -like $Filter) { $files.Add($child) }
+    }
+  }
+  return [pscustomobject]@{ Files = $files; Dirs = $dirs }
+}
+
+# A file's age for the cleanup: the newer of its creation and last-write times.
+function Get-CoopCleanupStamp($File) {
+  $c = $File.CreationTimeUtc
+  $w = $File.LastWriteTimeUtc
+  if ($c -gt $w) { return $c } else { return $w }
+}
+
+# Remove the files older than $Days in every target (with -DryRun, only count
+# them). Returns one row per target: Name, Root, Files, Bytes (removed or to
+# remove), Kept, KeptBytes (what stays) and Failed (files that could not go).
+function Invoke-CoopCleanup {
+  param([int]$Days = (Get-CoopCleanupDays), [switch]$DryRun, [datetime]$Now = [datetime]::UtcNow)
+  $rows = @()
+  $cutoff = $Now.ToUniversalTime().AddDays(-1 * $Days)
+  foreach ($t in @(Get-CoopCleanupTargets)) {
+    $row = [pscustomobject]@{ Name = $t.Name; Root = $t.Root; Files = 0; Bytes = [long]0; Kept = 0; KeptBytes = [long]0; Failed = 0 }
+    $found = Get-CoopCleanupFiles $t.Root $t.Filter
+    foreach ($f in $found.Files) {
+      $old = ($Days -gt 0) -and ((Get-CoopCleanupStamp $f) -lt $cutoff)
+      if (-not $old) { $row.Kept++; $row.KeptBytes += [long]$f.Length; continue }
+      if ($DryRun) { $row.Files++; $row.Bytes += [long]$f.Length; continue }
+      try { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop; $row.Files++; $row.Bytes += [long]$f.Length }
+      catch { $row.Failed++; $row.Kept++; $row.KeptBytes += [long]$f.Length }
+    }
+    if (-not $DryRun -and $Days -gt 0) {
+      # Deepest first, so a parent emptied by its children goes too; never the root.
+      $byDepth = @($found.Dirs | Sort-Object -Property @{ Expression = { $_.FullName.Length } } -Descending)
+      foreach ($d in $byDepth) {
+        if (-not (Test-Path -LiteralPath $d.FullName -PathType Container)) { continue }
+        if (@(Get-ChildItem -LiteralPath $d.FullName -Force -ErrorAction SilentlyContinue).Count -eq 0) {
+          Remove-Item -LiteralPath $d.FullName -Force -ErrorAction SilentlyContinue
+        }
+      }
+    }
+    $rows += $row
+  }
+  return $rows
+}
+
+# Bytes as one short phrase: 512 B, 3.4 MB, 1.2 GB.
+function Format-CoopBytes([long]$Bytes) {
+  if ($Bytes -ge 1GB) { return ('{0:0.0} GB' -f ($Bytes / 1GB)) }
+  if ($Bytes -ge 1MB) { return ('{0:0.0} MB' -f ($Bytes / 1MB)) }
+  if ($Bytes -ge 1KB) { return ('{0:0} KB' -f ($Bytes / 1KB)) }
+  return "$Bytes B"
+}
+
+function Get-CoopCleanupStampFile { return (Join-Path (Get-CoopProfileDir) 'cleanup-last.txt') }
+
+# The launch's cleanup: at most once a day per client, never when it is off,
+# never a failed launch. One line when something went.
+function Invoke-CoopDailyCleanup {
+  param([datetime]$Now = [datetime]::UtcNow)
+  try {
+    $days = Get-CoopCleanupDays
+    if ($days -le 0) { return }
+    $stamp = Get-CoopCleanupStampFile
+    $today = $Now.ToUniversalTime().ToString('yyyy-MM-dd')
+    if (Test-Path -LiteralPath $stamp -PathType Leaf) {
+      if (([System.IO.File]::ReadAllText($stamp)).Trim() -ceq $today) { return }
+    }
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $stamp) | Out-Null
+    [System.IO.File]::WriteAllText($stamp, $today + "`n")
+    $rows = @(Invoke-CoopCleanup -Days $days -Now $Now)
+    $files = 0; $bytes = [long]0
+    foreach ($r in $rows) { $files += $r.Files; $bytes += $r.Bytes }
+    if ($files -gt 0) { Coop-Info "cleanup: removed $files file(s) older than $days days ($(Format-CoopBytes $bytes)) from this client's sessions, backups and drafts   (settings: coop cleanup status)" }
+  } catch { }
+}
+
 # The repository's .coop folder for a launch in $StartDir: the folder of the
 # project file coop uses there (the nearest one at or above, else COOP_PROJECT_YML
 # or the launch lookup), else <git root>\.coop, else <StartDir>\.coop. The folder

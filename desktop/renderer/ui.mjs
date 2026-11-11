@@ -51,7 +51,22 @@ const ICONS = {
   diff: "M3.5 2.5h6l3 3v8h-9zM8 5v4M6 7h4M6 11h4",
   form: "M3 2.5h10v11H3zM5 5.5h6M5 8h6M5 10.5h3.5",
   graph: "M2.5 3h3v3h-3zM10.5 3h3v3h-3zM6.5 10h3v3h-3zM4 6l3.5 4M12 6l-3.5 4",
+  plug: "M6 2v3M10 2v3M4.5 5h7v2.5a3.5 3.5 0 0 1-7 0zM8 11v3",
 };
+
+// Extensions lead some lines with an emoji (the MCP adapter's plug, the memory
+// extension's brain). The window draws its own line icon in its place, so the
+// status bar and the toasts match the rest of the window.
+const GLYPHS = { "\u{1F50C}": "plug", "\u{1F9E0}": "book" };
+
+/** { icon, text }: the window's icon name for a known leading emoji ("" when none), and the text without it. */
+export function splitGlyph(text) {
+  const value = String(text === undefined || text === null ? "" : text);
+  for (const [glyph, name] of Object.entries(GLYPHS)) {
+    if (value.startsWith(glyph)) return { icon: name, text: value.slice(glyph.length).replace(/^\uFE0F?\s*/, "") };
+  }
+  return { icon: "", text: value };
+}
 
 export function icon(name, label) {
   const ns = "http://www.w3.org/2000/svg";
@@ -95,11 +110,12 @@ export function openModal({ title, titleIcon = "", body, buttons = [], onCancel,
     text: button.label,
     onclick: () => { if (button.onClick && button.onClick() === false) return; close(); },
   }))) : null;
+  const bodyBox = el("div", { class: "modal-body" }, body);
   const box = el("div", { class: `modal ${wide ? "wide" : ""} ${className}`, role: "dialog", "aria-modal": "true", "aria-label": title || "coop" },
     el("div", { class: "modal-title" },
       el("span", { class: "modal-title-text" }, titleIcon ? icon(titleIcon) : null, el("span", { text: title || "coop" })),
       el("button", { type: "button", class: "btn icon title-close", title: "Close (Esc)", onclick: cancel }, icon("close", "Close"))),
-    el("div", { class: "modal-body" }, body),
+    bodyBox,
     footer);
   box.addEventListener("keydown", (event) => {
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancel(); }
@@ -112,6 +128,13 @@ export function openModal({ title, titleIcon = "", body, buttons = [], onCancel,
   requestAnimationFrame(() => {
     const target = ["[autofocus]", "input, textarea, select", ".option", ".modal-buttons .btn.primary", ".modal-buttons .btn", ".btn"].map((selector) => box.querySelector(selector)).find(Boolean);
     if (target) target.focus();
+    // A body taller than the window (the shortcuts list) scrolls with the
+    // keyboard too: it takes the focus when nothing inside it can.
+    if (bodyBox.scrollHeight > bodyBox.clientHeight + 1 && !bodyBox.querySelector("button, input, textarea, select, [tabindex='0']")) {
+      bodyBox.tabIndex = 0;
+      bodyBox.setAttribute("role", "group");
+      bodyBox.setAttribute("aria-label", title || "coop");
+    }
   });
   return { close, cancel, root: box };
 }
@@ -138,7 +161,7 @@ export function pickFrom({ title, items, placeholder = "Type to filter", filter 
     let done = false;
     const finish = (value) => { if (!done) { done = true; resolve(value); } };
     const input = filter ? el("input", { class: "field", type: "text", placeholder, autofocus: true, "aria-label": placeholder }) : null;
-    const list = el("ul", { class: "pick-list", role: "listbox" });
+    const list = el("ul", { class: "pick-list", role: "listbox", "aria-label": title || "Choices" });
     let shown = items;
     let active = Math.max(0, items.findIndex((item) => item.value === current));
     const render = () => {
@@ -149,7 +172,7 @@ export function pickFrom({ title, items, placeholder = "Type to filter", filter 
         "aria-selected": index === active ? "true" : "false",
         onclick: () => { finish(item.value); modal.close(); },
         onmousemove: () => { if (active !== index) { active = index; render(); } },
-      }, el("span", { class: "option-label", text: item.label }), item.detail ? el("span", { class: "option-detail", text: item.detail }) : null, item.hint ? el("span", { class: "option-hint", text: item.hint }) : null)));
+      }, el("span", { class: "option-label", text: item.label }), item.hint ? el("span", { class: "option-hint", text: item.hint }) : null, item.detail ? el("span", { class: "option-detail", text: item.detail }) : null)));
       const node = list.children[active];
       if (node) node.scrollIntoView({ block: "nearest" });
     };
@@ -183,8 +206,10 @@ export function pickFrom({ title, items, placeholder = "Type to filter", filter 
 
 export function toast(message, level = "info", { timeout } = {}) {
   const host = document.getElementById("toasts");
+  const lead = splitGlyph(message);
   const node = el("div", { class: `toast ${level}`, role: level === "error" ? "alert" : "status" },
-    el("span", { class: "toast-text", text: String(message) }),
+    lead.icon ? icon(lead.icon) : null,
+    el("span", { class: "toast-text", text: lead.text }),
     el("button", { type: "button", class: "btn icon", title: "Dismiss", onclick: () => node.remove() }, icon("close", "Dismiss")));
   host.append(node);
   while (host.children.length > 5) host.firstElementChild.remove();

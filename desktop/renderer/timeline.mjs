@@ -368,8 +368,8 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
  * commands, edited report.sql", or the live step while the last one runs.
  * blocks are the run's blocks in order; tools is the timeline's tool map.
  */
-export function activitySummary(blocks, tools, { live = false } = {}) {
-  const read = []; const ran = []; const edited = []; const searched = []; const other = [];
+export function activitySummary(blocks, tools, { live = false, waiting = false } = {}) {
+  const read = []; const ran = []; const edited = []; const searched = []; const other = []; const blocked = [];
   let thinking = 0; let failed = 0;
   const toolOf = (block) => tools.get(block.toolCallId) || { status: "pending" };
   for (const block of blocks) {
@@ -378,6 +378,12 @@ export function activitySummary(blocks, tools, { live = false } = {}) {
     const tool = toolOf(block);
     const name = block.name || tool.name || "tool";
     const args = block.args !== undefined ? block.args : tool.args;
+    // A step coop's guardrails stopped (a declined approval, a production
+    // write) never ran: the line says so instead of "ran" or "edited".
+    if (tool.status === "error" && /^\s*coop guardrails: blocked\b/.test((tool.result && tool.result.text) || "")) {
+      blocked.push(name === "bash" ? String((args && args.command) || "").split("\n")[0] : fileName(pathOf(args)) || name);
+      continue;
+    }
     if (tool.status === "error") failed++;
     if (name === "read") read.push(fileName(pathOf(args)));
     else if (name === "bash") ran.push(String((args && args.command) || "").split("\n")[0]);
@@ -391,6 +397,8 @@ export function activitySummary(blocks, tools, { live = false } = {}) {
     if (last.type === "tool") {
       const tool = toolOf(last);
       if (tool.status === "pending" || tool.status === "running") {
+        // An approval or a question is open: nothing runs until it is answered.
+        if (waiting) return "Waiting for your answer...";
         const name = last.name || tool.name || "tool";
         const args = last.args !== undefined ? last.args : tool.args;
         const target = name === "bash" ? String((args && args.command) || "").split("\n")[0].slice(0, 60) : fileName(pathOf(args));
@@ -403,6 +411,7 @@ export function activitySummary(blocks, tools, { live = false } = {}) {
     }
   }
   const parts = [];
+  if (blocked.length) parts.push(`blocked ${blocked.length === 1 && blocked[0] ? blocked[0].slice(0, 60) : plural(blocked.length, "step")}`);
   if (read.length) parts.push(`read ${read.length === 1 && read[0] ? read[0] : plural(read.length, "file")}`);
   if (ran.length) parts.push(`ran ${ran.length === 1 && ran[0] ? ran[0].slice(0, 60) : plural(ran.length, "command")}`);
   if (edited.length) parts.push(`edited ${edited.length === 1 && edited[0] ? edited[0] : plural(edited.length, "file")}`);

@@ -1,32 +1,32 @@
 # coop-internal — in-agent power tips, the Cooptimize crew, and office classics
-Type /copy when Coop writes something you want on the clipboard.
-Type /start when you know the outcome but not which Coop workflow fits.
+Type /copy when coop writes something you want on the clipboard.
+Type /start when you know the outcome but not which coop workflow fits.
 Run /setup-docs to build lineage without leaving the active session.
-Use /handoff before pausing so another Coop session can resume cold.
-Use /explain when you want the reasoning behind Coop's current approach.
+Use /handoff before pausing so another coop session can resume cold.
+Use /explain when you want the reasoning behind coop's current approach.
 Run /spec-first before a change whose shape still needs consent.
 Use /slice-next to turn a broad plan into one testable vertical slice.
-Use /annotate to hand Coop exact Markdown feedback to apply.
+Use /annotate to hand coop exact Markdown feedback to apply.
 Run /pr-description after review to draft the commit and PR story from the diff.
 Ask for today's log now, or the weekly roll-up when Friday has happened all at once.
 Use /impact before touching a shared table, measure, or procedure.
 Type /compact when the conversation is useful but the context is getting crowded.
 Type /tree to inspect branches, then /fork when an alternate path deserves a session.
-Type /model to switch among the models already configured for Coop.
+Type /model to switch among the models already configured for coop.
 Run /coop-vibe coop-internal when you want only the coworker-safe pool.
 Run /coop-splash when the terminal has forgotten who owns the means of computation.
 Run /approvals to see what this session may do without asking.
-Ask Coop to trace a report issue all the way back to its load procedure.
-Try asking Coop for exact before-and-after outputs before accepting a refactor.
-Ask Coop to test the real visual context, not only a standalone measure.
-Try asking Coop to preserve the old path while a new one proves adoption.
-Ask Coop to keep new behavior opt-in when a reporting version is ambiguous.
-Try asking Coop to run a large comparison server-side instead of downloading it.
-Ask Coop to poll a warehouse result until repeated reads are stable.
-Try asking Coop to pre-aggregate facts before a join crosses grains.
-Ask Coop to inspect a conditional-format binding before changing working DAX.
-Try asking Coop to test RLS as a Viewer or effective identity.
-Ask Coop to save the SQL that proved the conclusion, not only the conclusion.
+Ask coop to trace a report issue all the way back to its load procedure.
+Try asking coop for exact before-and-after outputs before accepting a refactor.
+Ask coop to test the real visual context, not only a standalone measure.
+Try asking coop to preserve the old path while a new one proves adoption.
+Ask coop to keep new behavior opt-in when a reporting version is ambiguous.
+Try asking coop to run a large comparison server-side instead of downloading it.
+Ask coop to poll a warehouse result until repeated reads are stable.
+Try asking coop to pre-aggregate facts before a join crosses grains.
+Ask coop to inspect a conditional-format binding before changing working DAX.
+Try asking coop to test RLS as a Viewer or effective identity.
+Ask coop to save the SQL that proved the conclusion, not only the conclusion.
 
 # --- the crew (real names — keep this file out of the client-safe pool) ---
 TLDR or Joel won't read it

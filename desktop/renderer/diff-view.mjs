@@ -54,19 +54,19 @@ export function renderDiff(model, { mode = "unified", query = "", active = -1 } 
   model.hunks.forEach((hunk, h) => hunk.lines.forEach((line, i) => lineIndex.set(line, `${h}:${i}`)));
   const marks = (line) => (line ? marksFor.get(lineIndex.get(line)) || [] : []);
   let rows = 0;
-  const box = el("div", { class: `diff-view ${mode}`, role: "table", "aria-label": "Changes" });
+  const box = el("div", { class: `diff-view ${mode}`, role: "group", "aria-label": "Changes", tabindex: "0" });
   if (mode === "split") {
     for (const row of buildSplitRows(model.hunks)) {
       if (++rows > MAX_ROWS) break;
-      if (row.kind === "hunk") { box.append(el("div", { class: "diff-hunk", role: "row", text: row.header })); continue; }
+      if (row.kind === "hunk") { box.append(el("div", { class: "diff-hunk", text: row.header })); continue; }
       // The new side's cells carry their line number for "Fix this line".
       const side = (line, kind, no, newSide = false) => line
         ? [el("span", { class: "diff-num", text: no === null ? "" : String(no) }), el("span", { class: `diff-cell ${kind}`, ...(newSide && no !== null ? { "data-line": String(no) } : {}) }, lineText(line, marks(line)))]
         : [el("span", { class: "diff-num" }), el("span", { class: "diff-cell blank" })];
       if (row.kind === "ctx") {
-        box.append(el("div", { class: "diff-split-row", role: "row" }, ...side(row.line, "ctx", row.oldNo), ...side(row.line, "ctx", row.newNo, true)));
+        box.append(el("div", { class: "diff-split-row" }, ...side(row.line, "ctx", row.oldNo), ...side(row.line, "ctx", row.newNo, true)));
       } else {
-        box.append(el("div", { class: "diff-split-row", role: "row" },
+        box.append(el("div", { class: "diff-split-row" },
           ...side(row.left, "del", row.left ? row.left.oldNo : null),
           ...side(row.right, "add", row.right ? row.right.newNo : null, true)));
       }
@@ -74,10 +74,10 @@ export function renderDiff(model, { mode = "unified", query = "", active = -1 } 
   } else {
     for (const hunk of model.hunks) {
       if (++rows > MAX_ROWS) break;
-      box.append(el("div", { class: "diff-hunk", role: "row", text: hunk.header }));
+      box.append(el("div", { class: "diff-hunk", text: hunk.header }));
       for (const line of hunk.lines) {
         if (++rows > MAX_ROWS) break;
-        box.append(el("div", { class: `diff-row ${line.type}`, role: "row", ...(line.newNo === null ? {} : { "data-line": String(line.newNo) }) },
+        box.append(el("div", { class: `diff-row ${line.type}`, ...(line.newNo === null ? {} : { "data-line": String(line.newNo) }) },
           el("span", { class: "diff-num", text: line.oldNo === null ? "" : String(line.oldNo) }),
           el("span", { class: "diff-num", text: line.newNo === null ? "" : String(line.newNo) }),
           el("span", { class: "diff-sign", text: sign(line.type) }),

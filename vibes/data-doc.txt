@@ -1,18 +1,18 @@
 # data-doc — in-agent documentation, lineage, impact, and portal tips
-Run /setup-docs to configure and build lineage docs without leaving Coop.
+Run /setup-docs to configure and build lineage docs without leaving coop.
 Use /impact before changing a shared table, measure, or schema.
-Ask Coop to look up an object's lineage before proposing a change.
-Ask Coop to build Markdown docs and the offline lineage portal for this project.
-Ask Coop to scan SQL and Power BI together for cross-estate lineage.
-Ask Coop to check whether built documentation is stale.
-Try asking Coop for two dependency hops when one does not explain the impact.
-Ask Coop to trace a report issue from visual to measure to view to load procedure.
+Ask coop to look up an object's lineage before proposing a change.
+Ask coop to build Markdown docs and the offline lineage portal for this project.
+Ask coop to scan SQL and Power BI together for cross-estate lineage.
+Ask coop to check whether built documentation is stale.
+Try asking coop for two dependency hops when one does not explain the impact.
+Ask coop to trace a report issue from visual to measure to view to load procedure.
 Try treating missing lineage as a documentation gap, not proof an object is absent.
-Ask Coop which downstream objects a changed source file feeds before you commit it.
-Ask Coop to explain lineage trust markers before relying on an inferred edge.
-Ask Coop to document TMDL and .bim semantic models alongside warehouse SQL.
-Try asking Coop to identify undocumented tables, measures, and relationships.
-Ask Coop to save the diagnostic query that proved a lineage conclusion.
+Ask coop which downstream objects a changed source file feeds before you commit it.
+Ask coop to explain lineage trust markers before relying on an inferred edge.
+Ask coop to document TMDL and .bim semantic models alongside warehouse SQL.
+Try asking coop to identify undocumented tables, measures, and relationships.
+Ask coop to save the diagnostic query that proved a lineage conclusion.
 Use /discovery to explore and document an unfamiliar data estate.
 
 # --- light easter eggs (client-safe) ---
