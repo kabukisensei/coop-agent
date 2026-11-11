@@ -7,6 +7,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- **A second look before coop shows you a change.** coop already checks its own
+  SQL, DAX and model changes against the standards, but in the same conversation
+  that wrote them. A new read-only `standards_check` tool now sends the change and
+  the standards articles, and nothing else, in one separate model request. Each
+  problem it reports names the file, the line and the article; problems that were
+  already in the file are listed apart as pre-existing, and a clean check says so in
+  one line. A finding with no line or an article the check was not given is dropped.
+  It costs one extra model request per change, and when it cannot run coop says so
+  and relies on its own check (master plan SC1).
+
 - **Report a bug or send feedback.** `/feedback` in the terminal and the window,
   Help > Report a problem and a feedback button in the window header, `/bug` in
   the window, and `coop feedback` in a shell. coop asks bug, idea or question, a

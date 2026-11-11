@@ -35,7 +35,9 @@ by pi-hermes-memory.
 
 SQL, DAX and semantic-model standards are applied **while coop writes**: the active
 coop-standards wiki articles are fed into every such task. Before presenting SQL,
-DAX, or model changes, coop **self-checks** its own diff against the same articles.
+DAX, or model changes, coop **self-checks** its own diff against the same articles,
+then calls `standards_check` for a second look in a separate model request that sees
+only the change and the articles.
 The standards are the rule: coop fixes what does not meet them and deviates only on
 a user-granted exception or a stated reason, named in the summary. There is no
 separate rule engine (the former review tools were retired in ST1). Offline or on a
