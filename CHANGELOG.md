@@ -5,8 +5,6 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
-## [0.41.0] — 2026-11-11
-
 ### Added
 
 - **Tabs you can rearrange, and saved sessions that open in their own tab.** In
@@ -17,6 +15,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   front of you; if a tab already holds it, that tab comes forward. An unused tab
   (nothing said yet) still loads the session in place, and a full window loads
   it in the current tab.
+
+## [0.41.0] — 2026-11-11
+
+### Added
+
 - **A second look before coop shows you a change.** coop already checks its own
   SQL, DAX and model changes against the standards, but in the same conversation
   that wrote them. A new read-only `standards_check` tool now sends the change and
