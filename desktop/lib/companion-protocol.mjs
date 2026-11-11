@@ -348,8 +348,11 @@ export const newIncarnation = (random = randomBytes) => random(18).toString("bas
 
 const DIALOGS = new Set(["select", "confirm", "input", "editor"]);
 // coop-guardrails writes production writes in capitals (G1): "PRODUCTION write"
-// (yes/no under a human unlock), "PRODUCTION Warehouse SQL ...".
-const PRODUCTION = /\bPRODUCTION\b/;
+// (yes/no under a human unlock), "PRODUCTION read". A dev or test Warehouse write
+// whose SQL mentions prod is titled with its dev target and carries "The SQL
+// mentions prod": it stays a desk question too, as it was when it was titled
+// PRODUCTION (the SQL is only readable at the desk).
+const PRODUCTION = /\bPRODUCTION\b|\bThe SQL mentions prod\b/;
 // Options that grant more than the one action shown, such as coop-guardrails'
 // "Allow <server> edits for this session (...)".
 const WIDENING = /\bfor (this|the rest of the) session\b|\balways\b|\bdon'?t ask again\b/i;
