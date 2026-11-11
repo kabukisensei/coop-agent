@@ -204,7 +204,13 @@ conversation. Helpers: `lib/standards-check.mjs`; wiring: `createStandardsCheck`
   the writer. `introduced: false` marks a problem that was already there; the text
   lists those separately as pre-existing.
 - **Text:** the count first (`standards_check: 1 problem(s) in the change, 2
-  pre-existing (...)`), one line per finding; a clean check is one line.
+  pre-existing (...)`), one line per finding. A change with no problem of its own
+  starts `standards_check: no standards problems found in the change`, with the
+  pre-existing count after it when the file has older ones. The text lists at most
+  five pre-existing problems and counts the rest; `details.findings` has them all.
+- **One pass, not a proof:** the dev VM check of 2026-11-11 flagged the same new line
+  in one run and not in another. A clean result means the checker found nothing, not
+  that nothing is there; the writer's own rule-by-rule self-check still applies.
 - **`details.state`:** `ok`, `no_files`, `nothing_to_check`, or `unavailable` (no
   model or sign-in, no article applies, the request failed, the answer was not JSON).
   Unavailable never blocks: the text tells the agent to rely on its own self-check

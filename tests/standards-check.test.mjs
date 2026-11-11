@@ -74,6 +74,13 @@ assert.match(text, /3 finding\(s\) dropped/);
 const clean = findingsText({ findings: [], dropped: 0, checked: change.checked, skipped: [], truncated: false, titles: std.titles });
 assert.match(clean, /^standards_check: no standards problems found in the change \(2 file\(s\) against 2 article\(s\)/);
 assert.equal(clean.split("\n").length, 1, "a clean check is one line");
+// Dev VM, 2026-11-11: a clean change in a file with older problems said "0 problem(s)".
+const onlyOld = Array.from({ length: 7 }, (_, i) => ({ file: "sql/load.sql", line: i + 1, article: "SQL Layout", rule: "", problem: `old ${i + 1}`, fix: "", introduced: false }));
+const cleanOld = findingsText({ findings: onlyOld, dropped: 0, checked: change.checked, skipped: [], truncated: false, titles: std.titles });
+assert.match(cleanOld, /^standards_check: no standards problems found in the change; 7 pre-existing \(/);
+assert.doesNotMatch(cleanOld, /Fix each problem/);
+assert.match(cleanOld, /old 5/); assert.doesNotMatch(cleanOld, /old 6/);
+assert.match(cleanOld, /- and 2 more/);
 
 // --- the tool: one separate request with only the change and the standards ----
 const calls = [];
