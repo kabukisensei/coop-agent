@@ -2,8 +2,8 @@
   "schema_version": 1,
   "repository": "https://github.com/cooptimize/coop-standards.git",
   "branch": "main",
-  "revision": "5b3c9708644d8846aa65459808b9ad0ede2bb6cb",
-  "captured_ms": 1793806373997,
+  "revision": "e178959f84635cd369a9690f4feee01ace68c372",
+  "captured_ms": 1794413362050,
   "articles": [
     {
       "file": "Power BI/File Types.md",
@@ -85,7 +85,7 @@
     },
     {
       "file": "SQL/Gold/Stored Procedures.md",
-      "sha256": "adec44d9ee7640b9c0fe2cfa304f7dd345996ed7a3b88519a5b059ce8335d223",
+      "sha256": "db191f8e0c2e21babce963646c396b5a04c4a5b76b22b2b01a455b2a875921db",
       "id": "sql_gold_stored_procedures",
       "domain": "sql"
     },
@@ -97,7 +97,7 @@
     },
     {
       "file": "SQL/SQL Conventions.md",
-      "sha256": "b3927aa8e1b4db6d54929caca3b083b82678b21a4f3c096d67f3a425d9c19739",
+      "sha256": "dd30847567af0d09efc66bd19563496e60c93c3e78fe5212a11fb12b31a020fb",
       "id": "sql_conventions",
       "domain": "sql"
     },

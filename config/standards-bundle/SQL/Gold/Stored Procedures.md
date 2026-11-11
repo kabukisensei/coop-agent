@@ -60,16 +60,23 @@ Explain why a non-obvious choice exists; do not narrate the SQL. Phase comments 
 -- A full refresh requires the prior snapshot to be removed.
 ```
 
+## Error-handling standards
+
+Keep the procedure to the four phases. Do not add `TRY`/`CATCH`, `THROW`, `RAISERROR`, row-count assertions or other defensive checks unless the project's standards ask for them; validation runs as separate test queries after the load, as SQL Conventions describe.
+
 ## Preventing empty or partial tables
 
 - Use an explicit transaction when DirectQuery, integrations, or other live consumers require removal and replacement to commit together.
-- Commit on success; roll back on failure.
+- A failed statement must roll back the whole transaction without error-handling code. In Fabric Warehouse a failed statement rolls back the transaction on its own. In SQL Server and Azure SQL, put `SET XACT_ABORT ON;` before `BEGIN TRANSACTION` so any error rolls back the transaction and stops the procedure. Do not wrap the transaction in `TRY`/`CATCH`.
 - Limit the transaction to statements that need to become visible together. Gather and transform beforehand when the loading pattern permits; long transactions increase blocking, conflicts, and resource use.
 - Use this only when required by the incremental or replacement strategy.
 - A standalone `MERGE` commits its changes together under autocommit. Use an explicit transaction when it needs to commit with other statements.
 
 ```sql
+-- Any error rolls back the removal and the write together (SQL Server, Azure SQL).
+SET XACT_ABORT ON;
+
 BEGIN TRANSACTION;
--- Removal and writing occur here; roll back on failure.
+-- Removal and writing occur here.
 COMMIT TRANSACTION;
 ```

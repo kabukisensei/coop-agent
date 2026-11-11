@@ -104,6 +104,12 @@ WHERE EXISTS (...)
 WHERE EXISTS (...)
 ```
 
+### Error-handling standards
+
+- Keep SQL lean. Do not add `TRY`/`CATCH`, `THROW`, `RAISERROR`, `@@ERROR` or `@@ROWCOUNT` checks, `IF EXISTS` guards, or other defensive checks unless the project's standards ask for them. Let an error stop the statement and reach the caller or the orchestrating pipeline.
+- Put validation outside the object, in separate test queries: row counts, grain, duplicate keys, orphaned foreign keys, and expected totals. Hand them over with the change and run them on dev after it is deployed.
+- When editing existing code that already has error handling, leave it as it is unless the change is about it.
+
 ## Default positions
 
 ### Defaults when editing existing code

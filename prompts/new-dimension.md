@@ -20,8 +20,10 @@ do not write anything until I approve the spec.
 4. **Build it** following the Gold Dimension Tables, Gold Views and Gold Stored
    Procedures standards you were given: `dim` schema, PascalCase names, the
    matching and nullability rules, display-field rules, and a load that never
-   leaves an empty or partial table. Mark each SQL edit with the coop comment line.
+   leaves an empty or partial table, kept lean (no `TRY`/`CATCH`, `THROW` or
+   defensive checks unless the project's standards ask). Mark each SQL edit with
+   the coop comment line.
 5. **Self-check** the files against the same standards, name any deviation and its
-   reason, and tell me how to prove on dev that the business key is unique.
+   reason, and give me a separate test query that proves on dev the business key is unique.
 6. List the facts that should get an `FK{DimensionName}` column for it, and offer
    `/model-table` to add it to the semantic model.

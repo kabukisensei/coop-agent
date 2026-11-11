@@ -8,7 +8,9 @@ $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $coop = Join-Path (Join-Path $root 'bin') 'coop.ps1'
 
-$GUARDRAILS_LIMIT_BYTES = 6700
+$GUARDRAILS_LIMIT_BYTES = 6850
+# 6700 -> 6850 on 2026-11-11 (Aaron: lean SQL, no TRY/CATCH or THROW in procedures):
+# one sentence added to the Lean SQL section, with headroom for the CRLF checkout.
 # 6500 -> 6700 on 2026-10-27 (team feedback: no unnecessary functions in SQL):
 # one short guardrails section, with headroom for the CRLF checkout on Windows.
 # 7000 -> 7200 on 2026-10-01 (master plan row SQ4): one new native tool,

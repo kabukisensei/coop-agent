@@ -20,7 +20,9 @@ until I approve the spec.
    Tables (source structure, Schema Manager, approved developer changes), Gold
    Views (naming, fields, transformations) or Gold Stored Procedures (removal,
    gather, transformation, write and comment rules, no empty or partial tables),
-   plus SQL Conventions and SQL Layout. Mark each SQL edit with the coop comment
+   plus SQL Conventions and SQL Layout. Keep it lean: no `TRY`/`CATCH`, `THROW` or
+   defensive checks unless the project's standards ask. Mark each SQL edit with the coop comment
    line.
 5. **Self-check** against the same standards, name any deviation and its reason,
-   and give me the queries that prove the result on dev.
+   and give me the queries that prove the result on dev, as separate test queries,
+   never inside the object.
