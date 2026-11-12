@@ -512,11 +512,103 @@ function Get-CoopInstallDoctorRow {
   return @{ Level = 'ok'; Message = "install: a copy of coop-agent ($($script:CoopRoot)), version $ver"; Hint = '' }
 }
 # What `coop update` says on a machine install: the update task does the work.
+# The task's last result rides along, so "waiting: coop is open" or a failure is
+# not hidden behind "installed <old version>" (a client VM, 2026-11-12: coop
+# update said "installed 0.40.1" a day after 0.41.0 shipped and then only
+# refreshed 0.40.1).
 function Get-CoopMachineUpdateSummary {
   $state = Get-CoopUpdateState
   $checked = if ($state) { Format-CoopUpdateTime $state.last_run 'not yet' } else { 'not yet' }
   $installed = if ($state -and $state.installed_version) { [string]$state.installed_version } else { [string]$script:CoopVersion }
-  return "This coop updates itself (this machine): last checked $checked, installed $installed"
+  $line = "This coop updates itself (this machine): last checked $checked, installed $installed"
+  if ($state -and $state.last_result) { $line += " (task: $([string]$state.last_result))" }
+  return $line
+}
+# The newest coop-agent release's x.y.z for `coop update` on a machine install:
+# COOP_AUTO_UPDATE_LATEST (the tests), else github.com (the API's latest-release
+# record, else the /releases/latest redirect: the lookup scripts\auto-update.ps1
+# makes, which stays standalone), else what the task last saw. '' when nothing
+# answers. COOP_SKIP_UPDATE_CHECK=1 skips github.com.
+function Get-CoopNewestReleaseVersion($State = $null) {
+  if ($env:COOP_AUTO_UPDATE_LATEST) { return [string]$env:COOP_AUTO_UPDATE_LATEST }
+  $fromState = ''
+  if ($State -and $State.latest_version) { $fromState = [string]$State.latest_version }
+  if ($env:COOP_SKIP_UPDATE_CHECK -eq '1') { return $fromState }
+  $repo = 'kabukisensei/coop-agent'
+  $headers = @{ 'User-Agent' = 'coop-update' }
+  try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
+  try {
+    $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/latest" -UseBasicParsing -Headers $headers -TimeoutSec 15 -ErrorAction Stop
+    if ([string]$rel.tag_name -match '^v(\d+\.\d+\.\d+)$') { return $Matches[1] }
+  } catch { }
+  try {
+    $location = ''
+    try {
+      $r = Invoke-WebRequest -Uri "https://github.com/$repo/releases/latest" -UseBasicParsing -MaximumRedirection 0 -Headers $headers -TimeoutSec 15 -ErrorAction Stop
+      $location = [string]$r.Headers['Location']
+    } catch {
+      $resp = $_.Exception.Response
+      if ($resp) { try { $location = [string]$resp.Headers['Location'] } catch { $location = '' } }
+      if (-not $location -and $resp -and $resp.Headers) { try { $location = [string]$resp.Headers.Location } catch { } }
+    }
+    if ($location -match '/releases/tag/v(\d+\.\d+\.\d+)$') { return $Matches[1] }
+  } catch { }
+  return $fromState
+}
+# The processes this account can see running from the install folder (the
+# check the task makes before it installs; another account's are hidden from a
+# standard account). Names, '' entries dropped.
+function Get-CoopInstallProcessNames([string]$InstallDir) {
+  $root = ([string]$InstallDir).Trim().TrimEnd('\', '/')
+  if (-not $root) { return @() }
+  $procs = @()
+  try { $procs = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop | Select-Object Name, ExecutablePath) } catch {
+    try { $procs = @(Get-Process -ErrorAction Stop | Select-Object @{ n = 'Name'; e = { $_.ProcessName } }, @{ n = 'ExecutablePath'; e = { $_.Path } }) } catch { $procs = @() }
+  }
+  $names = @()
+  foreach ($p in $procs) {
+    $exe = [string]$p.ExecutablePath
+    if (-not $exe) { continue }
+    if ($exe.StartsWith($root + '\', [System.StringComparison]::OrdinalIgnoreCase) -or $exe.StartsWith($root + '/', [System.StringComparison]::Ordinal)) {
+      $name = if ($p.Name) { [string]$p.Name } else { [System.IO.Path]::GetFileName($exe) }
+      if ($name -and ($names -notcontains $name)) { $names += $name }
+    }
+  }
+  return @($names)
+}
+# What `coop update` adds on a machine install when a newer release is out than
+# the one installed (pure; @() when none is): why the task has not installed it
+# and how to get it now. $Started: the update task was started just now.
+function Get-CoopMachineUpdateNews {
+  param([string]$Installed, [string]$Latest, $State, [string[]]$OpenNames = @(), [string]$TaskName = 'coop update', [switch]$Started)
+  if (-not (Test-CoopVersionNewer $Latest $Installed)) { return @() }
+  $page = "https://github.com/kabukisensei/coop-agent/releases/tag/v$Latest"
+  $result = if ($State) { [string]$State.last_result } else { '' }
+  $open = @($OpenNames | Where-Object { $_ })
+  $lines = @("coop v$Latest is out; this machine still has v$Installed. The update task installs it for every account; coop update does not install it itself.")
+  if ($open.Count -gt 0) {
+    $lines += "coop is open ($($open -join ', ')): the update task waits until every coop window and coop terminal is closed, in every account on this machine."
+  } elseif ($result -like 'waiting*') {
+    $lines += "The task's last run waited because coop was open ($result). Close every coop window and coop terminal, in every account on this machine."
+  } elseif ($result -like 'failed*') {
+    $lines += "The task's last run failed: $($result.Substring(6).Trim()) (log: $(Join-Path (Get-CoopMachineProfileDir) 'logs\update.log'))."
+  } else {
+    $lines += 'The task has not tried this release yet.'
+  }
+  if ($Started) {
+    $lines += "Started the `"$TaskName`" task now; it installs v$Latest once coop is closed everywhere."
+  } else {
+    $lines += "It tries again every hour and at each Windows sign-in. To install it now: run the installer from $page, or ask an administrator to run: schtasks /Run /TN `"$TaskName`""
+  }
+  return @($lines)
+}
+# Is this PowerShell an elevated administrator? $false off Windows.
+function Test-CoopProcessElevated {
+  if ([System.IO.Path]::DirectorySeparatorChar -ne '\') { return $false }
+  try {
+    $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+    return (New-Object Security.Principal.WindowsPrincipal $id).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+  } catch { return $false }
 }
 # --- coop at Windows sign-in (`coop startup`) ---------------------------------
 # One value in the account's Run key starts scripts\sign-in.ps1 from this coop at

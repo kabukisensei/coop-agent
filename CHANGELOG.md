@@ -5,6 +5,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **`coop update` says when a newer coop is out.** On a machine install it used
+  to print "installed 0.40.1" and refresh 0.40.1's tools even after 0.41.0
+  shipped, which looked like an update that did nothing. It now checks
+  github.com, says the new version is out, why the update task has not
+  installed it yet (coop open in some account, a failed run, or not tried yet)
+  and how to get it now: the installer link, or the task, which an
+  administrator's `coop update` starts. The first line also shows the task's
+  last result, and `coop update --check` names the newest release.
+
 ## [0.41.1] — 2026-11-11
 
 ### Added
