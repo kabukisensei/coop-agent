@@ -61,9 +61,37 @@ if (Test-CoopMachineInstall) {
     } else {
       Write-Output ('  {0,-32} {1}' -f 'update task', "has not run yet (state: $(Get-CoopUpdateStateFile))")
     }
+    $newest = Get-CoopNewestReleaseVersion $machineState
+    if ($newest) {
+      $note = if (Test-CoopVersionNewer $newest ([string]$script:CoopVersion)) { ' (newer: the update task installs it once coop is closed in every account)' } else { '' }
+      Write-Output ('  {0,-32} {1}' -f 'newest release', "$newest$note")
+    }
     exit 0
   }
   Coop-Info (Get-CoopMachineUpdateSummary)
+  # A newer release than this package (2026-11-12: a client VM's coop update
+  # said "installed 0.40.1" a day after 0.41.0 shipped, then refreshed 0.40.1's
+  # tools, and the user took that for the update): say it is out, why the task
+  # has not installed it, and how to get it now. An administrator's coop update
+  # starts the task. This account's tools then wait for the new package (its
+  # first launch sets them up), so the old package's refresh is skipped.
+  $machineState = Get-CoopUpdateState
+  $newest = Get-CoopNewestReleaseVersion $machineState
+  if (Test-CoopVersionNewer $newest ([string]$script:CoopVersion)) {
+    $taskName = 'coop update'
+    $info = Get-CoopMachineInstallInfo
+    if ($info -and $info.task) { $taskName = [string]$info.task }
+    $open = @(Get-CoopInstallProcessNames (Get-CoopPackageRoot))
+    $started = $false
+    if (Test-CoopProcessElevated) {
+      $null = & schtasks.exe /Run /TN $taskName 2>&1
+      $started = ($LASTEXITCODE -eq 0)
+    }
+    foreach ($line in (Get-CoopMachineUpdateNews -Installed ([string]$script:CoopVersion) -Latest $newest -State $machineState -OpenNames $open -TaskName $taskName -Started:$started)) {
+      Coop-Warn $line
+    }
+    exit 0
+  }
   # The full setup when this package's pins never reached this account, and
   # (#478) when a tool the marker says was installed is not there as pinned any
   # more: the marker records that a setup finished, not that its tools stayed, and

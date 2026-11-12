@@ -308,7 +308,9 @@ silently and writes `%ProgramData%\coop\update-state.json` and
 `%ProgramData%\coop\logs\update.log`. The next launch in each account prints
 one line about an update that installed since that account's last launch (the
 window shows it in its notices); `coop update` on a machine install reports the
-task's state and brings that account's tools to the package's pins, and `coop doctor`'s install row says which install this is
+task's state and brings that account's tools to the package's pins; when a newer
+release is out it says so instead, with why the task has not installed it and the
+installer link (an administrator's `coop update` starts the task), and `coop doctor`'s install row says which install this is
 (this machine, this account only, or a developer clone). `coop startup` opens coop ready at every Windows sign-in (on by
 default on a machine install: the first launch turns it on once per account;
 `coop startup off` is remembered in `~/.coop/startup-off`, so updates keep it off): `scripts/sign-in.ps1`, started from the account's Run

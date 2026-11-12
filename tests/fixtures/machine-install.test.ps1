@@ -326,8 +326,32 @@ try {
   if ($row.Level -ne 'ok' -or $row.Message -notmatch '^install: this machine \(' -or $row.Message -notmatch 'version 0\.37\.0' -or $row.Message -notmatch 'updates itself \(last run \d{4}-\d\d-\d\d \d\d:\d\d, installed 0\.37\.0, result: up to date\)') { Ko "the doctor row: $($row | ConvertTo-Json -Compress)" }
   else { Ok 'doctor: "install: this machine (<dir>), version X, updates itself (last run <time>, installed <ver>, result: up to date)"' }
   $summary = Get-CoopMachineUpdateSummary
-  if ($summary -notmatch '^This coop updates itself \(this machine\): last checked \d{4}-\d\d-\d\d \d\d:\d\d, installed 0\.37\.0$') { Ko "the update summary: $summary" }
-  else { Ok 'coop update''s line: "This coop updates itself (this machine): last checked <time>, installed <version>"' }
+  if ($summary -notmatch '^This coop updates itself \(this machine\): last checked \d{4}-\d\d-\d\d \d\d:\d\d, installed 0\.37\.0 \(task: up to date\)$') { Ko "the update summary: $summary" }
+  else { Ok 'coop update''s line: "This coop updates itself (this machine): last checked <time>, installed <version> (task: <last result>)"' }
+  # What coop update adds when a newer release is out (2026-11-12: a client VM's coop
+  # update said "installed 0.40.1" a day after 0.41.0 shipped and only refreshed 0.40.1).
+  $waitingState = [pscustomobject]@{ schema_version = 1; last_result = 'waiting: coop is open (coop.exe)'; pending_version = '0.38.0'; installed_version = '0.37.0'; latest_version = '0.38.0' }
+  $failedState = [pscustomobject]@{ schema_version = 1; last_result = 'failed: the installer exited with code 2'; installed_version = '0.37.0'; latest_version = '0.38.0' }
+  $oldState = [pscustomobject]@{ schema_version = 1; last_result = 'up to date'; installed_version = '0.37.0'; latest_version = '0.37.0' }
+  $bad = @()
+  if (@(Get-CoopMachineUpdateNews -Installed '0.37.0' -Latest '0.37.0' -State $waitingState).Count -ne 0) { $bad += 'speaks when the installed version is the newest' }
+  if (@(Get-CoopMachineUpdateNews -Installed '0.37.0' -Latest '' -State $waitingState).Count -ne 0) { $bad += 'speaks when the newest release is unknown' }
+  $news = @(Get-CoopMachineUpdateNews -Installed '0.37.0' -Latest '0.38.0' -State $waitingState)
+  if ($news.Count -ne 3 -or $news[0] -notmatch '^coop v0\.38\.0 is out; this machine still has v0\.37\.0\.' -or $news[1] -notmatch 'waited because coop was open' -or $news[2] -notmatch 'releases/tag/v0\.38\.0' -or $news[2] -notmatch 'schtasks /Run /TN "coop update"') { $bad += "waiting: $($news -join ' | ')" }
+  $news = @(Get-CoopMachineUpdateNews -Installed '0.37.0' -Latest '0.38.0' -State $failedState)
+  if ($news[1] -notmatch '^The task''s last run failed: the installer exited with code 2 \(log: .*update\.log\)\.$') { $bad += "failed: $($news -join ' | ')" }
+  $news = @(Get-CoopMachineUpdateNews -Installed '0.37.0' -Latest '0.38.0' -State $oldState -OpenNames @('coop.exe', 'node.exe'))
+  if ($news[1] -notmatch '^coop is open \(coop\.exe, node\.exe\)') { $bad += "open: $($news -join ' | ')" }
+  $news = @(Get-CoopMachineUpdateNews -Installed '0.37.0' -Latest '0.38.0' -State $null -TaskName 'coop update' -Started)
+  if ($news[1] -ne 'The task has not tried this release yet.' -or $news[2] -notmatch '^Started the "coop update" task now') { $bad += "started: $($news -join ' | ')" }
+  $env:COOP_AUTO_UPDATE_LATEST = '0.39.0'
+  if ((Get-CoopNewestReleaseVersion $oldState) -ne '0.39.0') { $bad += 'COOP_AUTO_UPDATE_LATEST is not read' }
+  Remove-Item Env:\COOP_AUTO_UPDATE_LATEST -ErrorAction SilentlyContinue
+  $env:COOP_SKIP_UPDATE_CHECK = '1'
+  if ((Get-CoopNewestReleaseVersion $waitingState) -ne '0.38.0') { $bad += 'COOP_SKIP_UPDATE_CHECK=1 does not fall back to the task''s latest_version' }
+  Remove-Item Env:\COOP_SKIP_UPDATE_CHECK -ErrorAction SilentlyContinue
+  if ($bad.Count) { Ko 'coop update''s newer-release lines are wrong' ($bad -join "`n") }
+  else { Ok 'coop update names a newer release, why the task has not installed it (open, waiting, failed, not tried) and how to get it now' }
   $failed = New-CoopUpdateState 'failed: could not read the newest release from github.com' '0.37.0' '' '' ''
   Write-CoopUpdateStateFile $stateFile $failed
   $row = Get-CoopInstallDoctorRow
@@ -414,6 +438,9 @@ try {
   $installArgsFile = Join-Path $t 'install-args.txt'
   [System.IO.File]::WriteAllText((Join-Path $snapshot 'scripts\install.ps1'), ("[System.IO.File]::WriteAllText('" + $installArgsFile.Replace("'", "''") + "', (`$args -join ' '))`nexit 0`n"), $utf8)
   $env:NO_COLOR = '1'
+  # The newest release, without github.com: this package's own version for every
+  # case below except the newer-release one at the end.
+  $env:COOP_AUTO_UPDATE_LATEST = '0.37.0'
   function Invoke-Update([string[]]$UpdArgs) {
     $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
     $lines = @(& $psExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $snapshot 'scripts\update.ps1') @UpdArgs 2>&1 | ForEach-Object { "$_" })
@@ -511,6 +538,18 @@ sys.exit(1)
   $out = Invoke-Update @('--edge')
   if ($updRc -ne 1 -or $out -notmatch 'developer clones') { Ko "coop update --edge on a machine install should refuse (rc=$updRc)" $out }
   else { Ok 'coop update --edge on a machine install says it is for developer clones and exits 1' }
+  # A newer release than this package: coop update says so and why, and leaves
+  # this account's tools alone (the new package's first launch sets them up).
+  Write-CoopUpdateStateFile $stateFile (New-CoopUpdateState 'waiting: coop is open (coop.exe)' '0.37.0' '0.38.0' '0.38.0' 'https://github.com/kabukisensei/coop-agent/releases/tag/v0.38.0')
+  $env:COOP_AUTO_UPDATE_LATEST = '0.38.0'
+  Remove-Item -LiteralPath $installArgsFile, $syncArgsFile -Force -ErrorAction SilentlyContinue
+  $out = Invoke-Update @()
+  if ($updRc -ne 0 -or $out -notmatch 'installed 0\.37\.0 \(task: waiting: coop is open \(coop\.exe\)\)' -or $out -notmatch 'coop v0\.38\.0 is out; this machine still has v0\.37\.0' -or $out -notmatch 'waited because coop was open' -or $out -notmatch 'releases/tag/v0\.38\.0') { Ko "coop update with a newer release out should say so and why (rc=$updRc)" $out }
+  elseif ((Test-Path -LiteralPath $installArgsFile) -or (Test-Path -LiteralPath $syncArgsFile) -or $out -match 'refreshing extensions') { Ko 'coop update with a newer release out still refreshed the old package for this account' $out }
+  else { Ok 'coop update on a machine install with a newer release out names it, why the task has not installed it and the installer link, and skips the old package''s refresh' }
+  $out = Invoke-Update @('--check')
+  if ($updRc -ne 0 -or $out -notmatch 'newest release\s+0\.38\.0 \(newer') { Ko "coop update --check should name the newer release (rc=$updRc)" $out }
+  else { Ok 'coop update --check on a machine install names the newest release' }
 }
 finally {
   Restore-Env $saved

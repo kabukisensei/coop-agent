@@ -7,6 +7,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **`coop update` says when a newer coop is out.** On a machine install it used
+  to print "installed 0.40.1" and refresh 0.40.1's tools even after 0.41.0
+  shipped, which looked like an update that did nothing. It now checks
+  github.com, says the new version is out, why the update task has not
+  installed it yet (coop open in some account, a failed run, or not tried yet)
+  and how to get it now: the installer link, or the task, which an
+  administrator's `coop update` starts. The first line also shows the task's
+  last result, and `coop update --check` names the newest release.
+
 - **coop reads every SQL target the project file names, not only the main one.**
   A serverless pool (or Lakehouse) kept beside the dev Warehouse under
   `sql_targets.named` is now readable with `fabric_sql_query`: the agent passes
@@ -14,6 +23,7 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   environment, so a named prod still asks first. When the file names two or more
   targets, coop lists them for the agent at the start of a session, so it no
   longer tells you a configured target is out of reach.
+
 - **"coop updated to vX" no longer asks you to restart.** After an update the
   window showed the update line inside "Before coop can do everything here",
   with a Restart button, though the window already ran the new version. The
