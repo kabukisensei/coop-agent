@@ -270,6 +270,18 @@ with live data on the contract's default `sql_targets` entry (dev; never prod):
    (counts before and after, rows that changed) as the passing check. A difference
    you did not predict is a stop-and-ask trigger, not a footnote.
 
+**No-change refactors.** When the change must not alter the output (tidying a
+procedure, moving view logic into its procedure, a style or standards fix), counts
+and a sample are not enough: prove the whole output is identical. Before the edit,
+fingerprint the full output on dev, every row and every column, for example a
+row count plus a hash over the result serialised in key order (`FOR JSON` wrapped in
+`HASHBYTES('SHA2_256', ...)`, where the target supports it). After the edit, re-run
+the same fingerprint; it must match. When the old and new output can both be
+queried (the old view beside the new query, or a dev copy of the table), compare
+them with `EXCEPT` in both directions; both must return zero rows. Any difference
+fails the check, so a change that does alter values (NULL to blank, say) is not a
+no-change refactor: state the expected difference instead.
+
 Test targets ask first; production is explicit-approval only and never a verify
 target. Row reads on dev and test never ask; production reads ask once per session.
 

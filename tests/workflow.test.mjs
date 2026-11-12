@@ -31,6 +31,7 @@ assert.ok(skill.includes("explain what happened"), "skill requires post-slice ex
 assert.ok(skill.includes("Live-data tests between slices"), "skill documents live-data test hook");
 assert.ok(skill.includes("### Verify with data (SQL slices)"), "skill makes verify-with-data concrete for SQL (SQ5)");
 assert.ok(skill.includes("re-run exactly the same queries"), "skill re-runs the baseline queries after the edit");
+assert.ok(skill.includes("**No-change refactors.**") && skill.includes("`EXCEPT` in both directions"), "skill proves a no-change refactor with a whole-output comparison");
 assert.match(skill, /writes go only to the\s+default dev target/, "skill confines verify writes to dev");
 assert.match(skill, /never a verify\s+target/, "skill keeps production out of verification");
 assert.ok(skill.includes("tests.live_data.enabled"), "skill references the config key");
