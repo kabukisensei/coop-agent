@@ -15,7 +15,7 @@ import { makeResizer, sidebarMaxWidth } from "./resize.mjs";
 import { attachmentNote } from "./attach-note.mjs";
 import { widgetView } from "./widgets.mjs";
 import { COLLAPSE_KEY, TODO_TOOL, applyTodoResult, createTodos, startTurn, todoLines, todosFromMessages } from "./todos.mjs";
-import { setupItems, setupItem, setupSummary, EXAMPLES } from "./welcome.mjs";
+import { setupItems, setupItem, setupSummary, noticeNotes, EXAMPLES } from "./welcome.mjs";
 import { parseConfirm, confirmLabels, parseQuestionSelect, parseQuestionMulti, multiAnswer } from "./dialogs.mjs";
 import { imageBudgetProblem, restoreDraft } from "./draft.mjs";
 
@@ -44,6 +44,7 @@ const app = {
   attachments: [], // { kind: image | text | office | pdf | pending, ... } from lib/attachments.mjs
   vibe: "", // the tip under the splash and on the working line; a fresh one each turn
   setup: [], // what this machine still owes before coop works fully (welcome.mjs)
+  notes: [], // launch notices that only inform, such as "coop updated to v..." (welcome.mjs)
   history: [],
   historyIndex: -1,
   draft: "",
@@ -460,6 +461,7 @@ function renderEmpty({ fresh = false } = {}) {
     // Where coop is (F1): the launcher's one line, the same the console prints.
     app.info && app.info.clientLine ? el("p", { class: "tagline dim client-line", text: app.info.clientLine }) : null,
     app.vibe ? vibeLine() : null,
+    app.notes.length ? notesCard() : null,
     app.setup.length ? setupCard() : null,
     el("p", { class: "lead", text: ready
       ? `coop is ready in ${app.info ? app.info.folder : "this folder"}. Start a guided task, ask your own question, or pick another task from the Start menu.`
@@ -496,6 +498,17 @@ function setupCard() {
       el("button", { type: "button", class: "btn primary", onclick: restart }, icon("restart"), el("span", { text: "Restart coop" })),
       el("button", { type: "button", class: "btn ghost", text: "Dismiss", onclick: () => { app.setup = []; renderSetup(); } }),
       el("span", { class: "hint", text: "Each item runs once in the terminal; Restart picks it up here." })));
+}
+
+/**
+ * The launch notices that only inform (an update installed or waiting, the
+ * sign-in startup, the default profile): a quiet card with Dismiss and no
+ * Restart, since nothing is owed and the window already runs this version.
+ */
+function notesCard() {
+  return el("section", { class: "notes", "aria-label": "Notes" },
+    el("ul", { class: "notes-list" }, app.notes.map((note) => el("li", { class: "notes-item" }, icon("more"), el("span", { text: note.text })))),
+    el("button", { type: "button", class: "btn ghost", text: "Dismiss", onclick: () => { app.notes = []; renderEmpty({ fresh: true }); } }));
 }
 
 function renderSetup() {
@@ -1632,10 +1645,14 @@ async function boot() {
   renderStatus();
   // Sign-in, the COOP profile and Azure, each with its command, in one place
   // instead of a toast per launch notice (welcome.mjs).
-  app.setup = setupItems({ loginPresent: app.info.loginPresent, notices: (app.info.notices || []).map(clean) });
+  const notices = (app.info.notices || []).map(clean);
+  app.setup = setupItems({ loginPresent: app.info.loginPresent, notices });
+  app.notes = noticeNotes(notices);
   renderEmpty();
   await refreshAll();
   renderSetup();
+  // A window that opens on a conversation has no welcome screen to carry the notes.
+  if (app.notes.length && !conversationEmpty()) { for (const note of app.notes) toast(note.text, "info"); app.notes = []; }
   // The first launch on this profile opens the Start menu, as the terminal does.
   if (app.info.firstRun && app.running && conversationEmpty() && app.info.loginPresent !== false) sendPrompt("/start");
   prompt().focus();
