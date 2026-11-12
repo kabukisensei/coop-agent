@@ -5,6 +5,27 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.41.1] — 2026-11-12
+
+### Added
+
+- **Tabs you can rearrange, and saved sessions that open in their own tab.** In
+  the coop window, drag a session tab along the strip to put it where you want
+  it (Ctrl+Shift+PageUp and Ctrl+Shift+PageDown move it one place; Ctrl+1 to
+  Ctrl+9 follow the new order). Clicking a saved session in the sidebar or the
+  session picker now opens it in a new tab instead of replacing the session in
+  front of you; if a tab already holds it, that tab comes forward. An unused tab
+  (nothing said yet) still loads the session in place, and a full window loads
+  it in the current tab.
+
+### Changed
+
+- **Adding Silver columns follows each client's own Schema Manager.** The
+  `add-silver-columns` skill now treats commented view lines plus two pipelines as
+  the default flow only. A new optional `warehouse_manager.notes` field records how a
+  client's variant differs, and when the live setup does not match, coop plans from
+  that client's own steps (or asks) instead of forcing the default.
+
 ### Fixed
 
 - **`coop update` says when a newer coop is out.** On a machine install it used
@@ -30,27 +51,6 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   update notice (and the "update ready", sign-in startup and default-profile
   notices) now sit on a small notes card with Dismiss only; the set-up card is
   for things you still need to do.
-
-## [0.41.1] — 2026-11-11
-
-### Added
-
-- **Tabs you can rearrange, and saved sessions that open in their own tab.** In
-  the coop window, drag a session tab along the strip to put it where you want
-  it (Ctrl+Shift+PageUp and Ctrl+Shift+PageDown move it one place; Ctrl+1 to
-  Ctrl+9 follow the new order). Clicking a saved session in the sidebar or the
-  session picker now opens it in a new tab instead of replacing the session in
-  front of you; if a tab already holds it, that tab comes forward. An unused tab
-  (nothing said yet) still loads the session in place, and a full window loads
-  it in the current tab.
-
-### Changed
-
-- **Adding Silver columns follows each client's own Schema Manager.** The
-  `add-silver-columns` skill now treats commented view lines plus two pipelines as
-  the default flow only. A new optional `warehouse_manager.notes` field records how a
-  client's variant differs, and when the live setup does not match, coop plans from
-  that client's own steps (or asks) instead of forcing the default.
 
 ## [0.41.0] — 2026-11-11
 
