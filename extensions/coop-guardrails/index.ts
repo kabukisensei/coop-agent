@@ -145,7 +145,8 @@ export type ContractSqlTarget = {
  *  uses it (or fails closed) and never falls back to the managed Fabric target. */
 export type ContractSqlScope = {
   configured: boolean; client: string; tenant: string; target: ContractSqlTarget | null;
-  /** Every ready entry by the contract's name (dev, test, prod): a read may name one. */
+  /** Every ready entry by the contract's name (dev, test, prod, and `<env>@<set>` for
+   *  an environment of a named target set): a read may name one. */
   entries?: Record<string, ContractSqlTarget>;
   /** The named target sets (`sql_targets.named.<set>`): set name -> the environments
    *  it declares (dev, test, prod), present or not ready. `<env>@<set>` names one. */
@@ -307,6 +308,14 @@ export function parseContractSqlScope(text: string): ContractSqlScope | null {
   for (const env of envs) {
     const ready = readySqlTarget(env === "prod" ? "production" : env as "dev" | "test", entry(env));
     if (ready) entries[env] = ready;
+  }
+  // A named set's entries (`dev@serverless` beside the dev Warehouse): the same
+  // validation, the environment its key names (a named prod is production).
+  for (const [set, setEnvs] of Object.entries(namedSets)) {
+    for (const env of setEnvs) {
+      const ready = readySqlTarget(env === "prod" ? "production" : env as "dev" | "test", projectYamlMapping(text, ["sql_targets", "named", set, env]));
+      if (ready) entries[`${env}@${set}`] = ready;
+    }
   }
   const rawDefault = projectYamlScalar(text, ["sql_targets", "default_environment"]).trim().toLowerCase();
   const environment = rawDefault === "" ? "dev" : rawDefault;
@@ -1808,7 +1817,7 @@ function reusableSqlSurface(event: any): boolean {
   if (target.outerTool !== FABRIC_SQL_FALLBACK_TOOL || target.innerTool) return false;
   const input = event?.input;
   if (!input || typeof input !== "object" || Array.isArray(input)) return false;
-  if (input.environment !== undefined && !["dev", "test", "prod"].includes(input.environment)) return false;
+  if (input.environment !== undefined && (typeof input.environment !== "string" || !SCHEMA_COMPARE_LIVE_SIDE.test(input.environment))) return false;
   return Object.keys(input).every((key) => key === "query" || key === "maximum_rows" || key === "environment")
     && (input.maximum_rows === undefined || (Number.isInteger(input.maximum_rows) && input.maximum_rows >= 1 && input.maximum_rows <= 1000));
 }
@@ -2111,7 +2120,11 @@ export function trustedWriteEnvironment(event: any, deps: LiveReadResolverDeps, 
   const name = target.innerTool || target.outerTool;
   if (name === FABRIC_SQL_FALLBACK_TOOL && contract?.configured) {
     const requested = event?.input?.environment;
-    if (requested !== undefined) return requested === "dev" || requested === "test" ? requested : "production";
+    if (requested !== undefined) {
+      // `dev@serverless` is dev only when the file declares that set's dev entry.
+      const entry = typeof requested === "string" ? contract.entries?.[requested] ?? null : null;
+      return entry && (entry.environment === "dev" || entry.environment === "test") ? entry.environment : "production";
+    }
     return contract.target ? contract.target.environment : "unresolved";
   }
   return managedSqlEnvironment(deps);

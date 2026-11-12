@@ -1090,7 +1090,11 @@ fixed 60-second bound (the MCP timeout setting does not apply to it),
 and a plain read runs without a prompt on any environment. With a contract
 `sql_targets:` section the guardrails resolve that scope from the trusted contract
 snapshot (row SQ3; `docs/guardrails-reference.md`): the default entry, or the ready
-entry the call's `environment` field names (`dev`, `test` or `prod`; reads only).
+entry the call's `environment` field names (`dev`, `test` or `prod`, or
+`<env>@<set>` for an environment of a `sql_targets.named` set, such as
+`dev@serverless` for a serverless pool beside the dev Warehouse; reads only, each
+read as its environment, so a named `prod` is production). When the file declares
+two or more targets, coop names them for the agent once per session.
 
 ### Microsoft skills catalog
 

@@ -1741,6 +1741,37 @@ await t("contract sql_targets scope: a prod or placeholder default asks once per
   await handleSessionStart({ reason: "new" }, liveCtx);
 });
 
+await t("fabric_sql_query: `<env>@<set>` reads a named target set's entry as its environment (a dev serverless pool beside the dev Warehouse); an undeclared set asks every time", async () => {
+  const text = AZURE_CONTRACT + [
+    "  named:", "    serverless:", "      dev:", "        kind: synapse_serverless", "        server: contoso-syn-ondemand.sql.azuresynapse.net", "        database: Lake",
+    "      prod:", "        kind: synapse_serverless", "        server: contoso-synprod-ondemand.sql.azuresynapse.net", "        database: Lake", "",
+  ].join("\n");
+  const scope = cg.parseContractSqlScope(text);
+  assert.equal(scope.entries["dev@serverless"]?.kind, "synapse_serverless");
+  assert.equal(scope.entries["dev@serverless"]?.environment, "dev");
+  assert.equal(scope.entries["prod@serverless"]?.environment, "production", "a named prod is production");
+  assert.equal(scope.target?.kind, "azure_sql", "the default stays the plain dev entry");
+  const read = (environment, query = "SELECT TOP (5) name FROM dbo.Account") => ({ toolName: "fabric_sql_query", input: { query, environment } });
+  assert.equal(cg.trustedWriteEnvironment(read("dev@serverless"), {}, scope), "dev");
+  assert.equal(cg.trustedWriteEnvironment(read("prod@serverless"), {}, scope), "production");
+  assert.equal(cg.trustedWriteEnvironment(read("dev@other"), {}, scope), "production", "an undeclared set is never dev");
+  writeManagedTarget();
+  writeContract(text);
+  process.env.COOP_FABRIC_MCP_TOKEN = launchToken();
+  await handleSessionStart({ reason: "new" }, liveCtx);
+  clearAudit();
+  confirmAnswer = false; confirmCount = 0;
+  assert.equal(blocked(await handle(read("dev@serverless"), liveCtx)), false, "the dev serverless entry reads without a prompt");
+  assert.equal(confirmCount, 0);
+  assert.equal(blocked(await handle(read("prod@serverless"), liveCtx)), true, "the named prod entry asks first (declined)");
+  assert.equal(blocked(await handle(read("dev@other"), liveCtx)), true, "an undeclared set asks (declined)");
+  assert.equal(confirmCount, 2);
+  const r = await handle(read("dev@serverless", "UPDATE dbo.Account SET name = 'x' WHERE id = 1"), liveCtx);
+  assert.equal(blocked(r), true, "a write there is still a governed write");
+  confirmAnswer = false;
+  removeContract();
+});
+
 await t("catalog_snapshot (SQ9): status never asks; snapshot follows the sql_impact target rule; forged inputs are blocked", async () => {
   clearAudit();
   writeManagedTarget();

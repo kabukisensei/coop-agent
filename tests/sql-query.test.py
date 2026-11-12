@@ -596,6 +596,30 @@ with (
     for environment in ("production", "staging", 1):
         assert fsq.execute({"query": QUERY, "environment": environment}, cwd=az_project)["state"] == "input_invalid", environment
     assert fsq.execute({"query": "DELETE FROM dbo.T", "environment": "prod"}, cwd=az_project)["state"] == "query_rejected"
+# A second dev engine (a serverless pool beside the dev Warehouse) lives under
+# sql_targets.named and is read as `dev@<set>` (2026-11-12: a teammate's session
+# could reach only the Warehouse). An undeclared set never connects.
+serverless_temp, serverless_project = contract_fixture(
+    AZURE_BLOCK
+    + "  named:\n    serverless:\n      dev:\n        kind: synapse_serverless\n"
+    + "        server: contoso-syn-ondemand.sql.azuresynapse.net\n        database: Lake\n"
+)
+serverless_pyodbc = FakePyodbc()
+with (
+    mock.patch.dict(os.environ, {fsq.wmcp.FABRIC_TOKEN_ENV: FABRIC_TOKEN}, clear=False),
+    mock.patch.dict(sys.modules, {"pyodbc": serverless_pyodbc}),
+    mock.patch.object(fsq.wmcp, "az_access_token", side_effect=fake_sql_only_token),
+):
+    pool = fsq.execute({"query": QUERY, "maximum_rows": 1, "environment": "dev@serverless"}, cwd=serverless_project)
+    assert pool["state"] == "ok", pool
+    assert pool["target"] == {"environment": "dev", "kind": "synapse_serverless", "database": "Lake"}
+    assert "SERVER=contoso-syn-ondemand.sql.azuresynapse.net,1433" in serverless_pyodbc.call[0]
+    assert fsq.execute({"query": QUERY, "environment": "dev@other"}, cwd=serverless_project) == {"ok": False, "state": "target_invalid"}
+    assert fsq.execute({"query": QUERY, "environment": "prod@serverless"}, cwd=serverless_project) == {"ok": False, "state": "target_invalid"}
+    for environment in ("dev@", "dev@Serverless", "@serverless", "dev@serverless@x"):
+        assert fsq.execute({"query": QUERY, "environment": environment}, cwd=serverless_project)["state"] == "input_invalid", environment
+serverless_temp.cleanup()
+
 # Without sql_targets there is one target: naming an entry is target_invalid.
 legacy_named = fsq.execute({"query": QUERY, "environment": "prod"}, cwd=Path(tempfile.mkdtemp()))
 assert legacy_named["state"] in ("project_unavailable", "target_invalid"), legacy_named
