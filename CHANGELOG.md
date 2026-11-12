@@ -5,6 +5,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Refactors that must not change the data are checked in full.** When a SQL
+  change should leave the output exactly as it was (tidying a procedure, moving
+  view logic into it, a standards fix), the `coop-workflow` skill now has coop
+  compare the whole output before and after (a fingerprint of every row and
+  column, or `EXCEPT` both ways) instead of only a row count and a sample.
+
 ## [0.41.1] — 2026-11-12
 
 ### Added
