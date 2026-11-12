@@ -29,7 +29,7 @@ import { consoleProcess } from "../desktop/lib/terminal.mjs";
 import { listFiles, rankFiles } from "../desktop/lib/files.mjs";
 import { PiSession, endLeftovers, killTree } from "../desktop/lib/pi-session.mjs";
 import { BUILTINS, KEYS, TERMINAL_ONLY, completions, parseInput } from "../desktop/renderer/commands.mjs";
-import { setupItems, setupItem, setupSummary, EXAMPLES } from "../desktop/renderer/welcome.mjs";
+import { setupItems, setupItem, setupSummary, noticeNotes, EXAMPLES } from "../desktop/renderer/welcome.mjs";
 import { parseConfirm, confirmLabels, parseQuestionSelect, parseQuestionMulti, multiAnswer } from "../desktop/renderer/dialogs.mjs";
 import { menuTemplate, notificationFor } from "../desktop/lib/menu.mjs";
 import { restartOnce } from "../desktop/lib/restart.mjs";
@@ -346,6 +346,26 @@ await check("welcome: set-up items come from the sign-in flag and the launch not
   // The empty window's three buttons are the top three Start menu task guides.
   assert.deepEqual(EXAMPLES.map((example) => example.command), ["/new-fact", "/new-dimension", "/clean-model"]);
   for (const example of EXAMPLES) assert.ok(existsSync(join(ROOT, "prompts", `${example.command.slice(1)}.md`)), `${example.command} has its prompt template`);
+});
+
+await check("welcome: update, startup and default-profile notices are quiet notes, never set-up items", () => {
+  // What a client VM showed after auto-updating (2026-11-12): the update line sat
+  // in "Before coop can do everything here" with Restart, though the window
+  // already ran the new version.
+  const updated = "coop updated to v0.41.0 (this machine): https://github.com/kabukisensei/coop-agent/releases/tag/v0.41.0. Your client's sessions and settings are unchanged.";
+  const notices = [
+    updated,
+    "An update to v0.42.0 is ready; it installs within the hour after coop closes.",
+    "coop now opens ready when you sign in to Windows (the newest coop, the Azure sign-in, then the window). To stop that: coop startup off",
+    "COOP calls you Sam, your Windows account's name, with the default settings; change them any time with: coop onboard",
+    "live SQL sign-in unavailable: Azure authentication is required; run az login",
+    updated,
+  ];
+  assert.deepEqual(setupItems({ loginPresent: true, notices }).map((item) => item.id), ["azure"]);
+  assert.deepEqual(noticeNotes(notices).map((note) => note.id), ["updated", "update-ready", "startup", "profile-default"]);
+  assert.equal(noticeNotes(notices)[0].text, updated);
+  assert.deepEqual(setupItems({ loginPresent: true, notices: [updated] }), [], "an update alone shows no set-up card");
+  assert.deepEqual(noticeNotes(["Standards wiki offline; using the bundled copy", "  "]), []);
 });
 
 await check("welcome: the MCP adapter's 401 report is the Azure sign-in item, and a start notice never hides the welcome", () => {

@@ -14,6 +14,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   environment, so a named prod still asks first. When the file names two or more
   targets, coop lists them for the agent at the start of a session, so it no
   longer tells you a configured target is out of reach.
+- **"coop updated to vX" no longer asks you to restart.** After an update the
+  window showed the update line inside "Before coop can do everything here",
+  with a Restart button, though the window already ran the new version. The
+  update notice (and the "update ready", sign-in startup and default-profile
+  notices) now sit on a small notes card with Dismiss only; the set-up card is
+  for things you still need to do.
 
 ## [0.41.1] — 2026-11-11
 
