@@ -133,6 +133,7 @@ import {
   repositoryShortName,
   saveUserProfileName,
   scalarValue,
+  sqlTargetsNote as contractSqlTargetsNote,
   writeProjectContract,
   writtenSqlTargetProblems,
 } from "../../lib/project-contract.mjs";
@@ -296,7 +297,10 @@ const SQL_SOURCE_PARAMS = Type.Object({
 const FABRIC_SQL_QUERY_PARAMS = Type.Object({
   query: Type.String({ description: "One plain SELECT with a literal TOP bound. Sent to the helper over stdin, never argv." }),
   maximum_rows: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000, description: "Optional result cap at or below the query's TOP bound." })),
-  environment: Type.Optional(Type.Union([Type.Literal("dev"), Type.Literal("test"), Type.Literal("prod")], { description: "Read another sql_targets entry from the project file (for example prod, to compare it with dev). Omit for the default entry. Reads only." })),
+  environment: Type.Optional(Type.String({
+    pattern: "^(dev|test|prod)(@[a-z][a-z0-9_-]{0,31})?$",
+    description: "Read another sql_targets entry from the project file: dev, test or prod (for example prod, to compare it with dev), or <env>@<set> for an entry under sql_targets.named (dev@serverless reads the dev serverless pool beside the dev Warehouse). Omit for the default entry. Reads only.",
+  })),
 });
 
 interface FabricSqlInvocation { bin: string; args: string[]; env?: Record<string, string> }
@@ -2357,6 +2361,20 @@ export function projectGapsNote(cwd: string): string | null {
   }
 }
 
+/** Once per contract: every SQL target the file declares, by the name
+ *  fabric_sql_query's `environment` takes (a serverless pool beside the Warehouse
+ *  is `dev@<set>`), so the agent never reports a configured target as unreachable. */
+export function sqlTargetsNote(cwd: string): { contractPath: string; content: string } | null {
+  try {
+    const contractPath = findProjectYml(cwd);
+    if (!contractPath) return null;
+    const content = contractSqlTargetsNote(safeRead(contractPath));
+    return content ? { contractPath, content } : null;
+  } catch {
+    return null; // contract guidance must never break a turn
+  }
+}
+
 export function fabricTargetNote(cwd: string): { contractPath: string; content: string } | null {
   try {
     const contractPath = findProjectYml(cwd);
@@ -3099,7 +3117,7 @@ export default function coopTools(pi: ExtensionAPI) {
   pi.registerTool({
     name: "fabric_sql_query",
     label: "Fabric SQL Query (pyodbc fallback)",
-    description: "Governed pyodbc read of one bounded SELECT against the contract's default sql_targets entry, or the entry `environment` names (dev, test or prod, to compare them), (Azure SQL, Fabric SQL database, Synapse serverless, Fabric Warehouse/Lakehouse), or the canonical Fabric SQL target without sql_targets. When a managed fabric-sqlendpoint MCP tool exists, attempt it first and call fabric_sql_query only after that actual attempt fails (unavailable/missing, authentication, timeout, connection, transport). Never use it for SQL/business/query rejection. Accepts no target, server, credential, or token fields.",
+    description: "Governed pyodbc read of one bounded SELECT against the contract's default sql_targets entry, or the entry `environment` names (dev, test or prod, to compare them, or <env>@<set> for a second engine under sql_targets.named such as dev@serverless), (Azure SQL, Fabric SQL database, Synapse serverless, Fabric Warehouse/Lakehouse), or the canonical Fabric SQL target without sql_targets. When a managed fabric-sqlendpoint MCP tool exists, attempt it first and call fabric_sql_query only after that actual attempt fails (unavailable/missing, authentication, timeout, connection, transport). Never use it for SQL/business/query rejection. Accepts no target, server, credential, or token fields.",
     promptSnippet: "Post-MCP-failure pyodbc fallback for one approval-gated bounded Fabric SELECT TOP read",
     promptGuidelines: [
       "With a managed fabric-sqlendpoint MCP server, attempt it first; call fabric_sql_query only after an actual unavailable/authentication/timeout/connection/transport/tool-missing failure, never for SQL/business/query rejection, and never cascade automatically. Direct sql_targets kinds (Azure SQL, Fabric SQL database, Synapse) have no MCP server: fabric_sql_query is the live read route.",
@@ -3417,6 +3435,7 @@ export default function coopTools(pi: ExtensionAPI) {
     // session too: a /new, /resume or /fork starts a fresh context that needs them again.
     announcedCwds.clear();
     announcedFabricTargets.clear();
+    announcedSqlTargets.clear();
     announcedCatalogSnapshots.clear();
     announcedProjectGaps.clear();
     const primedLogin = primeModelLogin(ctx);
@@ -3451,6 +3470,7 @@ export default function coopTools(pi: ExtensionAPI) {
   // contract/logging guidance can never break a turn.
   const announcedCwds = new Set<string>();
   const announcedFabricTargets = new Set<string>();
+  const announcedSqlTargets = new Set<string>();
   // SQ8: the SQL object each in-flight edit or write is about (by toolCallId).
   const pendingSqlEdits = new Map<string, string>();
   const announcedCatalogSnapshots = new Set<string>();
@@ -3544,6 +3564,13 @@ export default function coopTools(pi: ExtensionAPI) {
             details: { contractPath: fabricTarget.contractPath },
           };
         }
+      }
+
+      const sqlTargets = sqlTargetsNote(cwd);
+      if (sqlTargets && !announcedSqlTargets.has(sqlTargets.contractPath)) {
+        announcedSqlTargets.add(sqlTargets.contractPath);
+        if (message) message.content = `${message.content}\n\n${sqlTargets.content}`;
+        else message = { customType: "coop-sql-targets", display: false, content: sqlTargets.content, details: { contractPath: sqlTargets.contractPath } };
       }
 
       // Once per folder: the committed catalog snapshot (SQ9), so SQL work starts

@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const dist = process.env.COOP_TEST_DIST;
-const { fabricTargetNote } = await import(pathToFileURL(`${dist}/coop-tools.mjs`).href);
+const { fabricTargetNote, sqlTargetsNote } = await import(pathToFileURL(`${dist}/coop-tools.mjs`).href);
 
 let n = 0;
 const t = async (name, fn) => {
@@ -129,6 +129,39 @@ try {
     const repo = join(tmp, "no-fabric");
     contract(repo, "profile:\n  client: \"Example\"\n");
     assert.equal(fabricTargetNote(repo), null);
+  });
+
+  await t("sql_targets note names every declared target by the name fabric_sql_query takes, the named serverless pool included", () => {
+    const repo = join(tmp, "targets");
+    contract(repo, [
+      "sql_targets:",
+      "  default_environment: dev",
+      "  dev:",
+      "    kind: fabric_warehouse",
+      `    workspace_id: ${WS}`,
+      `    item_id: ${WH}`,
+      "    database: DevWH",
+      "  named:",
+      "    serverless:",
+      "      dev:",
+      "        kind: synapse_serverless",
+      "        server: example-ondemand.sql.azuresynapse.net",
+      "        database: Lake",
+      "      test:",
+      "        kind: synapse_serverless",
+      "        server: TODO",
+      "        database: TODO",
+      "",
+    ].join("\n"));
+    const note = sqlTargetsNote(repo);
+    assert.ok(note, "two declared targets yield a note");
+    assert.match(note.content, /dev \(default\): Fabric Warehouse DevWH/);
+    assert.match(note.content, /dev@serverless: Synapse serverless SQL pool Lake/);
+    assert.doesNotMatch(note.content, /test@serverless/, "a placeholder entry is not listed");
+    assert.match(note.content, /environment="<name>"/);
+    const one = join(tmp, "one-target");
+    contract(one, ["sql_targets:", "  dev:", "    kind: azure_sql", "    server: a.database.windows.net", "    database: DW", ""].join("\n"));
+    assert.equal(sqlTargetsNote(one), null, "one target: nothing to choose");
   });
 } finally {
   rmSync(tmp, { recursive: true, force: true });
