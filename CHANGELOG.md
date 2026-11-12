@@ -7,6 +7,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **coop reads every SQL target the project file names, not only the main one.**
+  A serverless pool (or Lakehouse) kept beside the dev Warehouse under
+  `sql_targets.named` is now readable with `fabric_sql_query`: the agent passes
+  `dev@<set>` (for example `dev@serverless`). Each target is read as its
+  environment, so a named prod still asks first. When the file names two or more
+  targets, coop lists them for the agent at the start of a session, so it no
+  longer tells you a configured target is out of reach.
 - **"coop updated to vX" no longer asks you to restart.** After an update the
   window showed the update line inside "Before coop can do everything here",
   with a Restart button, though the window already ran the new version. The

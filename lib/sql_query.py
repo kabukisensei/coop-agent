@@ -6,7 +6,9 @@ The target comes from the project contract, never from the caller:
 - with a `sql_targets:` section (lib/sql_targets.py, master plan SQ1) the ready
   default environment (dev or test, never prod) is the target, unless the read
   names another ready entry with `environment` (dev, test or prod: people compare
-  prod with dev, and this executor only ever reads). Azure SQL
+  prod with dev, and this executor only ever reads; or `<env>@<set>`, an
+  environment of a named target set such as a serverless pool beside the
+  Warehouse). Azure SQL
   Database, Fabric SQL database and Synapse serverless entries name their host
   in the contract; Fabric Warehouse / Lakehouse entries carry workspace and item
   ids and the host is still discovered through the Fabric REST API;
@@ -410,7 +412,11 @@ def execute(payload: Any, *, cwd: Path | None = None) -> dict[str, Any]:
     if not isinstance(payload, dict) or set(payload) - {"query", "maximum_rows", "environment"}:
         return result("input_invalid")
     environment = payload.get("environment")
-    if environment is not None and environment not in ("dev", "test", "prod"):
+    # `dev`, `test`, `prod`, or `<env>@<set>`: an environment of a named target set
+    # (`dev@serverless` beside the dev Warehouse). The entry comes from the file.
+    if environment is not None and not (
+        isinstance(environment, str) and targets_lib.TARGET_SPEC_RE.fullmatch(environment)
+    ):
         return result("input_invalid")
     query = payload.get("query")
     limit = bounded_select_limit(query)
