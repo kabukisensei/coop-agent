@@ -591,7 +591,7 @@ function Get-CoopMachineUpdateNews {
   } elseif ($result -like 'waiting*') {
     $lines += "The task's last run waited because coop was open ($result). Close every coop window and coop terminal, in every account on this machine."
   } elseif ($result -like 'failed*') {
-    $lines += "The task's last run failed: $($result.Substring(6).Trim()) (log: $(Join-Path (Get-CoopMachineProfileDir) 'logs\update.log'))."
+    $lines += "The task's last run failed: $(($result -replace '^failed:\s*', '').Trim()) (log: $(Join-Path (Get-CoopMachineProfileDir) 'logs\update.log'))."
   } else {
     $lines += 'The task has not tried this release yet.'
   }
