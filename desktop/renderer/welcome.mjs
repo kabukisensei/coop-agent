@@ -15,6 +15,38 @@ const NOTICE_RULES = [
 ];
 
 /**
+ * Launch notices that only inform (nothing to run, no restart): an update that
+ * installed since this account's last launch or one waiting for coop to close,
+ * the sign-in startup turning itself on, the default COOP profile. They go on
+ * their own quiet card, never the set-up card: the window already runs the new
+ * version, so "Restart coop" would change nothing (lib/common.ps1
+ * Get-CoopUpdateLines; each shows once per account per version).
+ */
+const INFO_RULES = [
+  { test: /^coop updated to v\S+/i, id: "updated" },
+  { test: /^an update to v\S+ is ready\b/i, id: "update-ready" },
+  { test: /^coop now opens ready when you sign in\b/i, id: "startup" },
+  { test: /^COOP calls you\b/, id: "profile-default" },
+];
+
+/** The informational notice's id, or "" when the notice is not one. */
+function infoId(text) {
+  const rule = INFO_RULES.find((r) => r.test.test(text));
+  return rule ? rule.id : "";
+}
+
+/** The informational launch notices: `[{ id, text }]`, in order, empty ones and duplicates dropped. */
+export function noticeNotes(notices = []) {
+  const notes = [];
+  for (const raw of notices) {
+    const text = String(raw || "").trim();
+    const id = text ? infoId(text) : "";
+    if (id && !notes.some((note) => note.id === id)) notes.push({ id, text });
+  }
+  return notes;
+}
+
+/**
  * The set-up list for a window: `[{ id, text, command, detail }]`, newest
  * launch notices included. `command` is what to run in the terminal coop opens
  * on this session (`/login` runs inside coop; the others in the console).
@@ -26,6 +58,7 @@ export function setupItems({ loginPresent = true, notices = [] } = {}) {
   const add = (item) => { if (!seen.has(item.id)) { seen.add(item.id); items.push(item); } };
   if (loginPresent === false) add({ id: "login", text: "No model sign-in yet. coop cannot answer until you sign in once.", command: "/login", detail: "" });
   for (const raw of notices) {
+    if (infoId(String(raw || "").trim())) continue;
     const item = setupItem(raw);
     if (item) add(item);
   }

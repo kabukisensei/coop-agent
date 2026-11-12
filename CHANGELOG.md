@@ -16,6 +16,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   administrator's `coop update` starts. The first line also shows the task's
   last result, and `coop update --check` names the newest release.
 
+- **"coop updated to vX" no longer asks you to restart.** After an update the
+  window showed the update line inside "Before coop can do everything here",
+  with a Restart button, though the window already ran the new version. The
+  update notice (and the "update ready", sign-in startup and default-profile
+  notices) now sit on a small notes card with Dismiss only; the set-up card is
+  for things you still need to do.
+
 ## [0.41.1] — 2026-11-11
 
 ### Added
