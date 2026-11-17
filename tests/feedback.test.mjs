@@ -114,6 +114,21 @@ await check("the report: the person's words, coop's facts, redacted errors; spli
   assert.match(new URL(long.url).searchParams.get("body"), /full report is on your clipboard/);
 });
 
+await check("a long report with emoji is cut at code-point boundaries, never through a surrogate pair (#558)", () => {
+  // supplementary characters at many positions, so the binary search's probes land on them too
+  const bodies = ["😀".repeat(2000), "This is a synthetic feedback example. 😀 ".repeat(300), ("ab🚀c" + "d".repeat(7)).repeat(900), "x".repeat(6500) + "👍🏽".repeat(300)];
+  for (const body of bodies) {
+    const { url, cut } = f.issueUrl({ repo: "Cooptimize/coop-feedback", title: "t", body });
+    assert.ok(cut && url.length <= f.MAX_URL_LENGTH, `cut within the limit: ${url.length}`);
+    const got = new URL(url).searchParams.get("body");
+    assert.ok(!/[\uD800-\uDFFF]/.test(got.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, "")), "no lone surrogate");
+    assert.ok(body.startsWith(got.replace(/\n\n_\(Cut to fit[^]*$/, "")), "the cut text is a prefix of the report");
+  }
+  const short = f.issueUrl({ repo: "Cooptimize/coop-feedback", title: "t", body: "déjà vu 😀 日本語" });
+  assert.equal(short.cut, false);
+  assert.equal(new URL(short.url).searchParams.get("body"), "déjà vu 😀 日本語");
+});
+
 await check("delivery saves under ~/.coop/reports, copies, and opens only a github.com page", () => {
   const opened = [];
   const copied = [];
