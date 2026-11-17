@@ -64,6 +64,29 @@ def ensure_quiet_startup(path: Path) -> bool:
     return True
 
 
+# Pi 1.5.1 moved cacheWarming's default from "streaming" to "idle", which also
+# pays to keep prompt caches warm for up to 30 minutes between runs. coop keeps
+# the earlier behaviour: caches are warmed only while a run is active.
+COOP_CACHE_WARMING = "streaming"
+CACHE_WARMING_VALUES = ("off", "streaming", "idle")
+
+
+def ensure_cache_warming(path: Path) -> bool:
+    """Set cacheWarming to "streaming" unless the user chose a value.
+
+    A valid value already in the file ("off", "streaming" or "idle") is the
+    user's choice and is kept; a missing or unknown value becomes "streaming".
+    Every other setting is preserved. Returns True when the file changed.
+    """
+
+    settings, existing_mode = _read_json_object(path)
+    if settings.get("cacheWarming") in CACHE_WARMING_VALUES:
+        return False
+    settings["cacheWarming"] = COOP_CACHE_WARMING
+    _write_json_object(path, settings, existing_mode)
+    return True
+
+
 # pi-better-openai's own footer defaults to `footer.mode: "replace"`, which calls
 # ctx.ui.setFooter and wipes coop-powerline's footer on session_start (issue #203).
 # coop owns the footer: it surfaces pi-better-openai's plan-usage text through
@@ -171,7 +194,7 @@ def _npm_package_name(source: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Converge Coop-owned Pi settings")
-    parser.add_argument("command", choices=("ensure-quiet-startup", "ensure-coop-footer", "ensure-packages", "ensure-builtins-off"))
+    parser.add_argument("command", choices=("ensure-quiet-startup", "ensure-cache-warming", "ensure-coop-footer", "ensure-packages", "ensure-builtins-off"))
     parser.add_argument("settings", type=Path)
     parser.add_argument("sources", nargs="*", help="ensure-packages: npm:<name>@<pin> entries")
     args = parser.parse_args(argv)
@@ -179,6 +202,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "ensure-coop-footer":
             ensure_coop_footer(args.settings)
+        elif args.command == "ensure-cache-warming":
+            ensure_cache_warming(args.settings)
         elif args.command == "ensure-builtins-off":
             ensure_builtins_off(args.settings)
         elif args.command == "ensure-packages":

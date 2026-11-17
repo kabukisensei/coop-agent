@@ -148,4 +148,18 @@ with tempfile.TemporaryDirectory() as raw_tmp:
     assert result.returncode == 0 and json.loads(fresh_mcp.read_text()) == {"extensions": ["-builtin:mcp", "-builtin:codemode"]}
     print("  PASS ensure-builtins-off creates the entry in a new settings file")
 
-print("  14 Pi settings tests passed")
+    warm = tmp / "warm.json"
+    warm.write_text(json.dumps({"theme": "dark", "cacheWarming": "bogus"}))
+    result = subprocess.run([sys.executable, str(HELPER), "ensure-cache-warming", str(warm)], text=True, capture_output=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(warm.read_text()) == {"theme": "dark", "cacheWarming": "streaming"}
+    print("  PASS ensure-cache-warming sets streaming over a missing or unknown value, keeps the rest")
+    for choice in ("off", "idle", "streaming"):
+        chosen = tmp / f"warm-{choice}.json"
+        chosen.write_text(json.dumps({"cacheWarming": choice}))
+        before = chosen.read_bytes()
+        result = subprocess.run([sys.executable, str(HELPER), "ensure-cache-warming", str(chosen)], text=True, capture_output=True, check=False)
+        assert result.returncode == 0 and chosen.read_bytes() == before
+    print("  PASS ensure-cache-warming keeps a cacheWarming value the user chose")
+
+print("  16 Pi settings tests passed")

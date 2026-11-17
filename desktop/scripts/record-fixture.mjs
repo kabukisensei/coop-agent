@@ -100,8 +100,8 @@ function prepare(temp, port) {
   mkdirSync(agent, { recursive: true });
   mkdirSync(join(work, "build"), { recursive: true });
   // A tiny keepRecentTokens lets the short scripted session compact for real;
-  // quietStartup, -builtin:mcp and -builtin:codemode are what `coop sync` writes.
-  const settings = { defaultProvider: "fixture", defaultModel: "fixture-model", quietStartup: true, extensions: ["-builtin:mcp", "-builtin:codemode"], compaction: { keepRecentTokens: 1 } };
+  // quietStartup, cacheWarming, -builtin:mcp and -builtin:codemode are what `coop sync` writes.
+  const settings = { defaultProvider: "fixture", defaultModel: "fixture-model", quietStartup: true, cacheWarming: "streaming", extensions: ["-builtin:mcp", "-builtin:codemode"], compaction: { keepRecentTokens: 1 } };
   if (options.extensionsFrom) {
     const from = resolve(options.extensionsFrom);
     cpSync(join(from, "npm"), join(agent, "npm"), { recursive: true });

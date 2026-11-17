@@ -7,6 +7,20 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- **Pi 1.5.2, with prompt-cache warming kept to active runs.** Pi moves from
+  1.5.0. Fixes that reach coop: the find tool on Windows returning nothing for
+  patterns such as `src/**/*.ts`; the read and grep tools no longer load whole
+  files into memory, so large files stop running Pi out of memory; a sign-in
+  refreshed while Pi was stopping is saved instead of failing later with
+  `invalid_grant`; RPC mode (the coop window) finishes its shutdown cleanup and
+  honours an extension's shutdown while idle; image resizes no longer overlap.
+  Pi 1.5.1 changed `cacheWarming` to keep prompt caches warm for up to 30
+  minutes between runs, which spends money between runs; `coop sync` now sets
+  `cacheWarming: "streaming"` (the earlier default) unless you chose a value.
+  The RPC command set and slash commands are unchanged (docs diffed against
+  1.5.0); the coop-tools compaction-transport and Codex sign-in workarounds
+  stay. `config/pi-lock.json` and `config/extensions-lock.json` are
+  regenerated; the undici 8.12.3 override stays.
 - **Window runtimes: Node.js 22.23.5, Git 2.56.1 and Electron 44.11.3 (security).**
   The window installer bundles Node.js 22.23.5 (from 22.23.4), the November 11
   security release (HTTP/2 and TLS fixes, eight rated High); MinGit 2.56.1 (from

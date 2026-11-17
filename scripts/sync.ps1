@@ -69,6 +69,11 @@ if ($settingsPy) {
   & $settingsPy (Join-Path $script:CoopRoot 'lib\pi_settings.py') ensure-quiet-startup (Join-Path $PI_AGENT 'settings.json')
   if ($LASTEXITCODE -eq 0) { Coop-Ok 'quiet startup enabled (guardrails, skills, prompts, extensions, and theme still load)' }
   else { Coop-Warn "could not enable quiet startup in $PI_AGENT\settings.json" 'run: coop sync'; $script:SyncFailures++ }
+  # Pi 1.5.1 made idle cache warming the default (paid refreshes between runs);
+  # coop keeps warming to active runs unless the user set cacheWarming.
+  & $settingsPy (Join-Path $script:CoopRoot 'lib\pi_settings.py') ensure-cache-warming (Join-Path $PI_AGENT 'settings.json')
+  if ($LASTEXITCODE -eq 0) { Coop-Ok 'prompt-cache warming limited to active runs (unless you set cacheWarming)' }
+  else { Coop-Warn "could not set cacheWarming in $PI_AGENT\settings.json" 'run: coop sync'; $script:SyncFailures++ }
   # Pi 1.x's built-in MCP stays off beside pi-mcp-adapter, and its built-in
   # codemode gives way to coop's own (master plan U2); the launch passes --no-mcp
   # and loads extensions\coop-codemode too, this keeps both off for anything else
