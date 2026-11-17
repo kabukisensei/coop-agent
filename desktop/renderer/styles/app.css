@@ -311,6 +311,19 @@ details.divider .md { text-align: left; margin-top: 10px; padding: 10px 12px; ba
 .dock > * { max-width: 860px; margin-left: auto; margin-right: auto; }
 .widgets { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
 .widget { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); font-size: 12.5px; color: var(--text-muted); }
+/* The todo panel: a heading that folds it (click, Enter or Space, Alt+T) over its rows. */
+.widget.todos { padding: 0; overflow: hidden; }
+.todos-head {
+  display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 12px; background: none; border: 0;
+  color: var(--text-strong); font: inherit; font-family: var(--font-mono); text-align: left; white-space: pre; cursor: pointer;
+}
+.todos-head:hover { background: var(--surface-2); }
+.todos-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.todos-fold::before { content: "\25BE"; display: inline-block; width: 1em; color: var(--text-faint); }
+.todos-head[aria-expanded="false"] .todos-fold::before { content: "\25B8"; }
+.todos-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.todos-body { margin: 0; padding: 0 12px 8px; overflow: auto; font: inherit; font-family: var(--font-mono); white-space: pre; color: var(--text-muted); }
+.todos-body code { background: none; padding: 0; font-size: inherit; }
 .queue { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; font-size: 13px; }
 .queued { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .queued-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }

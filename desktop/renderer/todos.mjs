@@ -101,7 +101,8 @@ function row(task, showIds) {
 
 /**
  * The panel's lines, or none when nothing is left to show. `collapsed` keeps
- * the heading and a hint, as the terminal's collapse key does; `rows` is the
+ * the heading and the task in progress (or the next one waiting; a hint when
+ * every row is done); `rows` is the
  * row budget including the heading (`MAX_ROWS` by default, every row when
  * tool output is expanded).
  */
@@ -111,7 +112,15 @@ export function todoLines(state, { collapsed = false, rows = MAX_ROWS } = {}) {
   const completed = tasks.filter((task) => task.status === "completed").length;
   const active = tasks.some((task) => task.status === "pending" || task.status === "in_progress");
   const heading = `${active ? "●" : "○"} Todos (${completed}/${tasks.length})`;
-  if (collapsed) return [heading, `└─ collapsed, ${COLLAPSE_KEY} expands`];
+  if (collapsed) {
+    // Folded, the panel keeps the task being worked on in sight (Aaron,
+    // 2026-11-17): the rows in progress, else the next one waiting.
+    const showIds = tasks.some((task) => Array.isArray(task.blockedBy) && task.blockedBy.length > 0);
+    const working = tasks.filter((task) => task.status === "in_progress");
+    const next = working.length ? working : tasks.filter((task) => task.status === "pending").slice(0, 1);
+    if (!next.length) return [heading, `└─ collapsed, ${COLLAPSE_KEY} expands`];
+    return [heading, ...next.map((task, i) => `${i === next.length - 1 ? "└─" : "├─"} ${row(task, showIds)}`)];
+  }
   const showIds = tasks.some((task) => Array.isArray(task.blockedBy) && task.blockedBy.length > 0);
   const { visible, hiddenCompleted, truncatedTail } = layout(tasks, Math.max(2, rows) - 1);
   const lines = [heading, ...visible.map((task) => `├─ ${row(task, showIds)}`)];

@@ -7,6 +7,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- **Window: the todo list folds from its heading.** The Todos panel's heading is
+  now a button (click, Enter or Space) that collapses or expands the list, as a
+  tap does on the phone and as Alt+T already did. Folded, it keeps the task in
+  progress in sight (or the next one waiting), not just the count.
 - **Window runtimes: Node.js 22.23.5, Git 2.56.1 and Electron 44.11.3 (security).**
   The window installer bundles Node.js 22.23.5 (from 22.23.4), the November 11
   security release (HTTP/2 and TLS fixes, eight rated High); MinGit 2.56.1 (from

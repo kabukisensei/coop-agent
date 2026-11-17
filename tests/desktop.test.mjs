@@ -998,7 +998,14 @@ await check("todos: the panel's lines follow the terminal overlay (glyphs, activ
   const task = (id, status, extra = {}) => ({ id, subject: `Task ${id}`, status, ...extra });
   applyTodoResult(state, { details: { nextId: 4, tasks: [task(1, "completed"), task(2, "in_progress", { activeForm: "doing two" }), task(3, "pending")] } });
   assert.deepEqual(todoLines(state), ["● Todos (1/3)", "├─ ✓ Task 1", "├─ ◐ Task 2 (doing two)", "└─ ○ Task 3"]);
-  assert.deepEqual(todoLines(state, { collapsed: true }), ["● Todos (1/3)", `└─ collapsed, ${COLLAPSE_KEY} expands`]);
+  // Folded, the panel keeps the task being worked on in sight.
+  assert.deepEqual(todoLines(state, { collapsed: true }), ["● Todos (1/3)", "└─ ◐ Task 2 (doing two)"]);
+  applyTodoResult(state, { details: { nextId: 4, tasks: [task(1, "completed"), task(2, "pending"), task(3, "pending")] } });
+  assert.deepEqual(todoLines(state, { collapsed: true }), ["● Todos (1/3)", "└─ ○ Task 2"], "nothing in progress: the next one waiting");
+  applyTodoResult(state, { details: { nextId: 4, tasks: [task(1, "in_progress"), task(2, "in_progress"), task(3, "pending")] } });
+  assert.deepEqual(todoLines(state, { collapsed: true }), ["● Todos (0/3)", "├─ ◐ Task 1", "└─ ◐ Task 2"]);
+  applyTodoResult(state, { details: { nextId: 4, tasks: [task(1, "completed"), task(2, "completed")] } });
+  assert.deepEqual(todoLines(state, { collapsed: true }), ["○ Todos (2/2)", `└─ collapsed, ${COLLAPSE_KEY} expands`]);
   // Ids show only when a dependency points at them; deleted tasks never show.
   applyTodoResult(state, { details: { nextId: 5, tasks: [task(1, "deleted"), task(2, "in_progress"), task(3, "pending", { blockedBy: [2] }), task(4, "pending")] } });
   assert.deepEqual(todoLines(state), ["● Todos (0/3)", "├─ ◐ #2 Task 2", "├─ ○ #3 Task 3 ⛓ #2", "└─ ○ #4 Task 4"]);
@@ -1020,6 +1027,19 @@ await check("todos: the panel's lines follow the terminal overlay (glyphs, activ
   assert.equal(todoLines(state)[MAX_ROWS - 1], "└─ +5 more (5 pending)");
   assert.equal(COLLAPSE_KEY, "Alt+T");
   assert.match(PARITY, /Alt\+T collapses/);
+});
+
+await check("todos: the panel's heading is a keyboard button that folds it, like the phone's panel", () => {
+  const app = readFileSync(join(ROOT, "desktop", "renderer", "app.mjs"), "utf8");
+  const css = readFileSync(join(ROOT, "desktop", "renderer", "styles", "app.css"), "utf8");
+  const panel = app.slice(app.indexOf("function todoPanel("), app.indexOf("function showBanner("));
+  assert.match(panel, /el\("button", \{ type: "button", class: "todos-head", "aria-expanded"/, "the heading is a real button with aria-expanded");
+  assert.match(panel, /"aria-controls": "todosBody"/);
+  assert.match(panel, /app\.widgetsCollapsed = !app\.widgetsCollapsed; renderWidgets\(\)/, "a click folds it as Alt+T does");
+  assert.match(app, /matches\("\.todos-head"\)/, "a redraw keeps the keyboard on the heading");
+  assert.match(css, /\.todos-head:focus-visible \{ outline:/);
+  assert.match(css, /\.todos-head\[aria-expanded="false"\] \.todos-fold::before/);
+  assert.match(PARITY, /heading is a button \(click, Enter or Space\)/);
 });
 
 await check("widgets: Alt+T collapses a widget to its heading and a count; a one-line widget stays as it is", () => {
