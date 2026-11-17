@@ -7,6 +7,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- **Bundled standards refreshed to coop-standards b34d7fe.** Gold load procedures
+  wrap the removal and the write of every full reload in one transaction, so readers
+  never see an empty table, and Gold facts keep `NULL` for unknown values instead of
+  `0` or `''` unless the business asks. Online clients already read this from
+  coop-standards; the bundled copy is what coop uses offline or on a first run.
+
 - **Refactors that must not change the data are checked in full.** When a SQL
   change should leave the output exactly as it was (tidying a procedure, moving
   view logic into it, a standards fix), the `coop-workflow` skill now has coop

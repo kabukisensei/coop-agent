@@ -66,10 +66,10 @@ Keep the procedure to the four phases. Do not add `TRY`/`CATCH`, `THROW`, `RAISE
 
 ## Preventing empty or partial tables
 
-- Use an explicit transaction when DirectQuery, integrations, or other live consumers require removal and replacement to commit together.
+- Wrap the removal and the write of every full reload in one explicit transaction, so a reader never sees an empty or partial table.
+- Use an explicit transaction for other loading patterns when DirectQuery, integrations, or other live consumers require removal and replacement to commit together.
 - A failed statement must roll back the whole transaction without error-handling code. In Fabric Warehouse a failed statement rolls back the transaction on its own. In SQL Server and Azure SQL, put `SET XACT_ABORT ON;` before `BEGIN TRANSACTION` so any error rolls back the transaction and stops the procedure. Do not wrap the transaction in `TRY`/`CATCH`.
 - Limit the transaction to statements that need to become visible together. Gather and transform beforehand when the loading pattern permits; long transactions increase blocking, conflicts, and resource use.
-- Use this only when required by the incremental or replacement strategy.
 - A standalone `MERGE` commits its changes together under autocommit. Use an explicit transaction when it needs to commit with other statements.
 
 ```sql
