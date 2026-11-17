@@ -7,6 +7,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- **Window runtimes: Node.js 22.23.5, Git 2.56.1 and Electron 44.11.3 (security).**
+  The window installer bundles Node.js 22.23.5 (from 22.23.4), the November 11
+  security release (HTTP/2 and TLS fixes, eight rated High); MinGit 2.56.1 (from
+  2.56.0(4)), which fixes six Git CVEs including a remote code execution through
+  recursive clones; and Electron 44.11.3 (from 44.10.2), with Chromium, V8,
+  Skia and ANGLE security backports. The runtime lock is regenerated. CI uses
+  the same Node.js version.
 - **Refactors that must not change the data are checked in full.** When a SQL
   change should leave the output exactly as it was (tidying a procedure, moving
   view logic into it, a standards fix), the `coop-workflow` skill now has coop
