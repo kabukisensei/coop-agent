@@ -1072,7 +1072,7 @@ await check("parity: every Pi built-in command is a window built-in or terminal-
   const rows = paritySection("Pi built-in commands");
   const piCommands = new Set(SURFACE.slashCommands);
   // Pi's built-in MCP extension is off in every coop session (`--no-mcp`, and `-builtin:mcp` in the
-  // settings coop sync writes), so its /mcp (Pi 1.5.0) never exists there: the /mcp the window sends
+  // settings coop sync writes), so its /mcp (Pi 1.5.2) never exists there: the /mcp the window sends
   // to Pi as typed is pi-mcp-adapter's, recorded as an extension command (PARITY.md, the /mcp-auth row).
   // A Pi command an extension serves under the same name is that extension's, never a built-in.
   const [recorded] = response("get_commands");
