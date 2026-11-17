@@ -22,6 +22,15 @@ CREATE TABLE fact.CustomerTransactions (...)
       FKCustomer bigint NULL
 ```
 
+### Fact null standards
+
+- Keep `NULL` when a fact value is unknown or does not apply. `NULL` and zero mean different things.
+- Do not replace `NULL` with `0`, `''`, or another placeholder unless the business asks for that value.
+
+```sql
+     ,sl.discamount AS DiscountAmount
+```
+
 ### Fact index standards
 
 Where supported, add non-unique indexes to join columns. Indexes do not enforce relationships or uniqueness.
