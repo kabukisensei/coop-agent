@@ -988,6 +988,8 @@ function renderStatus() {
 }
 
 function renderWidgets() {
+  // A redraw replaces the todo heading; keep the keyboard on it.
+  const headFocused = document.activeElement instanceof Element && document.activeElement.matches(".todos-head");
   for (const placement of ["above", "below"]) {
     const box = $(placement === "above" ? "widgetsAbove" : "widgetsBelow");
     const widgets = [...app.widgets.entries()].filter(([, widget]) => widget.placement === placement);
@@ -996,8 +998,24 @@ function renderWidgets() {
     const todo = placement === "above" ? todoLines(app.todos, { collapsed, rows: app.prefs.expandTools ? Infinity : undefined }) : [];
     if (todo.length) widgets.unshift(["coop-todos", { lines: todo, placement, rendered: true }]);
     box.hidden = !widgets.length;
-    box.replaceChildren(...widgets.map(([key, widget]) => el("pre", { class: `widget${collapsed ? " collapsed" : ""}${key === "coop-todos" ? " todos" : ""}`, title: key }, el("code", { text: (widget.rendered ? widget.lines : widgetView(widget, collapsed)).join("\n") }))));
+    box.replaceChildren(...widgets.map(([key, widget]) => key === "coop-todos" ? todoPanel(widget.lines, collapsed)
+      : el("pre", { class: `widget${collapsed ? " collapsed" : ""}`, title: key }, el("code", { text: (widget.rendered ? widget.lines : widgetView(widget, collapsed)).join("\n") }))));
   }
+  const head = headFocused && document.querySelector("#widgetsAbove .todos-head");
+  if (head) head.focus();
+}
+
+// The todo panel: its heading is a button that folds the panels above the
+// prompt, as a tap on the phone's panel does and as Alt+T does; folded, the
+// body keeps the task being worked on (todos.mjs).
+function todoPanel(lines, collapsed) {
+  const [heading, ...rows] = lines;
+  const toggle = () => { app.widgetsCollapsed = !app.widgetsCollapsed; renderWidgets(); };
+  return el("div", { class: `widget todos${collapsed ? " collapsed" : ""}` },
+    el("button", { type: "button", class: "todos-head", "aria-expanded": collapsed ? "false" : "true", "aria-controls": "todosBody",
+      title: `${collapsed ? "Expand" : "Collapse"} the todo list (${COLLAPSE_KEY})`, onclick: toggle },
+    el("span", { class: "todos-fold", "aria-hidden": "true" }), el("span", { class: "todos-title", text: heading })),
+    rows.length ? el("pre", { id: "todosBody", class: "todos-body" }, el("code", { text: rows.join("\n") })) : null);
 }
 
 function showBanner(level, text, actions = [], detail = "") {
