@@ -26,8 +26,8 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22.23.4'
       - name: install electron-builder (desktop/installer, pinned)
@@ -37,7 +37,7 @@ jobs:
       - name: build the installer (stage + electron-builder, unsigned)
         shell: pwsh
         run: node desktop/scripts/build-installer.mjs
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coop-window-installer
           path: desktop/installer/dist/coop-window-*.exe
@@ -54,7 +54,7 @@ jobs:
           # F3: the auto-update dry run asks api.github.com; a token keeps a shared runner address off the unauthenticated rate limit.
           GH_TOKEN: ${{ github.token }}
         run: node desktop/scripts/verify-installer.mjs --output "$env:RUNNER_TEMP\installer-acceptance.json"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: coop-window-installer-acceptance
@@ -78,11 +78,11 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22.23.4'
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: coop-window-installer
           path: ${{ runner.temp }}/current
@@ -141,7 +141,7 @@ jobs:
           foreach ($f in @("$env:RUNNER_TEMP\upgrade-acceptance.json", "$env:RUNNER_TEMP\launch-acceptance.json")) {
             if (Test-Path -LiteralPath $f) { Write-Output "--- $f"; Get-Content -LiteralPath $f -Raw }
           }
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: coop-window-upgrade-acceptance
@@ -159,10 +159,10 @@ jobs:
       version: ${{ steps.notes.outputs.version }}
       notes: ${{ steps.notes.outputs.notes }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0   # the guard below needs origin/main's history
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22.23.4'
 
@@ -200,11 +200,11 @@ jobs:
           echo "version=$ver" >> "$GITHUB_OUTPUT"
           { echo "notes<<COOP_NOTES_EOF"; cat RELEASE_NOTES.md; echo "COOP_NOTES_EOF"; } >> "$GITHUB_OUTPUT"
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: coop-window-installer
           path: installer
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: coop-window-installer-acceptance
           path: installer
@@ -217,7 +217,7 @@ jobs:
       - name: Create GitHub Release
         # SHA-pinned (v3.0.1) — this is a third-party action with `contents: write`, so
         # a movable tag is the sharpest supply-chain edge in the whole workflow.
-        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           name: "coop-agent ${{ github.ref_name }}"
           body_path: RELEASE_NOTES.md
