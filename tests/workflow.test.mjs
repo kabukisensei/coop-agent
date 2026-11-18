@@ -136,4 +136,11 @@ assert.ok(skill.includes("No separate plan turn"), "the quick lane drops the sep
 assert.ok(skill.includes("desk-only production approvals never change"), "the quick lane keeps every guardrail");
 assert.ok(guardrails.includes("coop-workflow quick lane"), "guardrails name the quick lane");
 
+// Evidence reporting: every check is PASS, FAIL or NOT RUN, and a speed claim needs timings.
+const handoff = readFileSync(join(ROOT, "prompts/handoff.md"), "utf8");
+assert.ok(skill.includes("**PASS**, **FAIL** or **NOT RUN**"), "the summary reports each check as PASS, FAIL or NOT RUN");
+assert.ok(skill.includes("Never report a check you did not run as passed"), "a check that did not run is never reported as passed");
+assert.ok(skill.includes("**Speed claims.**"), "a speed claim needs before and after measurements");
+assert.ok(handoff.includes("PASS, FAIL or NOT RUN"), "the handoff reports each check as PASS, FAIL or NOT RUN");
+
 console.log("✓ workflow slice tests passed");

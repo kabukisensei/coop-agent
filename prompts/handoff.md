@@ -7,7 +7,9 @@ these sections, drawn from what actually happened (do not invent):
 
 - **What changed** — objects/files touched and the intent behind each.
 - **Self-checked / tested** — the standards self-check (rules met, rules you could
-  not meet), BPA / `fabric-cicd` validate results and any tests run, with pass/fail.
+  not meet), BPA / `fabric-cicd` validate results and any tests run, each as
+  PASS, FAIL or NOT RUN, with what it establishes and why a check was not run.
+  A speed claim carries its before and after timings or is marked not measured.
 - **Files modified** — the concrete list (source prepared for review vs.
   docs/logs already committed).
 - **Open issues / blockers** — anything unresolved or awaiting a decision.
