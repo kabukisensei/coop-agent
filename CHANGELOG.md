@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.42.0] — 2026-11-18
+
 ### Changed
 
 - **Checks are reported as PASS, FAIL or NOT RUN.** coop's summary and `/handoff`
@@ -51,7 +53,6 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   names the column changes a Link export makes to F&O tables. Two new source
   articles list the usual join keys for standard F&O and Project Operations
   tables. Online clients already read these from coop-standards.
-
 - **Refactors that must not change the data are checked in full.** When a SQL
   change should leave the output exactly as it was (tidying a procedure, moving
   view logic into it, a standards fix), the `coop-workflow` skill now has coop
