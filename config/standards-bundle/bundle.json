@@ -2,8 +2,8 @@
   "schema_version": 1,
   "repository": "https://github.com/cooptimize/coop-standards.git",
   "branch": "main",
-  "revision": "b34d7fe5a35fad545daee0c435dc87f96b7ae452",
-  "captured_ms": 1794943887654,
+  "revision": "d6352c66590f16c5005c9269744ba8a8e4b3ea47",
+  "captured_ms": 1795011063499,
   "articles": [
     {
       "file": "Power BI/File Types.md",
@@ -121,7 +121,7 @@
     },
     {
       "file": "Source Systems/D365 Exports.md",
-      "sha256": "2a21f277135ef2b7489f1094fc5149ff21e741fab05b3e65c311eaa4f9b6a2fb",
+      "sha256": "d7dd8be0197cf7ae4dece0318c999bdb172610ca07416748f148c1a0731e4e9d",
       "id": "source_d365_exports",
       "domain": "source"
     },
@@ -129,6 +129,18 @@
       "file": "Source Systems/D365 FO Source Tables.md",
       "sha256": "bed7050bb9af95fdf69e46d2168ce809ab073f095d92d343b5671b71dbe0b58b",
       "id": "source_d365_fo",
+      "domain": "source"
+    },
+    {
+      "file": "Source Systems/D365 FO Table Joins.md",
+      "sha256": "df32eb37a56bca859077e1a19985c2511e5b243f62983c47320cb3e7d8a9674d",
+      "id": "source_d365_fo_joins",
+      "domain": "source"
+    },
+    {
+      "file": "Source Systems/D365 Project Operations Table Joins.md",
+      "sha256": "2f6f5fa287bd819f56628949b62d28b8fe1a3c5c399737770f61c5ea277536bf",
+      "id": "source_d365_project_operations_joins",
       "domain": "source"
     },
     {

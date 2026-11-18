@@ -43,6 +43,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   never see an empty table, and Gold facts keep `NULL` for unknown values instead of
   `0` or `''` unless the business asks. Online clients already read this from
   coop-standards; the bundled copy is what coop uses offline or on a first run.
+- **Bundled standards refreshed to coop-standards d6352c6 (D365 export metadata
+  and table joins).** The D365 Exports article now has coop look up enum labels,
+  choice labels and lookup targets in the metadata tables a Synapse Link or
+  Fabric Link export carries (`GlobalOptionsetMetadata`, `OptionsetMetadata`,
+  `StateMetadata`, `StatusMetadata`, `TargetMetadata`) before it guesses one, and
+  names the column changes a Link export makes to F&O tables. Two new source
+  articles list the usual join keys for standard F&O and Project Operations
+  tables. Online clients already read these from coop-standards.
 
 - **Refactors that must not change the data are checked in full.** When a SQL
   change should leave the output exactly as it was (tidying a procedure, moving
