@@ -9,6 +9,7 @@
 - [ ] PowerShell parses: `pwsh -NoProfile -Command "Get-ChildItem -Recurse -Filter *.ps1 | ForEach-Object { $null = [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$e); if ($e) { $_.FullName; $e } }"` and `pwsh -NoProfile -File scripts/check-bom.ps1` passes (tests/run.ps1 runs it first)
 - [ ] `coop doctor` still green on my machine
 - [ ] `pwsh -File tests/run.ps1` and `bash tests/run.sh` pass locally (CI runs both, plus `tests/run.ps1` under Windows PowerShell 5.1)
+- [ ] Bug fix: the new or changed test fails on the commit before the fix and passes on this branch (say so in Notes, or why there is no test)
 - [ ] Governance preserved: read-only first, plan-and-approve, never commit source, MCP read-only, no secrets
 - [ ] New skills are advisory/read-only and reference `coop-workflow`; no name collision with existing skills
 - [ ] Updated docs (`README.md` / `docs/*`) and `CHANGELOG.md` (`## [Unreleased]`) as needed
@@ -16,4 +17,4 @@
 
 ## Notes
 
-<!-- Anything reviewers should know, e.g. not yet run on a Windows workstation. -->
+<!-- Anything reviewers should know: the commit the checks ran on, and any check NOT RUN with the reason (e.g. not yet run on a Windows workstation). -->

@@ -7,6 +7,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- **Checks are reported as PASS, FAIL or NOT RUN.** coop's summary and `/handoff`
+  now list each check with what it establishes, and name a check it did not run
+  with the reason (skipped in the quick lane, tool unavailable) instead of
+  leaving it out. A standards pass is reported as a rules result, not a data
+  result. coop says a query or measure is faster only with before and after
+  timings from the same dev target; otherwise it says the gain is not measured.
 - **Pi 1.5.2, with prompt-cache warming kept to active runs.** Pi moves from
   1.5.0. Fixes that reach coop: the find tool on Windows returning nothing for
   patterns such as `src/**/*.ts`; the read and grep tools no longer load whole

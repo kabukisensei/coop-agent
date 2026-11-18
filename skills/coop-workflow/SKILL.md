@@ -148,6 +148,11 @@ partial, or connected project without requiring the user to edit YAML.
    run Tabular Editor BPA (`bpa_review`, the deterministic model check) and
    `fabric-cicd` in validate-only mode. Address findings.
 8. **Diff + summarize.** Show `git diff` and summarize the change in plain language.
+   List each check as **PASS**, **FAIL** or **NOT RUN**, with what it establishes
+   and, for NOT RUN, the reason (skipped in the quick lane, tool unavailable, no
+   dev target). A check proves only what it exercised: a standards pass is about
+   the rules, not the data; only the before/after queries show what the data did.
+   Never report a check you did not run as passed.
    When built docs exist, call `data_doc` with `command="impact"` and `files` set to
    the changed source files, and list every downstream object it reports (an empty
    result is not proof of zero impact).
@@ -281,6 +286,11 @@ queried (the old view beside the new query, or a dev copy of the table), compare
 them with `EXCEPT` in both directions; both must return zero rows. Any difference
 fails the check, so a change that does alter values (NULL to blank, say) is not a
 no-change refactor: state the expected difference instead.
+
+**Speed claims.** Say a query, procedure or measure is faster only with
+measurements: time the same statement on the same dev target before and after the
+change, more than once so a cold cache does not decide it, and report both numbers.
+Without them, call it an expected improvement that is not measured.
 
 Test targets ask first; production is explicit-approval only and never a verify
 target. Row reads on dev and test never ask; production reads ask once per session.
