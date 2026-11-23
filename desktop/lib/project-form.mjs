@@ -18,6 +18,9 @@ import {
   PROJECT_MESSAGES,
   SQL_ENDPOINT_TYPES,
   TABLE_MAPPING_RULES,
+  WAREHOUSE_MANAGER_ENVIRONMENTS,
+  WAREHOUSE_MANAGER_FIELDS,
+  WAREHOUSE_MANAGER_PLATFORMS,
   projectYamlMapping,
   SQL_TARGET_DISCOVERED_KINDS,
   SQL_TARGET_KINDS,
@@ -150,6 +153,8 @@ export function loadProject(cwd, { env } = {}) {
     namedEnvironments: [...NAMED_SET_ENVIRONMENTS],
     destructiveChoices: [...SCHEMA_COMPARE_DESTRUCTIVE],
     maxNamedSets: MAX_NAMED_SETS,
+    warehouseManagerPlatforms: [...WAREHOUSE_MANAGER_PLATFORMS],
+    warehouseManagerEnvironments: WAREHOUSE_MANAGER_ENVIRONMENTS.map((e) => ({ ...e })),
     token: hash(original),
   };
 }
@@ -264,6 +269,13 @@ export function settingsFromForm(input, base, existingNames) {
   if (s.tabularEditorEnabled) {
     keep("tabularEditorPath");
     take("bpaRulesPath");
+  }
+  // The Schema Manager block (warehouse_manager): its fields count only when the
+  // part is switched on; off leaves an existing block as the file has it.
+  if (typeof input.warehouseManagerEnabled === "boolean") s.warehouseManagerEnabled = input.warehouseManagerEnabled;
+  if (s.warehouseManagerEnabled) {
+    for (const key of WAREHOUSE_MANAGER_FIELDS) take(key);
+    s.warehouseManagerPlatform = (s.warehouseManagerPlatform || "fabric").toLowerCase();
   }
   return s;
 }

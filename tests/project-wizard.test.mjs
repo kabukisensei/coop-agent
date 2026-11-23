@@ -451,7 +451,7 @@ await t("native wizard proposes the Azure SQL dev target on an Azure SQL machine
   const savedCoopDir = process.env.COOP_DIR;
   process.env.COOP_DIR = coopDir;
   try {
-    const confirms = [true, false, false, false, false, true]; // local source, add repo, Fabric, Power BI, TE, write
+    const confirms = [true, false, false, false, false, false, true]; // local source, add repo, Fabric, Power BI, TE, Schema Manager, write
     const labels = [];
     const ctx = {
       cwd: root,
@@ -697,7 +697,7 @@ await t("native wizard is reachable inside Coop and creates the contract", async
   const root = isolatedRoot("coop-project-wizard-");
   mkdirSync(join(root, ".git"));
   skipIfContaminated(root);
-  const confirms = [true, false, false, false, false, true]; // local source, add repo, Fabric, Power BI, TE, write
+  const confirms = [true, false, false, false, false, false, true]; // local source, add repo, Fabric, Power BI, TE, Schema Manager, write
   const confirmTitles = [];
   let selectCount = 0;
   const ctx = {
@@ -748,7 +748,7 @@ await t("Fabric ids are looked up by name from the Azure sign-in: Enter keeps th
     const body = pages[url];
     return body ? { ok: true, json: async () => body } : { ok: false, status: 404, json: async () => ({}) };
   };
-  const confirms = [true, false, true, true, false, true]; // local source, add repo, Fabric YES, Power BI YES, TE, write
+  const confirms = [true, false, true, true, false, false, true]; // local source, add repo, Fabric YES, Power BI YES, TE, Schema Manager, write
   const defaults = {};
   const notes = [];
   const ctx = {
@@ -798,7 +798,7 @@ await t("Fabric ids are looked up by name from the Azure sign-in: Enter keeps th
 await t("native wizard can create a repository-free discovery project", async () => {
   const root = trackFixture(mkdtempSync(join(tmpdir(), "coop-project-discovery-")));
   skipIfContaminated(root);
-  const confirms = [false, false, false, false, false, true]; // no local source, add repo, Fabric, Power BI, TE, write
+  const confirms = [false, false, false, false, false, false, true]; // no local source, add repo, Fabric, Power BI, TE, Schema Manager, write
   const notices = [];
   const ctx = {
     cwd: root,
@@ -1111,7 +1111,7 @@ await t("C1: /setup-project below a committed root contract edits that contract 
   mkdirSync(join(client, ".coop"));
   const contract = join(client, ".coop", "project.yml");
   writeFileSync(contract, `profile:\n  organization: 'Cooptimize'\n  client: 'Contoso'\n  default_branch: 'main'\nrepositories:\n  analytics:\n    description: 'Warehouse'\n    role: 'sql'\n    local_path: 'analytics'\n    remote_name: 'origin'\n    default_branch: 'main'\ntools:\n  fabric_cli:\n    enabled: false\n  tabular_editor_cli:\n    enabled: false\n`);
-  const confirms = [false, false, false, false, false, true]; // edit repo, add repo, Fabric, Power BI, TE, write
+  const confirms = [false, false, false, false, false, false, true]; // edit repo, add repo, Fabric, Power BI, TE, Schema Manager, write
   const titles = [];
   const notes = [];
   const ctx = {
@@ -1138,8 +1138,8 @@ await t("C1: with no contract beside other repositories, /setup-project creates 
   const client = trackFixture(mkdtempSync(join(tmpdir(), "coop-c1-new-")));
   skipIfContaminated(client);
   for (const name of ["analytics", "reports"]) mkdirSync(join(client, name, ".git"), { recursive: true });
-  // home repo yes, local source yes, edit analytics no, edit reports no, add repo no, Fabric no, Power BI no, TE no, write yes
-  const confirms = [true, true, false, false, false, false, false, false, true];
+  // home repo yes, local source yes, edit analytics no, edit reports no, add repo no, Fabric no, Power BI no, TE no, Schema Manager no, write yes
+  const confirms = [true, true, false, false, false, false, false, false, false, true];
   const titles = [];
   const notes = [];
   const ctx = {
@@ -1175,7 +1175,7 @@ await t("C1: with no contract beside other repositories, /setup-project creates 
   const other = trackFixture(mkdtempSync(join(tmpdir(), "coop-c1-decline-")));
   skipIfContaminated(other);
   for (const name of ["analytics", "reports"]) mkdirSync(join(other, name, ".git"), { recursive: true });
-  const declined = [false, false, false, false, false, false, true]; // home repo, local source, add repo, Fabric, Power BI, TE, write
+  const declined = [false, false, false, false, false, false, false, true]; // home repo, local source, add repo, Fabric, Power BI, TE, Schema Manager, write
   const ctx2 = { ...ctx, cwd: join(other, "reports"), ui: { ...ctx.ui, confirm: async () => declined.shift() ?? false } };
   assert.equal(await runProjectWizard({}, ctx2), true);
   assert.ok(existsSync(join(other, "reports", ".coop", "project.yml")));
@@ -1190,7 +1190,7 @@ await t("editing through /setup-project writes a backup and keeps custom setting
   const contract = join(root, ".coop", "project.yml");
   const original = `profile:\n  organization: 'Cooptimize'\n  client: 'Contoso'\n  default_branch: 'main'\nrepositories:\n  app:\n    description: 'App'\n    role: 'generic'\n    local_path: '.'\n    remote_name: 'origin'\n    default_branch: 'main'\ncustom_section:\n  keep: 'yes'\ntools:\n  fabric_cli:\n    enabled: false\n  tabular_editor_cli:\n    enabled: false\n`;
   writeFileSync(contract, original);
-  const confirms = [false, false, false, false, false, true]; // edit repo, add repo, Fabric, Power BI, TE, write
+  const confirms = [false, false, false, false, false, false, true]; // edit repo, add repo, Fabric, Power BI, TE, Schema Manager, write
   const notes = [];
   const ctx = {
     cwd: root,
@@ -1217,6 +1217,58 @@ await t("editing through /setup-project writes a backup and keeps custom setting
 });
 
 // --- C2: the declared layout and the semantic-model-to-SQL mapping -----------------
+
+await t("Schema Manager: /setup-project writes warehouse_manager, round-trips it, and keeps a client's own pipeline parameters", () => {
+  const wm = {
+    warehouseManagerEnabled: true, warehouseManagerPlatform: "fabric",
+    warehouseManagerBronzeDatabase: "Bronze LH", warehouseManagerBronzeRawSchema: "d365", warehouseManagerViewSchemas: "d365_fo=d365fo, d365_dataverse=d365po",
+    warehouseManagerSilverDatabase: "Silver DW", warehouseManagerSilverSchema: "",
+    warehouseManagerCreatePipeline: "PL Create Silver Table", warehouseManagerLoadPipeline: "PL Load Silver Table",
+    warehouseManagerNeverRun: "PL Load All, PL Nightly", warehouseManagerNotes: "",
+    warehouseManagerDevWorkspace: "Contoso Dev", warehouseManagerTestWorkspace: "",
+  };
+  // Off: no block, and parse says so.
+  const without = renderProjectWizardSettings({ ...settings, warehouseManagerEnabled: false });
+  assert.doesNotMatch(without, /^warehouse_manager:/m);
+  assert.equal(parseProjectWizardSettings(without, "/x").warehouseManagerEnabled, false);
+  // On: the block with the default parameters; parse reads every answer back.
+  const text = renderProjectWizardSettings({ ...settings, ...wm });
+  assert.match(text, /^warehouse_manager:\n  platform: 'fabric'/m);
+  assert.equal(projectYamlScalar(text, ["warehouse_manager", "bronze", "view_schemas", "d365_fo"]), "d365fo");
+  assert.equal(projectYamlScalar(text, ["warehouse_manager", "pipelines", "create_silver_table", "parameters", "SchemaManagerRunId"]), "{run_id}");
+  assert.equal(projectYamlScalar(text, ["warehouse_manager", "pipelines", "load_silver_table", "parameters", "TargetSchema"]), "{silver_schema}");
+  assert.deepEqual(projectYamlList(text, ["warehouse_manager", "never_run"]), ["PL Load All", "PL Nightly"]);
+  assert.equal(projectYamlScalar(text, ["warehouse_manager", "environments", "dev", "workspace"]), "Contoso Dev");
+  const back = parseProjectWizardSettings(text, "/x");
+  for (const [key, value] of Object.entries(wm)) assert.equal(back[key], value, key);
+  assert.equal(lib.projectSettingsProblems({ ...settings, ...wm }).length, 0);
+  // Apply on a contract without the block adds it after everything else, with the defaults.
+  const added = applyProjectWizardSettings(without, { ...settings, ...wm });
+  assert.equal(projectYamlScalar(added, ["warehouse_manager", "silver", "database"]), "Silver DW");
+  assert.equal(projectYamlScalar(added, ["warehouse_manager", "pipelines", "load_silver_table", "parameters", "SourceTable"]), "{table}");
+  assert.deepEqual(projectYamlList(added, ["warehouse_manager", "never_run"]), ["PL Load All", "PL Nightly"]);
+  assert.ok(added.includes("\ntests:\n"), "the rest of the file is untouched");
+  // A client's own parameters and extra keys survive an edit; No leaves the block alone.
+  const client = text
+    .replace("        SchemaManagerRunId: '{run_id}'", "        RunId: '{run_id}'  # this client's name for it\n        Mode: 'full'")
+    .replace("  notes: ''", "  notes: 'one combined pipeline'\n  custom_key: 'kept'");
+  const edited = applyProjectWizardSettings(client, { ...settings, ...wm, warehouseManagerSilverDatabase: "Silver DW 2", warehouseManagerViewSchemas: "d365_fo=d365fo", warehouseManagerNotes: "one combined pipeline" });
+  assert.equal(projectYamlScalar(edited, ["warehouse_manager", "silver", "database"]), "Silver DW 2");
+  assert.equal(projectYamlScalar(edited, ["warehouse_manager", "pipelines", "create_silver_table", "parameters", "RunId"]), "{run_id}", "the client's parameter stays");
+  assert.equal(projectYamlScalar(edited, ["warehouse_manager", "pipelines", "create_silver_table", "parameters", "Mode"]), "full");
+  assert.equal(projectYamlScalar(edited, ["warehouse_manager", "pipelines", "create_silver_table", "parameters", "SchemaManagerRunId"]), "", "no default is re-added beside them");
+  assert.equal(projectYamlScalar(edited, ["warehouse_manager", "bronze", "view_schemas", "d365_dataverse"]), "d365po", "a source system left out of the answer is kept");
+  assert.equal(projectYamlScalar(edited, ["warehouse_manager", "custom_key"]), "kept");
+  assert.equal(applyProjectWizardSettings(client, { ...settings, ...wm, warehouseManagerEnabled: false, warehouseManagerSilverDatabase: "ignored" }), client.endsWith("\n") ? client : `${client}\n`, "No keeps the block byte for byte");
+  // ADF: the data factory per environment; the checks name bad answers.
+  const adf = renderProjectWizardSettings({ ...settings, ...wm, warehouseManagerPlatform: "adf", warehouseManagerDevDataFactory: "adf-contoso-dev", warehouseManagerDevResourceGroup: "rg-data", warehouseManagerDevSubscriptionId: "11111111-1111-1111-1111-111111111111" });
+  assert.equal(projectYamlScalar(adf, ["warehouse_manager", "environments", "dev", "data_factory", "name"]), "adf-contoso-dev");
+  assert.equal(projectYamlScalar(adf, ["warehouse_manager", "environments", "dev", "workspace"]), "", "no Fabric workspace for ADF");
+  assert.equal(parseProjectWizardSettings(adf, "/x").warehouseManagerDevSubscriptionId, "11111111-1111-1111-1111-111111111111");
+  const problems = lib.projectSettingsProblems({ ...settings, ...wm, warehouseManagerPlatform: "synapse", warehouseManagerViewSchemas: "D365 FO=d365fo", warehouseManagerSilverSchema: "1silver", warehouseManagerDevSubscriptionId: "not-a-uuid" });
+  assert.deepEqual(problems.map((p) => p.field).sort(), ["warehouseManagerDevSubscriptionId", "warehouseManagerPlatform", "warehouseManagerSilverSchema", "warehouseManagerViewSchemas"]);
+  assert.equal(lib.projectSettingsProblems({ ...settings, ...wm, warehouseManagerEnabled: false, warehouseManagerPlatform: "synapse" }).length, 0, "off: nothing is checked");
+});
 
 await t("C2: a new contract declares fabric.layout and power_bi.table_mapping; parse and apply round-trip", () => {
   const { FABRIC_LAYOUTS, TABLE_MAPPING_RULES, proposedFabricLayout, tableMappingFromContract, projectYamlMapping, projectSettingsProblems, PROJECT_MESSAGES } = lib;
