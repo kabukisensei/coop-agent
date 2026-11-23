@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { canCreateFileSymlink } from "./symlink-rights.mjs";
 
 const piRoot = process.argv[2];
 assert.ok(piRoot && isAbsolute(piRoot), "supply the installed Pi package root explicitly");
@@ -347,32 +348,36 @@ if (existsSync(builtinIndex) && fauxIndex) {
     assert.equal(long.detail, `${Array(21).fill("read:ok").join(", ")}, mcp:ok`, "every nested call, in order, the last one too");
     // #371: a link alias to the production unlock, dangling or not, is refused
     // without a prompt and never creates a grant.
-    const coopDir = mkdtempSync(join(scratch, "coop-dir-"));
-    mkdirSync(join(coopDir, ".coop"));
-    const savedCoopDir = process.env.COOP_DIR;
-    process.env.COOP_DIR = coopDir;
-    try {
-      const grantPath = join(coopDir, ".coop", PROD_UNLOCK_FILE);
-      symlinkSync(grantPath, join(cwd, "receipt.json"));
-      const grant = JSON.stringify({ schema_version: 1, id: "review-only", client: "Contoso",
-        created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 60_000).toISOString() });
-      asked.length = 0;
-      const alias = await run(`const r = await Promise.allSettled([
-        tools.write({ path: "receipt.json", content: ${JSON.stringify(grant)} }),
-        tools.edit({ path: "receipt.json", edits: [{ oldText: "a", newText: "b" }] }),
-      ]);
-      return r.map((x) => x.status).join(",");`);
-      assert.match(alias, /rejected,rejected/, alias);
-      assert.equal(existsSync(grantPath), false, "no grant was written");
-      writeFileSync(grantPath, "{}");
-      answerConfirm = true;
-      const present = await run(`try { await tools.write({ path: "receipt.json", content: ${JSON.stringify(grant)} }); return "wrote"; } catch { return "refused"; }`);
-      answerConfirm = false;
-      assert.match(present, /refused/, present);
-      assert.equal(readFileSync(grantPath, "utf8"), "{}", "an existing grant is not changed either");
-      assert.equal(asked.length, 0, "no confirmation was offered to override it");
-    } finally {
-      if (savedCoopDir === undefined) delete process.env.COOP_DIR; else process.env.COOP_DIR = savedCoopDir;
+    if (!canCreateFileSymlink()) {
+      console.log("  skipped: no symlink rights (#371 script write through a link alias)");
+    } else {
+      const coopDir = mkdtempSync(join(scratch, "coop-dir-"));
+      mkdirSync(join(coopDir, ".coop"));
+      const savedCoopDir = process.env.COOP_DIR;
+      process.env.COOP_DIR = coopDir;
+      try {
+        const grantPath = join(coopDir, ".coop", PROD_UNLOCK_FILE);
+        symlinkSync(grantPath, join(cwd, "receipt.json"));
+        const grant = JSON.stringify({ schema_version: 1, id: "review-only", client: "Contoso",
+          created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 60_000).toISOString() });
+        asked.length = 0;
+        const alias = await run(`const r = await Promise.allSettled([
+          tools.write({ path: "receipt.json", content: ${JSON.stringify(grant)} }),
+          tools.edit({ path: "receipt.json", edits: [{ oldText: "a", newText: "b" }] }),
+        ]);
+        return r.map((x) => x.status).join(",");`);
+        assert.match(alias, /rejected,rejected/, alias);
+        assert.equal(existsSync(grantPath), false, "no grant was written");
+        writeFileSync(grantPath, "{}");
+        answerConfirm = true;
+        const present = await run(`try { await tools.write({ path: "receipt.json", content: ${JSON.stringify(grant)} }); return "wrote"; } catch { return "refused"; }`);
+        answerConfirm = false;
+        assert.match(present, /refused/, present);
+        assert.equal(readFileSync(grantPath, "utf8"), "{}", "an existing grant is not changed either");
+        assert.equal(asked.length, 0, "no confirmation was offered to override it");
+      } finally {
+        if (savedCoopDir === undefined) delete process.env.COOP_DIR; else process.env.COOP_DIR = savedCoopDir;
+      }
     }
     // #372: Esc while a script's approval is open closes it as a no; the next
     // script is not held behind the old dialog, and a late answer grants nothing.
