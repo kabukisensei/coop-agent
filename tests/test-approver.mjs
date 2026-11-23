@@ -15,18 +15,25 @@
 //      "client": "<the fake-data client>"};
 //   3. the nearest .coop/project.yml above the working folder names that same
 //      client in profile.client.
+// It answers the two shapes the guardrails ask in: a yes/no confirm (yes), and
+// the write question's three-option select ("Allow once" / "Allow ... edits for
+// this session" / "Decline"), where it picks "Allow once" and never the
+// session-wide option, so every later write asks again.
 // A question that says PRODUCTION is always declined: the approver never stands
 // in for a person at a production write, and the human unlock stays a person's.
 // Every answer it gives is one row in guardrails-audit.jsonl (the same file the
 // guardrails write), kind "test-approver", detail "test-approver", with no
-// question text and no command text.
+// question text and no command text: the row names the dialog's kind (confirm,
+// select), never its title, which carries the statement about to run.
 //
 // Usage (on the dev VM, from the client folder):
 //   coop desktop --print-spec > spec.json
 //   $env:COOP_TEST_APPROVER = '1'
 //   node tests\test-approver.mjs --spec spec.json --prompt "..." [--prompt "..."] [--marker <path>] [--timeout <ms>]
-// Pi's events stream to stdout as JSON lines; the exit code is 0 when every
-// prompt got a response, 2 when a gate refused, 1 on a Pi failure.
+// Pi's events stream to stdout as JSON lines; each prompt is sent once the run
+// the one before it started has finished, and Pi is stopped after the last run
+// ends. The exit code is 0 when every prompt ran to its end, 2 when a gate
+// refused, 1 on a Pi failure or a run that outlasted --timeout.
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { hostname, platform } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -39,6 +46,15 @@ const { projectYamlScalar } = await import(pathToFileURL(join(ROOT, "lib", "proj
 const { agentDir } = await import(pathToFileURL(join(ROOT, "lib", "paths.mjs")).href);
 
 export const PRODUCTION = /\bPRODUCTION\b/;
+
+// The write question's own option labels (extensions/coop-guardrails/index.ts:
+// APPROVE_ONCE, APPROVE_DECLINE); the test keeps these equal to the source.
+export const APPROVE_ONCE = "Allow once";
+export const APPROVE_DECLINE = "Decline";
+
+/** How long after a prompt is accepted a run may take to start before the prompt
+ *  counts as handled without one (a slash command starts no run). */
+export const RUN_START_MS = 2000;
 
 /** The marker file's default place: outside every repository, machine-wide. */
 export function defaultMarkerPath(env = process.env, os = platform()) {
@@ -96,26 +112,43 @@ export function checkGates({ env = process.env, markerPath = defaultMarkerPath(e
 
 /**
  * The answer to one extension_ui_request, or null for a request that is not a
- * dialog. A confirm is "yes" unless it says PRODUCTION; every other dialog
- * (select, input, editor) is cancelled so the run never waits on a person.
+ * dialog. A confirm is "yes" and the guardrails' write question (a select that
+ * offers both "Allow once" and "Decline") is "Allow once", unless the question
+ * says PRODUCTION; every other dialog (any other select, input, editor) is
+ * cancelled so the run never waits on a person. The session-wide option is
+ * never picked. PRODUCTION is looked for in the title and message only: the
+ * session option's own label says "production always asks" on every question.
  */
 export function answerFor(request) {
   if (!request || request.type !== "extension_ui_request") return null;
   const base = { type: "extension_ui_response", id: request.id };
+  const text = `${request.title || ""}\n${request.message || ""}`;
   if (request.method === "confirm") {
-    const text = `${request.title || ""}\n${request.message || ""}`;
     if (PRODUCTION.test(text)) return { response: { ...base, cancelled: true }, decision: "declined", label: "production" };
     return { response: { ...base, confirmed: true }, decision: "allowed", label: "approval" };
+  }
+  const options = Array.isArray(request.options) ? request.options : [];
+  if (request.method === "select" && options.includes(APPROVE_ONCE) && options.includes(APPROVE_DECLINE)) {
+    if (PRODUCTION.test(text)) return { response: { ...base, cancelled: true }, decision: "declined", label: "production" };
+    return { response: { ...base, value: APPROVE_ONCE }, decision: "allowed", label: "approval" };
   }
   if (["select", "input", "editor"].includes(request.method)) return { response: { ...base, cancelled: true }, decision: "declined", label: request.method };
   return null;
 }
 
-/** One audit row in the guardrails' own file; no question or command text. */
-export function auditAnswer({ cwd, decision, label, tool }, env = process.env, append = appendFileSync) {
+const DIALOG_KINDS = ["confirm", "select", "input", "editor"];
+
+/**
+ * One audit row in the guardrails' own file; no question or command text.
+ * `dialog` is the request's method and is written only when it is one of the
+ * four dialog kinds; a title is never written, because the guardrails put the
+ * statement about to run in it.
+ */
+export function auditAnswer({ cwd, decision, label, dialog }, env = process.env, append = appendFileSync) {
   try {
     const path = join(agentDir(env), "guardrails-audit.jsonl");
     mkdirSync(dirname(path), { recursive: true });
+    const tool = DIALOG_KINDS.includes(dialog) ? dialog : "dialog";
     append(path, JSON.stringify({ ts: new Date().toISOString(), cwd, kind: "test-approver", tool, decision, label, detail: "test-approver", pid: process.pid }) + "\n");
   } catch { /* logging never changes the answer; the row is best-effort like the guardrails' own */ }
 }
@@ -145,8 +178,16 @@ export async function run(options, { env = process.env, machine = hostname(), ou
   const { command, args } = piArgv(spec);
   const pi = new PiSession({ command, args, cwd: spec.cwd, env: piEnv(spec, env) });
   const exited = new Promise((resolve) => pi.on("exit", resolve));
+  // Pi answers a prompt as soon as its run starts, so the run's end is read from
+  // the events: agent_start opens it, agent_end closes it.
+  let running = false;
+  let wake = () => {};
+  const changed = () => new Promise((resolve) => { wake = resolve; });
+  pi.on("exit", () => wake());
   pi.on("event", (message) => {
     out.write(JSON.stringify(message) + "\n");
+    if (message.type === "agent_start") { running = true; wake(); }
+    if (message.type === "agent_end") { running = false; wake(); }
     const answer = answerFor(message);
     if (!answer) return;
     // The gates again, so a marker or project file changed mid-run stops the answers.
@@ -154,11 +195,11 @@ export async function run(options, { env = process.env, machine = hostname(), ou
     if (!again.ok) {
       err.write(`test approver: gate failed mid-run (${again.reason}); cancelling the question\n`);
       pi.answer({ type: "extension_ui_response", id: message.id, cancelled: true });
-      auditAnswer({ cwd: spec.cwd, decision: "declined", label: "gate-failed", tool: String(message.title || message.method) }, env);
+      auditAnswer({ cwd: spec.cwd, decision: "declined", label: "gate-failed", dialog: message.method }, env);
       return;
     }
     pi.answer(answer.response);
-    auditAnswer({ cwd: spec.cwd, decision: answer.decision, label: answer.label, tool: String(message.title || message.method) }, env);
+    auditAnswer({ cwd: spec.cwd, decision: answer.decision, label: answer.label, dialog: message.method }, env);
     err.write(`test approver: ${answer.decision} (${answer.label})\n`);
   });
   pi.on("protocol-error", (text) => err.write(`test approver: ${text}\n`));
@@ -168,6 +209,17 @@ export async function run(options, { env = process.env, machine = hostname(), ou
     for (const prompt of options.prompts) {
       const response = await pi.request({ type: "prompt", message: prompt }, { timeoutMs: options.timeout });
       if (!response.success) { err.write(`test approver: prompt failed: ${response.error || "unknown error"}\n`); code = 1; break; }
+      // Wait for the run this prompt started to end. A prompt that starts none
+      // within RUN_START_MS (a slash command) is done already.
+      const deadline = options.timeout > 0 ? Date.now() + options.timeout : Infinity;
+      const within = (ms) => new Promise((resolve) => { const timer = setTimeout(() => resolve("timeout"), Math.min(ms, 2 ** 31 - 1)); changed().then(() => { clearTimeout(timer); resolve("changed"); }); });
+      if (!running && !pi.exited) await within(RUN_START_MS);
+      let late = false;
+      while (running && !pi.exited) {
+        if (Date.now() >= deadline) { late = true; break; }
+        await within(Math.min(deadline - Date.now(), 60_000));
+      }
+      if (late) { err.write(`test approver: the run did not finish within ${options.timeout} ms\n`); code = 1; break; }
     }
   } catch (error) {
     err.write(`test approver: ${error.message}\n`);
