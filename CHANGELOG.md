@@ -20,12 +20,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
-- **New tool pins: coop-data-doc 1.5.0 and coop-sql-source-control 1.0.19.**
-  data-doc model pages list unused tables and columns for cleanup, and a table
-  named as a DAX table argument counts as used. Its retired `--reviews` flag is
+- **New tool pins: coop-data-doc 1.5.1, coop-sql-source-control 1.0.20 and
+  coop-schema-compare 0.1.14.** data-doc model pages list unused tables and
+  columns for cleanup, a table named as a DAX table argument (including inside
+  `DISTINCT` and `VALUES`) counts as used, and its retired `--reviews` flag is
   removed; a config that still lists `reviews:` builds with one warning. sqlsc
-  reads its migration phase marker only from a script's header comment, so the
-  same words in the body no longer change how the script runs.
+  reads its migration phase marker only from a script's header comment, compares
+  unique keys null-safely, and orders migrations written in the same second.
+  schema-compare includes DML triggers defined in a table's file, and reports a
+  module whose definition can't be read as unknown instead of equal.
 
 ## [0.42.0] — 2026-11-18
 
