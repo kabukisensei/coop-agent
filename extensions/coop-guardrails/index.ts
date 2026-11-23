@@ -1180,7 +1180,7 @@ export type ProductionVerdict = { decision: "allowed" | "declined" | "blocked-he
  *  unlock that covers this session, and then a yes/no for each write; without
  *  one it is blocked with no prompt. */
 export async function askProductionWrite(ctx: any, what: string, unlock: ProdUnlock | null, now = Date.now()): Promise<ProductionVerdict> {
-  const shown = what.length > 300 ? `${what.slice(0, 300)}…` : what;
+  const shown = what.length > 2000 ? `${what.slice(0, 2000)}…` : what;
   if (unlock) {
     if (!ctx?.hasUI || typeof ctx.ui?.confirm !== "function") return { decision: "blocked-headless", detail: `prod-unlock:${unlock.id}`, reason: PROD_WRITE_HEADLESS };
     const ok = await ctx.ui.confirm(
@@ -2245,12 +2245,12 @@ export function decideLiveRead(event: any, grant: LiveReadGrant | null, resolved
   return { action: "allow-read", label, kind, environment, scope: resolvedScope };
 }
 
-// --- Reads never nag (Aaron, 2026-11-10) -----------------------------------------
-// "Take away the guardrail prompts for read operations; prod requires it once,
-// then allow for the session." A row read coop can prove is a read runs without
-// a question on dev and test, and asks once per session on production (or on a
-// SQL target coop cannot confirm as dev or test, which counts as production).
-// Writes, ambiguous SQL, exports and downloads keep their own gates.
+// --- Reads never ask (Aaron, 2026-11-23) -----------------------------------------
+// "Disable all asks for reads; only writes ask, and they say exactly what is
+// about to run." A row read coop can prove is a read runs without a question on
+// every environment, production included (reads change nothing; people compare
+// prod with dev). It is audited with its environment. Writes, ambiguous SQL, a
+// call whose statement coop cannot see, exports and downloads keep their gates.
 const UNPROVEN_READ_VERB = /(^|[_\-.:/])(query|execute|run_sql|runsql|sql_query)([_\-.:/]|$)/i;
 const DAX_QUERY = /^\s*(?:EVALUATE|DEFINE)\b/i;
 
@@ -2291,20 +2291,81 @@ export function trustedReadEnvironment(event: any, deps: LiveReadResolverDeps, c
   return reusableSqlSurface(event) ? managedReadTarget(event, deps)?.environment ?? "untrusted" : "untrusted";
 }
 
-export type RowReadVerdict = "not-a-read" | "allow" | "production";
+export type RowReadVerdict = "not-a-read" | "allow";
 
-/** Where a provable row read stands. `trustedSqlEnvironment` is coop's own config
- *  for a Warehouse SQL call ("" for other tools); `namesProduction` is whether the
- *  call's words or the project file's production names mark it production. */
-export function rowReadVerdict(event: any, decision: LiveReadDecision, trustedSqlEnvironment: string, namesProduction: boolean): RowReadVerdict {
+/** Whether a row read runs without a question: it must be provably a read on a
+ *  surface coop vouches for. `trustedSqlEnvironment` is coop's own config for a
+ *  Warehouse SQL call ("" for other tools); "untrusted" (a tampered managed entry,
+ *  a call naming another item) keeps the per-call question. */
+export function rowReadVerdict(event: any, decision: LiveReadDecision, trustedSqlEnvironment: string): RowReadVerdict {
   if (decision.kind !== "row-data" || (decision.action !== "allow-read" && decision.action !== "prompt-once")) return "not-a-read";
   if (!provableRowRead(event)) return "not-a-read";
   const environment = decision.scope?.environment || trustedSqlEnvironment;
-  if (environment === "untrusted") return "not-a-read";
-  if (environment === "dev" || environment === "test") return "allow";
-  // A SQL target the project file does not confirm as dev or test is production.
-  if (sqlMcpRisk(event) || environment === "production") return "production";
-  return namesProduction || decision.environment === "production" ? "production" : "allow";
+  return environment === "untrusted" ? "not-a-read" : "allow";
+}
+
+/** The environment a read is audited under: coop's trusted config first, else
+ *  the call's own words or the project file's production names; a SQL target
+ *  coop's config does not confirm as dev or test counts as production. */
+export function readAuditEnvironment(event: any, decision: LiveReadDecision, trustedSqlEnvironment: string, namesProduction: boolean): string {
+  const environment = decision.scope?.environment || trustedSqlEnvironment;
+  if (environment === "dev" || environment === "test" || environment === "production") return environment;
+  if (sqlMcpRisk(event)) return "production";
+  return namesProduction || decision.environment === "production" ? "production" : "unlabelled";
+}
+
+// --- What a write prompt shows (Aaron, 2026-11-23) --------------------------------
+// Every write question names the exact statement or call about to run, its target
+// and its effect, so the person approves a thing, not a category. The text is
+// shown in the dialog only; the audit still records fixed labels, never SQL.
+const PROMPT_TEXT_LIMIT = 1500;
+
+/** SQL (or any command text) as the indented block a prompt shows: CRLF
+ *  normalised, blank edge lines dropped, every line indented two spaces (the
+ *  window renders indented lines as one code block), long text cut with a note. */
+export function promptBlock(text: string, limit = PROMPT_TEXT_LIMIT): string {
+  const whole = String(text ?? "").replace(/\r\n?/g, "\n").replace(/^\n+|\s+$/g, "");
+  const cut = whole.length > limit;
+  const shown = cut ? whole.slice(0, limit) : whole;
+  const lines = shown.split("\n").map((line) => `  ${line}`);
+  if (cut) lines.push(`  … (${whole.length - limit} more characters not shown)`);
+  return lines.join("\n");
+}
+
+// Object names after masking: words and bracket placeholders, with the blanks the
+// masker leaves around the dots of `[schema].[name]`.
+const SQL_OBJECT = String.raw`((?:[\w#$@]+\s*\.\s*){0,2}[\w#$@]+)`;
+const SQL_EFFECT = new RegExp(
+  String.raw`\b(?:(CREATE(?:\s+OR\s+ALTER)?|ALTER|DROP|TRUNCATE|DISABLE|ENABLE)\s+(TABLE|VIEW|PROC(?:EDURE)?|FUNCTION|TRIGGER|INDEX|SCHEMA|SEQUENCE|USER|ROLE|LOGIN)\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?(?:\w+\s+ON\s+)?${SQL_OBJECT}` +
+  String.raw`|(INSERT)\s+(?:INTO\s+)?${SQL_OBJECT}|(UPDATE)\s+(?!SET\b)${SQL_OBJECT}|(DELETE)\s+(?:FROM\s+)?${SQL_OBJECT}|(MERGE)\s+(?:INTO\s+)?${SQL_OBJECT}|(EXEC(?:UTE)?)\s+${SQL_OBJECT}` +
+  String.raw`|(GRANT|REVOKE|DENY)\b|(SELECT)\b[^;]*?\bINTO\s+${SQL_OBJECT})`, "gi");
+const SQL_EFFECT_WORD: Record<string, string> = {
+  CREATE: "creates", ALTER: "alters", DROP: "drops", TRUNCATE: "empties", DISABLE: "disables", ENABLE: "enables", INSERT: "inserts rows into", UPDATE: "updates rows in",
+  DELETE: "deletes rows from", MERGE: "merges rows into", EXEC: "runs procedure", EXECUTE: "runs procedure", GRANT: "changes permissions",
+  REVOKE: "changes permissions", DENY: "changes permissions", SELECT: "writes a new table",
+};
+
+/** One line saying what a SQL write does, from its executable text only (comments
+ *  and string contents never count): "updates rows in dbo.Customer; drops table
+ *  dbo.Old". Statements coop cannot name are counted. Empty when nothing is found. */
+export function sqlWriteEffect(sql: string): string {
+  const masked = sqlWithoutComments(String(sql ?? ""), true);
+  // Quoted identifiers survive masking as placeholders; the originals are read back in order.
+  const brackets = [...String(sql ?? "").matchAll(/\[[^\]]*\]/g)].map((m) => m[0]);
+  let bracketIndex = 0;
+  const unmask = (name: string) => name.replace(/\s+/g, "").replace(/__coop_bracket_identifier__/g, () => brackets[bracketIndex++] ?? "[?]");
+  const effects: string[] = [];
+  for (const m of masked.matchAll(SQL_EFFECT)) {
+    const [, ddl, kind, ddlObject, ins, insObject, upd, updObject, del, delObject, mrg, mrgObject, exec, execObject, perm, sel, selObject] = m;
+    const verb = (ddl || ins || upd || del || mrg || exec || perm || sel || "").toUpperCase().replace(/\s+OR\s+ALTER/, "");
+    const object = unmask(ddlObject || insObject || updObject || delObject || mrgObject || execObject || selObject || "");
+    const word = SQL_EFFECT_WORD[verb] || verb.toLowerCase();
+    effects.push(kind ? `${word} ${kind.toLowerCase()} ${object}` : object ? `${word} ${object}` : word);
+  }
+  const statements = masked.split(";").filter((part) => part.trim()).length;
+  const unique = [...new Set(effects)];
+  const more = statements > unique.length ? ` (${statements} statements in all)` : "";
+  return unique.length ? `${unique.join("; ")}${more}` : "";
 }
 
 // --- Session edit approvals (#156) ---------------------------------------------
@@ -2364,6 +2425,15 @@ function mutationCallText(event: any, target: MutationTarget): string {
   let inputText = "";
   try { inputText = JSON.stringify(call.proxy ? call.args || {} : event?.input || {}); } catch { inputText = ""; }
   return `${name} ${target.server || ""} ${inputText}`;
+}
+
+/** The arguments of an MCP call as the prompt shows them (one JSON line, or the
+ *  SQL/command text itself when the call carries one). Shown, never logged. */
+function mcpArgumentsText(event: any): string {
+  const sql = callSqlText(event);
+  if (sql.trim()) return sql;
+  const call = normalizeMcpCall(event);
+  try { return JSON.stringify(call.proxy ? call.args ?? {} : event?.input ?? {}); } catch { return "(arguments not shown)"; }
 }
 
 /** Human label for an approval key: the server name without its kind prefix. */
@@ -3329,8 +3399,6 @@ const UI_HEADLESS = (ctx: ExtensionContext): boolean => !ctx.hasUI || typeof ctx
 class Session {
   /** Closure-owned: one grant for the current session (SQL live reads). */
   liveReadGrant: LiveReadGrant | null = null;
-  /** Production row reads: one yes covers the rest of the session (2026-11-10). */
-  productionReads = false;
   /** Session edit approvals (#156): server keys only, never arguments or SQL. */
   readonly editApprovals = new Set<string>();
   /** Set once the session connects the Power BI Modeling MCP to anything naming
@@ -3353,7 +3421,6 @@ class Session {
   /** Drop every per-session grant (session_start / session_shutdown). */
   reset(): void {
     this.liveReadGrant = null;
-    this.productionReads = false;
     this.editApprovals.clear();
     this.modelingProduction = false;
   }
@@ -3654,8 +3721,10 @@ const mcpRule: Rule = {
       namesContractProduction(callStringValues(event), productionNames));
     // The permit is this call's approval: it is not asked twice below.
     let productionPermitted = false;
+    // What is about to run: the server/tool and its arguments, in the dialog only.
+    const mcpCall = mcp ? `${mcp}\n${promptBlock(mcpArgumentsText(event), 600)}` : "";
     if (mcpProductionWrite) {
-      const refused = await session.permitProductionWrite(ctx, "mcp-confirm", "governed-mcp", mcp as string);
+      const refused = await session.permitProductionWrite(ctx, "mcp-confirm", "governed-mcp", mcpCall);
       if (refused) return refused;
       productionPermitted = true;
     }
@@ -3663,7 +3732,7 @@ const mcpRule: Rule = {
     if (mcp && !productionPermitted) {
       const refused = await session.ask(ctx, {
         kind: "mcp-confirm", tool: "governed-mcp", label: "managed MCP mutation", detail: "mutation", sessionKey: editKey,
-        question: `This looks like a MUTATING MCP action (create/update/delete/deploy/publish):\n  ${mcp}\ncoop treats MCP as read-only (list / read / inspect). Run it?`,
+        question: `MCP write (create/update/delete/deploy/publish) about to run:\n  ${mcpCall}\ncoop treats MCP as read-only (list / read / inspect); this call changes something. Run it?`,
         headless: `coop guardrails: blocked mutating MCP action ${mcp}; approval is unavailable in headless mode.`,
         declined: `coop guardrails: blocked the MCP action ${mcp} (you declined). MCP is read-only by default — list / read / inspect only; make changes with explicit approval or in the Fabric / Power BI UX.`,
       });
@@ -3672,34 +3741,13 @@ const mcpRule: Rule = {
     const resolvedScope = resolveLiveReadScope(event, session.deps(ctx));
     const decision = decideLiveRead(event, session.liveReadGrant, resolvedScope);
     if (decision.action === "none" || decision.action === "allow-grant") return ALLOW;
-    // Reads never nag (Aaron, 2026-11-10): a provable row read runs on dev and
-    // test, and asks once per session on production. Every read is audited.
+    // Reads never ask (Aaron, 2026-11-23): a provable row read runs on every
+    // environment, production included, headless too. Every read is audited with
+    // its environment; only the asks went away, not the read-only check.
     const readEnvironment = sqlMcpRisk(event) ? trustedReadEnvironment(event, session.liveReadDeps, session.governance(ctx).sqlContract) : "";
-    const readVerdict = rowReadVerdict(
-      event, decision, readEnvironment,
-      PRODUCTION_WORD.test(mutationCallText(event, target)) || namesContractProduction(callStringValues(event), productionNames),
-    );
-    if (readVerdict === "allow") {
-      audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: "allowed", label: "live read", detail: `${decision.scope?.environment || readEnvironment || "unlabelled"}-read-only` });
-      return ALLOW;
-    }
-    if (readVerdict === "production") {
-      const readAudit = { cwd: ctx.cwd, kind: "mcp-confirm" as const, tool: "governed-live-read", label: "live read" };
-      if (session.productionReads) {
-        audit({ ...readAudit, decision: "allowed", detail: "production-read-session" });
-        return ALLOW;
-      }
-      if (UI_HEADLESS(ctx)) {
-        audit({ ...readAudit, decision: "blocked-headless", detail: "production-read" });
-        return block(`coop guardrails: blocked a production read through ${decision.label || "the governed tool"}; production reads are approved once per session, and approval is unavailable in headless mode.`);
-      }
-      const yes = await ctx.ui.confirm("coop live-data guardrail", `PRODUCTION read:\n  ${decision.label}\nReads change nothing. Allow production reads for the rest of this session? (Writes keep their own rules.)`);
-      if (!yes) {
-        audit({ ...readAudit, decision: "declined", detail: "production-read" });
-        return block(`coop guardrails: blocked a production read through ${decision.label || "the governed tool"} (you declined).`);
-      }
-      session.productionReads = true;
-      audit({ ...readAudit, decision: "allowed", detail: "production-read-session-granted" });
+    if (rowReadVerdict(event, decision, readEnvironment) === "allow") {
+      const namesProduction = PRODUCTION_WORD.test(mutationCallText(event, target)) || namesContractProduction(callStringValues(event), productionNames);
+      audit({ cwd: ctx.cwd, kind: "mcp-confirm", tool: "governed-live-read", decision: "allowed", label: "live read", detail: `${readAuditEnvironment(event, decision, readEnvironment, namesProduction)}-read-only` });
       return ALLOW;
     }
     // A single dev/test Warehouse INSERT/UPDATE/CREATE/ALTER can ride a session
@@ -3735,10 +3783,12 @@ const mcpRule: Rule = {
     if (sqlProductionWrite) {
       // Permitted once above for the same call, or asked now; never a session approval.
       if (productionPermitted) return ALLOW;
-      const ambiguousNote = decision.kind === "ambiguous-sql" ? " (ambiguous SQL, treated as a write)" : "";
-      const what = production
-        ? `${decision.label || "Warehouse SQL write"}${ambiguousNote}`
-        : `${decision.label || "Warehouse SQL write"}${ambiguousNote} (target not confirmed as dev or test; treated as production)`;
+      // The permit question shows the SQL itself (its first line takes the dialog's
+      // own indent), then the target and the effect.
+      const ambiguousNote = decision.kind === "ambiguous-sql" ? " (SQL coop cannot classify, treated as a write)" : "";
+      const where = production ? "production" : "not confirmed as dev or test (treated as production)";
+      const effect = sqlWriteEffect(callSqlText(event));
+      const what = `${promptBlock(callSqlText(event)).slice(2)}\nTarget: ${where}${ambiguousNote}${effect ? `\nEffect: ${effect}` : ""}`;
       const refused = await session.permitProductionWrite(ctx, "mcp-confirm", "governed-live-read", what);
       // Say why the target is unconfirmed and what to do; the write stays refused.
       if (refused && refused.action === "block" && refused.reason === PROD_WRITE_LOCKED && !production) {
@@ -3746,33 +3796,24 @@ const mcpRule: Rule = {
       }
       return refused || ALLOW;
     }
-    const sessionGrant = decision.action === "prompt-and-grant";
-    const scopeSummary = decision.scope ? [
-      "Resolved bounded session scope:",
-      `  client: ${decision.scope.client}`,
-      `  tenant: ${decision.scope.tenant}`,
-      `  principal: ${decision.scope.principal}`,
-      `  environment: ${decision.scope.environment}`,
-      `  target(s): ${decision.scope.targets.join(", ")}`,
-      `  operation: ${decision.scope.operationClass}`,
-      `  row limit: ${decision.scope.resultLimit}`,
-      `  time limit: ${decision.scope.timeoutMs} ms`,
-    ].join("\n") : "";
     // A write that reaches this question is on a target coop's config confirms as
-    // dev or test (anything else took the production permit above), so it is
-    // titled with that target, never "PRODUCTION" from the SQL's own words. Those
-    // words still keep the session option off and earn a line to check them: a
-    // three-part name can reach another database.
-    const writeTarget = mayWrite ? `\n  target: ${sqlWriteTargetText(event, session.liveReadDeps, contract, writeEnvironment)}` : "";
-    const mentionsProd = mayWrite && PRODUCTION_WORD.test(callSqlText(event))
+    // dev or test (anything else took the production permit above). The question
+    // shows the exact SQL, that target and the effect (Aaron, 2026-11-23: no
+    // generic messages); the target is never "PRODUCTION" from the SQL's own
+    // words, but those words keep the session option off and earn a line to
+    // check them: a three-part name can reach another database.
+    const sql = callSqlText(event);
+    const effect = mayWrite ? sqlWriteEffect(sql) : "";
+    const writeTarget = mayWrite ? `\nTarget: ${sqlWriteTargetText(event, session.liveReadDeps, contract, writeEnvironment)}${effect ? `\nEffect: ${effect}` : ""}` : "";
+    const mentionsProd = mayWrite && PRODUCTION_WORD.test(sql)
       ? "\nThe SQL mentions prod: check it writes only to this target, not to another database." : "";
     const prompt = decision.kind === "ddl-dml-destructive"
       ? sqlEditKey
-        ? `Warehouse SQL write (one INSERT, UPDATE, CREATE or ALTER):\n  ${decision.label}${writeTarget}\nDeletes, drops, merges, EXEC, batches and production always ask. Run it?`
-        : `Warehouse SQL mutation/DDL call:\n  ${decision.label}${writeTarget}${mentionsProd}\nDDL, DML, destructive SQL, EXEC, and batches require separate explicit approval. Run it?`
+        ? `Warehouse SQL write (one INSERT, UPDATE, CREATE or ALTER) about to run:\n${promptBlock(sql)}${writeTarget}\nDeletes, drops, merges, EXEC, batches and production always ask. Run it?`
+        : `Warehouse SQL write about to run:\n${promptBlock(sql)}${writeTarget}${mentionsProd}\nDeletes, drops, merges, EXEC, permission changes and batches ask every time. Run it?`
       : decision.kind === "ambiguous-sql"
-        ? `Ambiguous Warehouse SQL call:\n  ${decision.label}${writeTarget}${mentionsProd}\nOnly one plain read statement runs without asking. Run this call once?`
-        : `${production ? "PRODUCTION " : ""}row-level data read:\n  ${decision.label}\n${scopeSummary ? `${scopeSummary}\n` : ""}${sessionGrant ? "Approve this exact bounded scope for this session?" : "Read these rows once?"}`;
+        ? `Warehouse SQL coop cannot classify (it may write) about to run:\n${promptBlock(sql)}${writeTarget}${mentionsProd}\nOnly one plain read statement runs without asking. Run this call once?`
+        : `Data call coop cannot confirm as a read${production ? " (it names production)" : ""}:\n  ${decision.label}\n${promptBlock(mcpArgumentsText(event), 600)}\nCoop cannot verify this call as a plain read (a statement it cannot see or classify, or call fields it does not recognise), so it may change data; reads it can verify never ask. Run this call once?`;
     const refused = await session.ask(ctx, {
       title: "coop live-data guardrail", kind: "mcp-confirm", tool: "governed-live-read", label: auditLabel, detail: decision.kind || "live-read",
       sessionKey: sqlEditKey, question: prompt,
@@ -3781,7 +3822,6 @@ const mcpRule: Rule = {
     });
     if (refused) return refused;
     if (mayWrite) session.noteDevSqlWrite(ctx, writeEnvironment);
-    if (sessionGrant && decision.scope) session.liveReadGrant = createLiveReadGrant(decision.scope);
     return ALLOW;
   },
 };
@@ -4199,15 +4239,14 @@ export default function coopGuardrails(pi: ExtensionAPI) {
   // revoke` ends the session's own grants; the production unlock is a person's
   // (`coop unlock-prod --revoke`, or it expires) and is only shown.
   pi.registerCommand("approvals", {
-    description: "What this session may do without asking: edit approvals, production reads, the production unlock, the last decisions (/approvals revoke ends the session grants)",
+    description: "What this session may do without asking: edit approvals, the production unlock, the last decisions (/approvals revoke ends the session grants)",
     handler: async (args: any, ctx: ExtensionContext) => {
       const action = (Array.isArray(args) ? args.join(" ") : String(args || "")).trim().toLowerCase() || "status";
       let message: string;
       if (action === "revoke") {
         editApprovals.clear();
         session.liveReadGrant = null;
-        session.productionReads = false;
-        message = "coop approvals: edit approvals and the production-read approval revoked for this session. The next edit or production read asks again.";
+        message = "coop approvals: edit approvals revoked for this session. The next edit asks again.";
       } else if (action !== "status") {
         message = "Usage: /approvals [revoke]";
       } else {
@@ -4223,9 +4262,7 @@ export default function coopGuardrails(pi: ExtensionAPI) {
         } else {
           lines.push("Edit approvals: none. Each edit asks; pick \"for this session\" to approve a server once.");
         }
-        lines.push(session.productionReads
-          ? "Production reads: approved for this session (dev and test reads never ask)."
-          : "Production reads: the first one asks, then the session is covered (dev and test reads never ask).");
+        lines.push("Reads: never ask on any environment, production included (each one is audited); only writes ask.");
         const unlock = activeProdUnlock(ctx);
         lines.push(unlock
           ? `PRODUCTION WRITES UNLOCKED by a human for ${unlock.client} (grant ${unlock.id}, ${prodUnlockMinutesLeft(unlock)} min left): each production write asks yes/no at the desk and is audited.`

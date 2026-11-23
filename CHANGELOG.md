@@ -20,6 +20,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- **Reads never ask; write questions show the exact statement.** A row read coop
+  can prove is a read now runs without a question on every environment,
+  production included (the once-per-session production read question from
+  0.40.1 is gone); every read is still read-only and audited with its
+  environment. Every write question now names the thing about to run instead of
+  a generic label: a Warehouse SQL question shows the SQL itself, its target
+  Warehouse and environment, and its effect (`updates rows in dbo.Customer`); the
+  production permit under an unlock shows the same; an MCP write shows the
+  server, tool and arguments. Nothing else loosened: dev and test writes still
+  ask, destructive SQL asks every time, production writes still need the human
+  unlock plus a desk yes, and a call coop cannot confirm as a read still asks,
+  saying why. `/approvals` no longer lists a production-read approval.
+
 - **New tool pins: coop-data-doc 1.5.1, coop-sql-source-control 1.0.20 and
   coop-schema-compare 0.1.14.** data-doc model pages list unused tables and
   columns for cleanup, a table named as a DAX table argument (including inside

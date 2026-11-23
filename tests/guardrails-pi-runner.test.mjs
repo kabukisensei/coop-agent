@@ -82,15 +82,11 @@ const dispatch = async (event, expectedBlock) => {
   return result;
 };
 const fresh = async () => { await runner.emit({ type: "session_start", reason: "new" }); prompts = 0; };
-// Reads never nag (Aaron, 2026-11-10): the managed target here is production,
-// so the first read asks once and one yes covers the session on every surface.
+// Reads never ask (Aaron, 2026-11-23): the managed target here is production,
+// and a read runs with no question on every surface.
 await fresh(); answer = false;
-await dispatch(read(), true);
-answer = true;
 await dispatch(read(), false);
-assert.equal(prompts, 2, "declined once, approved once");
-assert.match(messages.at(-1), /PRODUCTION read[\s\S]*rest of this session/);
-answer = false; prompts = 0;
+assert.equal(prompts, 0, "a production read never asks");
 await dispatch(read(10), false);
 await dispatch({ ...read(), input: { ...read().input, args: JSON.stringify(read().input.args) } }, false);
 await dispatch({ toolName: "mcp", input: { server: "fabric-sqlendpoint", tool: "execute_query", args: JSON.stringify(read().input.args) } }, false);
@@ -143,12 +139,13 @@ for (const event of mutations) await dispatch(event, true);
 assert.equal(executions, beforeMutations, "no mutation reaches even the inert executor");
 await dispatch({ toolName: "mcp__fabric__get_schema", input: { environment: "production" } }, false);
 await dispatch({ toolName: "mcp__fabric__executeSQL", input: { sql: "DELETE FROM dbo.Customer" } }, true);
-// Revoke and shutdown end the production-read approval: the next read asks again.
+// Revoke and shutdown change nothing for reads: they never ask.
+prompts = 0;
 await commands.get("approvals").handler("revoke", runner.createContext());
-await dispatch(read(), true);
-answer = true; await dispatch(read(), false); answer = false;
+await dispatch(read(), false);
 await runner.emit({ type: "session_shutdown", reason: "switch" });
-await dispatch(read(), true);
+await dispatch(read(), false);
+assert.equal(prompts, 0, "a production read never asks, before or after revoke and shutdown");
 // A dev read never asks.
 config({ environment: "dev" }); prompts = 0;
 await dispatch(read(), false);
@@ -164,7 +161,7 @@ for (const fail of [() => { throw new Error("SYNTHETIC_APPROVAL_SECRET"); }, () 
 }
 runner.setUIContext(undefined);
 for (const event of [askRead, ...mutations]) await dispatch(event, true);
-await dispatch(read(), true); // a production read needs its one yes, which headless cannot give
+await dispatch(read(), false); // a production read needs no UI either
 config({ environment: "dev" }); await dispatch(read(), false); config(); // a dev read needs no UI
 runner.setUIContext(ui); answer = true;
 await dispatch({ toolName: "bash", input: { command: "rm -rf SYNTHETIC_COMMAND_SECRET" } }, false);
@@ -310,22 +307,20 @@ if (existsSync(builtinIndex) && fauxIndex) {
       tools.write({ path: ${JSON.stringify(unlockPath)}, content: "{}" }),
     ]);
     return r.map((x) => x.status).join(",");`);
-    assert.match(out, /rejected,rejected,rejected,rejected,rejected/, out);
-    assert.deepEqual(ran, [], "the production read was declined; the production write never reached the tool");
-    assert.equal(asked.length, 3, "the production read, the rm -rf and the .env read asked; the production write and the unlock were blocked outright");
+    assert.match(out, /fulfilled,rejected,rejected,rejected,rejected/, out);
+    assert.deepEqual(ran, ["fabric-sqlendpoint/execute_query"], "the production read ran with no question; the production write never reached the tool");
+    assert.equal(asked.length, 2, "the rm -rf and the .env read asked; the production write and the unlock were blocked outright");
     assert.equal(maxOpen, 1, "never two dialogs at once");
-    // One yes to the production read covers the script's later reads.
-    asked.length = 0; answerConfirm = true;
+    // Reads never ask: the script's reads run with no dialog.
+    asked.length = 0; ran.length = 0;
     const reads = await run(`const r = await Promise.allSettled([
       tools.mcp(${q("SELECT TOP (5) customer_id FROM dbo.Customer")}),
       tools.mcp(${q("SELECT TOP (5) name FROM dbo.Region")}),
     ]);
     return r.map((x) => x.status).join(",");`);
-    answerConfirm = false;
     assert.match(reads, /fulfilled,fulfilled/, reads);
     assert.deepEqual(ran, ["fabric-sqlendpoint/execute_query", "fabric-sqlendpoint/execute_query"]);
-    assert.equal(asked.length, 1, "the production read asked once");
-    assert.match(asked[0], /PRODUCTION read/);
+    assert.equal(asked.length, 0, "no read asked");
     // Dev edits: the first asks, its session approval covers the ones that waited.
     asked.length = 0; ran.length = 0;
     const m = (op) => JSON.stringify({ server: "powerbi-modeling-mcp", tool: "measure_operations", args: { request: { operation: op } } });
@@ -336,7 +331,7 @@ if (existsSync(builtinIndex) && fauxIndex) {
     assert.equal(ran.length, 3);
     const rows = readFileSync(join(agentDir, "guardrails-audit.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l))
       .filter((r) => r.kind === "codemode-script" && r.decision === "ran");
-    assert.equal(rows.at(-3).detail, "mcp:error, mcp:error, bash:error, read:error, write:error", "each nested call is audited by name");
+    assert.equal(rows.at(-3).detail, "mcp:ok, mcp:error, bash:error, read:error, write:error", "each nested call is audited by name (the production read ran)");
     assert.equal(rows.at(-2).detail, "mcp:ok, mcp:ok");
     assert.ok(!rows.some((r) => /DELETE|dbo\.Customer|rm -rf/.test(r.detail)), "never the arguments");
     // #373: a script with more than 20 calls keeps every call in its audit row.

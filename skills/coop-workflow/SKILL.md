@@ -293,7 +293,7 @@ change, more than once so a cold cache does not decide it, and report both numbe
 Without them, call it an expected improvement that is not measured.
 
 Test targets ask first; production is explicit-approval only and never a verify
-target. Row reads on dev and test never ask; production reads ask once per session.
+target. Row reads never ask on any environment; only writes ask.
 
 ## Other working habits
 
