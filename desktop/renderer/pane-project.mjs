@@ -19,7 +19,11 @@ export function platformHint(platform) {
   return "";
 }
 
-const FLAT = ["profileName", "organization", "client", "timezone", "defaultBranch", "tenantId", "fabricWorkspaceName", "fabricWorkspaceId", "sqlEndpointItemType", "sqlEndpointItemName", "sqlEndpointItemId", "sqlEndpointPropertiesId", "powerBiWorkspaceName", "powerBiWorkspaceId", "fabricLayout", "tableMappingRule", "tableMappingSchema", "tableMappingPrefix", "sqlTargetKind", "sqlTargetServer", "sqlTargetDatabase", "sqlTargetProdDatabase", "sqlTargetProdServer", "sqlTargetProdWorkspaceId", "sqlTargetProdItemId", "sqlTargetProdEndpointId", "sqlTargetTestDatabase", "sqlTargetTestServer", "sqlTargetTestWorkspaceId", "sqlTargetTestItemId", "sqlTargetTestEndpointId", "schemaCompareExclude", "schemaCompareRebuild", "schemaCompareDestructive", "tabularEditorPath", "bpaRulesPath"];
+const FLAT = ["profileName", "organization", "client", "timezone", "defaultBranch", "tenantId", "fabricWorkspaceName", "fabricWorkspaceId", "sqlEndpointItemType", "sqlEndpointItemName", "sqlEndpointItemId", "sqlEndpointPropertiesId", "powerBiWorkspaceName", "powerBiWorkspaceId", "fabricLayout", "tableMappingRule", "tableMappingSchema", "tableMappingPrefix", "sqlTargetKind", "sqlTargetServer", "sqlTargetDatabase", "sqlTargetProdDatabase", "sqlTargetProdServer", "sqlTargetProdWorkspaceId", "sqlTargetProdItemId", "sqlTargetProdEndpointId", "sqlTargetTestDatabase", "sqlTargetTestServer", "sqlTargetTestWorkspaceId", "sqlTargetTestItemId", "sqlTargetTestEndpointId", "schemaCompareExclude", "schemaCompareRebuild", "schemaCompareDestructive", "tabularEditorPath", "bpaRulesPath",
+  "warehouseManagerPlatform", "warehouseManagerBronzeDatabase", "warehouseManagerBronzeRawSchema", "warehouseManagerViewSchemas", "warehouseManagerSilverDatabase", "warehouseManagerSilverSchema", "warehouseManagerCreatePipeline", "warehouseManagerLoadPipeline", "warehouseManagerNeverRun", "warehouseManagerNotes",
+  "warehouseManagerDevWorkspace", "warehouseManagerDevDataFactory", "warehouseManagerDevResourceGroup", "warehouseManagerDevSubscriptionId", "warehouseManagerTestWorkspace", "warehouseManagerTestDataFactory", "warehouseManagerTestResourceGroup", "warehouseManagerTestSubscriptionId"];
+const WM_ENVS = [["Dev", "dev"], ["Test", "test"]];
+const WM_PLATFORM_LABELS = { fabric: "Fabric pipelines", adf: "Azure Data Factory" };
 const NAMED_ENVS = ["dev", "test", "prod"];
 const NAMED_FIELDS = ["database", "server", "workspaceId", "itemId", "endpointId"];
 const LAYOUT_LABELS = { warehouse: "Warehouse", lakehouse: "Lakehouse", sql_database: "SQL database", mixed: "Mixed (more than one kind)" };
@@ -35,6 +39,8 @@ export function initialValues(data) {
   values.powerBiEnabled = typeof s.powerBiEnabled === "boolean" ? s.powerBiEnabled : Boolean(s.fabricEnabled);
   values.tabularEditorEnabled = Boolean(s.tabularEditorEnabled);
   values.tabularEditorPath = s.tabularEditorPath || "te";
+  values.warehouseManagerEnabled = Boolean(s.warehouseManagerEnabled);
+  values.warehouseManagerPlatform = s.warehouseManagerPlatform || "fabric";
   values.powerBiWorkspaceName = s.powerBiWorkspaceName || s.fabricWorkspaceName || "";
   values.sqlTargetKind = s.sqlTargetKind || data.proposedKind[s.fabricEnabled ? "fabric" : "noFabric"] || "";
   values.sqlTargetDatabase = s.sqlTargetDatabase || s.sqlEndpointItemName || "";
@@ -72,6 +78,7 @@ export function formInput(values) {
   input.fabricEnabled = Boolean(values.fabricEnabled);
   input.powerBiEnabled = Boolean(values.powerBiEnabled);
   input.tabularEditorEnabled = Boolean(values.tabularEditorEnabled);
+  input.warehouseManagerEnabled = Boolean(values.warehouseManagerEnabled);
   input.repositories = values.repositories.map((repo) => Object.fromEntries(REPO_FIELDS.map((key) => [key, String(repo[key] || "")])));
   input.namedTargets = (values.namedTargets || []).map((set) => ({
     name: String(set.name || ""), kind: String(set.kind || ""),
@@ -270,6 +277,34 @@ export function mountProject(box, options, { coop, newSession }) {
     teBox.append(
       row({ field: "tabularEditorPath", label: "Tabular Editor CLI command or path", control: text(values, "tabularEditorPath") }),
       row({ field: "bpaRulesPath", label: "BPA rules file path", hint: "Optional.", control: text(values, "bpaRulesPath") }));
+    // The Schema Manager block (warehouse_manager): the same questions as /setup-project.
+    const wmBox = el("div", { class: "form-group", hidden: !values.warehouseManagerEnabled });
+    const wmEnvRows = WM_ENVS.map(([label, env]) => {
+      const p = `warehouseManager${label}`;
+      return {
+        workspace: row({ field: `${p}Workspace`, label: `${label} Fabric workspace`, hint: "Where the pipelines run; a name or id. Blank = none.", control: text(values, `${p}Workspace`) }),
+        factory: row({ field: `${p}DataFactory`, label: `${label} Azure Data Factory name`, hint: "Blank = none.", control: text(values, `${p}DataFactory`) }),
+        group: row({ field: `${p}ResourceGroup`, label: `${label} Data Factory resource group`, control: text(values, `${p}ResourceGroup`) }),
+        subscription: row({ field: `${p}SubscriptionId`, label: `${label} Data Factory subscription id`, hint: "A lowercase UUID.", control: text(values, `${p}SubscriptionId`) }),
+        env,
+      };
+    });
+    const showWmPlatform = () => {
+      const adf = values.warehouseManagerPlatform === "adf";
+      for (const r of wmEnvRows) { r.workspace.hidden = adf; r.factory.hidden = !adf; r.group.hidden = !adf; r.subscription.hidden = !adf; }
+    };
+    wmBox.append(
+      row({ field: "warehouseManagerPlatform", label: "Platform", hint: "Where the single-table pipelines run.", control: select(values, "warehouseManagerPlatform", (data.warehouseManagerPlatforms || ["fabric", "adf"]).map((v) => [v, WM_PLATFORM_LABELS[v] || v]), showWmPlatform) }),
+      row({ field: "warehouseManagerBronzeDatabase", label: "Bronze database", hint: "The Lakehouse or database with the generated Bronze views. Blank = unknown.", control: text(values, "warehouseManagerBronzeDatabase") }),
+      row({ field: "warehouseManagerBronzeRawSchema", label: "Bronze raw schema", hint: "Where the raw source tables land. Blank = unknown.", control: text(values, "warehouseManagerBronzeRawSchema") }),
+      row({ field: "warehouseManagerViewSchemas", label: "Bronze view schema per source system", hint: "source=schema, comma-separated; for example d365_fo=d365fo, d365_dataverse=d365po.", control: text(values, "warehouseManagerViewSchemas") }),
+      row({ field: "warehouseManagerSilverDatabase", label: "Silver database", hint: "The Warehouse or database with Silver. Blank = unknown.", control: text(values, "warehouseManagerSilverDatabase") }),
+      row({ field: "warehouseManagerSilverSchema", label: "Silver schema", hint: "Blank = the same schema name as the Bronze view.", control: text(values, "warehouseManagerSilverSchema") }),
+      row({ field: "warehouseManagerCreatePipeline", label: "Pipeline that regenerates one Silver table", hint: "Its name. Parameters are edited in the file itself (the defaults are written once).", control: text(values, "warehouseManagerCreatePipeline") }),
+      row({ field: "warehouseManagerLoadPipeline", label: "Pipeline that fully reloads one Silver table", hint: "Its name.", control: text(values, "warehouseManagerLoadPipeline") }),
+      row({ field: "warehouseManagerNeverRun", label: "Parent pipelines never run", hint: "Comma-separated; the ones that process every table. Blank = none.", control: text(values, "warehouseManagerNeverRun") }),
+      row({ field: "warehouseManagerNotes", label: "How this client's Schema Manager differs", hint: "In your own words; blank = the default flow (commented column lines, regenerate, reload).", control: text(values, "warehouseManagerNotes") }),
+      ...wmEnvRows.flatMap((r) => [r.workspace, r.factory, r.group, r.subscription]));
     const hint = platformHint(data.platform);
     const repos = values.repositories;
     fill(body,
@@ -331,6 +366,10 @@ export function mountProject(box, options, { coop, newSession }) {
       section("Tabular Editor",
         toggle("tabularEditorEnabled", "Use the Tabular Editor CLI for semantic-model BPA reviews", (on) => { teBox.hidden = !on; }),
         teBox),
+      section("Schema Manager",
+        toggle("warehouseManagerEnabled", "This client adds source columns to Silver through a Schema Manager (the add-silver-columns skill reads this)", (on) => { wmBox.hidden = !on; }),
+        el("p", { class: "hint", text: data.settings.warehouseManagerEnabled ? "The file has a warehouse_manager block: switched off, it stays as it is." : "Blanks are fine: coop discovers what it can read-only and asks before any write." }),
+        wmBox),
       el("div", { class: "form-problems", role: "alert", hidden: true }),
       // The form is long: its buttons stay in view at the bottom of the pane.
       el("div", { class: "form-actions form-footer" },
@@ -338,6 +377,7 @@ export function mountProject(box, options, { coop, newSession }) {
         el("button", { type: "button", class: "btn", text: "Discard edits", title: "Go back to what the file says now", onclick: () => reload(true) })));
     showTarget();
     showPrefix();
+    showWmPlatform();
   }
 
   // --- Problems -------------------------------------------------------------

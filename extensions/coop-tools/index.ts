@@ -105,8 +105,11 @@ import {
   SQL_TARGET_KINDS,
   SQL_TARGET_OTHER_ENVIRONMENTS,
   TABLE_MAPPING_RULES,
+  WAREHOUSE_MANAGER_ENVIRONMENTS,
+  WAREHOUSE_MANAGER_PLATFORMS,
   applyProjectWizardSettings,
   badSchemaNames,
+  badViewSchemaPairs,
   mappingCheckLines,
   mappingExpectationLine,
   proposedFabricLayout,
@@ -1528,6 +1531,9 @@ export interface ProjectWizardSettings {
   fabricLayout?: string;
   tableMappingRule?: string;
   tableMappingSchema?: string;
+  /** warehouse_manager (the Schema Manager block the add-silver-columns skill reads). */
+  warehouseManagerEnabled?: boolean;
+  warehouseManagerPlatform?: string;
   tableMappingPrefix?: string;
 }
 
@@ -1999,6 +2005,55 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
     if (rules === null) return false;
     settings.tabularEditorPath = te;
     settings.bpaRulesPath = rules;
+  }
+
+  // Schema Manager (warehouse_manager, design 2026-11-10): the add-silver-columns
+  // skill reads it. Blanks are allowed (the skill discovers read-only and asks);
+  // a No leaves an existing block exactly as the file has it.
+  const wm = settings as Record<string, unknown>;
+  const hadBlock = Boolean(settings.warehouseManagerEnabled);
+  settings.warehouseManagerEnabled = await askConfirm(ctx, "Schema Manager", `Does this client add source columns to Silver through a Schema Manager (generated Bronze views, one pipeline that regenerates a Silver table and one that reloads it)? The add-silver-columns skill reads these answers.${hadBlock ? " The file already has a warehouse_manager block: Yes edits it, No leaves it as it is." : " Blanks are fine: coop discovers what it can read-only and asks before any write."}`);
+  if (settings.warehouseManagerEnabled) {
+    const platform = await askText(ctx, `Schema Manager platform: ${WAREHOUSE_MANAGER_PLATFORMS.join(" (Fabric pipelines) or ")} (Azure Data Factory)`, settings.warehouseManagerPlatform || "fabric");
+    if (platform === null) return false;
+    const platformValue = platform.trim().toLowerCase();
+    if (!(WAREHOUSE_MANAGER_PLATFORMS as readonly string[]).includes(platformValue)) { notify(ctx, PROJECT_MESSAGES.warehouseManagerPlatform, "error"); return false; }
+    settings.warehouseManagerPlatform = platformValue;
+    const questions: Array<[string, string]> = [
+      ["warehouseManagerBronzeDatabase", "Bronze database: the Lakehouse or database with the generated Bronze views (blank = unknown)"],
+      ["warehouseManagerBronzeRawSchema", "Bronze raw schema: where the raw source tables land (blank = unknown)"],
+      ["warehouseManagerViewSchemas", "Bronze view schema per source system (source=schema, comma-separated; for example d365_fo=d365fo, d365_dataverse=d365po)"],
+      ["warehouseManagerSilverDatabase", "Silver database: the Warehouse or database with Silver (blank = unknown)"],
+      ["warehouseManagerSilverSchema", "Silver schema (blank = the same schema name as the Bronze view)"],
+      ["warehouseManagerCreatePipeline", "Pipeline that regenerates ONE Silver table (name; blank = unknown)"],
+      ["warehouseManagerLoadPipeline", "Pipeline that fully reloads ONE Silver table (name; blank = unknown)"],
+      ["warehouseManagerNeverRun", "Parent pipelines that process every table and are never run (comma-separated; blank = none)"],
+      ["warehouseManagerNotes", "How this client's Schema Manager differs from the default flow (blank = the default flow)"],
+    ];
+    for (const { prefix, label } of WAREHOUSE_MANAGER_ENVIRONMENTS) {
+      if (platformValue === "adf") {
+        questions.push(
+          [`${prefix}DataFactory`, `${label} Azure Data Factory name (blank = none)`],
+          [`${prefix}ResourceGroup`, `${label} Data Factory resource group (blank = none)`],
+          [`${prefix}SubscriptionId`, `${label} Data Factory subscription id (canonical UUID; blank = none)`],
+        );
+      } else {
+        questions.push([`${prefix}Workspace`, `${label} Fabric workspace where the pipelines run (name or id; blank = none)`]);
+      }
+    }
+    for (const [field, label] of questions) {
+      const answer = await askText(ctx, label, (wm[field] as string) || "");
+      if (answer === null) return false;
+      wm[field] = answer.trim();
+    }
+    for (const field of ["warehouseManagerBronzeRawSchema", "warehouseManagerSilverSchema"]) {
+      if (wm[field] && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(wm[field] as string)) { notify(ctx, PROJECT_MESSAGES.warehouseManagerSchema, "error"); return false; }
+    }
+    if (badViewSchemaPairs(wm.warehouseManagerViewSchemas as string).length) { notify(ctx, PROJECT_MESSAGES.warehouseManagerViewSchemas, "error"); return false; }
+    for (const { prefix } of WAREHOUSE_MANAGER_ENVIRONMENTS) {
+      const id = wm[`${prefix}SubscriptionId`] as string;
+      if (id && !CANONICAL_UUID.test(id)) { notify(ctx, PROJECT_MESSAGES.warehouseManagerSubscription, "error"); return false; }
+    }
   }
 
   const mode = estateMode(settings.repositories);

@@ -510,6 +510,7 @@ const ANSWERS = {
   fabric: { tenantId: "11111111-1111-1111-1111-111111111111", fabricWorkspaceName: "Contoso WS", fabricWorkspaceId: "22222222-2222-2222-2222-222222222222", sqlEndpointItemType: "Warehouse", sqlEndpointItemName: "ContosoDW", sqlEndpointItemId: "33333333-3333-3333-3333-333333333333", sqlEndpointPropertiesId: "", powerBiWorkspaceName: "Contoso WS", powerBiWorkspaceId: "22222222-2222-2222-2222-222222222222", fabricLayout: "warehouse", tableMappingRule: "prefix", tableMappingSchema: "dbo", tableMappingPrefix: "v_" },
   target: { sqlTargetKind: "azure_sql", sqlTargetServer: "Contoso-Dev.Database.Windows.Net", sqlTargetDatabase: "ContosoDW", sqlTargetProdServer: "Contoso-Prod.Database.Windows.Net", sqlTargetProdDatabase: "ContosoDW", sqlTargetTestDatabase: "", schemaCompareExclude: "stage, audit", schemaCompareRebuild: "dim, fact", schemaCompareDestructive: "commented" },
   te: { tabularEditorPath: "te", bpaRulesPath: "rules/bpa.json" },
+  wm: { warehouseManagerPlatform: "fabric", warehouseManagerBronzeDatabase: "Bronze LH", warehouseManagerBronzeRawSchema: "d365", warehouseManagerViewSchemas: "d365_fo=d365fo", warehouseManagerSilverDatabase: "ContosoDW", warehouseManagerSilverSchema: "", warehouseManagerCreatePipeline: "PL Create Silver Table", warehouseManagerLoadPipeline: "PL Load Silver Table", warehouseManagerNeverRun: "PL Load All", warehouseManagerNotes: "", warehouseManagerDevWorkspace: "Contoso WS", warehouseManagerTestWorkspace: "" },
 };
 
 // The terminal wizard, answered with ANSWERS through fake Pi dialogs.
@@ -532,7 +533,7 @@ function wizardCtx(root, { fresh = false, localSource = true } = {}) {
           if (/: default branch/.test(label)) return repo.defaultBranch;
           if (/: choose its local folder$/.test(label)) return repo.localPath;
         }
-        for (const [key, value] of Object.entries({ ...ANSWERS.fabric, ...ANSWERS.target, ...ANSWERS.te })) {
+        for (const [key, value] of Object.entries({ ...ANSWERS.fabric, ...ANSWERS.target, ...ANSWERS.te, ...ANSWERS.wm })) {
           const prompts = {
             tenantId: "Azure tenant ID", fabricWorkspaceName: "Default Fabric workspace name", fabricWorkspaceId: "Default Fabric workspace ID",
             sqlEndpointItemType: "Default SQL endpoint item type", sqlEndpointItemName: "Default SQL endpoint item name", sqlEndpointItemId: "Default SQL endpoint item ID",
@@ -542,6 +543,9 @@ function wizardCtx(root, { fresh = false, localSource = true } = {}) {
             sqlTargetProdServer: "Prod SQL server host", sqlTargetProdDatabase: "Prod database name", sqlTargetTestDatabase: "Test database name",
             schemaCompareExclude: "Schema compare: schemas never compared", schemaCompareRebuild: "Schema compare: schemas whose changed tables", schemaCompareDestructive: "Schema compare: destructive statements",
             tabularEditorPath: "Tabular Editor CLI command or path", bpaRulesPath: "BPA rules file path",
+            warehouseManagerPlatform: "Schema Manager platform", warehouseManagerBronzeDatabase: "Bronze database", warehouseManagerBronzeRawSchema: "Bronze raw schema", warehouseManagerViewSchemas: "Bronze view schema per source system",
+            warehouseManagerSilverDatabase: "Silver database", warehouseManagerSilverSchema: "Silver schema", warehouseManagerCreatePipeline: "Pipeline that regenerates ONE", warehouseManagerLoadPipeline: "Pipeline that fully reloads ONE",
+            warehouseManagerNeverRun: "Parent pipelines that process every table", warehouseManagerNotes: "How this client's Schema Manager differs", warehouseManagerDevWorkspace: "Dev Fabric workspace where the pipelines run", warehouseManagerTestWorkspace: "Test Fabric workspace where the pipelines run",
           };
           if (!fresh && label.startsWith(prompts[key])) return value;
         }
@@ -554,6 +558,7 @@ function wizardCtx(root, { fresh = false, localSource = true } = {}) {
         if (title === "Microsoft Fabric") return !fresh;
         if (title === "Power BI") return !fresh;
         if (title === "Tabular Editor") return !fresh;
+        if (title === "Schema Manager") return !fresh;
         return true; // the final "Create/Update .coop/project.yml?"
       },
       select: async (label, options) => {
@@ -577,7 +582,7 @@ const formAnswers = (data) => {
   values.client = ANSWERS.client;
   values.repositories[0] = { ...values.repositories[0], ...ANSWERS.analytics };
   values.repositories.push({ ...ANSWERS.added, isNew: true });
-  Object.assign(values, ANSWERS.fabric, ANSWERS.target, ANSWERS.te, { fabricEnabled: true, powerBiEnabled: true, tabularEditorEnabled: true });
+  Object.assign(values, ANSWERS.fabric, ANSWERS.target, ANSWERS.te, ANSWERS.wm, { fabricEnabled: true, powerBiEnabled: true, tabularEditorEnabled: true, warehouseManagerEnabled: true });
   return formInput(values);
 };
 
@@ -601,7 +606,8 @@ await check("project form: loads the wizard's fields; dropped fields never reach
     assert.equal(shown.includes(dropped), false, `${dropped} reaches the window`);
   }
   const input = formInput(initialValues(data));
-  assert.deepEqual(Object.keys(input).sort(), ["bpaRulesPath", "client", "defaultBranch", "fabricEnabled", "fabricLayout", "fabricWorkspaceId", "fabricWorkspaceName", "namedTargets", "organization", "powerBiEnabled", "powerBiWorkspaceId", "powerBiWorkspaceName", "profileName", "repositories", "schemaCompareDestructive", "schemaCompareExclude", "schemaCompareRebuild", "sqlEndpointItemId", "sqlEndpointItemName", "sqlEndpointItemType", "sqlEndpointPropertiesId", "sqlTargetDatabase", "sqlTargetKind", "sqlTargetProdDatabase", "sqlTargetProdEndpointId", "sqlTargetProdItemId", "sqlTargetProdServer", "sqlTargetProdWorkspaceId", "sqlTargetServer", "sqlTargetTestDatabase", "sqlTargetTestEndpointId", "sqlTargetTestItemId", "sqlTargetTestServer", "sqlTargetTestWorkspaceId", "tableMappingPrefix", "tableMappingRule", "tableMappingSchema", "tabularEditorEnabled", "tabularEditorPath", "tenantId", "timezone"]);
+  assert.deepEqual(Object.keys(input).sort(), ["bpaRulesPath", "client", "defaultBranch", "fabricEnabled", "fabricLayout", "fabricWorkspaceId", "fabricWorkspaceName", "namedTargets", "organization", "powerBiEnabled", "powerBiWorkspaceId", "powerBiWorkspaceName", "profileName", "repositories", "schemaCompareDestructive", "schemaCompareExclude", "schemaCompareRebuild", "sqlEndpointItemId", "sqlEndpointItemName", "sqlEndpointItemType", "sqlEndpointPropertiesId", "sqlTargetDatabase", "sqlTargetKind", "sqlTargetProdDatabase", "sqlTargetProdEndpointId", "sqlTargetProdItemId", "sqlTargetProdServer", "sqlTargetProdWorkspaceId", "sqlTargetServer", "sqlTargetTestDatabase", "sqlTargetTestEndpointId", "sqlTargetTestItemId", "sqlTargetTestServer", "sqlTargetTestWorkspaceId", "tableMappingPrefix", "tableMappingRule", "tableMappingSchema", "tabularEditorEnabled", "tabularEditorPath", "tenantId", "timezone",
+    "warehouseManagerBronzeDatabase", "warehouseManagerBronzeRawSchema", "warehouseManagerCreatePipeline", "warehouseManagerDevDataFactory", "warehouseManagerDevResourceGroup", "warehouseManagerDevSubscriptionId", "warehouseManagerDevWorkspace", "warehouseManagerEnabled", "warehouseManagerLoadPipeline", "warehouseManagerNeverRun", "warehouseManagerNotes", "warehouseManagerPlatform", "warehouseManagerSilverDatabase", "warehouseManagerSilverSchema", "warehouseManagerTestDataFactory", "warehouseManagerTestResourceGroup", "warehouseManagerTestSubscriptionId", "warehouseManagerTestWorkspace", "warehouseManagerViewSchemas"].sort());
   assert.equal(platformHint("azure_sql"), "This machine is set up as an Azure SQL client, so No is the usual answer.");
   assert.equal(platformHint(""), "");
 });

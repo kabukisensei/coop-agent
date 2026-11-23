@@ -5,6 +5,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **`/setup-project` asks about the Schema Manager.** The project wizard and the
+  window's Project pane now ask whether the client adds source columns to Silver
+  through a Schema Manager and write the `warehouse_manager` block the
+  `add-silver-columns` skill reads: platform (Fabric pipelines or Azure Data
+  Factory), Bronze and Silver databases and schemas, the Bronze view schema per
+  source system, the two single-table pipeline names, parent pipelines never run,
+  the client's notes, and the dev and test workspace or Data Factory. Blanks are
+  allowed. Pipeline parameters are written once with the default templates and
+  then left to the file, so a client's own parameters survive an edit; answering
+  No leaves an existing block exactly as it is.
+
 ## [0.42.0] — 2026-11-18
 
 ### Changed

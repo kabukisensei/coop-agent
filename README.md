@@ -905,7 +905,11 @@ The client's setup lives in the optional `warehouse_manager` block of
 `.coop/project.yml` (see `.coop/project.example.yml`): the Bronze database and view
 schemas, the Silver database, the regenerate and reload pipelines with their
 parameters as templates (`TableName: "{table}"`), parent pipelines never to run, and
-the Fabric workspace or Azure Data Factory per environment. Without the block, coop
+the Fabric workspace or Azure Data Factory per environment. `/setup-project` and the
+window's Project pane ask for it (the Schema Manager question: platform, Bronze and
+Silver databases and schemas, the two pipeline names, parent pipelines never run,
+notes, and the dev and test workspace or Data Factory); the pipeline parameters are
+written once with the defaults and then edited in the file. Without the block, coop
 discovers what it can read-only and proposes the block before any write. The skill
 runs on dev and test only; for production it writes a run sheet for a person. The
 guardrails are unchanged: the view `ALTER` and each pipeline run ask, and production
