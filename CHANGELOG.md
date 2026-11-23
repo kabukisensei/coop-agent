@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.42.1] — 2026-11-23
+
 ### Added
 
 - **`/setup-project` asks about the Schema Manager.** The project wizard and the
