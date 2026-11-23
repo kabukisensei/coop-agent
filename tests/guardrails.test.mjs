@@ -3184,16 +3184,18 @@ await t("#371: a write through any alias of the production unlock is refused out
     const grant = join(profile, ".coop", cg.PROD_UNLOCK_FILE);
     writeFileSync(join(dir, "plain.json"), "{}");
     const linkCtx = { ...ctx, cwd: dir };
+    // Needs no symlink: a case-only alias of the grant's own name is the grant; a plain file is not.
+    assert.equal(cg.writesProdUnlock("PROD-UNLOCK.JSON", dir), true, "case-only alias");
+    assert.equal(cg.writesProdUnlock("plain.json", dir), false);
     if (!canCreateFileSymlink()) {
       console.log("  skipped: no symlink rights (#371 dangling and chained alias checks)");
     } else {
       symlinkSync(grant, join(dir, "receipt.json"));            // dangling: the grant does not exist yet
       symlinkSync(join(dir, "receipt.json"), join(dir, "chain.json"));
       symlinkSync(join(profile, ".coop"), join(dir, "profile-link"));
-      for (const alias of ["receipt.json", join(dir, "chain.json"), "profile-link/" + cg.PROD_UNLOCK_FILE, "PROD-UNLOCK.JSON"]) {
+      for (const alias of ["receipt.json", join(dir, "chain.json"), "profile-link/" + cg.PROD_UNLOCK_FILE]) {
         assert.equal(cg.writesProdUnlock(alias, dir), true, alias);
       }
-      assert.equal(cg.writesProdUnlock("plain.json", dir), false);
       for (const tool of ["write", "edit"]) {
         confirmAnswer = true; confirmCount = 0;
         const result = await handle({ toolName: tool, input: { path: "receipt.json", content: "{}" } }, linkCtx);
