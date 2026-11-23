@@ -140,11 +140,12 @@ assert.equal(executions, beforeMutations, "no mutation reaches even the inert ex
 await dispatch({ toolName: "mcp__fabric__get_schema", input: { environment: "production" } }, false);
 await dispatch({ toolName: "mcp__fabric__executeSQL", input: { sql: "DELETE FROM dbo.Customer" } }, true);
 // Revoke and shutdown change nothing for reads: they never ask.
+prompts = 0;
 await commands.get("approvals").handler("revoke", runner.createContext());
 await dispatch(read(), false);
 await runner.emit({ type: "session_shutdown", reason: "switch" });
 await dispatch(read(), false);
-assert.equal(prompts, 0);
+assert.equal(prompts, 0, "a production read never asks, before or after revoke and shutdown");
 // A dev read never asks.
 config({ environment: "dev" }); prompts = 0;
 await dispatch(read(), false);
