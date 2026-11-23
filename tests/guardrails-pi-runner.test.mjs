@@ -331,7 +331,7 @@ if (existsSync(builtinIndex) && fauxIndex) {
     assert.equal(ran.length, 3);
     const rows = readFileSync(join(agentDir, "guardrails-audit.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l))
       .filter((r) => r.kind === "codemode-script" && r.decision === "ran");
-    assert.equal(rows.at(-3).detail, "mcp:error, mcp:error, bash:error, read:error, write:error", "each nested call is audited by name");
+    assert.equal(rows.at(-3).detail, "mcp:ok, mcp:error, bash:error, read:error, write:error", "each nested call is audited by name (the production read ran)");
     assert.equal(rows.at(-2).detail, "mcp:ok, mcp:ok");
     assert.ok(!rows.some((r) => /DELETE|dbo\.Customer|rm -rf/.test(r.detail)), "never the arguments");
     // #373: a script with more than 20 calls keeps every call in its audit row.
