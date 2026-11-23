@@ -18,6 +18,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   then left to the file, so a client's own parameters survive an edit; answering
   No leaves an existing block exactly as it is.
 
+### Changed
+
+- **New tool pins: coop-data-doc 1.5.0 and coop-sql-source-control 1.0.19.**
+  data-doc model pages list unused tables and columns for cleanup, and a table
+  named as a DAX table argument counts as used. Its retired `--reviews` flag is
+  removed; a config that still lists `reviews:` builds with one warning. sqlsc
+  reads its migration phase marker only from a script's header comment, so the
+  same words in the body no longer change how the script runs.
+
 ## [0.42.0] — 2026-11-18
 
 ### Changed
