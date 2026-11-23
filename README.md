@@ -495,7 +495,7 @@ first**, not read-only-only, and all are optional.
 | Server | Provides | Enablement and policy |
 | --- | --- | --- |
 | `fabric` | Manifest-pinned Microsoft Fabric MCP | follows the active Azure CLI login (az's default account; coop cannot set its tenant); metadata reads by default, mutations approval-gated |
-| `fabric-sqlendpoint` | Microsoft-managed Fabric SQL endpoint over direct Streamable HTTP with a launch-time Azure CLI bearer token | a plain read on the resolved dev/test target runs without a prompt, writes and SQL coop cannot classify ask, a production write needs the human unlock; valid project IDs select an item-scoped endpoint; with no explicit target, global; malformed explicit targets fail closed |
+| `fabric-sqlendpoint` | Microsoft-managed Fabric SQL endpoint over direct Streamable HTTP with a launch-time Azure CLI bearer token | a plain read runs without a prompt on any environment, writes and SQL coop cannot classify ask (the question shows the exact SQL, target and effect), a production write needs the human unlock; valid project IDs select an item-scoped endpoint; with no explicit target, global; malformed explicit targets fail closed |
 | `powerbi-modeling-mcp` | Microsoft Power BI Modeling MCP with `--start --readwrite --accept-eula` | no tenant/workspace required; reads run, edits ask (an approval can cover the session), deletes, imports and deploys always ask, production edits need your typed permit |
 | `azure-devops` | Manifest-pinned Azure DevOps MCP for one organization | requires enabled toggle + valid organization; mutations approval-gated |
 | `microsoft-learn` | `learn.microsoft.com/api/mcp` | requires only its enabled toggle; always-current Microsoft docs |
@@ -558,8 +558,8 @@ with the command / no client tenant configured). The row only probes: doctor nev
 signs in. `COOP_SKIP_AZ=1` skips both. Details: [Onboarding](https://coop.aaron-jennings.cloud/docs/onboarding.html#azure-sign-in-at-launch).
 
 For live estate discovery, Coop labels repo versus live evidence and reports drift. Row
-reads run without asking on dev and test; the first production read asks once and covers
-the rest of the session.
+reads run without asking on every environment, production included; only writes ask, and
+each write question shows the exact statement, its target and its effect.
 
 > **Supply-chain note:** generated npm-backed servers use exact versions from
 > `config/release-manifest.json`. Review Coop release updates before enabling them in
@@ -618,7 +618,7 @@ launch.
 
 **Audit trail.** Every guardrail decision the runtime `coop-guardrails` extension makes —
 a blocked source commit, a permitted or refused production write, or a confirmed/declined destructive command,
-secret-file access, live row/production read, or mutating MCP call — is appended as one JSON line to
+secret-file access, or mutating MCP call, and every live row read — is appended as one JSON line to
 `$PI_CODING_AGENT_DIR/guardrails-audit.jsonl` (default `~/.coop/agent/…`). Each line records
 the timestamp, working folder, kind, decision, and the offending path(s) or a fixed
 command classification. Command text and arguments are not persisted; the secret gate

@@ -19,7 +19,7 @@ never intercepted**.
 | **fabric-cicd deploys** | Reads the Python a shell or PowerShell command runs (and the local modules it imports) for `publish_all_items`, `unpublish_all_orphan_items` or `deploy_with_config`. Dev or test asks every time; production, or a run that names no target, is blocked. |
 | **Power BI Desktop reloads** | Reads `powerbi-desktop status` before `powerbi-desktop reload` and before a `powerbi-report-author preview` that reloads the live Desktop window (bare, `--reload`, `--reload-with-model`; `--status`, `--screenshot`, `--close` and `--host service` pass). The bridge's reload discards unsaved Desktop edits unconditionally, so an instance with `hasUnsavedChanges: true` asks first (headless: blocked), and an instance coop cannot verify (no status, not connected, pid missing, flag unstated) is blocked. The instance is picked by `--pid`, else by the preview's `.Report` folder, else every connected instance must be clean. |
 | **Secret files** | Confirms before the agent reads/edits/writes a secret-looking file — `.env` (not `.env.example`), `*.pem`/`*.key`/`*.p12`, `id_rsa`/`id_ed25519`, `credentials`, `.npmrc`, `secrets.*`. Declining blocks. |
-| **Live environment reads** | Reads never ask on dev or test. The first production row read asks once; one yes covers production reads for the rest of the session. Metadata, schema and artifact-code inspection run on every environment. Query/execute calls coop cannot classify, exports and downloads still ask. |
+| **Live environment reads** | Reads never ask on any environment, production included; each is audited with its environment. Metadata, schema and artifact-code inspection run everywhere too. Query/execute calls coop cannot confirm as reads, exports and downloads still ask. |
 | **Mutating MCP actions** | Confirms create/update/delete/deploy/publish-looking Fabric, Power BI, and proxied MCP calls. |
 | **Production writes** | Runs SQL DDL/DML on a production target, Power BI Modeling edits after a production connection, and Fabric or shell writes that name production only with a person's separate, time-limited go-ahead for that client, and then each one asks a yes/no at the desk; without it they are blocked. Never session-wide, never headless, never from the phone; every attempt is audited. A session can never give itself the go-ahead. |
 
@@ -31,7 +31,7 @@ do instead (e.g. "unstage source and let a human commit").
 - **Fail closed for enforcement exceptions.** Headless mutations/destructive
   commands and ambiguous Git wrappers block. An exception escaping enforcement,
   including a throwing/rejected approval dialog, blocks the affected call with a
-  fixed reason that excludes exception text. It cannot approve production reads.
+  fixed reason that excludes exception text. It cannot approve a write.
 - **Optional display/logging remains best-effort.** A failed audit write or status
   notification does not change the enforcement decision or crash Pi.
 - **Interactive confirms only.** Approval-required actions fail closed when no
@@ -47,11 +47,11 @@ may still contain command text and are not sanitized exports.
 
 - Disable governance confirms/blocks: `COOP_NO_GUARDRAILS=1`.
 - Show Pi's own update banner for maintainer diagnostics: `COOP_SHOW_UPSTREAM_UPDATE_NOTICES=1` (read by the Coop launcher).
-- `/approvals [revoke]` — what this session may do without asking (edit approvals, production reads, the production unlock), whether enforcement is on, and the last decisions; `revoke` ends the session grants.
+- `/approvals [revoke]` — what this session may do without asking (edit approvals, the production unlock), whether enforcement is on, and the last decisions; `revoke` ends the session grants.
 
 ## Live reads
 
-Reads need no approval on dev or test; production reads ask once per session (one yes covers the rest of the session, `/approvals revoke` ends it); only changes ask every time. A plain SQL read through the COOP-managed `fabric-sqlendpoint` entry or the native `fabric_sql_query` tool takes its environment from coop's own configuration, never from tool arguments, and is audited without SQL, arguments or results. A managed entry coop cannot vouch for, and query/execute calls coop cannot classify, ask every time. Detail: `docs/guardrails-reference.md`, Live environment reads.
+Reads need no approval on any environment, production included; only changes ask, and each write question shows the exact SQL (or MCP call), its target and its effect. A plain SQL read through the COOP-managed `fabric-sqlendpoint` entry or the native `fabric_sql_query` tool takes its environment from coop's own configuration, never from tool arguments, and is audited without SQL, arguments or results. A managed entry coop cannot vouch for, and query/execute calls coop cannot classify, ask every time. Detail: `docs/guardrails-reference.md`, Live environment reads.
 
 ## Implementation
 
