@@ -5,6 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { canCreateFileSymlink } from "./symlink-rights.mjs";
 
 // Point the audit log at a throwaway dir BEFORE the handler runs, so no test writes to
 // the real ~/.coop/agent/guardrails-audit.jsonl fallback.
@@ -678,6 +679,10 @@ await t("#365: reading the agent's auth.json asks, and is blocked headless", asy
   assert.equal(blocked(await call(`cat ${auth}`, { confirm: false })), true, "bash too");
 });
 await t("#367: an innocent-looking link to a secret is the secret (native and bash); plain links still work", async () => {
+  if (!canCreateFileSymlink()) {
+    console.log("  skipped: no symlink rights (#367 file-symlink alias checks)");
+    return;
+  }
   const dir = mkdtempSync(join(tmpdir(), "coop-link-"));
   try {
     writeFileSync(join(dir, ".env"), "SYNTHETIC=1\n");
@@ -3177,24 +3182,28 @@ await t("#371: a write through any alias of the production unlock is refused out
     process.env.COOP_DIR = profile;
     mkdirSync(join(profile, ".coop"), { recursive: true });
     const grant = join(profile, ".coop", cg.PROD_UNLOCK_FILE);
-    symlinkSync(grant, join(dir, "receipt.json"));            // dangling: the grant does not exist yet
-    symlinkSync(join(dir, "receipt.json"), join(dir, "chain.json"));
-    symlinkSync(join(profile, ".coop"), join(dir, "profile-link"));
     writeFileSync(join(dir, "plain.json"), "{}");
-    for (const alias of ["receipt.json", join(dir, "chain.json"), "profile-link/" + cg.PROD_UNLOCK_FILE, "PROD-UNLOCK.JSON"]) {
-      assert.equal(cg.writesProdUnlock(alias, dir), true, alias);
-    }
-    assert.equal(cg.writesProdUnlock("plain.json", dir), false);
     const linkCtx = { ...ctx, cwd: dir };
-    for (const tool of ["write", "edit"]) {
-      confirmAnswer = true; confirmCount = 0;
-      const result = await handle({ toolName: tool, input: { path: "receipt.json", content: "{}" } }, linkCtx);
-      assert.equal(blocked(result), true, `${tool} through a dangling alias`);
-      assert.match(result.reason, /never changes production access/);
-      assert.equal(confirmCount, 0, "no confirmation can override it");
+    if (!canCreateFileSymlink()) {
+      console.log("  skipped: no symlink rights (#371 dangling and chained alias checks)");
+    } else {
+      symlinkSync(grant, join(dir, "receipt.json"));            // dangling: the grant does not exist yet
+      symlinkSync(join(dir, "receipt.json"), join(dir, "chain.json"));
+      symlinkSync(join(profile, ".coop"), join(dir, "profile-link"));
+      for (const alias of ["receipt.json", join(dir, "chain.json"), "profile-link/" + cg.PROD_UNLOCK_FILE, "PROD-UNLOCK.JSON"]) {
+        assert.equal(cg.writesProdUnlock(alias, dir), true, alias);
+      }
+      assert.equal(cg.writesProdUnlock("plain.json", dir), false);
+      for (const tool of ["write", "edit"]) {
+        confirmAnswer = true; confirmCount = 0;
+        const result = await handle({ toolName: tool, input: { path: "receipt.json", content: "{}" } }, linkCtx);
+        assert.equal(blocked(result), true, `${tool} through a dangling alias`);
+        assert.match(result.reason, /never changes production access/);
+        assert.equal(confirmCount, 0, "no confirmation can override it");
+      }
+      assert.equal(existsSync(grant), false);
     }
-    assert.equal(existsSync(grant), false);
-    // A hard link to a grant that exists is the grant.
+    // A hard link to a grant that exists is the grant. Hard links need no symlink privilege.
     writeFileSync(grant, "{}");
     linkSync(grant, join(dir, "copy.json"));
     assert.equal(cg.writesProdUnlock("copy.json", dir), true, "hard link");
