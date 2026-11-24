@@ -2,7 +2,7 @@
 import { strict as assert } from "node:assert";
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const dist = process.env.COOP_TEST_DIST;
@@ -47,12 +47,40 @@ await t("nearest contract resolves its timezone-aware daily path", () => {
   const requirement = requiredDailyLog(child, new Date("2026-01-02T03:00:00Z"));
   assert.ok(requirement);
   assert.equal(requirement.date, "2026-01-01");
-  assert.equal(requirement.displayPath, "work/logs/2026-01-01.md");
+  // From a folder below the project root the model is given the full path: its
+  // write tool resolves a relative path against the folder coop runs in, so a
+  // root-relative one landed in <child>/work/logs (row LG1).
+  assert.equal(requirement.logPath, join(root, "work", "logs", "2026-01-01.md"));
+  assert.equal(requirement.displayPath, requirement.logPath.replace(/\\/g, "/"));
+  assert.equal(requiredDailyLog(root, new Date("2026-01-02T03:00:00Z")).displayPath, "work/logs/2026-01-01.md");
   assert.match(dailyLogSystemInstruction(requirement), /NON-SKIPPABLE/);
   assert.match(dailyLogSystemInstruction(requirement), /daily-logger skill/);
   assert.match(dailyLogSystemInstruction(requirement), /If absent, create it from the daily-logger template/);
   assert.match(dailyLogSystemInstruction(requirement), /if present, append without overwriting/);
   assert.match(dailyLogSystemInstruction(requirement), /Do not check for or create the log at startup/);
+});
+
+await t("a SQL repository beside the client home repository gets the home repository's log path (LG1)", () => {
+  const client = realpathSync(mkdtempSync(join(tmpdir(), "coop-daily-sibling-")));
+  const home = join(client, "client-home");
+  const sqlRepo = join(client, "sales-sql");
+  mkdirSync(join(sqlRepo, ".git"), { recursive: true });
+  mkdirSync(join(home, ".git"), { recursive: true });
+  writeContract(home);
+  const previous = process.env.COOP_PROJECT_YML;
+  process.env.COOP_PROJECT_YML = join(home, ".coop", "project.yml");
+  try {
+    const requirement = requiredDailyLog(sqlRepo, new Date("2026-01-02T03:00:00Z"));
+    assert.ok(requirement);
+    assert.equal(requirement.logPath, join(home, "work", "logs", "2026-01-01.md"));
+    // What the model reads must resolve, from the SQL repository, to the home
+    // repository's log and never to a path inside the SQL repository.
+    assert.equal(resolve(sqlRepo, requirement.displayPath), requirement.logPath);
+    assert.ok(dailyLogSystemInstruction(requirement).includes(requirement.displayPath));
+    assert.ok(!requirement.displayPath.startsWith("work/"), "never a path the SQL repository would resolve inside itself");
+  } finally {
+    if (previous === undefined) delete process.env.COOP_PROJECT_YML; else process.env.COOP_PROJECT_YML = previous;
+  }
 });
 
 await t("tool classifier ignores reads and recognizes work plus the log write", () => {

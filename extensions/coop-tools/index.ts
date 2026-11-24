@@ -1732,7 +1732,12 @@ export function requiredDailyLog(cwd: string, now = new Date()): DailyLogRequire
       .replace(/\{yyyy-mm-dd\}/gi, date)
       .replace(/YYYY-MM-DD/g, date);
     const logPath = isAbsolute(rendered) ? resolve(rendered) : resolve(projectRoot, rendered);
-    const rel = relative(projectRoot, logPath);
+    // Shown to the model, whose write tool resolves a relative path against the
+    // folder coop runs in, not the project root: relative only when the log is
+    // inside that folder, else the full path. A path relative to the project root
+    // made coop write `docs/agent/logs/daily` inside whichever repository it was
+    // started in (a SQL repository beside the client home repository, row LG1).
+    const rel = relative(resolve(cwd), logPath);
     const displayPath = (!rel.startsWith("..") && !isAbsolute(rel) ? rel || basename(logPath) : logPath)
       .replace(/\\/g, "/");
     return { contractPath, projectRoot, logPath, displayPath, date, timezone };

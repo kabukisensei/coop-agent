@@ -16,6 +16,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   rule stay where they were: the window reads no database. The pane also
   follows a rebuild coop ran in the conversation.
 
+### Fixed
+
+- **The daily log no longer lands in a SQL repository.** Started in a repository
+  beside the client home repository (or in a folder below the project root),
+  coop was told the log's path relative to the project root and wrote
+  `docs/agent/logs/daily` inside the folder it ran in. It now gets the full
+  path, so the log goes where the project file says (plan row LG1).
+- **A write is a write in the audit log.** A Warehouse or SQL write that asks,
+  approved or declined, is recorded under `governed-live-write`. It was filed
+  under `governed-live-read` with the label "Warehouse SQL write".
+
 ## [0.42.2] — 2026-11-24
 
 ### Added
