@@ -340,18 +340,18 @@ function Invoke-CoopCleanupCommand {
     if ($days -le 0) { Coop-Die "cleanup is off (turn it on: coop cleanup days $script:CoopCleanupDefaultDays)" }
     $rows = @(Invoke-CoopCleanup -Days $days)
     foreach ($r in $rows) {
-      $line = "$($r.Name): removed $($r.Files) file(s) older than $days days ($(Format-CoopBytes $r.Bytes)); $($r.Kept) kept ($(Format-CoopBytes $r.KeptBytes))   $($r.Root)"
+      $line = "$($r.Name): removed $($r.Files) file(s) older than $($r.Days) days ($(Format-CoopBytes $r.Bytes)); $($r.Kept) kept ($(Format-CoopBytes $r.KeptBytes))   $($r.Root)"
       if ($r.Failed -gt 0) { Coop-Warn "$line; $($r.Failed) could not be removed (in use?)" } else { Coop-Ok $line }
     }
     return
   }
   if ($days -le 0) { Coop-Info "cleanup is off: coop keeps every session, backup and draft (turn it on: coop cleanup days $script:CoopCleanupDefaultDays)" }
-  else { Coop-Info "coop removes sessions, backups and drafts older than $days days, once a day when it starts (change: coop cleanup days <N>; off: coop cleanup off)" }
+  else { Coop-Info "coop removes sessions, backups and drafts older than $days days, and its own leftovers, once a day when it starts (change: coop cleanup days <N>; off: coop cleanup off)" }
   $rows = @(Invoke-CoopCleanup -Days $days -DryRun)
   foreach ($r in $rows) {
     $total = $r.Files + $r.Kept
     $bytes = $r.Bytes + $r.KeptBytes
-    $due = if ($days -gt 0) { "; $($r.Files) older than $days days ($(Format-CoopBytes $r.Bytes))" } else { '' }
+    $due = if ($days -gt 0) { "; $($r.Files) older than $($r.Days) days ($(Format-CoopBytes $r.Bytes))" } else { '' }
     Coop-Info "$($r.Name): $total file(s), $(Format-CoopBytes $bytes)$due   $($r.Root)"
   }
 }
