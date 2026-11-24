@@ -458,7 +458,7 @@ and no prompt is asked (the read is dev only, catalog views only, read-only inte
 | Command | What it does |
 | --- | --- |
 | `setup` | Every dev target of the contract (`sql_targets.dev` and each `sql_targets.named.<set>.dev`) becomes a `live_sources` entry (`dev`, `dev_<set>`) with `environment: dev`, pointing at the repo `sql` or `sql_<set>` under `live/`. The host is resolved exactly as a read (`lib/sql_query.py` `resolve_target` and `resolve_connection`) and written through `coop-data-doc config-set`; coop never writes `coop-data-doc.yml` itself. A target that does not resolve as dev is `target_not_dev`. |
-| `refresh` | For each `live_sources` entry that is one of those dev targets (same host, same database), runs `coop-data-doc snapshot <name> --json` with the tenant-pinned token in the child's `COOP_DATA_DOC_ACCESS_TOKEN`. An entry the contract does not name is `not_a_dev_target` and gets no token. With `max_age_days`, a younger snapshot is skipped before anything is resolved or minted. |
+| `refresh` | For each `live_sources` entry that is one of those dev targets (same host, same database), runs `coop-data-doc snapshot <name> --json` with the tenant-pinned token in the child's `COOP_DATA_DOC_ACCESS_TOKEN`. An entry the contract does not name is `not_a_dev_target` and gets no token. With `max_age_days`, a younger snapshot is skipped before anything is resolved or minted. | Before each snapshot the helper hashes the object files the previous manifest names and, after it, reports the objects added, changed and removed since that read (`since`, `changes`, by `schema.name (type)`) and puts the same as a dated section at the top of `live/dev-changes.md` (`changes_file`); a first read has nothing to compare with and gets neither. |
 | `status` | The age of each source's snapshot from its `.coop-data-doc-snapshot.json`; reads files only. |
 
 `/setup-docs` offers "The live dev database" when the contract has a dev SQL
@@ -467,7 +467,10 @@ output folder) and a build. `coop-data-doc.yml` is the committed, shared setting
 `live/` gets a `.gitignore` so definitions are never committed. At session start,
 when the config in the session folder has `live_sources`, coop runs `refresh` with
 `max_age_days: 7` in the background and rebuilds the docs when a snapshot was
-taken, so each teammate's docs are at most a week behind dev. A failure is one
+taken, so each teammate's docs are at most a week behind dev. After the rebuild
+coop says what changed in dev since the previous read (one clause per source,
+at most five names per group) and names `live/dev-changes.md` for the full list:
+the weekly "what changed in dev" summary. A failure is one
 notice and never blocks the session. `/setup-docs live` skips the question and
 takes the live choice; `/setup-docs refresh` runs `refresh` with no age limit and
 rebuilds. The window's Docs pane shows when dev was last read (the oldest

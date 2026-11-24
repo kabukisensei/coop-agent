@@ -36,10 +36,10 @@ t("buildStartMenu returns runnable task items with unique labels", () => {
   assert.ok(labels.some((label) => label.includes("Document a warehouse or semantic model")), "data-doc setup must be discoverable from /start");
 });
 
-t("the menu is the six task guides, then the seven common workflows of master plan section 9, in order", () => {
+t("the menu is the seven task guides, then the seven common workflows of master plan section 9, in order", () => {
   const all = buildStartMenu().map((i) => i.label);
-  assert.equal(all.length, 13, "six guides plus one item per plan workflow");
-  const guides = ["Set up a fact table", "Set up a dimension", "Clean up a semantic model", "DAX measure", "silver load or gold view", "Add a table to the model"];
+  assert.equal(all.length, 14, "seven guides plus one item per plan workflow");
+  const guides = ["Set up a fact table", "Set up a dimension", "Clean up a semantic model", "DAX measure", "silver load or gold view", "Add a table to the model", "Clean up unused tables and columns"];
   guides.forEach((needle, i) => assert.ok(all[i].includes(needle), `guide ${i + 1} is "${needle}", got "${all[i]}"`));
   const labels = all.slice(guides.length);
   const expected = [
@@ -79,6 +79,7 @@ t("each task guide sends its prompt template, which asks first, specs before wri
     "dax-measure": [/DAX standards/, /Measure Metadata/],
     "new-load": [/Silver Tables/, /Gold Stored Procedures/, /\/spec-first/, /sql_impact/],
     "model-table": [/Relationships/, /M Query/, /bpa_review/],
+    "clean-unused": [/sql_impact/, /\/spec-first/, /\/slice-next/, /schema_compare/, /dev only/, /person/, /cannot see/],
   };
   assert.deepEqual(TASK_GUIDES.map((g) => g.name), Object.keys(expectStandards));
   const items = buildStartMenu();

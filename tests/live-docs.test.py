@@ -71,9 +71,15 @@ elif argv[0] == "snapshot":
         sys.exit(1)
     folder = config.parent / data["repos"][data["live_sources"][name]["repo"]]["path"]
     folder.mkdir(parents=True, exist_ok=True)
-    (folder / ".coop-data-doc-snapshot.json").write_text(json.dumps({"taken_at": "2026-11-24T16:00:00Z"}), encoding="utf-8")
+    # the object files this read "found": {relative path: text}, like the real snapshot
+    files = json.loads(os.environ.get("COOP_TEST_FILES", "{}"))
+    for relative, text in files.items():
+        (folder / relative).parent.mkdir(parents=True, exist_ok=True)
+        (folder / relative).write_text(text, encoding="utf-8")
+    taken_at = os.environ.get("COOP_TEST_TAKEN", "2026-11-24T16:00:00Z")
+    (folder / ".coop-data-doc-snapshot.json").write_text(json.dumps({"taken_at": taken_at, "files": sorted(files)}), encoding="utf-8")
     print(json.dumps({"command": "snapshot", "sources": [{"source": name, "path": str(folder), "skipped": False,
-        "taken_at": "2026-11-24T16:00:00Z", "counts": {"table": 2, "view": 1}, "written": 3, "removed": 0,
+        "taken_at": taken_at, "counts": {"table": 2, "view": 1}, "written": 3, "removed": 0,
         "unread": [{"schema": "dbo", "name": "v", "type": "view", "why": "x"}], "renamed": [], "dependencies": 1, "dependencies_error": None}]}))
 '''
 
@@ -251,10 +257,52 @@ with tempfile.TemporaryDirectory() as tmp:
     with no_resolving():
         assert ld.setup(cwd=root, config=str(config))["state"] == "no_dev_target"
 
+    # What changed in dev: the second read of a source is compared with the first,
+    # object by object, and the summary goes to live/dev-changes.md, newest first.
+    (root / ".coop" / "project.yml").write_text(CONTRACT, encoding="utf-8")
+    first = {"Tables/dbo.customers.sql": "CREATE TABLE [dbo].[customers] (\n    [id] int NOT NULL\n);\n",
+             "Views/dbo.v_customers.sql": "CREATE VIEW dbo.v_customers AS SELECT id FROM dbo.customers;\n",
+             "Views/sales.v_old.sql": "CREATE VIEW sales.v_old AS SELECT 1 AS x;\n", "Dependencies.json": "[]"}
+    import shutil
+    shutil.rmtree(root / "live")   # the reads above left snapshots and their (empty) comparisons
+    with resolving(), mock.patch.dict(os.environ, {"COOP_TEST_FILES": json.dumps(first), "COOP_TEST_TAKEN": "2026-11-17T06:00:00Z"}):
+        out = ld.refresh(cwd=root, config=str(config), now=TAKEN - timedelta(days=7))
+    assert out["taken"] == 2 and all("changes" not in row for row in out["sources"]), ("a first read has nothing to compare with", out)
+    assert not (root / "live" / "dev-changes.md").exists()
+    second = {"Tables/dbo.customers.sql": "CREATE TABLE [dbo].[customers] (\n    [id] int NOT NULL,\n    [name] nvarchar(50) NULL\n);\n",
+              "Views/dbo.v_customers.sql": first["Views/dbo.v_customers.sql"],
+              "Stored Procedures/sales.usp_load%20orders.sql": "CREATE PROCEDURE sales.[usp_load orders] AS SELECT 1;\n", "Dependencies.json": "[]"}
+    with resolving(), mock.patch.dict(os.environ, {"COOP_TEST_FILES": json.dumps(second)}):
+        out = ld.refresh(cwd=root, config=str(config), now=TAKEN)
+    dev = out["sources"][0]
+    assert dev["since"] == "2026-11-17T06:00:00Z" and dev["changes_file"] == "live/dev-changes.md", dev
+    assert dev["changes"] == {
+        "added": ["sales.usp_load orders (procedure)"],
+        "changed": ["dbo.customers (table)"],
+        "removed": ["sales.v_old (view)"],
+    }, dev
+    text = (root / "live" / "dev-changes.md").read_text(encoding="utf-8")
+    assert text.startswith("# What changed in dev\n\n"), text
+    assert text.count("## ") == 2 and text.index("## dev_lake: 2026-11-24 (since 2026-11-17)") < text.index("## dev: 2026-11-24 (since 2026-11-17)"), text
+    assert "- Added: sales.usp_load orders (procedure)\n- Changed: dbo.customers (table)\n- Removed: sales.v_old (view)\n" in text, text
+    assert "\r" not in text
+    # a third read with nothing changed goes on top; the older sections stay
+    with resolving(), mock.patch.dict(os.environ, {"COOP_TEST_FILES": json.dumps(second), "COOP_TEST_TAKEN": "2026-12-01T06:00:00Z"}):
+        out = ld.refresh(cwd=root, config=str(config), now=TAKEN + timedelta(days=7))
+    assert out["sources"][0]["changes"] == {"added": [], "changed": [], "removed": []}, out
+    text = (root / "live" / "dev-changes.md").read_text(encoding="utf-8")
+    assert text.count("## ") == 4 and text.index("## dev: 2026-12-01 (since 2026-11-24)\n\n- Nothing changed.\n") < text.index("## dev: 2026-11-24"), text
+    assert SQL_HOST not in text and "tok-" not in text
+    # the labels: type folder -> word, %XX unescaped, a stray path is still a label
+    assert ld.object_label("Functions/dbo.fn_x.sql") == "dbo.fn_x (function)"
+    assert ld.object_label("Triggers\\dbo.trg_a.sql") == "dbo.trg_a (trigger)"
+    assert ld.object_label("odd.sql") == "odd (object)"
+    (root / ".coop" / "project.yml").write_text("schema_version: 1\nprofile:\n  client: Contoso\n", encoding="utf-8")
+
     # The stdin contract routes to the same functions.
     assert ld.execute({"command": "status", "config": str(config)}, cwd=root)["state"] == "ok"
 
     for key in (ld.TOOL_ENV, "COOP_TEST_RECORD", ld.TOKEN_ENV):
         os.environ.pop(key, None)
 
-print("✓ live docs helper (dev targets only, token per source in the child's environment, fresh snapshots never connect)")
+print("✓ live docs helper (dev targets only, token per source in the child's environment, fresh snapshots never connect, what changed in dev)")
