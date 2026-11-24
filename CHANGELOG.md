@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.42.2] — 2026-11-24
+
 ### Added
 
 - **Lineage docs from the live dev database.** For a client whose SQL is not in
@@ -17,7 +19,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   over 7 days old, coop refreshes it and rebuilds the docs in the background.
   Dev targets only: a database the project file does not name as dev gets no
   sign-in token. The coop-data-doc pin moves from 1.5.1 to 1.6.1 for it; install and
-  `coop update` add `pyodbc` to coop-data-doc's environment.
+  `coop update` add `pyodbc` to coop-data-doc's environment. Known limit: with
+  more than one dev target, the wizard's layer step lists only the first
+  database's schemas; type the other database's schemas there, or its objects
+  are read but not documented.
 
 ### Changed
 
