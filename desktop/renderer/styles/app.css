@@ -402,7 +402,8 @@ details.divider .md { text-align: left; margin-top: 10px; padding: 10px 12px; ba
 .context.high .meter-fill { background: var(--warning); }
 
 /* ---------- modals, pickers, toasts ---------- */
-.modal-layer { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(5, 8, 12, 0.5); z-index: 20; }
+/* Above the toasts (30): a notice never sits on a dialog's buttons. */
+.modal-layer { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(5, 8, 12, 0.5); z-index: 40; }
 .modal {
   grid-area: 1 / 1; width: min(520px, 100%); max-height: calc(100vh - 48px); display: flex; flex-direction: column;
   background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); box-shadow: var(--shadow); overflow: hidden;
@@ -490,8 +491,10 @@ label.setting { cursor: default; }
 @keyframes rise { from { transform: translateY(-6px); opacity: 0; } }
 
 /* ---------- side pane (D1b2): changes, standards, project form, docs ---------- */
-body.with-pane .app { grid-template-columns: var(--sidebar-width, 264px) minmax(0, 1fr) var(--pane-width, 520px); }
-body.with-pane.no-sidebar .app { grid-template-columns: 0 minmax(0, 1fr) var(--pane-width, 520px); }
+/* Until someone drags it, the pane takes what a narrower window can spare: the
+   conversation keeps 480px (resize.mjs MIN_MAIN) down to the pane's 320px floor. */
+body.with-pane .app { grid-template-columns: var(--sidebar-width, 264px) minmax(0, 1fr) var(--pane-width, clamp(320px, calc(100vw - var(--sidebar-width, 264px) - 480px), 520px)); }
+body.with-pane.no-sidebar .app { grid-template-columns: 0 minmax(0, 1fr) var(--pane-width, clamp(320px, calc(100vw - 480px), 520px)); }
 .pane { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--panel); border-left: 1px solid var(--border); }
 /* Drag handles: the sidebar's right edge, the pane's left edge, the changes split. */
 .pane-resize, .sidebar-resize { position: absolute; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 2; touch-action: none; }
@@ -571,7 +574,10 @@ details.standards .pane-links { margin-top: 8px; }
 /* The drafts group (F2): this client's drafts for the repository, after the changed files. */
 .change-group { display: flex; align-items: center; margin: 6px 0 2px; padding: 2px 8px; font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; color: var(--text-muted); border-top: 1px solid var(--border); }
 .change-list > .change-group:first-child { margin-top: 0; border-top: 0; }
-.change-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 12.5px; }
+/* A long path gives up its folders first: the file's name is what tells two rows apart. */
+.change-path { flex: 1; min-width: 0; display: flex; overflow: hidden; white-space: nowrap; font-family: var(--font-mono); font-size: 12.5px; }
+.change-dir { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-muted); }
+.change-name { flex: 0 0 auto; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .change-head { flex: none; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .change-head code { flex: 1 1 auto; min-width: 0; }
 .change-open { flex: none; }
@@ -627,7 +633,17 @@ details.standards .pane-links { margin-top: 8px; }
 ::highlight(coop-pane-find-current) { background-color: var(--accent); color: var(--accent-text); }
 
 /* forms: the project form and the docs setup */
-.form-section { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.form-section { padding: 0 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+/* Each part of the project form folds: its heading, what it holds now, a chevron. */
+.section-head { display: flex; align-items: center; gap: 10px; padding: 10px 0; cursor: pointer; list-style: none; }
+.section-head::-webkit-details-marker { display: none; }
+.section-head h3 { flex: none; }
+.section-status { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; font-size: 12.5px; color: var(--text-muted); }
+.section-head > .icon { flex: none; color: var(--text-muted); transition: transform 0.12s; }
+.form-section[open] > .section-head > .icon { transform: rotate(90deg); }
+.section-body { display: flex; flex-direction: column; gap: 10px; padding: 2px 0 12px; }
+.folder-fold > summary { cursor: pointer; font-size: 12.5px; color: var(--text-muted); }
+.folder-fold[open] > summary { margin-bottom: 6px; }
 .form-section h3, .docs-setup h3, .docs-build h3 { margin: 0; font-size: 14px; color: var(--text-strong); display: flex; align-items: center; gap: 6px; }
 .form-group { display: flex; flex-direction: column; gap: 10px; padding-left: 12px; border-left: 2px solid var(--border); }
 .form-row { display: flex; flex-direction: column; gap: 4px; }
@@ -687,7 +703,6 @@ pre.output.build-log { max-height: 220px; font-size: 12px; white-space: pre-wrap
   body.no-sidebar .sidebar { visibility: visible; }
   .timeline, .dock { padding-left: 14px; padding-right: 14px; }
   .dock { padding-right: calc(14px + var(--scrollbar, 10px)); }
-  #terminalButton { display: none; }
   /* A narrow window shows the pane over the conversation. */
   body.with-pane .app { grid-template-columns: 0 minmax(0, 1fr); }
   body.with-pane.no-sidebar .app { grid-template-columns: 240px minmax(0, 1fr); }

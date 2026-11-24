@@ -5,7 +5,7 @@ import { el, icon, openModal, pickFrom, toast, modalOpen, relativeTime, splitGly
 import { createTimeline, applyEvent, loadMessages, startBash, finishBash, formatTokens, textOf, notice, turnOf, turns } from "./timeline.mjs";
 import { createFinder } from "./find.mjs";
 import { renderItem, renderTurn, codeBlock } from "./view.mjs";
-import { parseInput, completions, BUILTINS, KEYS } from "./commands.mjs";
+import { parseInput, completions, KEYS } from "./commands.mjs";
 import { registerPane, openPane, togglePane, closePane, currentPane, refreshPane, initPanes } from "./panes.mjs";
 import { mountChanges } from "./pane-changes.mjs";
 import { mountStandards } from "./pane-standards.mjs";
@@ -60,9 +60,6 @@ const app = {
     // working, expandable); activityOpen remembers each line the user opened.
     activityFold: true,
     activityOpen: new Map(),
-    // Pi's auto-retry default is on; get_state does not report it, so the
-    // window remembers what it last set here.
-    autoRetry: true,
     outputs: new Map(),
     outputState(key) {
       if (!this.outputs.has(key)) this.outputs.set(key, { all: false, redraw: () => {} });
@@ -149,6 +146,8 @@ function onEvent(event) {
   if (!event || typeof event !== "object") return;
   if (event.type === "extension_ui_request") { onUiRequest(event); return; }
   const { changed, status } = applyEvent(app.tl, event);
+  // A message you just sent is always in view, wherever the conversation was scrolled.
+  if (event.type === "message_start" && event.message && event.message.role === "user") app.stickNext = true;
   for (const id of changed) redraw(id);
   // A first prompt names a new session's tab right away.
   if (status || (event.type === "message_start" && event.message && event.message.role === "user")) { renderBusy(); renderHeader(); }
@@ -356,7 +355,8 @@ function nearBottom(box) {
 function flush() {
   app.frame = 0;
   const box = $("timeline");
-  const stick = nearBottom(box);
+  const stick = app.stickNext || nearBottom(box);
+  app.stickNext = false;
   const drawn = new Set();
   for (const id of app.dirty) {
     if (drawn.has(id)) continue;
@@ -625,6 +625,7 @@ async function runBash(command, excluded) {
   if (app.bashItem) { toast("A shell command is still running. Press Esc to stop it.", "warning"); return; }
   const id = startBash(app.tl, command, excluded);
   app.bashItem = id;
+  app.stickNext = true;
   redraw(id);
   renderBusy();
   const result = await cmd({ type: "bash", command, excludeFromContext: excluded });
@@ -925,7 +926,6 @@ function renderHeader() {
   const reasoning = app.state && app.state.model && app.state.model.reasoning;
   $("thinkingButton").hidden = !reasoning;
   $("thinkingButton").textContent = `Thinking: ${level || "off"}`;
-  $("terminalButton").hidden = !info.canOpenTerminal;
 }
 
 /**
@@ -1173,7 +1173,9 @@ async function renameSession(arg) {
     return;
   }
   const field = el("input", { class: "field", type: "text", autofocus: true });
-  field.value = app.tl.sessionName || "";
+  // The name on screen (a given name, or the title coop gave it) is the starting point.
+  const shown = $("sessionName").textContent || "";
+  field.value = app.tl.sessionName || (shown === "New session" ? "" : shown);
   const save = async () => { if (field.value.trim()) await renameSession(field.value.trim()); };
   field.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); save(); modal.close(); } });
   const modal = openModal({ title: "Name this session", body: field, buttons: [{ label: "Save", kind: "primary", onClick: () => { save(); } }, { label: "Cancel" }] });
@@ -1317,8 +1319,13 @@ async function exportSession(arg = "") {
 }
 
 async function newSession() {
-  // coop keeps working here; the new session gets its own tab and its own coop.
-  if (app.tl.busy) { await newTab(); return; }
+  // A new session gets its own tab, as a saved one does, so the conversation
+  // here stays where it is. Only an unused tab (nothing said, coop idle) is
+  // the new session already, and a full window starts it here.
+  if (!app.tl.busy && conversationEmpty()) { prompt().focus(); return; }
+  const tab = await coop.newTab("");
+  if (tab.success) return;
+  if (app.tl.busy) { toast(tab.error || "Could not open a new tab.", "warning"); return; }
   const result = await cmdOrToast({ type: "new_session" }, "Could not start a new session");
   if (result.success && !(result.data && result.data.cancelled)) { await refreshAll(); prompt().focus(); }
 }
@@ -1346,9 +1353,6 @@ function settingsPanel() {
   const body = el("div", { class: "settings" },
     row("Theme", select(Object.entries(THEME_LABELS), app.info.theme, (v) => coop.setTheme(v))),
     row("Auto-compact", toggle(Boolean(s.autoCompactionEnabled), async (v) => { await cmdOrToast({ type: "set_auto_compaction", enabled: v }, "Could not change auto-compact"); refreshState(); }), "Compact the conversation when the context is nearly full"),
-    row("Auto-retry", toggle(app.prefs.autoRetry, async (v) => { const r = await cmdOrToast({ type: "set_auto_retry", enabled: v }, "Could not change auto-retry"); if (r.success) app.prefs.autoRetry = v; }), "Retry a failed model call. Turns back on each time the window opens"),
-    row("Steering", select(Object.entries(DELIVERY), s.steeringMode, async (v) => { await cmdOrToast({ type: "set_steering_mode", mode: v }, "Could not change steering"); refreshState(); }), "How messages you send while coop works are delivered"),
-    row("Follow-ups", select(Object.entries(DELIVERY), s.followUpMode, async (v) => { await cmdOrToast({ type: "set_follow_up_mode", mode: v }, "Could not change follow-ups"); refreshState(); })),
     row("Show thinking", toggle(app.prefs.showThinking, (v) => { app.prefs.showThinking = v; app.prefs.thinkingOpen.clear(); rerenderAll(); }), "Ctrl+T"),
     row("Expand tool output", toggle(app.prefs.expandTools, (v) => { app.prefs.expandTools = v; app.prefs.toolOpen.clear(); rerenderAll(); }), "Ctrl+O"),
     row("DAX opens in", select([["tabular-editor", "Tabular Editor"], ["power-bi", "Power BI Desktop"]], app.info.daxEditor || "tabular-editor", async (v) => { const r = await coop.setPref("daxEditor", v); if (r && r.success) app.info.daxEditor = v; }), "The program the Changes pane's Open in editor uses for a semantic model's files (SQL opens in SSMS)"),
@@ -1360,7 +1364,7 @@ function settingsPanel() {
 
 function hotkeys() {
   const rows = [
-    ["Ctrl+K", "Command palette: every action and /command"],
+    ["Ctrl+K", "Command palette: everything the window can do"],
     // The tree view's own controls are listed in that view, not here.
     ...Object.values(KEYS).map((k) => [k.keys, k.does]),
     ["Ctrl+N", "New tab: another session alongside, with its own coop"],
@@ -1465,17 +1469,15 @@ async function pickSession() {
   if (value) await switchSession(value);
 }
 
+// Ctrl+K: what the window itself can do. Slash commands, prompts and skills
+// are one list, under "/" in the prompt box, not a second copy here.
 async function palette() {
   const items = [
     ...Object.entries(ACTIONS).filter(([id]) => id !== "terminal" && id !== "palette").map(([id, action]) => ({ label: action.label, hint: action.keys || "", value: { action: id } })),
     { label: "Open in terminal", hint: "", value: { action: "terminal" } },
-    ...BUILTINS.filter((c) => c.action === "terminal").map((c) => ({ label: `/${c.name}`, detail: c.description, value: { action: "terminal", name: c.name } })),
-    ...app.commands.map((c) => ({ label: `/${c.name}`, detail: String(c.description || "").replace(/^#+\s*/, "").split("\n")[0], hint: sourceLabel(c.source), value: { insert: `/${c.name} ` } })),
   ];
-  const value = await pickFrom({ title: "Commands", items, placeholder: "What do you want to do?" });
-  if (!value) return;
-  if (value.insert) setPrompt(value.insert);
-  else runAction(value.action, "", value.name || "");
+  const value = await pickFrom({ title: "Commands", items, placeholder: "What do you want to do? (type / in the prompt box for commands and skills)" });
+  if (value) runAction(value.action);
 }
 
 // --- Keyboard and wiring ------------------------------------------------------
@@ -1609,7 +1611,6 @@ function wire() {
   window.addEventListener("resize", () => sidebar.apply());
   $("modelButton").addEventListener("click", () => runAction("model"));
   $("thinkingButton").addEventListener("click", () => runAction("thinking"));
-  $("terminalButton").addEventListener("click", () => runAction("terminal"));
   $("menuButton").addEventListener("click", palette);
   $("feedbackButton").addEventListener("click", () => runAction("feedback"));
   $("paneButton").addEventListener("click", () => togglePane(app.lastPane));
@@ -1629,6 +1630,13 @@ function wire() {
     if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) prompt().focus();
   });
   window.addEventListener("resize", autosize);
+  // The side pane and the sessions list change the prompt's width without a
+  // window resize; its height follows either way.
+  let promptWidth = 0;
+  new ResizeObserver(() => {
+    const width = Math.round(composer.getBoundingClientRect().width);
+    if (width !== promptWidth) { promptWidth = width; autosize(); }
+  }).observe(composer);
 }
 
 function registerPanes() {

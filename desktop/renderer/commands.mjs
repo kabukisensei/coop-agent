@@ -91,7 +91,7 @@ export function completions(text, piCommands = [], { limit = 60 } = {}) {
     if (!command || typeof command.name !== "string" || seen.has(command.name)) continue;
     seen.add(command.name);
     const terminal = Object.hasOwn(TERMINAL_ONLY, command.name);
-    all.push({ name: command.name, args: "", description: `${firstLine(command.description)}${terminal ? " (opens the terminal)" : ""}`, source: String(command.source || "") });
+    all.push({ name: command.name, args: "", description: `${describe(command)}${terminal ? " (opens the terminal)" : ""}`.trim(), source: String(command.source || "") });
   }
   for (const [name, description] of Object.entries(TERMINAL_ONLY)) {
     if (seen.has(name)) continue;
@@ -105,6 +105,17 @@ export function completions(text, piCommands = [], { limit = 60 } = {}) {
 
 function firstLine(text) {
   return String(text || "").replace(/^#+\s*/, "").split("\n")[0].slice(0, 160);
+}
+
+/**
+ * One line about a Pi command for the lists (completion, Ctrl+K). A prompt
+ * template with no description of its own reports its heading, which is the
+ * command's name again ("/annotate"): that says nothing, so it is left out.
+ */
+export function describe(command) {
+  const line = firstLine(command && command.description);
+  const name = String((command && command.name) || "").toLowerCase();
+  return line.replace(/^\//, "").trim().toLowerCase() === name ? "" : line;
 }
 
 /**

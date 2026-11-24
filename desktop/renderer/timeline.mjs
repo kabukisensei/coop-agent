@@ -363,13 +363,20 @@ function pathOf(args) {
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
+// coop's own bookkeeping tools read as what they did for the person, not as a
+// tool name: the todo panel above the prompt and the question card are theirs.
+const PLAIN_STEPS = Object.freeze({
+  todo: { done: "updated the todo list", live: "Updating the todo list..." },
+  ask_user_question: { done: "asked you a question", live: "Asking you a question..." },
+});
+
 /**
  * One line for a run of tool calls and thinking: "Read vSales.sql, ran 2
  * commands, edited report.sql", or the live step while the last one runs.
  * blocks are the run's blocks in order; tools is the timeline's tool map.
  */
 export function activitySummary(blocks, tools, { live = false, waiting = false } = {}) {
-  const read = []; const ran = []; const edited = []; const searched = []; const other = []; const blocked = [];
+  const read = []; const ran = []; const edited = []; const searched = []; const other = []; const blocked = []; const plain = [];
   let thinking = 0; let failed = 0;
   const toolOf = (block) => tools.get(block.toolCallId) || { status: "pending" };
   for (const block of blocks) {
@@ -389,6 +396,7 @@ export function activitySummary(blocks, tools, { live = false, waiting = false }
     else if (name === "bash") ran.push(String((args && args.command) || "").split("\n")[0]);
     else if (name === "edit" || name === "write") edited.push(fileName(pathOf(args)));
     else if (name === "grep" || name === "find" || name === "ls") searched.push(name);
+    else if (Object.hasOwn(PLAIN_STEPS, name)) plain.push(PLAIN_STEPS[name].done);
     else other.push(name);
   }
   const last = blocks[blocks.length - 1];
@@ -406,6 +414,7 @@ export function activitySummary(blocks, tools, { live = false, waiting = false }
         if (name === "bash") return `Running ${target || "a command"}...`;
         if (name === "edit" || name === "write") return `Editing ${target || "a file"}...`;
         if (name === "grep" || name === "find" || name === "ls") return "Searching the folder...";
+        if (Object.hasOwn(PLAIN_STEPS, name)) return PLAIN_STEPS[name].live;
         return `Using ${name}...`;
       }
     }
@@ -417,6 +426,7 @@ export function activitySummary(blocks, tools, { live = false, waiting = false }
   if (edited.length) parts.push(`edited ${edited.length === 1 && edited[0] ? edited[0] : plural(edited.length, "file")}`);
   if (searched.length) parts.push(searched.length === 1 ? "searched the folder" : `searched ${searched.length} times`);
   if (other.length) parts.push(`used ${[...new Set(other)].join(", ")}`);
+  parts.push(...new Set(plain));
   if (!parts.length) parts.push(thinking ? "thought it through" : "worked");
   let text = parts.join(", ");
   text = text.charAt(0).toUpperCase() + text.slice(1);

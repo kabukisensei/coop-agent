@@ -44,11 +44,11 @@ const { listChanges, listDrafts, fileDiff, parseNameStatus, parseNumstat, newFil
 const { readStandards, readSnapshot, readNote, listNotes, knowledgeView, domainView, sourceDomainView, keepArticles, DOMAINS, KNOWLEDGE_LABELS } = await import("../desktop/lib/standards-view.mjs");
 const { loadProject, previewProject, saveProject, settingsFromForm } = await import("../desktop/lib/project-form.mjs");
 const docs = await import("../desktop/lib/docs-setup.mjs");
-const { normalizePath, relativePath, repoForPath, fixLinePrompt } = await import("../desktop/renderer/pane-changes.mjs");
+const { normalizePath, relativePath, repoForPath, fixLinePrompt, splitPath } = await import("../desktop/renderer/pane-changes.mjs");
 const editors = await import("../desktop/lib/editors.mjs");
 const { loadSettings } = await import("../desktop/lib/settings.mjs");
 const { articleOutline, sourceLine, noteLabel, isKnowledgeId, STATE_LABELS, KNOWLEDGE_STATE_LABELS } = await import("../desktop/renderer/pane-standards.mjs");
-const { initialValues, formInput, platformHint, folderRows, ROLE_LABELS } = await import("../desktop/renderer/pane-project.mjs");
+const { initialValues, formInput, platformHint, folderRows, sectionStatus, ROLE_LABELS } = await import("../desktop/renderer/pane-project.mjs");
 const { resolvePage, isDocsLink, stripFrontMatter, answerLabel, typeLabel, readAgo, liveActions, liveKey } = await import("../desktop/renderer/pane-docs.mjs");
 const { paneLinksForTool, paneLinksForText } = await import("../desktop/renderer/view.mjs");
 const { parseMarkdown } = await import("../desktop/renderer/markdown.mjs");
@@ -249,6 +249,12 @@ await check("drafts (F2): the repository's drafts folder lists newest first, rea
     assert.equal(rows[2].holds, "the team's project file, client skills and prompts");
     assert.equal(rows[3].holds, "(this machine)");
     assert.equal(folderRows({ standardsTier: "client" })[3].holds, "(this client)");
+    // Each folded part of the form says what it holds, from the form's values.
+    const empty = { repositories: [], namedTargets: [] };
+    assert.deepEqual(Object.keys(sectionStatus).map((key) => sectionStatus[key](empty)), ["not named yet", "none: discovery mode", "off", "off", "none", "none", "defaults", "off", "off"]);
+    const filled = { client: "Contoso", organization: "Cooptimize", repositories: [{}, {}], namedTargets: [{}], fabricEnabled: true, fabricWorkspaceName: "Contoso Dev", powerBiEnabled: true, powerBiWorkspaceName: "", sqlTargetKind: "fabric_warehouse", sqlTargetDatabase: "ContosoDW", schemaCompareExclude: "stage", tabularEditorEnabled: true, warehouseManagerEnabled: true };
+    assert.deepEqual(Object.keys(sectionStatus).map((key) => sectionStatus[key](filled)), ["Contoso", "2 repositories", "Contoso Dev", "on", "Fabric Warehouse: ContosoDW", "1 set", "customised", "on", "on"]);
+    assert.equal(sectionStatus.repositories({ repositories: [{}] }), "1 repository");
     // The renderer shows the group only when there are drafts, and the main process reads a draft from the drafts folder.
     const pane = readFileSync(join(ROOT, "desktop", "renderer", "pane-changes.mjs"), "utf8");
     assert.match(pane, /if \(!state\.drafts\.length\) return \[\];/);
@@ -259,6 +265,11 @@ await check("drafts (F2): the repository's drafts folder lists newest first, rea
 
 await check("changes: a tool call's path finds its file in the list", () => {
   assert.equal(normalizePath("C:\\Work\\Repo\\src\\a.sql", "c:\\work\\repo"), "src/a.sql");
+  // The changed-files list keeps a file's name in view and shortens its folders.
+  assert.deepEqual(splitPath("warehouse/Tables/fact.OrderLine.sql"), { dir: "warehouse/Tables/", name: "fact.OrderLine.sql" });
+  assert.deepEqual(splitPath("C:\\drafts\\a b.sql"), { dir: "C:\\drafts\\", name: "a b.sql" });
+  assert.deepEqual(splitPath("README.md"), { dir: "", name: "README.md" });
+  assert.deepEqual(splitPath(""), { dir: "", name: "" });
   assert.equal(normalizePath("/w/repo/docs/x.md", "/w/repo/"), "docs/x.md");
   assert.equal(normalizePath("./sql/b.sql", "/w/repo"), "sql/b.sql");
   assert.equal(normalizePath("@sql/b.sql", "/w/repo"), "sql/b.sql");

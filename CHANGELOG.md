@@ -7,6 +7,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- **What changed in dev.** When coop refreshes lineage docs from the live dev
+  database (the weekly session-start refresh, or `/setup-docs refresh`), it
+  compares the new read with the previous one and says which objects were added,
+  changed or removed since then, with the full list by date in
+  `live/dev-changes.md` (newest first; `live/` stays uncommitted). A first read
+  has nothing to compare with and says nothing.
+- **A Start menu guide for cleaning up unused tables and columns**
+  (`/clean-unused`). Candidates come from the lineage docs and `sql_impact` on
+  dev, each with its evidence and what the docs cannot see (notebooks,
+  pipelines, dynamic SQL); the guide waits for approval, changes dev only one
+  item at a time, and prepares the promotion script for a person to run.
+
 - **The window's Docs pane knows the live dev database.** When the docs come
   from the dev database, the pane shows when dev was last read and has a
   **Refresh from dev** button. When the project file has a dev SQL target and
@@ -34,6 +46,21 @@ All notable changes to coop-agent are recorded here. The format loosely follows
     and backups older than the cleanup age in a `.backups` folder from before
     v0.38.0 (in the repository or the client folder). A `.backups` folder with
     a file git tracks is left alone. `coop cleanup` lists each of these.
+- **Window: fewer things to look at** (UX review, 2026-11-24).
+  Ctrl+K lists what the window can do (about 30 rows) and no longer repeats
+  every slash command and skill: those are one `/` away in the prompt box.
+  Settings loses three rows nobody needs to set (auto-retry, steering,
+  follow-ups); the defaults stay as they were, so a message sent while coop
+  works still steers it and Alt+Enter still queues one. **New session** opens
+  a new tab, so the conversation you were in stays put. The terminal button
+  leaves the top bar ("Open in terminal" is in Ctrl+K). An error notice goes
+  away by itself after 20 seconds.
+- **Window: the Project pane opens short.** Each part of the project file
+  (repositories, Fabric, Power BI, SQL targets and the rest) is a fold with a
+  one-line summary of what is set, for example "2 repositories" or
+  "dev, test, prod". Project and You start open; a new project file starts
+  with everything open. A row that needs fixing opens its fold. Review and
+  Save are unchanged, and nothing is written until you save.
 
 ### Fixed
 
@@ -45,6 +72,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 - **A write is a write in the audit log.** A Warehouse or SQL write that asks,
   approved or declined, is recorded under `governed-live-write`. It was filed
   under `governed-live-read` with the label "Warehouse SQL write".
+- **Window: small things that got in the way** (UX review, 2026-11-24).
+  Sending a message scrolls the conversation to it, wherever it was scrolled.
+  The side pane no longer squeezes the conversation in a window narrower than
+  about 1260 px: until someone drags it, the pane takes what the window can
+  spare. The prompt box goes back to one line when the pane closes. A dialog
+  is drawn above a notice, so a notice never covers its buttons. The
+  changed-files list shortens a long path's folders and keeps the file's name.
+  The activity line says "Updated the todo list" and "Asked you a question"
+  instead of "Used todo" and "Used ask_user_question". The `/` menu drops a
+  description that only repeats the command's name. "Name this session" starts from the name on screen.
 
 ## [0.42.2] — 2026-11-24
 

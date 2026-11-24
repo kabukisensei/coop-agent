@@ -213,7 +213,7 @@ export function toast(message, level = "info", { timeout } = {}) {
     el("button", { type: "button", class: "btn icon", title: "Dismiss", onclick: () => node.remove() }, icon("close", "Dismiss")));
   host.append(node);
   while (host.children.length > 5) host.firstElementChild.remove();
-  const ms = timeout !== undefined ? timeout : level === "error" ? 0 : level === "warning" ? 12000 : 6000;
+  const ms = timeout !== undefined ? timeout : level === "error" ? 20000 : level === "warning" ? 12000 : 6000;
   if (ms > 0) setTimeout(() => node.remove(), ms);
   return node;
 }

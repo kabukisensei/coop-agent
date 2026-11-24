@@ -79,6 +79,19 @@ export function repoForPath(repos, path) {
  * The prompt "Fix this line" puts in the composer: the file, the line number
  * on the new side and the line's text, then the person's note.
  */
+/** A path as the folders it is in ("" at the top) and the file's own name: `{ dir, name }`. */
+export function splitPath(path) {
+  const text = String(path || "");
+  const at = Math.max(text.lastIndexOf("/"), text.lastIndexOf("\\"));
+  return { dir: text.slice(0, at + 1), name: text.slice(at + 1) };
+}
+
+// One row's path: when it is too long for the list, the folders shorten and the name stays.
+function pathLabel(path) {
+  const { dir, name } = splitPath(path);
+  return el("span", { class: "change-path" }, dir ? el("span", { class: "change-dir", text: dir }) : null, el("span", { class: "change-name", text: name }));
+}
+
 export function fixLinePrompt({ path, line, text, note }) {
   const where = line ? `${path} line ${line}` : path;
   const code = String(text || "").replace(/\s+/g, " ").trim().slice(0, 300);
@@ -126,7 +139,7 @@ export function mountChanges(box, options, { coop, cwd, setPrompt }) {
     fill(list, ...state.files.map((file) => {
       const item = el("li", { class: `change-file${file.path === state.selected ? " active" : ""}`, role: "option", "aria-selected": file.path === state.selected ? "true" : "false", tabindex: "0", title: file.oldPath ? `${file.oldPath} -> ${file.path}` : file.path },
         el("span", { class: `change-status ${file.status.replace(/\s+/g, "-")}`, text: STATUS_LABEL[file.status] || "M", title: statusTitle(file.status), "aria-label": statusTitle(file.status) }),
-        el("span", { class: "change-path", text: file.path }),
+        pathLabel(file.path),
         file.binary ? el("span", { class: "chip", text: "binary", title: "Not a text file, so there is no diff to read" }) : file.status === "new" ? el("span", { class: "chip", text: "new", title: STATUS_TITLE.new })
           : el("span", { class: "tool-stats", title: `${file.added} ${file.added === 1 ? "line" : "lines"} added, ${file.removed} removed` }, el("span", { class: "add", text: `+${file.added}` }), el("span", { class: "del", text: `-${file.removed}` })));
       item.addEventListener("click", () => select(file.path));
@@ -144,7 +157,7 @@ export function mountChanges(box, options, { coop, cwd, setPrompt }) {
       const key = `draft:${draft.path}`;
       const item = el("li", { class: `change-file${key === state.selected ? " active" : ""}`, role: "option", "aria-selected": key === state.selected ? "true" : "false", tabindex: "0", title: `Draft (this client): ${draft.path}` },
         el("span", { class: "change-status draft", text: "D", title: "Draft: a file coop wrote for review, not an edit of a repository file", "aria-label": "Draft" }),
-        el("span", { class: "change-path", text: draft.path }),
+        pathLabel(draft.path),
         el("span", { class: "chip", text: "draft", title: "Lives in this client's drafts folder, not in the repository" }));
       item.addEventListener("click", () => select(key));
       item.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(key); } });
