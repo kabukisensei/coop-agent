@@ -5,6 +5,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+## [0.42.3] — 2026-11-24
+
 ### Added
 
 - **The window's Docs pane knows the live dev database.** When the docs come
@@ -15,6 +17,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   arguments; they work in the terminal too), so the sign-in and the dev-only
   rule stay where they were: the window reads no database. The pane also
   follows a rebuild coop ran in the conversation.
+
+### Changed
+
+- **coop-data-doc 1.6.2.** Its setup now scans every repo it keeps, so with
+  two live dev sources (a Warehouse and a Lakehouse) the layer questions offer
+  the second source's schemas too.
 
 ## [0.42.2] — 2026-11-24
 
