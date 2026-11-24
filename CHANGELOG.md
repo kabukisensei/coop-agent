@@ -16,8 +16,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   every teammate's coop builds its own copy. When coop opens and a snapshot is
   over 7 days old, coop refreshes it and rebuilds the docs in the background.
   Dev targets only: a database the project file does not name as dev gets no
-  sign-in token. Needs coop-data-doc 1.6.1 or later (the pin is not moved here);
-  install and `coop update` add `pyodbc` to coop-data-doc's environment.
+  sign-in token. The coop-data-doc pin moves from 1.5.1 to 1.6.1 for it; install and
+  `coop update` add `pyodbc` to coop-data-doc's environment.
 
 ### Changed
 
