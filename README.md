@@ -1151,8 +1151,9 @@ never the repo layer (skills, prompts, scripts, themes, or guardrails). Replace 
 Git clone and rerun `.\bin\coop.cmd install`. Private `~/.coop` settings are preserved.
 
 **Release channel.** `coop update` fast-forwards the coop-agent checkout to the newest
-release tag (`vX.Y.Z` on `main`) and pins Pi, extensions, and tools to that release's
-manifest. It never moves a checkout backwards: a checkout at or past the newest release
+release tag on `main` and pins Pi, extensions, and tools to that release's
+manifest. A release tag is `vX.Y.Z` whose `VERSION` file is `X.Y.Z`.
+The update never moves a checkout backwards: a checkout at or past the newest release
 stays where it is. Merges to `main` reach teammates only when a release is tagged. Fresh
 clones start on the head of `main` and join the release channel at the next tag.
 

@@ -3340,9 +3340,8 @@ function Test-CoopRepoFollowsReleases {
   return ((Get-CoopRepoGitLine @('config', '--get', "branch.$branch.merge")) -ceq 'refs/heads/main')
 }
 
-# The newest strict vX.Y.Z tag merged into the last-fetched origin/main, with any
-# extra for-each-ref filters (e.g. --contains HEAD). rc tags, tags off main and
-# junk output are skipped; lstrip=2 so a same-named branch cannot hide a tag.
+# Newest vX.Y.Z tag merged into origin/main whose VERSION file equals that number.
+# lstrip=2 so a same-named branch cannot hide a tag.
 function Get-CoopRepoNewestRelease {
   param([string[]]$Filter = @())
   $ErrorActionPreference = 'Continue'
@@ -3352,7 +3351,11 @@ function Get-CoopRepoNewestRelease {
   foreach ($t in $out) {
     if ($null -eq $t) { continue }
     $s = ([string]$t).Trim()
-    if ($s -cmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { return $s }
+    if ($s -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { continue }
+    $shown = @(& git -C $script:CoopRoot show "${s}:VERSION" 2>$null)
+    if ($LASTEXITCODE -ne 0) { continue }
+    $ver = ($shown | Out-String) -replace '\s', ''
+    if ($ver -ceq $s.Substring(1)) { return $s }
   }
   return ''
 }

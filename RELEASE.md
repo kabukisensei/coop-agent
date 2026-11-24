@@ -114,7 +114,7 @@ git status --porcelain                 # expect: empty
 
 coop-agent does **not** publish to a registry. Teammates get it when
 `coop update` fast-forwards their checkout to the newest `vX.Y.Z` tag on
-`main`, so **pushing the tag is the fleet deployment**. A merge to `main`
+`main` whose `VERSION` file is that same number, so **pushing the tag is the fleet deployment**. A merge to `main`
 alone reaches only maintainers on `coop update --edge`. The whole release is
 a pull request and then one command; see also [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a-release).
 

@@ -1,8 +1,4 @@
 ﻿#!/usr/bin/env pwsh
-# A vX.Y.Z tag is a release only when VERSION at that tag is X.Y.Z.
-# The stray v1.0.19 (VERSION still 0.42.0) must not outrank v0.42.1, and a
-# checkout sitting on that commit must still be offered v0.42.1.
-# Offline: the origin is a local bare repo. The caller runs with EAP=Stop.
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '_common.ps1')
 # pwsh 7.3+: a failed native command honors EAP=Stop too, as redirected stderr does
@@ -26,8 +22,6 @@ try {
   $env:GIT_AUTHOR_NAME = 't'; $env:GIT_AUTHOR_EMAIL = 't@t'
   $env:GIT_COMMITTER_NAME = 't'; $env:GIT_COMMITTER_EMAIL = 't@t'
 
-  # v0.42.0 (VERSION matches), then a stray v1.0.19 on main whose VERSION is
-  # still 0.42.0, then v0.42.1 (VERSION matches). Same shape as the 2026-11-23 tag.
   $origin = Join-Path $t 'origin.git'
   $seed = Join-Path $t 'seed'
   Invoke-FixtureGit @('init', '-q', '--bare', $origin)
@@ -61,8 +55,6 @@ try {
     Ko "from the stray v1.0.19 commit the next release is v0.42.1 (got '$next')"
   } else { Ok 'from the stray commit the next release is v0.42.1' }
 
-  # The step 2 checkout in docs/install-windows.md, pasted as a user pastes it.
-  # Start behind v0.42.1 so a no-op checkout cannot pass.
   $install = Join-Path $t 'install'
   Invoke-FixtureGit @('clone', '-q', $origin, $install)
   Invoke-FixtureGit @('-C', $install, 'reset', '-q', '--hard', 'v0.42.0')

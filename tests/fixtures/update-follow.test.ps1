@@ -16,9 +16,13 @@ $PSNativeCommandUseErrorActionPreference = $true
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-update-follow-' + [guid]::NewGuid().ToString('N'))
 
-function Add-FixtureCommit([string]$Repo, [string]$Message, [string]$File) {
+function Add-FixtureCommit([string]$Repo, [string]$Message, [string]$File, [string]$Version = '') {
   [System.IO.File]::WriteAllText((Join-Path $Repo $File), "$Message`n")
   Invoke-FixtureGit @('-C', $Repo, 'add', $File)
+  if ($Version) {
+    [System.IO.File]::WriteAllText((Join-Path $Repo 'VERSION'), "$Version`n")
+    Invoke-FixtureGit @('-C', $Repo, 'add', 'VERSION')
+  }
   Invoke-FixtureGit @('-C', $Repo, 'commit', '-q', '-m', $Message)
 }
 function New-FixtureClone([string]$Name, [string[]]$CloneArgs = @(), [string]$From = '') {
@@ -73,13 +77,13 @@ try {
   Invoke-FixtureGit @('-C', $script:Origin, 'symbolic-ref', 'HEAD', 'refs/heads/main')
   Invoke-FixtureGit @('init', '-q', $seed)
   Invoke-FixtureGit @('-C', $seed, 'symbolic-ref', 'HEAD', 'refs/heads/main')
-  Add-FixtureCommit $seed 'c1' 'README'; Invoke-FixtureGit @('-C', $seed, 'tag', '-a', 'v0.9.0', '-m', 'v0.9.0')
-  Add-FixtureCommit $seed 'c2' 'f2';     Invoke-FixtureGit @('-C', $seed, 'tag', 'v0.10.0')
-  Add-FixtureCommit $seed 'c3' 'f3';     Invoke-FixtureGit @('-C', $seed, 'tag', '-a', 'v0.11.0-rc1', '-m', 'rc1')
+  Add-FixtureCommit $seed 'c1' 'README' '0.9.0'; Invoke-FixtureGit @('-C', $seed, 'tag', '-a', 'v0.9.0', '-m', 'v0.9.0')
+  Add-FixtureCommit $seed 'c2' 'f2' '0.10.0';    Invoke-FixtureGit @('-C', $seed, 'tag', 'v0.10.0')
+  Add-FixtureCommit $seed 'c3' 'f3';             Invoke-FixtureGit @('-C', $seed, 'tag', '-a', 'v0.11.0-rc1', '-m', 'rc1')
   foreach ($junk in @('v0.99', 'v0.10.0.1', 'v1')) { Invoke-FixtureGit @('-C', $seed, 'tag', $junk) }
-  Add-FixtureCommit $seed 'c4' 'f4'
+  Add-FixtureCommit $seed 'c4' 'f4' '0.12.0'
   Invoke-FixtureGit @('-C', $seed, 'checkout', '-q', '-b', 'side', 'v0.10.0')
-  Add-FixtureCommit $seed 's1' 'side';   Invoke-FixtureGit @('-C', $seed, 'tag', '-a', 'v9.9.9', '-m', 'side')
+  Add-FixtureCommit $seed 's1' 'side' '9.9.9';   Invoke-FixtureGit @('-C', $seed, 'tag', '-a', 'v9.9.9', '-m', 'side')
   Invoke-FixtureGit @('-C', $seed, 'checkout', '-q', 'main')
   Invoke-FixtureGit @('-C', $seed, 'push', '-q', $script:Origin, 'main', 'side', '--tags')
   $C1 = Get-FixtureGit @('-C', $seed, 'rev-parse', 'v0.9.0^{commit}')
@@ -486,8 +490,9 @@ try {
   Invoke-FixtureGit @('-C', $script:CoopRoot, 'reset', '-q', '--hard', 'v0.10.0')
   $tagger = Join-Path $t 'check-tagger'
   Invoke-FixtureGit @('clone', '-q', $script:Origin, $tagger)
-  Invoke-FixtureGit @('-C', $tagger, 'tag', '-a', 'v0.11.0', '-m', 'v0.11.0', 'main')
-  Invoke-FixtureGit @('-C', $tagger, 'push', '-q', 'origin', 'v0.11.0')
+  Add-FixtureCommit $tagger '0.11.0' 'VERSION'
+  Invoke-FixtureGit @('-C', $tagger, 'tag', '-a', 'v0.11.0', '-m', 'v0.11.0')
+  Invoke-FixtureGit @('-C', $tagger, 'push', '-q', 'origin', 'main', 'v0.11.0')
   $cStaleBefore = Get-CoopRepoCheckLine
   $fetched = Invoke-CoopRepoFetchOrigin
   $cStaleAfter = Get-CoopRepoCheckLine

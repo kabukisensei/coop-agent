@@ -210,8 +210,8 @@ coop release              # verifies the tree, CI and the pins, then tags vX.Y.Z
 **minor** for features/notable changes, **patch** for fixes.
 
 Pushing the tag is the fleet deployment: `coop update` moves teammates to the newest
-`vX.Y.Z` tag on `main` and ignores a tag that is not on `main`, which is why the tag
-only travels with `main`. Rollback is a new release, never a moved or deleted tag. See
+`vX.Y.Z` tag on `main` whose `VERSION` matches, and ignores a tag that is not on
+`main` or whose `VERSION` disagrees, which is why the tag only travels with `main`. Rollback is a new release, never a moved or deleted tag. See
 [RELEASE.md](RELEASE.md#d-coop-agent-this-repo).
 
 coop-agent is one of six coop-\* repos. When a change spans the suite

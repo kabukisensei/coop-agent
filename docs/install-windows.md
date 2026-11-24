@@ -78,12 +78,14 @@ Open a new PowerShell window and paste these four lines as they are:
 cd $HOME
 git clone https://github.com/kabukisensei/coop-agent.git
 cd coop-agent
-git checkout -q (@(git tag --merged origin/main '--sort=-v:refname') -match '^v\d+\.\d+\.\d+$' | Where-Object { [version]$_.Substring(1) -ge [version]'0.23.6' } | Select-Object -First 1)
+git checkout -q (@(git tag --merged origin/main '--sort=-v:refname') -match '^v\d+\.\d+\.\d+$' | Where-Object { $ErrorActionPreference = 'Continue'; $ver = ((git show "${_}:VERSION" 2>$null | Out-String) -replace '\s',''); [version]$_.Substring(1) -ge [version]'0.23.6' -and $ver -ceq $_.Substring(1) } | Select-Object -First 1)
 ```
 
 This puts coop in `C:\Users\<you>\coop-agent` at the newest release, and
-`coop update` moves it to each release after that. Don't add `--depth` or
-`--single-branch` to the clone: a partial clone cannot follow releases.
+`coop update` moves it to each release after that. A tag is a release only
+when its name is `vX.Y.Z` and the `VERSION` file at that tag is `X.Y.Z`.
+Don't add `--depth` or `--single-branch` to the clone: a partial clone
+cannot follow releases.
 
 ## 3. Double-click Install coop.cmd
 
