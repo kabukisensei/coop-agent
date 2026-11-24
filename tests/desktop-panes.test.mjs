@@ -44,7 +44,7 @@ const { listChanges, listDrafts, fileDiff, parseNameStatus, parseNumstat, newFil
 const { readStandards, readSnapshot, readNote, listNotes, knowledgeView, domainView, sourceDomainView, keepArticles, DOMAINS, KNOWLEDGE_LABELS } = await import("../desktop/lib/standards-view.mjs");
 const { loadProject, previewProject, saveProject, settingsFromForm } = await import("../desktop/lib/project-form.mjs");
 const docs = await import("../desktop/lib/docs-setup.mjs");
-const { normalizePath, relativePath, repoForPath, fixLinePrompt } = await import("../desktop/renderer/pane-changes.mjs");
+const { normalizePath, relativePath, repoForPath, fixLinePrompt, splitPath } = await import("../desktop/renderer/pane-changes.mjs");
 const editors = await import("../desktop/lib/editors.mjs");
 const { loadSettings } = await import("../desktop/lib/settings.mjs");
 const { articleOutline, sourceLine, noteLabel, isKnowledgeId, STATE_LABELS, KNOWLEDGE_STATE_LABELS } = await import("../desktop/renderer/pane-standards.mjs");
@@ -259,6 +259,11 @@ await check("drafts (F2): the repository's drafts folder lists newest first, rea
 
 await check("changes: a tool call's path finds its file in the list", () => {
   assert.equal(normalizePath("C:\\Work\\Repo\\src\\a.sql", "c:\\work\\repo"), "src/a.sql");
+  // The changed-files list keeps a file's name in view and shortens its folders.
+  assert.deepEqual(splitPath("warehouse/Tables/fact.OrderLine.sql"), { dir: "warehouse/Tables/", name: "fact.OrderLine.sql" });
+  assert.deepEqual(splitPath("C:\\drafts\\a b.sql"), { dir: "C:\\drafts\\", name: "a b.sql" });
+  assert.deepEqual(splitPath("README.md"), { dir: "", name: "README.md" });
+  assert.deepEqual(splitPath(""), { dir: "", name: "" });
   assert.equal(normalizePath("/w/repo/docs/x.md", "/w/repo/"), "docs/x.md");
   assert.equal(normalizePath("./sql/b.sql", "/w/repo"), "sql/b.sql");
   assert.equal(normalizePath("@sql/b.sql", "/w/repo"), "sql/b.sql");

@@ -5,7 +5,7 @@ import { el, icon, openModal, pickFrom, toast, modalOpen, relativeTime, splitGly
 import { createTimeline, applyEvent, loadMessages, startBash, finishBash, formatTokens, textOf, notice, turnOf, turns } from "./timeline.mjs";
 import { createFinder } from "./find.mjs";
 import { renderItem, renderTurn, codeBlock } from "./view.mjs";
-import { parseInput, completions, BUILTINS, KEYS } from "./commands.mjs";
+import { parseInput, completions, describe, BUILTINS, KEYS } from "./commands.mjs";
 import { registerPane, openPane, togglePane, closePane, currentPane, refreshPane, initPanes } from "./panes.mjs";
 import { mountChanges } from "./pane-changes.mjs";
 import { mountStandards } from "./pane-standards.mjs";
@@ -149,6 +149,8 @@ function onEvent(event) {
   if (!event || typeof event !== "object") return;
   if (event.type === "extension_ui_request") { onUiRequest(event); return; }
   const { changed, status } = applyEvent(app.tl, event);
+  // A message you just sent is always in view, wherever the conversation was scrolled.
+  if (event.type === "message_start" && event.message && event.message.role === "user") app.stickNext = true;
   for (const id of changed) redraw(id);
   // A first prompt names a new session's tab right away.
   if (status || (event.type === "message_start" && event.message && event.message.role === "user")) { renderBusy(); renderHeader(); }
@@ -356,7 +358,8 @@ function nearBottom(box) {
 function flush() {
   app.frame = 0;
   const box = $("timeline");
-  const stick = nearBottom(box);
+  const stick = app.stickNext || nearBottom(box);
+  app.stickNext = false;
   const drawn = new Set();
   for (const id of app.dirty) {
     if (drawn.has(id)) continue;
@@ -625,6 +628,7 @@ async function runBash(command, excluded) {
   if (app.bashItem) { toast("A shell command is still running. Press Esc to stop it.", "warning"); return; }
   const id = startBash(app.tl, command, excluded);
   app.bashItem = id;
+  app.stickNext = true;
   redraw(id);
   renderBusy();
   const result = await cmd({ type: "bash", command, excludeFromContext: excluded });
@@ -1173,7 +1177,9 @@ async function renameSession(arg) {
     return;
   }
   const field = el("input", { class: "field", type: "text", autofocus: true });
-  field.value = app.tl.sessionName || "";
+  // The name on screen (a given name, or the title coop gave it) is the starting point.
+  const shown = $("sessionName").textContent || "";
+  field.value = app.tl.sessionName || (shown === "New session" ? "" : shown);
   const save = async () => { if (field.value.trim()) await renameSession(field.value.trim()); };
   field.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); save(); modal.close(); } });
   const modal = openModal({ title: "Name this session", body: field, buttons: [{ label: "Save", kind: "primary", onClick: () => { save(); } }, { label: "Cancel" }] });
@@ -1470,9 +1476,9 @@ async function palette() {
     ...Object.entries(ACTIONS).filter(([id]) => id !== "terminal" && id !== "palette").map(([id, action]) => ({ label: action.label, hint: action.keys || "", value: { action: id } })),
     { label: "Open in terminal", hint: "", value: { action: "terminal" } },
     ...BUILTINS.filter((c) => c.action === "terminal").map((c) => ({ label: `/${c.name}`, detail: c.description, value: { action: "terminal", name: c.name } })),
-    ...app.commands.map((c) => ({ label: `/${c.name}`, detail: String(c.description || "").replace(/^#+\s*/, "").split("\n")[0], hint: sourceLabel(c.source), value: { insert: `/${c.name} ` } })),
+    ...app.commands.map((c) => ({ label: `/${c.name}`, detail: describe(c), hint: sourceLabel(c.source), value: { insert: `/${c.name} ` } })),
   ];
-  const value = await pickFrom({ title: "Commands", items, placeholder: "What do you want to do?" });
+  const value = await pickFrom({ title: "Commands", items, placeholder: "What do you want to do?", compact: true });
   if (!value) return;
   if (value.insert) setPrompt(value.insert);
   else runAction(value.action, "", value.name || "");
@@ -1629,6 +1635,13 @@ function wire() {
     if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) prompt().focus();
   });
   window.addEventListener("resize", autosize);
+  // The side pane and the sessions list change the prompt's width without a
+  // window resize; its height follows either way.
+  let promptWidth = 0;
+  new ResizeObserver(() => {
+    const width = Math.round(composer.getBoundingClientRect().width);
+    if (width !== promptWidth) { promptWidth = width; autosize(); }
+  }).observe(composer);
 }
 
 function registerPanes() {

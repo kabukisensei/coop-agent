@@ -28,7 +28,7 @@ import { readBranch } from "../desktop/lib/git.mjs";
 import { consoleProcess } from "../desktop/lib/terminal.mjs";
 import { listFiles, rankFiles } from "../desktop/lib/files.mjs";
 import { PiSession, endLeftovers, killTree } from "../desktop/lib/pi-session.mjs";
-import { BUILTINS, KEYS, TERMINAL_ONLY, completions, parseInput } from "../desktop/renderer/commands.mjs";
+import { BUILTINS, KEYS, TERMINAL_ONLY, completions, describe, parseInput } from "../desktop/renderer/commands.mjs";
 import { setupItems, setupItem, setupSummary, noticeNotes, EXAMPLES } from "../desktop/renderer/welcome.mjs";
 import { parseConfirm, confirmLabels, parseQuestionSelect, parseQuestionMulti, multiAnswer } from "../desktop/renderer/dialogs.mjs";
 import { menuTemplate, notificationFor } from "../desktop/lib/menu.mjs";
@@ -325,6 +325,13 @@ await check("composer: / completion lists built-ins, then Pi's commands from the
   assert.match(memory[0].description, /\(opens the terminal\)$/);
   assert.ok(completions("/", list, { limit: 500 }).length >= BUILTINS.length + list.length - 1);
   assert.deepEqual(completions("tree", list), []);
+  // A prompt template whose only description is its own name says nothing: the lists leave it out.
+  assert.equal(describe({ name: "annotate", description: "# /annotate\n\nUse the skill." }), "");
+  assert.equal(describe({ name: "annotate", description: "/Annotate" }), "");
+  assert.equal(describe({ name: "discovery", description: "# Discovery\nKick off" }), "");
+  assert.equal(describe({ name: "deploy-brief", description: "Deployment brief" }), "Deployment brief");
+  assert.equal(describe({ name: "x" }), "");
+  assert.equal(completions("/annot", [{ name: "annotate", description: "/annotate", source: "prompt" }])[0].description, "");
 });
 
 // --- Welcome, dialogs and menu (desktop UX review, 2026-10-03) -----------------
@@ -924,6 +931,13 @@ await check("activity: one line for a run of tool calls, the live step while one
   assert.equal(activitySummary([block("t4", "data_doc")], tools, { live: true }), "Using data_doc...");
   assert.equal(activitySummary([block("t1", "read"), { type: "thinking", text: "" }], tools, { live: true }), "Thinking...");
   assert.equal(activitySummary([block("t4", "data_doc")], tools, { live: false }), "Used data_doc");
+  // coop's own bookkeeping reads as what it did, once however often it ran.
+  const plainSteps = [{ type: "tool", toolCallId: "", name: "todo" }, { type: "tool", toolCallId: "", name: "todo" }, { type: "tool", toolCallId: "", name: "ask_user_question" }];
+  assert.equal(activitySummary(plainSteps, tools), "Updated the todo list, asked you a question");
+  assert.equal(activitySummary([block("t1", "read"), block("t4", "data_doc"), plainSteps[0]], tools), "Read vSales.sql, used data_doc, updated the todo list");
+  assert.equal(activitySummary([plainSteps[0]], tools, { live: true }), "Updating the todo list...");
+  assert.equal(activitySummary([plainSteps[2]], tools, { live: true }), "Asking you a question...");
+  assert.equal(activitySummary([plainSteps[2]], tools, { live: true, waiting: true }), "Waiting for your answer...");
   assert.equal(activitySummary([{ type: "tool", toolCallId: "x", name: "bash" }], new Map([["x", { status: "running", args: { command: "pwsh -File build.ps1" } }]]), { live: true }), "Running pwsh -File build.ps1...");
   // A step the guardrails stopped never ran, and a step behind an open card has not started.
   const blockedTools = new Map([

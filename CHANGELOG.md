@@ -16,6 +16,20 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   rule stay where they were: the window reads no database. The pane also
   follows a rebuild coop ran in the conversation.
 
+### Fixed
+
+- **Window: small things that got in the way** (UX review, 2026-11-24).
+  Sending a message scrolls the conversation to it, wherever it was scrolled.
+  The side pane no longer squeezes the conversation in a window narrower than
+  about 1260 px: until someone drags it, the pane takes what the window can
+  spare. The prompt box goes back to one line when the pane closes. A dialog
+  is drawn above a notice, so a notice never covers its buttons. The
+  changed-files list shortens a long path's folders and keeps the file's name.
+  The activity line says "Updated the todo list" and "Asked you a question"
+  instead of "Used todo" and "Used ask_user_question". Ctrl+K keeps each
+  command's description to two lines and drops one that only repeats the
+  command's name. "Name this session" starts from the name on screen.
+
 ## [0.42.2] — 2026-11-24
 
 ### Added
