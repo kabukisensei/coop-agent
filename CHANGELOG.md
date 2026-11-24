@@ -5,6 +5,21 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **The dev-VM test approver answers the write question again, and keeps its
+  text out of the audit log (tests only).** Since write questions show the exact
+  statement, the question is a three-option choice and its title carries the SQL,
+  the target and the effect. `tests/test-approver.mjs` answered only yes/no
+  dialogs, so it cancelled every dev write, and it wrote the dialog's title into
+  its `kind: "test-approver"` audit row, statement included. It now picks "Allow
+  once" on the guardrails' write question (never the session-wide option; a
+  question that says PRODUCTION is still declined), and its audit row names only
+  the dialog's kind. It also waits for the run a prompt started to finish before
+  it sends the next prompt or stops Pi: Pi answers a prompt as soon as the run
+  starts, so a second `--prompt` failed with "Agent is already processing" and a
+  single one was cut off. Nothing installed changes.
+
 ## [0.42.1] — 2026-11-23
 
 ### Added
