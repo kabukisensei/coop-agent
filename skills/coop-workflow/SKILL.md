@@ -300,10 +300,20 @@ target. Row reads never ask on any environment; only writes ask.
 These sharpen the principles above; reach for them on non-trivial or multi-step work.
 
 - **Codify mistakes.** When the model repeats an error or the user corrects the
-  same thing twice, write the correction down where future sessions inherit it —
-  the relevant skill, a deliberate `.coop/project.yml` standards override, or memory
-  (pi-hermes-memory).
+  same thing twice, write the correction down where future sessions inherit it.
+  Prefer the place that gets checked: a standards article or a deliberate
+  `.coop/project.yml` standards override (`standards_check` reads both) first,
+  then the relevant skill, and memory (pi-hermes-memory) last, because nothing
+  fails when a memory note is missed.
   A fix that lives only in this chat is a fix you'll redo next week.
+- **Test the assumption after two failed fixes.** When two fixes that rest on the
+  same assumption have failed the same check, stop fixing. Write the assumption
+  down in one sentence, run the query or read that would come out differently if
+  it were false, and show the result before you try a third fix.
+- **A review finding needs its evidence.** In a review (SQL, model, report,
+  workspace), report a problem as a finding only with what shows it: the query
+  and its output, the `file:line`, or the tool result. Anything you could not
+  show is listed apart as "not verified", with what would settle it.
 - **Markdown annotations.** Accept review feedback as annotations keyed to
   sections/files/lines (e.g. `fact_sales.sql:42: use the shared date dimension`)
   and apply **only** what's annotated — read each referenced spot first, make the
