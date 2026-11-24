@@ -4046,7 +4046,34 @@ function Get-CoopSourcedWheel($Source, [string]$Pin) {
 # installed again on coop's Python before any of that (version alone proves
 # nothing). Postcondition: outside --edge the installed version must equal the
 # pin afterwards, so an old launcher left on PATH never reads as a converged tool.
+# Libraries a tool needs inside its own pipx environment beyond what it declares:
+# coop-data-doc reads a live dev database (`snapshot`, /setup-docs) with pyodbc,
+# an optional extra of the package; the pin is python_tools.pyodbc, the one the
+# Fabric CLI environment carries, so the coop window package's wheel serves both.
+$script:CoopToolLibraries = @{ 'coop-data-doc' = @('pyodbc') }
+# Converge them after the tool itself: a library already at its pin costs one
+# metadata read and no pipx inject. '' when all are in place, else what failed.
+function Sync-CoopToolLibraries([string]$Package) {
+  foreach ($lib in @($script:CoopToolLibraries[$Package])) {
+    if (-not $lib) { continue }
+    $pin = Coop-ManifestGet -Key "python_tools.$lib"
+    if (-not $pin) { continue }
+    if ((Get-CoopVenvDistVersion $Package $lib) -eq $pin) { continue }
+    if ((Invoke-CoopPipx @('inject', $Package, "$lib==$pin", '--force')) -ne 0) { return "$lib $pin could not be added to its environment$(Get-CoopPipxFailureSuffix)" }
+  }
+  return ''
+}
 function Invoke-CoopPipxConverge {
+  param([string]$Package, [string]$Pin, [bool]$Edge = $false, [bool]$Force = $false, [string]$Python = '', [string]$FetchPython = '')
+  $r = Invoke-CoopPipxConvergeTool -Package $Package -Pin $Pin -Edge $Edge -Force $Force -Python $Python -FetchPython $FetchPython
+  if (-not $r.ok -or -not $script:CoopToolLibraries.ContainsKey($Package) -or -not (Get-CoopPipxToolVersion $Package)) { return $r }
+  # The tool is usable without its library (only the live read needs it), so a
+  # failed inject is said on the unit's line and does not fail the unit.
+  $missing = Sync-CoopToolLibraries $Package
+  if ($missing) { return (Coop-UnitResult $true "$($r.msg); $missing (docs from a live dev database wait for it; coop update tries again)") }
+  return $r
+}
+function Invoke-CoopPipxConvergeTool {
   param([string]$Package, [string]$Pin, [bool]$Edge = $false, [bool]$Force = $false, [string]$Python = '', [string]$FetchPython = '')
   if (-not (Test-CoopPipxAvailable)) { return (Coop-UnitResult $false "skipping $Package (pipx missing)") }
   $source = Get-CoopPythonToolSource $Package
