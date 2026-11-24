@@ -65,7 +65,31 @@ export function answerLabel(prompt, value) {
   return value === "" ? "(blank)" : String(value);
 }
 
-export function mountDocs(box, options, { coop, codeBlock }) {
+/** "today", "yesterday" or "N days ago" for when dev was last read; "" when never. */
+export function readAgo(takenAt, now = Date.now()) {
+  const taken = Date.parse(String(takenAt || ""));
+  if (Number.isNaN(taken)) return "";
+  const days = Math.max(0, Math.floor((now - taken) / 86_400_000));
+  return days === 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`;
+}
+
+/**
+ * The live dev database buttons for a docs location: `setUp` when the project
+ * has a dev SQL target and these docs do not read it yet, `refresh` when they
+ * do. Both run as /setup-docs in the conversation, so neither shows without
+ * a way to send it.
+ */
+export function liveActions(where, canSend) {
+  if (!where || !canSend) return { setUp: false, refresh: false };
+  return { setUp: Boolean(where.devTarget) && !where.live, refresh: Boolean(where.live) };
+}
+
+/** What a live read changes about a docs location. */
+export function liveKey(where) {
+  return where ? [where.exists, where.live, where.snapshotAt, where.built].join("|") : "";
+}
+
+export function mountDocs(box, options, { coop, codeBlock, sendSlash }) {
   const state = { location: null, running: false, prompt: null, steps: [], result: null, building: false, log: [], page: "", history: [], pages: null, query: "" };
   const summary = el("div", { class: "pane-summary" });
   const actions = el("div", { class: "form-actions" });
@@ -82,13 +106,35 @@ export function mountDocs(box, options, { coop, codeBlock }) {
     fill(summary, 
       where.exists ? el("span", { text: "Lineage docs set up: " }) : el("span", { text: "No lineage docs here yet. Setting them up writes " }),
       el("code", { text: where.config }),
-      where.built ? el("span", { class: "chip ok", text: "built" }) : where.exists ? el("span", { class: "chip", text: "not built yet" }) : null);
+      where.built ? el("span", { class: "chip ok", text: "built" }) : where.exists ? el("span", { class: "chip", text: "not built yet" }) : null,
+      where.live ? el("span", { class: "chip", text: readAgo(where.snapshotAt) ? `read from dev ${readAgo(where.snapshotAt)}` : "dev not read yet" }) : null);
     const busy = state.running || state.building;
+    const live = liveActions(where, typeof sendSlash === "function");
     fill(actions, 
       el("button", { type: "button", class: `btn ${where.exists ? "" : "primary"}`, text: where.exists ? "Change the setup" : "Set up the docs", disabled: busy, onclick: startSetup }),
+      live.setUp ? el("button", { type: "button", class: "btn", text: "Use the live dev database", title: "Read the SQL definitions from the dev database instead of a folder (read-only, no data rows). coop asks the rest in the conversation.", disabled: busy, onclick: () => runLive("/setup-docs live") }) : null,
       where.exists ? el("button", { type: "button", class: `btn ${where.exists && !where.built ? "primary" : ""}`, text: where.built ? "Build again" : "Build", disabled: busy, onclick: runBuild }) : null,
+      live.refresh ? el("button", { type: "button", class: "btn", text: "Refresh from dev", title: "Read the dev database again now and rebuild the docs (read-only, no data rows). coop reports in the conversation.", disabled: busy, onclick: () => runLive("/setup-docs refresh") }) : null,
       where.built ? el("button", { type: "button", class: "btn", text: "Read the docs", disabled: busy, onclick: () => openPage("index.md") }) : null,
       where.portal ? el("button", { type: "button", class: "btn", text: "Open the portal", title: "The HTML portal in your browser", onclick: openPortal }) : null);
+  }
+
+  // The live read runs in the conversation (the session holds the sign-in); the
+  // pane picks up the new state when the person comes back to it.
+  let liveWatch = null;
+  async function runLive(command) {
+    if (!(await sendSlash(command))) return;
+    toast("Started in the conversation. This pane updates when coop is done.", "info");
+    // A slash command ends no turn, so look again until the read shows (a read
+    // is allowed 5 minutes), then stop.
+    const before = liveKey(state.location);
+    let looks = 0;
+    clearInterval(liveWatch);
+    liveWatch = setInterval(async () => {
+      looks += 1;
+      if (!state.running && !state.building) await loadLocation();
+      if (looks >= 72 || liveKey(state.location) !== before) { clearInterval(liveWatch); liveWatch = null; }
+    }, 5000);
   }
 
   async function loadLocation() {

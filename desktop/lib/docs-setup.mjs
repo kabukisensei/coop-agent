@@ -15,7 +15,10 @@ import {
   driveJsonlSetup,
   linkCatalogDependencies,
   findDataDocConfig,
+  hasDevSqlTarget,
+  hasLiveSources,
   isHomeFolder,
+  liveSnapshotTakenAt,
   parseExisting,
   resolveDataDocExecutable,
   setupDocsPrefill,
@@ -178,16 +181,26 @@ export class DocsSetupRun {
   }
 }
 
-/** Where the folder's docs config, built Markdown and HTML portal are. */
+/**
+ * Where the folder's docs config, built Markdown and HTML portal are, and what
+ * the live dev database has to do with them: `live` (the config reads one),
+ * `devTarget` (the project file names a dev SQL target, so it could) and
+ * `snapshotAt` (when dev was last read, "" before the first read).
+ */
 export function docsLocation(cwd, env) {
   const config = findDataDocConfig(cwd, env) || join(cwd, DATADOC_CONFIG);
   const exists = existsSync(config);
-  const settings = exists ? parseExisting(readFileSync(config, "utf8")) : {};
+  const text = exists ? readFileSync(config, "utf8") : "";
+  const settings = exists ? parseExisting(text) : {};
+  const live = hasLiveSources(text);
   const base = dirname(config);
   const outputDir = resolve(base, settings.outputDir || DEFAULT_OUTPUT_DIR);
   const built = existsSync(join(outputDir, "manifest.json")) || existsSync(join(outputDir, "index.md"));
-  const siteIndex = resolve(base, siteDirOf(exists ? readFileSync(config, "utf8") : ""), "index.html");
-  return { config, exists, outputDir, built, portal: existsSync(siteIndex) ? siteIndex : "" };
+  const siteIndex = resolve(base, siteDirOf(text), "index.html");
+  return {
+    config, exists, outputDir, built, portal: existsSync(siteIndex) ? siteIndex : "",
+    live, devTarget: hasDevSqlTarget(cwd, env), snapshotAt: live ? liveSnapshotTakenAt(config) : "",
+  };
 }
 
 // output.site_dir (coop-data-doc's config.py default ./data-docs-site).

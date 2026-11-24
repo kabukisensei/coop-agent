@@ -1123,7 +1123,7 @@ handle("coop:docs-cancel", (state) => {
 
 function docsView(state) {
   const where = docsLocation(state.spec.cwd, toolEnv(state));
-  return { config: where.config, exists: where.exists, outputDir: where.outputDir, built: where.built, portal: Boolean(where.portal) };
+  return { config: where.config, exists: where.exists, outputDir: where.outputDir, built: where.built, portal: Boolean(where.portal), live: where.live, devTarget: where.devTarget, snapshotAt: where.snapshotAt };
 }
 
 handle("coop:docs-location", (state) => ({ success: true, data: docsView(state) }));

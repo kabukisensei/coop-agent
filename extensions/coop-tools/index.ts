@@ -160,6 +160,8 @@ import {
   linkCatalogDependencies,
   expandHomePath,
   findDataDocConfig,
+  hasDevSqlTarget,
+  hasLiveSources,
   isHomeFolder,
   parseExisting,
   resolveDataDocExecutable,
@@ -210,6 +212,8 @@ export {
   classifyManagedLines,
   dataDocPrefillFromProject,
   findDataDocConfig,
+  hasDevSqlTarget,
+  hasLiveSources,
   parseExisting,
   resolveDataDocExecutable,
 } from "../../lib/data-doc-setup.mjs";
@@ -1491,17 +1495,8 @@ export const LIVE_DOCS_MAX_AGE_DAYS = 7;
 const LIVE_FILES = "SQL files in a folder (a repository)";
 const LIVE_DEV = `The live dev database (read-only; coop refreshes it when it is over ${LIVE_DOCS_MAX_AGE_DAYS} days old)`;
 
-/** The config reads a live dev database (`live_sources:` with at least one entry). */
-export function hasLiveSources(configText: string): boolean {
-  return /^live_sources\s*:\s*(#.*)?\r?\n[ \t]+\S/m.test(configText);
-}
-
-/** The project file above `cwd` names a dev SQL target (`dev` or `dev@<set>`). */
-export function hasDevSqlTarget(cwd: string): boolean {
-  const contract = findProjectContract(cwd);
-  if (!contract) return false;
-  return sqlTargetEntries(safeRead(contract)).some((entry: { name: string }) => entry.name === "dev" || entry.name.startsWith("dev@"));
-}
+// hasLiveSources and hasDevSqlTarget live in lib/data-doc-setup.mjs: the window's
+// Docs pane asks the same two questions before it offers the live choice.
 
 /** One line per source for the person: what was read, what was skipped and why. */
 export function liveDocsSummary(details: any): string {
@@ -1571,6 +1566,27 @@ async function refreshLiveDocs(pi: ExtensionAPI, ctx: any): Promise<void> {
     if (Array.isArray(out?.sources) && out.sources.some((row: any) => row.state !== "fresh")) notify(ctx, `Lineage docs were not refreshed from dev: ${liveDocsSummary(out)}`, "warning");
     return;
   }
+  await rebuildAfterLiveRead(pi, ctx, ymlPath, out);
+}
+
+/** `/setup-docs refresh` (and the window's "Refresh from dev" button): read the
+ *  dev database again now, whatever the snapshot's age, and rebuild the docs. */
+async function refreshLiveDocsNow(pi: ExtensionAPI, ctx: any): Promise<boolean> {
+  const ymlPath = findDataDocConfig(ctx.cwd);
+  if (!ymlPath || !hasLiveSources(safeRead(ymlPath))) {
+    notify(ctx, "These docs do not come from a live dev database, so there is nothing to refresh. /setup-docs sets that up; `coop data-doc build` rebuilds docs made from files.", "warning");
+    return false;
+  }
+  notify(ctx, "Reading the dev database's object definitions again (read-only, no data rows)…", "info");
+  const out = await runFabricSqlHelper({ command: "refresh", config: ymlPath }, ctx.signal, ctx.cwd, "live_docs.py");
+  if (!out?.taken) {
+    notify(ctx, `The dev database was not read: ${Array.isArray(out?.sources) && out.sources.length ? liveDocsSummary(out) : liveDocsFailure(out)}`, "error");
+    return false;
+  }
+  return await rebuildAfterLiveRead(pi, ctx, ymlPath, out);
+}
+
+async function rebuildAfterLiveRead(pi: ExtensionAPI, ctx: any, ymlPath: string, out: any): Promise<boolean> {
   ignoreLiveFolder(ymlPath);
   let built = false;
   try {
@@ -1580,12 +1596,28 @@ async function refreshLiveDocs(pi: ExtensionAPI, ctx: any): Promise<void> {
   notify(ctx, built
     ? `Lineage docs refreshed from the dev database (${liveDocsSummary(out)}).`
     : `The dev database was read (${liveDocsSummary(out)}) but the docs did not rebuild; run \`coop data-doc build\`.`, built ? "info" : "warning");
+  return built;
+}
+
+/** What `/setup-docs <word>` asks for: `live` goes straight to the live dev
+ *  database, `refresh` reads dev again and rebuilds; anything else is the wizard. */
+export function setupDocsMode(args: unknown): "live" | "refresh" | "" {
+  const word = String(args ?? "").trim().toLowerCase();
+  return word === "live" || word === "refresh" ? word : "";
 }
 
 /** /setup-docs: run (or re-run) the wizard for this folder, prefilled from its config. */
-async function runSetupDocs(pi: ExtensionAPI, ctx: any): Promise<boolean> {
+async function runSetupDocs(pi: ExtensionAPI, ctx: any, mode: "live" | "refresh" | "" = ""): Promise<boolean> {
   if (stopInHomeFolder(ctx)) return false;
+  if (mode === "refresh") return await refreshLiveDocsNow(pi, ctx);
   const ymlPath = findDataDocConfig(ctx.cwd) || join(ctx.cwd, DATADOC_CONFIG);
+  if (mode === "live") {
+    if (!hasDevSqlTarget(ctx.cwd)) {
+      notify(ctx, "The project file names no dev SQL target, so there is no dev database to read. /setup-project adds one.", "warning");
+      return false;
+    }
+    return await setUpLiveDocs(pi, ctx, ymlPath);
+  }
   // A project with a dev SQL target can document it straight from the database.
   if (typeof ctx?.ui?.select === "function" && hasDevSqlTarget(ctx.cwd)) {
     const live = hasLiveSources(safeRead(ymlPath));
@@ -4027,14 +4059,15 @@ export default function coopTools(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("setup-docs", {
-    description: "Set up or rebuild coop-data-doc lineage docs for this folder (interactive wizard)",
-    handler: async (_args, ctx) => {
+    description: "Set up or rebuild coop-data-doc lineage docs for this folder (interactive wizard; `live` reads the dev database, `refresh` reads it again now)",
+    handler: async (args, ctx) => {
       try {
-        if (!ctx.hasUI) {
+        const mode = setupDocsMode(args);
+        if (!ctx.hasUI && mode !== "refresh") {
           notify(ctx, "setup-docs needs an interactive terminal. In a shell, run: coop data-doc setup", "warning");
           return;
         }
-        await runSetupDocs(pi, ctx);
+        await runSetupDocs(pi, ctx, mode);
       } catch (e: any) {
         notify(ctx, `setup-docs failed: ${errMsg(e)}. You can run the same wizard in a shell: coop data-doc setup`, "error");
       }

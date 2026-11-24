@@ -46,6 +46,15 @@ t("the live choice is offered only when the project file names a dev SQL target"
   assert.equal(tools.hasDevSqlTarget(named), true);
 });
 
+t("/setup-docs takes live and refresh; any other word is the wizard", () => {
+  assert.equal(tools.setupDocsMode("live"), "live");
+  assert.equal(tools.setupDocsMode("  Refresh \n"), "refresh");
+  assert.equal(tools.setupDocsMode(""), "");
+  assert.equal(tools.setupDocsMode(undefined), "");
+  assert.equal(tools.setupDocsMode("live now"), "");
+  assert.equal(tools.setupDocsMode("refresh --prod"), "");
+});
+
 t("a refresh reads as one clause per source, with no host and no token", () => {
   const text = tools.liveDocsSummary({ sources: [
     { name: "dev", state: "taken", objects: { view: 9, table: 5, procedure: 1 }, unread: 2 },

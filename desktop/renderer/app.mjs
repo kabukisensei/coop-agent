@@ -160,8 +160,8 @@ function onEvent(event) {
   if (event.type === "tool_execution_end" && event.toolName === TODO_TOOL && applyTodoResult(app.todos, event.result)) renderWidgets();
   if (event.type === "agent_settled") {
     refreshState(); refreshStats(); loadSessions();
-    // The changes pane follows coop's edits.
-    if (currentPane() === "changes") refreshPane();
+    // The changes pane follows coop's edits; the docs pane, a rebuild coop ran.
+    if (currentPane() === "changes" || currentPane() === "docs") refreshPane();
   }
   else if (event.type === "message_end" && event.message && event.message.role === "assistant") refreshStats();
 }
@@ -1435,6 +1435,19 @@ async function sendFeedback(arg = "") {
   if (!result.success) toast(`Could not start feedback: ${result.error || "unknown error"}. In a terminal: coop feedback`, "error");
 }
 
+// A pane's button that is really a slash command (the Docs pane's live dev
+// database setup and refresh): coop runs it in this tab's session, under the
+// session's identity and approvals, and answers in the conversation. The draft
+// in the prompt box stays where it is.
+async function sendSlash(text) {
+  if (!app.running) { toast("coop is not running in this window. Restart it first.", "warning"); return false; }
+  const input = { type: "prompt", message: text };
+  if (app.tl.busy) input.streamingBehavior = "steer";
+  const result = await cmd(input);
+  if (!result.success) toast(`coop did not take ${text}: ${result.error || "unknown error"}`, "error");
+  return Boolean(result.success);
+}
+
 async function runAction(id, arg = "", name = "") {
   const action = ACTIONS[id];
   if (!action) return;
@@ -1623,7 +1636,7 @@ function registerPanes() {
   registerPane({ id: "changes", label: "Changes", icon: "diff", description: "Files changed since the last commit", mount: (box, options) => mountChanges(box, options, { ...deps, cwd: () => (app.info ? app.info.cwd : ""), setPrompt }) });
   registerPane({ id: "standards", label: "Standards", icon: "shield", description: "The standards coop applies in this folder", mount: (box, options) => mountStandards(box, options, deps) });
   registerPane({ id: "project", label: "Project", icon: "form", description: "Project settings (.coop/project.yml)", mount: (box, options) => mountProject(box, options, { ...deps, newSession: () => runAction("new") }) });
-  registerPane({ id: "docs", label: "Docs", icon: "graph", description: "Lineage docs for this folder (coop-data-doc)", mount: (box, options) => mountDocs(box, options, deps) });
+  registerPane({ id: "docs", label: "Docs", icon: "graph", description: "Lineage docs for this folder (coop-data-doc)", mount: (box, options) => mountDocs(box, options, { ...deps, sendSlash }) });
 }
 
 async function boot() {

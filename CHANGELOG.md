@@ -5,6 +5,17 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **The window's Docs pane knows the live dev database.** When the docs come
+  from the dev database, the pane shows when dev was last read and has a
+  **Refresh from dev** button. When the project file has a dev SQL target and
+  the docs do not read it yet, it has **Use the live dev database**. Both run in
+  the tab's conversation as `/setup-docs refresh` and `/setup-docs live` (new
+  arguments; they work in the terminal too), so the sign-in and the dev-only
+  rule stay where they were: the window reads no database. The pane also
+  follows a rebuild coop ran in the conversation.
+
 ## [0.42.2] — 2026-11-24
 
 ### Added
