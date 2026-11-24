@@ -5,6 +5,16 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Changed
+
+- **Three working habits in the coop workflow.** When a correction repeats, coop
+  now writes it where it gets checked (a standards article or a project standards
+  override) before a skill, and uses memory last. After two failed fixes that
+  share one assumption, it tests the assumption before a third fix. In a review,
+  a problem is a finding only with the query output, `file:line` or tool result
+  that shows it; the rest is listed as not verified. Wording only, in
+  `skills/coop-workflow/SKILL.md`; the fixed context does not grow.
+
 ### Fixed
 
 - **The dev-VM test approver answers the write question again, and keeps its
