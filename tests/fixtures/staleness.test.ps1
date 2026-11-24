@@ -52,7 +52,9 @@ try {
 
   # 2. origin gains a commit released as v0.2.0 and an unreleased one after it; the
   #    clone's LOCAL refs are stale (tag not yet fetched) -> still 0.
-  Invoke-FixtureGit @('-C', $origin, 'commit', '--allow-empty', '-qm', 'three')
+  [System.IO.File]::WriteAllText((Join-Path $origin 'VERSION'), "0.2.0`n")
+  Invoke-FixtureGit @('-C', $origin, 'add', 'VERSION')
+  Invoke-FixtureGit @('-C', $origin, 'commit', '-qm', 'three')
   Invoke-FixtureGit @('-C', $origin, 'tag', '-a', 'v0.2.0', '-m', 'v0.2.0')
   Invoke-FixtureGit @('-C', $origin, 'commit', '--allow-empty', '-qm', 'four')
   if ((Get-CoopRepoBehindCount) -eq 0) { Ok 'behind-count is purely local (release not fetched yet -> 0)' } else { Ko 'behind-count must be local (no implicit fetch)' }

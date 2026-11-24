@@ -17,6 +17,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **`coop update` and the Windows install checkout skip a tag whose `VERSION`
+  disagrees.** A tag named `v1.0.19` on a commit whose `VERSION` was still
+  `0.42.0` sorted above every `0.42` release, so a checkout on `v0.42.0` moved
+  there and then stayed. A `vX.Y.Z` tag now counts only when `VERSION` at that
+  tag is `X.Y.Z`, the same check the release workflow uses before it publishes.
+  The install checkout in `docs/install-windows.md` applies the same rule.
+
 - **The dev-VM test approver answers the write question again, and keeps its
   text out of the audit log (tests only).** Since write questions show the exact
   statement, the question is a three-option choice and its title carries the SQL,
