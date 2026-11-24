@@ -1515,6 +1515,28 @@ export function liveDocsSummary(details: any): string {
   return rows.map(part).join("; ");
 }
 
+/** What changed in dev since the previous read, one clause per source that had
+ *  one to compare with: `dev since 2026-11-17: added dbo.a (table); changed …`.
+ *  At most five names per group, then "and N more"; the full list is in
+ *  live/dev-changes.md. Empty when no source was compared (a first read). */
+export function liveDocsChanges(details: any): string {
+  const rows: any[] = Array.isArray(details?.sources) ? details.sources : [];
+  const few = (names: string[]): string => names.length <= 5 ? names.join(", ") : `${names.slice(0, 5).join(", ")} and ${names.length - 5} more`;
+  const parts: string[] = [];
+  let file = "";
+  for (const row of rows) {
+    if (row.state !== "taken" || !row.changes || typeof row.changes !== "object") continue;
+    const since = String(row.since || "").slice(0, 10);
+    const groups = (["added", "changed", "removed"] as const)
+      .filter((word) => Array.isArray(row.changes[word]) && row.changes[word].length)
+      .map((word) => `${word} ${few(row.changes[word].map(String))}`);
+    parts.push(`${row.name}${since ? ` since ${since}` : ""}: ${groups.length ? groups.join("; ") : "nothing changed"}`);
+    if (row.changes_file) file = String(row.changes_file);
+  }
+  if (!parts.length) return "";
+  return `What changed in dev: ${parts.join(". ")}.${file ? ` Full list: ${file}.` : ""}`;
+}
+
 function liveDocsFailure(details: any): string {
   const state = String(details?.state || "internal_error");
   if (state === "tool_unavailable") return "coop-data-doc is not installed (run coop update).";
@@ -1596,6 +1618,8 @@ async function rebuildAfterLiveRead(pi: ExtensionAPI, ctx: any, ymlPath: string,
   notify(ctx, built
     ? `Lineage docs refreshed from the dev database (${liveDocsSummary(out)}).`
     : `The dev database was read (${liveDocsSummary(out)}) but the docs did not rebuild; run \`coop data-doc build\`.`, built ? "info" : "warning");
+  const changes = liveDocsChanges(out);
+  if (changes) notify(ctx, changes, "info");
   return built;
 }
 
@@ -2644,6 +2668,7 @@ export const TASK_GUIDES: ReadonlyArray<{ name: string; label: string; fallback:
   { name: "dax-measure", label: "\u{1F9EE}  Add or fix a DAX measure", fallback: "Help me add or fix a DAX measure in a Power BI semantic model, following the Cooptimize DAX and Measure Metadata standards. Ask me what it should answer first, and wait for my approval before editing." },
   { name: "new-load", label: "\u{1F504}  Build a silver load or gold view", fallback: "Help me build or change a silver table load or a gold view or stored procedure in SQL, following the Cooptimize standards. Ask me the layer, object and sources first, and write a spec for my approval before editing anything." },
   { name: "model-table", label: "\u{1F517}  Add a table to the model and relate it", fallback: "Help me add a SQL table to a Power BI semantic model and relate it, following the Cooptimize semantic model standards. Ask me the model and table first, and wait for my approval before editing." },
+  { name: "clean-unused", label: "\u{1F5D1}\uFE0F  Clean up unused tables and columns", fallback: "Help me find tables and columns nothing uses any more, from the data_doc lineage and sql_impact on dev, and remove them safely. List the candidates with their evidence and what the docs cannot see, wait for my approval, change dev only one item at a time, and prepare the promotion script for a person to run." },
 ]);
 
 /** A guide's text: prompts/<name>.md under the coop root without its `# /name`
