@@ -68,5 +68,18 @@ t("a refresh reads as one clause per source, with no host and no token", () => {
   assert.equal(tools.LIVE_DOCS_MAX_AGE_DAYS, 7);
 });
 
+t("what changed in dev reads as one clause per compared source, a few names each, and points at the full list", () => {
+  const many = Array.from({ length: 7 }, (_, i) => `dbo.t${i} (table)`);
+  const text = tools.liveDocsChanges({ sources: [
+    { name: "dev", state: "taken", since: "2026-11-17T06:00:00Z", changes: { added: ["sales.usp_load (procedure)"], changed: many, removed: [] }, changes_file: "live/dev-changes.md" },
+    { name: "dev_lake", state: "taken", since: "2026-11-17T06:00:00Z", changes: { added: [], changed: [], removed: [] }, changes_file: "live/dev-changes.md" },
+    { name: "first", state: "taken" },
+    { name: "stale", state: "fresh", age_days: 1 },
+  ] });
+  assert.equal(text, "What changed in dev: dev since 2026-11-17: added sales.usp_load (procedure); changed dbo.t0 (table), dbo.t1 (table), dbo.t2 (table), dbo.t3 (table), dbo.t4 (table) and 2 more. dev_lake since 2026-11-17: nothing changed. Full list: live/dev-changes.md.");
+  assert.equal(tools.liveDocsChanges({ sources: [{ name: "first", state: "taken" }] }), "", "a first read has nothing to compare with");
+  assert.equal(tools.liveDocsChanges({}), "");
+});
+
 rmSync(root, { recursive: true, force: true });
 console.log(`✓ live docs (${n} tests)`);

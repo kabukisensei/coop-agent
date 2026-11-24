@@ -7,6 +7,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Added
 
+- **What changed in dev.** When coop refreshes lineage docs from the live dev
+  database (the weekly session-start refresh, or `/setup-docs refresh`), it
+  compares the new read with the previous one and says which objects were added,
+  changed or removed since then, with the full list by date in
+  `live/dev-changes.md` (newest first; `live/` stays uncommitted). A first read
+  has nothing to compare with and says nothing.
+- **A Start menu guide for cleaning up unused tables and columns**
+  (`/clean-unused`). Candidates come from the lineage docs and `sql_impact` on
+  dev, each with its evidence and what the docs cannot see (notebooks,
+  pipelines, dynamic SQL); the guide waits for approval, changes dev only one
+  item at a time, and prepares the promotion script for a person to run.
+
 - **The window's Docs pane knows the live dev database.** When the docs come
   from the dev database, the pane shows when dev was last read and has a
   **Refresh from dev** button. When the project file has a dev SQL target and

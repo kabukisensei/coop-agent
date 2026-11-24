@@ -402,11 +402,13 @@ There is no `coop review` command: SQL/DAX standards are applied in the agent wh
 it writes, and it self-checks its diff against them before presenting a change.
 
 The **first interactive launch** on a machine opens the **Start Here menu**. It
-leads with six task guides for the work the team builds most: **set up a fact
+leads with seven task guides for the work the team builds most: **set up a fact
 table** (`/new-fact`), **set up a dimension** (`/new-dimension`), **clean up a
 semantic model** (`/clean-model`), **add or fix a DAX measure** (`/dax-measure`),
-**build a silver load or gold view** (`/new-load`) and **add a table to the model
-and relate it** (`/model-table`). Each guide asks for the specifics first, looks
+**build a silver load or gold view** (`/new-load`), **add a table to the model
+and relate it** (`/model-table`) and **clean up unused tables and columns**
+(`/clean-unused`: candidates from the lineage docs and `sql_impact`, dev changes
+one approved item at a time, the promotion script left for a person). Each guide asks for the specifics first, looks
 up lineage, names the coop-standards articles that apply and waits for approval
 before it writes; each is also a prompt template you can type. The window's empty
 page offers the first three as buttons. After the guides come the
@@ -432,6 +434,9 @@ wizard through a strict JSONL bridge; it is the same questionnaire used by
 When the SQL is not in a repository, `/setup-docs` can build the docs from the
 **live dev database** instead (offered when the project file has a dev SQL target):
 read-only, dev only, refreshed when it is over 7 days old as coop opens.
+Each refresh compares the new read with the previous one and says what changed in
+dev (objects added, changed and removed), with the full list in `live/dev-changes.md`;
+the weekly refresh makes that the weekly "what changed in dev" summary.
 `/setup-docs live` goes straight to that choice and `/setup-docs refresh` reads dev
 again now and rebuilds; the window's Docs pane has a button for each.
 The built docs live beside the committed project file (in the client home
