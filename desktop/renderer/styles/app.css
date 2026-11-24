@@ -424,7 +424,6 @@ details.divider .md { text-align: left; margin-top: 10px; padding: 10px 12px; ba
 .picker .option { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 2px 12px; }
 .picker .option-detail { grid-column: 1 / -1; }
 .picker .option-detail { white-space: normal; overflow: visible; }
-.picker .pick-list.compact .option-detail { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .picker .option.other .option-label { color: var(--text-muted); font-style: italic; }
 .check-list { display: flex; flex-direction: column; gap: 4px; margin: 0 0 10px; }
 .check-row { display: flex; align-items: flex-start; gap: 10px; padding: 6px 8px; border-radius: var(--radius); cursor: pointer; }
@@ -634,7 +633,17 @@ details.standards .pane-links { margin-top: 8px; }
 ::highlight(coop-pane-find-current) { background-color: var(--accent); color: var(--accent-text); }
 
 /* forms: the project form and the docs setup */
-.form-section { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.form-section { padding: 0 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+/* Each part of the project form folds: its heading, what it holds now, a chevron. */
+.section-head { display: flex; align-items: center; gap: 10px; padding: 10px 0; cursor: pointer; list-style: none; }
+.section-head::-webkit-details-marker { display: none; }
+.section-head h3 { flex: none; }
+.section-status { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; font-size: 12.5px; color: var(--text-muted); }
+.section-head > .icon { flex: none; color: var(--text-muted); transition: transform 0.12s; }
+.form-section[open] > .section-head > .icon { transform: rotate(90deg); }
+.section-body { display: flex; flex-direction: column; gap: 10px; padding: 2px 0 12px; }
+.folder-fold > summary { cursor: pointer; font-size: 12.5px; color: var(--text-muted); }
+.folder-fold[open] > summary { margin-bottom: 6px; }
 .form-section h3, .docs-setup h3, .docs-build h3 { margin: 0; font-size: 14px; color: var(--text-strong); display: flex; align-items: center; gap: 6px; }
 .form-group { display: flex; flex-direction: column; gap: 10px; padding-left: 12px; border-left: 2px solid var(--border); }
 .form-row { display: flex; flex-direction: column; gap: 4px; }
@@ -694,7 +703,6 @@ pre.output.build-log { max-height: 220px; font-size: 12px; white-space: pre-wrap
   body.no-sidebar .sidebar { visibility: visible; }
   .timeline, .dock { padding-left: 14px; padding-right: 14px; }
   .dock { padding-right: calc(14px + var(--scrollbar, 10px)); }
-  #terminalButton { display: none; }
   /* A narrow window shows the pane over the conversation. */
   body.with-pane .app { grid-template-columns: 0 minmax(0, 1fr); }
   body.with-pane.no-sidebar .app { grid-template-columns: 240px minmax(0, 1fr); }
