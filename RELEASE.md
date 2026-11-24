@@ -26,17 +26,20 @@ working tree. Never auto-release; if unsure whether a release was requested,
 stop and ask.
 
 **Definition of done:** a suite release is **not finished** until coop-website
-is synced and pushed — `versions.json` updated **first**, then badges /
-cache-bust, and **both** check scripts (`check-versions.sh`, `check-links.sh`)
-PASS. See step (c).
+is synced and that pull request is merged. coop-agent's `release.yml` dispatches
+the site's sync-release workflow when `COOP_WEBSITE_DISPATCH_TOKEN` is set.
+That workflow updates `versions.json`, badges and the changelog and opens the
+pull request. Without the secret, the GitHub Release is still published and
+the website job prints a notice; run sync-release by hand (step (c)). Pushing
+the site's `main` deploys.
 
 ## What publishes automatically on a `v*` tag push
 
 | Repo | Pushing tag `vX.Y.Z` triggers | Version source (single source of truth) |
 | --- | --- | --- |
 | coop-data-doc | `publish.yml`: build → wheel smoke-test → **PyPI** → GitHub Release | `src/coop_data_doc/__init__.py` `__version__` |
-| coop-agent | `release.yml`: **GitHub Release only** (body = that version's CHANGELOG section). Nothing goes to npm/PyPI | `VERSION` file + `extensions/*/package.json` (lockstep, managed by `coop release`) |
-| coop-website | nothing — tags are not used; **pushing to `main` deploys** the site. CI (`check.yml`) gates version-sync + link checks on every push/PR | `versions.json` in the repo root — every HTML badge/mention must match it (`scripts/check-versions.sh` enforces) |
+| coop-agent | `release.yml`: **GitHub Release** (body = that version's CHANGELOG section), then a `repository_dispatch` (`coop-release`, `{repo, tag}`) to coop-website when `COOP_WEBSITE_DISPATCH_TOKEN` is set. Nothing goes to npm/PyPI | `VERSION` file + `extensions/*/package.json` (lockstep, managed by `coop release`) |
+| coop-website | no tags of its own. coop-agent's `website` job dispatches `coop-release`, or you run Actions → sync-release by hand; that opens a pull request. **Pushing to `main` deploys** the site. CI (`check.yml`) gates version-sync + link checks on every push/PR | `versions.json` in the repo root — every HTML badge/mention must match it (`scripts/check-versions.sh` enforces) |
 
 coop-data-doc's `publish.yml` **verifies the pushed tag equals
 `__version__` exactly** and fails the whole publish otherwise.
@@ -132,8 +135,10 @@ pin: the fixtures, `NOTICE.md` and the client-home CI template read the
 manifest (the template keeps `coop-data-doc==<version>`, rendered at copy
 time), and `tests/pins.test.sh` fails the bump PR if a stale `<tool>==<old>`
 literal is left anywhere. The pre-tag gate below verifies the pin against
-coop-website's `versions.json` and aborts on a mismatch. (Update `versions.json`
-before or together with the pin; step (c) requires it anyway.)
+coop-website's `versions.json` and aborts on a mismatch. (Update the sibling
+checkout's `versions.json` before or together with the pin. The website job
+opens the site's sync pull request only after this tag is published, so that
+gate still reads the checkout you have, not the pull request.)
 
 **Refresh the bundled standards copy** so the release ships the wiki as it is
 today (first runs and offline machines read it until `coop sync` reaches the
@@ -192,12 +197,18 @@ release, the shortcut launch and the one-liner, as `ci.yml` runs on every push
 to `main`); the release job publishes the executable only when the acceptance
 report says ok and names the executable's SHA-256
 (`desktop/scripts/check-installer-report.mjs`), with that version's CHANGELOG
-section as the body; then the `website` job prints the coop-website command
-for step (c) (`bash scripts/sync-release.sh coop-agent X.Y.Z` in a site clone):
-coop-website is private, and a public repository cannot call its reusable
-`sync-release.yml`, so a `uses:` of it stops the whole tag run before it starts. A failed
-acceptance fails the tag run with no release created; fix, then release the
-next patch (never re-push a tag).
+section as the body. The `website` job (`needs: [release]`) then dispatches
+`repository_dispatch` event `coop-release` to kabukisensei/coop-website with
+`client_payload` `{repo, tag}`, `repo` this repository's name and `tag` the
+pushed tag (`github.ref_name`, `vX.Y.Z`). This workflow has no
+`workflow_dispatch` and no `inputs.tag`; the release job's `version` output is
+the same tag with the leading `v` removed, which the site's receiver rejects.
+The call needs the `COOP_WEBSITE_DISPATCH_TOKEN` secret. Without it the job
+prints a notice and exits 0, and you run the site's sync-release workflow by
+hand (step (c)). coop-website is private, so the job sends a
+`repository_dispatch`. A `uses:` of a workflow in that repository fails the
+tag run at planning (v0.38.7). A failed acceptance fails the tag run with no
+release created; fix, then release the next patch (never re-push a tag).
 
 Verify:
 
@@ -238,52 +249,28 @@ non-zero with the retry command.
 
 ## (c) coop-website — LAST
 
-No tags: **pushing to `main` deploys**. The site hard-codes tool versions in
-its HTML, with `versions.json` (repo root) as the declared single source of
-truth — CI (`check.yml`) fails any push/PR where they drift. The site still
-drifts every suite release unless you update it. coop-website's own
-`AGENTS.md` > "Release-time procedure" is the canonical detailed version of
-these steps.
+No tags on the site: **pushing to `main` deploys**. The site hard-codes tool
+versions in its HTML, with `versions.json` (repo root) as the declared single
+source of truth — CI (`check.yml`) fails any push/PR where they drift.
 
-```bash
-cd ../coop-website
-git pull
-```
+The sync is automatic once this repository has the
+`COOP_WEBSITE_DISPATCH_TOKEN` secret (a fine-grained PAT whose only repository
+is kabukisensei/coop-website, Contents: Read and write — the minimum for
+`POST /repos/{owner}/{repo}/dispatches`). After the GitHub Release is
+published, `release.yml`'s `website` job sends `repository_dispatch`
+event_type `coop-release` with `client_payload` `{repo, tag}`: `repo` is
+`coop-agent` and `tag` is `vX.Y.Z`. coop-website's sync-release workflow (the
+receiver from its PR #105) checks that pair, updates `versions.json`, the
+badges and the changelog, runs the site's check scripts, and opens the pull
+request. Review it, merge it, and the push to `main` deploys.
 
-1. **Edit `versions.json` first**: set the new product version(s); if any
-   js/css changed, also increment `"cache_bust"` by exactly 1. Keep its
-   strict one-`"key": "value"`-per-line layout — the checker parses it with
-   sed, not a JSON parser.
-2. Update the **version badges**: each `docs/*.html` carries
-   `<span class="version-label">vX.Y.Z</span>` in a `doc-version` line (plus a
-   "docs last updated" date). Pages track the repo they document —
-   `data-doc.html` → coop-data-doc, everything else → coop-agent. (The
-   `sql-review.html` / `sql-rules.html` / `dax-review.html` / `dax-rules.html`
-   pages are retired with the CLIs; removing them from the site is a separate
-   coop-website PR, and until it lands their badges stay at the last released
-   versions.) Sample
-   `coop doctor` output and JSON examples on those pages can also embed
-   versions — search each touched page for the OLD version string:
+Without the secret, the website job prints a notice and exits 0. The release
+is already published. Run the sync-release workflow in
+kabukisensei/coop-website by hand: Actions → sync-release → Run workflow, with
+repo `coop-agent` and tag `vX.Y.Z` (the tag must match `^v\d+\.\d+\.\d+$`).
 
-   ```bash
-   grep -rn "vOLD.X.Y" index.html docs/
-   ```
-
-3. If any js/css changed, bump the **cache-bust query** `?v=NN` → `?v=NN+1`
-   (to match the new `"cache_bust"`) on every asset reference across **all**
-   HTML files (they must stay identical; 50 references as of `?v=15`):
-
-   ```bash
-   grep -rno '?v=[0-9]*' index.html docs/*.html | sort -t= -k2 | uniq -c -f1
-   ```
-
-4. Verify no drift — run the same two checks CI runs, and re-run after fixing
-   each reported `DRIFT:` / `BROKEN:` line until both pass:
-
-   ```bash
-   bash scripts/check-versions.sh   # expect: "PASS: ..." and exit 0
-   bash scripts/check-links.sh      # expect: "PASS: ..." and exit 0
-   ```
-
-5. Commit, push `main`, then spot-check the live site (badge versions + a
-   hard-refresh for the new assets).
+coop-website's own `AGENTS.md` > "Release-time procedure" is the canonical
+description of the edits that workflow applies. A pre-tag pin check still
+reads the sibling checkout's `versions.json` (step (b)); pull that checkout
+when a tool's sync pull request has merged and you are about to tag
+coop-agent.

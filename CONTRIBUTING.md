@@ -211,8 +211,12 @@ coop release              # verifies the tree, CI and the pins, then tags vX.Y.Z
 
 Pushing the tag is the fleet deployment: `coop update` moves teammates to the newest
 `vX.Y.Z` tag on `main` whose `VERSION` matches, and ignores a tag that is not on
-`main` or whose `VERSION` disagrees, which is why the tag only travels with `main`. Rollback is a new release, never a moved or deleted tag. See
-[RELEASE.md](RELEASE.md#d-coop-agent-this-repo).
+`main` or whose `VERSION` disagrees, which is why the tag only travels with `main`. Rollback is a new release, never a moved or deleted tag. The tag run's
+`website` job then dispatches the coop-website docs sync when
+`COOP_WEBSITE_DISPATCH_TOKEN` is set. Without that secret the job prints a
+notice and you run kabukisensei/coop-website's sync-release workflow by hand
+(repo `coop-agent`, tag `vX.Y.Z`). See
+[RELEASE.md](RELEASE.md#b-coop-agent-this-repo).
 
 coop-agent is one of six coop-\* repos. When a change spans the suite
 (core → review tools → agent → website), release in the order documented in
