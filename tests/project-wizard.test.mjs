@@ -453,6 +453,7 @@ await t("native wizard proposes the Azure SQL dev target on an Azure SQL machine
   try {
     const confirms = [true, false, false, false, false, false, true]; // local source, add repo, Fabric, Power BI, TE, Schema Manager, write
     const labels = [];
+    const picks = [];
     const ctx = {
       cwd: root,
       hasUI: true,
@@ -468,13 +469,18 @@ await t("native wizard proposes the Azure SQL dev target on an Azure SQL machine
           if (_title === "Microsoft Fabric") assert.match(message, /Azure SQL client/);
           return confirms.shift() ?? false;
         },
-        select: async (_label, options) => options.find((x) => x.includes("General project")) ?? options.find((x) => x.startsWith("✓ Use this folder:")),
+        select: async (label, options) => {
+          if (label.startsWith("Dev SQL target")) picks.push(options);
+          return options.find((x) => x.includes("General project")) ?? options.find((x) => x.startsWith("✓ Use this folder:")) ?? options[0];
+        },
         notify: () => {},
       },
     };
     assert.equal(await runProjectWizard({}, ctx), true);
     const text = readFileSync(join(root, ".coop", "project.yml"), "utf8");
-    assert.ok(labels.some((l) => l.startsWith("Dev SQL target kind")), "the wizard asks for the dev SQL target kind");
+    assert.equal(picks.length, 1, "the wizard asks for the dev SQL target kind");
+    assert.equal(picks[0][0], "Azure SQL", "the machine's platform is the first row, so Enter keeps it");
+    assert.ok(!labels.some((l) => /Git remote name|Schema compare:/.test(l)), "a first setup skips the remote name and schema compare questions: " + labels.join(" | "));
     assert.equal(projectYamlScalar(text, ["sql_targets", "dev", "kind"]), "azure_sql");
     assert.equal(projectYamlScalar(text, ["sql_targets", "dev", "server"]), "contoso-dev.database.windows.net");
     assert.equal(projectYamlScalar(text, ["sql_targets", "dev", "database"]), "ContosoDW");
@@ -651,7 +657,7 @@ await t("editing a repository never replaces its folder with one above it withou
           if (["Repositories", "Microsoft Fabric / Power BI", "Tabular Editor", "Share with the team"].includes(title)) return false;
           return true;                                               // the final write
         },
-        select: async (_label, options) => options.find((x) => x.includes("Power BI")) ?? options.find((x) => x.startsWith("✓ Use this folder:")),
+        select: async (label, options) => label === "What do you want to change?" ? "Repositories" : options.find((x) => x.includes("Power BI")) ?? options.find((x) => x.startsWith("✓ Use this folder:")) ?? options[0],
         notify: () => {},
       },
     };
@@ -713,7 +719,7 @@ await t("native wizard is reachable inside Coop and creates the contract", async
       select: async (_label, options) => {
         selectCount++;
         if (selectCount === 1) return options.find((x) => x.includes("General project"));
-        return options.find((x) => x.startsWith("✓ Use this folder:"));
+        return options.find((x) => x.startsWith("✓ Use this folder:")) ?? options[0];
       },
       notify: () => {},
     },
@@ -768,7 +774,7 @@ await t("Fabric ids are looked up by name from the Azure sign-in: Enter keeps th
         return def;
       },
       confirm: async () => confirms.shift() ?? false,
-      select: async (_label, options) => options.find((x) => x.includes("General project")) ?? options.find((x) => x.startsWith("✓ Use this folder:")),
+      select: async (_label, options) => options.find((x) => x.includes("General project")) ?? options.find((x) => x.startsWith("✓ Use this folder:")) ?? options[0],
       notify: (message) => notes.push(String(message)),
     },
   };
@@ -1351,6 +1357,74 @@ await t("C2: the mapping predicts model tables and SQL objects, and names a mism
   assert.equal(mappingExpectationLine({ declared: false }, "dbo", "vSales"), "");
   assert.match(mappingExpectationLine(same, "dbo", "vSales"), /a semantic-model table named 'vSales' or 'dbo\.vSales' is expected to load dbo\.vSales; .*confirm with data_doc lineage/);
   assert.match(mappingExpectationLine(prefix, "dbo", "FactSales"), /no semantic-model table is expected to load dbo\.FactSales/);
+});
+
+await t("an existing file: pick one part, and only that part is asked; fixed choices are pickers; a bad answer is asked again", async () => {
+  const { PROJECT_WIZARD_PARTS, PROJECT_WIZARD_EVERYTHING } = await import(pathToFileURL(join(dist, "coop-tools.mjs")).href);
+  const root = isolatedRoot("coop-project-parts-");
+  mkdirSync(join(root, ".git"));
+  mkdirSync(join(root, ".coop"));
+  skipIfContaminated(root);
+  const contract = join(root, ".coop", "project.yml");
+  const original = "profile:\n  organization: 'Cooptimize'\n  client: 'Contoso'\n  default_branch: 'main'\nrepositories:\n  app:\n    description: 'App'\n    role: 'generic'\n    local_path: '.'\n    remote_name: 'origin'\n    default_branch: 'main'\n";
+  writeFileSync(contract, original);
+  const run = async (part, { inputs = {}, picks = {} } = {}) => {
+    const asked = { input: [], confirm: [], select: [], notes: [] };
+    const tries = {};
+    const ctx = {
+      cwd: root, hasUI: true, mode: "tui",
+      ui: {
+        input: async (label, def) => {
+          asked.input.push(label);
+          const key = Object.keys(inputs).find((k) => label.startsWith(k));
+          if (!key) return def;
+          const answers = [].concat(inputs[key]);
+          tries[key] = (tries[key] ?? 0) + 1;
+          return answers[Math.min(tries[key], answers.length) - 1];
+        },
+        confirm: async (title) => { asked.confirm.push(title); return title !== "Share with the team" && title !== "Repositories"; },
+        select: async (label, options) => {
+          asked.select.push([label, options]);
+          if (label === "What do you want to change?") return part;
+          const key = Object.keys(picks).find((k) => label.startsWith(k));
+          return key ? picks[key] : options[0];
+        },
+        notify: (message) => asked.notes.push(String(message)),
+      },
+    };
+    return { ok: await runProjectWizard({}, ctx), asked };
+  };
+
+  // The menu lists the same parts as the window's Project pane, then "everything".
+  const first = await run("Project details (client, timezone, branch)", { inputs: { "Client / engagement": "Fabrikam" } });
+  assert.equal(first.ok, true);
+  assert.deepEqual(first.asked.select[0][1], [...PROJECT_WIZARD_PARTS.map(([, text]) => text), PROJECT_WIZARD_EVERYTHING]);
+  assert.equal(first.asked.input.filter((label) => !label.startsWith("What should coop call you?")).length, 4, first.asked.input.join(" | "));
+  assert.ok(!first.asked.confirm.some((title) => /Fabric|Power BI|Tabular|Schema Manager|Repository/.test(title)), first.asked.confirm.join(" | "));
+  assert.equal(projectYamlScalar(readFileSync(contract, "utf8"), ["profile", "client"]), "Fabrikam");
+
+  // The SQL part: the kind is a pick, and a server host that is not a host is asked again.
+  const sql = await run("SQL targets and schema compare", {
+    picks: { "Dev SQL target": "Azure SQL" },
+    inputs: { "Dev SQL server host": ["not a host", "Contoso-Dev.database.windows.net"], "Dev database name": "ContosoDW" },
+  });
+  assert.equal(sql.ok, true, sql.asked.notes.join("\n"));
+  assert.ok(sql.asked.select.some(([label, options]) => label.startsWith("Dev SQL target") && options.includes("None")), "the kind is a pick with a None row");
+  assert.equal(sql.asked.input.filter((label) => label.startsWith("Dev SQL server host")).length, 2, "the bad host was asked again");
+  assert.ok(!sql.asked.input.some((label) => label.startsWith("Client / engagement")), "no other part is asked");
+  const text = readFileSync(contract, "utf8");
+  assert.equal(projectYamlScalar(text, ["sql_targets", "dev", "kind"]), "azure_sql");
+  assert.equal(projectYamlScalar(text, ["sql_targets", "dev", "server"]), "contoso-dev.database.windows.net");
+  assert.equal(projectYamlScalar(text, ["profile", "client"]), "Fabrikam", "the other parts stay as the file has them");
+
+  // Three bad answers stop the wizard and change nothing.
+  const before = readFileSync(contract, "utf8");
+  const bad = await run("SQL targets and schema compare", { inputs: { "Dev SQL server host": "not a host" } });
+  assert.equal(bad.ok, false);
+  assert.equal(readFileSync(contract, "utf8"), before);
+
+  // Esc at the menu changes nothing.
+  assert.equal((await run(undefined)).ok, false);
 });
 
 cleanupFixtures();

@@ -582,6 +582,18 @@ function wizardCtx(root, { fresh = false, localSource = true } = {}) {
           if (repo.localPath === ".") return options.find((o) => o.startsWith("✓ Use this folder:"));
           return options.find((o) => o.startsWith("⌨"));
         }
+        if (label === "What do you want to change?") return options[options.length - 1]; // everything
+        // The fixed-choice questions are picks: the row that stands for the answer.
+        const picks = [
+          ["Default SQL endpoint:", { Warehouse: "Warehouse", Lakehouse: "Lakehouse" }[ANSWERS.fabric.sqlEndpointItemType]],
+          ["Fabric layout:", { warehouse: "Warehouse", lakehouse: "Lakehouse", sql_database: "SQL database", mixed: "Mixed" }[ANSWERS.fabric.fabricLayout]],
+          ["How does a semantic-model table map", options.find((o) => o.toLowerCase().startsWith(String(ANSWERS.fabric.tableMappingRule || "same_name").replace("_", " ")))],
+          ["Dev SQL target:", { azure_sql: "Azure SQL" }[ANSWERS.target.sqlTargetKind]],
+          ["Schema compare:", { runnable: "Runnable", commented: "Commented out" }[ANSWERS.target.schemaCompareDestructive]],
+          ["Schema Manager:", { fabric: "Fabric pipelines", adf: "Azure Data Factory" }[ANSWERS.wm.warehouseManagerPlatform]],
+        ];
+        const pick = fresh ? null : picks.find(([prefix]) => label.startsWith(prefix));
+        if (pick) { assert.ok(options.includes(pick[1]), `${label}: ${pick[1]} is a row of ${options.join(" | ")}`); return pick[1]; }
         return options[0];
       },
     },
