@@ -49,7 +49,7 @@ const editors = await import("../desktop/lib/editors.mjs");
 const { loadSettings } = await import("../desktop/lib/settings.mjs");
 const { articleOutline, sourceLine, noteLabel, isKnowledgeId, STATE_LABELS, KNOWLEDGE_STATE_LABELS } = await import("../desktop/renderer/pane-standards.mjs");
 const { initialValues, formInput, platformHint, folderRows, ROLE_LABELS } = await import("../desktop/renderer/pane-project.mjs");
-const { resolvePage, isDocsLink, stripFrontMatter, answerLabel, typeLabel } = await import("../desktop/renderer/pane-docs.mjs");
+const { resolvePage, isDocsLink, stripFrontMatter, answerLabel, typeLabel, readAgo, liveActions, liveKey } = await import("../desktop/renderer/pane-docs.mjs");
 const { paneLinksForTool, paneLinksForText } = await import("../desktop/renderer/view.mjs");
 const { parseMarkdown } = await import("../desktop/renderer/markdown.mjs");
 const { KEYS } = await import("../desktop/renderer/commands.mjs");
@@ -939,7 +939,7 @@ await check("docs form: cancel, a wrong answer, and the home folder", async () =
 await check("docs pane: Build streams output; the built pages open only from the docs folder", async () => {
   const cwd = join(mkdtempSync(join(temp, "docs-build-")), "proj");
   mkdirSync(cwd);
-  assert.deepEqual(docs.docsLocation(cwd, process.env), { config: join(cwd, "coop-data-doc.yml"), exists: false, outputDir: join(cwd, "data-docs"), built: false, portal: "" });
+  assert.deepEqual(docs.docsLocation(cwd, process.env), { config: join(cwd, "coop-data-doc.yml"), exists: false, outputDir: join(cwd, "data-docs"), built: false, portal: "", live: false, devTarget: false, snapshotAt: "" });
   writeFileSync(join(cwd, "coop-data-doc.yml"), "project: demo\noutput:\n  dir: ./docs-out # built Markdown\n  site_dir: './portal'\n");
   // A fake spawn: the build's output, line by line, split across chunks.
   const spawnImpl = (exe, args, options) => {
@@ -1002,6 +1002,46 @@ await check("docs pane: Build streams output; the built pages open only from the
   assert.deepEqual(await docs.runDocsBuild({ cwd, env: process.env, platform: "linux", spawnImpl: failing }), { code: 2, tail: ["Repo 'sql' path does not exist"] });
   const missing = () => { const c = new EventEmitter(); c.stdout = new PassThrough(); c.stderr = new PassThrough(); setImmediate(() => c.emit("error", new Error("spawn ENOENT"))); return c; };
   assert.match((await docs.runDocsBuild({ cwd, env: process.env, platform: "linux", spawnImpl: missing })).tail[0], /Is it installed/);
+});
+
+await check("docs pane: the live dev database buttons follow the project file and the config", () => {
+  const cwd = join(temp, "docs-live");
+  mkdirSync(join(cwd, ".coop"), { recursive: true });
+  const env = { ...process.env, COOP_PROJECT_YML: "" };
+  // No dev SQL target: nothing about the live database is offered.
+  writeFileSync(join(cwd, ".coop", "project.yml"), "profile:\n  client: 'Contoso'\n");
+  let where = docs.docsLocation(cwd, env);
+  assert.deepEqual([where.live, where.devTarget, where.snapshotAt], [false, false, ""]);
+  assert.deepEqual(liveActions(where, true), { setUp: false, refresh: false });
+  // A dev target and docs made from files (or none yet): the live choice is offered.
+  writeFileSync(join(cwd, ".coop", "project.yml"), "sql_targets:\n  default_environment: dev\n  dev:\n    kind: 'azure_sql'\n    server: 'contoso-dev.database.windows.net'\n    database: 'ContosoDW'\n");
+  where = docs.docsLocation(cwd, env);
+  assert.deepEqual([where.live, where.devTarget], [false, true]);
+  assert.deepEqual(liveActions(where, true), { setUp: true, refresh: false });
+  assert.deepEqual(liveActions(where, false), { setUp: false, refresh: false }, "no way to send the command, no button");
+  // Live sources in the config, dev not read yet.
+  writeFileSync(join(cwd, "coop-data-doc.yml"), 'project_name: "x"\nrepos:\n  sql:\n    path: "./live/dev"\nlive_sources:\n  "dev":\n    server: "h"\n    database: "d"\n    repo: "sql"\n    environment: "dev"\n');
+  where = docs.docsLocation(cwd, env);
+  assert.deepEqual([where.live, where.snapshotAt], [true, ""]);
+  assert.deepEqual(liveActions(where, true), { setUp: false, refresh: true });
+  // Two sources read on different days: the docs are as old as the older one;
+  // a folder with no manifest or a broken one is not a read.
+  for (const [name, body] of [["dev", '{"taken_at":"2026-11-20T06:00:00Z"}'], ["dev_lake", '{"taken_at":"2026-11-12T06:00:00Z"}'], ["broken", "{not json"], ["dateless", '{"taken_at":"soon"}']]) {
+    mkdirSync(join(cwd, "live", name), { recursive: true });
+    writeFileSync(join(cwd, "live", name, ".coop-data-doc-snapshot.json"), body);
+  }
+  mkdirSync(join(cwd, "live", "empty"), { recursive: true });
+  const before = liveKey(where);
+  where = docs.docsLocation(cwd, env);
+  assert.equal(where.snapshotAt, "2026-11-12T06:00:00Z");
+  assert.notEqual(liveKey(where), before, "a read changes what the pane is waiting on");
+  const now = Date.parse("2026-11-24T12:00:00Z");
+  assert.equal(readAgo(where.snapshotAt, now), "12 days ago");
+  assert.equal(readAgo("2026-11-24T06:00:00Z", now), "today");
+  assert.equal(readAgo("2026-11-23T06:00:00Z", now), "yesterday");
+  assert.equal(readAgo("2026-11-25T06:00:00Z", now), "today", "a clock a little ahead is not a negative age");
+  assert.equal(readAgo("", now), "");
+  assert.equal(readAgo("soon", now), "");
 });
 
 await check("docs pane: which links the pane opens itself", () => {

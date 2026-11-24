@@ -468,7 +468,12 @@ output folder) and a build. `coop-data-doc.yml` is the committed, shared setting
 when the config in the session folder has `live_sources`, coop runs `refresh` with
 `max_age_days: 7` in the background and rebuilds the docs when a snapshot was
 taken, so each teammate's docs are at most a week behind dev. A failure is one
-notice and never blocks the session. The token, the host and exception text are
+notice and never blocks the session. `/setup-docs live` skips the question and
+takes the live choice; `/setup-docs refresh` runs `refresh` with no age limit and
+rebuilds. The window's Docs pane shows when dev was last read (the oldest
+`taken_at` under `live/`) and sends those two commands to the tab's session
+("Use the live dev database", "Refresh from dev"): the window itself never signs
+in or reads a database. The token, the host and exception text are
 never printed. The live read needs `pyodbc` in coop-data-doc's own pipx
 environment (`Sync-CoopToolLibraries` injects the manifest's `python_tools.pyodbc`
 pin after the tool converges; a failed inject is said on the unit line and does not

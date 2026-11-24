@@ -432,6 +432,8 @@ wizard through a strict JSONL bridge; it is the same questionnaire used by
 When the SQL is not in a repository, `/setup-docs` can build the docs from the
 **live dev database** instead (offered when the project file has a dev SQL target):
 read-only, dev only, refreshed when it is over 7 days old as coop opens.
+`/setup-docs live` goes straight to that choice and `/setup-docs refresh` reads dev
+again now and rebuilds; the window's Docs pane has a button for each.
 The built docs live beside the committed project file (in the client home
 repository `<client>-coop` when the client has several repositories; master plan
 DR1): `/setup-docs` proposes that `data-docs` folder as the output from any of the
