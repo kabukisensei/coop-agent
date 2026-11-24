@@ -426,6 +426,12 @@ try {
   $frRc = $LASTEXITCODE
   $ErrorActionPreference = $eap
   if ($frRc -eq 0) { $frOut | ForEach-Object { Write-Host $_ } } else { Ko 'fabric-runtime-convergence fixture failed' ($frOut -join "`n") }
+  # coop-data-doc's live-read library (pyodbc) through the same converge helper.
+  $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+  $llOut = @(& $psExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $checkout 'tests\fixtures\data-doc-live-library.test.ps1') 2>&1 | ForEach-Object { "$_" })
+  $llRc = $LASTEXITCODE
+  $ErrorActionPreference = $eap
+  if ($llRc -eq 0) { $llOut | ForEach-Object { Write-Host $_ } } else { Ko 'data-doc-live-library fixture failed' ($llOut -join "`n") }
 
   # --- 4. NORMAL-mode drift convergence (no --force): round-2 review item #1 -------
   # Deliberate drift: installed Pi 0.81.0 (manifest 1.5.2) and coop-data-doc 1.1.0

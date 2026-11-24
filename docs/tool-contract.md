@@ -446,6 +446,35 @@ name)` and `expectedSqlObject(mapping, table)` are the two directions of the rul
 texts above. The wizard writes `view_prefix: ''` for a `same_name` rule and never
 touches `overrides` once it holds entries.
 
+### Live dev docs (`lib/live_docs.py`)
+
+Lineage docs for a client whose SQL is not in a repository. `coop-data-doc`
+(1.6 or later) reads the dev database's catalog into a local folder with its own
+`snapshot` command and builds from those files; coop decides which databases,
+under which identity, and how old a snapshot may get. Not an agent tool: only
+`/setup-docs` and the session start call the helper, so no guardrail rule applies
+and no prompt is asked (the read is dev only, catalog views only, read-only intent).
+
+| Command | What it does |
+| --- | --- |
+| `setup` | Every dev target of the contract (`sql_targets.dev` and each `sql_targets.named.<set>.dev`) becomes a `live_sources` entry (`dev`, `dev_<set>`) with `environment: dev`, pointing at the repo `sql` or `sql_<set>` under `live/`. The host is resolved exactly as a read (`lib/sql_query.py` `resolve_target` and `resolve_connection`) and written through `coop-data-doc config-set`; coop never writes `coop-data-doc.yml` itself. A target that does not resolve as dev is `target_not_dev`. |
+| `refresh` | For each `live_sources` entry that is one of those dev targets (same host, same database), runs `coop-data-doc snapshot <name> --json` with the tenant-pinned token in the child's `COOP_DATA_DOC_ACCESS_TOKEN`. An entry the contract does not name is `not_a_dev_target` and gets no token. With `max_age_days`, a younger snapshot is skipped before anything is resolved or minted. |
+| `status` | The age of each source's snapshot from its `.coop-data-doc-snapshot.json`; reads files only. |
+
+`/setup-docs` offers "The live dev database" when the contract has a dev SQL
+target: `setup`, then `refresh`, then the usual wizard (for Power BI and the
+output folder) and a build. `coop-data-doc.yml` is the committed, shared setting;
+`live/` gets a `.gitignore` so definitions are never committed. At session start,
+when the config in the session folder has `live_sources`, coop runs `refresh` with
+`max_age_days: 7` in the background and rebuilds the docs when a snapshot was
+taken, so each teammate's docs are at most a week behind dev. A failure is one
+notice and never blocks the session. The token, the host and exception text are
+never printed. The live read needs `pyodbc` in coop-data-doc's own pipx
+environment (`Sync-CoopToolLibraries` injects the manifest's `python_tools.pyodbc`
+pin after the tool converges; a failed inject is said on the unit line and does not
+fail it) and the ODBC Driver 18. The committed `catalog_snapshot` below is a
+separate feature and is unchanged.
+
 ### `catalog_snapshot` (committed dev catalog snapshot)
 
 The committed dev catalog snapshot (master plan row SQ9, Joel's "schema file coop

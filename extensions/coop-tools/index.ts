@@ -136,6 +136,7 @@ import {
   repositoryShortName,
   saveUserProfileName,
   scalarValue,
+  sqlTargetEntries,
   sqlTargetsNote as contractSqlTargetsNote,
   writeProjectContract,
   writtenSqlTargetProblems,
@@ -327,7 +328,7 @@ export function fabricSqlPythonResolverInvocation(
   };
 }
 
-export type SqlHelper = "sql_query.py" | "sql_impact.py" | "catalog_snapshot.py" | "schema_compare.py";
+export type SqlHelper = "sql_query.py" | "sql_impact.py" | "catalog_snapshot.py" | "schema_compare.py" | "live_docs.py";
 
 export function fabricSqlHelperInvocation(
   python: string,
@@ -549,7 +550,7 @@ export function compareToolHint(details: any): string {
  *  a real warehouse, which took over a minute on the client VM), and a schema
  *  compare reads two catalogs that way. */
 export function sqlHelperTimeoutMs(helper: SqlHelper): number {
-  return helper === "catalog_snapshot.py" || helper === "schema_compare.py" ? 300_000 : 60_000;
+  return helper === "catalog_snapshot.py" || helper === "schema_compare.py" || helper === "live_docs.py" ? 300_000 : 60_000;
 }
 
 async function runFabricSqlHelper(params: any, signal: AbortSignal | undefined, cwd: string, helper: SqlHelper = "sql_query.py"): Promise<any> {
@@ -1479,10 +1480,119 @@ async function runQuickSetup(pi: ExtensionAPI, ctx: any, prefill: DataDocSetupPr
   return ok;
 }
 
+// --- Lineage docs from the live dev database (coop-data-doc `snapshot`) ---------
+// For a client whose SQL is not in a repository. lib/live_docs.py resolves the
+// project file's dev targets (same identity pinning as every dev read) and runs
+// the pinned coop-data-doc's read-only catalog snapshot into ./live/<source>
+// beside coop-data-doc.yml; the docs are then built from those files. Dev only.
+
+/** How old a live snapshot may get before coop refreshes it when a session starts. */
+export const LIVE_DOCS_MAX_AGE_DAYS = 7;
+const LIVE_FILES = "SQL files in a folder (a repository)";
+const LIVE_DEV = `The live dev database (read-only; coop refreshes it when it is over ${LIVE_DOCS_MAX_AGE_DAYS} days old)`;
+
+/** The config reads a live dev database (`live_sources:` with at least one entry). */
+export function hasLiveSources(configText: string): boolean {
+  return /^live_sources\s*:\s*(#.*)?\r?\n[ \t]+\S/m.test(configText);
+}
+
+/** The project file above `cwd` names a dev SQL target (`dev` or `dev@<set>`). */
+export function hasDevSqlTarget(cwd: string): boolean {
+  const contract = findProjectContract(cwd);
+  if (!contract) return false;
+  return sqlTargetEntries(safeRead(contract)).some((entry: { name: string }) => entry.name === "dev" || entry.name.startsWith("dev@"));
+}
+
+/** One line per source for the person: what was read, what was skipped and why. */
+export function liveDocsSummary(details: any): string {
+  const rows: any[] = Array.isArray(details?.sources) ? details.sources : [];
+  const part = (row: any): string => {
+    if (row.state === "taken") {
+      const counts = Object.keys(row.objects || {}).sort().map((key) => `${row.objects[key]} ${key}`).join(", ") || "no objects";
+      const unread = row.unread ? `; ${row.unread} could not be read with this sign-in` : "";
+      return `${row.name}: ${counts}${unread}`;
+    }
+    if (row.state === "fresh") return `${row.name}: up to date (${row.age_days} day(s) old)`;
+    if (row.state === "not_a_dev_target") return `${row.name}: skipped, it is not a dev target of .coop/project.yml`;
+    if (row.state === "tool_timeout") return `${row.name}: the read did not finish in time`;
+    return `${row.name}: the read failed (run \`coop data-doc snapshot ${row.name}\` in a shell for the reason)`;
+  };
+  return rows.map(part).join("; ");
+}
+
+function liveDocsFailure(details: any): string {
+  const state = String(details?.state || "internal_error");
+  if (state === "tool_unavailable") return "coop-data-doc is not installed (run coop update).";
+  if (state === "no_dev_target") return "the project file names no ready dev SQL target (/setup-project adds one).";
+  if (state === "config_not_written") return "the installed coop-data-doc did not accept live sources (coop update installs the pinned one).";
+  return `${state}.${sqlStateHint(details)}`;
+}
+
+/** `live/` holds one teammate's copy of the dev definitions, rewritten weekly:
+ *  keep it out of the repository (each coop reads its own). */
+function ignoreLiveFolder(configPath: string): void {
+  try {
+    const folder = join(dirname(configPath), "live");
+    const ignore = join(folder, ".gitignore");
+    if (existsSync(folder) && !existsSync(ignore)) writeFileSync(ignore, "*\n", "utf8");
+  } catch { /* best effort */ }
+}
+
+/** /setup-docs, the live choice: write the dev targets as live sources, read them
+ *  once, then hand over to the wizard with the SQL folder already answered. */
+async function setUpLiveDocs(pi: ExtensionAPI, ctx: any, ymlPath: string): Promise<boolean> {
+  notify(ctx, "Reading the dev database's object definitions (read-only, no data rows)…", "info");
+  const setup = await runFabricSqlHelper({ command: "setup", config: ymlPath }, ctx.signal, ctx.cwd, "live_docs.py");
+  if (!setup?.ok) {
+    notify(ctx, `Live docs not set up: ${liveDocsFailure(setup)}`, "error");
+    return false;
+  }
+  const read = await runFabricSqlHelper({ command: "refresh", config: ymlPath }, ctx.signal, ctx.cwd, "live_docs.py");
+  ignoreLiveFolder(ymlPath);
+  if (!read?.taken) {
+    notify(ctx, `The dev database was not read: ${Array.isArray(read?.sources) && read.sources.length ? liveDocsSummary(read) : liveDocsFailure(read)}`, "error");
+    return false;
+  }
+  notify(ctx, `Read from dev: ${liveDocsSummary(read)}. The wizard now asks the rest (Power BI folder, layers).`, read.state === "ok" ? "info" : "warning");
+  return await runQuickSetup(pi, ctx, parseExisting(safeRead(ymlPath)));
+}
+
+/** Session start: refresh a live snapshot older than LIVE_DOCS_MAX_AGE_DAYS and
+ *  rebuild the docs, in the background. A fresh snapshot costs one file read per
+ *  source and no sign-in. Silent unless something was refreshed or a read failed. */
+const liveRefreshStarted = new Set<string>();
+async function refreshLiveDocs(pi: ExtensionAPI, ctx: any): Promise<void> {
+  const ymlPath = findDataDocConfig(ctx.cwd);
+  if (!ymlPath || liveRefreshStarted.has(ymlPath) || !hasLiveSources(safeRead(ymlPath))) return;
+  liveRefreshStarted.add(ymlPath);
+  const out = await runFabricSqlHelper({ command: "refresh", config: ymlPath, max_age_days: LIVE_DOCS_MAX_AGE_DAYS }, undefined, ctx.cwd, "live_docs.py");
+  if (!out?.taken) {
+    // nothing due, or no sign-in in this session: say nothing unless a read was tried and failed
+    if (Array.isArray(out?.sources) && out.sources.some((row: any) => row.state !== "fresh")) notify(ctx, `Lineage docs were not refreshed from dev: ${liveDocsSummary(out)}`, "warning");
+    return;
+  }
+  ignoreLiveFolder(ymlPath);
+  let built = false;
+  try {
+    const res = await pi.exec("coop-data-doc", ["build", "--non-interactive"], { cwd: dirname(ymlPath) });
+    built = res.code === 0;
+  } catch { /* reported below */ }
+  notify(ctx, built
+    ? `Lineage docs refreshed from the dev database (${liveDocsSummary(out)}).`
+    : `The dev database was read (${liveDocsSummary(out)}) but the docs did not rebuild; run \`coop data-doc build\`.`, built ? "info" : "warning");
+}
+
 /** /setup-docs: run (or re-run) the wizard for this folder, prefilled from its config. */
 async function runSetupDocs(pi: ExtensionAPI, ctx: any): Promise<boolean> {
   if (stopInHomeFolder(ctx)) return false;
   const ymlPath = findDataDocConfig(ctx.cwd) || join(ctx.cwd, DATADOC_CONFIG);
+  // A project with a dev SQL target can document it straight from the database.
+  if (typeof ctx?.ui?.select === "function" && hasDevSqlTarget(ctx.cwd)) {
+    const live = hasLiveSources(safeRead(ymlPath));
+    const picked = await ctx.ui.select("Where does the SQL for these docs come from?", live ? [LIVE_DEV, LIVE_FILES] : [LIVE_FILES, LIVE_DEV]);
+    if (picked === undefined || picked === null) return false;
+    if (picked === LIVE_DEV) return await setUpLiveDocs(pi, ctx, ymlPath);
+  }
   const prefill = existsSync(ymlPath) ? parseExisting(safeRead(ymlPath)) : {};
   return await runQuickSetup(pi, ctx, prefill);
 }
@@ -3493,6 +3603,8 @@ export default function coopTools(pi: ExtensionAPI) {
     announcedSqlTargets.clear();
     announcedCatalogSnapshots.clear();
     announcedProjectGaps.clear();
+    // Docs built from the live dev database: refresh when over a week old (background).
+    void refreshLiveDocs(pi, ctx).catch(() => { /* never break a session start */ });
     const primedLogin = primeModelLogin(ctx);
     // The shared project file (C1): say once per session when the team's copy
     // moved, when this copy is unshared, or when the team has a file this

@@ -429,6 +429,9 @@ during startup. The command runs (or re-runs) the full native `coop-data-doc`
 wizard through a strict JSONL bridge; it is the same questionnaire used by
 `coop data-doc setup`. Older tool versions stop with upgrade guidance rather than a reduced fallback. See
 [`extensions/coop-tools/README.md`](extensions/coop-tools/README.md#data-doc-setup-setup-docs).
+When the SQL is not in a repository, `/setup-docs` can build the docs from the
+**live dev database** instead (offered when the project file has a dev SQL target):
+read-only, dev only, refreshed when it is over 7 days old as coop opens.
 The built docs live beside the committed project file (in the client home
 repository `<client>-coop` when the client has several repositories; master plan
 DR1): `/setup-docs` proposes that `data-docs` folder as the output from any of the

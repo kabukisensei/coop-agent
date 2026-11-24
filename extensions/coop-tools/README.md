@@ -193,6 +193,13 @@ through Pi dialogs, and returns answers over stdin. No local/reduced wizard exis
   folder is preselected, and browsing starts beside the suggestion only when a real
   repo is there (otherwise in the session folder). Yes/no questions show the
   wizard's default first, so "Use it anyway?" answers No on Enter.
+- **Docs from the live dev database.** When `.coop/project.yml` has a dev SQL
+  target, `/setup-docs` first asks where the SQL comes from: files in a folder, or
+  the live dev database (read-only). The live choice writes `live_sources` into
+  `coop-data-doc.yml` through `coop-data-doc config-set`, reads the dev catalog
+  into `live/` (git-ignored) and then runs the usual questionnaire. At session
+  start coop refreshes a snapshot older than 7 days in the background and rebuilds
+  the docs. Dev only; details in `docs/tool-contract.md`, "Live dev docs".
 - **Safe defaults (#102).** `/setup-docs` and *Document my data* stop in the home
   folder without writing `coop-data-doc.yml` and explain how to open coop in the
   project folder. A config saved as "not runnable yet" is a warning, and no build is

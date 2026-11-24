@@ -5,6 +5,20 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- **Lineage docs from the live dev database.** For a client whose SQL is not in
+  a repository, `/setup-docs` now asks where the SQL comes from when the project
+  file has a dev SQL target. "The live dev database" has `coop-data-doc` read
+  the dev catalog (definitions, table columns, the database's dependency list;
+  read-only, no data rows) into a git-ignored `live/` folder and build the docs
+  from it. `coop-data-doc.yml` keeps the setting, so it is committed once and
+  every teammate's coop builds its own copy. When coop opens and a snapshot is
+  over 7 days old, coop refreshes it and rebuilds the docs in the background.
+  Dev targets only: a database the project file does not name as dev gets no
+  sign-in token. The coop-data-doc pin moves from 1.5.1 to 1.6.1 for it; install and
+  `coop update` add `pyodbc` to coop-data-doc's environment.
+
 ### Changed
 
 - **Three working habits in the coop workflow.** When a correction repeats, coop
