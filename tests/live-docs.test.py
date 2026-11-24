@@ -16,6 +16,12 @@ from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# Windows runners default stdout to cp1252, which cannot encode the check mark.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, ValueError):
+    pass
 sys.path.insert(0, str(ROOT / "lib"))
 
 
