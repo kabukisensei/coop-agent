@@ -16,6 +16,24 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   rule stay where they were: the window reads no database. The pane also
   follows a rebuild coop ran in the conversation.
 
+### Changed
+
+- **Window: fewer things to look at** (UX review, 2026-11-24).
+  Ctrl+K lists what the window can do (about 30 rows) and no longer repeats
+  every slash command and skill: those are one `/` away in the prompt box.
+  Settings loses three rows nobody needs to set (auto-retry, steering,
+  follow-ups); the defaults stay as they were, so a message sent while coop
+  works still steers it and Alt+Enter still queues one. **New session** opens
+  a new tab, so the conversation you were in stays put. The terminal button
+  leaves the top bar ("Open in terminal" is in Ctrl+K). An error notice goes
+  away by itself after 20 seconds.
+- **Window: the Project pane opens short.** Each part of the project file
+  (repositories, Fabric, Power BI, SQL targets and the rest) is a fold with a
+  one-line summary of what is set, for example "2 repositories" or
+  "dev, test, prod". Project and You start open; a new project file starts
+  with everything open. A row that needs fixing opens its fold. Review and
+  Save are unchanged, and nothing is written until you save.
+
 ### Fixed
 
 - **Window: small things that got in the way** (UX review, 2026-11-24).
@@ -26,9 +44,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   is drawn above a notice, so a notice never covers its buttons. The
   changed-files list shortens a long path's folders and keeps the file's name.
   The activity line says "Updated the todo list" and "Asked you a question"
-  instead of "Used todo" and "Used ask_user_question". Ctrl+K keeps each
-  command's description to two lines and drops one that only repeats the
-  command's name. "Name this session" starts from the name on screen.
+  instead of "Used todo" and "Used ask_user_question". The `/` menu drops a
+  description that only repeats the command's name. "Name this session" starts from the name on screen.
 
 ## [0.42.2] — 2026-11-24
 
