@@ -89,6 +89,15 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   Save are unchanged, and nothing is written until you save.
 
 ### Fixed
+- **No more folder named `%SystemDrive%` in a project.** When coop ended a
+  command's process tree on Windows it started `taskkill` with only
+  `SystemRoot` in its environment and the project as its working folder.
+  Without `SystemDrive`, Windows cannot expand `%SystemDrive%\ProgramData` and
+  creates `%SystemDrive%\ProgramData\Microsoft\Windows\Caches` right there (two
+  demo folders on the dev VM, 2026-11-24). All three places that start
+  `taskkill` now pass `SystemDrive` and run it in the Windows folder. The
+  daily cleanup removes such a folder from the launch folder, the repository,
+  the client folder and the home folder; anything else inside one stays.
 
 - **The daily log no longer lands in a SQL repository.** Started in a repository
   beside the client home repository (or in a folder below the project root),

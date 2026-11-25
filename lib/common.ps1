@@ -2378,6 +2378,16 @@ function Get-CoopCleanupTargets {
       $targets += [pscustomobject]@{ Name = 'stray NUL files'; Root = $dir; Filter = @('*'); Entries = @('NUL'); Days = 1; Extra = $true; DropRoot = $false; MinBytes = 0; MaxBytes = 0; FilesOnly = $true; All = $false }
     }
   }
+  # A folder literally named %SystemDrive%: Windows makes one (with
+  # ProgramData\Microsoft\Windows\Caches inside) in the working folder of a
+  # program started without the SystemDrive variable, as coop's own taskkill
+  # was until v0.42.3. Nobody keeps work under that name. Same folders as NUL.
+  foreach ($dir in @(Get-CoopStrayNulDirs $StartDir)) {
+    $literal = Join-Path $dir '%SystemDrive%'
+    if (Test-Path -LiteralPath (Join-Path $literal 'ProgramData') -PathType Container) {
+      $targets += [pscustomobject]@{ Name = 'stray %SystemDrive% folders'; Root = $literal; Filter = @('*'); Entries = @('ProgramData'); Days = 1; Extra = $true; DropRoot = $true; MinBytes = 0; MaxBytes = 0; FilesOnly = $false; All = $false; DropEmptyRoot = $true }
+    }
+  }
   # The window keeps one data folder per coop checkout (desktop\main.mjs). One
   # that no window has opened for the cleanup age goes whole; the one used last
   # always stays.
@@ -2587,7 +2597,8 @@ function Invoke-CoopCleanup {
           Remove-Item -LiteralPath $d.FullName -Force -ErrorAction SilentlyContinue
         }
       }
-      if ($t.DropRoot -and $row.Files -gt 0 -and (Test-Path -LiteralPath $t.Root -PathType Container) -and @(Get-ChildItem -LiteralPath $t.Root -Force -ErrorAction SilentlyContinue).Count -eq 0) {
+      $dropEmpty = [bool]($t.PSObject.Properties['DropEmptyRoot'] -and $t.DropEmptyRoot)
+      if ($t.DropRoot -and ($row.Files -gt 0 -or $dropEmpty) -and (Test-Path -LiteralPath $t.Root -PathType Container) -and @(Get-ChildItem -LiteralPath $t.Root -Force -ErrorAction SilentlyContinue).Count -eq 0) {
         Remove-Item -LiteralPath $t.Root -Force -ErrorAction SilentlyContinue
       }
     }

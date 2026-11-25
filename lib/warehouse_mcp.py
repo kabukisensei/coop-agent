@@ -694,6 +694,15 @@ def _windows_taskkill_command(pid: int) -> list[str] | None:
     return [str(taskkill), "/PID", str(pid), "/T", "/F"]
 
 
+def _taskkill_environment(taskkill: str) -> dict[str, str]:
+    system_root = ntpath.dirname(ntpath.dirname(taskkill))
+    env = {"SystemRoot": system_root}
+    drive = ntpath.splitdrive(system_root)[0]
+    if len(drive) == 2 and drive[1] == ":":
+        env["SystemDrive"] = drive
+    return env
+
+
 def _terminate_token_helper_tree(proc: subprocess.Popen[bytes]) -> None:
     if _is_windows():
         taskkill = _windows_taskkill_command(proc.pid)
@@ -704,7 +713,11 @@ def _terminate_token_helper_tree(proc: subprocess.Popen[bytes]) -> None:
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
-                    env={"SystemRoot": ntpath.dirname(ntpath.dirname(taskkill[0]))},
+                    # SystemDrive and Windows' own folder as the working folder:
+                    # without SystemDrive, Windows creates a folder literally
+                    # named "%SystemDrive%" in the working folder (the project).
+                    env=_taskkill_environment(taskkill[0]),
+                    cwd=ntpath.dirname(ntpath.dirname(taskkill[0])),
                     shell=False,
                     timeout=2,
                     check=False,
