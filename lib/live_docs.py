@@ -20,6 +20,11 @@ part: which databases, under which identity, and how old a snapshot may get.
   not name. With `max_age_days`, a source whose snapshot is younger is skipped
   before anything is resolved or minted.
 - `status`: how old each source's snapshot is; reads files only.
+- What changed in dev: `refresh` compares each new snapshot with the one it
+  replaces (the files the previous manifest named, by content hash) and reports
+  the objects added, changed and removed since the previous read, in its answer
+  and as a dated section of `live/dev-changes.md` (newest first). The weekly
+  session-start refresh makes that the weekly "what changed in dev" summary.
 
 Dev only: never test, never production (coop-data-doc refuses a source whose
 `environment` is not dev, and only dev targets are offered here). Read-only: the
@@ -30,6 +35,7 @@ Nothing here prints a token, a host or exception text.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -38,6 +44,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -55,6 +62,21 @@ DEFAULT_MAX_AGE_DAYS = 7
 SNAPSHOT_TIMEOUT_SECONDS = 240
 SHOW_CONFIG_TIMEOUT_SECONDS = 30
 LIVE_FOLDER = "live"
+CHANGES_FILE = "dev-changes.md"
+CHANGES_TITLE = "# What changed in dev"
+CHANGES_INTRO = (
+    "Each read of the dev database compared with the one before it, newest first. "
+    "coop writes this file when it refreshes the lineage docs from dev; `live/` is "
+    "one teammate's copy and is not committed.\n"
+)
+# the snapshot's type folders -> the word for a person
+_KIND_BY_FOLDER = {
+    "tables": "table",
+    "views": "view",
+    "stored procedures": "procedure",
+    "functions": "function",
+    "triggers": "trigger",
+}
 
 result = sql_query.result
 
@@ -338,6 +360,8 @@ def refresh(*, cwd: Path, config: Any, max_age_days: Any = None, now: datetime |
                 return {**first_error, "sources": rows}
             rows.append({"name": source["name"], "state": "not_a_dev_target"})
             continue
+        before = snapshot_files(source["folder"])
+        since = str(_manifest(source["folder"]).get("taken_at") or "")
         data, code = _run_json(
             ["snapshot", source["name"], "--json", "--config", str(config_path)],
             cwd=config_path.parent,
@@ -353,20 +377,110 @@ def refresh(*, cwd: Path, config: Any, max_age_days: Any = None, now: datetime |
             continue
         taken += 1
         counts = entry.get("counts") if isinstance(entry.get("counts"), dict) else {}
-        rows.append(
-            {
-                "name": source["name"],
-                "state": "taken",
-                "taken_at": str(entry.get("taken_at", "")),
-                "objects": {str(k): int(v) for k, v in counts.items() if isinstance(v, int)},
-                "written": int(entry.get("written", 0) or 0),
-                "removed": int(entry.get("removed", 0) or 0),
-                "unread": len(entry.get("unread") or []),
-                "renamed": len(entry.get("renamed") or []),
-            }
-        )
+        row = {
+            "name": source["name"],
+            "state": "taken",
+            "taken_at": str(entry.get("taken_at", "")),
+            "objects": {str(k): int(v) for k, v in counts.items() if isinstance(v, int)},
+            "written": int(entry.get("written", 0) or 0),
+            "removed": int(entry.get("removed", 0) or 0),
+            "unread": len(entry.get("unread") or []),
+            "renamed": len(entry.get("renamed") or []),
+        }
+        after = snapshot_files(source["folder"])
+        if before is not None and after is not None:
+            # a previous read to compare with: what changed in dev since it
+            row["since"] = since
+            row["changes"] = compare_snapshots(before, after)
+            section = changes_section(source["name"], since, row["taken_at"], row["changes"])
+            row["changes_file"] = f"{LIVE_FOLDER}/{CHANGES_FILE}" if record_changes(config_path.parent / LIVE_FOLDER, section) else ""
+        rows.append(row)
     failed = [row for row in rows if row["state"] not in ("taken", "fresh")]
     return result("ok" if not failed else "partial" if taken else "failed", sources=rows, taken=taken)
+
+
+# --- what changed in dev -----------------------------------------------------------
+
+
+def _manifest(folder: Path) -> dict[str, Any]:
+    try:
+        data = json.loads((folder / MANIFEST).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def snapshot_files(folder: Path) -> dict[str, str] | None:
+    """{relative path: content hash} for every object file the folder's finished
+    manifest names; None when the folder holds no finished snapshot."""
+    manifest = _manifest(folder)
+    files = manifest.get("files")
+    if not manifest.get("taken_at") or not isinstance(files, list):
+        return None
+    out: dict[str, str] = {}
+    for relative in files:
+        if not isinstance(relative, str) or not relative.lower().endswith(".sql") or ".." in relative:
+            continue
+        try:
+            out[relative] = hashlib.sha256((folder / relative).read_bytes()).hexdigest()
+        except OSError:
+            continue
+    return out
+
+
+def object_label(relative: str) -> str:
+    """`Views/dbo.v_customers.sql` -> `dbo.v_customers (view)`; file names carry
+    sqlsc's %XX escapes."""
+    parts = relative.replace("\\", "/").split("/")
+    kind = _KIND_BY_FOLDER.get(parts[0].lower(), "object") if len(parts) > 1 else "object"
+    name = parts[-1]
+    if name.lower().endswith(".sql"):
+        name = name[:-4]
+    return f"{unquote(name)} ({kind})"
+
+
+def compare_snapshots(before: dict[str, str], after: dict[str, str]) -> dict[str, list[str]]:
+    """The objects added, changed and removed between two snapshots, by label."""
+    return {
+        "added": sorted(object_label(p) for p in after.keys() - before.keys()),
+        "changed": sorted(object_label(p) for p in after.keys() & before.keys() if after[p] != before[p]),
+        "removed": sorted(object_label(p) for p in before.keys() - after.keys()),
+    }
+
+
+def _day(stamp: str) -> str:
+    return stamp[:10] if len(stamp) >= 10 else stamp
+
+
+def changes_section(name: str, since: str, taken_at: str, changes: dict[str, list[str]]) -> str:
+    lines = [f"## {name}: {_day(taken_at)} (since {_day(since)})", ""]
+    if not any(changes.values()):
+        lines.append("- Nothing changed.")
+    for word in ("added", "changed", "removed"):
+        for label in changes.get(word, []):
+            lines.append(f"- {word.capitalize()}: {label}")
+    return "\n".join(lines) + "\n"
+
+
+def record_changes(live_folder: Path, section: str) -> bool:
+    """Put the section at the top of live/dev-changes.md (under its title), creating
+    the file when needed. False when it could not be written."""
+    path = live_folder / CHANGES_FILE
+    try:
+        old = path.read_text(encoding="utf-8") if path.is_file() else ""
+    except OSError:
+        old = ""
+    marker = "\n## "
+    at = old.find(marker)
+    older = old[at + 1 :] if at >= 0 else ""
+    text = f"{CHANGES_TITLE}\n\n{CHANGES_INTRO}\n{section}" + (f"\n{older}" if older else "")
+    try:
+        live_folder.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+    except OSError:
+        return False
+    return True
 
 
 # --- entry points -----------------------------------------------------------------

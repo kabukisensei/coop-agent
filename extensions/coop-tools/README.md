@@ -200,7 +200,9 @@ through Pi dialogs, and returns answers over stdin. No local/reduced wizard exis
   into `live/` (git-ignored) and then runs the usual questionnaire. At session
   start coop refreshes a snapshot older than 7 days in the background and rebuilds
   the docs. `/setup-docs live` takes the live choice without the question, and
-  `/setup-docs refresh` reads dev again now and rebuilds. Dev only; details in
+  `/setup-docs refresh` reads dev again now and rebuilds. Each refresh says what
+  changed in dev since the previous read (objects added, changed, removed) and
+  keeps the full list in `live/dev-changes.md`. Dev only; details in
   `docs/tool-contract.md`, "Live dev docs".
 - **Safe defaults (#102).** `/setup-docs` and *Document my data* stop in the home
   folder without writing `coop-data-doc.yml` and explain how to open coop in the

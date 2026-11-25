@@ -389,7 +389,7 @@ it is close to and stops.
 | `coop dev pi <args...>` | Raw escape hatch to `pi` |
 | `coop project home [<folder>]` | Show this Windows user's client folder record (client, folder, project file), or set it to `<folder>` (the folder given becomes the client folder; the project file is the one found in or above it) |
 | `coop folders` | Print the three places coop uses (this machine, this client, the repository) with their real paths; read-only |
-| `coop cleanup [status\|now\|days <N>\|off]` | This client's saved sessions, backups and drafts: coop removes the ones older than 45 days once a day when it starts. `status` (the default) shows how much is there and how much is due, `now` removes it at once, `days <N>` changes the age, `off` keeps everything. The setting is `cleanup.days` in `~/.coop/config`. Logs cap themselves and each update deletes its own download |
+| `coop cleanup [status\|now\|days <N>\|off]` | This client's saved sessions, backups and drafts: coop removes the ones older than 45 days once a day when it starts. `status` (the default) shows how much is there and how much is due, `now` removes it at once, `days <N>` changes the age, `off` keeps everything. The setting is `cleanup.days` in `~/.coop/config`. Logs cap themselves and each update deletes its own download The same daily run removes what coop and its parts leave behind: the memory extension's recovery copies after 7 days, Pi's per-call temp files after 2 days, the retired `coop web` profile, this user's standards copies once the machine folder is in use, and backups older than the cleanup age in a `.backups` folder from before v0.38.0 (the repository's or the client folder's; one with a file git tracks is left alone). A backup of 50 MB or more goes after 7 days, a file named `NUL` in the launch folder, the repository, the client folder or the home folder after 1 day, and a window data folder (`desktop\data`) that no window has opened for the cleanup age goes whole; the one used last always stays. |
 | `coop project status\|get\|share [--root <dir>] [--force]` | The shared project file from a shell: compare `.coop/project.yml` with the team's copy on origin, get the team's version (a fast-forward pull when nothing else would move, else only that file with a backup), or share yours (commits only that file and pushes the current branch; `--force` from a branch other than the default). Same code as `/project-get`, `/project-share` and the window's Project pane |
 
 `coop data-doc` **flows straight through** to `coop-data-doc` — every subcommand
@@ -402,11 +402,13 @@ There is no `coop review` command: SQL/DAX standards are applied in the agent wh
 it writes, and it self-checks its diff against them before presenting a change.
 
 The **first interactive launch** on a machine opens the **Start Here menu**. It
-leads with six task guides for the work the team builds most: **set up a fact
+leads with seven task guides for the work the team builds most: **set up a fact
 table** (`/new-fact`), **set up a dimension** (`/new-dimension`), **clean up a
 semantic model** (`/clean-model`), **add or fix a DAX measure** (`/dax-measure`),
-**build a silver load or gold view** (`/new-load`) and **add a table to the model
-and relate it** (`/model-table`). Each guide asks for the specifics first, looks
+**build a silver load or gold view** (`/new-load`), **add a table to the model
+and relate it** (`/model-table`) and **clean up unused tables and columns**
+(`/clean-unused`: candidates from the lineage docs and `sql_impact`, dev changes
+one approved item at a time, the promotion script left for a person). Each guide asks for the specifics first, looks
 up lineage, names the coop-standards articles that apply and waits for approval
 before it writes; each is also a prompt template you can type. The window's empty
 page offers the first three as buttons. After the guides come the
@@ -432,6 +434,9 @@ wizard through a strict JSONL bridge; it is the same questionnaire used by
 When the SQL is not in a repository, `/setup-docs` can build the docs from the
 **live dev database** instead (offered when the project file has a dev SQL target):
 read-only, dev only, refreshed when it is over 7 days old as coop opens.
+Each refresh compares the new read with the previous one and says what changed in
+dev (objects added, changed and removed), with the full list in `live/dev-changes.md`;
+the weekly refresh makes that the weekly "what changed in dev" summary.
 `/setup-docs live` goes straight to that choice and `/setup-docs refresh` reads dev
 again now and rebuilds; the window's Docs pane has a button for each.
 The built docs live beside the committed project file (in the client home

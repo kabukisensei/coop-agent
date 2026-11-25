@@ -2328,33 +2328,206 @@ function Set-CoopCleanupDays([int]$Days) {
 
 # The folders the cleanup looks in, with the files it may remove there. Sessions
 # only when coop runs isolated: a personal ~/.pi agent dir is never touched.
+# The first three are what the person's age (cleanup.days) is about. The rest
+# (Extra) are things coop or its parts leave behind and nobody reads again, found
+# on a real machine on 2026-11-24; a row for one shows only when something is there.
+#   Filter   file-name patterns, any depth under Root
+#   Entries  when set, only Root's direct children with these names are looked in
+#   Days     a fixed age for this target (0: the person's age)
+#   DropRoot the emptied Root goes too
 function Get-CoopCleanupTargets {
+  param([string]$StartDir = (Get-Location).Path, [int]$Days = (Get-CoopCleanupDays), [datetime]$Now = [datetime]::UtcNow)
   $targets = @()
-  if (-not (Test-CoopNoIsolate)) { $targets += [pscustomobject]@{ Name = 'sessions'; Root = (Join-Path (Get-CoopPiAgentDir) 'sessions'); Filter = '*.jsonl' } }
-  $targets += [pscustomobject]@{ Name = 'backups'; Root = (Get-CoopBackupsRoot); Filter = '*' }
-  $targets += [pscustomobject]@{ Name = 'drafts'; Root = (Get-CoopDraftsRoot); Filter = '*' }
+  $isolated = -not (Test-CoopNoIsolate)
+  $profileDir = Get-CoopProfileDir
+  if ($isolated) { $targets += [pscustomobject]@{ Name = 'sessions'; Root = (Join-Path (Get-CoopPiAgentDir) 'sessions'); Filter = @('*.jsonl'); Entries = @(); Days = 0; Extra = $false; DropRoot = $false; MinBytes = 0; MaxBytes = 0; FilesOnly = $false; All = $false } }
+  $big = Get-CoopLargeBackupBytes
+  $targets += [pscustomobject]@{ Name = 'backups'; Root = (Get-CoopBackupsRoot); Filter = @('*'); Entries = @(); Days = 0; Extra = $false; DropRoot = $false; MinBytes = 0; MaxBytes = $big; FilesOnly = $false; All = $false }
+  # A backup of $big bytes or more (an installer, an archive, a report file) is
+  # kept a week, not the cleanup age: two of them were 216 MB of one client's
+  # backups (Aaron, 2026-11-24).
+  $targets += [pscustomobject]@{ Name = 'large backups'; Root = (Get-CoopBackupsRoot); Filter = @('*'); Entries = @(); Days = 7; Extra = $true; DropRoot = $false; MinBytes = $big; MaxBytes = 0; FilesOnly = $false; All = $false }
+  $targets += [pscustomobject]@{ Name = 'drafts'; Root = (Get-CoopDraftsRoot); Filter = @('*'); Entries = @(); Days = 0; Extra = $false; DropRoot = $false; MinBytes = 0; MaxBytes = 0; FilesOnly = $false; All = $false }
+  # The memory extension's own safety copies (.failures.md.recovery-<n>,
+  # .USER.md.retired-<n>): about 95 MB in one week, never read again after a
+  # week. The memory files themselves and its database are not matched.
+  if ($isolated) { $targets += [pscustomobject]@{ Name = 'memory copies'; Root = (Join-Path (Get-CoopPiAgentDir) 'pi-hermes-memory'); Filter = @('.*.md.recovery-*', '.*.md.retired-*'); Entries = @(); Days = 7; Extra = $true; DropRoot = $false; MinBytes = 0; MaxBytes = 0; FilesOnly = $false; All = $false } }
+  # Pi's per-call temp files: left after every tool call that used one.
+  $targets += [pscustomobject]@{ Name = 'temp files'; Root = ([System.IO.Path]::GetTempPath().TrimEnd('\', '/')); Filter = @('*'); Entries = @('pi-codemode-*', 'pi-mcp-output-*', 'pi-bash-*'); Days = 2; Extra = $true; DropRoot = $false; MinBytes = 0; MaxBytes = 0; FilesOnly = $false; All = $false }
+  # The browser profile of the retired `coop web`.
+  $targets += [pscustomobject]@{ Name = 'old coop web profile'; Root = (Join-Path $profileDir 'web-app-profile'); Filter = @('*'); Entries = @(); Days = 0; Extra = $true; DropRoot = $true; MinBytes = 0; MaxBytes = 0; FilesOnly = $false; All = $false }
+  # This user's standards copies, once launches use the machine's folder (the
+  # standards-moved marker, Write-CoopStandardsPlaceNote).
+  try {
+    if ((Get-CoopStandardsLocation).Tier -ceq 'machine' -and (Test-Path -LiteralPath (Join-Path $profileDir 'standards-moved') -PathType Leaf)) {
+      $targets += [pscustomobject]@{ Name = 'old standards copies'; Root = (Join-Path $profileDir 'standards'); Filter = @('*'); Entries = @(); Days = 7; Extra = $true; DropRoot = $true; MinBytes = 0; MaxBytes = 0; FilesOnly = $false; All = $false }
+    }
+  } catch { }
+  # Backups from before v0.38.0, when they were written to a .backups folder in
+  # the repository or in the client folder beside it (Aaron, 2026-11-24: the same
+  # age rule as today's backups). A .backups folder with a file git tracks is
+  # someone's own and is left alone.
+  foreach ($legacy in @(Get-CoopLegacyBackupRoots $StartDir)) {
+    $targets += [pscustomobject]@{ Name = 'old backups'; Root = $legacy; Filter = @('*'); Entries = @(); Days = 0; Extra = $true; DropRoot = $true; MinBytes = 0; MaxBytes = 0; FilesOnly = $false; All = $false }
+  }
+  # A file named NUL: a shell that is not cmd (Git Bash, PowerShell) wrote one
+  # for a command's `> NUL`. Windows reserves the name, so nobody keeps work in
+  # one, and Explorer cannot delete it. Windows only; a file, never a folder.
+  if (Test-CoopWindowsHost) {
+    foreach ($dir in @(Get-CoopStrayNulDirs $StartDir)) {
+      $targets += [pscustomobject]@{ Name = 'stray NUL files'; Root = $dir; Filter = @('*'); Entries = @('NUL'); Days = 1; Extra = $true; DropRoot = $false; MinBytes = 0; MaxBytes = 0; FilesOnly = $true; All = $false }
+    }
+  }
+  # The window keeps one data folder per coop checkout (desktop\main.mjs). One
+  # that no window has opened for the cleanup age goes whole; the one used last
+  # always stays.
+  foreach ($stale in @(Get-CoopStaleDesktopDataDirs -Days $Days -Now $Now)) {
+    $targets += [pscustomobject]@{ Name = 'old window data'; Root = $stale; Filter = @('*'); Entries = @(); Days = 0; Extra = $true; DropRoot = $true; MinBytes = 0; MaxBytes = 0; FilesOnly = $false; All = $true }
+  }
   return $targets
+}
+
+# Backups this size or larger are kept a week (the 'large backups' target).
+function Get-CoopLargeBackupBytes { return [long]50MB }
+
+function Test-CoopWindowsHost { return [bool]($IsWindows -or $env:OS -eq 'Windows_NT') }
+
+# The folders a launch in $StartDir looks in for a stray NUL file: the launch
+# folder, the repository, the project file's folder, the client folder and the
+# user's home folder. Only the folder itself, never below it.
+function Get-CoopStrayNulDirs {
+  param([string]$StartDir = (Get-Location).Path)
+  $dirs = @()
+  $seen = @{}
+  $bases = @($StartDir)
+  try {
+    $gitRoot = Find-CoopGitRoot $StartDir
+    if ($gitRoot) { $bases += $gitRoot }
+    $above = Find-CoopContractAbove $StartDir
+    if ($above) { $bases += (Split-Path -Parent (Split-Path -Parent $above)) }
+    $record = Get-CoopClientRecord
+    if ($record.Exists -and $record.Root) { $bases += [string]$record.Root }
+  } catch { }
+  # The folder that holds the profile: the home folder, or COOP_DIR's.
+  $bases += (Split-Path -Parent (Get-CoopProfileDir))
+  foreach ($base in $bases) {
+    try {
+      $full = [System.IO.Path]::GetFullPath([string]$base).TrimEnd('\', '/')
+      if (-not $full -or $seen.ContainsKey($full.ToLowerInvariant())) { continue }
+      $seen[$full.ToLowerInvariant()] = $true
+      if (Test-Path -LiteralPath $full -PathType Container) { $dirs += $full }
+    } catch { }
+  }
+  return $dirs
+}
+
+# The window's data folders (<profile dir>\desktop\data\<12 hex>) that nothing
+# has touched for $Days days. Age is the newest of the folder's own entries
+# (Chromium rewrites several each time the window opens). The newest folder is
+# never listed, so the window in use keeps its settings however long it rests.
+function Get-CoopStaleDesktopDataDirs {
+  param([int]$Days = (Get-CoopCleanupDays), [datetime]$Now = [datetime]::UtcNow)
+  $stale = @()
+  if ($Days -le 0) { return $stale }
+  $root = Get-CoopDesktopDataDir
+  if (-not (Test-Path -LiteralPath $root -PathType Container)) { return $stale }
+  $found = @()
+  foreach ($d in @(Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction SilentlyContinue)) {
+    if ((Test-CoopReparsePoint $d) -or $d.Name -notmatch '^[0-9a-f]{12}$') { continue }
+    $newest = $d.LastWriteTimeUtc
+    foreach ($child in @(Get-ChildItem -LiteralPath $d.FullName -Force -ErrorAction SilentlyContinue)) {
+      if ($child.LastWriteTimeUtc -gt $newest) { $newest = $child.LastWriteTimeUtc }
+    }
+    $found += [pscustomobject]@{ Path = $d.FullName; Newest = $newest }
+  }
+  if ($found.Count -lt 2) { return $stale }
+  $ordered = @($found | Sort-Object -Property Newest -Descending)
+  $cutoff = $Now.ToUniversalTime().AddDays(-1 * $Days)
+  for ($i = 1; $i -lt $ordered.Count; $i++) {
+    if ($ordered[$i].Newest -lt $cutoff) { $stale += $ordered[$i].Path }
+  }
+  return $stale
+}
+
+# The .backups folders coop wrote before v0.38.0 that a launch in $StartDir can
+# see: in the repository, in the folder of the project file, and in the client
+# folder. Never the user's home folder's own, never one git tracks a file in.
+function Get-CoopLegacyBackupRoots {
+  param([string]$StartDir = (Get-Location).Path)
+  $roots = @()
+  $seen = @{}
+  $homeFull = ''
+  try { $homeFull = [System.IO.Path]::GetFullPath($HOME).TrimEnd('\', '/') } catch { }
+  $bases = @()
+  try {
+    $gitRoot = Find-CoopGitRoot $StartDir
+    if ($gitRoot) { $bases += $gitRoot }
+    $above = Find-CoopContractAbove $StartDir
+    if ($above) { $bases += (Split-Path -Parent (Split-Path -Parent $above)) }
+    $record = Get-CoopClientRecord
+    if ($record.Exists -and $record.Root) { $bases += [string]$record.Root }
+  } catch { }
+  foreach ($base in $bases) {
+    try {
+      $full = [System.IO.Path]::GetFullPath([string]$base).TrimEnd('\', '/')
+      if (-not $full -or $seen.ContainsKey($full.ToLowerInvariant())) { continue }
+      $seen[$full.ToLowerInvariant()] = $true
+      if ($homeFull -and [string]::Equals($full, $homeFull, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+      $dir = Join-Path $full '.backups'
+      if (-not (Test-Path -LiteralPath $dir -PathType Container)) { continue }
+      if (Test-CoopGitTracksUnder $full '.backups') { continue }
+      $roots += $dir
+    } catch { }
+  }
+  return $roots
+}
+
+# True when the repository holding $Dir tracks a file under $Dir\$Relative, or
+# when git cannot say (a repository is there but git did not answer).
+function Test-CoopGitTracksUnder([string]$Dir, [string]$Relative) {
+  if (-not (Find-CoopGitRoot $Dir)) { return $false }
+  if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return $true }
+  $previous = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'Continue'
+    $out = @(& git -C $Dir ls-files -- $Relative 2>$null)
+    if ($LASTEXITCODE -ne 0) { return $true }
+    return (@($out | Where-Object { $_ }).Count -gt 0)
+  } catch { return $true }
+  finally { $ErrorActionPreference = $previous }
 }
 
 function Test-CoopReparsePoint($Item) {
   return (($Item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)
 }
 
-# Every file under $Root matching $Filter, without following links or junctions.
-function Get-CoopCleanupFiles([string]$Root, [string]$Filter = '*') {
+# Every file under $Root whose name matches one of $Filter, without following
+# links or junctions. With $Entries, only inside Root's direct children with one
+# of those names (a matching child that is a file is itself the file).
+function Get-CoopCleanupFiles([string]$Root, [string[]]$Filter = @('*'), [string[]]$Entries = @(), [bool]$FilesOnly = $false) {
   $files = New-Object System.Collections.Generic.List[object]
   $dirs = New-Object System.Collections.Generic.List[object]
   if (-not (Test-Path -LiteralPath $Root -PathType Container)) { return [pscustomobject]@{ Files = $files; Dirs = $dirs } }
   $top = Get-Item -LiteralPath $Root -Force -ErrorAction SilentlyContinue
   if ($null -eq $top -or (Test-CoopReparsePoint $top)) { return [pscustomobject]@{ Files = $files; Dirs = $dirs } }
   $queue = New-Object System.Collections.Generic.Queue[string]
-  $queue.Enqueue($top.FullName)
+  if ($Entries.Count -gt 0) {
+    foreach ($child in @(Get-ChildItem -LiteralPath $top.FullName -Force -ErrorAction SilentlyContinue)) {
+      if (Test-CoopReparsePoint $child) { continue }
+      $named = $false
+      foreach ($pattern in $Entries) { if ($child.Name -like $pattern) { $named = $true; break } }
+      if (-not $named) { continue }
+      if ($child.PSIsContainer) { if (-not $FilesOnly) { $dirs.Add($child); $queue.Enqueue($child.FullName) } } else { $files.Add($child) }
+    }
+  } else {
+    $queue.Enqueue($top.FullName)
+  }
   while ($queue.Count -gt 0) {
     $dir = $queue.Dequeue()
     foreach ($child in @(Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue)) {
       if (Test-CoopReparsePoint $child) { continue }
       if ($child.PSIsContainer) { $dirs.Add($child); $queue.Enqueue($child.FullName); continue }
-      if ($child.Name -like $Filter) { $files.Add($child) }
+      foreach ($pattern in $Filter) { if ($child.Name -like $pattern) { $files.Add($child); break } }
     }
   }
   return [pscustomobject]@{ Files = $files; Dirs = $dirs }
@@ -2367,25 +2540,46 @@ function Get-CoopCleanupStamp($File) {
   if ($c -gt $w) { return $c } else { return $w }
 }
 
+# Delete one file. A name Windows reserves for a device (NUL) only goes through
+# the \\?\ form of its full path; Remove-Item would address the device.
+function Remove-CoopCleanupFile($File) {
+  if ((Test-CoopWindowsHost) -and $File.Name -match '^nul$' -and $File.FullName -match '^[A-Za-z]:\\') {
+    [System.IO.File]::Delete('\\?\' + $File.FullName)
+    return
+  }
+  Remove-Item -LiteralPath $File.FullName -Force -ErrorAction Stop
+}
+
 # Remove the files older than $Days in every target (with -DryRun, only count
 # them). Returns one row per target: Name, Root, Files, Bytes (removed or to
 # remove), Kept, KeptBytes (what stays) and Failed (files that could not go).
 function Invoke-CoopCleanup {
-  param([int]$Days = (Get-CoopCleanupDays), [switch]$DryRun, [datetime]$Now = [datetime]::UtcNow)
+  param([int]$Days = (Get-CoopCleanupDays), [switch]$DryRun, [datetime]$Now = [datetime]::UtcNow, [string]$StartDir = (Get-Location).Path)
   $rows = @()
-  $cutoff = $Now.ToUniversalTime().AddDays(-1 * $Days)
-  foreach ($t in @(Get-CoopCleanupTargets)) {
-    $row = [pscustomobject]@{ Name = $t.Name; Root = $t.Root; Files = 0; Bytes = [long]0; Kept = 0; KeptBytes = [long]0; Failed = 0 }
-    $found = Get-CoopCleanupFiles $t.Root $t.Filter
+  foreach ($t in @(Get-CoopCleanupTargets -StartDir $StartDir -Days $Days -Now $Now)) {
+    # A target's own age applies only while the cleanup is on (Days 0 = off).
+    $age = if ($Days -gt 0 -and $t.Days -gt 0) { [int]$t.Days } else { $Days }
+    $cutoff = $Now.ToUniversalTime().AddDays(-1 * $age)
+    $row = [pscustomobject]@{ Name = $t.Name; Root = $t.Root; Files = 0; Bytes = [long]0; Kept = 0; KeptBytes = [long]0; Failed = 0; Days = $age; Extra = [bool]$t.Extra }
+    $found = Get-CoopCleanupFiles $t.Root $t.Filter $t.Entries ([bool]$t.FilesOnly)
     foreach ($f in $found.Files) {
-      $old = ($Days -gt 0) -and ((Get-CoopCleanupStamp $f) -lt $cutoff)
+      # A size band leaves the other files to the target that owns them.
+      if ($t.MinBytes -gt 0 -and [long]$f.Length -lt [long]$t.MinBytes) { continue }
+      if ($t.MaxBytes -gt 0 -and [long]$f.Length -ge [long]$t.MaxBytes) { continue }
+      $old = ($age -gt 0) -and ($t.All -or ((Get-CoopCleanupStamp $f) -lt $cutoff))
       if (-not $old) { $row.Kept++; $row.KeptBytes += [long]$f.Length; continue }
       if ($DryRun) { $row.Files++; $row.Bytes += [long]$f.Length; continue }
-      try { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop; $row.Files++; $row.Bytes += [long]$f.Length }
+      try {
+        # git marks its pack and object files read-only; -Force alone clears that
+        # on Windows, and the attribute is cleared first for the cases it does not.
+        if ($f.IsReadOnly) { try { $f.IsReadOnly = $false } catch { } }
+        Remove-CoopCleanupFile $f; $row.Files++; $row.Bytes += [long]$f.Length
+      }
       catch { $row.Failed++; $row.Kept++; $row.KeptBytes += [long]$f.Length }
     }
-    if (-not $DryRun -and $Days -gt 0) {
-      # Deepest first, so a parent emptied by its children goes too; never the root.
+    if (-not $DryRun -and $age -gt 0) {
+      # Deepest first, so a parent emptied by its children goes too; the root
+      # only where the target says so.
       $byDepth = @($found.Dirs | Sort-Object -Property @{ Expression = { $_.FullName.Length } } -Descending)
       foreach ($d in $byDepth) {
         if (-not (Test-Path -LiteralPath $d.FullName -PathType Container)) { continue }
@@ -2393,7 +2587,11 @@ function Invoke-CoopCleanup {
           Remove-Item -LiteralPath $d.FullName -Force -ErrorAction SilentlyContinue
         }
       }
+      if ($t.DropRoot -and $row.Files -gt 0 -and (Test-Path -LiteralPath $t.Root -PathType Container) -and @(Get-ChildItem -LiteralPath $t.Root -Force -ErrorAction SilentlyContinue).Count -eq 0) {
+        Remove-Item -LiteralPath $t.Root -Force -ErrorAction SilentlyContinue
+      }
     }
+    if ($t.Extra -and ($row.Files + $row.Kept) -eq 0) { continue }
     $rows += $row
   }
   return $rows
@@ -2426,7 +2624,10 @@ function Invoke-CoopDailyCleanup {
     $rows = @(Invoke-CoopCleanup -Days $days -Now $Now)
     $files = 0; $bytes = [long]0
     foreach ($r in $rows) { $files += $r.Files; $bytes += $r.Bytes }
-    if ($files -gt 0) { Coop-Info "cleanup: removed $files file(s) older than $days days ($(Format-CoopBytes $bytes)) from this client's sessions, backups and drafts   (settings: coop cleanup status)" }
+    $extraFiles = 0
+    foreach ($r in $rows) { if ($r.Extra) { $extraFiles += $r.Files } }
+    $what = if ($extraFiles -gt 0) { "this client's sessions, backups and drafts and coop's own leftovers" } else { "this client's sessions, backups and drafts" }
+    if ($files -gt 0) { Coop-Info "cleanup: removed $files file(s) older than $days days ($(Format-CoopBytes $bytes)) from $what   (settings: coop cleanup status)" }
   } catch { }
 }
 

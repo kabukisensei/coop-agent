@@ -55,13 +55,13 @@ Extension commands).
 
 | Command | Maps to | In the window |
 | --- | --- | --- |
-| `/settings` | window | Settings: theme, auto-compaction (`set_auto_compaction`), auto-retry (`set_auto_retry`), steering and follow-up modes (`set_steering_mode`, `set_follow_up_mode`), show thinking, expand tools. Pi's other settings stay in the terminal's `/settings`. |
+| `/settings` | window | Settings: theme, auto-compaction (`set_auto_compaction`), show thinking, expand tools. Pi's other settings stay in the terminal's `/settings`. |
 | `/model` | rpc | Model picker over `get_available_models`, then `set_model`; `/model provider/id` sets it directly. Ctrl+L. |
 | `/thinking` | rpc | Thinking picker, then `set_thinking_level`; `/thinking high` sets it directly. Shift+Tab cycles (`cycle_thinking_level`). |
 | `/scoped-models` | terminal | Choosing the models Ctrl+P cycles is a terminal screen. |
 | `/login` | terminal | Model sign-in is interactive; the window also shows a sign-in banner when no login is stored. |
 | `/logout` | terminal | Same screen as `/login`. |
-| `/new` | rpc | `new_session`. Ctrl+Shift+N or the sidebar's New session. |
+| `/new` | rpc | A new tab with its own session, so the conversation in this tab stays (an unused tab is the new session already; a window at its tab limit runs `new_session` here). Ctrl+Shift+N or the sidebar's New session. |
 | `/resume` | rpc | Sessions list (sidebar and picker), then `switch_session` with a session file coop saved. Ctrl+Shift+R. |
 | `/name` | rpc | `set_session_name`; without a name it asks for one. The header's session name opens it too. |
 | `/session` | rpc | Session details from `get_state` and `get_session_stats`: file, id, messages, tokens, cost, context. |

@@ -72,6 +72,22 @@ export function folderRows(folders) {
   ];
 }
 
+/**
+ * One line per part of the form, from its values: what the file would hold,
+ * so a closed part still answers "is this set up?".
+ */
+export const sectionStatus = Object.freeze({
+  project: (v) => v.client || v.organization || "not named yet",
+  repositories: (v) => (v.repositories.length ? `${v.repositories.length} ${v.repositories.length === 1 ? "repository" : "repositories"}` : "none: discovery mode"),
+  fabric: (v) => (v.fabricEnabled ? v.fabricWorkspaceName || "on" : "off"),
+  powerBi: (v) => (v.powerBiEnabled ? v.powerBiWorkspaceName || "on" : "off"),
+  sqlTargets: (v) => (v.sqlTargetKind ? [KIND_LABELS[v.sqlTargetKind] || v.sqlTargetKind, v.sqlTargetDatabase].filter(Boolean).join(": ") : "none"),
+  namedSets: (v) => ((v.namedTargets || []).length ? `${v.namedTargets.length} set${v.namedTargets.length === 1 ? "" : "s"}` : "none"),
+  schemaCompare: (v) => (v.schemaCompareExclude || v.schemaCompareRebuild || v.schemaCompareDestructive ? "customised" : "defaults"),
+  tabularEditor: (v) => (v.tabularEditorEnabled ? "on" : "off"),
+  schemaManager: (v) => (v.warehouseManagerEnabled ? "on" : "off"),
+});
+
 /** What the window sends to save: only the fields the form owns. */
 export function formInput(values) {
   const input = Object.fromEntries(FLAT.map((key) => [key, String(values[key] || "")]));
@@ -88,18 +104,21 @@ export function formInput(values) {
 }
 
 export function mountProject(box, options, { coop, newSession }) {
-  const state = { data: null, values: null, dirty: false, kindTouched: false, view: "form", preview: null, team: null, folders: null };
+  const state = { data: null, values: null, dirty: false, kindTouched: false, view: "form", preview: null, team: null, folders: null, open: new Map() };
   const body = el("div", { class: "pane-scroll project-form" });
   box.append(body);
 
-  // F2: the three places coop keeps its files for this folder, at the top of the form.
+  // F2: the three places coop keeps its files for this folder, folded under the
+  // form: reference, not something the form asks.
   function foldersBlock(folders) {
     if (!folders) return null;
-    return el("dl", { class: "folder-rows", "aria-label": "Where coop keeps its files" },
-      ...folderRows(folders).flatMap((row) => [
-        el("dt", { text: row.label }),
-        el("dd", {}, el("code", { text: row.path }), el("span", { class: "hint", text: ` ${row.holds}` })),
-      ]));
+    return el("details", { class: "folder-fold" },
+      el("summary", { text: "Where coop keeps its files" }),
+      el("dl", { class: "folder-rows", "aria-label": "Where coop keeps its files" },
+        ...folderRows(folders).flatMap((row) => [
+          el("dt", { text: row.label }),
+          el("dd", {}, el("code", { text: row.path }), el("span", { class: "hint", text: ` ${row.holds}` })),
+        ])));
   }
 
   // --- Fields -------------------------------------------------------------
@@ -121,6 +140,7 @@ export function mountProject(box, options, { coop, newSession }) {
   function changed() {
     state.dirty = true;
     clearProblems();
+    refreshStatus();
   }
 
   function text(target, key, attrs = {}) {
@@ -138,8 +158,22 @@ export function mountProject(box, options, { coop, newSession }) {
       el("span", { text: label }));
   }
 
-  function section(title, ...children) {
-    return el("section", { class: "form-section" }, el("h3", { text: title }), ...children);
+  // Each part of the file is a fold with one line saying what it holds now, so
+  // the form reads as a short list and only the part being changed is open.
+  // `status` is a function of the form's values; the line follows every edit.
+  const statusLines = [];
+  function section(title, status, ...children) {
+    const line = el("span", { class: "section-status" });
+    if (!state.open.has(title)) state.open.set(title, title === "Project" || title === "You" || !state.data.exists);
+    const fold = el("details", { class: "form-section", open: state.open.get(title), dataset: { section: title } },
+      el("summary", { class: "section-head" }, el("h3", { text: title }), line, icon("chevron")),
+      el("div", { class: "section-body" }, ...children));
+    fold.addEventListener("toggle", () => state.open.set(title, fold.open));
+    statusLines.push(() => { line.textContent = status ? String(status(state.values) || "") : ""; });
+    return fold;
+  }
+  function refreshStatus() {
+    for (const draw of statusLines) draw();
   }
 
   function list(items) {
@@ -307,17 +341,17 @@ export function mountProject(box, options, { coop, newSession }) {
       ...wmEnvRows.flatMap((r) => [r.workspace, r.factory, r.group, r.subscription]));
     const hint = platformHint(data.platform);
     const repos = values.repositories;
+    statusLines.length = 0;
     fill(body,
-      foldersBlock(state.folders),
       el("div", { class: "pane-summary" },
         el("span", { text: data.exists ? "Editing " : "No contract yet: saving creates " }),
         el("code", { text: data.path })),
       data.exists ? null : el("p", { class: "hint", text: data.locationNote || "" }),
       el("div", { class: "team-slot" }, teamLine()),
-      el("p", { class: "hint", text: "The same questions as /setup-project. Review shows the change before anything is written; the old file is backed up in this client's backups folder." }),
-      data.profileMissing ? section("You",
+      el("p", { class: "hint", text: "Open the part you want to change. Review shows the change before anything is written." }),
+      data.profileMissing ? section("You", null,
         row({ field: "profileName", label: "What should coop call you?", hint: "Your local profile, not the project. Leave blank to skip.", control: text(values, "profileName") })) : null,
-      section("Project",
+      section("Project", sectionStatus.project,
         row({ field: "organization", label: "Organization", control: text(values, "organization") }),
         row({ field: "client", label: "Client / engagement", control: text(values, "client"), guarded: true }),
         row({ field: "timezone", label: "Timezone", control: text(values, "timezone") }),
@@ -325,7 +359,7 @@ export function mountProject(box, options, { coop, newSession }) {
         data.commitLists.top.length ? el("div", { class: "commit-lists" },
           el("div", { class: "form-label" }, el("span", { text: "Allowed to commit (all repositories)" }), guard()),
           el("div", {}, ...list(data.commitLists.top))) : null),
-      section("Repositories",
+      section("Repositories", sectionStatus.repositories,
         el("p", { class: "hint", text: repos.length ? "Repositories already in the file stay; their commit lists are edited in the file itself." : "No local source yet: coop starts in discovery mode. Add a repository when you have one." }),
         ...repos.map((repo, index) => repoCard(repo, index)),
         el("button", { type: "button", class: "btn", onclick: () => {
@@ -333,7 +367,7 @@ export function mountProject(box, options, { coop, newSession }) {
           changed();
           renderForm();
         } }, icon("plus"), el("span", { text: "Add a repository" }))),
-      section("Microsoft Fabric",
+      section("Microsoft Fabric", sectionStatus.fabric,
         toggle("fabricEnabled", "This project uses Microsoft Fabric (a Warehouse, Lakehouse or SQL database)", (on) => {
           fabricBox.hidden = !on;
           if (!state.kindTouched && !data.settings.sqlTargetKind) {
@@ -344,14 +378,14 @@ export function mountProject(box, options, { coop, newSession }) {
         }),
         hint ? el("p", { class: "hint", text: hint }) : null,
         fabricBox),
-      section("Power BI",
+      section("Power BI", sectionStatus.powerBi,
         toggle("powerBiEnabled", "This project uses Power BI semantic models or reports", (on) => { powerBiBox.hidden = !on; }),
         powerBiBox),
-      section("SQL targets",
+      section("SQL targets", sectionStatus.sqlTargets,
         row({ field: "sqlTargetKind", label: "Kind", hint: `Where coop runs read-only SQL by default (dev, never prod).${data.settings.sqlTargetKind ? "" : " The kind shown is proposed for this machine, as /setup-project proposes it; choose None to leave it out."}`, control: kindSelect, guarded: true }),
         serverRow, dbRow,
         ...envRows.flatMap((r) => [r.db, r.server, r.ws, r.item, r.endpoint])),
-      section("Named target sets",
+      section("Named target sets", sectionStatus.namedSets,
         el("p", { class: "hint", text: sets.length ? "Sets already in the file stay; an environment left blank keeps what the file has." : "A second engine beside the main one, for example a Lakehouse SQL endpoint beside the Warehouse. Needs the dev SQL target above." }),
         ...sets.map((set, index) => setCard(set, index)),
         sets.length < (data.maxNamedSets || 20) ? el("button", { type: "button", class: "btn", onclick: () => {
@@ -359,17 +393,18 @@ export function mountProject(box, options, { coop, newSession }) {
           changed();
           renderForm();
         } }, icon("plus"), el("span", { text: "Add a target set" })) : null),
-      section("Schema compare",
+      section("Schema compare", sectionStatus.schemaCompare,
         row({ field: "schemaCompareExclude", label: "Schemas never compared", hint: "Comma-separated. Shared by everyone on the team, so two people get the same differences.", control: text(values, "schemaCompareExclude") }),
         row({ field: "schemaCompareRebuild", label: "Schemas whose changed tables are dropped and recreated", hint: "Comma-separated; full-load dim and fact schemas. Blank = tables are altered.", control: text(values, "schemaCompareRebuild") }),
         row({ field: "schemaCompareDestructive", label: "Destructive statements in the promotion script", hint: "Runnable writes DROPs as statements; commented writes them commented out, for a person to uncomment.", control: select(values, "schemaCompareDestructive", [["", "Runnable (default)"], ...(data.destructiveChoices || ["runnable", "commented"]).map((v) => [v, v === "commented" ? "Commented out" : "Runnable"])]) })),
-      section("Tabular Editor",
+      section("Tabular Editor", sectionStatus.tabularEditor,
         toggle("tabularEditorEnabled", "Use the Tabular Editor CLI for semantic-model BPA reviews", (on) => { teBox.hidden = !on; }),
         teBox),
-      section("Schema Manager",
+      section("Schema Manager", sectionStatus.schemaManager,
         toggle("warehouseManagerEnabled", "This client adds source columns to Silver through a Schema Manager (the add-silver-columns skill reads this)", (on) => { wmBox.hidden = !on; }),
         el("p", { class: "hint", text: data.settings.warehouseManagerEnabled ? "The file has a warehouse_manager block: switched off, it stays as it is." : "Blanks are fine: coop discovers what it can read-only and asks before any write." }),
         wmBox),
+      foldersBlock(state.folders),
       el("div", { class: "form-problems", role: "alert", hidden: true }),
       // The form is long: its buttons stay in view at the bottom of the pane.
       el("div", { class: "form-actions form-footer" },
@@ -378,6 +413,7 @@ export function mountProject(box, options, { coop, newSession }) {
     showTarget();
     showPrefix();
     showWmPlatform();
+    refreshStatus();
   }
 
   // --- Problems -------------------------------------------------------------
@@ -396,6 +432,9 @@ export function mountProject(box, options, { coop, newSession }) {
     for (const problem of problems) {
       const rowNode = [...body.querySelectorAll(".form-row")].find((node) => node.dataset.field === problem.field);
       if (rowNode && !rowNode.closest("[hidden]")) {
+        // A fix inside a closed part opens it.
+        const fold = rowNode.closest("details.form-section");
+        if (fold) fold.open = true;
         rowNode.classList.add("bad");
         const note = rowNode.querySelector(".form-problem");
         note.textContent = note.textContent ? `${note.textContent} ${problem.message}` : problem.message;

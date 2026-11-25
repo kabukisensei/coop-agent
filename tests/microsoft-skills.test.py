@@ -535,6 +535,49 @@ with tempfile.TemporaryDirectory() as td:
     except ValueError:
         pass
 
+# A refresh leaves nothing behind (2026-11-24: 44 stage folders, about 470 MB, on
+# one Windows machine, because rmtree(ignore_errors=True) gave up on git's
+# read-only files). Stage folders go, read-only files included; so do generations
+# that are not current and over a week old; the current one, a recent one and
+# anything not coop's stay.
+import time as _time
+
+with tempfile.TemporaryDirectory() as td:
+    cat = Path(td) / "catalogs" / "microsoft"
+    (cat / "generations" / "cur").mkdir(parents=True)
+    (cat / "generations" / "recent").mkdir()
+    (cat / "generations" / "old").mkdir()
+    (cat / "generations" / "old" / "SKILL.md").write_text("x", encoding="utf-8")
+    week = _time.time() - 8 * 24 * 3600
+    os.utime(cat / "generations" / "old", (week, week))
+    (cat / "current.json").write_text(json.dumps({"generation": "cur"}), encoding="utf-8")
+    stage = cat / "microsoft-skills.abcd1234" / "repo" / "_repo" / ".git" / "objects"
+    stage.mkdir(parents=True)
+    pack = stage / "pack-1.pack"
+    pack.write_bytes(b"pack")
+    os.chmod(pack, stat.S_IREAD)  # what git does; this is what stopped rmtree on Windows
+    (cat / "someone-elses-folder").mkdir()
+    assert mskills.sweep_leftovers(cat) == 2
+    assert not (cat / "microsoft-skills.abcd1234").exists(), "stage folder left behind"
+    assert not (cat / "generations" / "old").exists(), "old generation left behind"
+    assert (cat / "generations" / "cur").is_dir() and (cat / "generations" / "recent").is_dir()
+    assert (cat / "someone-elses-folder").is_dir() and (cat / "current.json").is_file()
+    # No readable pointer: no generation is removed.
+    (cat / "current.json").unlink()
+    (cat / "generations" / "old").mkdir()
+    os.utime(cat / "generations" / "old", (week, week))
+    assert mskills.sweep_leftovers(cat) == 0 and (cat / "generations" / "old").is_dir()
+    # remove_tree clears a read-only file on its own.
+    ro = Path(td) / "ro"
+    ro.mkdir()
+    (ro / "f").write_bytes(b"x")
+    os.chmod(ro / "f", stat.S_IREAD)
+    mskills.remove_tree(ro)
+    assert not ro.exists()
+# The refresh itself must not bring back the silent failure.
+_src = (ROOT / "lib" / "microsoft_skills.py").read_text(encoding="utf-8")
+assert "ignore_errors=True" not in _src, "rmtree(ignore_errors=True) leaves git's read-only files on Windows"
+
 print(
     "  OK  Microsoft skills catalog pins, policy, LKG, tamper, launch, and supply-chain checks"
 )
