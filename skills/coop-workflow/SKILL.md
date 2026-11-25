@@ -126,7 +126,9 @@ partial, or connected project without requiring the user to edit YAML.
    `%USERPROFILE%\.coop\backups\<repository>\`), keeping the file's path inside the
    repository and the contract's `backup.timestamp_format` and `naming_pattern`
    (`<path>.<timestamp>.bak`). Never write a backup inside the repository. Name the
-   copy in your reply as `Backup (this client): <path>`.
+   copy in your reply as `Backup (this client): <path>`. Back up only files you
+   will change, never an installer, an archive or build output: a backup of
+   50 MB or more is removed after a week.
    **Drafts.** A file you write for review that is not an edit of a repository
    file (a draft `.sql`, a proposed script) goes in this client's drafts folder,
    `COOP_DRAFTS_DIR` (`%USERPROFILE%\.coop\drafts\<repository>\`), and the reply names

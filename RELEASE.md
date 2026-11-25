@@ -287,3 +287,32 @@ git pull
 
 5. Commit, push `main`, then spot-check the live site (badge versions + a
    hard-refresh for the new assets).
+
+### The "what's new" video (each coop-agent release)
+
+Each coop-agent release gets one short video (one to two minutes) that demos
+what changed. It never gates the tag, the installer or the version sync: when
+it is not ready, the release goes out without it and the video follows in its
+own coop-website pull request.
+
+1. **When.** Record it after the development VM's pre-tag check passes, from
+   the commit that will be tagged, so it shows what ships. Recording runs in a
+   cloud container on the Northwind demo data. It needs no VM and no client data.
+2. **What.** Pick three to six changes a user would notice from that release's
+   `CHANGELOG.md` section. A change that shows in the coop window gets a real
+   capture. One that does not (an installer or updater fix) gets a rules scene
+   that restates the CHANGELOG line. Never show the production approval screens.
+3. **Where.** The files are `assets/videos/whats-new-X.Y.Z.mp4`, `.vtt` and
+   `.poster.jpg` in coop-website. The video block goes under that release's
+   entry in `docs/changelog.html` and on `demo-videos-review.html`
+   (coop-website's `AGENTS.md`, components table, "What's new video").
+4. **Order.** The version sync pull request comes first. `scripts/sync-release.sh`
+   drops the previous release's video block when it rolls the changelog entry,
+   so the new entry starts with no video. Add the new one in the same pull
+   request or in a later one.
+5. **Review.** Aaron watches it before the pull request merges. Going live is
+   the same VPS pull as any other site change.
+
+The recording kit (scene files, capture scripts and its README) is kept with
+the other video kits in the project's shared files under
+`videos/whats-new/src`, not in a repository.

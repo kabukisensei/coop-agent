@@ -30,6 +30,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- **Three more things the daily cleanup removes** (Aaron, 2026-11-24). Off
+  (`coop cleanup off`) is off for these too.
+  - A backup of 50 MB or more is kept 7 days, not the cleanup age: two such
+    files (an installer and an archive) were 216 MB of one machine's backups.
+    The workflow skill now says to back up only the files coop will change.
+  - A file named `NUL` in the launch folder, the repository, the client folder
+    or the home folder goes after a day. A shell other than cmd writes one for
+    a command's `> NUL`; Windows reserves the name, so Explorer cannot delete
+    it. Windows only, a file only, never below those folders.
+  - The window keeps one data folder per coop checkout
+    (`~/.coop/desktop/data/<id>`). One that no window has opened for the
+    cleanup age (45 days) goes whole. The folder used last always stays, so
+    the window in use keeps its settings however long it rests.
 - **coop cleans up after itself.** An inventory of a real machine (2026-11-24)
   found what coop and its parts leave behind; the daily cleanup and the
   refreshes now remove it. Off (`coop cleanup off`) is off for all of it.
@@ -55,6 +68,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   a new tab, so the conversation you were in stays put. The terminal button
   leaves the top bar ("Open in terminal" is in Ctrl+K). An error notice goes
   away by itself after 20 seconds.
+- **`/setup-project` asks less.** On a project file that exists it first asks
+  which part to change (project details, repositories, Fabric, Power BI, SQL
+  targets, Tabular Editor, Schema Manager, or everything) and asks only that
+  part; the rest stays as the file has it. Questions with a fixed set of
+  answers are picks, not typed words: the SQL target kind (with a None row),
+  the endpoint type, the Fabric layout, the model-table rule, the schema
+  compare script style and the Schema Manager platform. A server host, schema
+  or prefix that does not pass its check is asked again (three tries) where it
+  used to end the wizard and drop every answer. A first setup no longer asks a
+  new repository's remote name (origin) or
+  the three schema compare lists (nothing excluded, runnable); all of them are
+  in the Project pane and in a later `/setup-project`. The file it writes, the
+  review before the write, the backup and the share question are unchanged.
 - **Window: the Project pane opens short.** Each part of the project file
   (repositories, Fabric, Power BI, SQL targets and the rest) is a fold with a
   one-line summary of what is set, for example "2 repositories" or
