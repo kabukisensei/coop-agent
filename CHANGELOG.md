@@ -5,6 +5,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **The project file note no longer says a folder is listed when it is not.**
+  Opened with a remembered project file that sits beside the repository but
+  does not list it, coop said the client home repository "lists this folder".
+  It now says which project file it is using and that the file does not list
+  this folder.
+
 ## [0.42.3] — 2026-11-24
 
 ### Added
