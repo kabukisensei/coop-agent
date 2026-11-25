@@ -32,9 +32,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
-- **coop-data-doc 1.6.2.** Its setup now scans every repo it keeps, so with
+- **coop-data-doc 1.6.3.** Its setup now scans every repo it keeps, so with
   two live dev sources (a Warehouse and a Lakehouse) the layer questions offer
-  the second source's schemas too.
+  the second source's schemas too, and asks one question in front of six
+  rarely changed settings. Docs read from a live dev database say which day
+  dev was read, and a build with no Power BI no longer reports
+  "0 cross-repo links".
 - **Three more things the daily cleanup removes** (Aaron, 2026-11-24). Off
   (`coop cleanup off`) is off for these too.
   - A backup of 50 MB or more is kept 7 days, not the cleanup age: two such
