@@ -395,7 +395,7 @@ function killProcessTree(child: ReturnType<typeof spawn>, signal: "SIGTERM" | "S
         // is killed only once taskkill is done: a child killed first leaves its own
         // children orphaned before taskkill can reach them, and they run on (the dev
         // VM, 2026-10-28: a cancelled helper's grandchild survived every time).
-        const killer = spawn(spec.command, spec.args, { env: { SystemRoot: process.env.SystemRoot as string }, shell: false, windowsHide: true, stdio: "ignore" });
+        const killer = spawn(spec.command, spec.args, { env: spec.env, cwd: spec.cwd, shell: false, windowsHide: true, stdio: "ignore" });
         let done = false;
         const after = () => { if (!done) { done = true; killChild(); } };
         killer.on("exit", after);
