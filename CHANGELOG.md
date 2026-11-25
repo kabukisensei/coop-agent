@@ -90,6 +90,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 - **No more folder named `%SystemDrive%` in a project.** When coop ended a
+- **The project file note no longer says a folder is listed when it is not.**
+  Opened with a remembered project file that sits beside the repository but
+  does not list it, coop said the client home repository "lists this folder".
+  It now says which project file it is using and that the file does not list
+  this folder.
   command's process tree on Windows it started `taskkill` with only
   `SystemRoot` in its environment and the project as its working folder.
   Without `SystemDrive`, Windows cannot expand `%SystemDrive%\ProgramData` and
