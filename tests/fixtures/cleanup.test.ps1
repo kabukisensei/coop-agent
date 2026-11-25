@@ -11,8 +11,13 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $coop = Join-Path (Join-Path $root 'bin') 'coop.ps1'
 $t = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-cleanup-' + [guid]::NewGuid().ToString('N'))
 
-$saved = Save-Env @('HOME', 'USERPROFILE', 'COOP_DIR', 'COOP_MACHINE_DIR', 'COOP_AGENT_DIR', 'PI_CODING_AGENT_DIR', 'COOP_NO_ISOLATE', 'NO_COLOR', 'COOP_SKIP_AZ')
+$saved = Save-Env @('HOME', 'USERPROFILE', 'COOP_DIR', 'COOP_MACHINE_DIR', 'COOP_AGENT_DIR', 'PI_CODING_AGENT_DIR', 'COOP_NO_ISOLATE', 'NO_COLOR', 'COOP_SKIP_AZ', 'TEMP', 'TMP', 'TMPDIR')
 try {
+  # The cleanup looks in the temp folder for Pi's per-call files: a sandbox one,
+  # never the machine's.
+  $temp_ = Join-Path $t 'temp'
+  New-Item -ItemType Directory -Force -Path $temp_ | Out-Null
+  $env:TEMP = $temp_; $env:TMP = $temp_; $env:TMPDIR = $temp_
   $home_ = New-SandboxHome (Join-Path $t 'home')
   $env:HOME = $home_
   $env:USERPROFILE = $home_
@@ -134,6 +139,81 @@ try {
   if ($LASTEXITCODE -ne 0 -and $out -match 'cleanup is off') { Ok 'coop cleanup now while off: refuses' } else { Ko "coop cleanup now while off (rc=$LASTEXITCODE)" $out }
   $out = (Invoke-Native { & $psExe -NoProfile -File $coop cleanup days 0 2>&1 } | Out-String)
   if ($LASTEXITCODE -ne 0 -and $out -match 'usage: coop cleanup') { Ok 'coop cleanup days 0: usage' } else { Ko "coop cleanup days 0 (rc=$LASTEXITCODE)" $out }
+
+  # --- what coop and its parts leave behind (2026-11-24) -------------------------------
+  Set-CoopCleanupDays 45
+  $memory = Join-Path $profile_ 'agent\pi-hermes-memory'
+  New-AgedFile (Join-Path $memory '.failures.md.recovery-1') 9
+  New-AgedFile (Join-Path $memory '.USER.md.retired-7') 8
+  New-AgedFile (Join-Path $memory '.failures.md.recovery-2') 3
+  New-AgedFile (Join-Path $memory 'failures.md') 300
+  New-AgedFile (Join-Path $memory 'MEMORY.md') 300
+  New-AgedFile (Join-Path $memory 'sessions.db') 300
+  New-AgedFile (Join-Path $temp_ 'pi-codemode-0a1b') 3
+  New-AgedFile (Join-Path $temp_ 'pi-mcp-output-abc123\out.json') 3
+  New-AgedFile (Join-Path $temp_ 'pi-bash-ff') 1
+  New-AgedFile (Join-Path $temp_ 'pi-mcp-output-new\out.json') 0
+  New-AgedFile (Join-Path $temp_ 'someone-elses.tmp') 300
+  New-AgedFile (Join-Path $temp_ 'other\pi-codemode-nested') 300
+  New-AgedFile (Join-Path $profile_ 'web-app-profile\Default\Cache\data_0') 130
+  New-AgedFile (Join-Path $profile_ 'web-app-profile\Local State') 130
+  # This user's standards copies: kept while launches use them, removed once
+  # launches use the machine's folder and the marker says so.
+  New-AgedFile (Join-Path $profile_ 'standards\canonical-generations\abc\checkout\SQL.md') 30
+  # Old .backups folders: the repository's (untracked) goes by age, one with a
+  # tracked file is left alone, the client folder's goes by age.
+  $client = Join-Path $t 'client'
+  $repoA = Join-Path $client 'repo-a'
+  $repoB = Join-Path $client 'repo-b'
+  $hasGit = [bool](Get-Command git -ErrorAction SilentlyContinue)
+  foreach ($r in @($repoA, $repoB)) {
+    New-Item -ItemType Directory -Force -Path $r | Out-Null
+    if ($hasGit) { & git -C $r init -q 2>$null | Out-Null } else { New-Item -ItemType Directory -Force -Path (Join-Path $r '.git') | Out-Null }
+  }
+  New-AgedFile (Join-Path $repoA '.backups\a.sql.20260601_101010.bak') 170
+  New-AgedFile (Join-Path $repoA '.backups\run_20261120\b.sql.bak') 4
+  New-AgedFile (Join-Path $repoA 'src\keep.sql.bak') 400
+  New-AgedFile (Join-Path $repoB '.backups\mine.bak') 400
+  if ($hasGit) {
+    & git -C $repoB add -f .backups/mine.bak 2>$null | Out-Null
+    # git add rewrites nothing in the work tree, but be sure of the age.
+    [System.IO.File]::SetCreationTimeUtc((Join-Path $repoB '.backups\mine.bak'), $now.AddDays(-400))
+    [System.IO.File]::SetLastWriteTimeUtc((Join-Path $repoB '.backups\mine.bak'), $now.AddDays(-400))
+  }
+  New-AgedFile (Join-Path $client '.backups\data-doc-build_20260909\site\index.html') 76
+  [System.IO.File]::WriteAllText((Join-Path $profile_ 'client.json'), (@{ schema_version = 1; client = 'Fixture'; root = $client; project_file = '' } | ConvertTo-Json -Compress), $utf8)
+
+  $names = @(Get-CoopCleanupTargets $repoA | ForEach-Object { $_.Name })
+  if ($names -notcontains 'old standards copies') { Ok 'the user standards folder is no target while launches may use it' } else { Ko 'the user standards folder was a target with no marker' }
+  $dry = @(Invoke-CoopCleanup -Days 45 -DryRun -Now $now -StartDir $repoA)
+  $dryNames = @($dry | ForEach-Object { $_.Name })
+  $m = $dry | Where-Object { $_.Name -ceq 'memory copies' }
+  if ($m.Files -eq 2 -and $m.Kept -eq 1 -and $m.Days -eq 7 -and (Test-Path -LiteralPath (Join-Path $memory '.failures.md.recovery-1')) -and $dryNames -contains 'temp files' -and $dryNames -contains 'old coop web profile' -and @($dry | Where-Object { $_.Name -ceq 'old backups' }).Count -eq 2) { Ok 'the dry run lists the leftovers with each one''s own age and removes nothing' } else { Ko 'leftover dry run' ($dry | Format-Table Name, Files, Kept, Days, Root | Out-String) }
+
+  $null = Invoke-CoopCleanup -Days 45 -Now $now -StartDir $repoA
+  $gone = @((Join-Path $memory '.failures.md.recovery-1'), (Join-Path $memory '.USER.md.retired-7'), (Join-Path $temp_ 'pi-codemode-0a1b'), (Join-Path $temp_ 'pi-mcp-output-abc123'), (Join-Path $profile_ 'web-app-profile'), (Join-Path $repoA '.backups\a.sql.20260601_101010.bak'), (Join-Path $client '.backups'))
+  $kept = @((Join-Path $memory '.failures.md.recovery-2'), (Join-Path $memory 'failures.md'), (Join-Path $memory 'MEMORY.md'), (Join-Path $memory 'sessions.db'), (Join-Path $temp_ 'pi-bash-ff'), (Join-Path $temp_ 'pi-mcp-output-new\out.json'), (Join-Path $temp_ 'someone-elses.tmp'), (Join-Path $temp_ 'other\pi-codemode-nested'), (Join-Path $repoA '.backups\run_20261120\b.sql.bak'), (Join-Path $repoA 'src\keep.sql.bak'), (Join-Path $profile_ 'standards\canonical-generations\abc\checkout\SQL.md'))
+  if ($hasGit) { $kept += (Join-Path $repoB '.backups\mine.bak') }
+  $bad = @($gone | Where-Object { Test-Path -LiteralPath $_ }) + @($kept | Where-Object { -not (Test-Path -LiteralPath $_) })
+  if ($bad.Count -eq 0) { Ok 'old memory copies, Pi temp files, the coop web profile and old .backups go; live memory, other temp files, newer backups and a .bak outside .backups stay' } else { Ko 'leftover cleanup removed or kept the wrong things' ($bad -join "`n") }
+
+  if ($hasGit) {
+    $null = Invoke-CoopCleanup -Days 45 -Now $now -StartDir $repoB
+    if (Test-Path -LiteralPath (Join-Path $repoB '.backups\mine.bak')) { Ok 'a .backups folder with a file git tracks is left alone' } else { Ko 'the cleanup removed a tracked file' }
+  } else { Ok 'no git here: the tracked .backups case runs where git is installed' }
+
+  # The marker and a writable machine folder: the user's old standards copies go.
+  New-Item -ItemType Directory -Force -Path (Join-Path $env:COOP_MACHINE_DIR 'standards') | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $profile_ 'standards-moved'), "2026-10-22`n", $utf8)
+  if ((Get-CoopStandardsLocation).Tier -ceq 'machine') {
+    $null = Invoke-CoopCleanup -Days 45 -Now $now -StartDir $repoA
+    if (-not (Test-Path -LiteralPath (Join-Path $profile_ 'standards')) -and (Test-Path -LiteralPath (Join-Path $env:COOP_MACHINE_DIR 'standards'))) { Ok 'after the move to the machine folder the user''s old standards copies go; the machine folder stays' } else { Ko 'old standards copies stayed, or the machine folder went' }
+  } else { Ko 'the fixture machine folder was not used for standards' }
+
+  # Off is off for the leftovers too.
+  New-AgedFile (Join-Path $temp_ 'pi-codemode-late') 30
+  $null = Invoke-CoopCleanup -Days 0 -Now $now -StartDir $repoA
+  if (Test-Path -LiteralPath (Join-Path $temp_ 'pi-codemode-late')) { Ok 'off (0 days): the leftovers stay too' } else { Ko 'a leftover was removed while the cleanup was off' }
 } finally {
   Restore-Env $saved
   Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue

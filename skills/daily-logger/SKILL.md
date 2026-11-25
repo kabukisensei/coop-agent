@@ -45,6 +45,10 @@ Use the path from the project contract (`.coop/project.yml` →
 docs/agent/logs/daily/YYYY-MM-DD.md
 ```
 
+The path is relative to the folder that holds `.coop/project.yml`, not to the
+folder coop is running in: started in a SQL repository beside the client home
+repository, write the log to the home repository (use the full path coop gives).
+
 (Weekly roll-ups go to `logging.weekly_log_path`, default
 `docs/agent/logs/weekly/YYYY-Www.md`, rolled up from the week's daily logs on request.) Create the
 folder/file from the template at first required use if missing; otherwise append a

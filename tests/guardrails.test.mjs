@@ -1018,12 +1018,16 @@ await t("a Warehouse SQL write approval lasts for the session; DELETE still asks
   assert.equal(blocked(await handle(sql("INSERT INTO dbo.T (a) VALUES (1)"), c)), false);
   assert.equal(blocked(await handle(sql("UPDATE dbo.T SET a = 2 WHERE id = 1"), c)), false);
   assert.equal(asked, 1, "the second write rides the session approval");
-  const writes = readAudit().filter((x) => x.tool === "governed-live-read");
+  const writes = readAudit().filter((x) => x.tool === "governed-live-write");
   assert.equal(writes.length, 2);
   for (const rec of writes) assert.equal(rec.label, "Warehouse SQL write", "an approved write is not audited as a read");
+  assert.equal(readAudit().filter((x) => x.tool === "governed-live-read").length, 0, "no write is filed under the read tool");
   pick = "decline";
+  clearAudit();
   assert.equal(blocked(await handle(sql("DELETE FROM dbo.T WHERE id = 1"), c)), true);
   assert.equal(asked, 2, "a DELETE still asks");
+  // A declined dev write is a write in the audit log too (dev VM, 2026-11-10).
+  assert.deepEqual(readAudit().map((x) => [x.tool, x.decision, x.label]), [["governed-live-write", "declined", "Warehouse SQL write"]]);
   await handleSessionStart({}, ctx);
   rmSync(join(AUDIT_DIR, "mcp-adapter.json"), { force: true });
 });

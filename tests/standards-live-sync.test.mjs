@@ -1,11 +1,11 @@
 import { strict as assert } from "node:assert";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { activeCanonicalGeneration, buildStandardsContext, fsyncDirectory, fsyncFile, identifyTaskDomains, pinStandardsTask, provenanceText, refreshCanonical, resolveStandard, retrieveRelevantSections, sourceStatus, standardsRegistry } from "../lib/standards.mjs";
+import { activeCanonicalGeneration, buildStandardsContext, pruneCanonicalLeftovers, fsyncDirectory, fsyncFile, identifyTaskDomains, pinStandardsTask, provenanceText, refreshCanonical, resolveStandard, retrieveRelevantSections, sourceStatus, standardsRegistry } from "../lib/standards.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // Fixture roots are resolved to their real path: macOS keeps tmpdir() under the
@@ -570,6 +570,34 @@ try {
       assert.equal(activeCanonicalGeneration(options()).ok, true);
     }
     assert.deepEqual(headings(buildStandardsContext(prompt, options({ refresh: false }))), headings(first));
+  });
+  test("a refresh prunes old generations, dead stages and dead lock candidates, never the active one", () => {
+    const base = join(tmp, "prune"), generations = join(base, "canonical-generations");
+    const at = 10 * 24 * 3600 * 1000 + 5_000_000_000; // "now" for the prune
+    const age = (path, days) => { const s = (at - days * 24 * 3600 * 1000) / 1000; utimesSync(path, s, s); };
+    const dir = (path, days) => { mkdirSync(path, { recursive: true }); writeFileSync(join(path, "f"), "x"); age(path, days); };
+    dir(join(generations, "active"), 30);
+    dir(join(generations, "old"), 8);
+    dir(join(generations, "older"), 20);
+    dir(join(generations, "recent"), 2);
+    dir(join(generations, ".stage-dead"), 2);
+    dir(join(generations, ".stage-live"), 0);
+    dir(join(base, ".canonical-storage.lock.candidate-6112-0a1b2c"), 14);
+    dir(join(base, ".canonical-storage.lock.candidate-7-ffff"), 0);
+    dir(join(base, ".canonical-storage.lock"), 14);
+    dir(join(base, "snapshots"), 30);
+    assert.equal(pruneCanonicalLeftovers({ base, generations }, "active", at), 4);
+    assert.deepEqual(readdirSync(generations).sort(), [".stage-live", "active", "recent"]);
+    assert.deepEqual(readdirSync(base).sort(), [".canonical-storage.lock", ".canonical-storage.lock.candidate-7-ffff", "canonical-generations", "snapshots"]);
+    // The generation before the active one stays whatever its age.
+    rmSync(join(generations, "recent"), { recursive: true });
+    dir(join(generations, "previous"), 40);
+    assert.equal(pruneCanonicalLeftovers({ base, generations }, "active", at), 0);
+    assert.equal(existsSync(join(generations, "previous")), true);
+    // No active generation named: nothing goes.
+    dir(join(generations, "old"), 8);
+    assert.equal(pruneCanonicalLeftovers({ base, generations }, "", at), 0);
+    assert.equal(existsSync(join(generations, "old")), true);
   });
   // ST1: coop no longer pins a reviewer run from the shell (`coop review` is gone).
   assert.doesNotMatch(readFileSync(join(ROOT, "bin", "coop.ps1"), "utf8"), /resolve-many|promote-run|accepted-run/);

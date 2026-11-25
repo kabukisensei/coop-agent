@@ -3771,6 +3771,10 @@ const mcpRule: Rule = {
     // write too, so off a confirmed dev/test target it takes the same
     // production path as a destructive write instead of a yes/no (#5).
     const mayWrite = decision.kind === "ddl-dml-destructive" || (decision.kind === "ambiguous-sql" && callSqlText(event).trim() !== "");
+    // The audit row's tool says write for anything that may write, asked, approved
+    // or declined: a declined dev ALTER filed under "governed-live-read" misled
+    // anyone filtering the log by tool (dev VM checks, 2026-11-10 and 2026-11-23).
+    const auditTool = mayWrite ? "governed-live-write" : "governed-live-read";
     const contract = session.governance(ctx).sqlContract;
     const writeEnvironment = mayWrite ? trustedWriteEnvironment(event, session.liveReadDeps, contract) : "";
     const production = decision.environment === "production" || decision.scope?.environment === "production" || writeEnvironment === "production";
@@ -3789,7 +3793,7 @@ const mcpRule: Rule = {
       const where = production ? "production" : "not confirmed as dev or test (treated as production)";
       const effect = sqlWriteEffect(callSqlText(event));
       const what = `${promptBlock(callSqlText(event)).slice(2)}\nTarget: ${where}${ambiguousNote}${effect ? `\nEffect: ${effect}` : ""}`;
-      const refused = await session.permitProductionWrite(ctx, "mcp-confirm", "governed-live-read", what);
+      const refused = await session.permitProductionWrite(ctx, "mcp-confirm", auditTool, what);
       // Say why the target is unconfirmed and what to do; the write stays refused.
       if (refused && refused.action === "block" && refused.reason === PROD_WRITE_LOCKED && !production) {
         return block(unconfirmedTargetReason(event, session.liveReadDeps, contract));
@@ -3815,7 +3819,7 @@ const mcpRule: Rule = {
         ? `Warehouse SQL coop cannot classify (it may write) about to run:\n${promptBlock(sql)}${writeTarget}${mentionsProd}\nOnly one plain read statement runs without asking. Run this call once?`
         : `Data call coop cannot confirm as a read${production ? " (it names production)" : ""}:\n  ${decision.label}\n${promptBlock(mcpArgumentsText(event), 600)}\nCoop cannot verify this call as a plain read (a statement it cannot see or classify, or call fields it does not recognise), so it may change data; reads it can verify never ask. Run this call once?`;
     const refused = await session.ask(ctx, {
-      title: "coop live-data guardrail", kind: "mcp-confirm", tool: "governed-live-read", label: auditLabel, detail: decision.kind || "live-read",
+      title: "coop live-data guardrail", kind: "mcp-confirm", tool: auditTool, label: auditLabel, detail: decision.kind || "live-read",
       sessionKey: sqlEditKey, question: prompt,
       headless: `coop guardrails: blocked ${decision.kind || "live-read"} access through ${decision.label || "the governed tool"}; explicit approval is unavailable in headless mode.`,
       declined: `coop guardrails: blocked ${decision.kind || "live-read"} access through ${decision.label || "the governed tool"} (you declined).`,

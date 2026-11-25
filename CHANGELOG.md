@@ -30,6 +30,22 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- **coop cleans up after itself.** An inventory of a real machine (2026-11-24)
+  found what coop and its parts leave behind; the daily cleanup and the
+  refreshes now remove it. Off (`coop cleanup off`) is off for all of it.
+  - The Microsoft skills refresh deletes its download folder. On Windows the
+    delete gave up silently on git's read-only files, so every refresh left one
+    (44 folders, about 470 MB). Old ones are swept at the next refresh, with
+    skills generations that are not current and over a week old.
+  - A standards refresh removes generations that are neither the active one nor
+    the one before it once they are a week old, and stage folders and lock
+    candidates a killed process left.
+  - The daily cleanup also removes the memory extension's recovery copies after
+    7 days, Pi's per-call temp files after 2 days, the retired `coop web`
+    profile, this user's standards copies once launches use the machine folder,
+    and backups older than the cleanup age in a `.backups` folder from before
+    v0.38.0 (in the repository or the client folder). A `.backups` folder with
+    a file git tracks is left alone. `coop cleanup` lists each of these.
 - **Window: fewer things to look at** (UX review, 2026-11-24).
   Ctrl+K lists what the window can do (about 30 rows) and no longer repeats
   every slash command and skill: those are one `/` away in the prompt box.
@@ -48,6 +64,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Fixed
 
+- **The daily log no longer lands in a SQL repository.** Started in a repository
+  beside the client home repository (or in a folder below the project root),
+  coop was told the log's path relative to the project root and wrote
+  `docs/agent/logs/daily` inside the folder it ran in. It now gets the full
+  path, so the log goes where the project file says (plan row LG1).
+- **A write is a write in the audit log.** A Warehouse or SQL write that asks,
+  approved or declined, is recorded under `governed-live-write`. It was filed
+  under `governed-live-read` with the label "Warehouse SQL write".
 - **Window: small things that got in the way** (UX review, 2026-11-24).
   Sending a message scrolls the conversation to it, wherever it was scrolled.
   The side pane no longer squeezes the conversation in a window narrower than
