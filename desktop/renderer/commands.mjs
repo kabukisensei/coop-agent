@@ -118,6 +118,25 @@ export function describe(command) {
   return line.replace(/^\//, "").trim().toLowerCase() === name ? "" : line;
 }
 
+/** How long after a slash command its one-line notices still count as its answer. */
+export const SLASH_ANSWER_MS = 5 * 60 * 1000;
+
+/**
+ * Where an extension's notice goes: "conversation" or "toast". A report
+ * (several lines, or long) goes in the conversation, as the terminal prints
+ * it. So does a one-liner that answers a slash command the person just ran
+ * (the Docs pane's "Refresh from dev" is `/setup-docs refresh`): a toast is
+ * gone in a few seconds, and "Lineage docs refreshed (...)" is the result they
+ * waited for. While coop is working, or with no command open, a one-liner is
+ * a toast as before.
+ */
+export function noticePlace({ text, busy = false, slashAt = 0, now = Date.now() }) {
+  const value = String(text || "");
+  if (value.includes("\n") || value.length > 200) return "conversation";
+  if (!busy && slashAt && now - slashAt >= 0 && now - slashAt < SLASH_ANSWER_MS) return "conversation";
+  return "toast";
+}
+
 /**
  * The window's keyboard shortcuts, each keyed by the Pi keybinding action
  * (docs/keybindings.md) it stands for, so /hotkeys and desktop/PARITY.md list
