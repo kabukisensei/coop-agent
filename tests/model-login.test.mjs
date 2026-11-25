@@ -43,8 +43,12 @@ try {
 
   let editorText = "";
   const notices = [];
+  // A folder outside any checkout: session start looks at the launch folder's
+  // repository (the team's project file) and fetches its origin when the last
+  // fetch is over ten minutes old, which on a slow lane was this checkout.
+  const launchDir = mkdtempSync(join(tmpdir(), "coop-model-login-cwd-"));
   const ctx = {
-    cwd: process.cwd(),
+    cwd: launchDir,
     hasUI: true,
     mode: "tui",
     ui: {
@@ -68,7 +72,7 @@ try {
   let shutdown = false;
   await loginHandlers.get("session_start")({ reason: "startup" }, {
     ...ctx,
-    cwd: join(process.cwd(), "login-only"),
+    cwd: join(launchDir, "login-only"),
     model: { provider: "openai-codex", id: "gpt-5.5" },
     shutdown() { shutdown = true; },
   });

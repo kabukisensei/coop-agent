@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "coop_version": "0.42.2",
+  "coop_version": "0.42.3",
   "node": {
     "min": "22.19.0"
   },
@@ -21,7 +21,7 @@
     "@xl0/pi-lovely-rename": "0.1.5"
   },
   "python_tools": {
-    "coop-data-doc": "1.6.1",
+    "coop-data-doc": "1.6.3",
     "coop-schema-compare": "0.1.14",
     "coop-sql-source-control": "1.0.20",
     "ms-fabric-cli": "1.8.0",

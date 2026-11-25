@@ -5,6 +5,18 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- **`coop cleanup now` reports what it really removed** (dev VM, 2026-11-24).
+  A removed read-only file (git's files in the old standards copies) was
+  counted with no size, so 13.2 MB showed as 6.9 MB; the size is now read
+  before the file goes. Empty folders the cleanup removes are counted and
+  shown (`and 96 empty folder(s)`), where a folder such as Pi's empty temp
+  ones used to go without a line. An empty folder now goes only when the
+  cleanup emptied it or it is itself past the age, so one a running program
+  made a moment ago stays.
+
+## [0.42.3] — 2026-11-24
+
 ### Added
 
 - **What changed in dev.** When coop refreshes lineage docs from the live dev
@@ -30,6 +42,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- **coop-data-doc 1.6.3.** Its setup now scans every repo it keeps, so with
+  two live dev sources (a Warehouse and a Lakehouse) the layer questions offer
+  the second source's schemas too, and asks one question in front of six
+  rarely changed settings. Docs read from a live dev database say which day
+  dev was read, and a build with no Power BI no longer reports
+  "0 cross-repo links".
 - **Three more things the daily cleanup removes** (Aaron, 2026-11-24). Off
   (`coop cleanup off`) is off for these too.
   - A backup of 50 MB or more is kept 7 days, not the cleanup age: two such
@@ -89,23 +107,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   Save are unchanged, and nothing is written until you save.
 
 ### Fixed
-- **`coop cleanup now` reports what it really removed** (dev VM, 2026-11-24).
-  A removed read-only file (git's files in the old standards copies) was
-  counted with no size, so 13.2 MB showed as 6.9 MB; the size is now read
-  before the file goes. Empty folders the cleanup removes are counted and
-  shown (`and 96 empty folder(s)`), where a folder such as Pi's empty temp
-  ones used to go without a line. An empty folder now goes only when the
-  cleanup emptied it or it is itself past the age, so one a running program
-  made a moment ago stays.
-- **No more folder named `%SystemDrive%` in a project.** When coop ended a
-  command's process tree on Windows it started `taskkill` with only
-  `SystemRoot` in its environment and the project as its working folder.
-  Without `SystemDrive`, Windows cannot expand `%SystemDrive%\ProgramData` and
-  creates `%SystemDrive%\ProgramData\Microsoft\Windows\Caches` right there (two
-  demo folders on the dev VM, 2026-11-24). All three places that start
-  `taskkill` now pass `SystemDrive` and run it in the Windows folder. The
-  daily cleanup removes such a folder from the launch folder, the repository,
-  the client folder and the home folder; anything else inside one stays.
+- **Stray `%SystemDrive%` folders are cleaned up.** Two demo folders on the
+  dev VM held a folder literally named
+  `%SystemDrive%\ProgramData\Microsoft\Windows\Caches` (2026-11-24). What
+  wrote them is not proven: a dev VM check on 2026-11-25 could not reproduce
+  it with `taskkill`. As a precaution, the three places that start `taskkill`
+  now pass `SystemDrive` and run it in the Windows folder. The daily cleanup
+  removes such a folder from the launch folder, the repository, the client
+  folder and the home folder; anything else inside one stays.
 
 - **The side pane in a narrow coop window.** At about 1000 px wide the pane's
   tab strip showed a horizontal scrollbar and the "Find in this diff" box shrank
