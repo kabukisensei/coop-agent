@@ -5,7 +5,7 @@ import { el, icon, openModal, pickFrom, toast, modalOpen, relativeTime, splitGly
 import { createTimeline, applyEvent, loadMessages, startBash, finishBash, formatTokens, textOf, notice, turnOf, turns } from "./timeline.mjs";
 import { createFinder } from "./find.mjs";
 import { renderItem, renderTurn, codeBlock } from "./view.mjs";
-import { parseInput, completions, KEYS } from "./commands.mjs";
+import { parseInput, completions, noticePlace, KEYS } from "./commands.mjs";
 import { registerPane, openPane, togglePane, closePane, currentPane, refreshPane, initPanes } from "./panes.mjs";
 import { mountChanges } from "./pane-changes.mjs";
 import { mountStandards } from "./pane-standards.mjs";
@@ -198,7 +198,7 @@ function onUiRequest(request) {
       }
       // Reports (several lines, like /mcp or /ctx-stats) go in the conversation,
       // where the terminal prints them too; one-liners are toasts.
-      if (text.includes("\n") || text.length > 200) redraw(notice(app.tl, level, text, { markdown: true }));
+      if (noticePlace({ text, busy: app.tl.busy, slashAt: app.slashAt }) === "conversation") redraw(notice(app.tl, level, text, { markdown: true }));
       else toast(text, level);
       break;
     }
@@ -578,6 +578,9 @@ async function sendPrompt(text, { followUp = false } = {}) {
   const input = { type: "prompt", message: text + attachmentNote(attachments) };
   if (images.length) input.images = images;
   if (app.tl.busy) input.streamingBehavior = followUp ? "followUp" : "steer";
+  // A slash command's one-line notices are its answer (noticePlace); any other
+  // message closes that.
+  app.slashAt = text.trim().startsWith("/") ? Date.now() : 0;
   pushHistory(text);
   clearPrompt();
   const result = await cmd(input);
@@ -1447,6 +1450,7 @@ async function sendSlash(text) {
   if (!app.running) { toast("coop is not running in this window. Restart it first.", "warning"); return false; }
   const input = { type: "prompt", message: text };
   if (app.tl.busy) input.streamingBehavior = "steer";
+  app.slashAt = Date.now();
   const result = await cmd(input);
   if (!result.success) toast(`coop did not take ${text}: ${result.error || "unknown error"}`, "error");
   return Boolean(result.success);

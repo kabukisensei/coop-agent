@@ -495,7 +495,7 @@ label.setting { cursor: default; }
    conversation keeps 480px (resize.mjs MIN_MAIN) down to the pane's 320px floor. */
 body.with-pane .app { grid-template-columns: var(--sidebar-width, 264px) minmax(0, 1fr) var(--pane-width, clamp(320px, calc(100vw - var(--sidebar-width, 264px) - 480px), 520px)); }
 body.with-pane.no-sidebar .app { grid-template-columns: 0 minmax(0, 1fr) var(--pane-width, clamp(320px, calc(100vw - 480px), 520px)); }
-.pane { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--panel); border-left: 1px solid var(--border); }
+.pane { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--panel); border-left: 1px solid var(--border); container: pane / inline-size; }
 /* Drag handles: the sidebar's right edge, the pane's left edge, the changes split. */
 .pane-resize, .sidebar-resize { position: absolute; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 2; touch-action: none; }
 .pane-resize { left: -3px; }
@@ -510,7 +510,15 @@ body.resizing { user-select: none; }
 body.resizing-x, body.resizing-x * { cursor: col-resize !important; }
 body.resizing-y, body.resizing-y * { cursor: row-resize !important; }
 .pane-head { display: flex; align-items: center; gap: 4px; height: 52px; padding: 0 8px; border-bottom: 1px solid var(--border); flex: none; }
-.pane-tabs { display: flex; gap: 2px; flex: 1; min-width: 0; overflow-x: auto; }
+.pane-tabs { display: flex; gap: 2px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+/* A narrow pane (its 320px floor in a small window): the open view keeps its
+   name, the others show their icon alone (the name stays in the tooltip), so
+   the row fits with no scrollbar under it. */
+@container pane (max-width: 440px) {
+  .pane-tab:not(.active) > span { display: none; }
+  /* The search box takes the row; its count and buttons sit under it. */
+  .pane-toolbar input.field { flex-basis: 100%; }
+}
 .pane-tab {
   display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border: 0; border-radius: var(--radius);
   background: transparent; color: var(--text-muted); cursor: pointer; white-space: nowrap;
@@ -526,8 +534,10 @@ body.resizing-y, body.resizing-y * { cursor: row-resize !important; }
 .pane-summary code { font-size: 12px; overflow-wrap: anywhere; color: var(--text); }
 .pane-summary.ok { color: var(--success); }
 .pane-empty { color: var(--text-muted); font-size: 13px; margin: 8px 0; }
-.pane-toolbar { display: flex; align-items: center; gap: 6px; flex: none; }
-.pane-toolbar .field { flex: 1; min-width: 0; }
+.pane-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; flex: none; }
+/* The box keeps a usable width: the buttons beside it move to a second row
+   before it shrinks to a square. */
+.pane-toolbar .field { flex: 1 1 160px; min-width: 0; }
 .change-repo-label { flex: none; font-size: 13px; color: var(--text-muted); }
 .pane-links { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; }
 details.standards .pane-links { margin-top: 8px; }

@@ -99,6 +99,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   daily cleanup removes such a folder from the launch folder, the repository,
   the client folder and the home folder; anything else inside one stays.
 
+- **The side pane in a narrow coop window.** At about 1000 px wide the pane's
+  tab strip showed a horizontal scrollbar and the "Find in this diff" box shrank
+  to a small square. In a narrow pane the tabs that are not open now show their
+  icon only, and the find box takes its own row.
+- **A slash command's short answer stays in the conversation.** A one-line
+  notice that answers a command you just typed (for example `/setup-docs
+  refresh`) used to flash as a toast and disappear. It now lands in the
+  conversation. Notices that arrive while coop is working are still toasts.
 - **The daily log no longer lands in a SQL repository.** Started in a repository
   beside the client home repository (or in a folder below the project root),
   coop was told the log's path relative to the project root and wrote
