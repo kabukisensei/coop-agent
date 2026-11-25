@@ -2378,10 +2378,11 @@ function Get-CoopCleanupTargets {
       $targets += [pscustomobject]@{ Name = 'stray NUL files'; Root = $dir; Filter = @('*'); Entries = @('NUL'); Days = 1; Extra = $true; DropRoot = $false; MinBytes = 0; MaxBytes = 0; FilesOnly = $true; All = $false }
     }
   }
-  # A folder literally named %SystemDrive%: Windows makes one (with
-  # ProgramData\Microsoft\Windows\Caches inside) in the working folder of a
-  # program started without the SystemDrive variable, as coop's own taskkill
-  # was until v0.42.3. Nobody keeps work under that name. Same folders as NUL.
+  # A folder literally named %SystemDrive% (with ProgramData\Microsoft\Windows\
+  # Caches inside): a program that could not expand the variable made it in its
+  # working folder. Which program is not known: coop's taskkill, started with
+  # only SystemRoot, was tested on the dev VM (2026-11-24) and does not.
+  # Nobody keeps work under that name. Same folders as NUL.
   foreach ($dir in @(Get-CoopStrayNulDirs $StartDir)) {
     $literal = Join-Path $dir '%SystemDrive%'
     if (Test-Path -LiteralPath (Join-Path $literal 'ProgramData') -PathType Container) {
@@ -2562,7 +2563,8 @@ function Remove-CoopCleanupFile($File) {
 
 # Remove the files older than $Days in every target (with -DryRun, only count
 # them). Returns one row per target: Name, Root, Files, Bytes (removed or to
-# remove), Kept, KeptBytes (what stays) and Failed (files that could not go).
+# remove), Kept, KeptBytes (what stays), Failed (files that could not go) and
+# Folders (empty folders removed, or already empty and due in a dry run).
 function Invoke-CoopCleanup {
   param([int]$Days = (Get-CoopCleanupDays), [switch]$DryRun, [datetime]$Now = [datetime]::UtcNow, [string]$StartDir = (Get-Location).Path)
   $rows = @()
@@ -2570,39 +2572,59 @@ function Invoke-CoopCleanup {
     # A target's own age applies only while the cleanup is on (Days 0 = off).
     $age = if ($Days -gt 0 -and $t.Days -gt 0) { [int]$t.Days } else { $Days }
     $cutoff = $Now.ToUniversalTime().AddDays(-1 * $age)
-    $row = [pscustomobject]@{ Name = $t.Name; Root = $t.Root; Files = 0; Bytes = [long]0; Kept = 0; KeptBytes = [long]0; Failed = 0; Days = $age; Extra = [bool]$t.Extra }
+    $row = [pscustomobject]@{ Name = $t.Name; Root = $t.Root; Files = 0; Bytes = [long]0; Kept = 0; KeptBytes = [long]0; Failed = 0; Folders = 0; Days = $age; Extra = [bool]$t.Extra }
     $found = Get-CoopCleanupFiles $t.Root $t.Filter $t.Entries ([bool]$t.FilesOnly)
+    $dropEmpty = [bool]($t.PSObject.Properties['DropEmptyRoot'] -and $t.DropEmptyRoot)
+    # The folders this run took something out of (a file, or an emptied folder).
+    $emptied = @{}
     foreach ($f in $found.Files) {
+      # Read once, before anything is removed: clearing the read-only attribute
+      # drops the cached size, and a removed file then has none to report (the dev
+      # VM, 2026-11-24: 13.2 MB of git's read-only files were reported as 6.9 MB).
+      $bytes = [long]$f.Length
+      $parent = [string]$f.DirectoryName
       # A size band leaves the other files to the target that owns them.
-      if ($t.MinBytes -gt 0 -and [long]$f.Length -lt [long]$t.MinBytes) { continue }
-      if ($t.MaxBytes -gt 0 -and [long]$f.Length -ge [long]$t.MaxBytes) { continue }
+      if ($t.MinBytes -gt 0 -and $bytes -lt [long]$t.MinBytes) { continue }
+      if ($t.MaxBytes -gt 0 -and $bytes -ge [long]$t.MaxBytes) { continue }
       $old = ($age -gt 0) -and ($t.All -or ((Get-CoopCleanupStamp $f) -lt $cutoff))
-      if (-not $old) { $row.Kept++; $row.KeptBytes += [long]$f.Length; continue }
-      if ($DryRun) { $row.Files++; $row.Bytes += [long]$f.Length; continue }
+      if (-not $old) { $row.Kept++; $row.KeptBytes += $bytes; continue }
+      if ($DryRun) { $row.Files++; $row.Bytes += $bytes; continue }
+      $removed = $false
       try {
         # git marks its pack and object files read-only; -Force alone clears that
         # on Windows, and the attribute is cleared first for the cases it does not.
         if ($f.IsReadOnly) { try { $f.IsReadOnly = $false } catch { } }
-        Remove-CoopCleanupFile $f; $row.Files++; $row.Bytes += [long]$f.Length
-      }
-      catch { $row.Failed++; $row.Kept++; $row.KeptBytes += [long]$f.Length }
+        Remove-CoopCleanupFile $f
+        $removed = $true
+      } catch { }
+      if ($removed) { $row.Files++; $row.Bytes += $bytes; if ($parent) { $emptied[$parent] = $true } }
+      else { $row.Failed++; $row.Kept++; $row.KeptBytes += $bytes }
     }
-    if (-not $DryRun -and $age -gt 0) {
+    if ($age -gt 0) {
       # Deepest first, so a parent emptied by its children goes too; the root
-      # only where the target says so.
+      # only where the target says so. An empty folder goes when this run emptied
+      # it or when it is itself past the age: one a running program made a moment
+      # ago stays. Each one is counted, so the report says what went.
       $byDepth = @($found.Dirs | Sort-Object -Property @{ Expression = { $_.FullName.Length } } -Descending)
       foreach ($d in $byDepth) {
         if (-not (Test-Path -LiteralPath $d.FullName -PathType Container)) { continue }
-        if (@(Get-ChildItem -LiteralPath $d.FullName -Force -ErrorAction SilentlyContinue).Count -eq 0) {
-          Remove-Item -LiteralPath $d.FullName -Force -ErrorAction SilentlyContinue
+        if (@(Get-ChildItem -LiteralPath $d.FullName -Force -ErrorAction SilentlyContinue).Count -ne 0) { continue }
+        if (-not ($t.All -or $dropEmpty -or $emptied.ContainsKey($d.FullName) -or $d.LastWriteTimeUtc -lt $cutoff)) { continue }
+        if ($DryRun) { $row.Folders++; continue }
+        Remove-Item -LiteralPath $d.FullName -Force -ErrorAction SilentlyContinue
+        if (-not (Test-Path -LiteralPath $d.FullName)) {
+          $row.Folders++
+          $up = Split-Path -Parent $d.FullName
+          if ($up) { $emptied[$up] = $true }
         }
       }
-      $dropEmpty = [bool]($t.PSObject.Properties['DropEmptyRoot'] -and $t.DropEmptyRoot)
+    }
+    if (-not $DryRun -and $age -gt 0) {
       if ($t.DropRoot -and ($row.Files -gt 0 -or $dropEmpty) -and (Test-Path -LiteralPath $t.Root -PathType Container) -and @(Get-ChildItem -LiteralPath $t.Root -Force -ErrorAction SilentlyContinue).Count -eq 0) {
         Remove-Item -LiteralPath $t.Root -Force -ErrorAction SilentlyContinue
       }
     }
-    if ($t.Extra -and ($row.Files + $row.Kept) -eq 0) { continue }
+    if ($t.Extra -and ($row.Files + $row.Kept + $row.Folders) -eq 0) { continue }
     $rows += $row
   }
   return $rows

@@ -340,7 +340,8 @@ function Invoke-CoopCleanupCommand {
     if ($days -le 0) { Coop-Die "cleanup is off (turn it on: coop cleanup days $script:CoopCleanupDefaultDays)" }
     $rows = @(Invoke-CoopCleanup -Days $days)
     foreach ($r in $rows) {
-      $line = "$($r.Name): removed $($r.Files) file(s) older than $($r.Days) days ($(Format-CoopBytes $r.Bytes)); $($r.Kept) kept ($(Format-CoopBytes $r.KeptBytes))   $($r.Root)"
+      $folders = if ($r.Folders -gt 0) { " and $($r.Folders) empty folder(s)" } else { '' }
+      $line = "$($r.Name): removed $($r.Files) file(s) older than $($r.Days) days ($(Format-CoopBytes $r.Bytes))$folders; $($r.Kept) kept ($(Format-CoopBytes $r.KeptBytes))   $($r.Root)"
       if ($r.Failed -gt 0) { Coop-Warn "$line; $($r.Failed) could not be removed (in use?)" } else { Coop-Ok $line }
     }
     return
@@ -352,6 +353,7 @@ function Invoke-CoopCleanupCommand {
     $total = $r.Files + $r.Kept
     $bytes = $r.Bytes + $r.KeptBytes
     $due = if ($days -gt 0) { "; $($r.Files) older than $($r.Days) days ($(Format-CoopBytes $r.Bytes))" } else { '' }
+    if ($days -gt 0 -and $r.Folders -gt 0) { $due += "; $($r.Folders) empty folder(s) due" }
     Coop-Info "$($r.Name): $total file(s), $(Format-CoopBytes $bytes)$due   $($r.Root)"
   }
 }

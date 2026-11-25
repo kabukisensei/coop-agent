@@ -713,9 +713,8 @@ def _terminate_token_helper_tree(proc: subprocess.Popen[bytes]) -> None:
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
-                    # SystemDrive and Windows' own folder as the working folder:
-                    # without SystemDrive, Windows creates a folder literally
-                    # named "%SystemDrive%" in the working folder (the project).
+                    # SystemDrive and Windows' own folder as the working folder,
+                    # so nothing taskkill writes can land in the project.
                     env=_taskkill_environment(taskkill[0]),
                     cwd=ntpath.dirname(ntpath.dirname(taskkill[0])),
                     shell=False,

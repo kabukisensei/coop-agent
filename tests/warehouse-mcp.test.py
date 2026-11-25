@@ -518,8 +518,7 @@ with (
     wmcp._terminate_token_helper_tree(fake_proc)
 taskkill_run.assert_called_once()
 assert taskkill_run.call_args.args[0][0] == r"C:\Windows\System32\taskkill.exe"
-# SystemDrive and Windows' own working folder: without them Windows leaves a
-# folder literally named "%SystemDrive%" in the project (dev VM, 2026-11-24).
+# SystemDrive and Windows' own working folder, never the project.
 assert taskkill_run.call_args.kwargs["env"] == {"SystemRoot": r"C:\Windows", "SystemDrive": "C:"}
 assert taskkill_run.call_args.kwargs["cwd"] == r"C:\Windows"
 assert taskkill_run.call_args.kwargs["shell"] is False

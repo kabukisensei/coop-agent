@@ -289,8 +289,7 @@ try {
   assert.deepEqual(windowsTaskkillCommand("C:\\Windows", 4242), {
     command: "C:\\Windows\\System32\\taskkill.exe",
     args: ["/PID", "4242", "/T", "/F"],
-    // SystemDrive and Windows' own working folder: without them Windows leaves a
-    // folder literally named "%SystemDrive%" in the project (dev VM, 2026-11-24).
+    // SystemDrive and Windows' own working folder, never the project.
     env: { SystemRoot: "C:\\Windows", SystemDrive: "C:" },
     cwd: "C:\\Windows",
   });

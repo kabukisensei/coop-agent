@@ -6,7 +6,14 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 ## [Unreleased]
 
 ### Fixed
-
+- **`coop cleanup now` reports what it really removed** (dev VM, 2026-11-24).
+  A removed read-only file (git's files in the old standards copies) was
+  counted with no size, so 13.2 MB showed as 6.9 MB; the size is now read
+  before the file goes. Empty folders the cleanup removes are counted and
+  shown (`and 96 empty folder(s)`), where a folder such as Pi's empty temp
+  ones used to go without a line. An empty folder now goes only when the
+  cleanup emptied it or it is itself past the age, so one a running program
+  made a moment ago stays.
 - **The project file note no longer says a folder is listed when it is not.**
   Opened with a remembered project file that sits beside the repository but
   does not list it, coop said the client home repository "lists this folder".

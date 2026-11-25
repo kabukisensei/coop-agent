@@ -315,6 +315,31 @@ try {
   $bad = @(@($stale, $only) | Where-Object { Test-Path -LiteralPath $_ }) + @(@($recent, $inUse, $other, $touched, (Join-Path $inUse 'settings.json'), (Join-Path $recent 'attachments\note.txt'), $data) | Where-Object { -not (Test-Path -LiteralPath $_) })
   if ($bad.Count -eq 0) { Ok 'window data folders unused for the cleanup age go whole; recent ones, the one in use, one with something newer inside and a folder with another name stay' } else { Ko 'old window data: the wrong folders went or stayed' ($bad -join "`n") }
 
+  # --- the report (dev VM, 2026-11-24) --------------------------------------------------
+  # A read-only file's size is counted (git's files in the old standards copies).
+  $ro1 = Join-Path $backups 'repo\ro\pack-1.bak'
+  $ro2 = Join-Path $backups 'repo\ro\pack-2.bak'
+  New-AgedFile $ro1 90 ('x' * 1000)
+  New-AgedFile $ro2 90 ('x' * 500)
+  (Get-Item -LiteralPath $ro1).IsReadOnly = $true
+  $rows = @(Invoke-CoopCleanup -Days 45 -Now $now -StartDir $repoA)
+  $b = $rows | Where-Object { $_.Name -ceq 'backups' }
+  if (-not (Test-Path -LiteralPath $ro1) -and $b.Files -eq 2 -and $b.Bytes -eq 1500 -and $b.Failed -eq 0 -and $b.Folders -eq 1) { Ok 'a removed read-only file counts with its full size, and the folder it emptied is counted' } else { Ko 'read-only size' ($b | Format-List | Out-String) }
+  # Empty Pi temp folders: an old one goes and is reported, one made just now stays.
+  $emptyOld = Join-Path $temp_ 'pi-mcp-output-emptyold'
+  $emptyNew = Join-Path $temp_ 'pi-mcp-output-emptynew'
+  New-Item -ItemType Directory -Force -Path $emptyOld, $emptyNew | Out-Null
+  [System.IO.Directory]::SetLastWriteTimeUtc($emptyOld, $now.AddDays(-5))
+  $dry = @(Invoke-CoopCleanup -Days 45 -DryRun -Now $now -StartDir $repoA)
+  $dryTemp = $dry | Where-Object { $_.Name -ceq 'temp files' }
+  $rows = @(Invoke-CoopCleanup -Days 45 -Now $now -StartDir $repoA)
+  $tempRow = $rows | Where-Object { $_.Name -ceq 'temp files' }
+  if ($dryTemp.Folders -eq 1 -and (Test-Path -LiteralPath $emptyNew) -and -not (Test-Path -LiteralPath $emptyOld) -and $tempRow.Folders -eq 1) { Ok 'an old empty Pi temp folder is listed, removed and reported; one made just now stays' } else { Ko "empty temp folders: dry=$($dryTemp.Folders) removed=$($tempRow.Folders) new kept=$(Test-Path -LiteralPath $emptyNew)" }
+  New-Item -ItemType Directory -Force -Path $emptyOld | Out-Null
+  [System.IO.Directory]::SetLastWriteTimeUtc($emptyOld, $now.AddDays(-5))
+  $out = (Invoke-Native { & $psExe -NoProfile -File $coop cleanup now 2>&1 } | Out-String)
+  if ($out -match 'temp files: removed 0 file\(s\).* and 1 empty folder\(s\)') { Ok 'coop cleanup now names the empty folders it removed' } else { Ko 'coop cleanup now did not report the empty folder' $out }
+
   # Off is off for the leftovers too.
   New-AgedFile (Join-Path $temp_ 'pi-codemode-late') 30
   $null = Invoke-CoopCleanup -Days 0 -Now $now -StartDir $repoA
