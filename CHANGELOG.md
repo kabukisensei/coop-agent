@@ -30,6 +30,19 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ### Changed
 
+- **Three more things the daily cleanup removes** (Aaron, 2026-11-24). Off
+  (`coop cleanup off`) is off for these too.
+  - A backup of 50 MB or more is kept 7 days, not the cleanup age: two such
+    files (an installer and an archive) were 216 MB of one machine's backups.
+    The workflow skill now says to back up only the files coop will change.
+  - A file named `NUL` in the launch folder, the repository, the client folder
+    or the home folder goes after a day. A shell other than cmd writes one for
+    a command's `> NUL`; Windows reserves the name, so Explorer cannot delete
+    it. Windows only, a file only, never below those folders.
+  - The window keeps one data folder per coop checkout
+    (`~/.coop/desktop/data/<id>`). One that no window has opened for the
+    cleanup age (45 days) goes whole. The folder used last always stays, so
+    the window in use keeps its settings however long it rests.
 - **coop cleans up after itself.** An inventory of a real machine (2026-11-24)
   found what coop and its parts leave behind; the daily cleanup and the
   refreshes now remove it. Off (`coop cleanup off`) is off for all of it.

@@ -210,6 +210,94 @@ try {
     if (-not (Test-Path -LiteralPath (Join-Path $profile_ 'standards')) -and (Test-Path -LiteralPath (Join-Path $env:COOP_MACHINE_DIR 'standards'))) { Ok 'after the move to the machine folder the user''s old standards copies go; the machine folder stays' } else { Ko 'old standards copies stayed, or the machine folder went' }
   } else { Ko 'the fixture machine folder was not used for standards' }
 
+  # --- large backups, NUL files, old window data (2026-11-25) --------------------------
+  # A backup of 50 MB or more is kept a week; a smaller one keeps the cleanup age.
+  function New-SizedFile([string]$Path, [long]$Bytes, [int]$AgeDays) {
+    New-AgedFile $Path $AgeDays
+    $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open)
+    try { $fs.SetLength($Bytes) } finally { $fs.Dispose() }
+    [System.IO.File]::SetCreationTimeUtc($Path, $now.AddDays(-1 * $AgeDays))
+    [System.IO.File]::SetLastWriteTimeUtc($Path, $now.AddDays(-1 * $AgeDays))
+  }
+  $bigOld = Join-Path $backups 'repo\tools\setup.exe.20261110.bak'
+  $bigNew = Join-Path $backups 'repo\tools\setup.exe.20261122.bak'
+  $smallOld = Join-Path $backups 'repo\src\c.sql.20261110.bak'
+  $justUnder = Join-Path $backups 'repo\src\model.20261110.bak'
+  New-SizedFile $bigOld 50MB 10
+  New-SizedFile $bigNew 50MB 3
+  New-SizedFile $justUnder (50MB - 1) 10
+  New-AgedFile $smallOld 10
+  $dry = @(Invoke-CoopCleanup -Days 45 -DryRun -Now $now -StartDir $repoA)
+  $large = $dry | Where-Object { $_.Name -ceq 'large backups' }
+  $plain = $dry | Where-Object { $_.Name -ceq 'backups' }
+  if ($large.Files -eq 1 -and $large.Kept -eq 1 -and $large.Days -eq 7 -and $plain.KeptBytes -lt 100MB) { Ok 'the dry run lists a large backup once, with its week' } else { Ko 'large backups dry run' ($dry | Format-Table Name, Files, Kept, KeptBytes, Days | Out-String) }
+  $null = Invoke-CoopCleanup -Days 45 -Now $now -StartDir $repoA
+  if (-not (Test-Path -LiteralPath $bigOld) -and (Test-Path -LiteralPath $bigNew) -and (Test-Path -LiteralPath $justUnder) -and (Test-Path -LiteralPath $smallOld)) { Ok 'a 50 MB backup goes after a week; a newer one, one just under the size and a small one of the same age stay' } else { Ko 'large backups: the wrong files went or stayed' }
+  $null = Invoke-CoopCleanup -Days 0 -Now $now.AddDays(30) -StartDir $repoA
+  if (Test-Path -LiteralPath $bigNew) { Ok 'off (0 days): a large backup stays' } else { Ko 'a large backup was removed while the cleanup was off' }
+  Remove-Item -LiteralPath $bigNew, $justUnder -Force
+
+  # A file named NUL in the launch folder, the repository, the client folder or
+  # the home folder goes after a day; nothing below those folders is looked at.
+  $launch = Join-Path $repoA 'src'
+  $nulDirs = @(Get-CoopStrayNulDirs $launch)
+  $wantDirs = @($launch, $repoA, $client, $home_) | ForEach-Object { [System.IO.Path]::GetFullPath($_).TrimEnd('\', '/') }
+  if ($nulDirs.Count -eq 4 -and @($wantDirs | Where-Object { $nulDirs -notcontains $_ }).Count -eq 0) { Ok 'NUL files are looked for in the launch folder, the repository, the client folder and the home folder' } else { Ko 'stray NUL folders' ($nulDirs -join "`n") }
+  if ($isWindowsHost) {
+    function New-NulFile([string]$Dir, [int]$AgeDays) {
+      $p = '\\?\' + (Join-Path $Dir 'NUL')
+      [System.IO.File]::WriteAllText($p, 'stray output')
+      [System.IO.File]::SetCreationTimeUtc($p, $now.AddDays(-1 * $AgeDays))
+      [System.IO.File]::SetLastWriteTimeUtc($p, $now.AddDays(-1 * $AgeDays))
+    }
+    function Test-NulFile([string]$Dir) { return [System.IO.File]::Exists('\\?\' + (Join-Path $Dir 'NUL')) }
+    New-NulFile $repoA 3
+    New-NulFile $home_ 3
+    New-NulFile $launch 0
+    New-NulFile (Join-Path $repoA '.backups') 30
+    $null = Invoke-CoopCleanup -Days 45 -Now $now -StartDir $launch
+    if (-not (Test-NulFile $repoA) -and -not (Test-NulFile $home_) -and (Test-NulFile $launch) -and (Test-NulFile (Join-Path $repoA '.backups'))) { Ok 'a NUL file older than a day goes from the repository and the home folder; today''s stays' } else { Ko "NUL files: repo=$(Test-NulFile $repoA) home=$(Test-NulFile $home_) launch=$(Test-NulFile $launch)" }
+    [System.IO.File]::Delete('\\?\' + (Join-Path $launch 'NUL'))
+    [System.IO.File]::Delete('\\?\' + (Join-Path (Join-Path $repoA '.backups') 'NUL'))
+  } else {
+    $names = @(Get-CoopCleanupTargets $launch | ForEach-Object { $_.Name })
+    New-AgedFile (Join-Path $t 'nul\NUL') 3
+    New-AgedFile (Join-Path $t 'nul2\NUL\work.sql') 3
+    $asFile = Get-CoopCleanupFiles (Join-Path $t 'nul') @('*') @('NUL') $true
+    $asDir = Get-CoopCleanupFiles (Join-Path $t 'nul2') @('*') @('NUL') $true
+    if ($names -notcontains 'stray NUL files' -and $asFile.Files.Count -eq 1 -and $asDir.Files.Count -eq 0 -and $asDir.Dirs.Count -eq 0) { Ok 'NUL files are a Windows target only; a folder with that name is never entered' } else { Ko "NUL off Windows: targets=$($names -join ','), file=$($asFile.Files.Count), folder files=$($asDir.Files.Count)" }
+  }
+
+  # The window's data folders: one no window has opened for the cleanup age goes
+  # whole; the one used last stays, and so does a folder with another name.
+  $data = Join-Path $profile_ 'desktop\data'
+  function New-WindowData([string]$Name, [int]$AgeDays) {
+    $d = Join-Path $data $Name
+    New-AgedFile (Join-Path $d 'settings.json') $AgeDays '{}'
+    New-AgedFile (Join-Path $d 'Local State') $AgeDays
+    New-AgedFile (Join-Path $d 'Cache\Cache_Data\data_0') $AgeDays
+    New-AgedFile (Join-Path $d 'attachments\note.txt') $AgeDays
+    foreach ($sub in @((Join-Path $d 'Cache\Cache_Data'), (Join-Path $d 'Cache'), (Join-Path $d 'attachments'), $d)) { [System.IO.Directory]::SetLastWriteTimeUtc($sub, $now.AddDays(-1 * $AgeDays)) }
+    return $d
+  }
+  $only = New-WindowData 'aaaaaaaaaaaa' 400
+  if (@(Get-CoopStaleDesktopDataDirs -Days 45 -Now $now).Count -eq 0) { Ok 'the only window data folder stays however old it is' } else { Ko 'the only window data folder was listed as old' }
+  $stale = New-WindowData '0123456789ab' 90
+  $recent = New-WindowData 'bbbbbbbbbbbb' 20
+  $inUse = New-WindowData 'cccccccccccc' 2
+  $other = New-WindowData 'not-a-window' 400
+  # A folder whose own time is old but which holds something newer is in use.
+  $touched = New-WindowData 'dddddddddddd' 90
+  New-AgedFile (Join-Path $touched 'Local State') 5
+  [System.IO.Directory]::SetLastWriteTimeUtc($touched, $now.AddDays(-90))
+  if (@(Get-CoopStaleDesktopDataDirs -Days 0 -Now $now).Count -eq 0) { Ok 'off (0 days): no window data folder is old' } else { Ko 'a window data folder was listed while the cleanup was off' }
+  $dry = @(Invoke-CoopCleanup -Days 45 -DryRun -Now $now -StartDir $repoA)
+  $w = @($dry | Where-Object { $_.Name -ceq 'old window data' })
+  if ($w.Count -eq 2 -and $w[0].Files -eq 4 -and $w[0].Kept -eq 0 -and (Test-Path -LiteralPath $stale)) { Ok 'the dry run lists each old window data folder whole and removes nothing' } else { Ko 'old window data dry run' ($dry | Format-Table Name, Files, Kept, Root | Out-String) }
+  $null = Invoke-CoopCleanup -Days 45 -Now $now -StartDir $repoA
+  $bad = @(@($stale, $only) | Where-Object { Test-Path -LiteralPath $_ }) + @(@($recent, $inUse, $other, $touched, (Join-Path $inUse 'settings.json'), (Join-Path $recent 'attachments\note.txt'), $data) | Where-Object { -not (Test-Path -LiteralPath $_) })
+  if ($bad.Count -eq 0) { Ok 'window data folders unused for the cleanup age go whole; recent ones, the one in use, one with something newer inside and a folder with another name stay' } else { Ko 'old window data: the wrong folders went or stayed' ($bad -join "`n") }
+
   # Off is off for the leftovers too.
   New-AgedFile (Join-Path $temp_ 'pi-codemode-late') 30
   $null = Invoke-CoopCleanup -Days 0 -Now $now -StartDir $repoA
