@@ -966,6 +966,12 @@ await t("C1: proposeContractRoot names the client home repository beside several
   assert.equal(findProjectContract(join(client, "analytics", "src"), {}), join(client, "contoso-coop", ".coop", "project.yml"), "the standards finder takes the sibling home too");
   // The launcher's answer wins for the other finders.
   assert.equal(findProjectContract(join(client, "reports"), { COOP_PROJECT_YML: join(client, "contoso-coop", ".coop", "project.yml") }), join(client, "contoso-coop", ".coop", "project.yml"));
+  // A project file coop was opened with that does not list this repository: the note does not say it does.
+  const remembered = proposeContractRoot(join(client, "reports"), { existing: join(client, "contoso-coop", ".coop", "project.yml") });
+  assert.deepEqual([remembered.kind, remembered.sibling, remembered.listed], ["existing", true, false]);
+  assert.match(contractLocationNote(remembered), /It does not list this folder/);
+  assert.doesNotMatch(contractLocationNote(remembered), /lists this folder/);
+  assert.equal(viaHome.listed, true);
   // A contract above cwd still wins over everything.
   mkdirSync(join(client, ".coop"));
   writeFileSync(join(client, ".coop", "project.yml"), "profile:\n  client: 'Contoso'\n");
