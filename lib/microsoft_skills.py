@@ -450,6 +450,66 @@ def git_archive_exact(url: str, revision: str, dest: Path) -> None:
     )
 
 
+def remove_tree(path: Path) -> None:
+    """rmtree that also clears the read-only bit git sets on pack and object
+    files on Windows. A plain rmtree that ignores errors left every refresh's
+    stage folder behind there (44 of them, about 470 MB, on one machine)."""
+
+    def _onerror(func, target, _exc):
+        try:
+            os.chmod(target, 0o700)
+            func(target)
+        except OSError:
+            pass
+
+    try:
+        shutil.rmtree(path, onerror=_onerror)
+    except OSError:
+        pass
+
+
+STAGE_PREFIX = "microsoft-skills."
+OLD_GENERATION_SECONDS = 7 * 24 * 3600
+
+
+def sweep_leftovers(cat: Path, *, now: float | None = None) -> int:
+    """Remove what earlier refreshes left in the catalog folder: every stage
+    folder (the caller holds the lock, so none is in use) and every generation
+    that is not the current one and is over a week old (a session that started
+    on the previous generation may still read it). Returns how many went."""
+    removed = 0
+    now = time.time() if now is None else now
+    try:
+        entries = sorted(cat.iterdir())
+    except OSError:
+        return 0
+    for entry in entries:
+        if entry.name.startswith(STAGE_PREFIX) and entry.is_dir() and not entry.is_symlink():
+            remove_tree(entry)
+            removed += 0 if entry.exists() else 1
+    current = ""
+    try:
+        current = str(read_json(cat / "current.json").get("generation") or "")
+    except (OSError, ValueError):
+        return removed  # no readable pointer: keep every generation
+    gens = cat / "generations"
+    try:
+        entries = sorted(gens.iterdir())
+    except OSError:
+        return removed
+    for entry in entries:
+        if not current or entry.name == current or entry.is_symlink() or not entry.is_dir():
+            continue
+        try:
+            if now - entry.stat().st_mtime < OLD_GENERATION_SECONDS:
+                continue
+        except OSError:
+            continue
+        remove_tree(entry)
+        removed += 0 if entry.exists() else 1
+    return removed
+
+
 def refresh(project_path: Path | None, *, force: bool = False) -> int:
     manifest = validate_manifest(read_json(MANIFEST))
     project = parse_project(project_path)
@@ -465,7 +525,8 @@ def refresh(project_path: Path | None, *, force: bool = False) -> int:
             {"state": "unavailable", "detail": "locked", "time": int(time.time())},
         )
         return 75
-    stage = Path(tempfile.mkdtemp(prefix="microsoft-skills.", dir=str(cat)))
+    sweep_leftovers(cat)
+    stage = Path(tempfile.mkdtemp(prefix=STAGE_PREFIX, dir=str(cat)))
     try:
         own = own_skill_names()
         enabled: list[dict[str, Any]] = []
@@ -591,7 +652,7 @@ def refresh(project_path: Path | None, *, force: bool = False) -> int:
             os.unlink(lock)
         except FileNotFoundError:
             pass
-        shutil.rmtree(stage, ignore_errors=True)
+        remove_tree(stage)
 
 
 def verify_current(data: dict[str, Any]) -> dict[str, Any]:
