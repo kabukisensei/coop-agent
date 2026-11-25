@@ -866,6 +866,31 @@ async function askConfirm(ctx: any, title: string, message: string): Promise<boo
   return await ctx.ui.confirm(title, message);
 }
 
+/** A pick from a fixed list (the value on file, or the proposal, comes first so
+ *  Enter keeps it). Without a picker it falls back to the typed question, and
+ *  the caller's own check still runs. null = Esc. */
+async function askChoice(ctx: any, label: string, typedLabel: string, choices: Array<[string, string]>, def: string): Promise<string | null> {
+  if (typeof ctx?.ui?.select !== "function") return askText(ctx, typedLabel, def);
+  const ordered = [...choices.filter(([value]) => value === def), ...choices.filter(([value]) => value !== def)];
+  const picked = await ctx.ui.select(label, ordered.map(([, text]) => text));
+  if (picked === null || picked === undefined) return null;
+  const hit = ordered.find(([, text]) => text === picked);
+  return hit ? hit[0] : def;
+}
+
+/** A typed answer with a check: a bad answer says why and asks again (three
+ *  tries), so one typo does not throw the earlier answers away. null = Esc;
+ *  undefined = still bad after three tries (the caller stops). */
+async function askChecked(ctx: any, label: string, def: string, ok: (value: string) => boolean, problem: string): Promise<string | null | undefined> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const answer = await askText(ctx, label, def);
+    if (answer === null) return null;
+    if (ok(answer)) return answer;
+    notify(ctx, problem, "error");
+  }
+  return undefined;
+}
+
 function safeRead(p: string): string {
   try {
     return readFileSync(p, "utf8");
@@ -1865,12 +1890,26 @@ async function editRepository(ctx: any, root: string, repo: ProjectRepositorySet
       `${name}'s folder is recorded as ${repo.localPath}; the picker chose ${localPath}, a folder above it. Replace it? No keeps ${repo.localPath}.`);
     if (!replace) localPath = repo.localPath;
   }
-  const remoteName = await askText(ctx, `${name}: Git remote name`, repo.remoteName);
+  // A new repository's remote is "origin"; the question is asked only when an
+  // entry on file is edited.
+  let remoteName: string | null = repo.remoteName;
+  if (!askName) remoteName = await askText(ctx, `${name}: Git remote name`, repo.remoteName);
   if (remoteName === null) return null;
   const defaultBranch = await askText(ctx, `${name}: default branch`, repo.defaultBranch);
   if (defaultBranch === null) return null;
   return { ...repo, name, description, role, localPath, remoteName, defaultBranch };
 }
+
+export const PROJECT_WIZARD_PARTS: ReadonlyArray<[string, string]> = [
+  ["project", "Project details (client, timezone, branch)"],
+  ["repositories", "Repositories"],
+  ["fabric", "Microsoft Fabric"],
+  ["powerbi", "Power BI"],
+  ["sql", "SQL targets and schema compare"],
+  ["tabular", "Tabular Editor"],
+  ["manager", "Schema Manager"],
+];
+export const PROJECT_WIZARD_EVERYTHING = "Everything, one question at a time";
 
 /** Native UI project setup/edit flow. Returns true only after a contract write. */
 export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<boolean> {
@@ -1897,11 +1936,22 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
   let root = where.root;
   let settings = parseProjectWizardSettings(original, root);
 
+  // An existing file: pick the one part to change, and every other part stays
+  // as the file has it (the window's Project pane has the same parts). A new
+  // file, or a UI with no picker, goes through all of them.
+  let only: string | null = null;
+  if (existing && typeof ctx.ui?.select === "function") {
+    const picked = await ctx.ui.select("What do you want to change?", [...PROJECT_WIZARD_PARTS.map(([, text]) => text), PROJECT_WIZARD_EVERYTHING]);
+    if (picked === null || picked === undefined) return false;
+    only = PROJECT_WIZARD_PARTS.find(([, text]) => text === picked)?.[0] ?? null;
+  }
+  const want = (part: string) => only === null || only === part;
+
   // The one onboarding question the launch no longer asks (master plan FR1): the
   // name coop calls the user by. Asked only while the local profile is missing;
   // Enter on a blank answer skips it, and it is never written into project.yml.
   // No name from the per-user file or the machine-level one (master plan P1).
-  if (!effectiveProfile().profile) {
+  if (want("project") && !effectiveProfile().profile) {
     const name = await askText(ctx, "What should coop call you? (your local profile, not the project)", "");
     if (name === null) return false;
     if (name) {
@@ -1911,14 +1961,16 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
     }
   }
 
-  const organization = await askText(ctx, "Organization", settings.organization);
-  if (organization === null) return false;
-  const client = await askText(ctx, "Client / engagement", settings.client);
-  if (client === null) return false;
-  const timezone = await askText(ctx, "Timezone", settings.timezone);
-  if (timezone === null) return false;
-  const defaultBranch = await askText(ctx, "Project default branch", settings.defaultBranch);
-  if (defaultBranch === null) return false;
+  let { organization, client, timezone, defaultBranch } = settings;
+  if (want("project")) {
+    const answers: Array<string | null> = [];
+    for (const [label, current] of [["Organization", organization], ["Client / engagement", client], ["Timezone", timezone], ["Project default branch", defaultBranch]]) {
+      const answer = await askText(ctx, label, current);
+      if (answer === null) return false;
+      answers.push(answer);
+    }
+    [organization, client, timezone, defaultBranch] = answers as string[];
+  }
   settings.organization = organization;
   settings.client = client;
   settings.timezone = timezone;
@@ -1947,6 +1999,7 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
     if (!hasLocalSource) settings.repositories = [];
   }
 
+  if (want("repositories")) {
   const editedRepos: ProjectRepositorySettings[] = [];
   for (const repo of settings.repositories) {
     const shouldEdit = repo.isNew || await askConfirm(ctx, `Repository: ${repo.name}`, `Edit ${repo.name}'s path, role, and branch?`);
@@ -1974,6 +2027,7 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
     editedRepos.push(added);
   }
   settings.repositories = editedRepos;
+  }
 
   // The install-time client platform only shapes the question; the answer (and
   // the contract it writes) decides per repository.
@@ -1987,7 +2041,7 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
   // endpoint) and the Power BI side (workspace, table mapping). A Power BI-only
   // client on Pro or PPU workspaces answers No / Yes and gets no empty fabric:
   // block, which would make the Warehouse target invalid.
-  settings.fabricEnabled = await askConfirm(ctx, "Microsoft Fabric", `Does this project use Microsoft Fabric (a Warehouse, Lakehouse or SQL database)?${platformHint}`);
+  if (want("fabric")) settings.fabricEnabled = await askConfirm(ctx, "Microsoft Fabric", `Does this project use Microsoft Fabric (a Warehouse, Lakehouse or SQL database)?${platformHint}`);
   // Fabric ids are looked up by name from the Azure sign-in the launch already
   // made (lib/fabric-discovery.mjs): each id question proposes what the name
   // resolves to, and a name typed where an id is asked resolves too. Without
@@ -1997,7 +2051,7 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
     tenant,
   });
   let discovery = makeDiscovery(settings.tenantId);
-  if (settings.fabricEnabled) {
+  if (want("fabric") && settings.fabricEnabled) {
     const tenant = await askText(ctx, "Azure tenant ID (optional)", settings.tenantId);
     if (tenant === null) return false;
     if (tenant !== settings.tenantId) discovery = makeDiscovery(tenant);
@@ -2008,7 +2062,8 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
     const fwId = (await discovery.resolveWorkspace(fwIdTyped)) || fwIdTyped;
     const sqlItems = await discovery.sqlItems(fwId);
     const onlyItem = sqlItems.length === 1 ? sqlItems[0] : null;
-    const endpointType = await askText(ctx, "Default SQL endpoint item type: Warehouse or Lakehouse (optional)", settings.sqlEndpointItemType || (onlyItem && onlyItem.type !== "SQLDatabase" ? onlyItem.type : ""));
+    const endpointType = await askChoice(ctx, "Default SQL endpoint: which kind of item is it?", "Default SQL endpoint item type: Warehouse or Lakehouse (optional)",
+      [["Warehouse", "Warehouse"], ["Lakehouse", "Lakehouse"], ["", "Not set"]], settings.sqlEndpointItemType || (onlyItem && onlyItem.type !== "SQLDatabase" ? onlyItem.type : ""));
     if (endpointType === null) return false;
     if (endpointType && endpointType !== "Warehouse" && endpointType !== "Lakehouse") {
       notify(ctx, PROJECT_MESSAGES.endpointType, "error");
@@ -2032,7 +2087,8 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
     }
     // The declared layout (C2): the contract states what coop would otherwise
     // assume, and lineage checks it.
-    const layout = await askText(ctx, `Fabric layout: which items hold the SQL (${FABRIC_LAYOUTS.join(", ")}; optional)`, settings.fabricLayout || proposedFabricLayout(endpointType, settings.sqlTargetKind));
+    const layout = await askChoice(ctx, "Fabric layout: which items hold the SQL?", `Fabric layout: which items hold the SQL (${FABRIC_LAYOUTS.join(", ")}; optional)`,
+      [["warehouse", "Warehouse"], ["lakehouse", "Lakehouse"], ["sql_database", "SQL database"], ["mixed", "Mixed"], ["", "Not set"]], settings.fabricLayout || proposedFabricLayout(endpointType, settings.sqlTargetKind));
     if (layout === null) return false;
     const layoutValue = layout.trim().toLowerCase();
     if (layoutValue && !(FABRIC_LAYOUTS as readonly string[]).includes(layoutValue)) {
@@ -2050,8 +2106,8 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
       fabricLayout: layoutValue,
     });
   }
-  settings.powerBiEnabled = await askConfirm(ctx, "Power BI", "Does this project use Power BI semantic models or reports? Yes for Pro and PPU workspaces too; no Fabric capacity is needed.");
-  if (settings.powerBiEnabled) {
+  if (want("powerbi")) settings.powerBiEnabled = await askConfirm(ctx, "Power BI", "Does this project use Power BI semantic models or reports? Yes for Pro and PPU workspaces too; no Fabric capacity is needed.");
+  if (want("powerbi") && settings.powerBiEnabled) {
     const pbiName = await askText(ctx, "Default Power BI workspace name (optional)", settings.powerBiWorkspaceName || (settings.fabricEnabled ? settings.fabricWorkspaceName : ""));
     if (pbiName === null) return false;
     const pbiIdTyped = await askText(ctx, "Default Power BI workspace ID (optional; the GUID in the workspace URL; Enter keeps the id the name resolves to)", settings.powerBiWorkspaceId || (settings.fabricEnabled && pbiName && pbiName === settings.fabricWorkspaceName ? settings.fabricWorkspaceId : await discovery.workspaceId(pbiName)));
@@ -2059,28 +2115,21 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
     const pbiId = (await discovery.resolveWorkspace(pbiIdTyped)) || pbiIdTyped;
     // The declared mapping (C2): how a semantic-model table maps to the SQL
     // object it loads; lineage checks it.
-    const rule = await askText(ctx, "Semantic-model table to SQL object rule: same_name (a table is named like its view) or prefix (table <name> loads <schema>.<prefix><name>)", settings.tableMappingRule || "same_name");
+    const rule = await askChoice(ctx, "How does a semantic-model table map to the SQL object it loads?", "Semantic-model table to SQL object rule: same_name (a table is named like its view) or prefix (table <name> loads <schema>.<prefix><name>)",
+      [["same_name", "Same name: a table is named like its view"], ["prefix", "Prefix: table <name> loads <schema>.<prefix><name>"]], settings.tableMappingRule || "same_name");
     if (rule === null) return false;
     const ruleValue = rule.trim().toLowerCase();
     if (!(TABLE_MAPPING_RULES as readonly string[]).includes(ruleValue)) {
       notify(ctx, PROJECT_MESSAGES.mappingRule, "error");
       return false;
     }
-    const schema = await askText(ctx, "Default schema for a model table named without one", settings.tableMappingSchema || "dbo");
-    if (schema === null) return false;
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(schema.trim())) {
-      notify(ctx, PROJECT_MESSAGES.mappingSchema, "error");
-      return false;
-    }
+    const schema = await askChecked(ctx, "Default schema for a model table named without one", settings.tableMappingSchema || "dbo", (v) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(v.trim()), PROJECT_MESSAGES.mappingSchema);
+    if (schema === null || schema === undefined) return false;
     let prefix = settings.tableMappingPrefix || "";
     if (ruleValue === "prefix") {
-      const typed = await askText(ctx, "View prefix the model table names drop (for example v_)", prefix);
-      if (typed === null) return false;
+      const typed = await askChecked(ctx, "View prefix the model table names drop (for example v_)", prefix, (v) => /^[A-Za-z0-9_]*$/.test(v.trim()), PROJECT_MESSAGES.mappingPrefix);
+      if (typed === null || typed === undefined) return false;
       prefix = typed.trim();
-      if (!/^[A-Za-z0-9_]*$/.test(prefix)) {
-        notify(ctx, PROJECT_MESSAGES.mappingPrefix, "error");
-        return false;
-      }
     }
     Object.assign(settings, {
       powerBiWorkspaceName: pbiName,
@@ -2093,8 +2142,10 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
 
   // SQL connection target for the dev environment (sql_targets:, SQ1). Enter keeps
   // the proposal; blank means no sql_targets block (today's fabric:-only contract).
+  if (want("sql")) {
   const kindDefault = settings.sqlTargetKind || proposedSqlTargetKind(platform, settings.fabricEnabled);
-  const kind = await askText(ctx, `Dev SQL target kind (${SQL_TARGET_KINDS.join(", ")}; blank = none)`, kindDefault);
+  const kind = await askChoice(ctx, "Dev SQL target: what kind of database does coop read and write in dev?", `Dev SQL target kind (${SQL_TARGET_KINDS.join(", ")}; blank = none)`,
+    [["fabric_warehouse", "Fabric Warehouse"], ["fabric_lakehouse", "Fabric Lakehouse"], ["fabric_sql_database", "Fabric SQL database"], ["azure_sql", "Azure SQL"], ["synapse_serverless", "Synapse serverless"], ["", "None"]], kindDefault);
   if (kind === null) return false;
   const kindValue = kind.trim().toLowerCase();
   if (kindValue && !(SQL_TARGET_KINDS as readonly string[]).includes(kindValue)) {
@@ -2104,12 +2155,8 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
   settings.sqlTargetKind = kindValue;
   if (kindValue) {
     if (!SQL_TARGET_DISCOVERED_KINDS.has(kindValue)) {
-      const server = await askText(ctx, "Dev SQL server host (for example contoso-dev.database.windows.net)", settings.sqlTargetServer);
-      if (server === null) return false;
-      if (!isServerHost(server)) {
-        notify(ctx, PROJECT_MESSAGES.serverHost, "error");
-        return false;
-      }
+      const server = await askChecked(ctx, "Dev SQL server host (for example contoso-dev.database.windows.net)", settings.sqlTargetServer, isServerHost, PROJECT_MESSAGES.serverHost);
+      if (server === null || server === undefined) return false;
       settings.sqlTargetServer = server.toLowerCase();
     }
     const database = await askText(ctx, "Dev database name", settings.sqlTargetDatabase || settings.sqlEndpointItemName || "");
@@ -2145,14 +2192,15 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
         (settings as Record<string, unknown>)[`${prefix}ItemId`] = item.trim();
         (settings as Record<string, unknown>)[`${prefix}EndpointId`] = endpoint;
       } else {
-        const envServer = await askText(ctx, `${label} SQL server host`, ((settings as Record<string, unknown>)[`${prefix}Server`] as string) || "");
-        if (envServer === null) return false;
-        if (!isServerHost(envServer)) { notify(ctx, PROJECT_MESSAGES.serverHost, "error"); return false; }
+        const envServer = await askChecked(ctx, `${label} SQL server host`, ((settings as Record<string, unknown>)[`${prefix}Server`] as string) || "", isServerHost, PROJECT_MESSAGES.serverHost);
+        if (envServer === null || envServer === undefined) return false;
         (settings as Record<string, unknown>)[`${prefix}Server`] = envServer.toLowerCase();
       }
     }
     // Schema compare defaults (schema_compare:, 0.38.3): the lists everyone on the
-    // team should share, so two people get the same diff count.
+    // team should share, so two people get the same diff count. A first setup
+    // takes the defaults (nothing excluded, runnable) without three questions.
+    if (existing) {
     const exclude = await askText(ctx, "Schema compare: schemas never compared (comma-separated; blank = none)", settings.schemaCompareExclude || "");
     if (exclude === null) return false;
     const rebuild = await askText(ctx, "Schema compare: schemas whose changed tables are dropped and recreated (comma-separated; blank = none)", settings.schemaCompareRebuild || "");
@@ -2160,16 +2208,19 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
     if (badSchemaNames(exclude).length || badSchemaNames(rebuild).length) { notify(ctx, PROJECT_MESSAGES.schemaNames, "error"); return false; }
     settings.schemaCompareExclude = exclude;
     settings.schemaCompareRebuild = rebuild;
-    const destructive = await askText(ctx, "Schema compare: destructive statements in the promotion script (runnable or commented)", settings.schemaCompareDestructive || "runnable");
+    const destructive = await askChoice(ctx, "Schema compare: how does the promotion script carry destructive statements?", "Schema compare: destructive statements in the promotion script (runnable or commented)",
+      [["runnable", "Runnable"], ["commented", "Commented out"]], settings.schemaCompareDestructive || "runnable");
     if (destructive === null) return false;
     if (!(SCHEMA_COMPARE_DESTRUCTIVE as readonly string[]).includes(destructive.trim().toLowerCase())) { notify(ctx, PROJECT_MESSAGES.destructive, "error"); return false; }
     settings.schemaCompareDestructive = destructive.trim().toLowerCase();
+    }
     // Named target sets (a second engine beside the main one) are edited in the
     // coop window's Project pane or the file: the terminal wizard keeps them as they are.
   }
+  }
 
-  settings.tabularEditorEnabled = await askConfirm(ctx, "Tabular Editor", "Use the Tabular Editor CLI for semantic-model BPA reviews?");
-  if (settings.tabularEditorEnabled) {
+  if (want("tabular")) settings.tabularEditorEnabled = await askConfirm(ctx, "Tabular Editor", "Use the Tabular Editor CLI for semantic-model BPA reviews?");
+  if (want("tabular") && settings.tabularEditorEnabled) {
     const te = await askText(ctx, "Tabular Editor CLI command or path", settings.tabularEditorPath || "te");
     if (te === null) return false;
     const rules = await askText(ctx, "BPA rules file path (optional)", settings.bpaRulesPath);
@@ -2183,9 +2234,10 @@ export async function runProjectWizard(pi: ExtensionAPI, ctx: any): Promise<bool
   // a No leaves an existing block exactly as the file has it.
   const wm = settings as Record<string, unknown>;
   const hadBlock = Boolean(settings.warehouseManagerEnabled);
-  settings.warehouseManagerEnabled = await askConfirm(ctx, "Schema Manager", `Does this client add source columns to Silver through a Schema Manager (generated Bronze views, one pipeline that regenerates a Silver table and one that reloads it)? The add-silver-columns skill reads these answers.${hadBlock ? " The file already has a warehouse_manager block: Yes edits it, No leaves it as it is." : " Blanks are fine: coop discovers what it can read-only and asks before any write."}`);
-  if (settings.warehouseManagerEnabled) {
-    const platform = await askText(ctx, `Schema Manager platform: ${WAREHOUSE_MANAGER_PLATFORMS.join(" (Fabric pipelines) or ")} (Azure Data Factory)`, settings.warehouseManagerPlatform || "fabric");
+  if (want("manager")) settings.warehouseManagerEnabled = await askConfirm(ctx, "Schema Manager", `Does this client add source columns to Silver through a Schema Manager (generated Bronze views, one pipeline that regenerates a Silver table and one that reloads it)? The add-silver-columns skill reads these answers.${hadBlock ? " The file already has a warehouse_manager block: Yes edits it, No leaves it as it is." : " Blanks are fine: coop discovers what it can read-only and asks before any write."}`);
+  if (want("manager") && settings.warehouseManagerEnabled) {
+    const platform = await askChoice(ctx, "Schema Manager: where do its pipelines run?", `Schema Manager platform: ${WAREHOUSE_MANAGER_PLATFORMS.join(" (Fabric pipelines) or ")} (Azure Data Factory)`,
+      [["fabric", "Fabric pipelines"], ["adf", "Azure Data Factory"]], settings.warehouseManagerPlatform || "fabric");
     if (platform === null) return false;
     const platformValue = platform.trim().toLowerCase();
     if (!(WAREHOUSE_MANAGER_PLATFORMS as readonly string[]).includes(platformValue)) { notify(ctx, PROJECT_MESSAGES.warehouseManagerPlatform, "error"); return false; }
