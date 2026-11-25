@@ -2378,10 +2378,11 @@ function Get-CoopCleanupTargets {
       $targets += [pscustomobject]@{ Name = 'stray NUL files'; Root = $dir; Filter = @('*'); Entries = @('NUL'); Days = 1; Extra = $true; DropRoot = $false; MinBytes = 0; MaxBytes = 0; FilesOnly = $true; All = $false }
     }
   }
-  # A folder literally named %SystemDrive%: Windows makes one (with
-  # ProgramData\Microsoft\Windows\Caches inside) in the working folder of a
-  # program started without the SystemDrive variable, as coop's own taskkill
-  # was until v0.42.3. Nobody keeps work under that name. Same folders as NUL.
+  # A folder literally named %SystemDrive% (with ProgramData\Microsoft\Windows\
+  # Caches inside): a program that could not expand the variable made it in its
+  # working folder. Which program is not known: coop's taskkill, started with
+  # only SystemRoot, was tested on the dev VM (2026-11-24) and does not.
+  # Nobody keeps work under that name. Same folders as NUL.
   foreach ($dir in @(Get-CoopStrayNulDirs $StartDir)) {
     $literal = Join-Path $dir '%SystemDrive%'
     if (Test-Path -LiteralPath (Join-Path $literal 'ProgramData') -PathType Container) {
