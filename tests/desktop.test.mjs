@@ -28,7 +28,7 @@ import { readBranch } from "../desktop/lib/git.mjs";
 import { consoleProcess } from "../desktop/lib/terminal.mjs";
 import { listFiles, rankFiles } from "../desktop/lib/files.mjs";
 import { PiSession, endLeftovers, killTree } from "../desktop/lib/pi-session.mjs";
-import { BUILTINS, KEYS, TERMINAL_ONLY, completions, describe, parseInput } from "../desktop/renderer/commands.mjs";
+import { BUILTINS, KEYS, SLASH_ANSWER_MS, TERMINAL_ONLY, completions, describe, noticePlace, parseInput } from "../desktop/renderer/commands.mjs";
 import { setupItems, setupItem, setupSummary, noticeNotes, EXAMPLES } from "../desktop/renderer/welcome.mjs";
 import { parseConfirm, confirmLabels, parseQuestionSelect, parseQuestionMulti, multiAnswer } from "../desktop/renderer/dialogs.mjs";
 import { menuTemplate, notificationFor } from "../desktop/lib/menu.mjs";
@@ -332,6 +332,15 @@ await check("composer: / completion lists built-ins, then Pi's commands from the
   assert.equal(describe({ name: "deploy-brief", description: "Deployment brief" }), "Deployment brief");
   assert.equal(describe({ name: "x" }), "");
   assert.equal(completions("/annot", [{ name: "annotate", description: "/annotate", source: "prompt" }])[0].description, "");
+  // A one-line notice is a toast, unless it answers a slash command just run (dev VM check, 2026-11-25:
+  // "/setup-docs refresh" reported its result in a toast that was gone before it could be read).
+  const t0 = 1_000_000;
+  assert.equal(noticePlace({ text: "Saved." }), "toast");
+  assert.equal(noticePlace({ text: "line one\nline two" }), "conversation");
+  assert.equal(noticePlace({ text: "x".repeat(201) }), "conversation");
+  assert.equal(noticePlace({ text: "Lineage docs refreshed from the dev database (dev: 12 objects).", slashAt: t0, now: t0 + 60_000 }), "conversation");
+  assert.equal(noticePlace({ text: "Saved.", slashAt: t0, now: t0 + SLASH_ANSWER_MS }), "toast", "an old command is closed");
+  assert.equal(noticePlace({ text: "Saved.", slashAt: t0, now: t0 + 1000, busy: true }), "toast", "while coop works a one-liner stays a toast");
 });
 
 // --- Welcome, dialogs and menu (desktop UX review, 2026-10-03) -----------------

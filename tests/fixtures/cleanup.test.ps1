@@ -268,6 +268,23 @@ try {
     if ($names -notcontains 'stray NUL files' -and $asFile.Files.Count -eq 1 -and $asDir.Files.Count -eq 0 -and $asDir.Dirs.Count -eq 0) { Ok 'NUL files are a Windows target only; a folder with that name is never entered' } else { Ko "NUL off Windows: targets=$($names -join ','), file=$($asFile.Files.Count), folder files=$($asDir.Files.Count)" }
   }
 
+  # A folder literally named %SystemDrive% (Windows writes one for a program
+  # started without that variable): its ProgramData tree goes after a day, an
+  # empty one at once, and the folder with it; anything else inside stays.
+  $literalA = Join-Path $repoA '%SystemDrive%'
+  $literalB = Join-Path $client '%SystemDrive%'
+  $literalC = Join-Path $home_ '%SystemDrive%'
+  New-AgedFile (Join-Path $literalA 'ProgramData\Microsoft\Windows\Caches\cversions.2.db') 3
+  New-Item -ItemType Directory -Force -Path (Join-Path $literalB 'ProgramData\Microsoft\Windows\Caches') | Out-Null
+  New-AgedFile (Join-Path $literalC 'ProgramData\Microsoft\Windows\Caches\cversions.2.db') 3
+  New-AgedFile (Join-Path $literalC 'mine\notes.txt') 300
+  New-AgedFile (Join-Path $repoA 'src\%SystemDrive%\ProgramData\x.db') 300
+  $null = Invoke-CoopCleanup -Days 0 -Now $now -StartDir $repoA
+  $offKept = (Test-Path -LiteralPath $literalA) -and (Test-Path -LiteralPath $literalB)
+  $null = Invoke-CoopCleanup -Days 45 -Now $now -StartDir $repoA
+  $bad = @(@($literalA, $literalB, (Join-Path $literalC 'ProgramData')) | Where-Object { Test-Path -LiteralPath $_ }) + @(@((Join-Path $literalC 'mine\notes.txt'), (Join-Path $repoA 'src\%SystemDrive%\ProgramData\x.db')) | Where-Object { -not (Test-Path -LiteralPath $_ ) })
+  if ($offKept -and $bad.Count -eq 0) { Ok 'a folder literally named %SystemDrive% goes with its ProgramData tree, an empty one too; other content in it and one below the launch folders stay; off keeps them' } else { Ko "stray %SystemDrive% folders (off kept=$offKept)" ($bad -join "`n") }
+
   # The window's data folders: one no window has opened for the cleanup age goes
   # whole; the one used last stays, and so does a folder with another name.
   $data = Join-Path $profile_ 'desktop\data'

@@ -289,7 +289,12 @@ try {
   assert.deepEqual(windowsTaskkillCommand("C:\\Windows", 4242), {
     command: "C:\\Windows\\System32\\taskkill.exe",
     args: ["/PID", "4242", "/T", "/F"],
+    // SystemDrive and Windows' own working folder: without them Windows leaves a
+    // folder literally named "%SystemDrive%" in the project (dev VM, 2026-11-24).
+    env: { SystemRoot: "C:\\Windows", SystemDrive: "C:" },
+    cwd: "C:\\Windows",
   });
+  assert.deepEqual(windowsTaskkillCommand("\\\\server\\share\\Windows", 7).env, { SystemRoot: "\\\\server\\share\\Windows" });
   assert.equal(windowsTaskkillCommand("Windows", 4242), null);
   console.log("  ✓ Fabric request headers resolve Azure CLI safely and fail closed");
 } finally {
