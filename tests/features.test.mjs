@@ -62,8 +62,8 @@ test("absent keys and an absent file are off; only a literal true is on", () => 
     assert.equal(sqlsc.sqlSourceEnabled(file), false, `sql-source ${value} is off`);
   }
   // A feature this version does not carry stays off even when the file says true.
-  const hand = fresh('{"features":{"history":true,"comments":true}}');
-  assert.equal(lib.featureEnabled("history", hand), false);
+  const hand = fresh('{"features":{"docs_refresh":true,"comments":true}}');
+  assert.equal(lib.featureEnabled("docs-refresh", hand), false);
   assert.equal(lib.featureEnabled("comments", hand), true);
   assert.equal(lib.featuresOnLine(lib.listFeatures({ file: hand })), "Features on for this client: Diff review comments.");
 });
@@ -117,9 +117,9 @@ test("a corrupt file is reported, read as all off, and never overwritten", () =>
 test("unknown keys and features this version does not carry are refused", () => {
   const file = fresh("{}");
   assert.throws(() => lib.setFeature("autopilot", true, { file }), (e) => e.code === "unknown" && /one of: instructions, history, comments, docs-refresh, sql-source/.test(e.message));
-  assert.throws(() => lib.setFeature("history", true, { file }), (e) => e.code === "unavailable");
+  assert.throws(() => lib.setFeature("docs-refresh", true, { file }), (e) => e.code === "unavailable");
   assert.equal(readFileSync(file, "utf8"), "{}", "a refused change writes nothing");
-  assert.equal(lib.setFeature("history", false, { file }), false, "turning an unbuilt feature off is harmless");
+  assert.equal(lib.setFeature("docs-refresh", false, { file }), false, "turning an unbuilt feature off is harmless");
   assert.equal(lib.featureFor("SQL-SOURCE").key, "sql-source");
 });
 
@@ -276,9 +276,9 @@ test("the CLI: show, set, cleanup-days and its exit codes", () => {
   assert.equal(JSON.parse(r.stdout).text, "SQL source control is on for this client (takes effect after /new or a restart).");
   assert.equal(read(file).sql_source_control.enabled, true);
   assert.equal(runCli(["set", "nope", "on"], coopDir).status, 2, "unknown key: usage");
-  r = runCli(["set", "history", "on"], coopDir);
+  r = runCli(["set", "docs-refresh", "on"], coopDir);
   assert.equal(r.status, 2);
-  assert.match(r.stderr, /Change history is not in this version of coop yet; it stays off/);
+  assert.match(r.stderr, /Daily lineage refresh is not in this version of coop yet; it stays off/);
   assert.equal(runCli(["set", "comments", "maybe"], coopDir).status, 2);
   assert.equal(runCli(["cleanup-days", "12"], coopDir).status, 0);
   assert.deepEqual(read(file).cleanup, { days: 12 });

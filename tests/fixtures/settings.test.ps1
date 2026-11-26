@@ -29,7 +29,7 @@ try {
   }
   $rows = @(
     '  Client instructions     off  instructions',
-    '  Change history          off  history  (not in this version yet)',
+    '  Change history          off  history',
     '  Diff review comments    off  comments',
     '  Daily lineage refresh   off  docs-refresh  (not in this version yet)',
     '  SQL source control      off  sql-source')
@@ -37,7 +37,7 @@ try {
   # --- every feature off: no config, then a config without the keys ------------------
   $r = Run-Coop @('settings')
   $missing = @($rows | Where-Object { -not $r.Out.Contains($_) })
-  if ($r.Rc -eq 0 -and $missing.Count -eq 0 -and -not $r.Out.Contains('instructions  (not in this version yet)') -and $r.Out -match 'Features \(all off unless you turn them on\)' -and $r.Out -match 'cleanup   45 days') { Ok 'coop settings with no config: the five features, all off, with their plain labels and keys' } else { Ko "coop settings (rc=$($r.Rc)) missing: $($missing -join ' | ')" $r.Out }
+  if ($r.Rc -eq 0 -and $missing.Count -eq 0 -and -not $r.Out.Contains('instructions  (not in this version yet)') -and -not $r.Out.Contains('history  (not in this version yet)') -and $r.Out -match 'Features \(all off unless you turn them on\)' -and $r.Out -match 'cleanup   45 days') { Ok 'coop settings with no config: the five features, all off, with their plain labels and keys' } else { Ko "coop settings (rc=$($r.Rc)) missing: $($missing -join ' | ')" $r.Out }
   if (-not (Test-Path -LiteralPath $cfg)) { Ok 'showing the settings writes nothing' } else { Ko 'coop settings created ~/.coop/config' }
   New-Item -ItemType Directory -Force -Path (Split-Path -Parent $cfg) | Out-Null
   [System.IO.File]::WriteAllText($cfg, '{"client":{"platform":"fabric"},"features":{},"sql_source_control":{}}', $utf8)
@@ -53,8 +53,8 @@ try {
   $shown = $null; try { $shown = $r.Out | ConvertFrom-Json } catch { }
   if ($r.Rc -eq 0 -and $shown -and (@($shown.features | Where-Object { $_.key -ceq 'comments' })[0].on -eq $true)) { Ok 'coop settings --json reads the same switch' } else { Ko 'coop settings --json' $r.Out }
   $before = [System.IO.File]::ReadAllText($cfg)
-  $r = Run-Coop @('settings', 'set', 'history', 'on')
-  if ($r.Rc -eq 2 -and $r.Out -match 'not in this version of coop yet' -and [System.IO.File]::ReadAllText($cfg) -ceq $before) { Ok 'a feature this version does not carry cannot be turned on' } else { Ko "set history on (rc=$($r.Rc))" $r.Out }
+  $r = Run-Coop @('settings', 'set', 'docs-refresh', 'on')
+  if ($r.Rc -eq 2 -and $r.Out -match 'not in this version of coop yet' -and [System.IO.File]::ReadAllText($cfg) -ceq $before) { Ok 'a feature this version does not carry cannot be turned on' } else { Ko "set docs-refresh on (rc=$($r.Rc))" $r.Out }
   $r = Run-Coop @('settings', 'set', 'autopilot', 'on')
   if ($r.Rc -eq 2 -and $r.Out -match "unknown feature 'autopilot'") { Ok 'an unknown key is refused and named' } else { Ko "unknown key (rc=$($r.Rc))" $r.Out }
   $r = Run-Coop @('settings', 'set', 'comments', 'maybe')
@@ -120,12 +120,12 @@ try {
 
   # --- doctor: a "Features (this client)" section, one fact per feature that is on ----
   $script:doctor = Join-Path $root 'scripts\doctor.ps1'
-  [System.IO.File]::WriteAllText($cfg, '{"features":{"comments":true,"history":true},"sql_source_control":{"enabled":true}}', $utf8)
+  [System.IO.File]::WriteAllText($cfg, '{"features":{"comments":true,"docs_refresh":true},"sql_source_control":{"enabled":true}}', $utf8)
   $drows = @(Get-DoctorRows | Where-Object { $_.section -ceq 'Features (this client)' })
   $names = @($drows | ForEach-Object { [string]$_.name })
   $commentsRow = @($names | Where-Object { $_ -like 'Diff review comments on:*' }).Count -eq 1
   $sqlRow = @($names | Where-Object { $_ -like 'SQL source control on*' }).Count -eq 1
-  $noHistory = @($names | Where-Object { $_ -like '*Change history*' }).Count -eq 0
+  $noHistory = @($names | Where-Object { $_ -like '*Daily lineage refresh*' }).Count -eq 0
   if ($commentsRow -and $sqlRow -and $noHistory -and $drows.Count -eq 2) { Ok 'doctor: one row per feature that is on (a feature this version lacks stays off)' } else { Ko 'doctor Features rows' (Show-Rows $drows) }
   Remove-Item -LiteralPath $cfg -Force
   $drows = @(Get-DoctorRows | Where-Object { $_.section -ceq 'Features (this client)' })

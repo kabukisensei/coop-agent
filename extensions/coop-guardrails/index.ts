@@ -44,6 +44,8 @@ import { appendFileSync, existsSync, lstatSync, readFileSync, readlinkSync, real
 import { basename, dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
 import { agentDir as coopAgentDir, coopAgentDir as coopIsolatedAgentDir, homeDir as coopHomeDir, personalPiAgentDir, profileDir as coopProfileDir } from "../../lib/paths.mjs";
 import { editGateDecision } from "../../lib/lineage-context.mjs";
+import { isHistoryPath, historyRoot, readCapped, recordFileChange, recordCallOnly, enforceCap, storeFor, readEntries, findEntry, planRestore, diffText, writeRestore, historyLines, realPath, sizeText } from "../../lib/action-history.mjs";
+import { featureEnabled } from "../../lib/features.mjs";
 
 declare const Buffer: { from(value: string, encoding: "base64url"): { length: number; toString(encoding: "utf8" | "base64url"): string } };
 
@@ -195,6 +197,64 @@ export function shellClientRulesTarget(cmd: string, cwd: string): { kind: "corre
   }
   return found;
 }
+
+/** Change history (CW2): the history folder (<profile dir>/history) as a shell
+ *  command names it, or null. Narrow, like the production unlock: the text
+ *  `.coop/history`, or a word that resolves into the folder once `~`, $HOME,
+ *  ${HOME}, %USERPROFILE%, $env:USERPROFILE and COOP_DIR's spellings are expanded
+ *  (a literal `cd` carries over, links are followed), or a glob whose literal
+ *  start could reach it. A parent folder named on its own is not matched. */
+export function shellHistoryTarget(cmd: string, cwd: string, env: Record<string, string | undefined> = process.env): string | null {
+  if (/\.coop[. ]*[\\/]+history\b/i.test(cmd)) return ".coop/history";
+  const home = coopHomeDir();
+  const vars: Record<string, string> = { HOME: env.HOME || home, USERPROFILE: env.USERPROFILE || env.HOME || home, COOP_DIR: env.COOP_DIR || "" };
+  const expand = (t: string) => t
+    .replace(/^~(?=$|[\\/])/, vars.HOME)
+    .replace(/\$\{(HOME|USERPROFILE|COOP_DIR)\}|\$env:(HOME|USERPROFILE|COOP_DIR)\b|%(HOME|USERPROFILE|COOP_DIR)%|\$(HOME|USERPROFILE|COOP_DIR)\b/gi,
+      (_m, a, b, c, d) => vars[String(a || b || c || d).toUpperCase()] ?? "");
+  const rootKey = (p: string) => (process.platform === "win32" ? p.toLowerCase() : p).replace(/\\/g, "/");
+  const root = rootKey(realPath(historyRoot(env)));
+  let dir = resolve(cwd || ".");
+  for (const { segment } of splitShellSegments(cmd)) {
+    const toks = tokenizeArgs(segment.trim()).map((t) => expand(stripGluedQuotes(t)));
+    while (toks.length && /^[({]+$/.test(toks[0])) toks.shift();
+    const first = programName((toks[0] || "").replace(/^[({]+/, ""));
+    if ((first === "cd" || first === "pushd" || first === "set-location" || first === "sl") && toks[1] && !toks[1].startsWith("-")) { dir = resolveDir(toks[1], dir); continue; }
+    for (const tok of toks) {
+      const t = tok.replace(/^\d*[<>&]+/, "");
+      const views = new Set<string>([t, t.replace(/\\(.)/g, "$1")]);
+      for (const v of [...views]) {
+        const eq = v.indexOf("="); if (eq > 0) views.add(v.slice(eq + 1));
+        const colon = v.indexOf(":"); if (colon > 1) views.add(v.slice(colon + 1));
+        const at = v.lastIndexOf("@"); if (at >= 0) views.add(v.slice(at + 1));
+      }
+      for (const v of views) {
+        if (!v || /^-/.test(v) && !/[\\/]/.test(v)) continue;
+        // A glob: its literal start, resolved, must reach into the history folder's
+        // own name (`~/.coop/*`, `~/.coop/hist*`), not just sit above it (`~/*`).
+        const glob = v.search(/[*?[]/);
+        if (glob >= 0) {
+          const literal = v.slice(0, glob);
+          if (!literal) continue;
+          const prefix = rootKey(resolveDir(literal, dir)) + (/[\\/]$/.test(literal) ? "/" : "");
+          if (root.startsWith(prefix) && !root.slice(prefix.length).includes("/")) return v;
+          continue;
+        }
+        try { if (isHistoryPath(resolveDir(v, dir), dir, env)) return v; } catch { /* not a path */ }
+      }
+    }
+  }
+  return null;
+}
+
+/** Does a file tool's path reach the history folder (as written, or along its links)? */
+export function fileHistoryTarget(p: string, cwd: string): boolean {
+  if (!p) return false;
+  // Pi's file tools drop a leading @ and expand ~ (resolveToCwd).
+  const views = [...new Set([p, p.replace(/^@/, "")])];
+  try { return views.some((v) => [v, ...linkChain(v, cwd)].some((hop) => isHistoryPath(hop, cwd))); } catch { return false; }
+}
+const HISTORY_BLOCK = "coop guardrails: blocked. coop's change history (<profile dir>/history) is the person's own record: coop never reads or changes it. Ask the user to use /history or the Changes pane's History tab.";
 
 /** A committed path is allowed only after explicit deny rules have been checked. */
 function isAllowedCommitPath(file: string, allowedGlobs: string[], deniedGlobs: string[]): boolean {
@@ -3437,9 +3497,9 @@ type AuditEntry = {
   cwd: string;
   // project-share rows are written by lib/project-share.mjs ("Share with the team", C1).
   // codemode-script rows list one script's nested calls by name (U2 step 3).
-  kind: "commit-block" | "danger-confirm" | "secret-confirm" | "mcp-confirm" | "project-share" | "lineage-gate" | "codemode-script";
+  kind: "commit-block" | "danger-confirm" | "secret-confirm" | "mcp-confirm" | "project-share" | "lineage-gate" | "codemode-script" | "change-history";
   tool: string;
-  decision: "blocked" | "blocked-headless" | "allowed" | "declined" | "ran";
+  decision: "blocked" | "blocked-headless" | "allowed" | "declined" | "ran" | "failed";
   label: string;   // the short subject (offending path, danger label, tool name)
   detail: string;  // offending paths (commit, first 8) or a fixed classification; never command text
   pid?: number;    // the coop process that decided: each window tab runs its own, so this tells tabs apart
@@ -3557,6 +3617,7 @@ type Ask = {
   grantedDetail?: string;    // audit detail when the person grants the key now
 };
 
+type HistoryApproval = "none-needed" | "asked-once" | "session-grant" | "production-desk" | "restore-approved";
 const UI_HEADLESS = (ctx: ExtensionContext): boolean => !ctx.hasUI || typeof ctx.ui?.confirm !== "function";
 
 /** The state one extension instance holds for its current Pi session. Nothing
@@ -3575,6 +3636,10 @@ class Session {
    *  writes are counted here; script or commit clears the count; the next turn
    *  starts with a note naming the debt until it is paid. */
   unscriptedDevWrites = 0;
+  /** Change history (CW2): how the call being decided now was approved. Calls are
+   *  decided one at a time, so one field is the per-toolCallId record; it is set
+   *  before each call and read when the call is allowed. */
+  callApproval: HistoryApproval = "none-needed";
   readonly liveReadDeps: LiveReadResolverDeps;
   constructor(readonly pi: ExtensionAPI) {
     this.liveReadDeps = {
@@ -3613,6 +3678,7 @@ class Session {
    *  and audited either way. Null when it may run. */
   async permitProductionWrite(ctx: ExtensionContext, kind: AuditEntry["kind"], tool: string, what: string): Promise<Decision | null> {
     const verdict = await askProductionWrite(ctx, what, this.activeProdUnlock(ctx));
+    if (verdict.decision === "allowed") this.callApproval = "production-desk";
     // Shell records keep no detail of their own (it could carry command text), so the permit rides the label there.
     audit({ cwd: ctx.cwd, kind, tool, decision: verdict.decision, label: kind === "danger-confirm" ? `production write (${verdict.detail})` : "production write", detail: verdict.detail });
     return verdict.decision === "allowed" ? null : block(verdict.reason);
@@ -3636,6 +3702,7 @@ class Session {
     const key = spec.sessionKey || null;
     if (key && this.editApprovals.has(key)) {
       audit({ cwd: ctx.cwd, kind, tool, decision: "allowed", label, detail: spec.heldDetail ?? "session-approval" });
+      this.noteApproval("session-grant", label);
       return null;
     }
     if (UI_HEADLESS(ctx)) {
@@ -3645,7 +3712,15 @@ class Session {
     const choice = await askEditApproval(ctx, spec.title || "coop guardrails", spec.question, key);
     if (choice === "session" && key) this.editApprovals.add(key);
     audit({ cwd: ctx.cwd, kind, tool, decision: choice === "declined" ? "declined" : "allowed", label, detail: choice === "session" ? spec.grantedDetail ?? "session-approval-granted" : spec.detail });
+    if (choice !== "declined") this.noteApproval(choice === "session" ? "session-grant" : "asked-once", label);
     return choice === "declined" ? block(spec.declined) : null;
+  }
+  /** The approval a history line names; the label is the audit's own (never command text). */
+  callLabel = "";
+  noteApproval(approval: HistoryApproval, label: string): void {
+    if (this.callApproval === "production-desk") return;
+    this.callApproval = approval;
+    if (!this.callLabel) this.callLabel = String(label || "");
   }
 }
 
@@ -3697,6 +3772,10 @@ const powershellRule: Rule = {
       audit({ cwd: ctx.cwd, kind: "danger-confirm", tool, decision: "blocked", label: "production unlock", detail: "prod-unlock-self" });
       return block(PROD_UNLOCK_SELF_BLOCK);
     }
+    if (shellHistoryTarget(command, ctx.cwd)) {
+      audit({ cwd: ctx.cwd, kind: "danger-confirm", tool, decision: "blocked", label: "change history", detail: "history-store" });
+      return block(HISTORY_BLOCK);
+    }
     // A fabric-cicd deploy is judged the same way from PowerShell: production is
     // blocked here too, and the deploy question replaces the generic one.
     const cicd = await checkFabricCicd(ctx, tool, command, session);
@@ -3725,6 +3804,12 @@ const fileRule: Rule = {
     if (writes && path && writesProdUnlock(path, ctx.cwd)) {
       audit({ cwd: ctx.cwd, kind: "secret-confirm", tool, decision: "blocked", label: "production unlock", detail: "prod-unlock-self" });
       return block(PROD_UNLOCK_SELF_BLOCK);
+    }
+    // CW2: the change history is the person's record; no model read or write
+    // reaches it, by any spelling or link, whether the feature is on or off.
+    if (path && fileHistoryTarget(path, ctx.cwd)) {
+      audit({ cwd: ctx.cwd, kind: "secret-confirm", tool, decision: "blocked", label: "change history", detail: "history-store" });
+      return block(HISTORY_BLOCK);
     }
     // F2: this client's backups and drafts (<profile dir>/backups, <profile dir>/drafts)
     // are coop's own working folders, never source: a backup of a .env or a draft
@@ -4040,6 +4125,11 @@ const prodUnlockShellRule: Rule = {
   id: "prod-unlock-shell",
   applies: isShell,
   check: ({ ctx, command }) => {
+    // CW2: the change history folder, by the same narrow rule (coop's own record).
+    if (shellHistoryTarget(command, ctx.cwd)) {
+      audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "blocked", label: "change history", detail: "history-store" });
+      return block(HISTORY_BLOCK);
+    }
     if (!touchesProdUnlock(command)) return PASS;
     audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "blocked", label: "production unlock", detail: "prod-unlock-self" });
     return block(PROD_UNLOCK_SELF_BLOCK);
@@ -4385,6 +4475,142 @@ async function enforce(call: Call, session: Session): Promise<Decision> {
   return ALLOW;
 }
 
+// --- Change history (FEATURES-DESIGN CW2) ---------------------------------------
+// After the fact and off the critical path: at tool_call (once the call is
+// allowed) the file's bytes are held by toolCallId; at tool_result the blobs and
+// the line are written after the result has gone back (setImmediate). A failure
+// to record is one notice and an audit row; it never fails or delays the call.
+// Calls the guardrails asked about that are not file edits (a live write, a
+// shell command) get a record-only line with the audit's own label.
+const HISTORY_PENDING_MAX = 64;
+class HistoryRecorder {
+  on = false;
+  readonly pending = new Map<string, any>();
+  readonly writes = new Set<Promise<void>>();
+  private warned = false;
+  constructor(private session: Session, private enabled: () => boolean) { this.readSwitch(); }
+  readSwitch(): void {
+    try { this.on = this.enabled() && featureEnabled("history"); } catch { this.on = false; }
+  }
+  sessionStart(ctx: ExtensionContext): void {
+    this.readSwitch();
+    this.pending.clear();
+    this.warned = false;
+    if (!this.on) return;
+    // The 1 GB cap, oldest month folders first; never in the way of the start.
+    setImmediate(() => {
+      try {
+        const removed = enforceCap();
+        if (removed.length) notifyQuiet(ctx, `Change history: removed the ${removed.length} oldest month folder(s) (${sizeText(removed.reduce((n: number, m: any) => n + m.bytes, 0))}) to stay under 1 GB.`, "info");
+      } catch (error) { this.failed(ctx, error); }
+    });
+  }
+  call(event: any, ctx: ExtensionContext): void {
+    try {
+      const id = String(event?.toolCallId || "");
+      const tool = String(event?.toolName || "");
+      if (!id || tool === "read") return;
+      if (this.pending.size >= HISTORY_PENDING_MAX) this.pending.delete(this.pending.keys().next().value as string);
+      if (tool === "write" || tool === "edit") {
+        const path = String(event?.input?.path ?? "").replace(/^@/, "");
+        if (!path) return;
+        const file = resolve(ctx.cwd || ".", path === "~" || /^~[/\\]/.test(path) ? join(coopHomeDir(), path.slice(1)) : path);
+        this.pending.set(id, { kind: "file", file, tool, approval: this.session.callApproval, before: readCapped(file) });
+      } else if (this.session.callApproval !== "none-needed") {
+        this.pending.set(id, { kind: "call", tool, approval: this.session.callApproval, label: this.session.callLabel || tool, cwd: ctx.cwd });
+      }
+    } catch (error) { this.failed(ctx, error); }
+  }
+  result(event: any, ctx: ExtensionContext): void {
+    const id = String(event?.toolCallId || "");
+    const item = id ? this.pending.get(id) : undefined;
+    if (!item) return;
+    this.pending.delete(id);
+    let sessionId = "";
+    try { sessionId = String(ctx?.sessionManager?.getSessionId?.() || ""); } catch { sessionId = ""; }
+    const isError = event?.isError === true;
+    const job: Promise<void> = new Promise<void>((done) => setImmediate(done))
+      .then(async () => {
+        if (item.kind === "file") await recordFileChange({ ...item, toolCallId: id, session: sessionId, isError, isSecretPath });
+        else recordCallOnly({ cwd: item.cwd, tool: item.tool, toolCallId: id, session: sessionId, approval: item.approval, label: item.label, isError });
+      })
+      .catch((error) => this.failed(ctx, error))
+      .finally(() => { this.writes.delete(job); });
+    this.writes.add(job);
+  }
+  failed(ctx: ExtensionContext, error: unknown): void {
+    const reason = String((error as any)?.code || (error as any)?.message || error).slice(0, 160);
+    try { audit({ cwd: ctx?.cwd ?? process.cwd(), kind: "change-history", tool: "history", decision: "failed", label: "change history", detail: reason }); } catch { /* best effort */ }
+    if (this.warned) return;
+    this.warned = true;
+    notifyQuiet(ctx, `change history paused: ${reason}. The edit itself went through; backups are unchanged.`, "warning");
+  }
+}
+
+function notifyQuiet(ctx: ExtensionContext, message: string, level: "info" | "warning"): void {
+  try { if (typeof ctx?.ui?.notify === "function") ctx.ui.notify(message, level); } catch { /* ignore */ }
+}
+
+/** The restore card's text: the diff, cut to a size a dialog can show. */
+function cardDiff(text: string): string {
+  const max = 4000;
+  return text.length > max ? `${text.slice(0, max)}\n… (${text.length - max} more characters; the Changes pane's History tab shows it all)` : text;
+}
+
+/** /history (the person's, never the model's): the last 20 changes in this
+ *  repository, and /history restore <id>, which always asks, backs the file up
+ *  first and records its own line (restore-approved). */
+function registerHistoryCommand(pi: ExtensionAPI, session: Session, history: HistoryRecorder): void {
+  pi.registerCommand("history", {
+    description: "Change history: coop's last 20 edits in this repository (/history restore <id> puts a file back, with approval and a backup)",
+    handler: async (args: any, ctx: ExtensionContext) => {
+      const words = (Array.isArray(args) ? args.join(" ") : String(args || "")).trim().split(/\s+/).filter(Boolean);
+      const say = (message: string, level: "info" | "warning" = "info") => notifyQuiet(ctx, message, level);
+      if (!history.on) { say("Change history is off for this client (coop settings set history on, then /new)."); return; }
+      const { repoRoot, store } = storeFor(ctx.cwd);
+      if (!words.length || words[0] === "list") {
+        say([`Change history for ${repoRoot} (newest first; /history restore <id> puts a file back):`, ...historyLines(readEntries(store))].join("\n"));
+        return;
+      }
+      if (words[0] !== "restore" || words.length !== 2) { say("Usage: /history [list] | /history restore <id>", "warning"); return; }
+      await Promise.allSettled([...history.writes]);
+      const entry = findEntry(store, words[1]);
+      const refusal = (why: string) => { say(`Change history: ${why}.`, "warning"); };
+      if (!entry) return refusal(`no change ${words[1]} in this repository's history (/history lists them)`);
+      const file = realPath(resolve(repoRoot, String(entry.target || "")));
+      const rel = relative(repoRoot, file);
+      if (!rel || rel.startsWith("..") || isAbsolute(rel)) return refusal(`${entry.target} is outside this repository, so coop does not restore it`);
+      if (isSecretPath(file) || isSecretPath(String(entry.target)) || fileHistoryTarget(file, repoRoot)) return refusal(`${entry.target} is a secret-looking or protected file, so coop does not restore it`);
+      const current = readCapped(file);
+      if (current === "large") return refusal(`${entry.target} is over 5 MB now`);
+      const plan = planRestore(store, entry, current);
+      if (plan.mode === "refused") return refusal(plan.reason);
+      if (plan.mode === "same") { say(`Change history: ${entry.target} already has its content from before change ${entry.id}; nothing to restore.`); return; }
+      const label = `restore ${entry.target}`;
+      const asked = plan.mode === "conflict"
+        ? `Taking out only change ${entry.id} conflicts with later edits to ${entry.target}:\n${cardDiff(String(plan.merged))}\n\nOverwrite the whole file with its content from before change ${entry.id}, LOSING EVERY LATER EDIT to it?\n${cardDiff(diffText(current, plan.content))}\nA backup of the file as it is now is written first.`
+        : `Restore ${entry.target} to before change ${entry.id} (${String(entry.ts).replace("T", " ").slice(0, 16)}, ${entry.tool})${plan.mode === "merged" ? ", keeping the later edits" : ""}:\n${cardDiff(diffText(current, plan.content))}\nA backup of the file as it is now is written first. Restore it?`;
+      const refused = await session.ask(ctx, {
+        kind: "change-history", tool: "history", label, detail: `${entry.id}:${plan.mode}`,
+        title: plan.mode === "conflict" ? "coop change history: overwrite the whole file?" : "coop change history",
+        question: asked,
+        headless: "coop change history: restore needs your approval, which is unavailable in headless mode.",
+        declined: `coop change history: ${entry.target} left as it is (you declined).`,
+      });
+      if (refused) { say(refused.reason); return; }
+      try {
+        const backup = writeRestore(file, plan.content);
+        let sessionId = "";
+        try { sessionId = String(ctx?.sessionManager?.getSessionId?.() || ""); } catch { sessionId = ""; }
+        try { await recordFileChange({ file, tool: "restore", toolCallId: "", session: sessionId, approval: "restore-approved", before: current, isSecretPath }); } catch (error) { history.failed(ctx, error); }
+        say(`Change history: restored ${entry.target} to before change ${entry.id}${plan.mode === "merged" ? " (later edits kept)" : ""}.${backup ? ` Backup: ${backup}` : ""}`);
+      } catch (error) {
+        say(`Change history: could not restore ${entry.target} (${String((error as any)?.code || (error as any)?.message || error)}). The file is as it was.`, "warning");
+      }
+    },
+  });
+}
+
 export default function coopGuardrails(pi: ExtensionAPI) {
   const enabled = () => process.env.COOP_NO_GUARDRAILS !== "1";
   const showUpstreamUpdates = () => process.env.COOP_SHOW_UPSTREAM_UPDATE_NOTICES === "1";
@@ -4407,21 +4633,30 @@ export default function coopGuardrails(pi: ExtensionAPI) {
   // session_shutdown + session_start without reloading this module). Drop the
   // stale governance snapshot so THIS session's project contract is re-read on
   // its next governed call — never carry policy across session switches.
-  pi.on("session_start", async () => {
+  pi.on("session_start", async (_event: any, ctx: ExtensionContext) => {
     resetSessionGovernance();
     session.reset();
+    history.sessionStart(ctx);
   });
   pi.on("session_shutdown", async () => {
     session.reset();
+    history.pending.clear();
   });
   // One audit row per codemode script, naming each nested call and its outcome.
   // The asks and blocks inside it were audited one by one as they happened.
   pi.on("tool_result", async (event: any, ctx: ExtensionContext) => {
-    if (!enabled() || event?.toolName !== "codemode") return;
+    if (!enabled()) return;
+    if (history.on) history.result(event, ctx);
+    if (event?.toolName !== "codemode") return;
     for (const detail of codemodeCallsDetails(event.details, event.isError === true)) {
       audit({ cwd: ctx?.cwd ?? process.cwd(), kind: "codemode-script", tool: "codemode", decision: "ran", label: "codemode script", detail });
     }
   });
+
+  // Change history (FEATURES-DESIGN CW2), only while the switch is on (read at
+  // load and at each session start: it takes effect after /new).
+  const history = new HistoryRecorder(session, enabled);
+  if (history.on) registerHistoryCommand(pi, session, history);
 
   // Pi 0.99's built-in MCP registers its tools directly, so the checks need the
   // registry's word on which server a tool belongs to (older Pi: name matching).
@@ -4447,8 +4682,12 @@ export default function coopGuardrails(pi: ExtensionAPI) {
       if (signal?.aborted) return { block: true, reason: CALL_CANCELLED };
       const ctx = withDialogSignal(arrivedCtx, signal);
       const event = withToolOrigin(rawEvent);
+      session.callApproval = "none-needed";
+      session.callLabel = "";
       const decision = await enforce({ event, ctx, tool: String(event?.toolName ?? ""), command: "" }, session);
-      return decision.action === "block" ? { block: true, reason: decision.reason } : undefined;
+      if (decision.action === "block") return { block: true, reason: decision.reason };
+      if (history.on) history.call(event, ctx);
+      return undefined;
     } catch {
       // An approval/policy failure is not permission. Never forward exception text:
       // it can contain command arguments, credentials, or private tool payloads.
