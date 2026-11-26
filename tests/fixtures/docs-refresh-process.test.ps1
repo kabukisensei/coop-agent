@@ -61,7 +61,8 @@ try {
   [System.IO.File]::WriteAllText($in, '')
   $argList = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $coop + '"'), '-p', '"say hi"')
   $procs = @(1, 2 | ForEach-Object { Start-Process -FilePath $psExe -ArgumentList $argList -WorkingDirectory $t -PassThru -NoNewWindow -RedirectStandardInput $in -RedirectStandardOutput (Join-Path $t "two$_.out") -RedirectStandardError (Join-Path $t "two$_.err") })
-  foreach ($p in $procs) { $null = $p.Handle; $p.WaitForExit() }
+  # Capped (60 s each): a stuck start ends here, as a failure, not the lane's timeout.
+  foreach ($p in $procs) { $null = $p.Handle; if (-not $p.WaitForExit(60000)) { Stop-DrTree $p } }
   $null = Wait-Dr { Test-DrWaiting } 30
   Set-DrClock (2 * 86400 + 21 * 60)
   $ran = Wait-Dr { (Get-DrRefreshCount) -ge 3 -and @(Get-DrLiveWaiters).Count -eq 0 } 60
@@ -76,7 +77,7 @@ try {
   $racers = @(1, 2 | ForEach-Object {
     Start-Process -FilePath $psExe -ArgumentList @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $drScript + '"'), '-WaiterFrom', 'coop', '-WaiterDue', $due) -WorkingDirectory $drProfile -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $t "race$_.out") -RedirectStandardError (Join-Path $t "race$_.err")
   })
-  foreach ($p in $racers) { $null = $p.Handle; $p.WaitForExit() }
+  foreach ($p in $racers) { $null = $p.Handle; if (-not $p.WaitForExit(60000)) { Stop-DrTree $p } }
   $outcomes = @(1, 2 | ForEach-Object { ([System.IO.File]::ReadAllText((Join-Path $t "race$_.out"))).Trim() } | Sort-Object)
   if ((Get-DrRefreshCount) -eq $before + 1 -and ($outcomes -join ',') -ceq 'done,ok') { Ok 'two waiters due at once race for the day''s claim: one run (ok), the other finds the day claimed (done)' } else { Ko "claim race: $($outcomes -join ',') with $((Get-DrRefreshCount) - $before) runs" }
   Remove-Item -LiteralPath (Join-Path $drDir 'pending.json') -Force -ErrorAction SilentlyContinue

@@ -12,6 +12,10 @@
 #   Get-DrCalls / Get-DrWaiterCalls every start of the built-in powershell.exe /
 #                                   only the waiter starts (argv arrays)
 #   Get-DrHelperCalls               every lib\live_docs.py request the run made
+#                                   (bom: the request's stdin began with a BOM)
+#   Wait-DrWaiterCalls / Wait-DrCalls  wait (capped) for the recorded starts a step
+#                                   expects (ShellExecute returns before them)
+#   Invoke-DrCapped <argv>          a real script in a child, capped at 60 s
 #   Get-DrWaiterEnv                 the launch-private variables each waiter start
 #                                   inherited (none may reach it)
 #   Get-DrAzCalls                   every fake `az` call (Set-DrReal: the real
@@ -131,10 +135,13 @@ if _name == "warehouse_mcp.py" and sys.argv[1:2] == ["launch-token"] and os.envi
         os.write(1, b"warning\tauth_required\tend")
     os._exit(0)
 if _name == "live_docs.py" and os.environ.get("COOP_TEST_DR_REAL") != "1":
-    request = json.loads(sys.stdin.read() or "null")
+    # The bytes as sent: a BOM before the request is recorded (the fixture fails
+    # on one) and then dropped, so one stray BOM does not hide every other check.
+    raw = sys.stdin.buffer.read()
+    request = json.loads(raw.decode("utf-8-sig") or "null")
     command = request.get("command") if isinstance(request, dict) else ""
     _record({"request": request, "cwd": os.getcwd(), "project_yml": os.environ.get("COOP_PROJECT_YML", ""),
-             "token": os.environ.get("COOP_FABRIC_MCP_TOKEN", ""), "pid": os.getpid()})
+             "token": os.environ.get("COOP_FABRIC_MCP_TOKEN", ""), "pid": os.getpid(), "bom": raw.startswith(b"\xef\xbb\xbf")})
     delay = float(os.environ.get("COOP_TEST_DR_SLEEP", "") or 0)
     if delay and os.environ.get("COOP_TEST_DR_GRANDCHILD"):
         # coop-data-doc's place: a child that would outlive this helper if only the helper were stopped.
@@ -182,32 +189,74 @@ function Get-DrArg($Call, [string]$Name) { $a = @($Call); for ($i = 0; $i -lt $a
 function ConvertFrom-DrUnix([long]$Seconds) { return [System.DateTimeOffset]::FromUnixTimeSeconds($Seconds).LocalDateTime }
 
 # --- the real scripts -------------------------------------------------------------------------
+# Every run of a real script is a child with empty stdin and its output in files
+# (no pipe a grandchild could hold open), capped: past -Seconds (60 by default)
+# the whole tree is ended and the step answers TimedOut at once, so a step that
+# goes wrong fails fast instead of holding the lane (Windows CI, 2026-11-26: a
+# replayed waiter slept for 20 real minutes).
+function Stop-DrTree($Process) {
+  if ($isWindowsHost) {
+    try { & (Join-Path $env:SystemRoot 'System32\taskkill.exe') /PID $Process.Id /T /F 2>&1 | Out-Null } catch { }
+  } else {
+    try { $Process.Kill($true) } catch { }
+  }
+  try { if (-not $Process.HasExited) { $Process.Kill() } } catch { }
+  try { [void]$Process.WaitForExit(5000) } catch { }
+}
+$script:drRun = 0
+function Invoke-DrCapped([string[]]$ArgList, [string]$Cwd = $t, [int]$Seconds = 60) {
+  $script:drRun++
+  $in = Join-Path $t "run$($script:drRun).in"; $so = Join-Path $t "run$($script:drRun).out"; $se = Join-Path $t "run$($script:drRun).err"
+  [System.IO.File]::WriteAllText($in, '')
+  # Start-Process joins the list with spaces (Windows PowerShell 5.1): quote what has a space or is empty.
+  $quoted = @($ArgList | ForEach-Object { if ($_ -eq '' -or $_ -match '\s') { '"' + $_ + '"' } else { $_ } })
+  $p = Start-Process -FilePath $psExe -ArgumentList $quoted -WorkingDirectory $Cwd -PassThru -NoNewWindow -RedirectStandardInput $in -RedirectStandardOutput $so -RedirectStandardError $se
+  $null = $p.Handle   # Windows PowerShell 5.1: keeps ExitCode readable after exit
+  $timedOut = -not $p.WaitForExit($Seconds * 1000)
+  if ($timedOut) { Stop-DrTree $p }
+  $stdout = ''; $stderr = ''
+  try { $stdout = [System.IO.File]::ReadAllText($so) } catch { }
+  try { $stderr = [System.IO.File]::ReadAllText($se) } catch { }
+  $rc = if ($timedOut) { 124 } else { $p.ExitCode }
+  $all = $stdout + $stderr
+  if ($timedOut) { $all += "`n[fixture: stopped after $Seconds s: $($ArgList -join ' ')]" }
+  return @{ Rc = $rc; Out = $all; StdOut = $stdout; TimedOut = $timedOut }
+}
+# Windows starts the waiter (and sign-in's window) through ShellExecute, which
+# returns before the recorder has written its line: wait for the recorded starts
+# a step expects (at most -Seconds), so a later step never replays an older one.
+function Wait-DrWaiterCalls([int]$Count, [int]$Seconds = 30) {
+  $deadline = (Get-Date).AddSeconds($Seconds)
+  while ((@(Get-DrWaiterCalls).Count -lt $Count -or @(Get-DrWaiterEnv).Count -lt $Count) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 100 }
+  return @(Get-DrWaiterCalls)
+}
+function Wait-DrCalls([int]$Count, [int]$Seconds = 30) {
+  $deadline = (Get-Date).AddSeconds($Seconds)
+  while (@(Get-DrCalls).Count -lt $Count -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 100 }
+  return @(Get-DrCalls)
+}
 # The Run entry starts it with no parameter; here the recorder stands in for the
 # built-in powershell.exe and the closing pause is skipped.
 function Invoke-DrSignIn {
-  $out = (Invoke-Native { & $psExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $signIn -PowerShellPath $drBuiltin -NoPause 2>&1 } | Out-String)
-  return @{ Rc = $LASTEXITCODE; Out = $out }
+  return (Invoke-DrCapped @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $signIn, '-PowerShellPath', $drBuiltin, '-NoPause'))
 }
 # `coop -p "say hi"` in a child whose stdin is empty, as tests/fixtures/pi-exit-code.test.ps1 runs it.
 function Invoke-DrCoop {
-  $in = Join-Path $t 'coop.in'; $so = Join-Path $t 'coop.out'; $se = Join-Path $t 'coop.err'
-  [System.IO.File]::WriteAllText($in, '')
-  $argList = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ('"' + $coop + '"'), '-p', '"say hi"')
-  $p = Start-Process -FilePath $psExe -ArgumentList $argList -WorkingDirectory $t -PassThru -NoNewWindow -RedirectStandardInput $in -RedirectStandardOutput $so -RedirectStandardError $se
-  $null = $p.Handle
-  $p.WaitForExit()
-  return @{ Rc = $p.ExitCode; Out = [System.IO.File]::ReadAllText($so) + [System.IO.File]::ReadAllText($se) }
+  return (Invoke-DrCapped @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $coop, '-p', 'say hi'))
 }
 # The waiter, run to its end, in the profile folder as the starters start it:
-# its last output line is the outcome.
+# its last output line is the outcome ('fixture-timeout' past the cap).
 function Invoke-DrWaiter([string[]]$WaiterArgs) {
-  Push-Location -LiteralPath $drProfile
-  try { $out = @(Invoke-Native { & $psExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $drScript @WaiterArgs 2>&1 } | ForEach-Object { [string]$_ } | Where-Object { $_.Trim() }) } finally { Pop-Location }
-  return @{ Rc = $LASTEXITCODE; Outcome = $(if ($out.Count) { $out[-1].Trim() } else { '' }); Out = ($out -join "`n") }
+  $r = Invoke-DrCapped (@('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $drScript) + $WaiterArgs) $drProfile
+  $out = @(($r.StdOut -split "`r?`n") | Where-Object { $_.Trim() })
+  $outcome = if ($r.TimedOut) { 'fixture-timeout' } elseif ($out.Count) { $out[-1].Trim() } else { '' }
+  return @{ Rc = $r.Rc; Outcome = $outcome; Out = $r.Out }
 }
 # A recorded start, replayed exactly (with -WaiterTick appended to look once).
+# No recorded start: nothing runs (an empty argument would be no waiter at all).
 function Invoke-DrRecordedWaiter($Call, [switch]$Tick) {
   $from = Get-DrArg $Call '-WaiterFrom'; $due = Get-DrArg $Call '-WaiterDue'
+  if (-not $from -or -not $due) { return @{ Rc = -1; Outcome = 'no-recorded-waiter'; Out = 'the fixture has no recorded waiter start to replay' } }
   $wa = @('-WaiterFrom', $from, '-WaiterDue', $due)
   if ($Tick) { $wa += '-WaiterTick' }
   return (Invoke-DrWaiter $wa)
@@ -226,8 +275,7 @@ function Invoke-DrDesktop {
   $saveAppData = $env:APPDATA
   $env:APPDATA = Join-Path $t 'appdata'
   try {
-    $out = (Invoke-Native { & $psExe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $coop desktop --app $drWindow $drClient 2>&1 } | Out-String)
-    return @{ Rc = $LASTEXITCODE; Out = $out }
+    return (Invoke-DrCapped @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $coop, 'desktop', '--app', $drWindow, $drClient))
   } finally { $env:APPDATA = $saveAppData }
 }
 function Get-DrWindowStarts { return @(Read-DrJsonLines $drWindowLog) }

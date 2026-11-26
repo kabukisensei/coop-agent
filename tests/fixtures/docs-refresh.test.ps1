@@ -48,7 +48,7 @@ try {
 
   # --- off: exactly today ------------------------------------------------------------------
   $r = Invoke-DrSignIn
-  $calls = @(Get-DrCalls)
+  $calls = @(Wait-DrCalls 3)
   $kinds = @($calls | ForEach-Object { $a = @($_); if ($a -contains '-Command') { 'azure' } elseif (@($a | Where-Object { ([string]$_).EndsWith('coop-desktop.ps1') }).Count) { 'window' } elseif ($a -contains 'update') { 'update' } else { 'other: ' + ($a -join ' ') } })
   if ($r.Rc -eq 0 -and ($kinds -join ',') -ceq 'update,azure,window' -and (Flat $r.Out) -notmatch 'lineage refresh') { Ok 'off, sign-in: the same three starts as before (update, Azure check, window), no refresh line' } else { Ko "off, sign-in (rc=$($r.Rc)): $($kinds -join ', ')" $r.Out }
   $r = Invoke-DrCoop
@@ -57,6 +57,7 @@ try {
   [System.IO.File]::WriteAllText((Join-Path $drProfile 'config'), '{"features":{"comments":true,"docs_refresh":false}}', $utf8)
   $null = Invoke-DrSignIn
   $null = Invoke-DrCoop
+  $null = Wait-DrCalls 6
   $noWaiter = (@(Get-DrWaiterCalls).Count -eq 0) -and (@(Get-DrCalls).Count -eq 6)
   if ($noWaiter -and -not (Test-Path -LiteralPath $drDir) -and -not (Test-Path -LiteralPath $drLog) -and @(Get-DrHelperCalls).Count -eq 0) { Ok 'off (docs_refresh false): no waiter, no docs-refresh folder, no log, no live_docs.py call' } else { Ko 'off wrote or started something' ((Get-DrCalls | ForEach-Object { @($_) -join ' ' }) -join "`n") }
   # sign-in.ps1 has no environment seam: with the feature off, COOP_BUILTIN_POWERSHELL changes nothing (Neon B5).
@@ -71,7 +72,7 @@ try {
   $before = Get-DrNow
   $r = Invoke-WithPrivateEnv { Invoke-DrSignIn }
   $after = Get-DrNow
-  $waiters = @(Get-DrWaiterCalls)
+  $waiters = @(Wait-DrWaiterCalls 1)
   $due = if ($waiters.Count) { ConvertFrom-DrUnix ([long](Get-DrArg $waiters[0] '-WaiterDue')) } else { [datetime]::MinValue }
   $inWindow = ($due -ge $before.AddMinutes(20).AddSeconds(-2)) -and ($due -le $after.AddMinutes(20).AddSeconds(2))
   if ($waiters.Count -eq 1 -and (Get-DrArg $waiters[0] '-WaiterFrom') -ceq 'signin' -and $inWindow -and (Flat $r.Out) -match 'daily lineage refresh: scheduled 20 minutes after sign-in') { Ok 'sign-in: one hidden waiter, due 20 minutes after the sign-in started' } else { Ko "sign-in waiter: $($waiters.Count) starts, due $due" $r.Out }
@@ -104,7 +105,7 @@ try {
   # --- the next day, coop alone (closed long before the 20 minutes) --------------------------------
   Set-DrClock (86400)
   $r = Invoke-WithPrivateEnv { Invoke-DrCoop }
-  $waiters = @(Get-DrWaiterCalls)
+  $waiters = @(Wait-DrWaiterCalls ($n + 1))
   $coopWaiter = $waiters[-1]
   $due = ConvertFrom-DrUnix ([long](Get-DrArg $coopWaiter '-WaiterDue'))
   if ($r.Rc -eq 0 -and $waiters.Count -eq $n + 1 -and (Get-DrArg $coopWaiter '-WaiterFrom') -ceq 'coop' -and $due -gt (Get-DrNow).AddMinutes(19) -and $due -le (Get-DrNow).AddMinutes(20)) { Ok 'the next day, coop start: one waiter, due 20 minutes after that coop started' } else { Ko "next day coop waiter: $($waiters.Count - $n) starts, due $due" $r.Out }
@@ -118,8 +119,9 @@ try {
   # --- whichever comes first --------------------------------------------------------------------
   $day = 2 * 86400
   Set-DrClock $day
+  $n = @(Get-DrWaiterCalls).Count
   $null = Invoke-DrCoop
-  $coopWaiter = @(Get-DrWaiterCalls)[-1]
+  $coopWaiter = @(Wait-DrWaiterCalls ($n + 1))[-1]
   # A sign-in whose update wait took 12 minutes is due in 8 (dot-sourced, as sign-in.ps1 runs it).
   $handed = (Invoke-Native { & $psExe -NoProfile -Command ". '$($drScript -replace "'", "''")'; Start-CoopDocsRefresh -ProfileDir '$($drProfile -replace "'", "''")' -From signin -StartedAt (Get-Date).AddMinutes(-12)" 2>&1 } | Out-String).Trim()
   $p = Get-DrPending
@@ -131,13 +133,15 @@ try {
 
   # --- the due is floored and a clock set back adds nothing ---------------------------------------
   # (the same day, its claim lifted for the two starts and put back after)
+  $n = @(Get-DrWaiterCalls).Count
   $floorOut = (Invoke-Native { & $psExe -NoProfile -Command ". '$($drScript -replace "'", "''")'; Remove-Item -LiteralPath '$((Join-Path $drDir ('day-' + (Get-DrDay (2 * 86400)))) -replace "'", "''")'; `$null = Start-CoopDocsRefresh -ProfileDir '$($drProfile -replace "'", "''")' -From signin -StartedAt (Get-Date).AddMinutes(-25); (Get-Content -Raw -LiteralPath '$((Join-Path $drDir 'pending.json') -replace "'", "''")' | ConvertFrom-Json).due" 2>&1 } | Out-String).Trim()
-  $lastDue = @(Get-DrWaiterCalls)[-1]
+  $lastDue = @(Wait-DrWaiterCalls ($n + 1))[-1]
   $dueFloor = ConvertFrom-DrUnix ([long](Get-DrArg $lastDue '-WaiterDue'))
   $floorOk = ($dueFloor -ge (Get-DrNow).AddSeconds(115)) -and ($dueFloor -le (Get-DrNow).AddSeconds(125))
   Remove-Item -LiteralPath (Join-Path $drDir 'pending.json') -Force -ErrorAction SilentlyContinue
+  $n = @(Get-DrWaiterCalls).Count
   $backOut = (Invoke-Native { & $psExe -NoProfile -Command ". '$($drScript -replace "'", "''")'; `$null = Start-CoopDocsRefresh -ProfileDir '$($drProfile -replace "'", "''")' -From coop -StartedAt (Get-Date).AddMinutes(30)" 2>&1 } | Out-String).Trim()
-  $lastDue = @(Get-DrWaiterCalls)[-1]
+  $lastDue = @(Wait-DrWaiterCalls ($n + 1))[-1]
   $dueBack = ConvertFrom-DrUnix ([long](Get-DrArg $lastDue '-WaiterDue'))
   $backOk = ($dueBack -ge (Get-DrNow).AddMinutes(20).AddSeconds(-5)) -and ($dueBack -le (Get-DrNow).AddMinutes(20).AddSeconds(5))
   if ($floorOk -and $backOk) { Ok 'the due: 25 minutes of update wait gives now + 2 minutes (never in the start-up); a start time in the future (clock set back) gives now + 20' } else { Ko "due floor=$dueFloor ($floorOk) back=$dueBack ($backOk) at $(Get-DrNow)" ($floorOut + "`n" + $backOut) }
@@ -154,7 +158,7 @@ try {
   $n = @(Get-DrWaiterCalls).Count
   $r = Invoke-DrCoop
   $p = Get-DrPending
-  $reused = (@(Get-DrWaiterCalls).Count -eq $n + 1) -and $p -and [int]$p.pid -eq 0
+  $reused = (@(Wait-DrWaiterCalls ($n + 1)).Count -eq $n + 1) -and $p -and [int]$p.pid -eq 0
   if ($reused) { Ok 'a pid reused after a logoff (a running PowerShell with another start time) is not taken for a waiter: a new one starts' } else { Ko "reused pid: $(@(Get-DrWaiterCalls).Count - $n) new waiters" ($p | ConvertTo-Json -Compress) }
   Remove-Item -LiteralPath (Join-Path $drDir 'pending.json') -Force -ErrorAction SilentlyContinue
   $failed = (Invoke-Native { & $psExe -NoProfile -Command ". '$($drScript -replace "'", "''")'; Start-CoopDocsRefresh -ProfileDir '$($drProfile -replace "'", "''")' -From coop -StartedAt (Get-Date) -PowerShell '$((Join-Path $t 'no-such-dir\no-such-powershell') -replace "'", "''")'" 2>&1 } | Out-String).Trim()
@@ -163,8 +167,9 @@ try {
   # --- asleep past midnight --------------------------------------------------------------------
   $day = 3 * 86400
   Set-DrClock $day
+  $n = @(Get-DrWaiterCalls).Count
   $null = Invoke-DrCoop
-  $coopWaiter = @(Get-DrWaiterCalls)[-1]
+  $coopWaiter = @(Wait-DrWaiterCalls ($n + 1))[-1]
   Set-DrClock ($day + 86400 + 2 * 3600)
   $w = Invoke-DrRecordedWaiter $coopWaiter -Tick
   $wantDue = (Get-DrNow).AddMinutes(20).ToString('yyyy-MM-dd HH:mm', [System.Globalization.CultureInfo]::InvariantCulture)
@@ -180,7 +185,7 @@ try {
   $deadline = (Get-Date).AddSeconds(15)
   while (@(Get-DrWindowStarts).Count -eq 0 -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 100 }
   $windowStart = @(Get-DrWindowStarts)
-  $waiters = @(Get-DrWaiterCalls)
+  $waiters = @(Wait-DrWaiterCalls ($n + 1))
   $deskOk = $r.Rc -eq 0 -and $windowStart.Count -eq 1 -and $windowStart[0].spec -and $waiters.Count -eq $n + 1 -and (Get-DrArg $waiters[-1] '-WaiterFrom') -ceq 'coop'
   $deskEnv = @(Get-DrWaiterEnv)[-1]
   if ($deskOk -and @($deskEnv.private).Count -eq 0) { Ok 'coop desktop: the window gets its launch spec, then one waiter is scheduled, with no launch spec, token or first-run marker' } else { Ko "coop desktop (rc=$($r.Rc)): window starts $($windowStart.Count), waiters +$($waiters.Count - $n), waiter env $(@($deskEnv.private) -join ',')" $r.Out }
@@ -189,8 +194,9 @@ try {
   # --- a coop update installing --------------------------------------------------------------------
   $day = 5 * 86400
   Set-DrClock $day
+  $n = @(Get-DrWaiterCalls).Count
   $null = Invoke-DrCoop
-  $coopWaiter = @(Get-DrWaiterCalls)[-1]
+  $coopWaiter = @(Wait-DrWaiterCalls ($n + 1))[-1]
   New-Item -ItemType Directory -Force -Path $env:COOP_MACHINE_DIR | Out-Null
   $updating = Join-Path $env:COOP_MACHINE_DIR 'updating.json'
   [System.IO.File]::WriteAllText($updating, (ConvertTo-Json -Compress -InputObject ([ordered]@{ version = '9.9.9'; started = (Get-DrNow).ToUniversalTime().ToString('o') })))
@@ -202,8 +208,9 @@ try {
   $claimed = Test-Path -LiteralPath (Join-Path $drDir ('day-' + (Get-DrDay $day)))
   if ($w.Outcome -ceq 'update-wait' -and $w2.Outcome -ceq 'update_running' -and -not $claimed -and $state.result -ceq 'update_running' -and $state.line -ceq 'Docs refresh waited for a coop update. It runs at the next sign-in or coop start.' -and @(Get-DrHelperCalls).Count -eq 6) { Ok 'an update installing: the waiter waits, then gives up 30 minutes past the due time without claiming the day (update_running)' } else { Ko "update running: $($w.Outcome) / $($w2.Outcome), claimed=$claimed" ($w2.Out) }
   Remove-Item -LiteralPath $updating -Force
+  $n = @(Get-DrWaiterCalls).Count
   $null = Invoke-DrCoop
-  $coopWaiter = @(Get-DrWaiterCalls)[-1]
+  $coopWaiter = @(Wait-DrWaiterCalls ($n + 1))[-1]
   Set-DrClock ($day + 75 * 60)
   $w = Invoke-DrRecordedWaiter $coopWaiter
   if ($w.Outcome -ceq 'ok' -and @(Get-DrHelperCalls).Count -eq 8) { Ok 'after the update: the next coop start schedules the unclaimed day and it runs' } else { Ko "after the update: $($w.Outcome)" $w.Out }
@@ -267,11 +274,29 @@ try {
   # Put the last code-table state back for doctor below.
   [System.IO.File]::WriteAllText($drState, ($lastFailed | ConvertTo-Json -Depth 6 -Compress), $utf8)
 
+  # --- stdin without a BOM (Windows CI, 2026-11-26) -------------------------------------------------------
+  # Every request the run sent reached live_docs.py without a BOM before the JSON
+  # (Windows PowerShell 5.1's Process.StandardInput writes one on a UTF-8 console).
+  $sent = @(Get-DrHelperCalls)
+  $boms = @($sent | Where-Object { $_.bom })
+  if ($sent.Count -gt 0 -and $boms.Count -eq 0) { Ok "every request reached live_docs.py without a BOM ($($sent.Count) requests)" } else { Ko "$($boms.Count) of $($sent.Count) requests reached live_docs.py after a BOM" }
+  # And the real helper reads a request after a BOM (the second guard): the BOM bytes written here, on every platform.
+  $bomProbe = "import json, os, subprocess, sys`n" +
+    "req = json.dumps({'command': 'status', 'config': sys.argv[2]}).encode('ascii')`n" +
+    "env = dict(os.environ, COOP_TEST_DR_REAL='1')`n" +
+    "out = subprocess.run([sys.executable, sys.argv[1]], input=b'\xef\xbb\xbf' + req, capture_output=True, timeout=60, env=env).stdout`n" +
+    "print(json.loads(out.decode('utf-8'))['state'])`n"
+  $bomFile = Join-Path $t 'bom-probe.py'
+  [System.IO.File]::WriteAllText($bomFile, $bomProbe, [System.Text.Encoding]::ASCII)
+  $bomState = (Invoke-Native { & $realPy $bomFile (Join-Path $drRoot 'lib\live_docs.py') (Join-Path $t 'no-such\coop-data-doc.yml') 2>&1 } | Out-String).Trim()
+  if ($bomState -ceq 'config_unavailable') { Ok 'the real live_docs.py reads a request that starts with a BOM (config_unavailable, not input_invalid)' } else { Ko "real live_docs.py after a BOM: $bomState" }
+
   # --- switched off while waiting ----------------------------------------------------------------------
   $day += 86400
   Set-DrClock $day
+  $n = @(Get-DrWaiterCalls).Count
   $null = Invoke-DrCoop
-  $coopWaiter = @(Get-DrWaiterCalls)[-1]
+  $coopWaiter = @(Wait-DrWaiterCalls ($n + 1))[-1]
   Set-DrFeature 'off'
   Set-DrClock ($day + 21 * 60)
   $count = @(Get-DrHelperCalls).Count
