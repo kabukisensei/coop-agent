@@ -439,8 +439,8 @@ if (Test-Have 'coop-sqlsc') {
       if ($cfgDoc -and $cfgDoc.PSObject.Properties['sql_source_control'] -and $cfgDoc.sql_source_control.enabled -eq $true) { $sqlscOn = $true }
     }
   } catch { $sqlscOn = $false }
-  if ($sqlscOn) { D-Ok 'SQL source control is ON for this Windows user (/sql-source off inside coop turns it off)' }
-  else { D-Ok 'SQL source control is OFF for this Windows user, the default (/sql-source on inside coop turns it on)' }
+  if ($sqlscOn) { D-Ok "SQL source control is ON for this $(Get-CoopAccountNoun) (/sql-source off inside coop turns it off)" }
+  else { D-Ok "SQL source control is OFF for this $(Get-CoopAccountNoun), the default (/sql-source on inside coop turns it on)" }
 } else {
   D-Ok 'coop-sqlsc not installed (SQL source control; the coop window package carries it; see the Release manifest row)'
 }
@@ -558,6 +558,8 @@ if (-not (Test-CoopToolEnabled $projYml 'tabular_editor_cli')) {
       ) | Where-Object { $_ })) {
         if (Test-Path -LiteralPath $d) { $foundTe = $d; break }
       }
+      # Linux personal edition: the te Linux build has no .exe (~/.local/bin/te).
+      if (-not $foundTe -and -not (Test-CoopWindowsHost)) { $foundTe = Get-CoopUnixToolFallback 'te' }
       if ($foundTe) { D-Ok "Tabular Editor CLI: $foundTe" }
       else { D-Warn 'Tabular Editor CLI (te) not found (optional)' "download 'te' from https://tabulareditor.com/product/features-and-tools/tabular-editor-cli (requires a Tabular Editor account during the preview), place in ~/.local/bin or on PATH, then run: te auth login" }
     }
@@ -1039,7 +1041,7 @@ if ((Test-CoopGitCheckout $script:CoopRoot) -and (Test-Have 'git')) {
 } else {
   # A zip/shared-drive copy: everything above still updates, but the repo layer
   # (skills/prompts/guardrails/themes/scripts) is frozen at whatever the zip held.
-  D-Warn 'this coop-agent is not a git checkout — skills/prompts/guardrails will NEVER update' 'fix: git clone the repo, then run .\bin\coop.cmd install from the clone (your ~/.coop settings carry over)'
+  D-Warn 'this coop-agent is not a git checkout — skills/prompts/guardrails will NEVER update' "fix: git clone the repo, then run $(Get-CoopCloneInstallCommand) from the clone (your ~/.coop settings carry over)"
 }
 
 D-Head 'Powerline / splash assets'

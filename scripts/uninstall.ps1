@@ -12,6 +12,9 @@
 # agent plus the pipx venvs (coop-data-doc / ms-fabric-cli, plus the retired
 # coop-sql-review / coop-dax-review venvs when an older coop left them behind).
 #
+# On Linux (the personal edition) the launcher is the ~/.local/bin/coop link to
+# this clone's bin/coop; there is no registry PATH entry and no shortcut.
+#
 # NEVER touches: this repo clone, any work repo's .coop\project.yml, the rest of
 # ~/.coop (private config dirs live there), or your personal ~/.pi/agent (and
 # its login — coop only ever linked/copied it in).
@@ -60,6 +63,24 @@ if (-not (Coop-Confirm 'Remove coop from this machine?')) {
 }
 
 # --- 1. PATH launcher + persistent user-PATH entry (inverse of install.ps1) ----
+if (-not (Test-CoopWindowsHost)) {
+  # Linux personal edition: install linked ~/.local/bin/coop to this clone's
+  # bin/coop and wrote no registry PATH. Remove the link only when it is a
+  # symlink to a coop forwarder (a regular file or a foreign link stays).
+  $LOCALBIN = Join-Path $HOME '.local/bin'
+  $launcher = Join-Path $LOCALBIN 'coop'
+  $item = Get-Item -LiteralPath $launcher -Force -ErrorAction SilentlyContinue
+  if (-not $item) {
+    Coop-Info "no launcher at $launcher (already gone)"
+  } elseif ($item.LinkType -ne 'SymbolicLink') {
+    Coop-Warn "$launcher is not a link coop made; leaving it alone"
+  } elseif (([string]$item.Target) -notmatch '(^|/)bin/coop$') {
+    Coop-Warn "$launcher links to $($item.Target), not a coop clone; leaving it alone"
+  } else {
+    Remove-Item -LiteralPath $launcher -Force -ErrorAction SilentlyContinue
+    if (-not (Get-Item -LiteralPath $launcher -Force -ErrorAction SilentlyContinue)) { Coop-Ok "removed $launcher" } else { Coop-Warn "could not remove $launcher" }
+  }
+} else {
 $LOCALBIN = Join-Path $env:LOCALAPPDATA 'coop\bin'
 $launcher = Join-Path $LOCALBIN 'coop.cmd'
 if (Test-Path -LiteralPath $launcher -PathType Leaf) {
@@ -105,6 +126,7 @@ try {
   Coop-Warn "couldn't update the user PATH automatically — remove $LOCALBIN by hand (System Properties > Environment Variables)."
 }
 $env:PATH = (($env:PATH -split ';') | Where-Object { $_ -ne $LOCALBIN }) -join ';'
+}   # end of the Windows-only launcher/PATH branch
 
 # --- 2. Start Menu + Desktop shortcuts (inverse of install.ps1) ----------------
 # Same folders install wrote to: the shell folders, or the sandbox profile's own
@@ -192,5 +214,5 @@ if ($KEEP_TOOLS) {
 
 [Console]::Error.WriteLine('')
 Coop-Ok 'uninstall complete.'
-Coop-Info 're-install any time from a coop-agent clone:  .\bin\coop.cmd install'
+Coop-Info "re-install any time from a coop-agent clone:  $(Get-CoopCloneInstallCommand)"
 exit 0

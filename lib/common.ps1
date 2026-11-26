@@ -2403,6 +2403,19 @@ function Get-CoopLargeBackupBytes { return [long]50MB }
 
 function Test-CoopWindowsHost { return [bool]($IsWindows -or $env:OS -eq 'Windows_NT') }
 
+# User-facing platform words. Windows keeps its exact wording ('Windows user',
+# `.\bin\coop.cmd install`); the Linux personal edition (pwsh 7) names its own
+# account and the bash forwarder instead.
+function Get-CoopAccountNoun {
+  if (Test-CoopWindowsHost) { return 'Windows user' }
+  if ($IsMacOS) { return 'macOS user' }
+  return 'Linux user'
+}
+function Get-CoopCloneInstallCommand {
+  if (Test-CoopWindowsHost) { return '.\bin\coop.cmd install' }
+  return 'bin/coop install'
+}
+
 # The folders a launch in $StartDir looks in for a stray NUL file: the launch
 # folder, the repository, the project file's folder, the client folder and the
 # user's home folder. Only the folder itself, never below it.
@@ -3986,6 +3999,37 @@ function Test-CoopPiCommandLineOwned([string]$CommandLine, [string[]]$Roots) {
   return $false
 }
 
+# Linux/macOS (pwsh 7): the same (ProcessId, CommandLine) rows from Get-Process,
+# which reads /proc. npm links `pi` as a symlink to Pi's cli.js and the kernel
+# keeps the link path in argv (`node ~/.npm-global/bin/pi`), so each of the first
+# few arguments that is a link is replaced by its resolved target; the row then
+# names pi-coding-agent under its npm root as on Windows. $Processes lets a
+# fixture pass fake Get-Process shapes (Id, CommandLine).
+function Get-CoopUnixNodeProcessRows([object[]]$Processes = $null) {
+  if ($null -eq $Processes) { $Processes = @(Get-Process -Name node -ErrorAction SilentlyContinue) }
+  $rows = @()
+  foreach ($p in $Processes) {
+    if ($null -eq $p) { continue }
+    $cmd = [string]$p.CommandLine
+    if (-not $cmd) { continue }
+    $tokens = @($cmd -split '\s+' | Where-Object { $_ })
+    $limit = [Math]::Min($tokens.Count, 3)
+    for ($i = 0; $i -lt $limit; $i++) {
+      $t = $tokens[$i]
+      if (-not $t.StartsWith('/')) { continue }
+      try {
+        $item = Get-Item -LiteralPath $t -Force -ErrorAction Stop
+        if ($item.LinkType -eq 'SymbolicLink') {
+          $target = $item.ResolveLinkTarget($true)
+          if ($target) { $tokens[$i] = $target.FullName }
+        }
+      } catch { }
+    }
+    $rows += (New-Object PSObject -Property @{ ProcessId = $p.Id; CommandLine = ($tokens -join ' ') })
+  }
+  return $rows
+}
+
 # A coop/pi session of THIS install is open: a node.exe (not this process) whose
 # command line Test-CoopPiCommandLineOwned accepts. $Rows / $Roots let a fixture
 # pass fake process rows (ProcessId, CommandLine) and roots; by default the rows
@@ -3993,6 +4037,7 @@ function Test-CoopPiCommandLineOwned([string]$CommandLine, [string[]]$Roots) {
 function Test-CoopPiRunning([object[]]$Rows = $null, [string[]]$Roots = $null) {
   if ($null -eq $Roots) { $Roots = @(Get-CoopNpmGlobalRoots) }
   try {
+    if ($null -eq $Rows -and -not (Test-CoopWindowsHost)) { $Rows = @(Get-CoopUnixNodeProcessRows) }
     if ($null -eq $Rows) { $Rows = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue) }
     foreach ($p in $Rows) {
       if ($null -eq $p) { continue }
@@ -4001,6 +4046,25 @@ function Test-CoopPiRunning([object[]]$Rows = $null, [string[]]$Roots = $null) {
     }
   } catch { }
   return $false
+}
+
+# Linux/macOS fallback for a tool that is installed but not on PATH yet (a new
+# shell picks it up): the first existing <dir>/<Name> in PIPX_BIN_DIR, ~/.local/bin
+# and the pipx venv's own bin dir (<PIPX_HOME or ~/.local/share/pipx>/venvs/<Venv>/bin).
+# '' when none exists. Windows keeps its .exe lookups at each call site.
+function Get-CoopUnixToolFallback([string]$Name, [string]$Venv = '') {
+  $dirs = @()
+  if ($env:PIPX_BIN_DIR) { $dirs += $env:PIPX_BIN_DIR }
+  $dirs += (Join-Path $HOME '.local/bin')
+  if ($Venv) {
+    $pipxHome = if ($env:PIPX_HOME) { $env:PIPX_HOME } else { Join-Path $HOME '.local/share/pipx' }
+    $dirs += (Join-Path $pipxHome "venvs/$Venv/bin")
+  }
+  foreach ($d in $dirs) {
+    $f = Join-Path $d $Name
+    if (Test-Path -LiteralPath $f -PathType Leaf) { return $f }
+  }
+  return ''
 }
 
 # The busy guard install and update share: clear leftover staging dirs, then say
@@ -4012,7 +4076,11 @@ function Test-CoopPiConvergeAllowed([string]$Command = 'coop update') {
   if (-not (Test-Have 'pi')) { return $true }
   Remove-CoopPiStagingDirs
   if (-not (Test-CoopPiRunning)) { return $true }
+  if (-not (Test-CoopWindowsHost)) {
+    Coop-Warn 'a coop/pi session appears to be running — skipping the in-place Pi convergence (replacing the agent files under a running session can break it mid-turn and leave a `.pi-coding-agent-*` staging dir).'
+  } else {
   Coop-Warn 'a coop/pi session appears to be running — skipping the in-place Pi convergence (Windows locks open files, which can corrupt the agent install and leave a `.pi-coding-agent-*` staging dir).'
+  }
   Coop-Say  "      Close all coop/pi windows, then re-run: $Command"
   return $false
 }
@@ -4441,6 +4509,14 @@ function Invoke-CoopFabricCliConverge {
   if (Test-Path -LiteralPath $localFab) {
     $v = (& $localFab --version 2>$null | Select-Object -First 1)
     return (Coop-UnitResult $true "Microsoft Fabric CLI ready ($v)")
+  }
+  if (-not (Test-CoopWindowsHost)) {
+    # Linux/macOS: pipx links `fab` (no .exe) into PIPX_BIN_DIR, ~/.local/bin by default.
+    $localFab = Get-CoopUnixToolFallback 'fab' $Package
+    if ($localFab) {
+      $v = (& $localFab --version 2>$null | Select-Object -First 1)
+      return (Coop-UnitResult $true "Microsoft Fabric CLI ready ($v)")
+    }
   }
   return (Coop-UnitResult $false "$Package installed but 'fab' not on PATH yet — open a new shell")
 }
@@ -5257,7 +5333,7 @@ function Test-CoopOnboardingMissing {
 # The launch line for an incomplete profile, naming what is missing: with the
 # machine profile (P1) supplying the name, only this user's settings are.
 function Get-CoopOnboardingMissingMessage {
-  $what = if (Test-CoopUserProfileMissing) { 'user.json or config missing' } else { 'config missing: client platform and settings for this Windows user' }
+  $what = if (Test-CoopUserProfileMissing) { 'user.json or config missing' } else { "config missing: client platform and settings for this $(Get-CoopAccountNoun)" }
   return "COOP onboarding is incomplete ($what). Run: coop onboard"
 }
 

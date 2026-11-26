@@ -243,6 +243,10 @@ if (Test-CoopBundledRuntime) {
   # the window's shortcut is the way back in, not a clone's Install coop.cmd.
   $installCmd = "& `"$(Join-Path $script:CoopRoot 'bin\coop.cmd')`" install"
   $rerunHint = 'start the coop window again (its shortcut), which runs this setup once more'
+} elseif (-not (Test-Have 'coop') -and -not (Test-CoopWindowsHost)) {
+  # Linux personal edition: no Install coop.cmd; the clone's bash forwarder.
+  $installCmd = "$(Join-Path $script:CoopRoot 'bin/coop') install"
+  $rerunHint = "run: $installCmd"
 } elseif (-not (Test-Have 'coop')) {
   $installCmd = "& `"$(Join-Path $script:CoopRoot 'bin\coop.cmd')`" install"
   $rerunHint = "double-click Install coop.cmd again (or run: $installCmd)"
