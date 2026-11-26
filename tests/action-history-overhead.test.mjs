@@ -1,8 +1,11 @@
 // Change history (CW2), extended lane: what a write waits for. 200 real write
 // calls through the bundled guardrails' tool_call and tool_result handlers, with
-// the switch off and on; the per-write difference is the overhead the person
-// can feel (the design's bar: under 10 ms at p95). The recording itself runs
-// after the result (setImmediate) and is timed on its own, for the record.
+// the switch off and on, each to its own file (so no cache is warm); the
+// per-write difference is the overhead the person can feel (the design's bar:
+// under 10 ms at p95). Off runs no history code at all, so "on" carries every
+// cost: the folder check, the path rules and the two reads. Then one file just
+// under 5 MB (read twice on the tool path) and one excluded path (a .csv: never
+// read). The recording itself runs after the result and is timed on its own.
 //   COOP_TEST_DIST=<bundled extensions> node tests/action-history-overhead.test.mjs
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
@@ -20,6 +23,7 @@ mkdirSync(join(HOME, ".coop"), { recursive: true });
 mkdirSync(process.env.PI_CODING_AGENT_DIR, { recursive: true });
 const repo = join(root, "client");
 mkdirSync(join(repo, "docs"), { recursive: true });
+mkdirSync(join(repo, "data"), { recursive: true });
 spawnSync("git", ["init", "-q", repo]);
 
 const cg = await import(pathToFileURL(`${process.env.COOP_TEST_DIST}/coop-guardrails.mjs`).href);
@@ -44,11 +48,11 @@ async function run() {
     for (const mode of i % 2 ? ["on", "off"] : ["off", "on"]) {
       const h = handlers[mode];
       const toolCallId = `${mode}-${i}`;
-      const input = { path: "docs/perf.md", content: text(`${mode}${i}`) };
+      const input = { path: `docs/perf-${mode}-${i}.md`, content: text(`${mode}${i}`) };
       const t0 = performance.now();
       await h.tool_call({ toolName: "write", toolCallId, input }, ctx);
       const t1 = performance.now();
-      writeFileSync(join(repo, "docs", "perf.md"), input.content); // the tool itself, not timed
+      writeFileSync(join(repo, input.path), input.content); // the tool itself, not timed
       const t2 = performance.now();
       await h.tool_result({ toolName: "write", toolCallId, input, content: [], isError: false }, ctx);
       const t3 = performance.now();
@@ -59,6 +63,28 @@ async function run() {
   return times;
 }
 const pct = (xs, p) => { const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.ceil((p / 100) * s.length) - 1)]; };
+
+/** One write's handler time, off and on, `reps` times each: the medians. */
+async function one(path, content, reps = 5) {
+  const handlers = { off: load(false), on: load(true) };
+  const times = { off: [], on: [] };
+  for (let i = 0; i < reps; i++) {
+    for (const mode of ["off", "on"]) {
+      const h = handlers[mode];
+      const toolCallId = `one-${mode}-${path}-${i}`;
+      const input = { path, content };
+      const t0 = performance.now();
+      await h.tool_call({ toolName: "write", toolCallId, input }, ctx);
+      const t1 = performance.now();
+      writeFileSync(join(repo, path), content);
+      const t2 = performance.now();
+      await h.tool_result({ toolName: "write", toolCallId, input, content: [], isError: false }, ctx);
+      times[mode].push((t1 - t0) + (performance.now() - t2));
+      await cg.historySettled();
+    }
+  }
+  return { off: pct(times.off, 50), on: pct(times.on, 50) };
+}
 
 const { off, on } = await run();
 // The measurement is of a recorder that records: every "on" write has its line.
@@ -76,6 +102,13 @@ for (let i = 0; i < N; i++) {
   await lib.recordFileChange({ file, tool: "write", before });
   rec.push(performance.now() - t0);
 }
+const bigText = "x".repeat(lib.MAX_FILE_BYTES - 1024);
+writeFileSync(join(repo, "docs", "big.md"), bigText);
+const big = await one("docs/big.md", `${bigText.slice(1)}y`);
+const bigLine = lib.readEntries(lib.storeFor(repo).store, { limit: 5 }).find((e) => e.target === "docs/big.md");
+assert.ok(bigLine && bigLine.after && !bigLine.excluded, "the 5 MB file's content is kept");
+const excluded = await one("data/extract.csv", text("csv"));
+assert.equal(lib.readEntries(lib.storeFor(repo).store, { limit: 5 }).find((e) => e.target === "data/extract.csv").excluded, "data file");
 const ms = (x) => `${x.toFixed(3)} ms`;
 const report = {
   writes: N,
@@ -83,12 +116,16 @@ const report = {
   inlineOn: { median: pct(on, 50), p95: pct(on, 95) },
   overhead: { median: pct(on, 50) - pct(off, 50), p95: pct(on, 95) - pct(off, 95) },
   deferredRecord: { median: pct(rec, 50), p95: pct(rec, 95) },
+  file5MB: { off: big.off, on: big.on, overhead: big.on - big.off },
+  excludedCsv: { off: excluded.off, on: excluded.on, overhead: excluded.on - excluded.off },
 };
-console.log(`  change history per-write cost over ${N} writes (4.7 KB file):`);
+console.log(`  change history per-write cost over ${N} writes (4.7 KB files, a new file each write):`);
 console.log(`    guardrails handlers, history off: median ${ms(report.inlineOff.median)}, p95 ${ms(report.inlineOff.p95)}`);
 console.log(`    guardrails handlers, history on:  median ${ms(report.inlineOn.median)}, p95 ${ms(report.inlineOn.p95)}`);
 console.log(`    overhead a write waits for:       median ${ms(report.overhead.median)}, p95 ${ms(report.overhead.p95)}`);
 console.log(`    deferred recording (after the result): median ${ms(report.deferredRecord.median)}, p95 ${ms(report.deferredRecord.p95)}`);
+console.log(`    one file just under 5 MB (median of 5): off ${ms(big.off)}, on ${ms(big.on)}, overhead ${ms(big.on - big.off)}`);
+console.log(`    one excluded path (.csv, median of 5):  off ${ms(excluded.off)}, on ${ms(excluded.on)}, overhead ${ms(excluded.on - excluded.off)}`);
 if (process.env.COOP_HISTORY_PERF_JSON) writeFileSync(process.env.COOP_HISTORY_PERF_JSON, JSON.stringify(report, null, 2));
 assert.ok(report.inlineOn.p95 - report.inlineOff.p95 < 10, `p95 overhead ${ms(report.overhead.p95)} is under 10 ms`);
 console.log("  ✓ change history adds under 10 ms per write at p95");
