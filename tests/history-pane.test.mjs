@@ -20,10 +20,14 @@ spawnSync("git", ["init", "-q", repo]);
 const lib = await import("../lib/action-history.mjs");
 const view = await import("../desktop/lib/history-view.mjs");
 const liveDom = await import("./fixtures/fake-dom.mjs");
-const { mountChanges, historyOn, restorePrompt } = await import("../desktop/renderer/pane-changes.mjs");
+const { mountChanges, historyOn, restorePrompt, historyRegisteredIn } = await import("../desktop/renderer/pane-changes.mjs");
 
 let n = 0;
-const check = async (name, fn) => { await fn(); n++; console.log(`  ✓ ${name}`); };
+let failed = 0;
+// Each check reports on its own, so one failure does not hide the next.
+const check = async (name, fn) => {
+  try { await fn(); n++; console.log(`  ✓ ${name}`); } catch (error) { failed++; console.log(`  ✗ ${name}\n    ${String(error && error.message || error).split("\n")[0]}`); }
+};
 
 // A real store: two edits of one file, one data extract (not kept), one record-only line.
 const file = join(repo, "sql", "v.sql");
@@ -36,7 +40,7 @@ writeFileSync(file, "SELECT 2\nFROM b\n");
 const e2 = await lib.recordFileChange({ file, tool: "edit", before, approval: "asked-once", session: "s1", env });
 writeFileSync(join(repo, "out.csv"), "a,b\n");
 const e3 = await lib.recordFileChange({ file: join(repo, "out.csv"), tool: "write", before: null, session: "s1", env });
-const e4 = lib.recordCallOnly({ cwd: repo, tool: "bash", approval: "asked-once", label: "rm -rf", env });
+const e4 = await lib.recordCallOnly({ cwd: repo, tool: "bash", approval: "asked-once", label: "rm -rf", env });
 
 await check("the main process's read path: off answers nothing; on lists newest first and gives one change's diff", () => {
   assert.equal(view.historyRows(repo, { on: false, env }).success, false);
@@ -52,19 +56,19 @@ await check("the main process's read path: off answers nothing; on lists newest 
   for (const v of [undefined, {}, { ok: false, features: [{ key: "history", on: true }] }, { ok: true, features: [{ key: "history", on: "true" }] }]) assert.equal(view.historyOnIn(v), false);
 });
 
-function pane(on) {
+function pane(on, { registered = true, repos = [{ id: "", label: "w", rel: "" }], current = "" } = {}) {
   const dom = liveDom.installLiveDom();
   const box = new liveDom.FakeElement("div");
   dom.body.append(box);
-  const h = { on, prompts: [], asked: [] };
+  const h = { on, registered, prompts: [], asked: [] };
   const coop = {
-    changes: async () => ({ success: true, data: { repos: [{ id: "", label: "w", rel: "" }], current: "", repo: true, files: [{ path: "sql/v.sql", status: "modified", added: 1, removed: 1 }], drafts: [], draftsDir: "" } }),
+    changes: async () => ({ success: true, data: { repos, current, repo: true, files: [{ path: "sql/v.sql", status: "modified", added: 1, removed: 1 }], drafts: [], draftsDir: "" } }),
     changeDiff: async () => ({ success: true, data: { diff: "@@ -1 +1 @@\n-a\n+b" } }),
     history: async () => { h.asked.push("history"); return view.historyRows(repo, { on: h.on, env }); },
     historyDiff: async (id) => view.historyDiff(repo, id, { on: h.on, env }),
     openInEditor: async () => ({ success: true, data: {} }),
   };
-  h.api = mountChanges(box, {}, { coop, cwd: () => repo, setPrompt: (t) => h.prompts.push(t), getPrompt: () => "", commentsOn: () => true, historyOn: () => h.on });
+  h.api = mountChanges(box, {}, { coop, cwd: () => repo, setPrompt: (t) => h.prompts.push(t), getPrompt: () => "", commentsOn: () => true, historyOn: () => h.on, historyRegistered: () => h.registered });
   return Object.assign(h, { dom, box, q: (s) => box.querySelector(s), all: (s) => box.querySelectorAll(s) });
 }
 
@@ -134,4 +138,43 @@ await check("the Restore prompt carries only the id", () => {
   assert.equal(historyOn({ ok: true, features: [{ key: "history", on: false }] }), false);
 });
 
+// --- Fix round (Neon's review B1, B2) --------------------------------------------
+
+await check("B2: on, but /history not registered in this coop (turned on after it started): no Restore, a note to restart", async () => {
+  const h = pane(true, { registered: false });
+  await h.dom.settle();
+  h.dom.click(h.q(".change-views").querySelectorAll("button")[1]);
+  await h.dom.settle();
+  h.dom.click(h.all(".history-row")[2]);
+  await h.dom.settle();
+  assert.equal(h.q(".change-restore"), null, "no Restore: /history would go to the model as a prompt");
+  assert.match(h.q(".change-restore-note").textContent, /run \/new or restart coop/);
+  assert.deepEqual(h.prompts, []);
+  // Pi's command list decides it.
+  assert.equal(historyRegisteredIn([{ name: "approvals" }, { name: "history", source: "extension" }]), true);
+  for (const c of [undefined, [], [{ name: "approvals" }], [null]]) assert.equal(historyRegisteredIn(c), false);
+});
+
+await check("B1: Restore names the repository the pane picked (a file's history is in its own repository)", async () => {
+  const h = pane(true, { repos: [{ id: "", label: "w", rel: "" }, { id: "sqlA", label: "sqlA", rel: "sqlA" }], current: "sqlA" });
+  await h.dom.settle();
+  h.dom.click(h.q(".change-views").querySelectorAll("button")[1]);
+  await h.dom.settle();
+  h.dom.click(h.all(".history-row")[2]);
+  await h.dom.settle();
+  h.dom.click(h.q(".change-restore"));
+  assert.deepEqual(h.prompts, [`/history restore ${e2.id} sqlA`]);
+  assert.equal(restorePrompt("ab12cd34", "../other repo\n"), "/history restore ab12cd34 ../other repo");
+});
+
+await check("a CRLF-only change says so instead of an empty diff", async () => {
+  const f = join(repo, "sql", "crlf.sql");
+  writeFileSync(f, "a\nb\n");
+  const b0 = readFileSync(f);
+  writeFileSync(f, "a\r\nb\r\n");
+  const e = await lib.recordFileChange({ file: f, tool: "write", before: b0, env });
+  assert.match(view.historyDiff(repo, e.id, { on: true, env }).data.error, /No lines changed: only line endings \(CRLF\/LF\) changed/);
+});
+
+if (failed) { console.log(`  ✗ ${failed} change history pane test(s) FAILED`); process.exit(1); }
 console.log(`  ${n} change history pane tests passed`);

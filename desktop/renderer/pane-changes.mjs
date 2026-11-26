@@ -108,23 +108,39 @@ export function fixLinePrompt({ path, line, text, note }) {
 // diffs again it re-anchors each comment. Comments live in this tab's memory
 // only. Off (or an unreadable setting), the pane is ED1 exactly.
 
-/** True only when the window's feature list says Change history (CW2) is on. */
-export function historyOn(view) {
+/** True only when the window's feature list says feature `key` is on (an
+ *  unreadable list, or anything but a literal true, is off). */
+function featureOnIn(view, key) {
   if (!view || view.ok === false || !Array.isArray(view.features)) return false;
-  return view.features.some((f) => f && f.key === "history" && f.on === true);
+  return view.features.some((f) => f && f.key === key && f.on === true);
 }
 
-/** What a History row's Restore button puts in the prompt (the person sends it; the guardrails ask). */
-export function restorePrompt(id) {
-  return `/history restore ${String(id || "").replace(/[^0-9a-f]/gi, "")}`;
+/** True only when the window's feature list says Change history (CW2) is on. */
+export function historyOn(view) {
+  return featureOnIn(view, "history");
+}
+
+/** What a History row's Restore button puts in the prompt (the person sends it; the
+ *  guardrails ask): the id, and the repository the pane picked (its folder relative
+ *  to the open folder) when it is not the open folder's own, since a file's history
+ *  lives in its own repository's store. */
+export function restorePrompt(id, repoRel = "") {
+  const rel = String(repoRel || "").replace(/[\u0000-\u001f\u007f]/g, "").trim();
+  return `/history restore ${String(id || "").replace(/[^0-9a-f]/gi, "")}${rel ? ` ${rel}` : ""}`;
+}
+
+/** True only when Pi's command list (get_commands) has /history: this coop
+ *  registered it at start. A slash command it lacks would go to the model as a
+ *  plain prompt, so Restore is offered only then. */
+export function historyRegisteredIn(commands) {
+  return Array.isArray(commands) && commands.some((c) => c && c.name === "history");
 }
 
 const APPROVAL_TEXT = { "none-needed": "no approval needed", "asked-once": "you approved it", "session-grant": "a session approval", "production-desk": "approved at the desk (production)", "restore-approved": "a restore you approved" };
 
 /** True only when the window's feature list says Diff review comments is on. */
 export function commentsOn(view) {
-  if (!view || view.ok === false || !Array.isArray(view.features)) return false;
-  return view.features.some((f) => f && f.key === "comments" && f.on === true);
+  return featureOnIn(view, "comments");
 }
 
 /**
@@ -317,7 +333,7 @@ export function reviewPrompt(comments) {
   return [`Review comments on the Changes pane${where}:`, ...comments.map((c, i) => commentLine(c, i + 1)), "Revise under the usual rules; answer each by number."].join("\n");
 }
 
-export function mountChanges(box, options, { coop, cwd, setPrompt, getPrompt, commentsOn: isCommentsOn, historyOn: isHistoryOn }) {
+export function mountChanges(box, options, { coop, cwd, setPrompt, getPrompt, commentsOn: isCommentsOn, historyOn: isHistoryOn, historyRegistered: isHistoryRegistered }) {
   // `model` is the parsed diff, parsed once when the diff arrives; `ticket` names
   // the latest diff request, so a late answer for an earlier one is dropped.
   const state = { files: [], drafts: [], draftsDir: "", selected: "", mode: "unified", query: "", active: 0, matches: [], diff: null, loading: false, repos: [], repo: null, comments: [], anchor: null, model: null, nextComment: 1, ticket: 0, lastBatch: [], lastPrompt: "" };
@@ -327,6 +343,8 @@ export function mountChanges(box, options, { coop, cwd, setPrompt, getPrompt, co
   state.view = "changes";
   state.history = [];
   const historyEnabled = () => { try { return typeof isHistoryOn === "function" && isHistoryOn() === true; } catch { return false; } };
+  // Restore needs /history in this coop (registered at start, with the switch on then).
+  const historyRunnable = () => { try { return typeof isHistoryRegistered === "function" && isHistoryRegistered() === true; } catch { return false; } };
   const viewRow = el("div", { class: "pane-toolbar change-views", role: "tablist", "aria-label": "Which changes to show" });
   // Shown only when the open folder holds more than one repository.
   const repoPicker = el("select", { class: "field", "aria-label": "Repository to compare", title: "Which repository's changes to show", onchange: (event) => load("", event.target.value) });
@@ -400,8 +418,11 @@ export function mountChanges(box, options, { coop, cwd, setPrompt, getPrompt, co
     renderHistoryList();
     const entry = state.history.find((e) => e.id === id);
     const restorable = Boolean(entry && entry.kind === "file" && !entry.excluded && !entry.created);
-    fill(fileHead, entry ? el("code", { text: `${entry.target} (change ${entry.id}, ${String(entry.ts || "").replace("T", " ").slice(0, 16)})` }) : "",
-      restorable ? el("button", { type: "button", class: "btn change-restore", title: "Put /history restore in the prompt; you send it, and coop asks before it writes (with a backup first)", onclick: () => { if (typeof setPrompt === "function") setPrompt(restorePrompt(id)); } }, "Restore") : null);
+    const repo = state.repos.find((r) => r.id === state.repo);
+    const action = !restorable ? null
+      : historyRunnable() ? el("button", { type: "button", class: "btn change-restore", title: "Put /history restore in the prompt; you send it, and coop asks before it writes (with a backup first)", onclick: () => { if (typeof setPrompt === "function" && historyRunnable()) setPrompt(restorePrompt(id, repo ? repo.rel : "")); } }, "Restore")
+        : el("span", { class: "change-restore-note", text: "Restore needs /history, which this session does not have yet (Change history was turned on after it started): run /new or restart coop" });
+    fill(fileHead, entry ? el("code", { text: `${entry.target} (change ${entry.id}, ${String(entry.ts || "").replace("T", " ").slice(0, 16)})` }) : "", action);
     fill(diffBox, el("div", { class: "working" }, el("span", { class: "spinner" }), el("span", { text: "Reading the change" })));
     const result = await coop.historyDiff(id);
     if (ticket !== state.ticket || state.selected !== `history:${id}`) return;
