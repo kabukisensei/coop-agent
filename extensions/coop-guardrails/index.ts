@@ -4483,10 +4483,15 @@ async function enforce(call: Call, session: Session): Promise<Decision> {
 // Calls the guardrails asked about that are not file edits (a live write, a
 // shell command) get a record-only line with the audit's own label.
 const HISTORY_PENDING_MAX = 64;
+const HISTORY_WRITES = new Set<Promise<void>>();
+/** Resolves once every recording started so far has finished (tests; /history restore). */
+export function historySettled(): Promise<unknown> {
+  return Promise.allSettled([...HISTORY_WRITES]);
+}
 class HistoryRecorder {
   on = false;
   readonly pending = new Map<string, any>();
-  readonly writes = new Set<Promise<void>>();
+  readonly writes = HISTORY_WRITES;
   private warned = false;
   constructor(private session: Session, private enabled: () => boolean) { this.readSwitch(); }
   readSwitch(): void {

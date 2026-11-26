@@ -668,6 +668,7 @@ print("resume verdict contract OK")
     @{ Name = 'cleanup';                Lane = 'gate';     Head = 'cleanup of old sessions, backups and drafts' },
     @{ Name = 'settings';               Lane = 'gate';     Head = 'coop settings: the Features list, all off by default, through the one ~/.coop/config writer' },
     @{ Name = 'client-rules';           Lane = 'gate';     Head = 'client instructions (CW1): coop settings set instructions on, and the doctor row from the one loader' },
+    @{ Name = 'history';                Lane = 'gate';     Head = 'change history (CW2): coop settings set history on, whole-month cleanup, and the doctor row' },
     @{ Name = 'update-follow';          Lane = 'gate';     Head = 'coop update follows release tags (never backwards)' },
     @{ Name = 'release-tag-version';    Lane = 'gate';     Head = 'a release tag counts only when VERSION at that tag matches' },
     @{ Name = 'version-describe';       Lane = 'gate';     Head = 'coop version and doctor --publish carry git describe' },

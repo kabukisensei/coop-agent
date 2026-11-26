@@ -46,7 +46,6 @@ git("add", "-A");
 git("commit", "-q", "-m", "init");
 
 const setSwitch = (on) => writeFileSync(CONFIG, JSON.stringify({ features: { history: on } }));
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** A fresh guardrails instance (it reads the switch at load, as after /new). */
 function load({ confirm = async () => true, hasUI = true, sessionId = "sess-1" } = {}) {
@@ -94,15 +93,14 @@ function load({ confirm = async () => true, hasUI = true, sessionId = "sess-1" }
 }
 
 const store = () => lib.storeFor(repo).store;
-/** Wait for the deferred recording (it runs after the result, off the critical path). */
+/** The deferred recording (it runs after the result, off the critical path), once it has finished. */
 async function lines(expected, s = store()) {
-  for (let i = 0; i < 200; i++) {
-    const got = lib.readEntries(s, { limit: Infinity });
-    if (got.length >= expected) return got;
-    await sleep(10);
-  }
-  return lib.readEntries(s, { limit: Infinity });
+  await cg.historySettled();
+  const got = lib.readEntries(s, { limit: Infinity });
+  assert.ok(got.length >= expected, `${expected} line(s) recorded, found ${got.length}`);
+  return got;
 }
+const settled = () => cg.historySettled();
 const blobCount = (s = store()) => readdirSync(s).filter((m) => /^\d{4}-\d{2}$/.test(m)).reduce((n, m) => n + (existsSync(join(s, m, "blobs")) ? readdirSync(join(s, m, "blobs")).length : 0), 0);
 const reset = () => { rmSync(HISTORY, { recursive: true, force: true }); lib.clearGitIgnoredCache(); };
 
@@ -114,12 +112,12 @@ test("off (the default): no history folder, no /history, the write goes through 
   const r = await g.fileTool("write", "docs/off.md", "off\n");
   assert.equal(r.blocked, false);
   assert.equal(r.result, undefined, "tool_result changes nothing");
-  await sleep(50);
+  await settled();
   assert.equal(existsSync(HISTORY), false, "off makes no folder");
   setSwitch(false);
   const g2 = load();
   await g2.fileTool("write", "docs/off.md", "still off\n");
-  await sleep(50);
+  await settled();
   assert.equal(existsSync(HISTORY), false, "an explicit false is off too");
 });
 
@@ -247,11 +245,11 @@ test("approval paths: asked once, session grant, record-only lines for a shell c
   assert.match(lib.notRestorable(e), /not restorable here/);
   // A plain read-only command that asks nothing is not recorded.
   await g.call("bash", { command: "ls docs" });
-  await sleep(50);
+  await settled();
   assert.equal(lib.readEntries(store(), { limit: Infinity }).length, 1);
   // A read is never recorded, even one that asked.
   await g.call("read", { path: ".env" });
-  await sleep(50);
+  await settled();
   assert.equal(lib.readEntries(store(), { limit: Infinity }).length, 1);
 });
 
@@ -355,7 +353,7 @@ test("a failure to record never fails the write: one notice, one audit row", asy
     assert.equal(r.blocked, false);
     assert.equal(r.result, undefined);
     assert.equal(readFileSync(join(repo, "docs", "f.md"), "utf8"), "y\n");
-    await sleep(100);
+    await settled();
     const warned = g.notices.filter((x) => /^change history paused:/.test(x.m));
     assert.equal(warned.length, 1, "one notice per session");
     const audit = readFileSync(join(process.env.PI_CODING_AGENT_DIR, "guardrails-audit.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));

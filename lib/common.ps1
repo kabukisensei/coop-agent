@@ -2361,6 +2361,26 @@ function Get-CoopClientRulesStatus([string]$Cwd) {
   return @{ Data = $null; Error = $err }
 }
 
+# Change history (CW2) for doctor: lib\action-history.mjs status --json (ASCII
+# JSON): @{ Data = { root, stores, months, bytes, cap }; Error }.
+function Get-CoopHistoryStatus {
+  if (-not (Test-Have 'node')) { return @{ Data = $null; Error = 'Node.js is not on PATH (coop needs it; run coop doctor)' } }
+  $cli = Join-Path $script:CoopRoot 'lib\action-history.mjs'
+  $eap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    $items = @(& node $cli 'status' '--json' 2>&1)
+    $rc = $LASTEXITCODE
+  } finally { $ErrorActionPreference = $eap }
+  $out = @($items | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | ForEach-Object { [string]$_ }) -join "`n"
+  $err = (@($items | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } | ForEach-Object { [string]$_.Exception.Message }) -join "`n").Trim()
+  $data = $null
+  if ($rc -eq 0 -and $out) { try { $data = $out | ConvertFrom-Json } catch { $data = $null } }
+  if ($null -ne $data) { return @{ Data = $data; Error = '' } }
+  if (-not $err) { $err = "lib\action-history.mjs exited $rc" }
+  return @{ Data = $null; Error = $err }
+}
+
 # The writer's --json answer as @{ Data; Error }: Data is the parsed object
 # ($null when there is none), Error the reason a call failed ("" when it did
 # not). Its JSON is ASCII, so no console code page garbles a path in it.
@@ -2451,7 +2471,36 @@ function Get-CoopCleanupTargets {
   foreach ($stale in @(Get-CoopStaleDesktopDataDirs -Days $Days -Now $Now)) {
     $targets += [pscustomobject]@{ Name = 'old window data'; Root = $stale; Filter = @('*'); Entries = @(); Days = 0; Extra = $true; DropRoot = $true; MinBytes = 0; MaxBytes = 0; FilesOnly = $false; All = $true }
   }
+  # Change history (FEATURES-DESIGN CW2, Aaron 2026-11-26: the cleanup age): a
+  # month folder whose whole month is older than the age goes whole, never a
+  # single file inside a month (its log names the blobs beside it).
+  foreach ($month in @(Get-CoopStaleHistoryMonthDirs -Days $Days -Now $Now)) {
+    $targets += [pscustomobject]@{ Name = 'old change history'; Root = $month; Filter = @('*'); Entries = @(); Days = 0; Extra = $true; DropRoot = $true; MinBytes = 0; MaxBytes = 0; FilesOnly = $false; All = $true }
+  }
   return $targets
+}
+
+# The change history's month folders (<profile dir>\history\<repo>-<hash8>\<yyyy-MM>)
+# whose month ended more than $Days days ago. Links and junctions are never
+# followed; a folder with another name is left alone.
+function Get-CoopStaleHistoryMonthDirs {
+  param([int]$Days = (Get-CoopCleanupDays), [datetime]$Now = [datetime]::UtcNow)
+  $stale = @()
+  if ($Days -le 0) { return $stale }
+  $root = Join-Path (Get-CoopProfileDir) 'history'
+  if (-not (Test-Path -LiteralPath $root -PathType Container)) { return $stale }
+  $cutoff = $Now.ToUniversalTime().AddDays(-1 * $Days)
+  foreach ($store in @(Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction SilentlyContinue)) {
+    if (Test-CoopReparsePoint $store) { continue }
+    foreach ($m in @(Get-ChildItem -LiteralPath $store.FullName -Directory -Force -ErrorAction SilentlyContinue)) {
+      if ((Test-CoopReparsePoint $m) -or $m.Name -notmatch '^(\d{4})-(\d{2})$') { continue }
+      $year = [int]$Matches[1]; $mon = [int]$Matches[2]
+      if ($mon -lt 1 -or $mon -gt 12) { continue }
+      $end = (New-Object System.DateTime($year, $mon, 1, 0, 0, 0, [System.DateTimeKind]::Utc)).AddMonths(1)
+      if ($end -lt $cutoff) { $stale += $m.FullName }
+    }
+  }
+  return $stale
 }
 
 # Backups this size or larger are kept a week (the 'large backups' target).

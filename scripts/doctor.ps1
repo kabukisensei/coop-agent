@@ -939,6 +939,16 @@ if ($null -eq $featureList) {
           else { D-Ok $fact }
         }
       }
+      'history' {
+        # The store's size against its 1 GB cap; whole month folders go by the cleanup age.
+        $hist = Get-CoopHistoryStatus
+        if ($hist.Error) { D-Warn 'Change history on, but coop could not read its folder' $hist.Error }
+        else {
+          $fact = "Change history on: $([int]$hist.Data.months) month folder(s), $(Format-CoopBytes ([long]$hist.Data.bytes)) of $(Format-CoopBytes ([long]$hist.Data.cap)) ($($hist.Data.root))"
+          if ([long]$hist.Data.bytes -ge [long]$hist.Data.cap) { D-Warn $fact 'over the cap: the oldest month folders go at the next session start' }
+          else { D-Ok $fact }
+        }
+      }
       'sql-source' {
         if (Test-Have 'coop-sqlsc') { D-Ok 'SQL source control on: coop-sqlsc is installed' }
         else { D-Warn 'SQL source control on, but coop-sqlsc is not installed' 'coop update (the coop window package carries it)' }
