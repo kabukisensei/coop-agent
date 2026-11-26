@@ -236,7 +236,7 @@ export function shellHistoryTarget(cmd: string, cwd: string, env: Record<string,
         if (glob >= 0) {
           const literal = v.slice(0, glob);
           if (!literal) continue;
-          const prefix = rootKey(resolveDir(literal, dir)) + (/[\\/]$/.test(literal) ? "/" : "");
+          const prefix = rootKey(resolveDir(literal, dir)).replace(/\/+$/, "") + (/[\\/]$/.test(literal) ? "/" : "");
           if (root.startsWith(prefix) && !root.slice(prefix.length).includes("/")) return v;
           continue;
         }

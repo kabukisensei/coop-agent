@@ -220,6 +220,8 @@ echo "→ client instructions (CW1): off is today's behaviour (the 03600165 gold
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/client-instructions-off.test.mjs"
 echo "→ client instructions (CW1) and the guardrails: a real git repository, the commit prompt"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/client-rules-guardrails.test.mjs"
+echo "→ change history (CW2): the store, real writes through the guardrails, restore, the folder block"
+COOP_TEST_DIST="$TMP" node --test --test-reporter=spec "$ROOT/tests/action-history.test.mjs"
 echo "→ client instructions (CW1) across /new: the installed Pi's own extension loader"
 # The Pi package behind `pi` on PATH (the pinned one, when the caller puts it first).
 PI_PKG=""
@@ -431,6 +433,9 @@ if [ "${COOP_TEST_EXTENDED:-0}" = "1" ]; then
   echo "→ Fabric request headers and SQL launcher (MCP launch phases: tests/fixtures/fabric-mcp-launch.test.ps1 in run.ps1)"
   node "$ROOT/tests/fabric-request-headers.test.mjs"
   COOP_TEST_DIST="$TMP" node "$ROOT/tests/fabric-sql-launcher.test.mjs"
+
+  echo "→ change history (CW2): per-write overhead over 200 writes (under 10 ms at p95)"
+  COOP_TEST_DIST="$TMP" node "$ROOT/tests/action-history-overhead.test.mjs"
 
   echo "→ coop window: Pi as a real process (dialogs, hang, crash, leftover children)"
   node "$ROOT/tests/desktop-rpc.test.mjs"
