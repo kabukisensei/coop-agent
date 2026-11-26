@@ -101,6 +101,11 @@ source = (ROOT / "extensions" / "coop-tools" / "index.ts").read_text(encoding="u
 markers = re.findall(r"^\s*//\s*coop:feature\s+(\S+)\s*$", source, re.MULTILINE)
 assert markers and all(m in known for m in markers), markers
 ok("every coop:feature marker names a feature from lib/features.mjs")
+# A marker that is not directly above its registerTool call (above an `if`, or
+# after a blank line) names a real feature but does not count: the tool would
+# stay in the default-off total. Every marker in the file must be one that counts.
+assert len(markers) == len(switched), (markers, switched)
+ok("every coop:feature marker in coop-tools counts (none misplaced)")
 
 human = subprocess.run([sys.executable, str(ROOT / "scripts" / "context-budget.py")], cwd=ROOT, capture_output=True, text=True, check=True).stdout
 assert "Estimated fixed total, default-off" in human and "Estimated fixed total, all-on" in human, human

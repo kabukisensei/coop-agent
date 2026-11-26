@@ -454,7 +454,9 @@ function Invoke-CoopSettings {
   }
   Write-Host ''
   Write-Host 'Other settings'
-  $days = Get-CoopCleanupDays
+  # The same read as the features above (lib\features.mjs reads cleanup.days as
+  # Get-CoopCleanupDays does), not a second read of ~/.coop/config.
+  $days = [int]$list.cleanup.days
   $cleanup = if ($days -gt 0) { "$days days" } else { 'off' }
   Write-Host ('  {0,-10}{1,-10}{2}' -f 'cleanup', $cleanup, '(coop cleanup days <N>|off)')
   $startup = 'n/a'

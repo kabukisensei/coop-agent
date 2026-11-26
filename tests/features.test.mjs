@@ -6,10 +6,10 @@
 // /sql-source writing through the same writer.
 //
 // Run: node --test tests/features.test.mjs (tests/run.sh runs it in the gate lane).
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, utimesSync, writeFileSync, existsSync, readdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -20,6 +20,8 @@ const CLI = join(ROOT, "lib", "features.mjs");
 const HOME = mkdtempSync(join(tmpdir(), "coop-features-"));
 process.env.COOP_DIR = HOME;
 const lib = await import("../lib/features.mjs");
+const TEMPS = [HOME];
+after(() => { for (const dir of TEMPS) rmSync(dir, { recursive: true, force: true }); });
 const sqlsc = await import("../lib/sqlsc.mjs");
 
 let n = 0;
@@ -240,7 +242,7 @@ test("two writers at once (the window in-process and the CLI) lose no update", a
   const cliRuns = () => new Promise((done, fail) => {
     let left = 6;
     for (let i = 0; i < 6; i++) {
-      const child = spawn(process.execPath, [CLI, "set", "comments", i % 2 ? "off" : "on"], { env: { ...process.env, COOP_DIR: coopDir }, stdio: "ignore" });
+      const child = spawn(process.execPath, [CLI, "set", "comments", i % 2 ? "off" : "on"], { env: { ...process.env, COOP_DIR: coopDir, COOP_CONFIG_LOCK_WAIT_MS: "10000" }, stdio: "ignore" });
       child.on("exit", (rc) => { if (rc !== 0) fail(new Error(`cli exited ${rc}`)); else if (--left === 0) done(); });
     }
   });
@@ -290,6 +292,31 @@ test("the CLI: show, set, cleanup-days and its exit codes", () => {
   r = runCli(["show"], coopDir);
   assert.equal(r.status, 0, "show still answers");
   assert.match(r.stdout, /every feature reads as off/);
+});
+
+test("the CLI: COOP_CONFIG_LOCK_WAIT_MS sets its lock wait; --file needs a value; cleanup-days keeps its siblings", () => {
+  const file = fresh('{"a":1}');
+  const coopDir = dirname(dirname(file));
+  const lock = join(dirname(file), "config.lock");
+  writeFileSync(lock, "held");
+  const started = Date.now();
+  const r = spawnSync(process.execPath, [CLI, "set", "comments", "on", "--file", file], { encoding: "utf8", env: { ...process.env, COOP_CONFIG_LOCK_WAIT_MS: "100" } });
+  const took = Date.now() - started;
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, /another coop is changing/);
+  assert.ok(took < 1500, `the 100 ms wait was used, not the 2 s default (${took} ms)`);
+  rmSync(lock);
+  // --file with no value is a usage error, not a write to the real profile's config.
+  const own = fresh();
+  const ownDir = dirname(dirname(own));
+  const bare = spawnSync(process.execPath, [CLI, "set", "comments", "on", "--file"], { encoding: "utf8", env: { ...process.env, COOP_DIR: ownDir } });
+  assert.equal(bare.status, 2, bare.stdout + bare.stderr);
+  assert.ok(!existsSync(own), "nothing written to the default config");
+  // cleanup-days keeps other keys in the cleanup block.
+  writeFileSync(file, JSON.stringify({ schema_version: 1, cleanup: { days: 30, note: "kept" } }));
+  lib.setCleanupDays(12, { file });
+  assert.deepEqual(read(file).cleanup, { days: 12, note: "kept" });
+  void coopDir;
 });
 
 test("/sql-source on|off writes through the one writer", () => {
@@ -396,6 +423,7 @@ test("session start names the features that are on, and says nothing while every
     exec: async () => ({ code: 1, stdout: "", stderr: "" }),
   });
   const cwd = mkdtempSync(join(tmpdir(), "coop-features-cwd-"));
+  TEMPS.push(cwd);
   const start = async () => {
     const notices = [];
     const ctx = { cwd, hasUI: false, ui: { notify: (m) => notices.push(String(m)), setStatus: () => {} }, sessionManager: { getSessionId: () => "s", getSessionFile: () => "" } };

@@ -1445,7 +1445,10 @@ await check("review comments: past MAX_ROWS the diff is cut and comment controls
 await check("review comments: the window wiring (one writer in-process, applies at once, nothing written by the pane)", () => {
   const main = readFileSync(join(ROOT, "desktop", "main.mjs"), "utf8");
   assert.match(main, /import \{ changedText, featureFor, listFeatures, setFeature \} from "\.\.\/lib\/features\.mjs";/, "main imports the one writer from the bundled coop folder");
-  assert.ok(!/powershell|coop\.ps1.*settings/i.test(main.slice(main.indexOf('handle("coop:feature-set"'), main.indexOf('handle("coop:copy"'))), "no PowerShell start per click");
+  const setAt = main.indexOf('handle("coop:feature-set"');
+  const endAt = main.indexOf("\nhandle(", setAt + 1);
+  assert.ok(setAt > 0 && endAt > setAt, "the coop:feature-set handler and the one after it are found, in order");
+  assert.ok(!/powershell|coop\.ps1.*settings/i.test(main.slice(setAt, endAt)), "no PowerShell start per click");
   assert.match(main, /broadcast\("coop:features", view\)/, "every tab hears a change at once");
   assert.match(main, /features: featureView\(state\)/);
   const preload = readFileSync(join(ROOT, "desktop", "preload.cjs"), "utf8");
