@@ -24,9 +24,12 @@
 # Python and Node run from, and any process from it makes the task wait an hour.
 # Each step's outcome goes to <profile>\.coop\logs\sign-in.log. Windows
 # PowerShell 5.1 syntax. The tests dot-source this file for its functions:
-# nothing runs then.
+# nothing runs then. The Run entry passes no parameter; the fixtures pass
+# -PowerShellPath (a stand-in for the built-in powershell.exe) and -NoPause.
 param(
-  [int]$WaitMinutes = 12
+  [int]$WaitMinutes = 12,
+  [string]$PowerShellPath = '',
+  [switch]$NoPause
 )
 
 # Release lookup, version compare and the trimmed log line, shared with the task.
@@ -75,6 +78,7 @@ function Get-CoopSignInRefreshLine([string]$Outcome) {
     'started' { return 'scheduled 20 minutes after sign-in (it runs in the background)' }
     'pending' { return 'already scheduled' }
     'done' { return 'already ran today' }
+    'failed' { return 'could not start the background refresh; the next coop start tries again' }
   }
   return $Outcome
 }
@@ -85,9 +89,8 @@ function Write-CoopSignInLine([string]$Text) {
   Write-Host "  $Text"
   if ($script:SignInLog) { try { Add-CoopUpdateLogLine $script:SignInLog $Text } catch { } }
 }
-# COOP_BUILTIN_POWERSHELL: the fixtures' stand-in (scripts\docs-refresh.ps1 reads it too).
 function Get-CoopSignInPowerShell {
-  if ($env:COOP_BUILTIN_POWERSHELL) { return [string]$env:COOP_BUILTIN_POWERSHELL }
+  if ($PowerShellPath) { return $PowerShellPath }
   return (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe')
 }
 # While an update installs, coop's icons lead nowhere for several minutes, so
@@ -185,19 +188,23 @@ function Invoke-CoopSignIn {
     # 4. The daily lineage refresh. Off (the default) costs one look at the
     #    config's text (lib\common.ps1 Start-CoopDocsRefreshAtLaunch makes the
     #    same check); the starter is loaded only when it may be on.
-    $settings = Join-Path $profileDir 'config'
-    if ((Test-Path -LiteralPath $settings -PathType Leaf) -and ([System.IO.File]::ReadAllText($settings) -match '"docs_refresh"\s*:\s*true')) {
-      . (Join-Path $PSScriptRoot 'docs-refresh.ps1')
-      $refresh = Start-CoopDocsRefresh -ProfileDir $profileDir -From 'signin' -StartedAt $start
-      if ($refresh -ne 'off') { Write-CoopSignInLine "daily lineage refresh: $(Get-CoopSignInRefreshLine $refresh)" }
+    #    Its own try: nothing here may turn a good sign-in into a failed one.
+    try {
+      $settings = Join-Path $profileDir 'config'
+      if ((Test-Path -LiteralPath $settings -PathType Leaf) -and ([System.IO.File]::ReadAllText($settings) -match '"docs_refresh"\s*:\s*true')) {
+        . (Join-Path $PSScriptRoot 'docs-refresh.ps1')
+        $refresh = Start-CoopDocsRefresh -ProfileDir $profileDir -From 'signin' -StartedAt $start -PowerShell $PowerShellPath
+        if ($refresh -ne 'off') { Write-CoopSignInLine "daily lineage refresh: $(Get-CoopSignInRefreshLine $refresh)" }
+      }
+    } catch {
+      Write-CoopSignInLine "daily lineage refresh: not scheduled ($($_.Exception.Message))"
     }
   } catch {
     Write-CoopSignInLine "stopped: $($_.Exception.Message)"
     $rc = 1
   }
   Write-Host "  log: $($script:SignInLog)"
-  # COOP_SIGNIN_NO_PAUSE=1: the fixtures run this script without the pause.
-  if ($env:COOP_SIGNIN_NO_PAUSE -ne '1') { Start-Sleep -Seconds $(if ($rc) { 30 } else { 3 }) }
+  if (-not $NoPause) { Start-Sleep -Seconds $(if ($rc) { 30 } else { 3 }) }
   return $rc
 }
 
