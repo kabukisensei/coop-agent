@@ -994,13 +994,21 @@ function Invoke-CoopPiProcess {
   $token = Get-CoopFabricMcpToken
   if ($token) { $env:COOP_FABRIC_MCP_TOKEN = $token }
   try {
+    # $LASTEXITCODE is set only when Pi actually ran; cleared first, a stale value
+    # from an earlier native call can never pass for Pi's.
+    $global:LASTEXITCODE = $null
     & pi @PiArgs
-    if ($?) {
-      $script:CoopPiRc = $LASTEXITCODE
+    $piOk = $?
+    if ($null -ne $global:LASTEXITCODE) {
+      # Pi started. A non-zero exit (no model signed in, a failed -p turn) is Pi's
+      # own result, already explained by Pi: pass it through without a launch
+      # warning ($? is false for any non-zero native exit, so it cannot tell).
+      $script:CoopPiRc = $global:LASTEXITCODE
+    } elseif ($piOk) {
+      $script:CoopPiRc = 0
     } else {
       # Process failed to start (Windows PowerShell 5.1 with -ErrorActionPreference
-      # Continue records the error instead of throwing, and leaves $LASTEXITCODE
-      # stale). Reading it would silently succeed with an unrelated exit code.
+      # Continue records the error instead of throwing, and sets no exit code).
       $launchCode = -1
       $startError = $error[0]
       if ($startError -and $startError.Exception) {
