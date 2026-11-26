@@ -85,7 +85,7 @@ try {
   if ($r.Rc -eq 1 -and [System.IO.File]::ReadAllText($cfg) -ceq $corrupt) { Ok 'coop settings set on a corrupt config fails and leaves it' } else { Ko "settings set on corrupt (rc=$($r.Rc))" $r.Out }
   $r = Run-Coop @('settings')
   $missing = @($rows | Where-Object { -not $r.Out.Contains($_) })
-  if ($r.Rc -eq 0 -and $missing.Count -eq 0 -and $r.Out -match 'is not valid JSON') { Ok 'coop settings on a corrupt config: all off, and it says why' } else { Ko "settings on corrupt (rc=$($r.Rc))" $r.Out }
+  if ($r.Rc -eq 0 -and $missing.Count -eq 0 -and $r.Out -match 'is not valid\s+JSON') { Ok 'coop settings on a corrupt config: all off, and it says why' } else { Ko "settings on corrupt (rc=$($r.Rc))" $r.Out }
 
   # --- coop settings --json always answers JSON, even when node is missing -------------
   $noNode = Join-Path $t 'no-node-bin'
