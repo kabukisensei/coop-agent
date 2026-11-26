@@ -138,11 +138,11 @@ test("the lock: a held lock makes a writer wait, then give up; a stale one is cl
 
 test("the lock: Windows' EPERM/EACCES/EBUSY on config.lock (DELETE_PENDING, an AV scan) are waited out, not thrown", () => {
   const file = fresh('{"a":1}');
-  assert.ok(lib.lockFs && typeof lib.lockFs.openSync === "function", "the lock's fs calls are reachable for this test");
-  const real = lib.lockFs.openSync;
+  assert.ok(lib.configFs && typeof lib.configFs.openSync === "function", "the lock's fs calls are reachable for this test");
+  const real = lib.configFs.openSync;
   const codes = ["EPERM", "EACCES", "EBUSY"];
   let calls = 0;
-  lib.lockFs.openSync = (path, flags, ...rest) => {
+  lib.configFs.openSync = (path, flags, ...rest) => {
     if (String(path).endsWith("config.lock") && flags === "wx" && calls < codes.length) {
       const e = new Error(`${codes[calls]}: operation not permitted, open '${path}'`);
       e.code = codes[calls++];
@@ -153,7 +153,7 @@ test("the lock: Windows' EPERM/EACCES/EBUSY on config.lock (DELETE_PENDING, an A
   try {
     assert.equal(lib.setFeature("comments", true, { file, waitMs: 2000 }), true);
   } finally {
-    lib.lockFs.openSync = real;
+    lib.configFs.openSync = real;
   }
   assert.equal(calls, 3, "each transient error was retried");
   assert.equal(read(file).features.comments, true);
@@ -179,6 +179,38 @@ test("the lock: a writer releases only its own lock, and a stale lock is broken 
   assert.equal(lib.setFeature("comments", true, { file, waitMs: 1000 }), true);
   assert.ok(!existsSync(lock) && !existsSync(breaker));
   assert.deepEqual(read(file), { schema_version: 1, a: 1, b: 2, features: { comments: true } });
+});
+
+test("a read refused for a moment (Windows EBUSY/EPERM/EACCES) is retried; one that stays refused is an io error, never 'not valid JSON, remove it'", () => {
+  const file = fresh('{"features":{"comments":true}}');
+  const fsOps = lib.configFs;
+  assert.ok(fsOps && typeof fsOps.readFileSync === "function", "the config's fs calls are reachable for this test");
+  const real = fsOps.readFileSync;
+  let left = 2;
+  fsOps.readFileSync = (path, ...rest) => {
+    if (path === file && left > 0) { left -= 1; throw Object.assign(new Error("EBUSY: resource busy or locked"), { code: "EBUSY" }); }
+    return real(path, ...rest);
+  };
+  try {
+    const config = lib.readCoopConfig(file);
+    assert.equal(config.ok, true, "two busy reads, then the file");
+    assert.equal(lib.featureEnabled("comments", file), true);
+    fsOps.readFileSync = (path, ...rest) => {
+      if (path === file) throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+      return real(path, ...rest);
+    };
+    const refused = lib.readCoopConfig(file);
+    assert.equal(refused.ok, false);
+    assert.equal(refused.errorKind, "io");
+    assert.equal(lib.listFeatures({ file }).errorKind, "io");
+    assert.throws(() => lib.setFeature("comments", false, { file }), (e) => !/not valid JSON|remove/i.test(e.message) && /could not be read/.test(e.message));
+  } finally {
+    fsOps.readFileSync = real;
+  }
+  assert.equal(readFileSync(file, "utf8"), '{"features":{"comments":true}}', "untouched");
+  const bad = fresh("{broken");
+  assert.equal(lib.readCoopConfig(bad).errorKind, "parse");
+  assert.equal(lib.listFeatures({ file: bad }).errorKind, "parse");
 });
 
 test("the CLI runs when started through another spelling of its path (a link; on Windows letter case or a short name)", () => {

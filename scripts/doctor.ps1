@@ -917,9 +917,12 @@ if ($featureRead.Rc -eq 0) { try { $featureList = $featureRead.Out | ConvertFrom
 if ($null -eq $featureList) {
   D-Warn 'could not read the feature switches' $(if ($featureRead.Err) { $featureRead.Err } else { 'coop settings shows them' })
 } else {
-  if ($featureList.ok -ne $true) { D-Warn "$($featureList.file) is not valid JSON, so every feature reads as off" 'fix or remove the file; coop never overwrites it' }
   $featuresOn = @($featureList.features | Where-Object { $_.on -eq $true })
-  if ($featuresOn.Count -eq 0) { D-Ok 'every feature is off for this client (the default; coop settings lists them and turns one on)' }
+  if ($featureList.ok -ne $true) {
+    if ([string]$featureList.errorKind -eq 'io') { D-Warn "$($featureList.file) could not be read just now, so every feature reads as off" "$($featureList.error); run coop doctor again in a moment" }
+    else { D-Warn "$($featureList.file) is not valid JSON, so every feature reads as off" 'fix or remove the file; coop never overwrites it' }
+  }
+  elseif ($featuresOn.Count -eq 0) { D-Ok 'every feature is off for this client (the default; coop settings lists them and turns one on)' }
   foreach ($feature in $featuresOn) {
     switch ([string]$feature.key) {
       'comments' { D-Ok 'Diff review comments on: the window''s Changes pane collects line comments and sends them as one prompt' }

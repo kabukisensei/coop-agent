@@ -101,7 +101,20 @@ try {
   if ($drows.Count -eq 1 -and $drows[0].status -ceq 'ok' -and $drows[0].name -like 'every feature is off*') { Ok 'doctor: no config, every feature off in one ok row' } else { Ko 'doctor Features rows with no config' (Show-Rows $drows) }
   [System.IO.File]::WriteAllText($cfg, '{oops', $utf8)
   $drows = @(Get-DoctorRows | Where-Object { $_.section -ceq 'Features (this client)' })
-  if (@($drows | Where-Object { $_.status -ceq 'warn' -and $_.name -like '*is not valid JSON*' }).Count -eq 1 -and [System.IO.File]::ReadAllText($cfg) -ceq '{oops') { Ok 'doctor: a corrupt config is a warning, and the file is left alone' } else { Ko 'doctor Features rows with a corrupt config' (Show-Rows $drows) }
+  # The warning only: not also a green "every feature is off" row under it.
+  if ($drows.Count -eq 1 -and @($drows | Where-Object { $_.status -ceq 'warn' -and $_.name -like '*is not valid JSON*' }).Count -eq 1 -and [System.IO.File]::ReadAllText($cfg) -ceq '{oops') { Ok 'doctor: a corrupt config is one warning (no ok row under it), and the file is left alone' } else { Ko 'doctor Features rows with a corrupt config' (Show-Rows $drows) }
+
+  # --- a config coop cannot open (a lock, an AV scan, a permission) is not "not valid JSON" ---
+  if ($env:OS -ne 'Windows_NT') {
+    [System.IO.File]::WriteAllText($cfg, '{"features":{"comments":true}}', $utf8)
+    & chmod 000 $cfg
+    try {
+      $r = Run-Coop @('settings')
+      if ($r.Rc -eq 0 -and $r.Out -match 'could not be read just now' -and $r.Out -notmatch 'not valid JSON|fix or remove') { Ok 'coop settings on a config it cannot open: says so, and does not ask to remove it' } else { Ko "settings on an unreadable config (rc=$($r.Rc))" $r.Out }
+      $drows = @(Get-DoctorRows | Where-Object { $_.section -ceq 'Features (this client)' })
+      if ($drows.Count -eq 1 -and $drows[0].status -ceq 'warn' -and $drows[0].name -like '*could not be read just now*') { Ok 'doctor: a config it cannot open is one warning, not "not valid JSON"' } else { Ko 'doctor Features rows with an unreadable config' (Show-Rows $drows) }
+    } finally { & chmod 600 $cfg }
+  }
 } finally {
   Restore-Env $saved
   Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue

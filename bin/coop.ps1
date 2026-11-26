@@ -441,7 +441,12 @@ function Invoke-CoopSettings {
     $note = if ($f.available -eq $true) { '' } else { '  (not in this version yet)' }
     Write-Host ('  {0,-24}{1,-5}{2}{3}' -f $f.label, $state, $f.key, $note)
   }
-  if ($list.ok -ne $true) { Coop-Warn "$($list.file) is not valid JSON ($($list.error)): every feature reads as off, and coop leaves the file as it is until you fix or remove it" }
+  if ($list.ok -ne $true) {
+    # Only a file that does not parse is the person's to fix; one that could not
+    # be opened just now (a lock, an antivirus scan, a permission) is not.
+    if ([string]$list.errorKind -eq 'io') { Coop-Warn "$($list.file) could not be read just now ($($list.error)): every feature reads as off; try again in a moment" }
+    else { Coop-Warn "$($list.file) is not valid JSON ($($list.error)): every feature reads as off, and coop leaves the file as it is until you fix or remove it" }
+  }
   Write-Host ''
   Write-Host 'Other settings'
   $days = Get-CoopCleanupDays

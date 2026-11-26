@@ -277,13 +277,14 @@ function windowInfo(state) {
 // read and written in this process through lib/features.mjs, the one writer
 // (`coop settings` runs the same module's CLI); no PowerShell start per click.
 // The window's own settings.json is unchanged.
+const FEATURE_LOCK_WAIT_MS = 500;
 function featureFile(state) {
   return configPath(toolEnv(state));
 }
 function featureView(state) {
   try {
     const list = listFeatures({ file: featureFile(state) });
-    return { ok: list.ok, error: list.error, file: list.file, features: list.features };
+    return { ok: list.ok, error: list.error, errorKind: list.errorKind, file: list.file, features: list.features };
   } catch (error) {
     return { ok: false, error: error && error.message ? error.message : String(error), file: "", features: [] };
   }
@@ -957,7 +958,9 @@ handle("coop:features", (state) => ({ success: true, data: featureView(state) })
 handle("coop:feature-set", (state, key, on) => {
   const feature = featureFor(typeof key === "string" ? key : "");
   if (!feature || typeof on !== "boolean") return { success: false, error: "unknown feature" };
-  setFeature(feature.key, on, { file: featureFile(state) });
+  // This runs on the main process's thread, which a lock wait blocks: wait a
+  // short while (another writer holds the lock for milliseconds), then say busy.
+  setFeature(feature.key, on, { file: featureFile(state), waitMs: FEATURE_LOCK_WAIT_MS });
   const view = featureView(state);
   broadcast("coop:features", view);
   return { success: true, data: { ...view, text: changedText(feature, on) } };
