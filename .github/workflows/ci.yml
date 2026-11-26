@@ -323,9 +323,12 @@ jobs:
     # runner, and `coop uninstall --yes`. Exit codes are checked: install and
     # doctor exit 0, or 1 (doctor's "something required is missing" code) only
     # when the one red doctor row is the ODBC/pyodbc "Fabric SQL fallback" row
-    # (pyodbc cannot load without unixODBC + msodbcsql18, which need root on a
-    # workstation) and install counts at most that one failed step; uninstall
-    # exits 0. A PowerShell error line anywhere in the output fails the job.
+    # (pyodbc cannot load without unixODBC, and the driver is msodbcsql18: both
+    # need root and Microsoft's apt repository, which coop's Linux install does
+    # not touch, so the job asserts that row instead of installing them) and
+    # install counts at most that one failed step, the Fabric Python runtime.
+    # "6. ODBC Driver 18" and "7. Tabular Editor CLI" must be warnings, never
+    # red. uninstall exits 0. A PowerShell error line anywhere fails the job.
     name: linux personal edition (pwsh 7)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -349,12 +352,20 @@ jobs:
         run: |
           sb="$RUNNER_TEMP/coop-linux"
           mkdir -p "$sb/home" "$sb/npm-global" "$sb/logs"
-          python -m pip install --quiet --user 'pipx==1.19.1'
+          # Keep the npm and pip caches the setup actions restore and save
+          # (they live under the runner's HOME, which changes below).
+          npm_cache=$(npm config get cache)
+          pip_cache=$(python -m pip cache dir)
+          # pipx for the interpreter coop picks (Get-CoopPython: the first
+          # python3 on PATH, setup-python's), installed into the SANDBOX home's
+          # user site. Installed under the runner's HOME (run 45754897943), its
+          # script stayed on PATH but could not import pipx once HOME moved.
+          HOME="$sb/home" PIP_CACHE_DIR="$pip_cache" python3 -m pip install --quiet --user 'pipx==1.19.1'
+          test "$(HOME="$sb/home" python3 -m pipx --version)" = "1.19.1"
+          test "$(HOME="$sb/home" "$sb/home/.local/bin/pipx" --version)" = "1.19.1"
           {
-            # Keep the npm and pip caches the setup actions restore and save
-            # (they live under the runner's HOME, which changes below).
-            echo "npm_config_cache=$(npm config get cache)"
-            echo "PIP_CACHE_DIR=$(python -m pip cache dir)"
+            echo "npm_config_cache=$npm_cache"
+            echo "PIP_CACHE_DIR=$pip_cache"
             echo "HOME=$sb/home"
             echo "NPM_CONFIG_PREFIX=$sb/npm-global"
             echo "PIPX_HOME=$sb/home/.local/share/pipx"
@@ -364,7 +375,6 @@ jobs:
           {
             echo "$sb/npm-global/bin"
             echo "$sb/home/.local/bin"
-            echo "$(python -m site --user-base)/bin"
           } >> "$GITHUB_PATH"
       - name: coop install --yes, doctor --json, launch-spec --json (sandbox HOME)
         shell: bash
@@ -402,9 +412,18 @@ jobs:
           fails = [str(c.get("name", "")) for c in doc["checks"] if c.get("status") == "fail"]
           for name in fails:
               print(f"doctor fail row: {name}")
-          odbc_only = len(fails) == 1 and fails[0].startswith("Fabric SQL fallback")
+          # The one red row allowed: pyodbc that cannot load (no unixODBC), or
+          # pyodbc that loads without the driver. Not "runtime is unavailable",
+          # "pyodbc missing" or a missing tool: those are install failures.
+          odbc_row = re.compile(r"^Fabric SQL fallback: (pyodbc is installed but unloadable|ODBC Driver 18\+ for SQL Server is missing)$")
+          odbc_only = len(fails) == 1 and bool(odbc_row.match(fails[0]))
           if fails and not odbc_only:
               print("::error::doctor has red rows besides the ODBC/pyodbc one"); bad = 1
+          # Linux reality: the ODBC driver and te are warnings, never red.
+          for prefix, allowed in (("6. ODBC Driver 18", ("warn", "ok")), ("7. Tabular Editor CLI", ("warn",))):
+              rows = [c for c in doc["checks"] if str(c.get("name", "")).startswith(prefix)]
+              if len(rows) != 1 or rows[0].get("status") not in allowed:
+                  print(f"::error::doctor row '{prefix}' should be one of {allowed}: {rows}"); bad = 1
           # doctor exits 1 exactly when a row is red (scripts/doctor.ps1).
           want_doctor = 1 if fails else 0
           if doctor_rc != want_doctor:
@@ -412,6 +431,11 @@ jobs:
           install_text = open(os.path.join(logs, "install.log"), encoding="utf-8", errors="replace").read()
           m = re.search(r"(\d+) install/sync step\(s\) failed", install_text)
           failed_steps = int(m.group(1)) if m else 0
+          for line in install_text.splitlines():
+              if "could not install" in line:
+                  print(f"::error::install.log: {line}"); bad = 1
+          if failed_steps == 1 and "failed to converge the Fabric Python runtime" not in install_text:
+              print("::error::the one failed install step is not the Fabric Python runtime (pyodbc)"); bad = 1
           if install_rc == 0:
               pass
           elif install_rc == 1 and odbc_only and failed_steps <= 1 and "Bootstrap finished, but doctor reported problems" in install_text:

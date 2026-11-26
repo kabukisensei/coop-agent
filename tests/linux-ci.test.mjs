@@ -42,7 +42,11 @@ t("the linux job runs install --yes, doctor --json, launch-spec --json and unins
 t("the linux job checks exit codes, the link target, PATH, and PowerShell error lines", () => {
   assert.match(linux, /if doctor_rc != want_doctor/);
   assert.match(linux, /install_rc == 1 and odbc_only/, "install may exit 1 only for the ODBC/pyodbc row");
-  assert.match(linux, /startswith\("Fabric SQL fallback"\)/, "only the ODBC/pyodbc doctor row may be red");
+  assert.match(linux, /odbc_row = re\.compile\(r"\^Fabric SQL fallback: \(pyodbc is installed but unloadable\|ODBC Driver 18\\\+ for SQL Server is missing\)\$"\)/, "only the ODBC/pyodbc doctor row may be red, by its exact text");
+  assert.doesNotMatch(linux, /startswith\("Fabric SQL fallback"\)/, "a bare prefix also accepts 'selected Fabric Python runtime is unavailable' (run 45754897943)");
+  assert.match(linux, /\("6\. ODBC Driver 18", \("warn", "ok"\)\)/, "the ODBC driver row is a warning");
+  assert.match(linux, /\("7\. Tabular Editor CLI", \("warn",\)\)/, "the te row is a warning");
+  assert.match(linux, /"could not install" in line/, "a failed pipx/npm tool install fails the job");
   assert.match(linux, /"checks" in obj/);
   assert.match(linux, /not doc\["checks"\]/);
   assert.match(linux, /readlink -f "\$HOME\/\.local\/bin\/coop"/);
@@ -54,6 +58,11 @@ t("the linux job checks exit codes, the link target, PATH, and PowerShell error 
 });
 t("the linux job pins pipx, caches npm and pip, and checks out shallow", () => {
   assert.match(linux, /pipx==\d+\.\d+\.\d+/);
+  // pipx goes into the sandbox HOME's user site for the python3 coop picks;
+  // installed under the runner's HOME it could not import once HOME moved.
+  assert.match(linux, /HOME="\$sb\/home" PIP_CACHE_DIR="\$pip_cache" python3 -m pip install --quiet --user 'pipx==/);
+  assert.match(linux, /HOME="\$sb\/home" python3 -m pipx --version/);
+  assert.doesNotMatch(linux, /site --user-base/, "no runner-HOME user bin dir on PATH");
   assert.match(linux, /cache: npm/);
   assert.match(linux, /cache: pip/);
   assert.doesNotMatch(linux, /fetch-depth: 0/);
