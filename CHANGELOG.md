@@ -34,6 +34,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   "this Windows user". New page: `docs/install-linux.md`.
 
 ### Fixed
+- **coop no longer says "Pi launch failed" when Pi started and exited with an
+  error.** A Pi that ran and exited non-zero (for example `coop -p` with no
+  model signed in) printed its own message and then a false
+  `! Pi launch failed (code=...)` with an unrelated code, and coop exited 1
+  whatever Pi returned. Pi's exit code now passes through as coop's, and the
+  launch-failure line is kept for a Pi that could not start at all.
 - **`coop cleanup now` reports what it really removed** (dev VM, 2026-11-24).
   A removed read-only file (git's files in the old standards copies) was
   counted with no size, so 13.2 MB showed as 6.9 MB; the size is now read
