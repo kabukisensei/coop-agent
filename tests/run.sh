@@ -220,6 +220,8 @@ echo "→ client instructions (CW1): off is today's behaviour (the 03600165 gold
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/client-instructions-off.test.mjs"
 echo "→ client instructions (CW1) and the guardrails: a real git repository, the commit prompt"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/client-rules-guardrails.test.mjs"
+echo "→ daily lineage refresh (CW6): the session-start line from the last run (on), nothing read (off)"
+COOP_TEST_DIST="$TMP" node "$ROOT/tests/docs-refresh-notice.test.mjs"
 echo "→ change history (CW2): the store, real writes through the guardrails, restore, the folder block"
 COOP_TEST_DIST="$TMP" node --test --test-reporter=spec "$ROOT/tests/action-history.test.mjs"
 echo "→ change history (CW2) off: no history code on the tool path (the store module stubbed and counted)"

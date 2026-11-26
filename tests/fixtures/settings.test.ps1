@@ -31,13 +31,13 @@ try {
     '  Client instructions     off  instructions',
     '  Change history          off  history',
     '  Diff review comments    off  comments',
-    '  Daily lineage refresh   off  docs-refresh  (not in this version yet)',
+    '  Daily lineage refresh   off  docs-refresh',
     '  SQL source control      off  sql-source')
 
   # --- every feature off: no config, then a config without the keys ------------------
   $r = Run-Coop @('settings')
   $missing = @($rows | Where-Object { -not $r.Out.Contains($_) })
-  if ($r.Rc -eq 0 -and $missing.Count -eq 0 -and -not $r.Out.Contains('instructions  (not in this version yet)') -and -not $r.Out.Contains('history  (not in this version yet)') -and $r.Out -match 'Features \(all off unless you turn them on\)' -and $r.Out -match 'cleanup   45 days') { Ok 'coop settings with no config: the five features, all off, with their plain labels and keys' } else { Ko "coop settings (rc=$($r.Rc)) missing: $($missing -join ' | ')" $r.Out }
+  if ($r.Rc -eq 0 -and $missing.Count -eq 0 -and -not $r.Out.Contains('instructions  (not in this version yet)') -and -not $r.Out.Contains('history  (not in this version yet)') -and -not $r.Out.Contains('(not in this version yet)') -and $r.Out -match 'Features \(all off unless you turn them on\)' -and $r.Out -match 'cleanup   45 days') { Ok 'coop settings with no config: the five features, all off, with their plain labels and keys' } else { Ko "coop settings (rc=$($r.Rc)) missing: $($missing -join ' | ')" $r.Out }
   if (-not (Test-Path -LiteralPath $cfg)) { Ok 'showing the settings writes nothing' } else { Ko 'coop settings created ~/.coop/config' }
   New-Item -ItemType Directory -Force -Path (Split-Path -Parent $cfg) | Out-Null
   [System.IO.File]::WriteAllText($cfg, '{"client":{"platform":"fabric"},"features":{},"sql_source_control":{}}', $utf8)
@@ -54,7 +54,10 @@ try {
   if ($r.Rc -eq 0 -and $shown -and (@($shown.features | Where-Object { $_.key -ceq 'comments' })[0].on -eq $true)) { Ok 'coop settings --json reads the same switch' } else { Ko 'coop settings --json' $r.Out }
   $before = [System.IO.File]::ReadAllText($cfg)
   $r = Run-Coop @('settings', 'set', 'docs-refresh', 'on')
-  if ($r.Rc -eq 2 -and $r.Out -match 'not in this version of coop yet' -and [System.IO.File]::ReadAllText($cfg) -ceq $before) { Ok 'a feature this version does not carry cannot be turned on' } else { Ko "set docs-refresh on (rc=$($r.Rc))" $r.Out }
+  $doc = Get-Content -LiteralPath $cfg -Raw | ConvertFrom-Json
+  if ($r.Rc -eq 0 -and $doc.features.docs_refresh -eq $true -and $doc.features.comments -eq $true -and (($r.Out -replace '\s+', ' ') -match 'Daily lineage refresh is on for this client \(takes effect at the next sign-in or coop start\)')) { Ok 'coop settings set docs-refresh on: saved beside the other switches, says when it takes effect' } else { Ko "set docs-refresh on (rc=$($r.Rc))" $r.Out }
+  $r = Run-Coop @('settings', 'set', 'docs-refresh', 'off')
+  if ($r.Rc -eq 0 -and [System.IO.File]::ReadAllText($cfg) -ne $before -and (Get-Content -LiteralPath $cfg -Raw | ConvertFrom-Json).features.docs_refresh -eq $false) { Ok 'coop settings set docs-refresh off' } else { Ko "set docs-refresh off (rc=$($r.Rc))" $r.Out }
   $r = Run-Coop @('settings', 'set', 'autopilot', 'on')
   if ($r.Rc -eq 2 -and $r.Out -match "unknown feature 'autopilot'") { Ok 'an unknown key is refused and named' } else { Ko "unknown key (rc=$($r.Rc))" $r.Out }
   $r = Run-Coop @('settings', 'set', 'comments', 'maybe')
@@ -125,8 +128,8 @@ try {
   $names = @($drows | ForEach-Object { [string]$_.name })
   $commentsRow = @($names | Where-Object { $_ -like 'Diff review comments on:*' }).Count -eq 1
   $sqlRow = @($names | Where-Object { $_ -like 'SQL source control on*' }).Count -eq 1
-  $noHistory = @($names | Where-Object { $_ -like '*Daily lineage refresh*' }).Count -eq 0
-  if ($commentsRow -and $sqlRow -and $noHistory -and $drows.Count -eq 2) { Ok 'doctor: one row per feature that is on (a feature this version lacks stays off)' } else { Ko 'doctor Features rows' (Show-Rows $drows) }
+  $refreshRow = @($names | Where-Object { $_ -like 'Daily lineage refresh on: no run yet*' }).Count -eq 1
+  if ($commentsRow -and $sqlRow -and $refreshRow -and $drows.Count -eq 3) { Ok 'doctor: one row per feature that is on (Daily lineage refresh: no run yet)' } else { Ko 'doctor Features rows' (Show-Rows $drows) }
   Remove-Item -LiteralPath $cfg -Force
   $drows = @(Get-DoctorRows | Where-Object { $_.section -ceq 'Features (this client)' })
   if ($drows.Count -eq 1 -and $drows[0].status -ceq 'ok' -and $drows[0].name -like 'every feature is off*') { Ok 'doctor: no config, every feature off in one ok row' } else { Ko 'doctor Features rows with no config' (Show-Rows $drows) }

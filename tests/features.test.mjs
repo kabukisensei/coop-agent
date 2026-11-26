@@ -61,11 +61,12 @@ test("absent keys and an absent file are off; only a literal true is on", () => 
     assert.equal(lib.featureEnabled("comments", file), false, `comments ${value} is off`);
     assert.equal(sqlsc.sqlSourceEnabled(file), false, `sql-source ${value} is off`);
   }
-  // A feature this version does not carry stays off even when the file says true.
+  // Daily lineage refresh (CW6) is built: true in the file turns it on like the others.
   const hand = fresh('{"features":{"docs_refresh":true,"comments":true}}');
-  assert.equal(lib.featureEnabled("docs-refresh", hand), false);
+  assert.equal(lib.featureEnabled("docs-refresh", hand), true);
   assert.equal(lib.featureEnabled("comments", hand), true);
-  assert.equal(lib.featuresOnLine(lib.listFeatures({ file: hand })), "Features on for this client: Diff review comments.");
+  assert.equal(lib.featuresOnLine(lib.listFeatures({ file: hand })), "Features on for this client: Diff review comments, Daily lineage refresh.");
+  assert.ok(lib.FEATURES.every((f) => f.available), "every listed feature is in this version");
 });
 
 test("a round trip keeps every other key, in order", () => {
@@ -114,12 +115,14 @@ test("a corrupt file is reported, read as all off, and never overwritten", () =>
   }
 });
 
-test("unknown keys and features this version does not carry are refused", () => {
+test("unknown keys are refused; Daily lineage refresh turns on and off", () => {
   const file = fresh("{}");
   assert.throws(() => lib.setFeature("autopilot", true, { file }), (e) => e.code === "unknown" && /one of: instructions, history, comments, docs-refresh, sql-source/.test(e.message));
-  assert.throws(() => lib.setFeature("docs-refresh", true, { file }), (e) => e.code === "unavailable");
   assert.equal(readFileSync(file, "utf8"), "{}", "a refused change writes nothing");
-  assert.equal(lib.setFeature("docs-refresh", false, { file }), false, "turning an unbuilt feature off is harmless");
+  assert.equal(lib.setFeature("docs-refresh", true, { file }), true);
+  assert.equal(read(file).features.docs_refresh, true, "stored as features.docs_refresh");
+  assert.equal(lib.setFeature("docs-refresh", false, { file }), false);
+  assert.equal(read(file).features.docs_refresh, false);
   assert.equal(lib.featureFor("SQL-SOURCE").key, "sql-source");
 });
 
@@ -277,8 +280,9 @@ test("the CLI: show, set, cleanup-days and its exit codes", () => {
   assert.equal(read(file).sql_source_control.enabled, true);
   assert.equal(runCli(["set", "nope", "on"], coopDir).status, 2, "unknown key: usage");
   r = runCli(["set", "docs-refresh", "on"], coopDir);
-  assert.equal(r.status, 2);
-  assert.match(r.stderr, /Daily lineage refresh is not in this version of coop yet; it stays off/);
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout.trim(), "Daily lineage refresh is on for this client (takes effect at the next sign-in or coop start).");
+  assert.equal(runCli(["set", "docs-refresh", "off"], coopDir).status, 0);
   assert.equal(runCli(["set", "comments", "maybe"], coopDir).status, 2);
   assert.equal(runCli(["cleanup-days", "12"], coopDir).status, 0);
   assert.deepEqual(read(file).cleanup, { days: 12 });

@@ -44,7 +44,7 @@ import {
   sourceStatus,
 } from "../../lib/standards.mjs";
 import { agentDir as coopAgentDir, configPath as coopConfigPath } from "../../lib/paths.mjs";
-import { featureEnabled, featuresOnLine } from "../../lib/features.mjs";
+import { docsRefreshNotice, featureEnabled, featuresOnLine } from "../../lib/features.mjs";
 import { appendCorrection, clientRulesLine, clientRulesProblems, clientRulesRoot, correctionRefusal, loadClientRules, noteInContext } from "../../lib/client-rules.mjs";
 import {
   CHECKER_SYSTEM_PROMPT,
@@ -3838,6 +3838,15 @@ export default function coopTools(pi: ExtensionAPI) {
     try {
       const features = featuresOnLine();
       if (features) notify(ctx, features, "info");
+    } catch { /* best effort */ }
+    // Daily lineage refresh (CW6): the last background run's one line ("Docs
+    // refreshed 08:21, 3 files changed." or why it was skipped), when it ran in
+    // the last day. Off reads nothing.
+    try {
+      if (featureEnabled("docs-refresh")) {
+        const refreshed = docsRefreshNotice();
+        if (refreshed) notify(ctx, refreshed.text, refreshed.level);
+      }
     } catch { /* best effort */ }
     // Client instructions (CW1): one line saying what was loaded, and one per line
     // or file left out and why. Off reads nothing at all.
