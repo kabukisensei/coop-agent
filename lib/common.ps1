@@ -3932,15 +3932,20 @@ function Invoke-CoopRepoFollowRelease {
 function Get-CoopPiVersion {
   if (-not (Test-Have 'pi')) { return '' }
   if (-not (Test-CoopWindowsHost)) {
-    # SP6 spike (Linux pwsh): an older pi prints --version on stderr, and a
-    # $null cast to [string] reaches [regex]::Match as null (throws). Read both
-    # streams and never hand Match a null.
-    $raw = [string](& pi --version 2>&1 | Select-Object -First 1)
-    if (-not $raw) { return '' }
-    $m = [regex]::Match($raw, '\d+\.\d+\.\d+')
-    if ($m.Success) { return $m.Value } else { return '' }
-  }
+    # Linux personal edition: an older pi prints --version on stderr, and Node
+    # may print a warning line (ExperimentalWarning, ...) on stderr before it.
+    # Read every line of both streams; the first semver wins, stdout first.
+    $out = @(); $errs = @()
+    foreach ($line in @(& pi --version 2>&1)) {
+      if ($line -is [System.Management.Automation.ErrorRecord]) { $errs += [string]$line } else { $out += [string]$line }
+    }
+    $raw = ''
+    foreach ($line in @($out + $errs)) {
+      if ([regex]::IsMatch($line, '\d+\.\d+\.\d+')) { $raw = $line; break }
+    }
+  } else {
   $raw = (& pi --version 2>$null | Select-Object -First 1)
+  }
   $m = [regex]::Match([string]$raw, '\d+\.\d+\.\d+')
   if ($m.Success) { return $m.Value } else { return '' }
 }
