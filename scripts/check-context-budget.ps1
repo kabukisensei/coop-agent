@@ -25,7 +25,9 @@ $GUARDRAILS_LIMIT_BYTES = 6850
 # description is kept to one short line; Aaron allows growth for real capabilities.
 # 7400 -> 7500 on 2026-11-11 (master plan row SC1): one new native tool,
 # standards_check, with its metadata kept to three short strings.
-$TOTAL_LIMIT_TOKENS = 7500
+# 7500 -> 8000 on 2026-11-26 (Aaron): the budget was at 7493/7500 after LX1;
+# headroom for the next real capabilities.
+$TOTAL_LIMIT_TOKENS = 8000
 
 $py = Get-Command python3 -ErrorAction SilentlyContinue
 if (-not $py) { $py = Get-Command python -ErrorAction SilentlyContinue }
