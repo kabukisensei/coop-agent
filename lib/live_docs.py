@@ -115,9 +115,15 @@ def find_tool() -> str:
     return ""
 
 
+# No console window for coop-data-doc on Windows: the daily refresh runs this
+# helper with no console, and a console program started from it would open one.
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+
+
 def _child_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
     env.pop(TOKEN_ENV, None)  # only the one snapshot child gets a token
+    env.pop(wmcp.FABRIC_TOKEN_ENV, None)  # the launch identity is this process's alone
     env.update(extra or {})
     return env
 
@@ -143,6 +149,7 @@ def _run_json(
             errors="replace",
             timeout=timeout,
             check=False,
+            creationflags=NO_WINDOW,
         )
     except subprocess.TimeoutExpired:
         return None, -2
@@ -381,7 +388,21 @@ def _same(a: str, b: str) -> bool:
     return a.strip().lower() == b.strip().lower()
 
 
-def refresh(*, cwd: Path, config: Any, max_age_days: Any = None, now: datetime | None = None) -> dict[str, Any]:
+def _mint_launch_identity(project: dict[str, Any], project_path: Path | None, spec: str) -> dict[str, Any] | None:
+    """Mint the launch identity for `spec` into this process's environment, as
+    `warehouse_mcp.py launch-token` does for a launch (the audience the entry's
+    kind uses, pinned to the client tenant); None when minted, else the error.
+    Never prompts: an expired sign-in is `auth_required`."""
+    entry = targets_lib.parse_sql_targets(project).resolve(spec)
+    resource = wmcp.FABRIC_RESOURCE if entry is not None and entry.discovered else wmcp.SQL_RESOURCE
+    token, state = wmcp.az_access_token(resource=resource, tenant=wmcp.pinned_tenant(project_path))
+    if state != "ok":
+        return result(state, stage="launch_token")
+    os.environ[wmcp.FABRIC_TOKEN_ENV] = token
+    return None
+
+
+def refresh(*, cwd: Path, config: Any, max_age_days: Any = None, now: datetime | None = None, mint: bool = False) -> dict[str, Any]:
     config_path = _config_path(config, cwd)
     if config_path is None:
         return result("config_unavailable")
@@ -407,9 +428,18 @@ def refresh(*, cwd: Path, config: Any, max_age_days: Any = None, now: datetime |
     if not due:
         return result("ok", sources=rows, taken=0)
 
-    project, _path = _project(cwd)
+    project, project_path = _project(cwd)
     if project is None:
         return result("project_unavailable")
+    if mint and not os.environ.get(wmcp.FABRIC_TOKEN_ENV, ""):
+        # The daily refresh (no coop session, so no launch token): mint the
+        # launch identity here, only now that a ready dev entry that is not
+        # production needs it, named sets included. It stays in this process.
+        usable = [spec for spec, _set_name in dev_specs(project) if not dev_is_prod(project, spec)]
+        if usable:
+            error = _mint_launch_identity(project, project_path, usable[0])
+            if error is not None:
+                return {**error, "sources": rows}
     # resolve each dev target once, only now that something is due
     resolved: list[tuple[str, str, str]] = []  # (host, database, token)
     first_error: dict[str, Any] | None = None
@@ -531,6 +561,7 @@ def build(*, cwd: Path, config: Any, timeout_seconds: Any = None) -> dict[str, A
             stderr=subprocess.DEVNULL,
             timeout=limit,
             check=False,
+            creationflags=NO_WINDOW,
         )
     except subprocess.TimeoutExpired:
         return result("tool_timeout")
@@ -633,13 +664,17 @@ def record_changes(live_folder: Path, section: str) -> bool:
 def execute(payload: Any, *, cwd: Path | None = None) -> dict[str, Any]:
     """stdin contract for the coop-tools extension:
     {"command": "setup", "config": path} | {"command": "status", "config": path}
-    | {"command": "refresh", "config": path, "max_age_days": int?}
-    | {"command": "build", "config": path, "timeout_seconds": int?}."""
-    if not isinstance(payload, dict) or set(payload) - {"command", "config", "max_age_days", "timeout_seconds"}:
+    | {"command": "refresh", "config": path, "max_age_days": int?, "mint": true?}
+    | {"command": "build", "config": path, "timeout_seconds": int?}.
+    `mint` (the daily refresh, scripts/docs-refresh.ps1): with no launch token in
+    the environment, mint one after everything else was checked."""
+    if not isinstance(payload, dict) or set(payload) - {"command", "config", "max_age_days", "timeout_seconds", "mint"}:
         return result("input_invalid")
     here = cwd or Path.cwd()
     command = payload.get("command")
     if "timeout_seconds" in payload and command != "build":
+        return result("input_invalid")
+    if "mint" in payload and (command != "refresh" or payload["mint"] is not True):
         return result("input_invalid")
     if command == "build" and "max_age_days" not in payload:
         return build(cwd=here, config=payload.get("config"), timeout_seconds=payload.get("timeout_seconds"))
@@ -648,7 +683,7 @@ def execute(payload: Any, *, cwd: Path | None = None) -> dict[str, Any]:
     if command == "status" and "max_age_days" not in payload:
         return status(cwd=here, config=payload.get("config"))
     if command == "refresh":
-        return refresh(cwd=here, config=payload.get("config"), max_age_days=payload.get("max_age_days"))
+        return refresh(cwd=here, config=payload.get("config"), max_age_days=payload.get("max_age_days"), mint=payload.get("mint") is True)
     return result("input_invalid")
 
 
