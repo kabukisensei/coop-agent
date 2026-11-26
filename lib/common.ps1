@@ -3844,6 +3844,15 @@ function Invoke-CoopRepoFollowRelease {
 # The Pi agent's own semver, e.g. '0.80.2' (from `pi --version`). '' if unknown.
 function Get-CoopPiVersion {
   if (-not (Test-Have 'pi')) { return '' }
+  if (-not (Test-CoopWindowsHost)) {
+    # SP6 spike (Linux pwsh): an older pi prints --version on stderr, and a
+    # $null cast to [string] reaches [regex]::Match as null (throws). Read both
+    # streams and never hand Match a null.
+    $raw = [string](& pi --version 2>&1 | Select-Object -First 1)
+    if (-not $raw) { return '' }
+    $m = [regex]::Match($raw, '\d+\.\d+\.\d+')
+    if ($m.Success) { return $m.Value } else { return '' }
+  }
   $raw = (& pi --version 2>$null | Select-Object -First 1)
   $m = [regex]::Match([string]$raw, '\d+\.\d+\.\d+')
   if ($m.Success) { return $m.Value } else { return '' }
