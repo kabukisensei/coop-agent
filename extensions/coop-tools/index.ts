@@ -44,6 +44,7 @@ import {
   sourceStatus,
 } from "../../lib/standards.mjs";
 import { agentDir as coopAgentDir, configPath as coopConfigPath } from "../../lib/paths.mjs";
+import { featuresOnLine } from "../../lib/features.mjs";
 import {
   CHECKER_SYSTEM_PROMPT,
   checkPlan,
@@ -3728,6 +3729,12 @@ export default function coopTools(pi: ExtensionAPI) {
     try {
       const note = projectFileNote(ctx.cwd);
       if (note) notify(ctx, note.text, note.state === "team-newer" ? "warning" : "info");
+    } catch { /* best effort */ }
+    // The Features list (FEATURES-DESIGN): one line naming the features that are
+    // on for this client (~/.coop/config); nothing at all while every one is off.
+    try {
+      const features = featuresOnLine();
+      if (features) notify(ctx, features, "info");
     } catch { /* best effort */ }
     // First launch (master plan FR1): the common-workflows menu, once per profile
     // dir. The flag is cleared first so `/new` in the same process never reopens it.

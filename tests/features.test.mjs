@@ -12,7 +12,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = join(ROOT, "lib", "features.mjs");
@@ -213,4 +213,32 @@ test("/sql-source on|off writes through the one writer", () => {
   assert.deepEqual(read(file), { features: { comments: true }, sql_source_control: { enabled: true, changed_at: "2026-10-20T22:00:00.000Z" } });
   const source = readFileSync(join(ROOT, "lib", "sqlsc.mjs"), "utf8");
   assert.ok(!/renameSync|writeFileSync/.test(source), "lib/sqlsc.mjs no longer writes ~/.coop/config itself");
+});
+
+const dist = process.env.COOP_TEST_DIST;
+test("session start names the features that are on, and says nothing while every one is off", { skip: dist ? false : "needs COOP_TEST_DIST (tests/run.sh bundles coop-tools)" }, async () => {
+  const tools = await import(pathToFileURL(join(dist, "coop-tools.mjs")).href);
+  const starts = [];
+  tools.default({
+    registerTool: () => {}, registerCommand: () => {}, sendUserMessage: () => {}, getThinkingLevel: () => "off",
+    on: (event, fn) => { if (event === "session_start") starts.push(fn); },
+    exec: async () => ({ code: 1, stdout: "", stderr: "" }),
+  });
+  const cwd = mkdtempSync(join(tmpdir(), "coop-features-cwd-"));
+  const start = async () => {
+    const notices = [];
+    const ctx = { cwd, hasUI: false, ui: { notify: (m) => notices.push(String(m)), setStatus: () => {} }, sessionManager: { getSessionId: () => "s", getSessionFile: () => "" } };
+    for (const fn of starts) { try { await fn({}, ctx); } catch { /* other session_start work needs more of Pi */ } }
+    return notices;
+  };
+  const file = join(HOME, ".coop", "config");
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify({ client: { platform: "fabric" } }));
+  assert.ok(starts.length > 0);
+  assert.ok(!(await start()).some((m) => /Features on/.test(m)), "every feature off: no line");
+  lib.setFeature("comments", true, { file });
+  lib.setFeature("sql-source", true, { file });
+  assert.deepEqual((await start()).filter((m) => /Features on/.test(m)), ["Features on for this client: Diff review comments, SQL source control."]);
+  lib.setFeature("comments", false, { file });
+  lib.setFeature("sql-source", false, { file });
 });

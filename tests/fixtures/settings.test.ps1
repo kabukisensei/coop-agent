@@ -86,6 +86,22 @@ try {
   $r = Run-Coop @('settings')
   $missing = @($rows | Where-Object { -not $r.Out.Contains($_) })
   if ($r.Rc -eq 0 -and $missing.Count -eq 0 -and $r.Out -match 'is not valid JSON') { Ok 'coop settings on a corrupt config: all off, and it says why' } else { Ko "settings on corrupt (rc=$($r.Rc))" $r.Out }
+
+  # --- doctor: a "Features (this client)" section, one fact per feature that is on ----
+  $script:doctor = Join-Path $root 'scripts\doctor.ps1'
+  [System.IO.File]::WriteAllText($cfg, '{"features":{"comments":true,"history":true},"sql_source_control":{"enabled":true}}', $utf8)
+  $drows = @(Get-DoctorRows | Where-Object { $_.section -ceq 'Features (this client)' })
+  $names = @($drows | ForEach-Object { [string]$_.name })
+  $commentsRow = @($names | Where-Object { $_ -like 'Diff review comments on:*' }).Count -eq 1
+  $sqlRow = @($names | Where-Object { $_ -like 'SQL source control on*' }).Count -eq 1
+  $noHistory = @($names | Where-Object { $_ -like '*Change history*' }).Count -eq 0
+  if ($commentsRow -and $sqlRow -and $noHistory -and $drows.Count -eq 2) { Ok 'doctor: one row per feature that is on (a feature this version lacks stays off)' } else { Ko 'doctor Features rows' (Show-Rows $drows) }
+  Remove-Item -LiteralPath $cfg -Force
+  $drows = @(Get-DoctorRows | Where-Object { $_.section -ceq 'Features (this client)' })
+  if ($drows.Count -eq 1 -and $drows[0].status -ceq 'ok' -and $drows[0].name -like 'every feature is off*') { Ok 'doctor: no config, every feature off in one ok row' } else { Ko 'doctor Features rows with no config' (Show-Rows $drows) }
+  [System.IO.File]::WriteAllText($cfg, '{oops', $utf8)
+  $drows = @(Get-DoctorRows | Where-Object { $_.section -ceq 'Features (this client)' })
+  if (@($drows | Where-Object { $_.status -ceq 'warn' -and $_.name -like '*is not valid JSON*' }).Count -eq 1 -and [System.IO.File]::ReadAllText($cfg) -ceq '{oops') { Ok 'doctor: a corrupt config is a warning, and the file is left alone' } else { Ko 'doctor Features rows with a corrupt config' (Show-Rows $drows) }
 } finally {
   Restore-Env $saved
   Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue

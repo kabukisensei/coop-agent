@@ -906,6 +906,32 @@ switch (Get-CoopDesktopRuntimeState) {
 }
 }
 
+D-Head 'Features (this client)'
+# FEATURES-DESIGN, the Features list: this client's feature switches in
+# ~/.coop/config, read through the one writer's CLI (lib\features.mjs), all off
+# unless turned on (coop settings, or the window's Settings). One health fact
+# per feature that is on.
+$featureList = $null
+$featureRead = Invoke-CoopFeaturesCli @('show', '--json')
+if ($featureRead.Rc -eq 0) { try { $featureList = $featureRead.Out | ConvertFrom-Json } catch { $featureList = $null } }
+if ($null -eq $featureList) {
+  D-Warn 'could not read the feature switches' $(if ($featureRead.Err) { $featureRead.Err } else { 'coop settings shows them' })
+} else {
+  if ($featureList.ok -ne $true) { D-Warn "$($featureList.file) is not valid JSON, so every feature reads as off" 'fix or remove the file; coop never overwrites it' }
+  $featuresOn = @($featureList.features | Where-Object { $_.on -eq $true })
+  if ($featuresOn.Count -eq 0) { D-Ok 'every feature is off for this client (the default; coop settings lists them and turns one on)' }
+  foreach ($feature in $featuresOn) {
+    switch ([string]$feature.key) {
+      'comments' { D-Ok 'Diff review comments on: the window''s Changes pane collects line comments and sends them as one prompt' }
+      'sql-source' {
+        if (Test-Have 'coop-sqlsc') { D-Ok 'SQL source control on: coop-sqlsc is installed' }
+        else { D-Warn 'SQL source control on, but coop-sqlsc is not installed' 'coop update (the coop window package carries it)' }
+      }
+      default { D-Ok "$($feature.label) on" }
+    }
+  }
+}
+
 D-Head 'Project contract'
 $proj = Find-CoopProjectYml
 if ($proj) {
