@@ -44,7 +44,7 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   emphasis normalization). A linked `.coop` or `.coop/rules` folder is never read
   or written through. `/correct <text>` (or coop, when you correct it) adds a
   correction only after an "Add / Edit / No" card, No by default; it applies to
-  your next message, and to the team once committed. The guardrails never read
+  your next message, and to the team once committed and pushed. The guardrails never read
   these files. coop's own `edit`/`write` never touches `.coop/rules/corrections.md`
   (the card is the only way in) and asks for each change to any other
   `.coop/rules/` file (blocked headless). A commit under `.coop/rules/` asks every
@@ -53,6 +53,33 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   holds whether or not your own switch is on, since the files steer every teammate
   who has it on. Off, nothing is read and a session is exactly as before (tools,
   commands, notices and hidden context).
+  **Only approved text is loaded.** A rules file's text reaches the model only as
+  it is on the client repository's upstream default branch (`origin/<default>` as
+  last fetched; coop never fetches it or pushes to it on its own), i.e. what a
+  person reviewed and pushed, plus `corrections.md` entries approved on this
+  machine with the Add / Edit / No card (an approval ledger outside the
+  repository, `~/.coop/client-rules-approvals/`, that only the card writes: each
+  entry's id and the sha256 of its text). A local edit to `AGENTS.md`,
+  `product.md`, `tech.md` or `structure.md` is therefore not loaded until it is
+  committed and pushed (upstream's copy loads meanwhile), and an entry written into
+  `corrections.md` any other way is not loaded at all. The session line and doctor
+  count what was held back (`1 unapproved local change in .coop/rules/ not loaded:
+  approve with /correct, or get them merged.`) and name each file. With no
+  upstream (no `origin` remote, nothing fetched yet, not a git repository) only
+  card-approved corrections load, and the session says why. A body can no longer
+  close the notes wrapper or pose as its marker, every match of a relaxing phrase
+  counts (not only the first), `data_doc` is protected like `sql_impact`, and
+  wrapped prose is screened in runs of up to 12 lines (across a heading or a blank
+  line) as well as whole paragraphs. The cheaper gates stay as defence in depth: a
+  shell command that writes `.coop/rules/` asks each call (sqlsc and fab
+  `-o`/`--output` included) and one that writes `corrections.md` or the ledger is
+  blocked; a link or hard link to a rules file (in `drafts/` and `backups/` too) is
+  the rules file; a commit whose own command runs anything but `cd`, a plain read
+  or verifiable staging first (a write, index plumbing, git in another folder,
+  pathspec magic or a glob in a removed path) asks, and so does `git pull`; a push
+  that would change `.coop/rules/` on origin's main branch asks every time; and a
+  command that rewrites origin's refs or remote settings (`git update-ref`,
+  `git remote set-url`, a fetch into a named ref, a write in `.git/refs`) asks.
 
 ### Changed
 - **The secret-text patterns live in `lib/secret-text.mjs`.** `lib/feedback.mjs`
