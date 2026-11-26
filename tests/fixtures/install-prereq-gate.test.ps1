@@ -62,6 +62,11 @@ try {
   if (Get-Command coop -ErrorAction SilentlyContinue) { Ko 'a coop is on the stub PATH' $env:PATH }
   $launch = '& "' + (Join-Path $root 'bin\coop.cmd') + '" install'
   $rerun = "then double-click Install coop.cmd again (or run: $launch)"
+  if (-not $isWindowsHost) {
+    # The Linux personal edition (LX1) has no Install coop.cmd: the clone's bash forwarder.
+    $launch = (Join-Path $root 'bin/coop') + ' install'
+    $rerun = "then run: $launch"
+  }
 
   $out = Invoke-Install
   if ($installRc -eq 0) { Ko 'install.ps1 exited 0 with Node and Python missing' $out }
