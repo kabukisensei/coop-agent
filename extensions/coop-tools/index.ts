@@ -1645,7 +1645,8 @@ export function liveDocsChanges(details: any): string {
 function liveDocsFailure(details: any): string {
   const state = String(details?.state || "internal_error");
   if (state === "tool_unavailable") return "coop-data-doc is not installed (run coop update).";
-  if (state === "no_dev_target") return "the project file names no ready dev SQL target (/setup-project adds one).";
+  if (state === "no_dev_target") return "there is no dev SQL target. Add a dev SQL target in Project > SQL targets (or /setup-project).";
+  if (state === "dev_is_prod") return "the dev SQL target points at production, so nothing was read. Point the dev target at a dev database in Project > SQL targets (or /setup-project).";
   if (state === "config_not_written") return "the installed coop-data-doc did not accept live sources (coop update installs the pinned one).";
   return `${state}.${sqlStateHint(details)}`;
 }
