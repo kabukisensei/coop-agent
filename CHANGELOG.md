@@ -32,7 +32,11 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   key; a file with a BOM is read, and a file that does not parse is reported and
   never overwritten. `coop cleanup days|off` (before: an in-place PowerShell
   rewrite) and `/sql-source on|off` (before: a corrupt file was replaced) now go
-  through it, and the window writes through it directly.
+  through it, and the window writes through it directly. `coop onboard` (and
+  `coop install --platform`) takes the same lock and writes only its own keys, so
+  re-running it keeps the feature switches, `sql_source_control` and `cleanup`
+  (before: it rebuilt the file from its own answers), and it accepts a config
+  another coop writer created without `schema_version`.
 - **The context budget reports two totals.** A native tool behind a feature switch
   carries a `// coop:feature <key>` marker; `coop dev context-budget` shows the
   default-off total (what a fresh install sends, now 7,388 tokens) and the all-on
