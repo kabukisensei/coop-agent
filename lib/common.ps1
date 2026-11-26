@@ -2309,21 +2309,40 @@ function Get-CoopCleanupDays {
   return $script:CoopCleanupDefaultDays
 }
 
-# Save the cleanup age in ~/.coop/config, keeping every other key.
-function Set-CoopCleanupDays([int]$Days) {
-  $f = Get-CoopConfigFile
-  $cfg = $null
-  if (Test-Path -LiteralPath $f -PathType Leaf) {
-    $text = Get-Content -LiteralPath $f -Raw -Encoding UTF8
-    if ($text -and $text.Trim()) { $cfg = $text | ConvertFrom-Json }
+# The one writer of ~/.coop/config is lib\features.mjs (FEATURES-DESIGN, the
+# Features list): a lock file, a re-read, a temp file renamed over, every other
+# key kept, and a file that does not parse left as it is. PowerShell runs its
+# CLI on Get-CoopConfigFile instead of rewriting the file itself (no
+# ConvertTo-Json round trip under Windows PowerShell 5.1). Returns
+# @{ Rc; Out; Err } with the CLI's exit code, stdout and stderr as text.
+function Invoke-CoopFeaturesCli {
+  param([string[]]$CliArgs = @())
+  if (-not (Test-Have 'node')) { return @{ Rc = 127; Out = ''; Err = 'Node.js is not on PATH (coop needs it; run coop doctor)' } }
+  $cli = Join-Path $script:CoopRoot 'lib\features.mjs'
+  $all = @($CliArgs) + @('--file', (Get-CoopConfigFile))
+  $eap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    $items = @(& node $cli @all 2>&1)
+    $rc = $LASTEXITCODE
+  } finally { $ErrorActionPreference = $eap }
+  $outLines = @()
+  $errLines = @()
+  foreach ($item in $items) {
+    if ($item -is [System.Management.Automation.ErrorRecord]) { $errLines += [string]$item.Exception.Message }
+    else { $outLines += [string]$item }
   }
-  if ($null -eq $cfg) { $cfg = New-Object PSObject }
-  $block = New-Object PSObject
-  $block | Add-Member -NotePropertyName 'days' -NotePropertyValue $Days
-  if ($cfg.PSObject.Properties['cleanup']) { $cfg.cleanup = $block }
-  else { $cfg | Add-Member -NotePropertyName 'cleanup' -NotePropertyValue $block }
-  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $f) | Out-Null
-  [System.IO.File]::WriteAllText($f, ($cfg | ConvertTo-Json -Depth 32) + "`n", (New-Object System.Text.UTF8Encoding $false))
+  return @{ Rc = $rc; Out = ($outLines -join "`n"); Err = (($errLines -join "`n").Trim()) }
+}
+
+# Save the cleanup age in ~/.coop/config, keeping every other key (through the
+# one writer). Throws with the writer's reason when it could not be saved.
+function Set-CoopCleanupDays([int]$Days) {
+  $r = Invoke-CoopFeaturesCli @('cleanup-days', [string]$Days)
+  if ($r.Rc -ne 0) {
+    if ($r.Err) { throw $r.Err }
+    throw "the settings writer (lib\features.mjs) exited $($r.Rc)"
+  }
 }
 
 # The folders the cleanup looks in, with the files it may remove there. Sessions

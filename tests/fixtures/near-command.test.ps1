@@ -22,7 +22,7 @@ try {
     Invoke-Expression $match.Value
     $cases = [ordered]@{
       'docter' = 'doctor'; 'updat' = 'update'; 'instal' = 'install'; 'hepl' = 'help'; 'feedbak' = 'feedback'
-      'versoin' = 'version'; 'datadoc' = 'data-doc'; 'synk' = 'sync'
+      'versoin' = 'version'; 'datadoc' = 'data-doc'; 'synk' = 'sync'; 'setings' = 'settings'; 'cleanp' = 'cleanup'
       'hello' = ''; 'hi' = ''; 'review' = ''; 'please' = ''; 'start' = ''; 'doctor' = ''; 'Instal-It' = ''
       'unlock-prd' = ''; 'launch-spce' = ''
     }
