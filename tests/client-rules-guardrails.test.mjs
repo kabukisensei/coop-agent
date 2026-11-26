@@ -226,17 +226,19 @@ try {
   // --- Fix round (Neon B2): commit-prompt bypasses -------------------------------------
   const resetHard = () => { git("reset", "-q", "--hard", "HEAD"); };
 
-  await t("git mv out of .coop/rules/ then commit asks (the staged listing names both sides of a rename)", async () => {
+  await t("fix 3: git mv out of .coop/rules/ is judged as git lists it, as on main (a removal adds no instructions; a known limit)", async () => {
     resetHard();
     fs.mkdirSync(join(repo, "docs"), { recursive: true });
     git("mv", ".coop/rules/AGENTS.md", "docs/x.md");
-    confirms = []; confirmAnswer = true;
-    const r = await bash("git commit -m move");
-    assert.equal(blocked(r), false);
-    assert.equal(confirms.length, 1, "one approval card");
-    assert.match(confirms[0], /\.coop\/rules\/AGENTS\.md/);
-    git("mv", "docs/x.md", ".coop/rules/AGENTS.md");
-    resetHard();
+    try {
+      confirms = []; confirmAnswer = false;
+      const r = await bash("git commit -m move");
+      assert.equal(blocked(r), false, JSON.stringify(r));
+      assert.equal(confirms.length, 0);
+    } finally {
+      git("mv", "docs/x.md", ".coop/rules/AGENTS.md");
+      resetHard();
+    }
   });
 
   await t("cd .coop/rules && git rm / git mv / git add -f, then commit: asks (paths made repository-relative)", async () => {
@@ -254,15 +256,18 @@ try {
     }
   });
 
-  await t("a non-ASCII name under .coop/rules/ asks and is named as itself (core.quotepath=false)", async () => {
+  await t("fix 3: a non-ASCII name under .coop/rules/ fails closed (git quotes it; blocked as source, as on main)", async () => {
     stage(".coop/rules/café.md", "# Café\n");
-    confirms = []; confirmAnswer = true;
-    const r = await bash('git commit -m "cafe"');
-    assert.equal(blocked(r), false, JSON.stringify(r));
-    assert.equal(confirms.length, 1);
-    assert.match(confirms[0], /\.coop\/rules\/café\.md/);
-    unstageAll();
-    fs.rmSync(join(repo, ".coop", "rules", "café.md"));
+    try {
+      confirms = []; confirmAnswer = true;
+      const r = await bash('git commit -m "cafe"');
+      assert.equal(blocked(r), true, JSON.stringify(r));
+      assert.match(r.reason, /never commit source/);
+      assert.equal(confirms.length, 0);
+    } finally {
+      unstageAll();
+      fs.rmSync(join(repo, ".coop", "rules", "café.md"));
+    }
   });
 
   await t("a path that IS .coop/rules (a link committed there, no trailing slash) counts", async () => {
@@ -355,36 +360,30 @@ try {
     resetHard();
     await asks('echo "x" > .coop/rules/tech.md && git add -A && git commit -m "add"', /changes the client's instructions/);
     await asks('rm .coop/rules/AGENTS.md && git commit -am "clean"', /changes the client's instructions/);
-    // Not a rules path: the commit itself cannot be verified before the command runs.
-    await asks('echo "x" >> README.md && git commit -am "readme"', /Can't verify what this commit would include:[\s\S]*echo runs before the commit and may change what it includes/);
     await passes("cd docs 2>/dev/null; git status");
     resetHard();
   });
 
-  await t("fix 2: git plumbing before a commit fails closed to a prompt (-C mismatch, pathspec magic and globs, update-index, apply --index, restore --staged, read-tree, pull)", async () => {
+  await t("fix 3: the round-2 gates that fired outside .coop/rules/ are gone (pull, remote, config, refs, push, a command or -C before a commit)", async () => {
     resetHard();
     for (const cmd of [
-      "git -C .coop/rules add AGENTS.md && git commit -m edit",
-      "git -C .coop/rules rm AGENTS.md && git commit -m clean",
-      "git rm ':(top).coop/rules/AGENTS.md' && git commit -m x",
-      "git rm '.coop/ru?es/AGENTS.md' && git commit -m x",
-      "git rm 'docs/*.md' && git commit -m x",
-      "git update-index --add docs/x.md && git commit -m x",
-      "git apply --index p.diff && git commit -m x",
-      "git restore --staged --source=side README.md && git commit -m x",
-      "git read-tree side && git commit -m x",
       "git pull",
       "git pull origin main",
-    ]) await asks(cmd);
-    const why = (cmd) => cg.commitPrecededUnverifiable(cmd, cg.parseGitCommands(cmd).at(-1), repo);
-    assert.match(why("git -C .coop/rules add AGENTS.md && git commit -m edit"), /another folder/);
-    assert.match(why("git rm ':(top).coop/rules/AGENTS.md' && git commit -m x"), /pathspec magic/);
-    assert.match(why("git rm '.coop/ru?es/AGENTS.md' && git commit -m x"), /glob/);
-    assert.match(why("git apply --index p.diff && git commit -m x"), /apply --index/);
-    assert.match(why("git restore --staged --source=side x && git commit -m x"), /restore --staged/);
-    assert.match(why("git read-tree side && git commit -m x"), /read-tree/);
-    assert.equal(why("cd docs && git add a.md && git commit -m x"), null, "cd and plain staging stay verifiable");
-    assert.ok(cg.COMMIT_LIKE_SUBCOMMANDS.has("pull"));
+      "git remote set-url origin ../other.git",
+      "git remote add upstream ../other.git",
+      "git config remote.origin.url ../other.git",
+      "git fetch . HEAD:refs/remotes/origin/main",
+      "git update-ref refs/remotes/origin/main HEAD",
+      "git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main",
+      "git push origin HEAD:main",
+      "git push origin main",
+      'echo "x" >> README.md && git commit -am "readme"',
+      "npm test && git commit -m docs",
+      "git -C /other add src/app.py && git commit -m docs",
+    ]) await passes(cmd);
+    for (const name of ["upstreamRefRewriteLabel", "commitPrecededUnverifiable", "pushDefaultTargets"]) assert.equal(cg[name], undefined, name);
+    assert.equal(cg.COMMIT_LIKE_SUBCOMMANDS.has("pull"), false);
+    assert.deepEqual(cg.RULE_ORDER.filter((id) => /client|push/.test(id)), [], "no new rule ids: the rule order is main's");
   });
 
   await t("fix 2: a link or hard link in drafts/ or backups/ to a rules file is the rules file (checked before the drafts allowance)", async () => {
@@ -412,53 +411,6 @@ try {
       assert.equal(confirms.length, 0);
     } finally {
       for (const f of [join(drafts, "log-hard.md"), join(drafts, "log.md"), join(repo, "team-hard.md")]) { try { fs.unlinkSync(f); } catch { /* not made */ } }
-    }
-  });
-
-  await t("fix 2: rewriting what the loader reads as upstream asks (update-ref, symbolic-ref, remote set-url, fetch into a ref, config of a remote, a write in .git)", async () => {
-    for (const cmd of [
-      "git update-ref refs/remotes/origin/main HEAD",
-      "git symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/evil",
-      "git remote set-url origin ../evil.git",
-      "git remote add origin ../evil.git",
-      "git fetch . HEAD:refs/remotes/origin/main",
-      "git -c remote.origin.url=../evil.git fetch",
-      "git config remote.origin.url ../evil.git",
-      "echo deadbeef > .git/refs/remotes/origin/main",
-    ]) await asks(cmd, /rewrites the repository's remote branches or remote settings/);
-    for (const cmd of ["git fetch origin", "git config --get remote.origin.url", "git remote -v", "git symbolic-ref --short HEAD"]) await passes(cmd);
-  });
-
-  await t("fix 2: a push that changes .coop/rules/ on origin's main asks; other pushes do not", async () => {
-    resetHard();
-    const origin = join(root, "origin.git");
-    spawnSync("git", ["init", "-q", "--bare", origin]);
-    git("remote", "add", "origin", origin);
-    const branch = git("symbolic-ref", "--short", "HEAD").trim();
-    git("push", "-q", "origin", `HEAD:main`);
-    git("fetch", "-q", "origin");
-    try {
-      // A README-only change to main: no prompt.
-      fs.writeFileSync(join(repo, "README.md"), "# Client\n\nPush me.\n");
-      git("commit", "-qam", "readme");
-      await passes("git push origin HEAD:main");
-      git("push", "-q", "origin", "HEAD:main"); git("fetch", "-q", "origin");
-      // A rules change to main asks, every time; a feature branch or a dry run does not.
-      fs.writeFileSync(join(repo, ".coop", "rules", "tech.md"), "# Tech\nFabric.\n");
-      git("add", "--", ".coop/rules/tech.md");
-      git("commit", "-qm", "tech");
-      await asks("git push origin HEAD:main", /may change the client's instructions on the main branch[\s\S]*\.coop\/rules\/tech\.md on origin\/main/);
-      await asks(`git push origin ${branch}:main`);
-      await asks("git push origin HEAD:refs/remotes/origin/main", /writes refs\/remotes\/origin\/main/);
-      await passes("git push origin HEAD:feat");
-      await passes("git push --dry-run origin HEAD:main");
-      confirms = [];
-      const r = await bash("git push origin HEAD:main", ctxHeadless);
-      assert.equal(blocked(r), true);
-      assert.match(r.reason, /approval is unavailable in headless mode/);
-    } finally {
-      git("reset", "-q", "--hard", "HEAD~2");
-      git("remote", "remove", "origin");
     }
   });
 

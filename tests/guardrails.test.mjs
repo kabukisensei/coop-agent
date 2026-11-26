@@ -64,11 +64,7 @@ const pi = {
     // NB: cached diff args ("diff --cached --name-only") contain BOTH substrings, so
     // check --cached first.
     if (bin === "git" && a.includes("diff --cached")) return { stdout: staged, code: 0, stderr: "" };
-    // Every listing passes --no-renames (fix round, B2); the ref listing is the one
-    // whose operands are a commit range (no `--` pathspec, not the bare HEAD diff).
-    const afterNoRenames = args.includes("--no-renames") ? args.slice(args.indexOf("--no-renames") + 1) : [];
-    const refListing = a.includes("diff --name-only --no-renames") && afterNoRenames.length > 0 && !afterNoRenames.includes("--") && !(afterNoRenames.length === 1 && afterNoRenames[0] === "HEAD");
-    if (bin === "git" && refListing) return refFiles === null ? { stdout: "", code: 128, stderr: "fatal: bad revision" } : { stdout: refFiles, code: 0, stderr: "" };
+    if (bin === "git" && a.includes("--no-renames")) return refFiles === null ? { stdout: "", code: 128, stderr: "fatal: bad revision" } : { stdout: refFiles, code: 0, stderr: "" };
     if (bin === "git" && a.includes("diff --name-only")) return { stdout: modified, code: 0, stderr: "" };
     if (bin === "git" && a.includes("ls-files --others")) return { stdout: untracked, code: 0, stderr: "" };
     return { stdout: "", code: 0, stderr: "" };
@@ -147,12 +143,7 @@ await t("compound docs-only staging and commits still work; other repos and dry 
   assert.equal(blocked(await call("git add docs/a.md && git commit -m docs", { modifiedFiles: "docs/a.md" })), false);
   assert.equal(blocked(await call("git add . && git commit -m docs", { modifiedFiles: "docs/a.md", untrackedFiles: "docs/b.md" })), false);
   assert.equal(blocked(await call("git add -n src/app.py && git commit -m docs", { stagedFiles: "docs/a.md", modifiedFiles: "src/app.py" })), false, "a dry run stages nothing");
-  // Fix round 2: git in another folder before the commit may be the same repository
-  // (`git -C .coop/rules add …`), so the commit asks instead of passing silently.
-  assert.equal(blocked(await call("git -C /other add src/app.py && git commit -m docs", { stagedFiles: "docs/a.md", modifiedFiles: "src/app.py" })), true, "staging in another folder asks; declined, blocked");
-  assert.equal(confirmCount, 1);
-  assert.match(lastConfirm, /git add runs in another folder before the commit/);
-  assert.equal(blocked(await call("git -C /other add src/app.py && git commit -m docs", { stagedFiles: "docs/a.md", modifiedFiles: "src/app.py", confirm: true })), false, "yes lets it through");
+  assert.equal(blocked(await call("git -C /other add src/app.py && git commit -m docs", { stagedFiles: "docs/a.md", modifiedFiles: "src/app.py" })), false, "staging in another repo");
   assert.equal(blocked(await call("git commit -m docs && git add src/app.py", { stagedFiles: "docs/a.md", modifiedFiles: "src/app.py" })), false, "staging after the commit");
   assert.equal(blocked(await call("cd /work/other && git add src/app.py && git commit -m wip", { modifiedFiles: "src/app.py" })), true, "cd applies to both segments");
   assert.equal(lastRepoDir, "/work/other");
@@ -587,8 +578,7 @@ await t("blocks declined git clean with separate force token / --force", async (
   assert.equal(blocked(await call("git clean -fd", { confirm: false })), true);
 });
 await t("git push without force is not flagged by a later -f in the same line", async () => {
-  // A feature branch: a push to main is judged by pushRule (fix round 2), not here.
-  assert.equal(blocked(await call("git push origin feat; rm -f x", { confirm: false })), false);
+  assert.equal(blocked(await call("git push origin main; rm -f x", { confirm: false })), false);
   assert.equal(blocked(await call("git push && grep -f pat file", { confirm: false })), false);
 });
 await t("blocks declined DROP of non-table objects (INDEX/PROCEDURE)", async () => {
@@ -3373,7 +3363,7 @@ await t("#1: abbreviated long options are the gated options (git accepts any una
     assert.match(lastConfirm, /Destructive command/, cmd);
   }
   // Unrelated options and negations are untouched; too-short prefixes are not matched.
-  assert.equal(blocked(await call("git push --no-force origin feat", { confirm: false })), false);
+  assert.equal(blocked(await call("git push --no-force origin main", { confirm: false })), false);
   assert.equal(blocked(await call("git reset --soft HEAD~1", { confirm: false })), false);
   assert.equal(cg.normalizeGitLongOption("--am", ["amend", "all"]), "--amend", "git takes --am as --amend");
   assert.equal(cg.normalizeGitLongOption("--a", ["amend", "all"]), "--a", "one character never matches");
@@ -3819,7 +3809,7 @@ await t("merge, cherry-pick, revert, am and commit-tree take the never-commit-so
   // Value options are consumed, not read as refs: the message/strategy words never become a diff target.
   execLog.length = 0;
   await pick("git merge -m 'take feat' -s recursive -X theirs feat", { refFiles: "docs/a.md" });
-  const diffs = execLog.filter((e) => e.bin === "git" && e.args.includes("--no-renames") && !e.args.includes("--cached")).map((e) => e.args.slice(-1)[0]);
+  const diffs = execLog.filter((e) => e.bin === "git" && e.args.includes("--no-renames")).map((e) => e.args.slice(-1)[0]);
   assert.deepEqual(diffs, ["HEAD...feat"]);
   // The unit helper.
   assert.deepEqual(cg.commitLikePlan(parseGitCommand("git cherry-pick -x a1 b2")), { kind: "refs", refs: ["a1", "b2"] });
@@ -3927,8 +3917,7 @@ await t("the rules run in their declared order: native tools each own a rule, th
   assert.deepEqual([...cg.RULE_ORDER], [
     "codemode", "mcp-script", "powershell", "files", "sql-source", "live-metadata", "mcp",
     "shell-command", "prod-unlock-shell", "secret-file-shell", "environment-dump", "azure-sign-in",
-    "client-rules-shell", "git-commit", "sqlsc-shell", "destructive-command", "push-client-rules",
-    "fabric-write-shell", "fabric-cicd-shell", "desktop-reload",
+    "git-commit", "sqlsc-shell", "destructive-command", "fabric-write-shell", "fabric-cicd-shell", "desktop-reload",
   ]);
   // A cleared shell rule hands the command to the next: a destructive command that also touches a
   // secret asks twice, in that order, and a no at either point blocks.
