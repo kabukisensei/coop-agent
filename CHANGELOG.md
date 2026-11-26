@@ -26,7 +26,28 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   each comment shows "changed", "unchanged" or "moved or gone, check it". Off, the
   pane's "Fix this line" works exactly as before.
 
+- **Client instructions** (Settings, Features, or `coop settings set instructions
+  on`; off by default, takes effect after `/new`). The client home repository can
+  carry `.coop/rules/`: `AGENTS.md`, optional `product.md`, `tech.md`,
+  `structure.md`, and `corrections.md` (approved corrections). coop reads them with
+  one loader (`lib/client-rules.mjs`) into a hidden note with its own cap (2,000
+  tokens, outside the fixed context budget; `coop context-budget` shows it as its
+  own row), says at session start what it loaded (`Client instructions: 4 files,
+  1,240 of 2,000 tokens.`), and sends the note again when compaction, `/new` or a
+  fork drops it. Over the cap it keeps whole files in order (`AGENTS.md`, the
+  newest corrections, `tech.md`, `structure.md`, `product.md`) and names what it
+  left out. A line that tries to relax a coop rule or matches a secret pattern is
+  dropped and named in the session line and in doctor. `/correct <text>` (or coop,
+  when you correct it) adds a correction only after an "Add / Edit / No" card, No
+  by default; it applies to your next message, and to the team once committed.
+  The guardrails never read these files, and a commit under `.coop/rules/` asks
+  every time (other Markdown still passes). Off, nothing is read and a session is
+  exactly as before (tools, commands, notices and hidden context).
+
 ### Changed
+- **The secret-text patterns live in `lib/secret-text.mjs`.** `lib/feedback.mjs`
+  imports them back in the same order, so feedback reports are redacted exactly as
+  before; the client instructions use the same patterns.
 - **One writer for `~/.coop/config`.** `lib/features.mjs` takes a short lock,
   re-reads the file, writes a temp file and renames it over, keeping every other
   key; a file with a BOM is read, and a file that does not parse is reported and
@@ -40,8 +61,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 - **The context budget reports two totals.** A native tool behind a feature switch
   carries a `// coop:feature <key>` marker; `coop dev context-budget` shows the
   default-off total (what a fresh install sends, now 7,388 tokens) and the all-on
-  total (every feature on, 7,496), and `check-context-budget.ps1` gates the all-on
-  total against 8,000.
+  total (every feature on, 7,552 with the `client_rules` tool of Client
+  instructions), and `check-context-budget.ps1` gates the all-on total against
+  8,000. The client instructions' own 2,000-token cap is reported as a separate
+  row, outside both totals.
 
 ### Fixed
 - **coop no longer says "Pi launch failed" when Pi started and exited with an

@@ -306,7 +306,9 @@ These sharpen the principles above; reach for them on non-trivial or multi-step 
   Prefer the place that gets checked: a standards article or a deliberate
   `.coop/project.yml` standards override (`standards_check` reads both) first,
   then the relevant skill, and memory (pi-hermes-memory) last, because nothing
-  fails when a memory note is missed.
+  fails when a memory note is missed. With Client instructions on, a correction
+  about how to work for this client goes to its corrections log instead: offer
+  `client_rules` (or the user's `/correct`), which asks Add / Edit / No first.
   A fix that lives only in this chat is a fix you'll redo next week.
 - **Test the assumption after two failed fixes.** When two fixes that rest on the
   same assumption have failed the same check, stop fixing. Write the assumption

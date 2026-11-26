@@ -14,6 +14,10 @@ rejected approval promise, blocks that call with a fixed reason. Exception text 
 returned or logged. Optional display and audit-write failures remain best-effort and
 cannot turn a refusal into permission.
 
+### Client instructions never loosen a rule
+
+With the Client instructions feature on (`coop settings set instructions on`, off by default), coop sends the client's `.coop/rules/` files to the model as a hidden note, capped at 2,000 tokens of its own and re-sent after compaction, `/new` or a fork. The note opens with: coop's guardrails, standards and approval rules always win where they differ. At load, a line that tries to relax a coop rule (skip backups, approvals or `standards_check`; commit or push; production; `COOP_NO_GUARDRAILS`) or matches a secret-text pattern (`lib/secret-text.mjs`) is dropped, and the session line and doctor name it (`1 line not loaded: it tries to let coop commit or push (AGENTS.md:3)`). That check helps authors; the boundary is the code above, which never reads these files. Standards exceptions stay in `project.yml`. A correction is added only through the `client_rules` tool or `/correct`, after an Add / Edit / No card (No by default; headless adds nothing), and the same checks refuse a relaxing or secret line before the card.
+
 ### Git source-commit blocking
 
 A `git commit` that would include source is **blocked**. This covers:
@@ -31,6 +35,8 @@ A commit whose repository the command text cannot name asks first and is blocked
 The other verbs that create a commit on the branch take the same gate: `git merge`, `git cherry-pick` and `git revert` (with or without `--no-commit` / `--squash`, which stage the same content) are checked against what the named commits bring in (`git diff --name-only` of the merge base or the picked commit, plus anything already staged), and source there is blocked with the same reason. When the paths cannot be listed (`git am`, `git commit-tree`, `--continue` / `--skip`, a mainline `-m` pick, no named commit, a ref the shell expands or git cannot diff) the command asks first like an unverifiable commit and is blocked headlessly; `--abort` / `--quit` create no commit and pass.
 
 Allowed paths come from the target repo's `.coop/project.yml` entry under `repositories:` (`agent_allowed_to_commit` / `agent_never_commit`), falling back to the top-level `agent_allowed_to_commit` and the built-in docs/logs/site defaults. Commit only allowed paths and let a human commit source.
+
+The client's instructions are the one exception to Markdown passing: anything under a `.coop/rules/` folder (`AGENTS.md`, `corrections.md` and the rest; master plan CW1) steers coop for the whole team once shared, so a commit that includes one **asks every time** (no session grant) and is blocked headlessly or when declined, even where a project glob would allow it. A deny glob over it still blocks, and a commit that also carries source is blocked as source. This is a path test: the guardrails never open or read those files, so nothing written in them can change a rule.
 
 ### SQL source control (coop-sql-source-control)
 

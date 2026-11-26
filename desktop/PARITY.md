@@ -237,6 +237,12 @@ marker reads "changed", "unchanged" or "moved or gone, check it". Comments live 
 the tab's memory only and stop at the diff's 4,000-line cut. Off, or when the
 setting cannot be read, the pane is the single-line "Fix this line" note exactly.
 
+Client instructions (after `/new`) need nothing of the window's own: the
+session-start line and any "line not loaded" warnings arrive as notices, the
+hidden note travels inside Pi's session as in the terminal, `/correct` comes from
+Pi's command list, and its "Add / Edit / No" question (No first) is a question
+card like any extension's.
+
 ## Tabs (several sessions at once)
 
 The window's own addition, matching how the terminal runs one coop per
