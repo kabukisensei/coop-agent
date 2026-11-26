@@ -311,6 +311,107 @@ jobs:
             ${{ runner.temp }}/launch-acceptance.json
           if-no-files-found: ignore
 
+  linux:
+    # The Linux personal edition (master plan row LX1): Windows is the team
+    # platform; Linux under pwsh 7 is a supported personal edition, and this job
+    # is its gate. One implementation: the same scripts, with the Linux-only
+    # branches behind `-not (Test-CoopWindowsHost)`. It runs the PowerShell
+    # suite (gate lane), then a real `coop install --yes`, `coop doctor` and
+    # `coop launch-spec --json` against a throwaway HOME (pipx and npm pointed
+    # into it), the guardrails through the pinned Pi's own extension runner, and
+    # `coop uninstall`. No ODBC driver is installed here, so the one red doctor
+    # row allowed is the "Fabric SQL fallback" row (pyodbc cannot load without
+    # unixODBC + msodbcsql18, which need root on a workstation); any other red
+    # row, or a PowerShell exception anywhere in the output, fails the job.
+    name: linux personal edition (pwsh 7)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      COOP_SKIP_AZ: '1'
+      NO_COLOR: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22.23.5'
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: PowerShell behavioral tests, gate lane (pwsh 7 on Linux)
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/run.ps1
+      - name: sandbox HOME for the real install
+        run: |
+          sb="$RUNNER_TEMP/coop-linux"
+          mkdir -p "$sb/home" "$sb/npm-global" "$sb/logs"
+          python -m pip install --quiet --user pipx
+          {
+            echo "HOME=$sb/home"
+            echo "NPM_CONFIG_PREFIX=$sb/npm-global"
+            echo "PIPX_HOME=$sb/home/.local/share/pipx"
+            echo "PIPX_BIN_DIR=$sb/home/.local/bin"
+            echo "COOP_LOGS=$sb/logs"
+          } >> "$GITHUB_ENV"
+          {
+            echo "$sb/npm-global/bin"
+            echo "$sb/home/.local/bin"
+            echo "$(python -m site --user-base)/bin"
+          } >> "$GITHUB_PATH"
+      - name: coop install --yes, doctor, launch-spec --json (sandbox HOME)
+        shell: bash
+        run: |
+          set +e
+          bin/coop install --yes > "$COOP_LOGS/install.log" 2>&1; echo "install rc=$?"
+          bin/coop doctor > "$COOP_LOGS/doctor.log" 2>&1; echo "doctor rc=$?"
+          bin/coop doctor --json > "$COOP_LOGS/doctor.json" 2> "$COOP_LOGS/doctor-json.err"
+          bin/coop launch-spec --json > "$COOP_LOGS/launch-spec.json" 2> "$COOP_LOGS/launch-spec.err"; spec_rc=$?
+          set -e
+          cat "$COOP_LOGS/install.log" "$COOP_LOGS/doctor.log"
+          test -L "$HOME/.local/bin/coop" || { echo "::error::install did not link ~/.local/bin/coop"; exit 1; }
+          test "$spec_rc" -eq 0 || { cat "$COOP_LOGS/launch-spec.err"; echo "::error::launch-spec --json exited $spec_rc"; exit 1; }
+          python - "$COOP_LOGS" <<'PY'
+          import json, os, re, sys
+          logs = sys.argv[1]
+          bad = 0
+          for name in ("install.log", "doctor.log", "doctor-json.err", "launch-spec.err"):
+              text = open(os.path.join(logs, name), encoding="utf-8", errors="replace").read()
+              if "Exception" in text:
+                  print(f"::error::{name} carries a PowerShell exception"); bad = 1
+          doc = None
+          for line in open(os.path.join(logs, "doctor.json"), encoding="utf-8"):
+              if line.startswith('{"checks"'):
+                  doc = json.loads(line)
+          if doc is None:
+              print("::error::doctor --json printed no document"); sys.exit(1)
+          fails = [c for c in doc["checks"] if c.get("status") == "fail"]
+          others = [c for c in fails if not str(c.get("name", "")).startswith("Fabric SQL fallback")]
+          for c in fails:
+              print(f"doctor fail row: {c.get('name')}")
+          if others:
+              print("::error::doctor has red rows besides the ODBC/pyodbc one"); bad = 1
+          spec = json.load(open(os.path.join(logs, "launch-spec.json"), encoding="utf-8"))
+          args = " ".join(spec.get("args", []))
+          if "coop-guardrails" not in args:
+              print("::error::launch-spec does not load coop-guardrails"); bad = 1
+          sys.exit(bad)
+          PY
+      - name: guardrails through Pi's own extension runner (the pinned Pi install put in the sandbox)
+        run: node tests/guardrails-pi-runner.test.mjs "$NPM_CONFIG_PREFIX/lib/node_modules/@earendil-works/pi-coding-agent"
+      - name: coop uninstall (sandbox HOME)
+        run: |
+          bin/coop uninstall --yes > "$COOP_LOGS/uninstall.log" 2>&1 || true
+          cat "$COOP_LOGS/uninstall.log"
+          if grep -q Exception "$COOP_LOGS/uninstall.log"; then echo "::error::uninstall printed a PowerShell exception"; exit 1; fi
+          if [ -e "$HOME/.local/bin/coop" ] || [ -L "$HOME/.local/bin/coop" ]; then echo "::error::uninstall left ~/.local/bin/coop"; exit 1; fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: coop-linux-logs
+          path: ${{ runner.temp }}/coop-linux/logs
+          if-no-files-found: ignore
+
   gate:
     # The one stable check name for this workflow. It needs every job above and
     # fails unless each one finished with `success`, so a failed, cancelled or
@@ -319,7 +420,7 @@ jobs:
     # any new ci.yml job to `needs` here.
     name: gate
     if: always()
-    needs: [shell, tests, windows, installer, installer-upgrade]
+    needs: [shell, tests, windows, installer, installer-upgrade, linux]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -330,12 +431,13 @@ jobs:
           TESTS_RESULT: ${{ needs.tests.result }}
           WINDOWS_RESULT: ${{ needs.windows.result }}
           INSTALLER_RESULT: ${{ needs.installer.result }}
+          LINUX_RESULT: ${{ needs.linux.result }}
           UPGRADE_RESULT: ${{ needs.installer-upgrade.result }}
           EVENT: ${{ github.event_name }}
         run: |
           printf '%s\n' "$NEEDS_JSON"
           rc=0
-          for job in "shell=$SHELL_RESULT" "tests=$TESTS_RESULT" "windows=$WINDOWS_RESULT" "installer=$INSTALLER_RESULT"; do
+          for job in "shell=$SHELL_RESULT" "tests=$TESTS_RESULT" "windows=$WINDOWS_RESULT" "installer=$INSTALLER_RESULT" "linux=$LINUX_RESULT"; do
             if [ "${job#*=}" != "success" ]; then echo "::error::gate: ${job%%=*} finished with '${job#*=}'"; rc=1; fi
           done
           case "$UPGRADE_RESULT" in
