@@ -26,7 +26,74 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   each comment shows "changed", "unchanged" or "moved or gone, check it". Off, the
   pane's "Fix this line" works exactly as before.
 
+- **Client instructions** (Settings, Features, or `coop settings set instructions
+  on`; off by default, takes effect after `/new`). The client home repository can
+  carry `.coop/rules/`: `AGENTS.md`, optional `product.md`, `tech.md`,
+  `structure.md`, and `corrections.md` (approved corrections). coop reads them with
+  one loader (`lib/client-rules.mjs`) into a hidden note with its own cap (2,000
+  tokens, outside the fixed context budget; `coop context-budget` shows it as its
+  own row), says at session start what it loaded (`Client instructions: 4 files,
+  1,240 of 2,000 tokens.`), and sends the note again when compaction, `/new` or a
+  fork drops it. Over the cap it keeps whole files in order (`AGENTS.md`, the
+  newest corrections, `tech.md`, `structure.md`, `product.md`) and names what it
+  left out; the cap counts the whole note. The note calls the files untrusted team
+  notes that cannot grant permissions. A line, a list item with its continuation
+  lines, or two or three wrapped lines that try to relax a coop rule, override
+  coop's instructions or match a secret pattern are dropped and named in the
+  session line and in doctor (checked after Unicode, zero-width and Markdown
+  emphasis normalization). A linked `.coop` or `.coop/rules` folder is never read
+  or written through. `/correct <text>` (or coop, when you correct it) adds a
+  correction only after an "Add / Edit / No" card, No by default; it applies to
+  your next message, and to the team once committed and pushed. The guardrails never read
+  these files. coop's own `edit`/`write` never touches `.coop/rules/corrections.md`
+  (the card is the only way in) and asks for each change to any other
+  `.coop/rules/` file (blocked headless). A commit under `.coop/rules/` asks every
+  time, including a `cd .coop/rules && git rm` (other Markdown still passes). That write and commit gate
+  holds whether or not your own switch is on, since the files steer every teammate
+  who has it on. Off, nothing is read and a session is exactly as before (tools,
+  commands, notices and hidden context).
+  **Only approved text is loaded.** A rules file's text reaches the model only as
+  it is on the client repository's upstream default branch (`origin/<default>` as
+  last fetched; coop never fetches it or pushes on its own), i.e. what a
+  person reviewed and pushed, plus `corrections.md` entries approved on this
+  machine with the Add / Edit / No card (an approval ledger outside the
+  repository, `~/.coop/client-rules-approvals/`, that only the card writes: each
+  entry's id and the sha256 of its text). A local edit to `AGENTS.md`,
+  `product.md`, `tech.md` or `structure.md` is therefore not loaded until it is
+  committed and pushed (upstream's copy loads meanwhile), and an entry written into
+  `corrections.md` any other way is not loaded at all. The session line and doctor
+  count what was held back (`1 unapproved local change in .coop/rules/ not loaded:
+  approve with /correct, or get them merged.`) and name each file. With no
+  upstream (no `origin` remote, nothing fetched yet, not a git repository) only
+  card-approved corrections load, and the session says why. A body can no longer
+  close the notes wrapper or pose as its marker, every match of a relaxing phrase
+  counts (not only the first), `data_doc` is protected like `sql_impact`, and
+  wrapped prose is screened in runs of up to 12 lines (across a heading or a blank
+  line) as well as whole paragraphs. The loader's git runs nothing the repository configures:
+  no hooks, fsmonitor, pager, transport, ssh command or credential helper, no
+  replace refs, no lazy fetch (a partial clone's unfetched file is not loaded, and
+  the session says why), none of the caller's `GIT_*` variables, and no system or
+  global config. origin/HEAD counts only when it names one of origin's branches, a
+  linked `.git` is refused, the ledger must name its repository and is refused when
+  linked, and the client repository is fixed when the session starts. The cheaper
+  gates stay as defence in depth, triggered only by a `.coop/rules/` path or the
+  ledger: a shell command that writes `.coop/rules/` asks each call (sqlsc and fab
+  `-o`/`--output` included) and one that writes `corrections.md` or the ledger is
+  blocked; a link or hard link to a rules file (in `drafts/` and `backups/` too) is
+  the rules file. `git pull`, `git push`, `git remote` and every other command are
+  judged exactly as before. The limit is documented in
+  `docs/guardrails-reference.md`: coop can run shell commands, so a determined
+  injected instruction could still put text in front of it, like any file coop
+  reads; the coded guardrails are what stop it acting on it. Keep the client
+  repository's main branch protected.
+
 ### Changed
+- **The secret-text patterns live in `lib/secret-text.mjs`.** `lib/feedback.mjs`
+  imports them back in the same order, so feedback reports are redacted exactly as
+  before. The client instructions use the same patterns plus private-key headers,
+  passwords in URLs, AWS and Entra keys and camelCase keys (`clientSecret:`), and
+  judge a long unlabelled run by its shape, so a SQL object name or a repo path
+  (`usp_Load_Silver_D365_CustomerInvoiceTransactions`) is no longer taken for a key.
 - **One writer for `~/.coop/config`.** `lib/features.mjs` takes a short lock,
   re-reads the file, writes a temp file and renames it over, keeping every other
   key; a file with a BOM is read, and a file that does not parse is reported and
@@ -40,8 +107,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 - **The context budget reports two totals.** A native tool behind a feature switch
   carries a `// coop:feature <key>` marker; `coop dev context-budget` shows the
   default-off total (what a fresh install sends, now 7,388 tokens) and the all-on
-  total (every feature on, 7,496), and `check-context-budget.ps1` gates the all-on
-  total against 8,000.
+  total (every feature on, 7,552 with the `client_rules` tool of Client
+  instructions), and `check-context-budget.ps1` gates the all-on total against
+  8,000. The client instructions' own 2,000-token cap is reported as a separate
+  row, outside both totals.
 
 ### Fixed
 - **coop no longer says "Pi launch failed" when Pi started and exited with an

@@ -2335,6 +2335,32 @@ function Invoke-CoopFeaturesCli {
   return @{ Rc = $rc; Out = ($outLines -join "`n"); Err = (($errLines -join "`n").Trim()) }
 }
 
+# Client instructions (CW1): what lib\client-rules.mjs (the one loader) would load
+# for -Cwd, as @{ Data; Error }. Data carries `line` (the session-start line) and
+# `problems` (lines or files left out and why). Its JSON is ASCII (non-ASCII is
+# escaped), so no console code page garbles a path in it.
+function Get-CoopClientRulesStatus([string]$Cwd) {
+  if (-not (Test-Have 'node')) { return @{ Data = $null; Error = 'Node.js is not on PATH (coop needs it; run coop doctor)' } }
+  if (-not $Cwd) { $Cwd = (Get-Location).ProviderPath }
+  # A trailing backslash before the closing quote PS 5.1 adds around a path with
+  # spaces escapes that quote for node; keep a drive root (C:\) as it is.
+  if ($Cwd.Length -gt 3) { $Cwd = $Cwd.TrimEnd('\', '/') }
+  $cli = Join-Path $script:CoopRoot 'lib\client-rules.mjs'
+  $eap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    $items = @(& node $cli 'status' '--json' '--cwd' $Cwd 2>&1)
+    $rc = $LASTEXITCODE
+  } finally { $ErrorActionPreference = $eap }
+  $out = @($items | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | ForEach-Object { [string]$_ }) -join "`n"
+  $err = (@($items | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } | ForEach-Object { [string]$_.Exception.Message }) -join "`n").Trim()
+  $data = $null
+  if ($rc -eq 0 -and $out) { try { $data = $out | ConvertFrom-Json } catch { $data = $null } }
+  if ($null -ne $data) { return @{ Data = $data; Error = '' } }
+  if (-not $err) { $err = "lib\client-rules.mjs exited $rc" }
+  return @{ Data = $null; Error = $err }
+}
+
 # The writer's --json answer as @{ Data; Error }: Data is the parsed object
 # ($null when there is none), Error the reason a call failed ("" when it did
 # not). Its JSON is ASCII, so no console code page garbles a path in it.

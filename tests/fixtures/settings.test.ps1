@@ -28,7 +28,7 @@ try {
     return @{ Rc = $LASTEXITCODE; Out = $out }
   }
   $rows = @(
-    '  Client instructions     off  instructions  (not in this version yet)',
+    '  Client instructions     off  instructions',
     '  Change history          off  history  (not in this version yet)',
     '  Diff review comments    off  comments',
     '  Daily lineage refresh   off  docs-refresh  (not in this version yet)',
@@ -37,7 +37,7 @@ try {
   # --- every feature off: no config, then a config without the keys ------------------
   $r = Run-Coop @('settings')
   $missing = @($rows | Where-Object { -not $r.Out.Contains($_) })
-  if ($r.Rc -eq 0 -and $missing.Count -eq 0 -and $r.Out -match 'Features \(all off unless you turn them on\)' -and $r.Out -match 'cleanup   45 days') { Ok 'coop settings with no config: the five features, all off, with their plain labels and keys' } else { Ko "coop settings (rc=$($r.Rc)) missing: $($missing -join ' | ')" $r.Out }
+  if ($r.Rc -eq 0 -and $missing.Count -eq 0 -and -not $r.Out.Contains('instructions  (not in this version yet)') -and $r.Out -match 'Features \(all off unless you turn them on\)' -and $r.Out -match 'cleanup   45 days') { Ok 'coop settings with no config: the five features, all off, with their plain labels and keys' } else { Ko "coop settings (rc=$($r.Rc)) missing: $($missing -join ' | ')" $r.Out }
   if (-not (Test-Path -LiteralPath $cfg)) { Ok 'showing the settings writes nothing' } else { Ko 'coop settings created ~/.coop/config' }
   New-Item -ItemType Directory -Force -Path (Split-Path -Parent $cfg) | Out-Null
   [System.IO.File]::WriteAllText($cfg, '{"client":{"platform":"fabric"},"features":{},"sql_source_control":{}}', $utf8)

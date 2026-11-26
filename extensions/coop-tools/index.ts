@@ -34,7 +34,7 @@ import { Type } from "typebox";
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -44,7 +44,8 @@ import {
   sourceStatus,
 } from "../../lib/standards.mjs";
 import { agentDir as coopAgentDir, configPath as coopConfigPath } from "../../lib/paths.mjs";
-import { featuresOnLine } from "../../lib/features.mjs";
+import { featureEnabled, featuresOnLine } from "../../lib/features.mjs";
+import { appendCorrection, clientRulesLine, clientRulesProblems, clientRulesRoot, correctionRefusal, loadClientRules, noteInContext } from "../../lib/client-rules.mjs";
 import {
   CHECKER_SYSTEM_PROMPT,
   checkPlan,
@@ -287,6 +288,10 @@ const SCHEMA_COMPARE_PARAMS = Type.Object({
   commented: Type.Optional(Type.Boolean({ description: "Comment destructive statements out." })),
 });
 
+const CLIENT_RULES_PARAMS = Type.Object({
+  command: Type.Optional(Type.Literal("add_correction")),
+  text: Type.String({ description: "The correction, one sentence." }),
+});
 const SQL_SOURCE_PARAMS = Type.Object({
   command: Type.Optional(Type.Union(
     ["status", "diff", "checkout", "release", "script", "get_latest", "commit", "deploy", "init"].map((c) => Type.Literal(c)),
@@ -850,6 +855,80 @@ function notify(ctx: any, message: string, type: "info" | "warning" | "error" = 
   } catch {
     /* never break pi */
   }
+}
+
+// --- Client instructions (FEATURES-DESIGN, CW1) ---------------------------------
+// lib/client-rules.mjs is the one loader. Here: the switch, and the question card
+// an approved correction must pass before it goes into the client's log.
+
+/** The Client instructions switch in ~/.coop/config; false when it can't be read. */
+function clientRulesSwitch(): boolean {
+  try { return featureEnabled("instructions"); } catch { return false; }
+}
+
+const CLIENT_RULES_OFF = "Client instructions are off for this client. Turn them on with coop settings set instructions on (or the window's Settings), then /new.";
+const CLIENT_RULES_RESTART = "Client instructions are on, but this coop started with them off, so client_rules and /correct are not here and nothing was loaded: restart coop to use them.";
+const CORRECTION_ADD = "Add";
+const CORRECTION_EDIT = "Edit";
+const CORRECTION_NO = "No";
+
+export type CorrectionOutcome =
+  | { state: "added"; id: string; entry: string; path: string }
+  | { state: "declined" | "headless" | "off" | "no_root"; why: string }
+  | { state: "refused"; why: string };
+
+/** The client repository this session's instructions come from: fixed at session
+ *  start (a .coop/project.yml written later in a subfolder cannot redirect it);
+ *  before any session start, the folder found from `cwd`. */
+let pinnedClientRulesRoot: string | null = null;
+export function pinClientRulesRoot(cwd: string | null): string {
+  pinnedClientRulesRoot = cwd === null ? null : clientRulesRoot(cwd);
+  return pinnedClientRulesRoot || "";
+}
+export function sessionClientRulesRoot(cwd: string): string {
+  return pinnedClientRulesRoot !== null ? pinnedClientRulesRoot : clientRulesRoot(cwd);
+}
+
+/**
+ * The "Add this to the client's corrections log? Add / Edit / No" card (No first,
+ * the default; dismissing it is No). A line that relaxes a coop rule or holds a
+ * secret is refused before and after any edit. Headless runs never add one.
+ */
+export async function approveCorrection(ctx: any, draft: string, now: Date = new Date(), signal?: AbortSignal): Promise<CorrectionOutcome> {
+  if (!clientRulesSwitch()) return { state: "off", why: CLIENT_RULES_OFF };
+  const root = sessionClientRulesRoot(ctx?.cwd || process.cwd());
+  if (!root) return { state: "no_root", why: "no .coop/project.yml was found, so there is no client repository to keep corrections in" };
+  let text = String(draft ?? "").replace(/\s+/g, " ").trim();
+  const refusal = correctionRefusal(text);
+  if (refusal) return { state: "refused", why: refusal };
+  if (!ctx?.hasUI || typeof ctx?.ui?.select !== "function") {
+    return { state: "headless", why: "approval is unavailable here (headless), so nothing was added; the corrections log changes only through the Add / Edit / No card" };
+  }
+  for (let round = 0; round < 5; round++) {
+    const canEdit = typeof ctx.ui.editor === "function" || typeof ctx.ui.input === "function";
+    const options = canEdit ? [CORRECTION_NO, CORRECTION_ADD, CORRECTION_EDIT] : [CORRECTION_NO, CORRECTION_ADD];
+    const picked = await ctx.ui.select(`Add this to the client's corrections log (.coop/rules/corrections.md)?\n  ${text}`, options, signal ? { signal } : undefined);
+    if (picked === CORRECTION_ADD) {
+      const author = effectiveProfile().profile?.name || (() => { try { return userInfo().username; } catch { return ""; } })();
+      const added = appendCorrection(root, text, { author, now });
+      return { state: "added", ...added };
+    }
+    if (picked !== CORRECTION_EDIT || !canEdit) return { state: "declined", why: "you chose No, so nothing was added" };
+    const edit = typeof ctx.ui.editor === "function" ? ctx.ui.editor : ctx.ui.input;
+    const edited = await edit.call(ctx.ui, "Edit the correction (one sentence)", text);
+    if (edited === undefined || edited === null) return { state: "declined", why: "the edit was cancelled, so nothing was added" };
+    text = String(edited).replace(/\s+/g, " ").trim();
+    const again = correctionRefusal(text);
+    if (again) return { state: "refused", why: again };
+  }
+  return { state: "declined", why: "nothing was added" };
+}
+
+function correctionText(outcome: CorrectionOutcome): string {
+  if (outcome.state === "added") {
+    return `Added ${outcome.id} to .coop/rules/corrections.md. It applies to your sessions from the next message; the team gets it once the file is committed and pushed (committing it asks).`;
+  }
+  return `Not added: ${outcome.why}.`;
 }
 
 /** Prompt for text; Enter (blank) accepts `def`; returns null when cancelled.
@@ -3140,6 +3219,9 @@ export function createStandardsCheck(deps: StandardsCheckDeps = defaultStandards
 }
 
 export default function coopTools(pi: ExtensionAPI) {
+  // Client instructions (CW1): the switch as this extension instance read it when
+  // Pi loaded it; client_rules and /correct are registered from this one reading.
+  const clientRulesRegistered = clientRulesSwitch();
   // The first sql_source status of a session names a missing commit line once
   // per repository; session_start forgets them (one Pi process can carry
   // several sessions and folders: the dev VM, 2026-10-21, never saw it).
@@ -3393,6 +3475,27 @@ export default function coopTools(pi: ExtensionAPI) {
         content: [{ type: "text" as const, text: modelText(head, lines, "run sql_source with fewer objects") }],
         details: { state: out.ok === false ? "refused" : "ok", command: input.command, config, user: agent, result: out },
       };
+    },
+  });
+
+  // Client instructions (CW1): the one way coop adds to the client's corrections
+  // log, through the Add / Edit / No card. Registered only while the switch is on
+  // (then /new or a restart); the marker below puts it in the all-on total only.
+  // coop:feature instructions
+  if (clientRulesRegistered) pi.registerTool({
+    name: "client_rules",
+    label: "Client instructions",
+    // Metadata kept short: every string here is fixed context (scripts/check-context-budget.ps1).
+    description: "Add an approved correction to the client's instructions (asks: Add / Edit / No).",
+    promptSnippet: "Save a correction the user gave",
+    promptGuidelines: ["When the user corrects how you work for this client, offer client_rules with one sentence; it asks them first."],
+    parameters: CLIENT_RULES_PARAMS,
+    executionMode: "sequential",
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      const command = String((params as any)?.command || "add_correction");
+      if (command !== "add_correction") return { content: [{ type: "text" as const, text: `client_rules: unknown command ${command}.` }], details: { state: "input_invalid" } };
+      const outcome = await approveCorrection(ctx, String((params as any)?.text ?? ""), new Date(), signal);
+      return { content: [{ type: "text" as const, text: correctionText(outcome) }], details: outcome };
     },
   });
 
@@ -3736,6 +3839,24 @@ export default function coopTools(pi: ExtensionAPI) {
       const features = featuresOnLine();
       if (features) notify(ctx, features, "info");
     } catch { /* best effort */ }
+    // Client instructions (CW1): one line saying what was loaded, and one per line
+    // or file left out and why. Off reads nothing at all.
+    // Pi re-runs this extension for /new (a new runtime), so the tool and command
+    // follow the switch there. Should a Pi keep this instance across a session
+    // start, keep them in step with the note: off hides client_rules from the
+    // model; on without them registered loads nothing and says to restart coop.
+    const rulesSwitch = clientRulesSwitch();
+    clientRulesOn = rulesSwitch && clientRulesRegistered;
+    if (rulesSwitch && !clientRulesRegistered) notify(ctx, CLIENT_RULES_RESTART, "info");
+    if (clientRulesRegistered) syncClientRulesTool(rulesSwitch);
+    pinClientRulesRoot(null);
+    if (clientRulesOn) {
+      try {
+        const rules = loadClientRules(pinClientRulesRoot(ctx.cwd));
+        notify(ctx, clientRulesLine(rules), "info");
+        for (const problem of clientRulesProblems(rules)) notify(ctx, problem, "warning");
+      } catch { /* a bad file never blocks a session */ }
+    }
     // First launch (master plan FR1): the common-workflows menu, once per profile
     // dir. The flag is cleared first so `/new` in the same process never reopens it.
     if (shouldOpenFirstRunMenu(ctx)) {
@@ -3766,6 +3887,19 @@ export default function coopTools(pi: ExtensionAPI) {
   const announcedCatalogSnapshots = new Set<string>();
   const announcedProjectGaps = new Set<string>();
   let announcedTeamKnowledge = false;
+  // Client instructions (CW1): the switch as this session read it (session start).
+  let clientRulesOn = clientRulesRegistered;
+  // Hide client_rules from the model while the switch is off (and show it again,
+  // only if coop hid it); Pi has no way to unregister a tool.
+  let clientRulesHidden = false;
+  const syncClientRulesTool = (on: boolean) => {
+    try {
+      const names = (pi as any).getActiveTools?.();
+      if (!Array.isArray(names)) return;
+      if (!on && names.includes("client_rules")) { (pi as any).setActiveTools(names.filter((n: string) => n !== "client_rules")); clientRulesHidden = true; }
+      else if (on && clientRulesHidden) { if (!names.includes("client_rules")) (pi as any).setActiveTools([...names, "client_rules"]); clientRulesHidden = false; }
+    } catch { /* best effort: the tool itself refuses while off */ }
+  };
   let sessionToolFailures = 0;
   // Distinct failed tool_result events (dedupe by toolCallId so a replayed
   // result is never counted twice).
@@ -3893,12 +4027,15 @@ export default function coopTools(pi: ExtensionAPI) {
         }
       }
 
+      // The model's context text, read once per turn and only when a check needs it.
+      let contextText: string | null = null;
+      const contextNow = () => (contextText === null ? (contextText = standardsInContext(ctx)) : contextText);
       if (standardsContext.records.length) {
         const patternTexts = standardsContext.patterns.map((pattern: any) => {
           const snippets = pattern.sections.map((section: any) => `### ${section.heading} (${section.path})\n${section.content}`).join("\n\n");
           return `[semantic_model] optional authority=${pattern.authority_class} source=${pattern.source} root=${pattern.source_root} selective=true (relevant Incremental BI excerpts only; not mandatory)${snippets ? `\n${snippets}` : ""}`;
         });
-        const content = standardsMessageContent(standardsContext.records as any[], patternTexts, standardsInContext(ctx));
+        const content = standardsMessageContent(standardsContext.records as any[], patternTexts, contextNow());
         if (message) message.content = `${message.content}\n\n${content}`;
         else message = {
           customType: "coop-standards",
@@ -3928,6 +4065,20 @@ export default function coopTools(pi: ExtensionAPI) {
             message = { customType: "coop-project-gaps", display: false, content: gapsNote };
           }
         }
+      }
+
+      // Client instructions (CW1), last: read every turn (an approved correction
+      // applies at once) and sent again whenever the note with this exact text is
+      // no longer in the model's context (new session, compaction, /new, a fork),
+      // as QL1 does for the standards. Off reads nothing.
+      if (clientRulesOn) {
+        try {
+          const rules = loadClientRules(sessionClientRulesRoot(cwd));
+          if (rules.note && !noteInContext(rules, contextNow())) {
+            if (message) message.content = `${message.content}\n\n${rules.note}`;
+            else message = { customType: "coop-client-instructions", display: false, content: rules.note, details: { files: rules.loaded, hash: rules.hash } };
+          }
+        } catch { /* a bad file never breaks a turn */ }
       }
 
       if (!message && !requirement) return;
@@ -4235,6 +4386,26 @@ export default function coopTools(pi: ExtensionAPI) {
   // checks and edits, then a pre-filled issue on the private feedback repository
   // opened in their browser. coop sends nothing itself (lib/feedback.mjs). Pi
   // owns /bug in the terminal; the window's /bug and Help menu run this command.
+  // Client instructions (CW1): registered only while the switch is on, so off
+  // leaves the command list exactly as before.
+  if (clientRulesRegistered) pi.registerCommand("correct", {
+    description: "Save a correction to the client's instructions (asks: Add / Edit / No)",
+    handler: async (args: string, ctx: ExtensionContext) => {
+      try {
+        if (!clientRulesSwitch()) { notify(ctx, CLIENT_RULES_OFF, "info"); return; }
+        const text = String(args || "").trim();
+        if (!text) {
+          pi.sendUserMessage("Draft the correction I just gave you as one sentence, then save it with client_rules (command add_correction); it asks me first.");
+          return;
+        }
+        const outcome = await approveCorrection(ctx, text);
+        notify(ctx, correctionText(outcome), outcome.state === "added" ? "info" : outcome.state === "declined" ? "info" : "warning");
+      } catch (e: any) {
+        notify(ctx, `The correction was not saved: ${errMsg(e)}.`, "error");
+      }
+    },
+  });
+
   pi.registerCommand("feedback", {
     description: "Report a bug or send an idea or question to the coop team (you check a redacted preview first)",
     handler: async (args: string, ctx: ExtensionContext) => {
