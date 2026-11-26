@@ -355,6 +355,8 @@ echo "→ committed dev catalog snapshot (SQ9: one file per object, manifest, st
 python3 "$ROOT/tests/catalog-snapshot.test.py"
 echo "→ lineage docs from the live dev database (dev targets only, token in the child's environment, fresh snapshots never connect)"
 python3 "$ROOT/tests/live-docs.test.py"
+echo "→ daily lineage refresh (CW6): dev_is_prod, the build and its changed files, what the waiter may run"
+python3 "$ROOT/tests/docs-refresh.test.py"
 echo "→ schema compare (SQ10: two catalogs, sorted diff, ordered promotion script, destructive commented out, nothing applied)"
 python3 "$ROOT/tests/schema-compare.test.py"
 echo "→ sql_targets contract section (SQ1: kinds, host patterns, production never default)"
