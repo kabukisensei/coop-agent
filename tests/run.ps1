@@ -538,7 +538,7 @@ print("resume verdict contract OK")
     } catch { Ko "context-budget --json totals: $_" }
     if ($cbOut -like '*Estimated fixed total, default-off*' -and $cbOut -like '*Estimated fixed total, all-on*') { Ok 'context-budget prints both totals' } else { Ko "context-budget must print both totals: $cbOut" }
     $cbCheck = Join-Path $root 'scripts\check-context-budget.ps1'
-    $cbGate = & $cbCheck 2>&1 | Out-String
+    $cbGate = & $psExe -NoProfile -File $cbCheck 2>&1 | Out-String
     if ($LASTEXITCODE -eq 0 -and $cbGate -match 'default-off \d+ tokens, all-on \d+/8000 tokens') { Ok "check-context-budget.ps1 gate passes and prints both totals: $($cbGate.Trim())" } else { Ko "check-context-budget.ps1 gate failed: $cbGate" }
     # The gate fails when all-on passes the ceiling, even with default-off under it.
     $cbFake = Join-Path $stub 'budget-over.json'
