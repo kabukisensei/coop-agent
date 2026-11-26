@@ -945,7 +945,8 @@ if ($null -eq $featureList) {
         if ($hist.Error) { D-Warn 'Change history on, but coop could not read its folder' $hist.Error }
         else {
           $fact = "Change history on: $([int]$hist.Data.months) month folder(s), $(Format-CoopBytes ([long]$hist.Data.bytes)) of $(Format-CoopBytes ([long]$hist.Data.cap)) ($($hist.Data.root))"
-          if ([long]$hist.Data.bytes -ge [long]$hist.Data.cap) { D-Warn $fact 'over the cap: the oldest month folders go at the next session start' }
+          if ($hist.Data.PSObject.Properties['linked'] -and $hist.Data.linked -eq $true) { D-Warn $fact 'the history folder is a link or junction: coop neither measures nor cleans it; make it a plain folder' }
+          elseif ([long]$hist.Data.bytes -ge [long]$hist.Data.cap) { D-Warn $fact 'over the cap: the oldest month folders (never the current one) go at the next session start' }
           else { D-Ok $fact }
         }
       }

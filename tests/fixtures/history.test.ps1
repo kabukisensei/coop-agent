@@ -101,6 +101,57 @@ try {
   $drows = @(Get-DoctorRows | Where-Object { $_.section -ceq 'Features (this client)' })
   $row = @($drows | Where-Object { ([string]$_.name) -like 'Change history on:*' })
   if ($row.Count -eq 1 -and $row[0].status -ceq 'ok' -and (Flat ([string]$row[0].name)) -match '^Change history on: 2 month folder\(s\), \d+ B of 1(\.0)? GB \(.*history\)$') { Ok 'doctor: Change history on, its month folders and size against the 1 GB cap' } else { Ko 'doctor Change history row' (Show-Rows $drows) }
+
+  # --- fix round (Neon's review B4) --------------------------------------------------------
+  # Month names that are no real month (0000-01, 9999-12, 2026-13) are skipped, never a crash.
+  $bad = @()
+  foreach ($name in @('0000-01', '9999-12', '2026-13')) { $bad += (New-Month $store $name 0) }
+  $listed = $null; $threw = ''
+  try { $listed = @(Get-CoopStaleHistoryMonthDirs -Days 45 -Now $now) } catch { $threw = $_.Exception.Message }
+  $targetsOk = $true
+  try { $null = @(Get-CoopCleanupTargets -Days 45 -Now $now) } catch { $targetsOk = $false; $threw += $_.Exception.Message }
+  if (-not $threw -and $targetsOk -and @($listed | Where-Object { $bad -contains $_ }).Count -eq 0) { Ok 'month names that are no real month (0000-01, 9999-12, 2026-13) are skipped, and the cleanup still runs' } else { Ko 'bad month names' "$threw $($listed -join ', ')" }
+  foreach ($b in $bad) { Remove-Item -LiteralPath $b -Recurse -Force -ErrorAction SilentlyContinue }
+
+  # An old month folder that is already empty goes too.
+  $emptyOld = Join-Path $store '2026-07'
+  New-Item -ItemType Directory -Force -Path $emptyOld | Out-Null
+  $null = Invoke-CoopCleanup -Days 45 -Now $now
+  if (-not (Test-Path -LiteralPath $emptyOld)) { Ok 'an empty old month folder is removed as well' } else { Ko 'an empty old month folder stayed' }
+
+  # The current month is never listed, whatever the age.
+  if (@(Get-CoopStaleHistoryMonthDirs -Days 1 -Now (New-Object System.DateTime(2026, 11, 30, 23, 0, 0, [System.DateTimeKind]::Utc)) | Where-Object { $_ -eq $nov }).Count -eq 0) { Ok 'the current month folder is never a cleanup target' } else { Ko 'the current month was listed' }
+
+  # A linked store, and a linked history folder itself: never followed, nothing listed through them.
+  $hroot = Join-Path $home_ '.coop\history'
+  $outside2 = Join-Path $t 'outside2'
+  $old = Join-Path $outside2 'client-0123abcd\2025-02'
+  New-Item -ItemType Directory -Force -Path $old | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $old 'precious.txt'), 'x')
+  function New-Link([string]$Path, [string]$Target) {
+    try {
+      if ($env:OS -eq 'Windows_NT') { New-Item -ItemType Junction -Path $Path -Target $Target | Out-Null } else { New-Item -ItemType SymbolicLink -Path $Path -Target $Target | Out-Null }
+      return $true
+    } catch { return $false }
+  }
+  $linkedStore = Join-Path $hroot 'linked-89abcdef'
+  if (New-Link $linkedStore (Join-Path $outside2 'client-0123abcd')) {
+    $null = Invoke-CoopCleanup -Days 45 -Now $now
+    if (Test-Path -LiteralPath (Join-Path $old 'precious.txt')) { Ok 'a store folder that is a link is not followed' } else { Ko 'the cleanup removed a file through a linked store' }
+    [System.IO.Directory]::Delete($linkedStore)
+  } else { Ok 'a store folder that is a link is not followed (no link could be made here; skipped)' }
+  $realHistory = Join-Path $t 'history-real'
+  Move-Item -LiteralPath $hroot -Destination $realHistory
+  if (New-Link $hroot $outside2) {
+    $listed = @(Get-CoopStaleHistoryMonthDirs -Days 45 -Now $now)
+    $null = Invoke-CoopCleanup -Days 45 -Now $now
+    if ($listed.Count -eq 0 -and (Test-Path -LiteralPath (Join-Path $old 'precious.txt'))) { Ok 'a history folder that is itself a link is never followed: nothing listed, nothing removed' } else { Ko 'the cleanup followed a linked history folder' ($listed -join "`n") }
+    $drows = @(Get-DoctorRows | Where-Object { $_.section -ceq 'Features (this client)' })
+    $row = @($drows | Where-Object { ([string]$_.name) -like 'Change history on:*' })
+    if ($row.Count -eq 1 -and $row[0].status -ceq 'warn' -and (Flat ([string]$row[0].hint)) -match 'link or junction') { Ok 'doctor warns that the history folder is a link and is neither measured nor cleaned' } else { Ko 'doctor linked history row' (Show-Rows $drows) }
+    [System.IO.Directory]::Delete($hroot)
+  } else { Ok 'a history folder that is itself a link is never followed (no link could be made here; skipped)' }
+  Move-Item -LiteralPath $realHistory -Destination $hroot
 } finally {
   Restore-Env $saved
   Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue

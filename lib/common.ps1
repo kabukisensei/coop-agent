@@ -2340,36 +2340,28 @@ function Invoke-CoopFeaturesCli {
 # `problems` (lines or files left out and why). Its JSON is ASCII (non-ASCII is
 # escaped), so no console code page garbles a path in it.
 function Get-CoopClientRulesStatus([string]$Cwd) {
-  if (-not (Test-Have 'node')) { return @{ Data = $null; Error = 'Node.js is not on PATH (coop needs it; run coop doctor)' } }
   if (-not $Cwd) { $Cwd = (Get-Location).ProviderPath }
   # A trailing backslash before the closing quote PS 5.1 adds around a path with
   # spaces escapes that quote for node; keep a drive root (C:\) as it is.
   if ($Cwd.Length -gt 3) { $Cwd = $Cwd.TrimEnd('\', '/') }
-  $cli = Join-Path $script:CoopRoot 'lib\client-rules.mjs'
-  $eap = $ErrorActionPreference
-  $ErrorActionPreference = 'Continue'
-  try {
-    $items = @(& node $cli 'status' '--json' '--cwd' $Cwd 2>&1)
-    $rc = $LASTEXITCODE
-  } finally { $ErrorActionPreference = $eap }
-  $out = @($items | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | ForEach-Object { [string]$_ }) -join "`n"
-  $err = (@($items | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } | ForEach-Object { [string]$_.Exception.Message }) -join "`n").Trim()
-  $data = $null
-  if ($rc -eq 0 -and $out) { try { $data = $out | ConvertFrom-Json } catch { $data = $null } }
-  if ($null -ne $data) { return @{ Data = $data; Error = '' } }
-  if (-not $err) { $err = "lib\client-rules.mjs exited $rc" }
-  return @{ Data = $null; Error = $err }
+  return (Invoke-CoopNodeJsonStatus 'lib\client-rules.mjs' @('status', '--json', '--cwd', $Cwd))
 }
 
 # Change history (CW2) for doctor: lib\action-history.mjs status --json (ASCII
-# JSON): @{ Data = { root, stores, months, bytes, cap }; Error }.
+# JSON): @{ Data = { root, stores, months, bytes, cap, linked }; Error }.
 function Get-CoopHistoryStatus {
+  return (Invoke-CoopNodeJsonStatus 'lib\action-history.mjs' @('status', '--json'))
+}
+
+# One of coop's Node status CLIs (ASCII JSON on stdout) as @{ Data; Error }: Data
+# the parsed object ($null when there is none), Error why not ("" when it worked).
+function Invoke-CoopNodeJsonStatus([string]$Script, [string[]]$CliArgs) {
   if (-not (Test-Have 'node')) { return @{ Data = $null; Error = 'Node.js is not on PATH (coop needs it; run coop doctor)' } }
-  $cli = Join-Path $script:CoopRoot 'lib\action-history.mjs'
+  $cli = Join-Path $script:CoopRoot $Script
   $eap = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
   try {
-    $items = @(& node $cli 'status' '--json' 2>&1)
+    $items = @(& node $cli @CliArgs 2>&1)
     $rc = $LASTEXITCODE
   } finally { $ErrorActionPreference = $eap }
   $out = @($items | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | ForEach-Object { [string]$_ }) -join "`n"
@@ -2377,7 +2369,7 @@ function Get-CoopHistoryStatus {
   $data = $null
   if ($rc -eq 0 -and $out) { try { $data = $out | ConvertFrom-Json } catch { $data = $null } }
   if ($null -ne $data) { return @{ Data = $data; Error = '' } }
-  if (-not $err) { $err = "lib\action-history.mjs exited $rc" }
+  if (-not $err) { $err = "$Script exited $rc" }
   return @{ Data = $null; Error = $err }
 }
 
@@ -2475,28 +2467,36 @@ function Get-CoopCleanupTargets {
   # month folder whose whole month is older than the age goes whole, never a
   # single file inside a month (its log names the blobs beside it).
   foreach ($month in @(Get-CoopStaleHistoryMonthDirs -Days $Days -Now $Now)) {
-    $targets += [pscustomobject]@{ Name = 'old change history'; Root = $month; Filter = @('*'); Entries = @(); Days = 0; Extra = $true; DropRoot = $true; MinBytes = 0; MaxBytes = 0; FilesOnly = $false; All = $true }
+    $targets += [pscustomobject]@{ Name = 'old change history'; Root = $month; Filter = @('*'); Entries = @(); Days = 0; Extra = $true; DropRoot = $true; MinBytes = 0; MaxBytes = 0; FilesOnly = $false; All = $true; DropEmptyRoot = $true }
   }
   return $targets
 }
 
 # The change history's month folders (<profile dir>\history\<repo>-<hash8>\<yyyy-MM>)
 # whose month ended more than $Days days ago. Links and junctions are never
-# followed; a folder with another name is left alone.
+# followed, the history folder itself included (a linked history folder could
+# lead outside coop's own); a folder with another name, or a month name that is
+# no real month (0000-01, 2026-13), is left alone; the current month never goes.
 function Get-CoopStaleHistoryMonthDirs {
   param([int]$Days = (Get-CoopCleanupDays), [datetime]$Now = [datetime]::UtcNow)
   $stale = @()
   if ($Days -le 0) { return $stale }
   $root = Join-Path (Get-CoopProfileDir) 'history'
   if (-not (Test-Path -LiteralPath $root -PathType Container)) { return $stale }
+  $rootItem = $null
+  try { $rootItem = Get-Item -LiteralPath $root -Force -ErrorAction Stop } catch { return $stale }
+  if (Test-CoopReparsePoint $rootItem) { return $stale }
   $cutoff = $Now.ToUniversalTime().AddDays(-1 * $Days)
+  $current = $Now.ToUniversalTime().ToString('yyyy-MM')
   foreach ($store in @(Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction SilentlyContinue)) {
     if (Test-CoopReparsePoint $store) { continue }
     foreach ($m in @(Get-ChildItem -LiteralPath $store.FullName -Directory -Force -ErrorAction SilentlyContinue)) {
       if ((Test-CoopReparsePoint $m) -or $m.Name -notmatch '^(\d{4})-(\d{2})$') { continue }
       $year = [int]$Matches[1]; $mon = [int]$Matches[2]
-      if ($mon -lt 1 -or $mon -gt 12) { continue }
-      $end = (New-Object System.DateTime($year, $mon, 1, 0, 0, 0, [System.DateTimeKind]::Utc)).AddMonths(1)
+      if ($year -lt 1 -or $year -gt 9998 -or $mon -lt 1 -or $mon -gt 12 -or $m.Name -eq $current) { continue }
+      try {
+        $end = (New-Object System.DateTime($year, $mon, 1, 0, 0, 0, [System.DateTimeKind]::Utc)).AddMonths(1)
+      } catch { continue }
       if ($end -lt $cutoff) { $stale += $m.FullName }
     }
   }
