@@ -2335,14 +2335,25 @@ function Invoke-CoopFeaturesCli {
   return @{ Rc = $rc; Out = ($outLines -join "`n"); Err = (($errLines -join "`n").Trim()) }
 }
 
+# The writer's --json answer as @{ Data; Error }: Data is the parsed object
+# ($null when there is none), Error the reason a call failed ("" when it did
+# not). Its JSON is ASCII, so no console code page garbles a path in it.
+function ConvertFrom-CoopFeaturesReply($Reply) {
+  $data = $null
+  if ($Reply.Out) { try { $data = $Reply.Out | ConvertFrom-Json } catch { $data = $null } }
+  if ($Reply.Rc -eq 0 -and $null -ne $data) { return @{ Data = $data; Error = '' } }
+  $why = ''
+  if ($null -ne $data -and $data.PSObject.Properties['error'] -and $data.error) { $why = [string]$data.error }
+  elseif ($Reply.Err) { $why = [string]$Reply.Err }
+  else { $why = "the settings writer (lib\features.mjs) exited $($Reply.Rc)" }
+  return @{ Data = $data; Error = $why }
+}
+
 # Save the cleanup age in ~/.coop/config, keeping every other key (through the
 # one writer). Throws with the writer's reason when it could not be saved.
 function Set-CoopCleanupDays([int]$Days) {
-  $r = Invoke-CoopFeaturesCli @('cleanup-days', [string]$Days)
-  if ($r.Rc -ne 0) {
-    if ($r.Err) { throw $r.Err }
-    throw "the settings writer (lib\features.mjs) exited $($r.Rc)"
-  }
+  $reply = ConvertFrom-CoopFeaturesReply (Invoke-CoopFeaturesCli @('cleanup-days', [string]$Days, '--json'))
+  if ($reply.Error) { throw $reply.Error }
 }
 
 # The folders the cleanup looks in, with the files it may remove there. Sessions

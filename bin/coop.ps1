@@ -407,6 +407,16 @@ function Invoke-CoopStartup {
 # settings. New, so `coop config` stays Pi's command. Every change goes through
 # the one ~/.coop/config writer, lib\features.mjs (Invoke-CoopFeaturesCli); the
 # window's Settings call the same module directly.
+# `coop settings ... --json`: the writer's JSON as it is, or, when it gave none
+# (node missing, a crash), {"ok":false,"error":...}, never silence. Exits.
+function Write-CoopFeaturesJson($Reply, $Parsed) {
+  if ($null -ne $Parsed.Data) { Write-Output $Reply.Out }
+  else { Write-Output (ConvertTo-Json -Compress -InputObject @{ ok = $false; error = [string]$Parsed.Error }) }
+  $rc = $Reply.Rc
+  if ($Parsed.Error -and $rc -eq 0) { $rc = 1 }
+  exit $rc
+}
+
 function Invoke-CoopSettings {
   param([string[]] $SettingsArgs = @())
   $usage = 'usage: coop settings [--json] | coop settings set <key> on|off [--json]'
@@ -414,25 +424,20 @@ function Invoke-CoopSettings {
   $words = @($SettingsArgs | Where-Object { $_ -cne '--json' })
   if ($words.Count -gt 0 -and $words[0] -ceq 'set') {
     if ($words.Count -ne 3 -or @('on', 'off') -notcontains ([string]$words[2]).ToLowerInvariant()) { Coop-Die $usage }
-    $cliArgs = @('set', [string]$words[1], ([string]$words[2]).ToLowerInvariant())
-    if ($json) { $cliArgs += '--json' }
-    $r = Invoke-CoopFeaturesCli $cliArgs
-    if ($json) { if ($r.Out) { Write-Output $r.Out }; exit $r.Rc }
-    if ($r.Rc -eq 0) { Coop-Ok $r.Out; return }
-    $why = if ($r.Err) { $r.Err } else { "the settings writer exited $($r.Rc)" }
-    Coop-Err "could not change the setting: $why"
+    $r = Invoke-CoopFeaturesCli @('set', [string]$words[1], ([string]$words[2]).ToLowerInvariant(), '--json')
+    $reply = ConvertFrom-CoopFeaturesReply $r
+    if ($json) { Write-CoopFeaturesJson $r $reply }
+    if (-not $reply.Error) { Coop-Ok ([string]$reply.Data.text); return }
+    Coop-Err "could not change the setting: $($reply.Error)"
     if ($r.Rc -eq 2) { Coop-Info 'coop settings lists the features and their keys' }
-    exit $r.Rc
+    exit $(if ($r.Rc -ne 0) { $r.Rc } else { 1 })
   }
   if ($words.Count -gt 1 -or ($words.Count -eq 1 -and $words[0] -cne 'show')) { Coop-Die $usage }
   $r = Invoke-CoopFeaturesCli @('show', '--json')
-  if ($json) { if ($r.Out) { Write-Output $r.Out }; exit $r.Rc }
-  $list = $null
-  if ($r.Rc -eq 0) { try { $list = $r.Out | ConvertFrom-Json } catch { $list = $null } }
-  if ($null -eq $list) {
-    $why = if ($r.Err) { $r.Err } else { "the settings reader exited $($r.Rc)" }
-    Coop-Die "could not read the settings: $why"
-  }
+  $reply = ConvertFrom-CoopFeaturesReply $r
+  if ($json) { Write-CoopFeaturesJson $r $reply }
+  $list = $reply.Data
+  if ($reply.Error -or $null -eq $list) { Coop-Die "could not read the settings: $($reply.Error)" }
   Write-Host "Settings for this client ($($list.file))"
   Write-Host ''
   Write-Host 'Features (all off unless you turn them on)'

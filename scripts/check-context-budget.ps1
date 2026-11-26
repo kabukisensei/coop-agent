@@ -37,7 +37,9 @@ $GUARDRAILS_LIMIT_BYTES = 6850
 $TOTAL_LIMIT_TOKENS = 8000
 
 if ($BudgetJson) {
-  $json = [System.IO.File]::ReadAllText($BudgetJson)
+  # Get-Content resolves a relative path against PowerShell's location ($PWD);
+  # [System.IO.File] would use the process's starting folder.
+  $json = Get-Content -LiteralPath $BudgetJson -Raw -Encoding UTF8
 } else {
   $py = Get-Command python3 -ErrorAction SilentlyContinue
   if (-not $py) { $py = Get-Command python -ErrorAction SilentlyContinue }

@@ -549,6 +549,10 @@ print("resume verdict contract OK")
     [System.IO.File]::WriteAllText($cbFine, '{"categories":{"guardrails":{"bytes":100}},"estimated_fixed_total_tokens":8000,"estimated_all_on_total_tokens":8000,"estimated_default_off_total_tokens":7900}')
     $cbOk = & $psExe -NoProfile -File $cbCheck -BudgetJson $cbFine 2>&1 | Out-String
     if ($LASTEXITCODE -eq 0) { Ok 'check-context-budget.ps1 passes an all-on total of exactly 8000' } else { Ko "the gate must pass at 8000: $cbOk" }
+    # A relative -BudgetJson resolves against PowerShell's location, not the
+    # process's starting folder ([Environment]::CurrentDirectory).
+    $cbRel = & $psExe -NoProfile -Command "Set-Location -LiteralPath '$stub'; & '$cbCheck' -BudgetJson 'budget-over.json'; exit `$LASTEXITCODE" 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0 -and $cbRel -match 'every feature on is 8100 tokens') { Ok 'check-context-budget.ps1 reads a relative -BudgetJson from the current location' } else { Ko "a relative -BudgetJson must resolve against the current location: $cbRel" }
   }
 
   # --- 4. update --check is a dry-run: reports versions, exits 0 -------------

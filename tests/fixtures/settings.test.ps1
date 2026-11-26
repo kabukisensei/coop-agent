@@ -87,6 +87,37 @@ try {
   $missing = @($rows | Where-Object { -not $r.Out.Contains($_) })
   if ($r.Rc -eq 0 -and $missing.Count -eq 0 -and $r.Out -match 'is not valid JSON') { Ok 'coop settings on a corrupt config: all off, and it says why' } else { Ko "settings on corrupt (rc=$($r.Rc))" $r.Out }
 
+  # --- coop settings --json always answers JSON, even when node is missing -------------
+  $noNode = Join-Path $t 'no-node-bin'
+  New-Item -ItemType Directory -Force -Path $noNode | Out-Null
+  $pathBefore = $env:PATH
+  try {
+    $env:PATH = $noNode
+    foreach ($argsCase in @(@('settings', '--json'), @('settings', 'set', 'comments', 'on', '--json'))) {
+      $r = Run-Coop $argsCase
+      $parsed = $null
+      try { $parsed = (($r.Out -split "`n") | Where-Object { $_.Trim().StartsWith('{') } | Select-Object -First 1) | ConvertFrom-Json } catch { $parsed = $null }
+      if ($r.Rc -ne 0 -and $null -ne $parsed -and $parsed.ok -eq $false -and [string]$parsed.error -match 'Node\.js') { Ok "coop $($argsCase -join ' ') with no node: a JSON error, not silence" } else { Ko "coop $($argsCase -join ' ') with no node (rc=$($r.Rc))" $r.Out }
+    }
+  } finally { $env:PATH = $pathBefore }
+
+  # --- what node hands PowerShell is ASCII JSON, so no console code page can garble a path ---
+  $wide = Join-Path $t ('Zo' + [char]0x00EB + '-' + [char]0x5DE5)
+  New-Item -ItemType Directory -Force -Path (Join-Path $wide '.coop') | Out-Null
+  $wideCfg = Join-Path $wide '.coop\config'
+  $raw = & node (Join-Path $root 'lib\features.mjs') show --json --file $wideCfg
+  $bytes = [System.Text.Encoding]::UTF8.GetBytes(($raw -join "`n"))
+  $ascii = @($bytes | Where-Object { $_ -gt 127 }).Count -eq 0
+  $back = ($raw -join "`n") | ConvertFrom-Json
+  if ($ascii -and $back.file -ceq $wideCfg) { Ok 'lib\features.mjs --json is ASCII (\u escapes) and round-trips a non-ASCII profile path' } else { Ko "features --json must be ASCII and round-trip the path (ascii=$ascii)" ($raw -join "`n") }
+  $env:COOP_DIR = $wide
+  try {
+    $r = Run-Coop @('settings', 'set', 'comments', 'on')
+    $saved_ = $null
+    try { $saved_ = [System.IO.File]::ReadAllText($wideCfg) | ConvertFrom-Json } catch { }
+    if ($r.Rc -eq 0 -and $r.Out -match 'Diff review comments is on' -and $null -ne $saved_ -and $saved_.features.comments -eq $true) { Ok 'coop settings set under a non-ASCII profile path' } else { Ko "settings set under a non-ASCII path (rc=$($r.Rc))" $r.Out }
+  } finally { $env:COOP_DIR = $home_ }
+
   # --- doctor: a "Features (this client)" section, one fact per feature that is on ----
   $script:doctor = Join-Path $root 'scripts\doctor.ps1'
   [System.IO.File]::WriteAllText($cfg, '{"features":{"comments":true,"history":true},"sql_source_control":{"enabled":true}}', $utf8)
