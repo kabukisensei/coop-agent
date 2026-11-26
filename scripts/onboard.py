@@ -6,12 +6,16 @@ Writes only to ~/.coop/user.json and ~/.coop/config; never touches project files
 """
 
 import argparse
+import contextlib
 import json
 import os
+import random
 import re
+import secrets
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 LIB_DIR = Path(__file__).resolve().parent.parent / "lib"
@@ -256,15 +260,117 @@ def load_config() -> dict:
         raise ValueError(
             f"Invalid existing {CONFIG_JSON}: {exc}. Fix or move it; COOP will not overwrite it."
         ) from exc
-    if not isinstance(value, dict) or value.get("schema_version") != 1:
+    # A config another coop writer created without the field (an older
+    # Set-CoopCleanupDays wrote `{"cleanup": ...}` only) is version 1; an explicit
+    # other version is refused and left alone.
+    if not isinstance(value, dict) or value.get("schema_version", 1) != 1:
         raise ValueError(
             f"Unsupported existing {CONFIG_JSON} schema; expected schema_version 1. COOP will not overwrite it."
         )
     return value
 
 
-def save_config(data: dict) -> None:
-    atomic_save(CONFIG_JSON, data)
+# ~/.coop/config has more than one writer: this wizard, and lib/features.mjs (the
+# window's Settings, `coop settings`, `coop cleanup days`, /sql-source). Every
+# writer takes the same lock file (config.lock beside the config: created
+# exclusively, holding its owner's token; a lock older than 10 seconds was left by
+# a writer that died, and is broken under config.lock.break so only one
+# contender removes it), re-reads the file under it, and keeps every key it does
+# not own. Onboarding is interactive, so it waits longer than the 2 seconds the
+# window does.
+CONFIG_LOCK_WAIT_S = 10.0
+CONFIG_LOCK_STALE_S = 10.0
+# Windows reports a lock file another process is deleting (DELETE_PENDING) or
+# scanning as a permission error, not as "exists": wait on those too.
+_LOCK_BUSY = (FileExistsError, PermissionError)
+
+
+def _lock_wait_s() -> float:
+    raw = os.environ.get("COOP_CONFIG_LOCK_WAIT_MS", "")
+    try:
+        return max(0.0, int(raw) / 1000.0) if raw else CONFIG_LOCK_WAIT_S
+    except ValueError:
+        return CONFIG_LOCK_WAIT_S
+
+
+def _create_exclusive(path: Path, token: str) -> bool:
+    try:
+        fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except _LOCK_BUSY:
+        return False
+    except OSError as exc:
+        if getattr(exc, "winerror", None) in (32, 33):  # sharing / lock violation
+            return False
+        raise
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(token)
+    return True
+
+
+def _is_stale(path: Path) -> bool:
+    try:
+        return time.time() - path.stat().st_mtime > CONFIG_LOCK_STALE_S
+    except OSError:
+        return False
+
+
+def _read_token(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _break_stale_lock(lock: Path, token: str) -> None:
+    breaker = lock.with_name(lock.name + ".break")
+    if not _create_exclusive(breaker, token):
+        # A breaker that died mid-break: remove its marker, then try again later.
+        if _is_stale(breaker):
+            with contextlib.suppress(OSError):
+                breaker.unlink()
+        return
+    try:
+        if _is_stale(lock):  # still the dead writer's lock, not a new owner's
+            with contextlib.suppress(OSError):
+                lock.unlink()
+    finally:
+        with contextlib.suppress(OSError):
+            breaker.unlink()
+
+
+@contextlib.contextmanager
+def config_lock(config: Path = None):
+    config = Path(config or CONFIG_JSON)
+    config.parent.mkdir(parents=True, exist_ok=True)
+    lock = config.parent / "config.lock"
+    token = f"{os.getpid()}-{secrets.token_hex(8)}"
+    deadline = time.monotonic() + _lock_wait_s()
+    while not _create_exclusive(lock, token):
+        if _is_stale(lock):
+            _break_stale_lock(lock, token)
+            continue
+        if time.monotonic() >= deadline:
+            raise ValueError(f"another coop is changing {config}; try again in a moment")
+        time.sleep(0.01 + random.random() * 0.015)
+    try:
+        yield
+    finally:
+        # Only our own lock: a writer that outlived the stale age may have lost it.
+        if _read_token(lock) == token:
+            with contextlib.suppress(OSError):
+                lock.unlink()
+
+
+def save_config(updates: dict) -> dict:
+    """Write onboarding's own top-level keys into ~/.coop/config under the lock,
+    re-reading the file there and keeping every other key (the feature switches,
+    sql_source_control, cleanup, and anything a newer coop adds). Returns the
+    data written."""
+    with config_lock():
+        merged = {**load_config(), **updates}
+        merged.setdefault("schema_version", 1)
+        atomic_save(CONFIG_JSON, merged)
+        return merged
 
 
 def read_confirm(prompt: str, default: bool) -> bool:
@@ -727,12 +833,11 @@ def cmd_platform(args: argparse.Namespace) -> int:
             return 2
     else:
         value = ask_platform(current)
-    config = dict(config)
-    config.setdefault("schema_version", 1)
-    client = dict(config.get("client")) if isinstance(config.get("client"), dict) else {}
-    client["platform"] = value
-    config["client"] = client
-    save_config(config)
+    try:
+        save_config({"client": {**(config.get("client") if isinstance(config.get("client"), dict) else {}), "platform": value}})
+    except ValueError as exc:
+        sys.stderr.write(f"{exc}\n")
+        return 2
     sys.stderr.write(f"Client platform: {PLATFORM_LABELS[value]} (saved to {CONFIG_JSON}).\n")
     print(value)
     return 0
@@ -933,12 +1038,14 @@ def cmd_onboard(args: argparse.Namespace) -> int:
             and "integrations" in existing_config
             and _profile_is_valid()
         ):
-            config = dict(existing_config)
-            client = dict(config.get("client")) if isinstance(config.get("client"), dict) else {}
+            client = dict(existing_config.get("client")) if isinstance(existing_config.get("client"), dict) else {}
             value = normalize_platform(args.platform)
             client["platform"] = value
-            config["client"] = client
-            save_config(config)
+            try:
+                save_config({"client": client})
+            except ValueError as exc:
+                sys.stderr.write(f"{exc}\n")
+                return 2
             sys.stderr.write(
                 f"Client platform: {PLATFORM_LABELS[value]} (saved to {CONFIG_JSON}). "
                 "Integrations are unchanged; review them with `coop onboard --config-only`.\n"
@@ -971,7 +1078,13 @@ def cmd_onboard(args: argparse.Namespace) -> int:
         quick_start="integrations" not in existing_config and not args.config_only,
         no_sign_in=bool(getattr(args, "no_sign_in", False)),
     )
-    save_config(config)
+    # run_config_questions answers onboarding's keys only; save_config merges
+    # them into the file as it is now, so nothing another writer owns is lost.
+    try:
+        save_config(config)
+    except ValueError as exc:
+        sys.stderr.write(f"{exc}\n")
+        return 2
     try:
         refresh_mcp()
     except Exception as exc:

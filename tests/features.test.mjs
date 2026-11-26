@@ -132,7 +132,7 @@ test("the lock: a held lock makes a writer wait, then give up; a stale one is cl
   const old = new Date(Date.now() - 60_000);
   utimesSync(lock, old, old);
   assert.equal(lib.setFeature("comments", true, { file, waitMs: 150 }), true, "a lock a dead writer left is removed");
-  assert.deepEqual(read(file), { a: 1, features: { comments: true } });
+  assert.deepEqual(read(file), { schema_version: 1, a: 1, features: { comments: true } });
   assert.ok(!existsSync(lock));
 });
 
@@ -210,9 +210,93 @@ test("/sql-source on|off writes through the one writer", () => {
   assert.equal(sqlsc.setSqlSourceEnabled(true, file, new Date("2026-10-20T22:00:00Z")), true);
   assert.equal(sqlsc.sqlSourceEnabled(file), true);
   assert.equal(lib.featureEnabled("sql-source", file), true, "the same switch the Features list shows");
-  assert.deepEqual(read(file), { features: { comments: true }, sql_source_control: { enabled: true, changed_at: "2026-10-20T22:00:00.000Z" } });
+  assert.deepEqual(read(file), { schema_version: 1, features: { comments: true }, sql_source_control: { enabled: true, changed_at: "2026-10-20T22:00:00.000Z" } });
   const source = readFileSync(join(ROOT, "lib", "sqlsc.mjs"), "utf8");
   assert.ok(!/renameSync|writeFileSync/.test(source), "lib/sqlsc.mjs no longer writes ~/.coop/config itself");
+});
+
+// --- Interop with scripts/onboard.py (the other ~/.coop/config writer) --------
+// onboard.py refuses a config without schema_version 1, and used to rebuild the
+// file from its own keys only, so re-running onboarding dropped every switch.
+const PY = process.env.PYTHON || (spawnSync("python3", ["--version"]).status === 0 ? "python3" : "python");
+// Blank answers to every onboarding question (no Azure, no integrations change).
+const ONBOARD_ANSWERS = "n\nn\nn\nn\nn\nn\nn\n";
+function onboard(coopDir, args = ["onboard", "--config-only"]) {
+  return spawnSync(PY, [join(ROOT, "scripts", "onboard.py"), ...args], {
+    encoding: "utf8",
+    input: ONBOARD_ANSWERS,
+    env: { ...process.env, HOME: coopDir, USERPROFILE: coopDir, COOP_DIR: coopDir, COOP_AZ_BIN: join(coopDir, "no-az"), COOP_CLIENT_PLATFORM: "fabric" },
+  });
+}
+
+test("a fresh ~/.coop/config the Node writer creates carries schema_version 1, and onboard.py accepts it", () => {
+  const file = fresh();
+  const coopDir = dirname(dirname(file));
+  lib.setFeature("comments", true, { file });
+  assert.equal(read(file).schema_version, 1, "a new file is stamped with schema_version 1");
+  const cleanupOnly = fresh();
+  lib.setCleanupDays(20, { file: cleanupOnly });
+  assert.deepEqual(read(cleanupOnly), { schema_version: 1, cleanup: { days: 20 } });
+  const r = onboard(coopDir);
+  assert.equal(r.status, 0, `onboard.py --config-only must accept the Node writer's file: ${r.stderr}`);
+  assert.doesNotMatch(r.stderr, /Unsupported existing/);
+  const data = read(file);
+  assert.equal(data.schema_version, 1);
+  assert.equal(data.features.comments, true, "onboarding keeps the feature switch");
+  assert.ok(data.integrations, "onboarding wrote its own keys");
+});
+
+test("setFeature, then onboard.py --config-only (and platform --set): every switch, sql_source_control and cleanup survive", () => {
+  const file = fresh();
+  const coopDir = dirname(dirname(file));
+  let r = onboard(coopDir);
+  assert.equal(r.status, 0, r.stderr);
+  lib.setFeature("comments", true, { file });
+  lib.setFeature("sql-source", true, { file, now: new Date("2026-11-26T08:00:00Z") });
+  lib.setCleanupDays(30, { file });
+  r = onboard(coopDir);
+  assert.equal(r.status, 0, r.stderr);
+  let data = read(file);
+  assert.equal(data.features.comments, true, "features.comments kept");
+  assert.deepEqual(data.sql_source_control, { enabled: true, changed_at: "2026-11-26T08:00:00.000Z" }, "sql_source_control kept");
+  assert.deepEqual(data.cleanup, { days: 30 }, "cleanup kept");
+  assert.equal(data.client.platform, "fabric");
+  r = onboard(coopDir, ["platform", "--set", "azure_sql"]);
+  assert.equal(r.status, 0, r.stderr);
+  data = read(file);
+  assert.equal(data.client.platform, "azure_sql");
+  assert.equal(data.features.comments, true, "platform --set keeps the switches");
+  assert.ok(!existsSync(join(dirname(file), "config.lock")), "onboard.py releases config.lock");
+});
+
+test("onboard.py accepts a schema-less config another coop writer left (main's Set-CoopCleanupDays) and stamps it", () => {
+  const file = fresh(JSON.stringify({ cleanup: { days: 12 } }, null, 2));
+  const r = onboard(dirname(dirname(file)));
+  assert.equal(r.status, 0, r.stderr);
+  const data = read(file);
+  assert.equal(data.schema_version, 1);
+  assert.deepEqual(data.cleanup, { days: 12 });
+  // A different, explicit schema is still refused and left alone.
+  const future = fresh('{"schema_version": 2}');
+  const r2 = onboard(dirname(dirname(future)));
+  assert.notEqual(r2.status, 0);
+  assert.match(r2.stderr, /expected schema_version 1/);
+  assert.equal(readFileSync(future, "utf8"), '{"schema_version": 2}');
+});
+
+test("onboard.py waits for config.lock like every other writer", () => {
+  const file = fresh();
+  const coopDir = dirname(dirname(file));
+  const lock = join(dirname(file), "config.lock");
+  writeFileSync(lock, "someone-else");
+  const r = spawnSync(PY, [join(ROOT, "scripts", "onboard.py"), "platform", "--set", "both"], {
+    encoding: "utf8",
+    env: { ...process.env, HOME: coopDir, USERPROFILE: coopDir, COOP_DIR: coopDir, COOP_CONFIG_LOCK_WAIT_MS: "200" },
+  });
+  assert.notEqual(r.status, 0, "a held lock refuses the write");
+  assert.match(r.stderr, /another coop is changing/);
+  assert.ok(!existsSync(file), "nothing written while the lock is held");
+  assert.equal(readFileSync(lock, "utf8"), "someone-else", "someone else's lock is left alone");
 });
 
 const dist = process.env.COOP_TEST_DIST;
