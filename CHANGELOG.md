@@ -14,8 +14,7 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   (`coop config` stays Pi's command); the window's Settings has the same five rows
   under "Features (this client)", each saying when a change takes effect. Doctor
   has a "Features (this client)" section and a session names the features that are
-  on in one line (nothing while all are off). Features this version does not carry
-  yet are listed and stay off.
+  on in one line (nothing while all are off).
 - **Diff review comments in the window's Changes pane** (Settings, Features;
   applies at once). Comment on a new line, a removed line or a shift-click range
   inside one hunk, collect the comments as markers you can edit or delete, and
@@ -128,7 +127,52 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   or junction is never measured or cleaned, by the cleanup or the cap; doctor
   shows the size and warns about such a link. Backups are unchanged.
 
+- **Daily lineage refresh** (Settings, Features, or `coop settings set docs-refresh
+  on`; off by default, takes effect at the next sign-in or coop start). Once a
+  calendar day, in the background, coop reads the dev database's object
+  definitions again and rebuilds the lineage docs in the repository's docs folder,
+  as the weekly session-start refresh does, so changed docs show in the Changes
+  pane like any other change (nothing is committed). It runs 20 minutes after
+  Windows sign-in or 20 minutes after coop starts, whichever comes first, never
+  during start-up: the sign-in hook schedules it once it has waited for coop's own
+  update (that wait counts toward the 20 minutes) and opened the window, and `coop`
+  and the window schedule it once Pi or the window is started, unless today's run
+  is done or one is already waiting. No Task Scheduler task: a waiter in the
+  built-in `powershell.exe` (hidden, below normal priority, detached, so closing
+  coop does not stop it) sleeps until the due time, exits if the feature was
+  switched off, waits up to 30 minutes past it while a coop update installs (then
+  skips the day without claiming it, `update_running`), and claims the day with a
+  create-new file, so two coop windows starting at once, or sign-in and coop
+  together, give one run. A computer asleep at the due time runs it on waking; one
+  asleep past midnight runs that day's 20 minutes after waking. The run is a fixed
+  script (`scripts/docs-refresh.ps1`), not an agent: no Pi, no model, no Git. It
+  reads the client folder from `~/.coop/client.json`, uses that folder's
+  `.coop/project.yml`, mints the tenant-pinned token without a prompt (into the
+  child's environment only) and runs `lib/live_docs.py` (`refresh`, then the new
+  narrow `build`, which also counts the files it changed); Power BI is read from
+  the checked-out folder. The whole run stops after 20 minutes. Dev targets only:
+  a dev target that names a production database is never read (`dev_is_prod`).
+  A missing setup is skipped with a reason code (`no_client`, `no_project`,
+  `no_docs_config`, `no_live_sources`, `no_dev_target`, `dev_is_prod`,
+  `tool_unavailable`), a failure says why (`signin_needed`, `timeout`,
+  `snapshot_failed`, `build_failed`), and a failed run is not retried that day
+  (`/setup-docs refresh` runs it now). Doctor and the next session start show one
+  line: `Docs refreshed 08:21, 3 files changed.` or the reason. Results:
+  `~/.coop/docs-refresh/state.json`, `~/.coop/logs/docs-refresh.log` (under 1 MB);
+  claim files older than 7 days go. Off, sign-in and coop only read the switch:
+  nothing starts and nothing is written.
+
 ### Changed
+- **Live lineage docs never read a dev target that names production.**
+  `lib/live_docs.py` refuses a dev entry with the same server and database,
+  workspace and item, or Lakehouse SQL endpoint as any production entry (the plain
+  `sql_targets.prod` or a named set's), or, when the project file sets no
+  production entry, one whose server, database or set name reads as production
+  (`prod`, `production`, `prd`, `live`) or equals `fabric.environment_names.prod`
+  (`dev_is_prod`). This holds for `/setup-docs`, the weekly session-start refresh
+  and the Daily lineage refresh alike. The Warehouse launch token function
+  (`Get-CoopFabricMcpToken`) moved from `bin/coop.ps1` into `lib/common.ps1`,
+  unchanged, so the daily refresh mints it the same way.
 - **The secret-text patterns live in `lib/secret-text.mjs`.** `lib/feedback.mjs`
   imports them back in the same order, so feedback reports are redacted exactly as
   before. The client instructions use the same patterns plus private-key headers,
