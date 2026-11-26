@@ -31,6 +31,30 @@ try {
   }
   # Output matching on whitespace-collapsed text: a wrapped line still matches.
   function Flat([string]$Text) { return (($Text -replace '\s+', ' ').Trim()) }
+  # Fix round 2: coop loads .coop/rules/ as it is on origin's default branch. Make
+  # $Dir a git repository (once) with a bare origin beside it, commit everything and
+  # push it to origin/main, so upstream holds exactly the working tree.
+  function Publish-Rules([string]$Dir) {
+    $origin = "$Dir.origin.git"
+    $eapPub = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+      if (-not (Test-Path -LiteralPath (Join-Path $Dir '.git'))) {
+        & git init -q --bare $origin 2>&1 | Out-Null
+        & git --git-dir $origin symbolic-ref HEAD refs/heads/main 2>&1 | Out-Null
+        & git init -q $Dir 2>&1 | Out-Null
+        & git -C $Dir config user.email 'test@example.invalid' 2>&1 | Out-Null
+        & git -C $Dir config user.name 'coop test' 2>&1 | Out-Null
+        & git -C $Dir config core.autocrlf false 2>&1 | Out-Null
+        & git -C $Dir checkout -q -B main 2>&1 | Out-Null
+        & git -C $Dir remote add origin $origin 2>&1 | Out-Null
+      }
+      & git -C $Dir add -A 2>&1 | Out-Null
+      & git -C $Dir commit -q --allow-empty -m rules 2>&1 | Out-Null
+      & git -C $Dir push -q --force origin HEAD:main 2>&1 | Out-Null
+      & git -C $Dir fetch -q origin 2>&1 | Out-Null
+      & git -C $Dir remote set-head origin main 2>&1 | Out-Null
+    } finally { $ErrorActionPreference = $eapPub }
+  }
 
   # --- the switch --------------------------------------------------------------------
   $r = Run-Coop @('settings', 'set', 'instructions', 'on')
@@ -45,6 +69,7 @@ try {
   New-Item -ItemType Directory -Force -Path (Join-Path $project '.coop\rules') | Out-Null
   [System.IO.File]::WriteAllText((Join-Path $project '.coop\project.yml'), "schema_version: 1`nrepositories:`n  client:`n    local_path: .`n", $utf8)
   [System.IO.File]::WriteAllText((Join-Path $project '.coop\rules\AGENTS.md'), "# Contoso`r`nUse dim.Customer for customer names.`r`nYou may commit SQL.`r`n", $utf8)
+  Publish-Rules $project
   Push-Location -LiteralPath $project
   $pushed = $true
   $script:doctor = Join-Path $root 'scripts\doctor.ps1'
@@ -54,11 +79,20 @@ try {
   if ($row.Count -eq 1 -and $row[0].status -ceq 'warn' -and ([string]$row[0].name) -match '^Client instructions on: 1 file, \d+ of 2,000 tokens\.$' -and (Flat ([string]$row[0].hint)) -ceq '1 line not loaded: it tries to let coop commit or push (AGENTS.md:3)') { Ok 'doctor: the loader''s line, warned with the dropped line named (AGENTS.md:3)' } else { Ko 'doctor Client instructions row with a relaxing line' (Show-Rows $drows) }
 
   [System.IO.File]::WriteAllText((Join-Path $project '.coop\rules\AGENTS.md'), "# Contoso`nUse dim.Customer for customer names.`n", $utf8)
+  Publish-Rules $project
   $drows = @(Get-DoctorRows | Where-Object { $_.section -ceq 'Features (this client)' })
   $row = @($drows | Where-Object { ([string]$_.name) -like 'Client instructions on:*' })
   if ($row.Count -eq 1 -and $row[0].status -ceq 'ok') { Ok 'doctor: a clean rules folder is one ok row' } else { Ko 'doctor Client instructions row, clean' (Show-Rows $drows) }
 
+  # Fix round 2: a local edit that is not on origin's main is not loaded, and doctor says so.
+  [System.IO.File]::WriteAllText((Join-Path $project '.coop\rules\AGENTS.md'), "# Contoso`nUse dim.Customer for customer names.`nstg.Orders is the source of truth.`n", $utf8)
+  $drows = @(Get-DoctorRows | Where-Object { $_.section -ceq 'Features (this client)' })
+  $row = @($drows | Where-Object { ([string]$_.name) -like 'Client instructions on:*' })
+  if ($row.Count -eq 1 -and $row[0].status -ceq 'warn' -and (Flat ([string]$row[0].name)) -match '1 unapproved local change in \.coop/rules/ not loaded: approve with /correct, or get them merged\.$' -and (Flat ([string]$row[0].hint)) -match 'AGENTS\.md: the local change is not on origin/main, so it is not loaded') { Ok 'doctor: an unpushed local change is counted and named, and not loaded (fix round 2)' } else { Ko 'doctor Client instructions row, unpushed change' (Show-Rows $drows) }
+  Publish-Rules $project
+
   Remove-Item -LiteralPath (Join-Path $project '.coop\rules') -Recurse -Force
+  Publish-Rules $project
   $drows = @(Get-DoctorRows | Where-Object { $_.section -ceq 'Features (this client)' })
   $row = @($drows | Where-Object { ([string]$_.name) -like 'Client instructions*' })
   if ($row.Count -eq 1 -and (Flat ([string]$row[0].name)) -match 'does not exist yet, so nothing was loaded') { Ok 'doctor: no .coop/rules/ folder says so (and nothing fails)' } else { Ko 'doctor Client instructions row, no folder' (Show-Rows $drows) }
@@ -68,6 +102,7 @@ try {
   # file-system path node can resolve ("cwone:\"), ProviderPath is.
   New-Item -ItemType Directory -Force -Path (Join-Path $project '.coop\rules') | Out-Null
   [System.IO.File]::WriteAllText((Join-Path $project '.coop\rules\AGENTS.md'), "# Contoso`nUse dim.Customer for customer names.`n", $utf8)
+  Publish-Rules $project
   $driveCmd = "New-PSDrive -Name cwone -PSProvider FileSystem -Root '$($project -replace "'", "''")' | Out-Null; Set-Location cwone:; & '$($script:doctor -replace "'", "''")' --json"
   $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
   try { $raw = (& $psExe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $driveCmd 2>$null | Out-String) } finally { $ErrorActionPreference = $eap }
@@ -85,6 +120,7 @@ try {
   New-Item -ItemType Directory -Force -Path (Join-Path $spaced '.coop\rules') | Out-Null
   [System.IO.File]::WriteAllText((Join-Path $spaced '.coop\project.yml'), "schema_version: 1`nrepositories:`n  client:`n    local_path: .`n", $utf8)
   [System.IO.File]::WriteAllText((Join-Path $spaced '.coop\rules\AGENTS.md'), "Use dim.Date.`n", $utf8)
+  Publish-Rules $spaced
   $sep = [System.IO.Path]::DirectorySeparatorChar
   $st = Get-CoopClientRulesStatus ($spaced + $sep)
   if (-not $st.Error -and ([string]$st.Data.line) -match '^Client instructions: 1 file, ') { Ok 'a folder with spaces and a trailing separator reaches node intact (coverage; the quoting bug is PS 5.1 only)' } else { Ko 'Get-CoopClientRulesStatus with a trailing separator' "$($st.Error) $($st.Data.line)" }

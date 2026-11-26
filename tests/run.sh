@@ -212,6 +212,8 @@ echo "→ the Features list and the one ~/.coop/config writer (lib/features.mjs)
 COOP_TEST_DIST="$TMP" node --test --test-reporter=spec "$ROOT/tests/features.test.mjs"
 echo "→ client instructions (CW1): the loader, the note and its re-sending, corrections, /correct"
 COOP_TEST_DIST="$TMP" node --test --test-reporter=spec "$ROOT/tests/client-rules.test.mjs"
+echo "→ client instructions (CW1), fix round 2: only approved text is loaded (upstream, or the card's ledger)"
+COOP_TEST_DIST="$TMP" node --test --test-reporter=spec "$ROOT/tests/client-rules-approval.test.mjs"
 echo "→ client instructions (CW1): off is today's behaviour (the 03600165 golden)"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/client-instructions-off.test.mjs"
 echo "→ client instructions (CW1) and the guardrails: a real git repository, the commit prompt"

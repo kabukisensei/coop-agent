@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
-import { captureSession, makeFixture, useHome } from "./cw1-capture.mjs";
+import { captureSession, gitIn, makeFixture, publishRules, useHome } from "./cw1-capture.mjs";
 import {
   CLIENT_RULES_CAP_CHARS,
   appendCorrection,
@@ -33,10 +33,12 @@ after(() => { try { rmSync(fx.root, { recursive: true, force: true }); } catch {
 const rulesDir = join(fx.project, ".coop", "rules");
 const config = join(fx.home, ".coop", "config");
 const setSwitch = (on) => writeFileSync(config, JSON.stringify({ schema_version: 1, features: { instructions: on } }));
-const resetRules = (files) => {
+// Written and pushed: upstream (origin/main) holds exactly these files, so they load.
+const resetRules = (files, { publish = true } = {}) => {
   rmSync(rulesDir, { recursive: true, force: true });
   mkdirSync(rulesDir, { recursive: true });
   for (const [name, text] of Object.entries(files)) writeFileSync(join(rulesDir, name), text);
+  if (publish) publishRules(fx.project);
 };
 
 // --- the loader ---------------------------------------------------------------
@@ -125,6 +127,7 @@ test("relax check: what it drops and what it keeps", () => {
 });
 
 test("loader: a missing, linked, oversized or folder-shaped file is skipped and named; BOM and CRLF read cleanly; no folder loads nothing", () => {
+  resetRules({}); // nothing under .coop/rules/ on upstream either
   rmSync(rulesDir, { recursive: true, force: true });
   let r = loadClientRules(fx.project);
   assert.equal(r.note, "");
@@ -184,7 +187,7 @@ test("corrections log: refusals, ids per day, the entry format, CRLF kept", () =
   rmSync(rulesDir, { recursive: true, force: true });
   const first = appendCorrection(fx.project, "Dates are UTC.", { author: "Aaron", now });
   assert.equal(first.id, "C-2026-11-26-1");
-  assert.match(readFileSync(first.path, "utf8"), /^# Corrections\n\n.*Commit this file to share it with the team\.\n\n- C-2026-11-26-1 · 2026-11-26 · Aaron · Dates are UTC\.\n$/s);
+  assert.match(readFileSync(first.path, "utf8"), /^# Corrections\n\n.*Commit and push this file to share it with the team\.\n\n- C-2026-11-26-1 · 2026-11-26 · Aaron · Dates are UTC\.\n$/s);
 });
 
 // --- coop-tools, bundled, on a fake Pi ----------------------------------------------
@@ -285,7 +288,7 @@ test("runtime, client_rules: refuses a relaxing or secret line without a card; h
   answers = ["Add"];
   res = await run("Use dim.Customer for customer names, never stg.Customer.");
   assert.equal(res.details.state, "added");
-  assert.match(res.content[0].text, /^Added C-\d{4}-\d{2}-\d{2}-1 to \.coop\/rules\/corrections\.md\. It applies to your sessions from the next message; the team gets it once the file is committed \(committing it asks\)\.$/);
+  assert.match(res.content[0].text, /^Added C-\d{4}-\d{2}-\d{2}-1 to \.coop\/rules\/corrections\.md\. It applies to your sessions from the next message; the team gets it once the file is committed and pushed \(committing it asks\)\.$/);
   assert.match(readFileSync(log, "utf8"), /\n- C-\d{4}-\d{2}-\d{2}-1 · \d{4}-\d{2}-\d{2} · \S+ · Use dim\.Customer for customer names, never stg\.Customer\.\n$/);
 
   answers = ["Edit", () => "Skip backups for these.", "Add"];
@@ -433,7 +436,7 @@ test("fix 8: a linked .coop or .coop/rules folder is never read or written throu
   if (!linked) return; // Windows without the link right
   try {
     const r = loadClientRules(fx.project);
-    assert.equal(r.note, "");
+    assert.doesNotMatch(r.note, /Outside the repository/, "the linked folder is never read (fix round 2: upstream's own copy may still load)");
     assert.match(clientRulesProblems(r).join(" | "), /\.coop\/rules\/ not loaded: .*is a link/);
     assert.throws(() => appendCorrection(fx.project, "Dates are UTC.", { author: "t" }), /is a link/);
     assert.equal(existsSync(join(outside, "corrections.md")), false, "nothing written outside the repository");

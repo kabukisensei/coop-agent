@@ -7,7 +7,8 @@
 // 03600165 bundle (before CW1):
 //   COOP_TEST_DIST=<bundle of 03600165> node tests/cw1-capture.mjs --write tests/fixtures/cw1-off-golden.json
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -28,6 +29,35 @@ export function makeFixture() {
   const home = join(root, "home");
   mkdirSync(join(home, ".coop"), { recursive: true });
   return { root, project, home };
+}
+
+/** Run git in `dir`; throws with git's own message when it fails. */
+export function gitIn(dir, ...args) {
+  const r = spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+  if (r.status !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr}`);
+  return r.stdout;
+}
+
+/** Fix round 2: coop loads .coop/rules/ as it is on origin's default branch. Make
+ *  `project` a git repository (once) with a bare origin beside it, commit everything
+ *  and push it to origin/main, so upstream holds exactly the working tree. */
+export function publishRules(project, { message = "rules" } = {}) {
+  const origin = `${project}.origin.git`;
+  if (!existsSync(join(project, ".git"))) {
+    spawnSync("git", ["init", "-q", "--bare", origin]);
+    spawnSync("git", ["--git-dir", origin, "symbolic-ref", "HEAD", "refs/heads/main"]); // a clone checks out main
+    spawnSync("git", ["init", "-q", project]);
+    gitIn(project, "config", "user.email", "test@example.invalid");
+    gitIn(project, "config", "user.name", "coop test");
+    gitIn(project, "config", "core.autocrlf", "false");
+    gitIn(project, "checkout", "-q", "-B", "main");
+    gitIn(project, "remote", "add", "origin", origin);
+  }
+  gitIn(project, "add", "-A");
+  gitIn(project, "commit", "-q", "--allow-empty", "-m", message);
+  gitIn(project, "push", "-q", "--force", "origin", "HEAD:main");
+  gitIn(project, "fetch", "-q", "origin");
+  gitIn(project, "remote", "set-head", "origin", "main");
 }
 
 /** Point every per-user path at the fixture home (no real ~/.coop is read or written). */

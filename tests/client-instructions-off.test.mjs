@@ -15,7 +15,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { strict as assert } from "node:assert";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { captureSession, digest, makeFixture, normalized, useHome } from "./cw1-capture.mjs";
+import { captureSession, digest, makeFixture, normalized, publishRules, useHome } from "./cw1-capture.mjs";
 import { FEATURES } from "../lib/features.mjs";
 
 // The trace, before any bundle loads (builtin ESM exports synced to it).
@@ -67,6 +67,7 @@ for (const [label, write] of [
 
 await t("on: the same capture differs (client_rules, /correct, the session line, the note)", async () => {
   writeFileSync(config, JSON.stringify({ schema_version: 1, features: { instructions: true } }));
+  publishRules(fx.project); // fix round 2: what loads is what is on origin's main
   const cap = normalized(await traceCapture({ project: fx.project }), fx.root);
   assert.ok(touched.some((x) => x.call === "readFileSync" && IN_RULES.test(x.path)), "on: the trace sees the loader read .coop/rules/");
   assert.notEqual(digest(cap), golden.sha256);
