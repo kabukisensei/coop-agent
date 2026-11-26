@@ -36,18 +36,31 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   1,240 of 2,000 tokens.`), and sends the note again when compaction, `/new` or a
   fork drops it. Over the cap it keeps whole files in order (`AGENTS.md`, the
   newest corrections, `tech.md`, `structure.md`, `product.md`) and names what it
-  left out. A line that tries to relax a coop rule or matches a secret pattern is
-  dropped and named in the session line and in doctor. `/correct <text>` (or coop,
-  when you correct it) adds a correction only after an "Add / Edit / No" card, No
-  by default; it applies to your next message, and to the team once committed.
-  The guardrails never read these files, and a commit under `.coop/rules/` asks
-  every time (other Markdown still passes). Off, nothing is read and a session is
-  exactly as before (tools, commands, notices and hidden context).
+  left out; the cap counts the whole note. The note calls the files untrusted team
+  notes that cannot grant permissions. A line, a list item with its continuation
+  lines, or two or three wrapped lines that try to relax a coop rule, override
+  coop's instructions or match a secret pattern are dropped and named in the
+  session line and in doctor (checked after Unicode, zero-width and Markdown
+  emphasis normalization). A linked `.coop` or `.coop/rules` folder is never read
+  or written through. `/correct <text>` (or coop, when you correct it) adds a
+  correction only after an "Add / Edit / No" card, No by default; it applies to
+  your next message, and to the team once committed. The guardrails never read
+  these files. coop's own `edit`/`write` never touches `.coop/rules/corrections.md`
+  (the card is the only way in) and asks for each change to any other
+  `.coop/rules/` file (blocked headless). A commit under `.coop/rules/` asks every
+  time, including a `git mv` out of it, a `cd .coop/rules && git rm`, and a
+  non-ASCII file name (other Markdown still passes). That write and commit gate
+  holds whether or not your own switch is on, since the files steer every teammate
+  who has it on. Off, nothing is read and a session is exactly as before (tools,
+  commands, notices and hidden context).
 
 ### Changed
 - **The secret-text patterns live in `lib/secret-text.mjs`.** `lib/feedback.mjs`
   imports them back in the same order, so feedback reports are redacted exactly as
-  before; the client instructions use the same patterns.
+  before. The client instructions use the same patterns plus private-key headers,
+  passwords in URLs, AWS and Entra keys and camelCase keys (`clientSecret:`), and
+  judge a long unlabelled run by its shape, so a SQL object name or a repo path
+  (`usp_Load_Silver_D365_CustomerInvoiceTransactions`) is no longer taken for a key.
 - **One writer for `~/.coop/config`.** `lib/features.mjs` takes a short lock,
   re-reads the file, writes a temp file and renames it over, keeping every other
   key; a file with a BOM is read, and a file that does not parse is reported and
