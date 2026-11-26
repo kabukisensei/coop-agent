@@ -55,6 +55,12 @@ test("loader: the files in their order, one line for the session, the wrapper th
   assert.deepEqual([...order].sort((a, b) => a - b), order, "sections in priority order");
   assert.ok(r.note.indexOf("Amounts are in cents") < r.note.indexOf("Dates are UTC"), "corrections newest first");
   assert.deepEqual(clientRulesProblems(r), []);
+  // A log a person wrote by hand: plain bullets are entries too, never silently dropped.
+  resetRules({ "corrections.md": "# Corrections\n\nIntro text.\n\n- Use dim.Customer, never stg.Customer.\n  It has the cleaned names.\n* Dates are UTC.\n" });
+  const hand = loadClientRules(fx.project);
+  assert.equal(hand.correctionsTotal, 2);
+  assert.match(hand.note, /## corrections\.md \(approved corrections, newest first\)\n\* Dates are UTC\.\n- Use dim\.Customer, never stg\.Customer\.\n {2}It has the cleaned names\./);
+  assert.doesNotMatch(hand.note, /Intro text/);
 });
 
 test("loader: over the cap, whole files in order, corrections cut at an entry boundary, each left-out file named", () => {
