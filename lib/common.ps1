@@ -897,6 +897,10 @@ function Get-CoopPipxVenvsDir {
   } else {
     $candidates += (Join-Path $HOME '.local\pipx')
     $candidates += (Join-Path $HOME '.local/pipx')
+    # pipx 1.3+ on Linux: $XDG_DATA_HOME/pipx (~/.local/share/pipx) when the
+    # legacy ~/.local/pipx is absent.
+    $xdgData = if ($env:XDG_DATA_HOME) { $env:XDG_DATA_HOME } else { Join-Path $HOME '.local/share' }
+    $candidates += (Join-Path $xdgData 'pipx')
   }
   foreach ($c in $candidates) {
     if ($c -and (Test-Path -LiteralPath $c)) { return (Join-Path $c 'venvs') }
@@ -4146,21 +4150,21 @@ function Test-CoopPiRunning([object[]]$Rows = $null, [string[]]$Roots = $null) {
   return $false
 }
 
-# Linux/macOS fallback for a tool that is installed but not on PATH yet (a new
-# shell picks it up): the first existing <dir>/<Name> in PIPX_BIN_DIR, ~/.local/bin
-# and the pipx venv's own bin dir (<PIPX_HOME or ~/.local/share/pipx>/venvs/<Venv>/bin).
-# '' when none exists. Windows keeps its .exe lookups at each call site.
-function Get-CoopUnixToolFallback([string]$Name, [string]$Venv = '') {
+# Linux personal edition: a tool that is installed but not on PATH yet (a new
+# shell picks it up): the first executable <dir>/<Name> in PIPX_BIN_DIR,
+# <HomeDir>/.local/bin and the pipx venv's own bin dir (<Get-CoopPipxVenvsDir>/
+# <Venv>/bin). '' when none exists. A file without an execute bit does not
+# count. Windows keeps its .exe lookups at each call site.
+function Get-CoopUnixToolFallback([string]$Name, [string]$Venv = '', [string]$HomeDir = $HOME) {
   $dirs = @()
   if ($env:PIPX_BIN_DIR) { $dirs += $env:PIPX_BIN_DIR }
-  $dirs += (Join-Path $HOME '.local/bin')
-  if ($Venv) {
-    $pipxHome = if ($env:PIPX_HOME) { $env:PIPX_HOME } else { Join-Path $HOME '.local/share/pipx' }
-    $dirs += (Join-Path $pipxHome "venvs/$Venv/bin")
-  }
+  $dirs += (Join-Path $HomeDir '.local/bin')
+  if ($Venv) { $dirs += (Join-Path (Join-Path (Get-CoopPipxVenvsDir) $Venv) 'bin') }
   foreach ($d in $dirs) {
     $f = Join-Path $d $Name
-    if (Test-Path -LiteralPath $f -PathType Leaf) { return $f }
+    if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { continue }
+    $item = Get-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+    if ($item -and ([int]$item.UnixFileMode -band 73)) { return $f }   # 73 = 0o111, any execute bit
   }
   return ''
 }
@@ -4609,9 +4613,13 @@ function Invoke-CoopFabricCliConverge {
     return (Coop-UnitResult $true "Microsoft Fabric CLI ready ($v)")
   }
   if (-not (Test-CoopWindowsHost)) {
-    # Linux/macOS: pipx links `fab` (no .exe) into PIPX_BIN_DIR, ~/.local/bin by default.
+    # Linux: pipx links `fab` (no .exe) into PIPX_BIN_DIR, ~/.local/bin by default.
     $localFab = Get-CoopUnixToolFallback 'fab' $Package
     if ($localFab) {
+      $fv = ((& $localFab --version 2>&1) -join ' ')
+      if ($fv -match '(?i)paramiko|invoke') {
+        return (Coop-UnitResult $false "'$localFab' is Python Fabric (SSH), not Microsoft Fabric CLI — put the ms-fabric-cli bin dir first on PATH, then: fab --version")
+      }
       $v = (& $localFab --version 2>$null | Select-Object -First 1)
       return (Coop-UnitResult $true "Microsoft Fabric CLI ready ($v)")
     }
