@@ -402,6 +402,70 @@ function Invoke-CoopStartup {
   Coop-Info "log: $log   turn it off: coop startup off"
 }
 
+# `coop settings [--json] | set <key> on|off` (FEATURES-DESIGN, the Features
+# list): this client's feature switches, all off unless turned on, and its other
+# settings. New, so `coop config` stays Pi's command. Every change goes through
+# the one ~/.coop/config writer, lib\features.mjs (Invoke-CoopFeaturesCli); the
+# window's Settings call the same module directly.
+# `coop settings ... --json`: the writer's JSON as it is, or, when it gave none
+# (node missing, a crash), {"ok":false,"error":...}, never silence. Exits.
+function Write-CoopFeaturesJson($Reply, $Parsed) {
+  if ($null -ne $Parsed.Data) { Write-Output $Reply.Out }
+  else { Write-Output (ConvertTo-Json -Compress -InputObject @{ ok = $false; error = [string]$Parsed.Error }) }
+  $rc = $Reply.Rc
+  if ($Parsed.Error -and $rc -eq 0) { $rc = 1 }
+  exit $rc
+}
+
+function Invoke-CoopSettings {
+  param([string[]] $SettingsArgs = @())
+  $usage = 'usage: coop settings [--json] | coop settings set <key> on|off [--json]'
+  $json = @($SettingsArgs) -ccontains '--json'
+  $words = @($SettingsArgs | Where-Object { $_ -cne '--json' })
+  if ($words.Count -gt 0 -and $words[0] -ceq 'set') {
+    if ($words.Count -ne 3 -or @('on', 'off') -notcontains ([string]$words[2]).ToLowerInvariant()) { Coop-Die $usage }
+    $r = Invoke-CoopFeaturesCli @('set', [string]$words[1], ([string]$words[2]).ToLowerInvariant(), '--json')
+    $reply = ConvertFrom-CoopFeaturesReply $r
+    if ($json) { Write-CoopFeaturesJson $r $reply }
+    if (-not $reply.Error) { Coop-Ok ([string]$reply.Data.text); return }
+    Coop-Err "could not change the setting: $($reply.Error)"
+    if ($r.Rc -eq 2) { Coop-Info 'coop settings lists the features and their keys' }
+    exit $(if ($r.Rc -ne 0) { $r.Rc } else { 1 })
+  }
+  if ($words.Count -gt 1 -or ($words.Count -eq 1 -and $words[0] -cne 'show')) { Coop-Die $usage }
+  $r = Invoke-CoopFeaturesCli @('show', '--json')
+  $reply = ConvertFrom-CoopFeaturesReply $r
+  if ($json) { Write-CoopFeaturesJson $r $reply }
+  $list = $reply.Data
+  if ($reply.Error -or $null -eq $list) { Coop-Die "could not read the settings: $($reply.Error)" }
+  Write-Host "Settings for this client ($($list.file))"
+  Write-Host ''
+  Write-Host 'Features (all off unless you turn them on)'
+  foreach ($f in @($list.features)) {
+    $state = if ($f.on -eq $true) { 'on' } else { 'off' }
+    $note = if ($f.available -eq $true) { '' } else { '  (not in this version yet)' }
+    Write-Host ('  {0,-24}{1,-5}{2}{3}' -f $f.label, $state, $f.key, $note)
+  }
+  if ($list.ok -ne $true) {
+    # Only a file that does not parse is the person's to fix; one that could not
+    # be opened just now (a lock, an antivirus scan, a permission) is not.
+    if ([string]$list.errorKind -eq 'io') { Coop-Warn "$($list.file) could not be read just now ($($list.error)): every feature reads as off; try again in a moment" }
+    else { Coop-Warn "$($list.file) is not valid JSON ($($list.error)): every feature reads as off, and coop leaves the file as it is until you fix or remove it" }
+  }
+  Write-Host ''
+  Write-Host 'Other settings'
+  # The same read as the features above (lib\features.mjs reads cleanup.days as
+  # Get-CoopCleanupDays does), not a second read of ~/.coop/config.
+  $days = [int]$list.cleanup.days
+  $cleanup = if ($days -gt 0) { "$days days" } else { 'off' }
+  Write-Host ('  {0,-10}{1,-10}{2}' -f 'cleanup', $cleanup, '(coop cleanup days <N>|off)')
+  $startup = 'n/a'
+  if ($env:OS -eq 'Windows_NT') { $startup = if (Get-CoopStartupEntry) { 'on' } else { 'off' } }
+  Write-Host ('  {0,-10}{1,-10}{2}' -f 'startup', $startup, '(coop startup on|off)')
+  Write-Host ''
+  Write-Host 'Change one: coop settings set comments on'
+}
+
 # `coop folders`: the three places coop uses, read-only (F1). Other rows build on it.
 function Invoke-CoopFolders {
   $record = Get-CoopClientRecord
@@ -598,6 +662,8 @@ $(Coop-Bold)Usage$(Coop-Rst)
                             (share commits that one file and pushes; --force on a non-default branch)
   coop project home [folder]
                             Show or set this Windows user's client folder (and its project file), where coop opens every time
+  coop settings [set <key> on|off]
+                            This client's features (all off unless you turn them on) and other settings
   coop folders              Show the three places coop uses: this machine, this client, the repository
   coop startup on|off       Open coop when you sign in to Windows: update, Azure sign-in, then the window
   coop cleanup [now|days N|off]  Old sessions, backups and drafts: what is there, remove them now, or change the 45-day age
@@ -1781,7 +1847,7 @@ if ($cmd -ceq 'dev') {
 function Get-CoopNearCommand([string]$Word) {
   if ($Word -cnotmatch '^[a-z][a-z-]{2,}$') { return '' }
   $known = @('desktop', 'doctor', 'update', 'install', 'uninstall', 'onboard', 'profile', 'project', 'folders',
-    'startup', 'data-doc', 'catalog', 'schema', 'support', 'feedback', 'version', 'help', 'sync', 'dev')
+    'startup', 'settings', 'cleanup', 'data-doc', 'catalog', 'schema', 'support', 'feedback', 'version', 'help', 'sync', 'dev')
   $best = ''
   $bestDistance = 99
   foreach ($name in $known) {
@@ -1853,6 +1919,7 @@ switch -CaseSensitive ($cmd) {
   'folders' { Invoke-CoopFolders; break }
   'startup' { Invoke-CoopStartup $rest; break }
   'cleanup' { Invoke-CoopCleanupCommand $rest; break }
+  'settings' { Invoke-CoopSettings $rest; break }
   'new-skill' { New-CoopSkill $rest; break }
   'new-prompt' { New-CoopPrompt $rest; break }
   'release' { Invoke-CoopRelease $rest; break }

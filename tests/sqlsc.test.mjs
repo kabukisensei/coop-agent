@@ -55,7 +55,14 @@ await t("the per-user switch: off by default, /sql-source on writes ~/.coop/conf
   assert.equal(lib.sqlSourceEnabled(file), false);
   writeFileSync(file, "{not json");
   assert.equal(lib.sqlSourceEnabled(file), false, "unreadable: off");
-  assert.equal(lib.setSqlSourceEnabled(true, file), true, "unreadable is replaced");
+  // The one config writer (lib/features.mjs, FEATURES-DESIGN): a file that does
+  // not parse is reported and never overwritten (it was replaced before).
+  assert.throws(() => lib.setSqlSourceEnabled(true, file), /not valid JSON/, "unreadable is reported");
+  assert.equal(readFileSync(file, "utf8"), "{not json", "unreadable is left as it is");
+  writeFileSync(file, "﻿" + JSON.stringify({ client: { platform: "fabric" } }));
+  assert.equal(lib.setSqlSourceEnabled(true, file), true, "a BOM-prefixed file is read and written");
+  assert.equal(JSON.parse(readFileSync(file, "utf8")).client.platform, "fabric");
+  assert.equal(lib.setSqlSourceEnabled(false, file), false);
   assert.match(lib.sqlSourceSwitchText(true), /ON for this Windows user/);
   assert.match(lib.sqlSourceSwitchText(false), /OFF for this Windows user/);
 });

@@ -7,7 +7,8 @@ import { createFinder } from "./find.mjs";
 import { renderItem, renderTurn, codeBlock } from "./view.mjs";
 import { parseInput, completions, noticePlace, KEYS } from "./commands.mjs";
 import { registerPane, openPane, togglePane, closePane, currentPane, refreshPane, initPanes } from "./panes.mjs";
-import { mountChanges } from "./pane-changes.mjs";
+import { commentsOn, mountChanges } from "./pane-changes.mjs";
+import { featuresGroup, refreshFeatures } from "./features-settings.mjs";
 import { mountStandards } from "./pane-standards.mjs";
 import { mountProject } from "./pane-project.mjs";
 import { mountDocs } from "./pane-docs.mjs";
@@ -1345,7 +1346,11 @@ async function cloneSession() {
   if (result.success && !(result.data && result.data.cancelled)) { await refreshAll(); toast("Cloned into a new session.", "info"); }
 }
 
-function settingsPanel() {
+async function settingsPanel() {
+  // The Features list is read again each time Settings opens: `coop settings` in
+  // a terminal, /sql-source in a session or a fixed ~/.coop/config may have
+  // changed it since the window started.
+  await refreshFeatures({ coop, info: app.info, changed: () => window.dispatchEvent(new CustomEvent("coop:features")) });
   const s = app.state || {};
   const row = (label, control, help) => el("label", { class: "setting" }, el("div", { class: "setting-label" }, el("span", { text: label }), help ? el("span", { class: "hint", text: help }) : null), control);
   const select = (options, value, onChange) => {
@@ -1361,6 +1366,7 @@ function settingsPanel() {
     row("DAX opens in", select([["tabular-editor", "Tabular Editor"], ["power-bi", "Power BI Desktop"]], app.info.daxEditor || "tabular-editor", async (v) => { const r = await coop.setPref("daxEditor", v); if (r && r.success) app.info.daxEditor = v; }), "The program the Changes pane's Open in editor uses for a semantic model's files (SQL opens in SSMS)"),
     row("Notify in the background", toggle(app.info.notify !== false, async (v) => { const r = await coop.setPref("notify", v); if (r && r.success) app.info.notify = v; }), "A Windows notification and a taskbar flash when coop finishes or asks while you are elsewhere"),
     row("Menu bar", toggle(app.info.menuBar !== false, async (v) => { const r = await coop.setPref("menuBar", v); if (r && r.success) app.info.menuBar = v; }), "File, Edit, View, Session and Help above the window (Alt shows it when hidden)"),
+    featuresGroup(row, { coop, info: app.info, toast }),
     el("p", { class: "hint", text: "Pi's other settings (default model, scoped models, terminal display) are in the terminal's /settings." }));
   openModal({ title: "Settings", body, wide: true, buttons: [{ label: "Open in terminal", onClick: () => { openTerminal("Run /settings there."); } }, { label: "Done", kind: "primary" }] });
 }
@@ -1645,7 +1651,7 @@ function wire() {
 
 function registerPanes() {
   const deps = { coop, codeBlock };
-  registerPane({ id: "changes", label: "Changes", icon: "diff", description: "Files changed since the last commit", mount: (box, options) => mountChanges(box, options, { ...deps, cwd: () => (app.info ? app.info.cwd : ""), setPrompt }) });
+  registerPane({ id: "changes", label: "Changes", icon: "diff", description: "Files changed since the last commit", mount: (box, options) => mountChanges(box, options, { ...deps, cwd: () => (app.info ? app.info.cwd : ""), setPrompt, getPrompt: () => prompt().value, commentsOn: () => commentsOn(app.info && app.info.features) }) });
   registerPane({ id: "standards", label: "Standards", icon: "shield", description: "The standards coop applies in this folder", mount: (box, options) => mountStandards(box, options, deps) });
   registerPane({ id: "project", label: "Project", icon: "form", description: "Project settings (.coop/project.yml)", mount: (box, options) => mountProject(box, options, { ...deps, newSession: () => runAction("new") }) });
   registerPane({ id: "docs", label: "Docs", icon: "graph", description: "Lineage docs for this folder (coop-data-doc)", mount: (box, options) => mountDocs(box, options, { ...deps, sendSlash }) });
@@ -1659,6 +1665,8 @@ async function boot() {
   coop.onExit(onExit);
   coop.onNotice((notice) => toast(clean(notice.message), notice.level || "info"));
   coop.onTheme((theme) => applyTheme(theme));
+  // Another tab (or window) changed a feature switch: the Changes pane follows at once.
+  coop.onFeatures((view) => { if (app.info) app.info.features = view; window.dispatchEvent(new CustomEvent("coop:features")); });
   coop.onMenu((menu) => { if (menu && typeof menu.action === "string") runAction(menu.action); });
   coop.onRefresh(async (change) => {
     if (change && change.action === "reload") {

@@ -5,6 +5,44 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+- **One Features list, all off unless you turn them on.** This client's feature
+  switches live in `~/.coop/config`: Client instructions, Change history, Diff
+  review comments, Daily lineage refresh and SQL source control (the existing
+  `/sql-source on|off` switch, unchanged). `coop settings` lists them with the
+  cleanup and startup settings, and `coop settings set <key> on|off` changes one
+  (`coop config` stays Pi's command); the window's Settings has the same five rows
+  under "Features (this client)", each saying when a change takes effect. Doctor
+  has a "Features (this client)" section and a session names the features that are
+  on in one line (nothing while all are off). Features this version does not carry
+  yet are listed and stay off.
+- **Diff review comments in the window's Changes pane** (Settings, Features;
+  applies at once). Comment on a new line, a removed line or a shift-click range
+  inside one hunk, collect the comments as markers you can edit or delete, and
+  "Send to coop (N comments)" puts one numbered request in the prompt for you to
+  send; paths are named from the open folder, so a repository below it reads
+  right, and drafts read as `draft <name>`. coop revises under the usual backups,
+  approvals, lineage check and `standards_check`, and when the pane diffs again
+  each comment shows "changed", "unchanged" or "moved or gone, check it". Off, the
+  pane's "Fix this line" works exactly as before.
+
+### Changed
+- **One writer for `~/.coop/config`.** `lib/features.mjs` takes a short lock,
+  re-reads the file, writes a temp file and renames it over, keeping every other
+  key; a file with a BOM is read, and a file that does not parse is reported and
+  never overwritten. `coop cleanup days|off` (before: an in-place PowerShell
+  rewrite) and `/sql-source on|off` (before: a corrupt file was replaced) now go
+  through it, and the window writes through it directly. `coop onboard` (and
+  `coop install --platform`) takes the same lock and writes only its own keys, so
+  re-running it keeps the feature switches, `sql_source_control` and `cleanup`
+  (before: it rebuilt the file from its own answers), and it accepts a config
+  another coop writer created without `schema_version`.
+- **The context budget reports two totals.** A native tool behind a feature switch
+  carries a `// coop:feature <key>` marker; `coop dev context-budget` shows the
+  default-off total (what a fresh install sends, now 7,388 tokens) and the all-on
+  total (every feature on, 7,496), and `check-context-budget.ps1` gates the all-on
+  total against 8,000.
+
 ### Fixed
 - **coop no longer says "Pi launch failed" when Pi started and exited with an
   error.** A Pi that ran and exited non-zero (for example `coop -p` with no

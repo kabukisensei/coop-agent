@@ -218,6 +218,25 @@ Windows notification plus taskbar flash when a turn ends (`agent_end`) or an
 extension asks a question while the window is in the background (Settings >
 Notify in the background).
 
+## Features and diff review comments
+
+The window's own additions, read from this client's `~/.coop/config` like the
+terminal's `coop settings`. Settings has a "Features (this client)" group with
+the same five rows (Client instructions, Change history, Diff review comments,
+Daily lineage refresh, SQL source control), all off unless turned on; the main
+process reads and writes them through `lib/features.mjs`, the one writer of that
+file, with no PowerShell start per click, and each row says when a change takes
+effect. With Diff review comments on (at once, in every tab), the Changes pane
+takes a comment on a new line, a removed line (by its old number) or a
+shift-click range inside one hunk and one side; comments collect as markers with
+Edit and Delete, and "Send to coop (N comments)" puts one numbered request in the
+prompt for the person to send, naming each path from the open folder (`draft
+<name>` for a draft). coop revises in an ordinary turn under the usual backups,
+approvals, lineage check and `standards_check`; when the pane diffs again each
+marker reads "changed", "unchanged" or "moved or gone, check it". Comments live in
+the tab's memory only and stop at the diff's 4,000-line cut. Off, or when the
+setting cannot be read, the pane is the single-line "Fix this line" note exactly.
+
 ## Tabs (several sessions at once)
 
 The window's own addition, matching how the terminal runs one coop per

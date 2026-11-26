@@ -137,7 +137,14 @@ below):
   hook: `before_agent_start` — only when BUILT docs exist — injects an agent-visible,
   human-hidden (`display: false`) note so coop consults the lineage before touching
   an object. Missing docs stay silent; setup is explicitly launched with
-  `/setup-docs` or the `/start` menu.
+  `/setup-docs` or the `/start` menu. Every tool's description, snippet and
+  guidelines count toward the fixed context budget (`coop dev context-budget`). A
+  tool registered only while one of the Features list's switches is on
+  (`lib/features.mjs`, `coop settings`) carries `// coop:feature <key>` on the line
+  directly above its `pi.registerTool` call, as `sql_source` does: it then counts
+  in the all-on total only, and `scripts/check-context-budget.ps1` gates the
+  all-on total (every feature on) against the ceiling and prints the default-off
+  total beside it.
 - `extensions/coop-powerline/index.ts` — coop renders its **own** footer and splash
   here (it does **not** use a third-party powerline footer; `pi-powerline-footer` was
   removed). The splash is the truecolor block-art Cooptimize logo; the footer shows
