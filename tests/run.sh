@@ -326,6 +326,8 @@ echo "→ sql_targets contract section (SQ1: kinds, host patterns, production ne
 python3 "$ROOT/tests/sql-targets.test.py"
 echo "→ review fixes: the one YAML parser (core-schema coercion, never PyYAML), enabled: false, manifest containment, fleet digest config"
 python3 "$ROOT/tests/review-fixes.test.py"
+echo "→ context budget: default-off and all-on totals, coop:feature markers"
+python3 "$ROOT/tests/context-budget.test.py"
 echo "→ one profile root: COOP_DIR is the parent of .coop; one agent-dir chain (S3, #220)"
 python3 "$ROOT/tests/coop-paths.test.py"
 bash "$ROOT/tests/onboard.test.sh"

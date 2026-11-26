@@ -3,6 +3,14 @@
 # check-context-budget.ps1 — context-budget check (lib/context-budget via scripts/context-budget.py).
 # Runs the same Python measurement script and checks the same thresholds.
 #
+# Two totals (FEATURES-DESIGN, context budget): the default-off total (what a
+# fresh install sends) and the all-on total (plus every native tool behind a
+# `// coop:feature <key>` switch). The ceiling gates the ALL-ON total, so turning
+# every feature on can never overflow it. Both are printed.
+#
+# -BudgetJson <file>: check a saved `coop context-budget --json` document instead
+# of measuring (tests/run.ps1 proves the gate fails above the ceiling with one).
+param([string]$BudgetJson = '')
 $ErrorActionPreference = 'Stop'
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -28,15 +36,17 @@ $GUARDRAILS_LIMIT_BYTES = 6850
 # 7500 -> 8000 on 2026-11-26 (Aaron): headroom for the next real capabilities.
 $TOTAL_LIMIT_TOKENS = 8000
 
-$py = Get-Command python3 -ErrorAction SilentlyContinue
-if (-not $py) { $py = Get-Command python -ErrorAction SilentlyContinue }
-if (-not $py) {
-  Write-Warning 'python3 not found; cannot run context-budget check'
-  exit 0
+if ($BudgetJson) {
+  $json = [System.IO.File]::ReadAllText($BudgetJson)
+} else {
+  $py = Get-Command python3 -ErrorAction SilentlyContinue
+  if (-not $py) { $py = Get-Command python -ErrorAction SilentlyContinue }
+  if (-not $py) {
+    Write-Warning 'python3 not found; cannot run context-budget check'
+    exit 0
+  }
+  $json = & $coop context-budget --json 2>&1 | Out-String
 }
-
-$json = & $coop context-budget --json 2>&1 | Out-String
-$err = $null
 $data = $json | ConvertFrom-Json -ErrorAction Stop
 
 $fail = 0
@@ -46,9 +56,13 @@ if ($grBytes -gt $GUARDRAILS_LIMIT_BYTES) {
   $fail = 1
 }
 
-$total = $data.estimated_fixed_total_tokens
+# The all-on total; a document from before the split has only the one total.
+$total = $data.estimated_all_on_total_tokens
+if ($null -eq $total) { $total = $data.estimated_fixed_total_tokens }
+$defaultOff = $data.estimated_default_off_total_tokens
+if ($null -eq $defaultOff) { $defaultOff = $total }
 if ($total -gt $TOTAL_LIMIT_TOKENS) {
-  Write-Host "DRIFT: estimated fixed total is $total tokens (limit $TOTAL_LIMIT_TOKENS)"
+  Write-Host "DRIFT: estimated fixed total with every feature on is $total tokens (limit $TOTAL_LIMIT_TOKENS; default-off $defaultOff)"
   $fail = 1
 }
 
@@ -57,4 +71,4 @@ if ($fail -ne 0) {
   exit 1
 }
 
-Write-Host "PASS: context-budget within thresholds (guardrails ${grBytes}/${GUARDRAILS_LIMIT_BYTES} bytes, fixed total ${total}/${TOTAL_LIMIT_TOKENS} tokens)"
+Write-Host "PASS: context-budget within thresholds (guardrails ${grBytes}/${GUARDRAILS_LIMIT_BYTES} bytes, fixed total default-off ${defaultOff} tokens, all-on ${total}/${TOTAL_LIMIT_TOKENS} tokens)"

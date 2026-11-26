@@ -14,7 +14,14 @@ Rules:
   launcher simply execs this script.
 
 Classification:
-- Always-loaded items are counted in estimated_fixed_total_tokens.
+- Always-loaded items are counted in the fixed total.
+- A native tool registered only while a feature switch is on carries the marker
+  comment `// coop:feature <key>` on the line directly above its
+  pi.registerTool call. Two totals follow (FEATURES-DESIGN, context budget):
+  the default-off total (everything not behind a switch: what a fresh install
+  sends) and the all-on total (plus every switched tool). The all-on total is
+  estimated_fixed_total_tokens, the number scripts/check-context-budget.ps1
+  gates, so turning every feature on can never pass the ceiling.
 - Prompt template bodies are NOT counted in fixed total because Pi expands them
   only when invoked; they are reported as on-demand inventory.
 """
@@ -248,36 +255,6 @@ def measure_prompts(prompts_dir: Path) -> dict:
     }
 
 
-def extract_braced_blocks(text: str, marker: str) -> list[str]:
-    """Extract the contents inside balanced {} for every occurrence of marker{.
-
-    Handles nested braces and skips braceless arrow functions/templates by only
-    counting '{' and '}' that appear at the top level of the block.
-    """
-    blocks = []
-    i = 0
-    while True:
-        idx = text.find(marker, i)
-        if idx == -1:
-            break
-        start = idx + len(marker)
-        if start >= len(text) or text[start] != "{":
-            i = start
-            continue
-        depth = 1
-        j = start + 1
-        while j < len(text) and depth > 0:
-            if text[j] == "{":
-                depth += 1
-            elif text[j] == "}":
-                depth -= 1
-            j += 1
-        if depth == 0:
-            blocks.append(text[start + 1 : j - 1])
-        i = j
-    return blocks
-
-
 def extract_string_literal(text: str, pos: int) -> tuple[str, int]:
     """Extract a string literal starting at pos. Returns (literal, next_index)."""
     if pos >= len(text):
@@ -296,65 +273,128 @@ def extract_string_literal(text: str, pos: int) -> tuple[str, int]:
     return text[pos + 1 : end], end + 1
 
 
-def collect_tool_metadata_chars(index_text: str) -> tuple[int, int]:
-    """Return (total_chars_of_metadata_strings, number_of_tools).
+FEATURE_MARKER = re.compile(r"^\s*//\s*coop:feature\s+([a-z][a-z0-9-]*)\s*$")
+TOOL_NAME = re.compile(r"""\bname\s*:\s*["'`]([^"'`]+)["'`]""")
 
-    Captures strings after description:, promptSnippet:, and inside
-    promptGuidelines: [...] arrays within pi.registerTool({...}) blocks.
+
+def tool_blocks_with_markers(index_text: str) -> list[dict]:
+    """Every pi.registerTool({...}) block: {"block", "name", "feature"}.
+
+    `feature` is the key of a `// coop:feature <key>` comment on the line
+    directly above the line that holds the registerTool call ("" when none).
     """
+    out = []
+    marker = "pi.registerTool("
+    i = 0
+    while True:
+        idx = index_text.find(marker, i)
+        if idx == -1:
+            break
+        start = idx + len(marker)
+        if start >= len(index_text) or index_text[start] != "{":
+            i = start
+            continue
+        depth = 1
+        j = start + 1
+        while j < len(index_text) and depth > 0:
+            if index_text[j] == "{":
+                depth += 1
+            elif index_text[j] == "}":
+                depth -= 1
+            j += 1
+        if depth != 0:
+            break
+        block = index_text[start + 1 : j - 1]
+        line_start = index_text.rfind("\n", 0, idx) + 1
+        prev_end = line_start - 1
+        prev_start = index_text.rfind("\n", 0, max(prev_end, 0)) + 1 if prev_end > 0 else 0
+        prev_line = index_text[prev_start:prev_end].rstrip("\r") if prev_end > 0 else ""
+        m = FEATURE_MARKER.match(prev_line)
+        name = TOOL_NAME.search(block)
+        out.append({"block": block, "name": name.group(1) if name else "", "feature": m.group(1) if m else ""})
+        i = j
+    return out
+
+
+def block_metadata_chars(block: str) -> int:
+    """Chars of the strings after description:, promptSnippet:, and inside
+    promptGuidelines: [...] in one registerTool block."""
     total = 0
-    tool_blocks = extract_braced_blocks(index_text, "pi.registerTool(")
-    for block in tool_blocks:
-        i = 0
-        in_guidelines = False
-        while i < len(block):
-            if block.startswith("promptGuidelines", i):
-                j = i + len("promptGuidelines")
-                while j < len(block) and block[j] in ": \t\n\r":
-                    j += 1
-                if j < len(block) and block[j] == "[":
-                    in_guidelines = True
-                    i = j + 1
-                    continue
-            if in_guidelines and block[i] == "]":
-                in_guidelines = False
-                i += 1
+    i = 0
+    in_guidelines = False
+    while i < len(block):
+        if block.startswith("promptGuidelines", i):
+            j = i + len("promptGuidelines")
+            while j < len(block) and block[j] in ": \t\n\r":
+                j += 1
+            if j < len(block) and block[j] == "[":
+                in_guidelines = True
+                i = j + 1
                 continue
-            key_match = None
-            for key in ("description", "promptSnippet"):
-                if block.startswith(key, i):
-                    j = i + len(key)
-                    if j < len(block) and block[j] == ":":
-                        key_match = key
-                        i = j + 1
-                        break
-            if key_match:
-                while i < len(block) and block[i] in " \t\n\r":
-                    i += 1
-                lit, nxt = extract_string_literal(block, i)
+        if in_guidelines and block[i] == "]":
+            in_guidelines = False
+            i += 1
+            continue
+        key_match = None
+        for key in ("description", "promptSnippet"):
+            if block.startswith(key, i):
+                j = i + len(key)
+                if j < len(block) and block[j] == ":":
+                    key_match = key
+                    i = j + 1
+                    break
+        if key_match:
+            while i < len(block) and block[i] in " \t\n\r":
+                i += 1
+            lit, nxt = extract_string_literal(block, i)
+            total += len(lit)
+            i = nxt
+            continue
+        if in_guidelines:
+            lit, nxt = extract_string_literal(block, i)
+            if nxt > i:
                 total += len(lit)
                 i = nxt
                 continue
-            if in_guidelines:
-                lit, nxt = extract_string_literal(block, i)
-                if nxt > i:
-                    total += len(lit)
-                    i = nxt
-                    continue
-            i += 1
-    return total, len(tool_blocks)
+        i += 1
+    return total
+
+
+def collect_tool_metadata_chars(index_text: str) -> tuple[int, int]:
+    """Return (total_chars_of_metadata_strings, number_of_tools), every tool
+    counted (the all-on view)."""
+    blocks = tool_blocks_with_markers(index_text)
+    return sum(block_metadata_chars(b["block"]) for b in blocks), len(blocks)
 
 
 def measure_native_tools(extensions_dir: Path) -> dict:
-    """Measure the COOP native tool surface (currently extensions/coop-tools)."""
+    """Measure the COOP native tool surface (currently extensions/coop-tools):
+    every tool (all-on), and the ones behind a feature switch."""
     coop_tools = extensions_dir / "coop-tools" / "index.ts"
     text = read_text(coop_tools)
-    meta_chars, tool_count = collect_tool_metadata_chars(text)
+    blocks = tool_blocks_with_markers(text)
+    switched = []
+    meta_chars = 0
+    switched_chars = 0
+    for b in blocks:
+        chars = block_metadata_chars(b["block"])
+        meta_chars += chars
+        if b["feature"]:
+            switched_chars += chars
+            switched.append({
+                "name": b["name"],
+                "feature": b["feature"],
+                "schema_chars": chars,
+                "estimated_tokens": estimate_tokens(chars),
+            })
     return {
         "file": str(coop_tools.relative_to(extensions_dir.parent) if coop_tools.is_file() else "extensions/coop-tools/index.ts"),
-        "count": tool_count,
+        "count": len(blocks),
         "schema_chars": meta_chars,
         "estimated_tokens": estimate_tokens(meta_chars),
+        "default_off_count": len(blocks) - len(switched),
+        "default_off_schema_chars": meta_chars - switched_chars,
+        "switched": switched,
         "file_chars": len(text),
     }
 
@@ -444,13 +484,16 @@ def main() -> int:
 
     # Fixed total: only always-loaded + advertised metadata that is present at startup.
     # Prompt template bodies are on-demand inventory, not fixed total.
-    total_chars = (
+    base_chars = (
         guardrails["chars"]
         + profile["instruction_chars"]
         + proj_chars
         + skills["description_chars"]
-        + native_tools["schema_chars"]
     )
+    # All-on: every native tool, switched ones included (the gated total).
+    total_chars = base_chars + native_tools["schema_chars"]
+    # Default-off: only the tools not behind a feature switch (a fresh install).
+    default_off_chars = base_chars + native_tools["default_off_schema_chars"]
 
     measurement = {
         "method": "static_char_estimate",
@@ -492,6 +535,9 @@ def main() -> int:
             "count": native_tools["count"],
             "schema_chars": native_tools["schema_chars"],
             "estimated_tokens": native_tools["estimated_tokens"],
+            "default_off_count": native_tools["default_off_count"],
+            "default_off_schema_chars": native_tools["default_off_schema_chars"],
+            "switched": native_tools["switched"],
             "file_chars": native_tools["file_chars"],
         },
         "extensions": {
@@ -519,8 +565,12 @@ def main() -> int:
         else None,
         "measurement": measurement,
         "categories": categories,
+        # The all-on total (every feature switched on): what the gate checks.
         "estimated_fixed_total_tokens": estimate_tokens(total_chars),
         "total_chars": total_chars,
+        "estimated_all_on_total_tokens": estimate_tokens(total_chars),
+        "estimated_default_off_total_tokens": estimate_tokens(default_off_chars),
+        "default_off_total_chars": default_off_chars,
     }
 
     if args.json:
@@ -537,6 +587,8 @@ def main() -> int:
     print("Advertised metadata")
     print(f"  Skills                 {skills['count']:<3} entries {skills['description_chars']:,} chars    ~{skills['estimated_tokens']:,} tokens")
     print(f"  Native tools           {native_tools['count']:<3} tools   {native_tools['schema_chars']:,} schema chars  ~{native_tools['estimated_tokens']:,} tokens")
+    for t in native_tools["switched"]:
+        print(f"    behind a switch      {t['name'] or '?'} ({t['feature']})  {t['schema_chars']:,} chars  ~{t['estimated_tokens']:,} tokens")
     print("")
     print("On-demand inventory (not included in fixed total)")
     print(f"  Prompt templates       {prompts['count']:<3} files   {prompts['chars']:,} chars    ~{prompts['estimated_tokens']:,} tokens")
@@ -545,8 +597,9 @@ def main() -> int:
     for e in extensions["entries"]:
         print(f"  {e['name']:<24} {e['registered_tools']} tool(s), {e['registered_commands']} cmd(s)")
     print("")
-    print(f"Estimated fixed total              ~{estimate_tokens(total_chars):,} tokens")
-    print(f"Total measured chars               {total_chars:,}")
+    print(f"Estimated fixed total, default-off ~{estimate_tokens(default_off_chars):,} tokens   (every feature off: what a fresh install sends)")
+    print(f"Estimated fixed total, all-on      ~{estimate_tokens(total_chars):,} tokens   (every feature on: the gated total)")
+    print(f"Total measured chars               {total_chars:,} all-on, {default_off_chars:,} default-off")
     print("")
     print(f"Static estimate: {TOKEN_FORMULA}")
     print("Exact provider measurement: not requested" if not args.measure else "Exact provider measurement: requested but unavailable")

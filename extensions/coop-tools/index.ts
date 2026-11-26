@@ -3255,6 +3255,8 @@ export default function coopTools(pi: ExtensionAPI) {
 
   // Registered only while the user's switch is on (/sql-source on, then /new or
   // a restart): off, the tool and its guidance cost no model context at all.
+  // The marker below puts it in the all-on budget total only (context-budget.py).
+  // coop:feature sql-source
   if (sqlSourceEnabled()) pi.registerTool({
     name: "sql_source",
     label: "SQL source control",

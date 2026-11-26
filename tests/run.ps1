@@ -530,9 +530,25 @@ print("resume verdict contract OK")
     } catch {
       Ko "context-budget --json did not parse as JSON: $_"
     }
+    # Two totals (FEATURES-DESIGN): default-off (a fresh install) and all-on
+    # (plus every tool behind a `// coop:feature` switch); the gate is on all-on.
+    try {
+      $switched = @($cbData.categories.native_tools.switched)
+      if ($cbData.estimated_default_off_total_tokens -lt $cbData.estimated_all_on_total_tokens -and $cbData.estimated_all_on_total_tokens -eq $cbData.estimated_fixed_total_tokens -and (@($switched | Where-Object { $_.name -ceq 'sql_source' -and $_.feature -ceq 'sql-source' })).Count -eq 1) { Ok "context-budget --json: default-off $($cbData.estimated_default_off_total_tokens) < all-on $($cbData.estimated_all_on_total_tokens) tokens; sql_source sits behind its switch" } else { Ko "context-budget --json totals: $cbJsonOut" }
+    } catch { Ko "context-budget --json totals: $_" }
+    if ($cbOut -like '*Estimated fixed total, default-off*' -and $cbOut -like '*Estimated fixed total, all-on*') { Ok 'context-budget prints both totals' } else { Ko "context-budget must print both totals: $cbOut" }
     $cbCheck = Join-Path $root 'scripts\check-context-budget.ps1'
-    & $cbCheck
-    if ($LASTEXITCODE -eq 0) { Ok 'check-context-budget.ps1 gate passes' } else { Ko 'check-context-budget.ps1 gate failed' }
+    $cbGate = & $cbCheck 2>&1 | Out-String
+    if ($LASTEXITCODE -eq 0 -and $cbGate -match 'default-off \d+ tokens, all-on \d+/8000 tokens') { Ok "check-context-budget.ps1 gate passes and prints both totals: $($cbGate.Trim())" } else { Ko "check-context-budget.ps1 gate failed: $cbGate" }
+    # The gate fails when all-on passes the ceiling, even with default-off under it.
+    $cbFake = Join-Path $stub 'budget-over.json'
+    [System.IO.File]::WriteAllText($cbFake, '{"categories":{"guardrails":{"bytes":100}},"estimated_fixed_total_tokens":8100,"estimated_all_on_total_tokens":8100,"estimated_default_off_total_tokens":7000}')
+    $cbOver = & $psExe -NoProfile -File $cbCheck -BudgetJson $cbFake 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0 -and $cbOver -match 'every feature on is 8100 tokens \(limit 8000; default-off 7000\)') { Ok 'check-context-budget.ps1 fails when the all-on total passes 8000 (default-off under it)' } else { Ko "the gate must fail on all-on above 8000: $cbOver" }
+    $cbFine = Join-Path $stub 'budget-fine.json'
+    [System.IO.File]::WriteAllText($cbFine, '{"categories":{"guardrails":{"bytes":100}},"estimated_fixed_total_tokens":8000,"estimated_all_on_total_tokens":8000,"estimated_default_off_total_tokens":7900}')
+    $cbOk = & $psExe -NoProfile -File $cbCheck -BudgetJson $cbFine 2>&1 | Out-String
+    if ($LASTEXITCODE -eq 0) { Ok 'check-context-budget.ps1 passes an all-on total of exactly 8000' } else { Ko "the gate must pass at 8000: $cbOk" }
   }
 
   # --- 4. update --check is a dry-run: reports versions, exits 0 -------------
