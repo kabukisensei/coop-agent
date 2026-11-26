@@ -65,17 +65,17 @@ if (-not (Coop-Confirm 'Remove coop from this machine?')) {
 # --- 1. PATH launcher + persistent user-PATH entry (inverse of install.ps1) ----
 if (-not (Test-CoopWindowsHost)) {
   # Linux personal edition: install linked ~/.local/bin/coop to this clone's
-  # bin/coop and wrote no registry PATH. Remove the link only when it is a
-  # symlink to a coop forwarder (a regular file or a foreign link stays).
-  $LOCALBIN = Join-Path $HOME '.local/bin'
-  $launcher = Join-Path $LOCALBIN 'coop'
+  # bin/coop and wrote no registry PATH. Remove the link only when it resolves
+  # to this clone's bin/coop (Test-CoopUnixLauncherOwned); a regular file or a
+  # link to anything else stays.
+  $launcher = Get-CoopUnixLauncherPath
   $item = Get-Item -LiteralPath $launcher -Force -ErrorAction SilentlyContinue
   if (-not $item) {
     Coop-Info "no launcher at $launcher (already gone)"
   } elseif ($item.LinkType -ne 'SymbolicLink') {
     Coop-Warn "$launcher is not a link coop made; leaving it alone"
-  } elseif (([string]$item.Target) -notmatch '(^|/)bin/coop$') {
-    Coop-Warn "$launcher links to $($item.Target), not a coop clone; leaving it alone"
+  } elseif (-not (Test-CoopUnixLauncherOwned $launcher)) {
+    Coop-Warn "$launcher links to $($item.Target), not this coop-agent clone; leaving it alone"
   } else {
     Remove-Item -LiteralPath $launcher -Force -ErrorAction SilentlyContinue
     if (-not (Get-Item -LiteralPath $launcher -Force -ErrorAction SilentlyContinue)) { Coop-Ok "removed $launcher" } else { Coop-Warn "could not remove $launcher" }

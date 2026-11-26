@@ -2434,6 +2434,62 @@ function Add-CoopPathFront([string]$Dir) {
   if ($current) { $env:PATH = "$Dir$sep$current" } else { $env:PATH = $Dir }
 }
 
+# Linux personal edition: install links ~/.local/bin/coop to this clone's
+# bin/coop (the bash forwarder) and uninstall removes it. A link is ours only
+# when it resolves to this clone's bin/coop; a link to another tool's (or
+# another clone's) bin/coop, or a regular file, is never replaced or removed.
+function Get-CoopUnixLauncherPath([string]$HomeDir = $HOME) {
+  return (Join-Path (Join-Path $HomeDir '.local/bin') 'coop')
+}
+function Test-CoopUnixLauncherOwned([string]$Path, [string]$Root = $script:CoopRoot) {
+  $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+  if (-not $item -or $item.LinkType -ne 'SymbolicLink') { return $false }
+  $ours = [System.IO.Path]::GetFullPath((Join-Path $Root 'bin/coop'))
+  $target = ''
+  try { $t = $item.ResolveLinkTarget($true); if ($t) { $target = $t.FullName } } catch { $target = '' }
+  if (-not $target) { return $false }
+  if ($target -eq $ours) { return $true }
+  # A folder link on either path (a clone reached through a linked folder):
+  # compare the fully resolved paths.
+  if ((Test-Have 'realpath') -and (Test-Path -LiteralPath $target)) {
+    $a = [string](& realpath -e -- $target 2>$null | Select-Object -First 1)
+    $b = [string](& realpath -e -- $ours 2>$null | Select-Object -First 1)
+    if ($a -and $a -eq $b) { return $true }
+  }
+  return $false
+}
+
+# Install step 6 on Linux: link ~/.local/bin/coop to this clone's bin/coop
+# (never over a foreign link or a regular file), then warn when ~/.local/bin was
+# not on the PATH the user started coop with ($OriginalPath, by default
+# COOP_ORIGINAL_PATH): coop prepends it for its own run, so the current PATH
+# cannot tell. $InstallCmd is the re-run command the hints name.
+function Install-CoopUnixLauncher {
+  param([string]$Root = $script:CoopRoot, [string]$HomeDir = $HOME, [string]$OriginalPath = $env:COOP_ORIGINAL_PATH, [string]$InstallCmd = 'bin/coop install')
+  $localBin = Join-Path $HomeDir '.local/bin'
+  New-Item -ItemType Directory -Force -Path $localBin | Out-Null
+  $launcher = Get-CoopUnixLauncherPath $HomeDir
+  $shimTarget = Join-Path $Root 'bin/coop'
+  $item = Get-Item -LiteralPath $launcher -Force -ErrorAction SilentlyContinue
+  if ($item -and $item.LinkType -eq 'SymbolicLink') {
+    if (Test-CoopUnixLauncherOwned $launcher $Root) { Coop-Ok 'coop already linked' }
+    else { Coop-Warn "$launcher links to $($item.Target), not this coop-agent clone; leaving it alone" "remove it, then re-run: $InstallCmd" }
+  } elseif ($item) {
+    Coop-Warn "$launcher exists and is not a link; leaving it alone" "remove it, then re-run: $InstallCmd"
+  } else {
+    try {
+      New-Item -ItemType SymbolicLink -Path $launcher -Target $shimTarget -ErrorAction Stop | Out-Null
+      Coop-Ok "linked $launcher -> $shimTarget"
+    } catch { Coop-Warn "could not link $launcher`: $($_.Exception.Message)" }
+  }
+  $sep = [System.IO.Path]::PathSeparator
+  $entries = @($OriginalPath.Split($sep) | ForEach-Object { $_.TrimEnd('/') })
+  if ($entries -notcontains $localBin.TrimEnd('/')) {
+    Add-CoopPathFront $localBin
+    Coop-Warn "$localBin is not on your PATH" 'add it in your shell profile (pipx ensurepath does this), then open a new terminal'
+  }
+}
+
 # The folders a launch in $StartDir looks in for a stray NUL file: the launch
 # folder, the repository, the project file's folder, the client folder and the
 # user's home folder. Only the folder itself, never below it.

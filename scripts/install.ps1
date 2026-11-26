@@ -243,7 +243,7 @@ if (Test-CoopBundledRuntime) {
   $rerunHint = 'start the coop window again (its shortcut), which runs this setup once more'
 } elseif (-not (Test-Have 'coop') -and -not (Test-CoopWindowsHost)) {
   # Linux personal edition: no Install coop.cmd; the clone's bash forwarder.
-  $installCmd = "$(Join-Path $script:CoopRoot 'bin/coop') install"
+  $installCmd = "`"$(Join-Path $script:CoopRoot 'bin/coop')`" install"
   $rerunHint = "run: $installCmd"
 } elseif (-not (Test-Have 'coop')) {
   $installCmd = "& `"$(Join-Path $script:CoopRoot 'bin\coop.cmd')`" install"
@@ -367,30 +367,12 @@ finally {
 Coop-Head "6/8  Link 'coop' onto your PATH"
 Set-CoopSetupPhase 6 8 'Putting the coop command on your PATH'
 if (-not (Test-CoopWindowsHost)) {
-  # SP6 spike (Linux pwsh): no .cmd launcher, no registry PATH. Symlink
-  # ~/.local/bin/coop to the bash forwarder (bin/coop follows symlinks) and
-  # name the shell-profile step when ~/.local/bin is not on PATH yet.
+  # Linux personal edition: no .cmd launcher, no registry PATH. Link
+  # ~/.local/bin/coop to the bash forwarder (bin/coop follows symlinks), never
+  # over a foreign link or file, and warn when ~/.local/bin was not on the PATH
+  # coop started with (Install-CoopUnixLauncher in lib/common.ps1).
   $machineLink = $false
-  $LOCALBIN = Join-Path $HOME '.local/bin'
-  New-Item -ItemType Directory -Force -Path $LOCALBIN | Out-Null
-  $launcher = Join-Path $LOCALBIN 'coop'
-  $shimTarget = Join-Path $script:CoopRoot 'bin/coop'
-  $item = Get-Item -LiteralPath $launcher -Force -ErrorAction SilentlyContinue
-  if ($item -and $item.LinkType -eq 'SymbolicLink' -and [string]$item.Target -eq $shimTarget) {
-    Coop-Ok 'coop already linked'
-  } elseif ($item -and $item.LinkType -ne 'SymbolicLink') {
-    Coop-Warn "$launcher exists and is not a link; leaving it alone" "remove it, then re-run: coop install"
-  } else {
-    try {
-      New-Item -ItemType SymbolicLink -Force -Path $launcher -Target $shimTarget -ErrorAction Stop | Out-Null
-      Coop-Ok "linked $launcher -> $shimTarget"
-    } catch { Coop-Warn "could not link $launcher`: $($_.Exception.Message)" }
-  }
-  $sep = [System.IO.Path]::PathSeparator
-  if (($env:PATH -split $sep) -notcontains $LOCALBIN) {
-    $env:PATH = "$LOCALBIN$sep$env:PATH"
-    Coop-Warn "$LOCALBIN is not on your PATH" 'add it in your shell profile (pipx ensurepath does this), then open a new terminal'
-  }
+  Install-CoopUnixLauncher -Root $script:CoopRoot -InstallCmd $installCmd
 } else {
 $LOCALBIN = Join-Path $env:LOCALAPPDATA 'coop\bin'
 New-Item -ItemType Directory -Force -Path $LOCALBIN | Out-Null

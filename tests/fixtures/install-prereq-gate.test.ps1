@@ -64,7 +64,7 @@ try {
   $rerun = "then double-click Install coop.cmd again (or run: $launch)"
   if (-not $isWindowsHost) {
     # The Linux personal edition (LX1) has no Install coop.cmd: the clone's bash forwarder.
-    $launch = (Join-Path $root 'bin/coop') + ' install'
+    $launch = '"' + (Join-Path $root 'bin/coop') + '" install'
     $rerun = "then run: $launch"
   }
 
