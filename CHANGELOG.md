@@ -48,14 +48,13 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   these files. coop's own `edit`/`write` never touches `.coop/rules/corrections.md`
   (the card is the only way in) and asks for each change to any other
   `.coop/rules/` file (blocked headless). A commit under `.coop/rules/` asks every
-  time, including a `git mv` out of it, a `cd .coop/rules && git rm`, and a
-  non-ASCII file name (other Markdown still passes). That write and commit gate
+  time, including a `cd .coop/rules && git rm` (other Markdown still passes). That write and commit gate
   holds whether or not your own switch is on, since the files steer every teammate
   who has it on. Off, nothing is read and a session is exactly as before (tools,
   commands, notices and hidden context).
   **Only approved text is loaded.** A rules file's text reaches the model only as
   it is on the client repository's upstream default branch (`origin/<default>` as
-  last fetched; coop never fetches it or pushes to it on its own), i.e. what a
+  last fetched; coop never fetches it or pushes on its own), i.e. what a
   person reviewed and pushed, plus `corrections.md` entries approved on this
   machine with the Add / Edit / No card (an approval ledger outside the
   repository, `~/.coop/client-rules-approvals/`, that only the card writes: each
@@ -70,16 +69,23 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   close the notes wrapper or pose as its marker, every match of a relaxing phrase
   counts (not only the first), `data_doc` is protected like `sql_impact`, and
   wrapped prose is screened in runs of up to 12 lines (across a heading or a blank
-  line) as well as whole paragraphs. The cheaper gates stay as defence in depth: a
-  shell command that writes `.coop/rules/` asks each call (sqlsc and fab
+  line) as well as whole paragraphs. The loader's git runs nothing the repository configures:
+  no hooks, fsmonitor, pager, transport, ssh command or credential helper, no
+  replace refs, no lazy fetch (a partial clone's unfetched file is not loaded, and
+  the session says why), none of the caller's `GIT_*` variables, and no system or
+  global config. origin/HEAD counts only when it names one of origin's branches, a
+  linked `.git` is refused, the ledger must name its repository and is refused when
+  linked, and the client repository is fixed when the session starts. The cheaper
+  gates stay as defence in depth, triggered only by a `.coop/rules/` path or the
+  ledger: a shell command that writes `.coop/rules/` asks each call (sqlsc and fab
   `-o`/`--output` included) and one that writes `corrections.md` or the ledger is
   blocked; a link or hard link to a rules file (in `drafts/` and `backups/` too) is
-  the rules file; a commit whose own command runs anything but `cd`, a plain read
-  or verifiable staging first (a write, index plumbing, git in another folder,
-  pathspec magic or a glob in a removed path) asks, and so does `git pull`; a push
-  that would change `.coop/rules/` on origin's main branch asks every time; and a
-  command that rewrites origin's refs or remote settings (`git update-ref`,
-  `git remote set-url`, a fetch into a named ref, a write in `.git/refs`) asks.
+  the rules file. `git pull`, `git push`, `git remote` and every other command are
+  judged exactly as before. The limit is documented in
+  `docs/guardrails-reference.md`: coop can run shell commands, so a determined
+  injected instruction could still put text in front of it, like any file coop
+  reads; the coded guardrails are what stop it acting on it. Keep the client
+  repository's main branch protected.
 
 ### Changed
 - **The secret-text patterns live in `lib/secret-text.mjs`.** `lib/feedback.mjs`
