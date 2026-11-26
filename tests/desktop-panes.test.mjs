@@ -1452,7 +1452,7 @@ await check("review comments: the window wiring (one writer in-process, applies 
   assert.match(preload, /setFeature: \(key, on\) => ipcRenderer\.invoke\("coop:feature-set", String\(key \|\| ""\), on === true\)/);
   assert.match(preload, /onFeatures: listen\("coop:features"\)/);
   const app = readFileSync(join(ROOT, "desktop", "renderer", "app.mjs"), "utf8");
-  assert.match(app, /"Features \(this client\)"/);
+  assert.match(readFileSync(join(ROOT, "desktop", "renderer", "features-settings.mjs"), "utf8"), /"Features \(this client\)"/);
   assert.match(app, /commentsOn: \(\) => commentsOn\(app\.info && app\.info\.features\)/);
   assert.match(app, /window\.dispatchEvent\(new CustomEvent\("coop:features"\)\)/);
   const pane = readFileSync(join(ROOT, "desktop", "renderer", "pane-changes.mjs"), "utf8");
@@ -1654,6 +1654,55 @@ await check("review comments: a deleted commented line is moved or gone, even wh
   const m2 = modelOf(PROCS, gone);
   assert.ok([12, 13].every((line) => sideLines(m2, "new").has(line)), "proc c's END and GO are in the new diff");
   assert.equal(reanchorComment(comment, m2).status, "moved", "not 'changed' over proc c's lines");
+});
+
+await check("Settings, Features: re-read when Settings opens; a toggle is disabled while saving and raises no second redraw (4)", async () => {
+  const app = readFileSync(join(ROOT, "desktop", "renderer", "app.mjs"), "utf8");
+  const panel = app.slice(app.indexOf("function settingsPanel("), app.indexOf("function hotkeys("));
+  assert.match(panel, /await refreshFeatures\(\{ coop, info: app\.info, changed: \(\) => window\.dispatchEvent\(new CustomEvent\("coop:features"\)\) \}\);/, "Settings reads the switches again before drawing them");
+  assert.match(panel, /featuresGroup\(row, \{ coop, info: app\.info, toast \}\)/);
+  assert.equal((app.match(/dispatchEvent\(new CustomEvent\("coop:features"\)\)/g) || []).length, 2, "one from the main process's broadcast, one when Settings finds a change; none per toggle");
+  const fs = await import("../desktop/renderer/features-settings.mjs");
+  const dom = liveDom.installLiveDom();
+  const view = (on) => ({ ok: true, file: "/h/.coop/config", features: [{ key: "comments", label: "Diff review comments", help: "Comment", on, available: true, takesEffect: "at once" }, { key: "history", label: "Change history", help: "Log", on: false, available: false, takesEffect: "after /new" }] });
+  // Re-read: a change made elsewhere (coop settings in a terminal) is seen, and announced once.
+  const info = { features: view(false) };
+  let announced = 0;
+  await fs.refreshFeatures({ coop: { features: async () => ({ success: true, data: view(true) }) }, info, changed: () => { announced += 1; } });
+  assert.equal(info.features.features[0].on, true);
+  assert.equal(announced, 1);
+  await fs.refreshFeatures({ coop: { features: async () => ({ success: true, data: view(true) }) }, info, changed: () => { announced += 1; } });
+  assert.equal(announced, 1, "nothing changed: no event");
+  await fs.refreshFeatures({ coop: { features: async () => { throw new Error("gone"); } }, info, changed: () => { announced += 1; } });
+  assert.equal(info.features.features[0].on, true, "a failed read keeps the last view");
+  // A toggle: disabled while the save is in flight, no window event of its own.
+  let finish;
+  const calls = [];
+  const coop = { setFeature: (key, on) => { calls.push([key, on]); return new Promise((done) => { finish = done; }); } };
+  const toasts = [];
+  const row = (label, control) => el("label", {}, el("span", { text: label }), control);
+  const { el } = await import("../desktop/renderer/ui.mjs");
+  const group = fs.featuresGroup(row, { coop, info: { features: view(false) }, toast: (m, l) => toasts.push([m, l]) });
+  let events = 0;
+  dom.window.addEventListener("coop:features", () => { events += 1; });
+  const [comments, history] = group.querySelectorAll("input");
+  assert.equal(history.disabled, true, "a feature this version lacks cannot be switched");
+  comments.checked = true;
+  dom.fire(comments, "change");
+  assert.equal(comments.disabled, true, "disabled while saving");
+  assert.deepEqual(calls, [["comments", true]]);
+  finish({ success: true, data: { ...view(true), text: "Diff review comments is on for this client." } });
+  await dom.settle();
+  assert.equal(comments.disabled, false);
+  assert.equal(events, 0, "the main process's broadcast drives the redraw, not the toggle");
+  assert.deepEqual(toasts, [["Diff review comments is on for this client.", "info"]]);
+  comments.checked = false;
+  dom.fire(comments, "change");
+  finish({ success: false, error: "another coop is changing it" });
+  await dom.settle();
+  assert.equal(comments.checked, true, "a failed save puts the switch back");
+  assert.equal(comments.disabled, false);
+  assert.match(toasts[1][0], /Could not change Diff review comments: another coop is changing it/);
 });
 
 rmSync(temp, { recursive: true, force: true });
