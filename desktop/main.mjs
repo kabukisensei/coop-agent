@@ -48,6 +48,7 @@ import { tailnetOrigin } from "./lib/companion-tailscale.mjs";
 import { createPushSender, loadVapid } from "./lib/companion-push.mjs";
 import { configPath, draftsDirFor, folderPlaces, profileDir } from "../lib/paths.mjs";
 import { changedText, featureFor, listFeatures, setFeature } from "../lib/features.mjs";
+import { historyDiff, historyOnIn, historyRows } from "./lib/history-view.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RENDERER = join(HERE, "renderer");
@@ -1033,6 +1034,13 @@ handle("coop:change-diff", async (state, path) => {
   if (!entry) return { success: false, error: "that file is not in the list of changes; refresh it" };
   return { success: true, data: await fileDiff(state.changeDir || state.spec.cwd, entry) };
 });
+
+// Change history (FEATURES-DESIGN CW2): the History view of the Changes pane,
+// read-only (desktop/lib/history-view.mjs). Restore only fills the prompt with
+// /history restore <id> for the person to send; the guardrails then ask.
+const historyArgs = (state) => ({ on: historyOnIn(featureView(state)), env: toolEnv(state) });
+handle("coop:history", async (state) => historyRows(state.changeDir || state.spec.cwd, historyArgs(state)));
+handle("coop:history-diff", async (state, id) => historyDiff(state.changeDir || state.spec.cwd, id, historyArgs(state)));
 
 // "Open in editor": the person edits a changed file in their own program (SSMS
 // for SQL, Tabular Editor or Power BI Desktop for a model, else Windows' app

@@ -394,6 +394,8 @@ node "$ROOT/tests/desktop.test.mjs"
 node "$ROOT/desktop/scripts/runtime-lock.mjs" check
 echo "→ coop window side pane (D1b2): changes, standards, project form, docs setup"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/desktop-panes.test.mjs"
+echo "→ change history (CW2) in the window: the Changes pane's History view and its read path"
+node "$ROOT/tests/history-pane.test.mjs"
 echo "→ coop window attachments (D1b2): Office and PDF text, the splash and the vibes"
 node "$ROOT/tests/desktop-attachments.test.mjs"
 echo "→ coop window package (D1c): the package bootstrap, electron-builder config, stage and installer acceptance"

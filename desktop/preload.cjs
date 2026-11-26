@@ -47,6 +47,9 @@ contextBridge.exposeInMainWorld("coop", Object.freeze({
   // Panes (D1b2).
   changes: (repo) => ipcRenderer.invoke("coop:changes", typeof repo === "string" ? repo : null),
   changeDiff: (path) => ipcRenderer.invoke("coop:change-diff", String(path || "")),
+  // Change history (CW2): this repository's recorded changes and one change's diff, read-only.
+  history: () => ipcRenderer.invoke("coop:history"),
+  historyDiff: (id) => ipcRenderer.invoke("coop:history-diff", String(id || "")),
   openInEditor: (path) => ipcRenderer.invoke("coop:open-in-editor", String(path || "")),
   folders: () => ipcRenderer.invoke("coop:folders"),
   standards: () => ipcRenderer.invoke("coop:standards"),

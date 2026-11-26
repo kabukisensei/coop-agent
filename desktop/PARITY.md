@@ -243,6 +243,15 @@ hidden note travels inside Pi's session as in the terminal, `/correct` comes fro
 Pi's command list, and its "Add / Edit / No" question (No first) is a question
 card like any extension's.
 
+Change history (after `/new`) adds a History view to the Changes pane, beside
+"Uncommitted", only while the switch is on: coop's own edits in the repository,
+newest first, with time, tool, file, how each was approved and the session. A row
+opens its diff in the same diff view (read-only: no comments or "Fix this line"
+there), and Restore puts `/history restore <id>` in the prompt for the person to
+send; the restore itself is the guardrails' `/history` command, which asks every
+time with the diff, backs the file up first and records its own line, as in the
+terminal. The main process only reads the store (`desktop/lib/history-view.mjs`).
+
 ## Tabs (several sessions at once)
 
 The window's own addition, matching how the terminal runs one coop per
