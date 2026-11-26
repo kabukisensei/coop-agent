@@ -24,7 +24,12 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   install and update busy guard sees running Pi sessions (node, nodejs or pi
   processes, argv from `/proc` with npm's `bin/pi` link resolved); `fab` and
   `te` are found in `~/.local/bin`, `PIPX_BIN_DIR` and the pipx venv
-  (executable files only, and a Python Fabric `fab` is refused); and hints name
+  (executable files only, and a Python Fabric `fab` is refused); a `pipx` on
+  PATH counts only if it answers `--version`, so a dead `pip install --user`
+  pipx script (its Python upgraded, or its module in another HOME: the first
+  CI run, where every tool install died with "No module named 'pipx'") is
+  skipped for the next pipx on PATH, else `<python> -m pipx`, else the pipx
+  step installs one; and hints name
   `bin/coop install` and "this Linux user" instead of `.\bin\coop.cmd` and
   "this Windows user". New page: `docs/install-linux.md`.
 

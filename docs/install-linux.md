@@ -41,6 +41,10 @@ missing. It never runs `sudo` for you.
    sudo apt-get install -y pipx
    pipx ensurepath
    ```
+   coop runs the first `pipx` on PATH that answers `pipx --version`, else
+   `python3 -m pipx`. A `pipx` left over from `pip install --user pipx` on a
+   Python you have since upgraded fails with "No module named 'pipx'"; coop
+   skips it, but remove it (`rm ~/.local/bin/pipx`) so your shell does too.
 4. **`~/.local/bin` on PATH.** `pipx ensurepath` adds it to your shell profile.
    Open a new terminal afterwards and check with `echo $PATH`. `coop install`
    links the `coop` command there.
