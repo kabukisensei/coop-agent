@@ -61,6 +61,11 @@ async function run() {
 const pct = (xs, p) => { const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.ceil((p / 100) * s.length) - 1)]; };
 
 const { off, on } = await run();
+// The measurement is of a recorder that records: every "on" write has its line.
+await cg.historySettled();
+const recorded = lib.readEntries(lib.storeFor(repo).store, { limit: Infinity }).filter((e) => e.session === "perf" && e.toolCallId.startsWith("on-"));
+assert.equal(recorded.length, N + 20, "history on recorded every write");
+assert.ok(recorded.every((e) => e.before && e.after && !e.excluded), "with its content");
 // The deferred recording, timed directly (off the critical path).
 const rec = [];
 for (let i = 0; i < N; i++) {
