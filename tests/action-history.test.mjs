@@ -231,7 +231,7 @@ for (let i = 0; i < 150; i++) recordCallOnly({ cwd: ${JSON.stringify(repo)}, too
   assert.equal(lib.readEntries(s, { limit: Infinity }).length, 300, "torn and broken lines are skipped");
 });
 
-test("approval paths: asked once, session grant, record-only lines for a shell command the guardrails asked about", async () => {
+test("approval paths: asked once, record-only lines for a shell command the guardrails asked about", async () => {
   reset();
   setSwitch(true);
   const g = load({ confirm: async () => true });
@@ -316,7 +316,7 @@ test("restore: clean, keeping a later edit (git merge-file), refused conflict an
   assert.equal(readFileSync(file, "utf8"), before.replace("DD\n", "d\n"), "the whole file as it was before that change");
 });
 
-test("restore refuses: headless, a record-only line, an unknown id, an excluded file, a path outside the repository", async () => {
+test("restore refuses: headless, a record-only line, an unknown id, a path outside the repository", async () => {
   reset();
   setSwitch(true);
   const g = load();
@@ -354,14 +354,14 @@ test("a failure to record never fails the write: one notice, one audit row", asy
     assert.equal(r.result, undefined);
     assert.equal(readFileSync(join(repo, "docs", "f.md"), "utf8"), "y\n");
     await settled();
-    const warned = g.notices.filter((x) => /^change history paused:/.test(x.m));
+    const warned = g.notices.filter((x) => /^change history could not record a change:/.test(x.m));
     assert.equal(warned.length, 1, "one notice per session");
     const audit = readFileSync(join(process.env.PI_CODING_AGENT_DIR, "guardrails-audit.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
     assert.ok(audit.filter((a) => a.kind === "change-history" && a.decision === "failed").length >= 2);
   } finally { rmSync(HISTORY, { force: true }); }
 });
 
-test("the history folder is blocked for model reads, writes, edits and commands, by every spelling, on or off", async () => {
+test("on: the history folder is blocked for model reads, writes, edits and commands, by every spelling; off: no history check at all", async () => {
   reset();
   setSwitch(true);
   const g = load();
@@ -371,17 +371,17 @@ test("the history folder is blocked for model reads, writes, edits and commands,
   symlinkSync(HISTORY, join(repo, "innocent"));
   for (const on of [true, false]) {
     setSwitch(on);
-    const h = load();
+    const h = load({ confirm: async () => true });
     const blockedFile = async (tool, path, cwd = repo) => {
       const r = await h.handlers.tool_call({ toolName: tool, toolCallId: "b", input: tool === "write" ? { path, content: "x" } : { path } }, { ...h.ctx, cwd });
       return Boolean(r && r.block && /change history/.test(r.reason));
     };
     for (const tool of ["read", "write", "edit"]) {
-      assert.ok(await blockedFile(tool, log), `${tool} absolute (${on})`);
-      assert.ok(await blockedFile(tool, log.replace(HOME, "~")), `${tool} ~ (${on})`);
-      assert.ok(await blockedFile(tool, `@${log}`), `${tool} @ (${on})`);
-      assert.ok(await blockedFile(tool, "innocent/x"), `${tool} through a link (${on})`);
-      assert.ok(await blockedFile(tool, "history/x", PROFILE), `${tool} relative (${on})`);
+      assert.equal(await blockedFile(tool, log), on, `${tool} absolute (${on})`);
+      assert.equal(await blockedFile(tool, log.replace(HOME, "~")), on, `${tool} ~ (${on})`);
+      assert.equal(await blockedFile(tool, `@${log}`), on, `${tool} @ (${on})`);
+      assert.equal(await blockedFile(tool, "innocent/x"), on, `${tool} through a link (${on})`);
+      assert.equal(await blockedFile(tool, "history/x", PROFILE), on, `${tool} relative (${on})`);
     }
     const blockedShell = async (command, toolName = "bash") => {
       const r = await h.handlers.tool_call({ toolName, toolCallId: "s", input: { command } }, h.ctx);
@@ -391,28 +391,254 @@ test("the history folder is blocked for model reads, writes, edits and commands,
       `cat ${log}`, `python -c "print(open('${log}').read())"`, `python -c "open('~/.coop/history/x')"`, "cat ~/.coop/history/*/log.jsonl", "cat $HOME/.coop/history", 'cat "${USERPROFILE}/.coop/history"',
       "type %USERPROFILE%\\.coop\\history\\x", "ls $COOP_DIR/.coop/hist*", "ls ~/.coop/*", "cd ~/.coop && cat history/a",
       "cat innocent/log.jsonl", "rm -rf ~/.coop/history", "zcat ~/.coop/history/x/2026-11/blobs/a.gz",
-    ]) assert.ok(await blockedShell(command), `${command} (${on})`);
-    assert.ok(await blockedShell("Get-Content $env:USERPROFILE\\.coop\\history\\x", "powershell"), `powershell (${on})`);
-    // Narrow: everything else is today's behaviour.
+      "ls ~/.coop/h*", "ls ~/.coop/[h]istory", "ls ~/.coop/hist?ry/x",
+    ]) assert.equal(await blockedShell(command), on, `${command} (${on})`);
+    assert.equal(await blockedShell("Get-Content $env:USERPROFILE\\.coop\\history\\x", "powershell"), on, `powershell (${on})`);
+    // Narrow: everything else is today's behaviour. A glob in ~/.coop that cannot
+    // match the name "history" is not it (Neon B6).
     mkdirSync(join(repo, ".coop"), { recursive: true });
-    for (const command of ["ls ~/.coop", "cat docs/p.md", "ls ~/*", "git log --oneline -1", "cat .coop/history.md", "ls .coop/history", "cat ~/.coop/history-notes.txt"]) assert.ok(!(await blockedShell(command)), `${command} is not blocked (${on})`);
+    for (const command of ["ls ~/.coop", "cat docs/p.md", "ls ~/*", "git log --oneline -1", "cat .coop/history.md", "ls .coop/history", "cat ~/.coop/history-notes.txt",
+      "ls ~/.coop/*.json", "cat ~/.coop/*.txt", "ls ~/.coop/b*"]) assert.ok(!(await blockedShell(command)), `${command} is not blocked (${on})`);
     assert.ok(!(await blockedFile("read", "docs/p.md")), "an ordinary read");
   }
   rmSync(join(repo, "innocent"));
 });
 
-test("whole-month retention: the 1 GB cap removes the oldest month folders first", () => {
+test("whole-month retention: the 1 GB cap removes the oldest month folders first", async () => {
   reset();
   const s = lib.storeFor(repo).store;
   for (const [m, size] of [["2026-08", 600], ["2026-09", 300], ["2026-10", 300]]) {
     mkdirSync(join(s, m, "blobs"), { recursive: true });
     writeFileSync(join(s, m, "log.jsonl"), "x".repeat(size));
   }
-  const removed = lib.enforceCap(HISTORY, 700);
+  const removed = await lib.enforceCap(HISTORY, 700, { now: new Date("2026-11-26T12:00:00Z") });
   assert.deepEqual(removed.map((r) => r.month), ["2026-08"]);
   assert.ok(!existsSync(join(s, "2026-08")) && existsSync(join(s, "2026-09")) && existsSync(join(s, "2026-10")), "whole folders, oldest first");
-  assert.equal(lib.historyStatus(HISTORY).months, 2);
+  assert.equal((await lib.historyStatus(HISTORY)).months, 2);
   const r = spawnSync(process.execPath, [join(ROOT, "lib", "action-history.mjs"), "status", "--json"], { encoding: "utf8", env: process.env });
   assert.equal(r.status, 0);
   assert.equal(JSON.parse(r.stdout).months, 2);
+});
+
+// --- Fix round (Neon's review of CW2) ------------------------------------------
+
+test("B3: the bytes after are the file as this call left it, even when a second edit lands before the recording runs", async () => {
+  reset();
+  setSwitch(true);
+  const g = load();
+  const file = join(repo, "docs", "race.md");
+  writeFileSync(file, "v0\n");
+  await g.fileTool("write", "docs/race.md", "v1\n");
+  // The recording is deferred (setImmediate, then git check-ignore). A second
+  // edit lands first, outside this call:
+  writeFileSync(file, "v2\n");
+  const [first] = await lines(1);
+  assert.equal(lib.readBlob(store(), first.month, first.before).toString(), "v0\n");
+  assert.equal(lib.readBlob(store(), first.month, first.after).toString(), "v1\n", "after is v1, not the later v2");
+  // Restoring that first change keeps the later edit's question: it is not a silent clean overwrite.
+  const plan = lib.planRestore(store(), first, readFileSync(file));
+  assert.notEqual(plan.mode, "clean");
+});
+
+test("should-fix 6: a locked file is never waited for on the tool path; its content is simply not kept", { skip: process.platform === "win32" || process.getuid?.() === 0 ? "needs POSIX permissions (not root)" : false }, async () => {
+  reset();
+  setSwitch(true);
+  const g = load();
+  const file = join(repo, "docs", "locked.md");
+  writeFileSync(file, "locked\n");
+  const toolCallId = "locked-1";
+  const input = { path: "docs/locked.md", content: "new\n" };
+  spawnSync("chmod", ["000", file]);
+  let decision;
+  try { decision = await g.handlers.tool_call({ type: "tool_call", toolName: "write", toolCallId, input }, g.ctx); } finally { spawnSync("chmod", ["644", file]); }
+  assert.ok(!decision || !decision.block);
+  writeFileSync(file, "new\n");
+  await g.handlers.tool_result({ type: "tool_result", toolName: "write", toolCallId, input, content: [], isError: false }, g.ctx);
+  const [e] = await lines(1);
+  assert.equal(e.excluded, "could not be read (locked?)");
+  assert.equal(g.notices.filter((x) => /could not record/.test(x.m)).length, 0, "not a failure: the call is recorded without content");
+});
+
+test("B2: switched on at a session start without /history registered: nothing recorded, no command, the session says to restart coop", async () => {
+  reset();
+  setSwitch(false);
+  const g = load();
+  assert.equal(g.commands.history, undefined);
+  setSwitch(true);
+  await g.handlers.session_start({ type: "session_start" }, g.ctx);
+  assert.ok(g.notices.some((x) => /restart coop to use Change history/.test(x.m)), "the session line says to restart");
+  assert.equal(g.commands.history, undefined, "still no /history: a Restore would go to the model");
+  await g.fileTool("write", "docs/b2.md", "b2\n");
+  await settled();
+  assert.equal(existsSync(HISTORY), false, "nothing recorded until a restart");
+  // A restart (a fresh instance with the switch on) has it.
+  const h = load();
+  assert.ok(h.commands.history);
+  await h.fileTool("write", "docs/b2.md", "b2 again\n");
+  await lines(1);
+});
+
+test("B1: a client folder with several repositories: each file's change goes to its own repository, /history lists them all or the one named, and restore finds it", async () => {
+  reset();
+  setSwitch(true);
+  const client = join(root, "multi");
+  for (const name of ["sqlA", "sqlB"]) {
+    mkdirSync(join(client, name, "views"), { recursive: true });
+    spawnSync("git", ["init", "-q", join(client, name)]);
+    writeFileSync(join(client, name, "views", "v.sql"), `SELECT '${name}'\n`);
+  }
+  let answer = true;
+  const g = load({ confirm: async () => answer });
+  const c = { ...g.ctx, cwd: client };
+  await g.fileTool("write", "sqlA/views/v.sql", "SELECT 'A2'\n", { cwd: client });
+  await g.fileTool("write", "sqlB/views/v.sql", "SELECT 'B2'\n", { cwd: client });
+  const [a] = await lines(1, lib.storeFor(join(client, "sqlA")).store);
+  const [b] = await lines(1, lib.storeFor(join(client, "sqlB")).store);
+  assert.equal(a.target, "views/v.sql");
+  await g.command("history", "", c);
+  const all = g.notices.at(-1).m;
+  assert.match(all, /sqlA\/views\/v\.sql/);
+  assert.match(all, /sqlB\/views\/v\.sql/);
+  await g.command("history", "list sqlB", c);
+  assert.match(g.notices.at(-1).m, new RegExp(b.id));
+  assert.doesNotMatch(g.notices.at(-1).m, new RegExp(a.id), "the repository the pane picked, only");
+  // Restore by id alone (found in sqlA's store) and with the repository named.
+  await g.command("history", `restore ${a.id}`, c);
+  assert.equal(readFileSync(join(client, "sqlA", "views", "v.sql"), "utf8"), "SELECT 'sqlA'\n");
+  await g.command("history", `restore ${b.id} sqlB`, c);
+  assert.equal(readFileSync(join(client, "sqlB", "views", "v.sql"), "utf8"), "SELECT 'sqlB'\n");
+  await g.command("history", `restore ${b.id} sqlA`, c);
+  assert.match(g.notices.at(-1).m, /no change/, "the wrong repository named: not found there");
+});
+
+test("B4: the 1 GB cap never follows a linked history folder, skips bad month names and never removes the current month", async () => {
+  reset();
+  const outside = join(root, "outside-history");
+  const s = join(outside, "client-0123abcd");
+  for (const m of ["2026-01", "0000-01", "2026-13", "9999-12"]) {
+    mkdirSync(join(s, m), { recursive: true });
+    writeFileSync(join(s, m, "log.jsonl"), "x".repeat(500));
+  }
+  mkdirSync(PROFILE, { recursive: true });
+  symlinkSync(outside, HISTORY);
+  try {
+    assert.deepEqual(await lib.enforceCap(HISTORY, 1), [], "a linked history folder: nothing removed");
+    assert.ok(existsSync(join(s, "2026-01", "log.jsonl")));
+    assert.equal((await lib.historyStatus(HISTORY)).linked, true);
+  } finally { rmSync(HISTORY, { force: true }); }
+  // A plain folder: bad names are not months; the current month stays even over the cap.
+  const now = new Date("2026-11-26T12:00:00Z");
+  const own = join(HISTORY, "client-0123abcd");
+  for (const m of ["2026-10", "2026-11", "0000-01", "2026-13"]) {
+    mkdirSync(join(own, m), { recursive: true });
+    writeFileSync(join(own, m, "log.jsonl"), "x".repeat(500));
+  }
+  assert.deepEqual((await lib.listMonths(HISTORY)).map((m) => m.month), ["2026-10", "2026-11"]);
+  const removed = await lib.enforceCap(HISTORY, 1, { now });
+  assert.deepEqual(removed.map((m) => m.month), ["2026-10"]);
+  assert.ok(existsSync(join(own, "2026-11", "log.jsonl")), "the current month is never removed by the cap");
+  assert.ok(existsSync(join(own, "0000-01")), "a folder that is no month is left alone");
+  assert.equal(lib.sizeText(1024 * 1024 * 1024), "1.0 GB");
+});
+
+test("should-fix 5: restore a deleted file (and its folder), refuse a binary-now file and a created file; a CRLF-only change says so", async () => {
+  reset();
+  setSwitch(true);
+  const g = load();
+  mkdirSync(join(repo, "gone", "deep"), { recursive: true });
+  writeFileSync(join(repo, "gone", "deep", "d.md"), "keep me\n");
+  await g.fileTool("write", "gone/deep/d.md", "changed\n");
+  const [d] = await lines(1);
+  rmSync(join(repo, "gone"), { recursive: true, force: true });
+  await g.command("history", `restore ${d.id}`);
+  assert.match(g.confirms.at(-1), /was deleted after change/);
+  assert.equal(readFileSync(join(repo, "gone", "deep", "d.md"), "utf8"), "keep me\n", "the file and its folder come back");
+  // An empty file deleted since: it still comes back (not "nothing to restore").
+  writeFileSync(join(repo, "docs", "empty.md"), "");
+  await g.fileTool("write", "docs/empty.md", "now text\n");
+  const [em] = await lines(3);
+  rmSync(join(repo, "docs", "empty.md"));
+  await g.command("history", `restore ${em.id}`);
+  assert.equal(readFileSync(join(repo, "docs", "empty.md"), "utf8"), "");
+  // Binary now: refused, the file untouched.
+  writeFileSync(join(repo, "docs", "bin.md"), "a\nb\nc\n");
+  await g.fileTool("write", "docs/bin.md", "a\nB\nc\n");
+  const [bn] = await lines(5);
+  writeFileSync(join(repo, "docs", "bin.md"), Buffer.from([0x61, 0, 0x62]));
+  await g.command("history", `restore ${bn.id}`);
+  assert.match(g.notices.at(-1).m, /binary now/);
+  assert.deepEqual([...readFileSync(join(repo, "docs", "bin.md"))], [0x61, 0, 0x62]);
+  // A change that created the file: refused with its reason.
+  await g.fileTool("write", "docs/created.md", "new\n");
+  const [cr] = await lines(6);
+  await g.command("history", `restore ${cr.id}`);
+  assert.match(g.notices.at(-1).m, /created the file/);
+  // An excluded file (a data extract): refused, content not stored.
+  await g.fileTool("write", "docs/x.csv", "a,b\n");
+  const [cs] = await lines(7);
+  await g.command("history", `restore ${cs.id}`);
+  assert.match(g.notices.at(-1).m, /content was not stored \(data file\)/);
+  // CRLF only.
+  writeFileSync(join(repo, "docs", "crlf.md"), "a\nb\n");
+  await g.fileTool("write", "docs/crlf.md", "a\r\nb\r\n");
+  const [cl] = await lines(8);
+  assert.deepEqual(lib.entryDiff(store(), cl), { diff: "", note: "line endings (CRLF/LF)" });
+  await g.command("history", `restore ${cl.id}`);
+  assert.match(g.confirms.at(-1), /only line endings \(CRLF\/LF\)/);
+  // git merge-file failing (status > 127) is a refusal, not a conflict card.
+  const fake = join(root, "fake-git.sh");
+  writeFileSync(fake, "#!/bin/sh\nexit 255\n", { mode: 0o755 });
+  writeFileSync(join(repo, "docs", "m.md"), "1\n2\n3\n");
+  await g.fileTool("write", "docs/m.md", "1\nTWO\n3\n");
+  const [mm] = await lines(10);
+  writeFileSync(join(repo, "docs", "m.md"), "1\nTWO\n3\nlater\n");
+  if (process.platform !== "win32") assert.equal(lib.planRestore(store(), mm, readFileSync(join(repo, "docs", "m.md")), { git: fake }).mode, "refused");
+});
+
+test("should-fix 7: a secret name that links elsewhere, a .gitignore written since, a new folder in a linked repository", async () => {
+  reset();
+  setSwitch(true);
+  const g = load({ confirm: async () => true });
+  writeFileSync(join(repo, "docs", "cfg.txt"), "harmless\n");
+  symlinkSync(join(repo, "docs", "cfg.txt"), join(repo, ".env.local"));
+  try {
+    await g.fileTool("write", ".env.local", "plain words\n");
+    const [e] = await lines(1);
+    assert.equal(e.excluded, "secret-looking file", "the name the tool was given counts");
+  } finally { rmSync(join(repo, ".env.local"), { force: true }); }
+  // Not ignored, then coop adds it to .gitignore: the next write is ignored.
+  await g.fileTool("write", "later/x.md", "1\n");
+  const [x1] = await lines(2);
+  assert.equal(x1.excluded, undefined);
+  await g.fileTool("write", ".gitignore", "ignored/\nlater/\n");
+  await lines(3);
+  await g.fileTool("write", "later/x.md", "2\n");
+  const [x2] = await lines(4);
+  assert.equal(x2.excluded, "ignored by .gitignore");
+  writeFileSync(join(repo, ".gitignore"), "ignored/\n");
+  // The repository through a link, a failed write into a new nested folder: still inside it.
+  const link = join(root, "client-link");
+  symlinkSync(repo, link);
+  try {
+    await g.fileTool("write", "brand/new/dir/f.md", "x\n", { cwd: link, isError: true });
+    const [f] = await lines(5);
+    assert.equal(f.target, "brand/new/dir/f.md");
+    assert.notEqual(f.excluded, "outside the repository");
+  } finally { rmSync(link, { force: true }); }
+});
+
+test("should-fix 8: a torn last line does not swallow the next one; shutdown waits for the last line", async () => {
+  reset();
+  setSwitch(true);
+  const g = load();
+  await g.fileTool("write", "docs/t.md", "1\n");
+  const [e] = await lines(1);
+  appendFileSync(join(store(), e.month, "log.jsonl"), '{"v":1,"id":"torn');
+  await g.fileTool("write", "docs/t.md", "2\n");
+  const got = await lines(2);
+  assert.equal(got.length, 2, "the line after a torn one still parses");
+  // /new or exit: the last edit's line is written before shutdown returns.
+  await g.fileTool("write", "docs/t.md", "3\n");
+  await g.handlers.session_shutdown({ type: "session_shutdown" }, g.ctx);
+  assert.equal(lib.readEntries(store(), { limit: Infinity }).length, 3);
 });

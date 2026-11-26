@@ -31,5 +31,6 @@ export function historyDiff(dir, id, { on, env = process.env } = {}) {
   if (entry.excluded) return { success: true, data: { error: `Its content was not kept (${entry.excluded}), so there is no diff to show.` } };
   const diff = entryDiff(store, entry);
   if (diff === null) return { success: true, data: { error: "Its stored content is gone (removed by the cleanup?)." } };
+  if (typeof diff === "object") return { success: true, data: { error: `No lines changed: only ${diff.note} changed.` } };
   return { success: true, data: { diff } };
 }

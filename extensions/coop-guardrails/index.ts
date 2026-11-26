@@ -44,7 +44,7 @@ import { appendFileSync, existsSync, lstatSync, readFileSync, readlinkSync, real
 import { basename, dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
 import { agentDir as coopAgentDir, coopAgentDir as coopIsolatedAgentDir, homeDir as coopHomeDir, personalPiAgentDir, profileDir as coopProfileDir } from "../../lib/paths.mjs";
 import { editGateDecision } from "../../lib/lineage-context.mjs";
-import { isHistoryPath, historyRoot, readCapped, recordFileChange, recordCallOnly, enforceCap, storeFor, readEntries, findEntry, planRestore, diffText, writeRestore, historyLines, realPath, sizeText } from "../../lib/action-history.mjs";
+import { isHistoryPath, historyRoot, readNow, readCapped, prepareFile, recordFileChange, recordCallOnly, enforceCap, storeFor, storesNear, readEntries, findEntry, planRestore, diffText, changeNote, writeRestore, historyLines, realPath, sizeText, clearGitIgnoredCache } from "../../lib/action-history.mjs";
 import { featureEnabled } from "../../lib/features.mjs";
 
 declare const Buffer: { from(value: string, encoding: "base64url"): { length: number; toString(encoding: "utf8" | "base64url"): string } };
@@ -202,16 +202,23 @@ export function shellClientRulesTarget(cmd: string, cwd: string): { kind: "corre
  *  command names it, or null. Narrow, like the production unlock: the text
  *  `.coop/history`, or a word that resolves into the folder once `~`, $HOME,
  *  ${HOME}, %USERPROFILE%, $env:USERPROFILE and COOP_DIR's spellings are expanded
- *  (a literal `cd` carries over, links are followed), or a glob whose literal
- *  start could reach it. A parent folder named on its own is not matched. */
+ *  (a literal `cd` carries over, links are followed), or a glob whose part in
+ *  the history folder's parent matches the name `history`. A parent folder
+ *  named on its own is not matched. Runs only while Change history is on. */
 export function shellHistoryTarget(cmd: string, cwd: string, env: Record<string, string | undefined> = process.env): string | null {
   // Named inside any word (a script's string): a home spelling then .coop/history,
   // or the folder's own path. A repository's own `.coop/history.md` is not it.
   if (/(?:~|\$\{?(?:HOME|USERPROFILE|COOP_DIR)\}?|%(?:HOME|USERPROFILE|COOP_DIR)%|\$env:(?:HOME|USERPROFILE|COOP_DIR))[\\/]+\.coop[. ]*[\\/]+history[. ]*(?![\w.-])/i.test(cmd)) return ".coop/history";
-  const flat = (p: string) => (process.platform === "win32" ? p.toLowerCase() : p).replace(/\\+/g, "/");
-  for (const spelled of new Set([historyRoot(env), realPath(historyRoot(env))])) {
-    const at = flat(cmd).indexOf(flat(spelled));
-    if (at >= 0 && !/[\w.-]/.test(flat(cmd).charAt(at + flat(spelled).length))) return spelled;
+  const win = process.platform === "win32";
+  // Worked out once per command: the folder as spelled and as resolved, its
+  // parent and name, and whether it exists (links can only lead into it then).
+  const spelledRoot = historyRoot(env);
+  const realRoot = realPath(spelledRoot);
+  const flat = (p: string) => (win ? p.toLowerCase() : p).replace(/\\+/g, "/");
+  const flatCmd = flat(cmd);
+  for (const spelled of new Set([spelledRoot, realRoot])) {
+    const at = flatCmd.indexOf(flat(spelled));
+    if (at >= 0 && !/[\w.-]/.test(flatCmd.charAt(at + flat(spelled).length))) return spelled;
   }
   const home = coopHomeDir();
   const vars: Record<string, string> = { HOME: env.HOME || home, USERPROFILE: env.USERPROFILE || env.HOME || home, COOP_DIR: env.COOP_DIR || "" };
@@ -219,8 +226,17 @@ export function shellHistoryTarget(cmd: string, cwd: string, env: Record<string,
     .replace(/^~(?=$|[\\/])/, vars.HOME)
     .replace(/\$\{(HOME|USERPROFILE|COOP_DIR)\}|\$env:(HOME|USERPROFILE|COOP_DIR)\b|%(HOME|USERPROFILE|COOP_DIR)%|\$(HOME|USERPROFILE|COOP_DIR)\b/gi,
       (_m, a, b, c, d) => vars[String(a || b || c || d).toUpperCase()] ?? "");
-  const rootKey = (p: string) => (process.platform === "win32" ? p.toLowerCase() : p).replace(/\\/g, "/");
-  const root = rootKey(realPath(historyRoot(env)));
+  const rootKey = (p: string) => (win ? p.toLowerCase() : p).replace(/\\/g, "/").replace(/\/+$/, "");
+  const roots = [...new Set([rootKey(spelledRoot), rootKey(realRoot)])];
+  const parents = [...new Set([rootKey(dirname(spelledRoot)), rootKey(dirname(realRoot))])];
+  const rootName = win ? basename(realRoot).toLowerCase() : basename(realRoot);
+  const rootExists = existsSync(realRoot);
+  const inRoot = (p: string) => { const k = rootKey(p); return roots.some((r) => k === r || k.startsWith(`${r}/`)); };
+  // A glob part (one path segment) as a whole-name pattern: * ? and [...].
+  const globMatches = (part: string, name: string) => {
+    const rx = part.replace(/[.+^${}()|\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".").replace(/\[!/g, "[^");
+    try { return new RegExp(`^${rx}$`, win ? "i" : "").test(name); } catch { return true; }
+  };
   let dir = resolve(cwd || ".");
   for (const { segment } of splitShellSegments(cmd)) {
     const toks = tokenizeArgs(segment.trim()).map((t) => expand(stripGluedQuotes(t)));
@@ -237,17 +253,28 @@ export function shellHistoryTarget(cmd: string, cwd: string, env: Record<string,
       }
       for (const v of views) {
         if (!v || /^-/.test(v) && !/[\\/]/.test(v)) continue;
-        // A glob: its literal start, resolved, must reach into the history folder's
-        // own name (`~/.coop/*`, `~/.coop/hist*`), not just sit above it (`~/*`).
+        // A glob: the segment holding its first wildcard must sit in the history
+        // folder's parent and match the name `history` (`~/.coop/*`,
+        // `~/.coop/hist*`); `~/.coop/*.json` and `~/*` do not. A glob after the
+        // folder's own path (`<history>/*/log.jsonl`) is inside it.
         const glob = v.search(/[*?[]/);
         if (glob >= 0) {
-          const literal = v.slice(0, glob);
-          if (!literal) continue;
-          const prefix = rootKey(resolveDir(literal, dir)).replace(/\/+$/, "") + (/[\\/]$/.test(literal) ? "/" : "");
-          if (root.startsWith(prefix) && !root.slice(prefix.length).includes("/")) return v;
+          const cut = Math.max(v.lastIndexOf("/", glob), v.lastIndexOf("\\", glob));
+          const head = cut >= 0 ? v.slice(0, cut + 1) : "";
+          const tail = v.slice(cut + 1);
+          const part = tail.split(/[\\/]/)[0];
+          const headDir = resolveDir(head || ".", dir);
+          const ats = [rootKey(headDir), ...(rootExists ? [rootKey(realPath(headDir))] : [])];
+          if (ats.some((at) => inRoot(at) || (parents.includes(at) && globMatches(part, rootName)))) return v;
           continue;
         }
-        try { if (isHistoryPath(resolveDir(v, dir), dir, env)) return v; } catch { /* not a path */ }
+        try {
+          const full = resolveDir(v, dir);
+          if (inRoot(full)) return v;
+          // Along links: only when the folder exists, and only for a word that
+          // names a path (a bare word is resolved once, without its parent's chain).
+          if (rootExists && inRoot(/[\\/]/.test(v) ? realPath(full) : (() => { try { return realpathSync.native(full); } catch { return full; } })())) return v;
+        } catch { /* not a path */ }
       }
     }
   }
@@ -3647,6 +3674,9 @@ class Session {
    *  decided one at a time, so one field is the per-toolCallId record; it is set
    *  before each call and read when the call is allowed. */
   callApproval: HistoryApproval = "none-needed";
+  /** Change history (CW2) is on and /history is registered in this instance: the
+   *  history folder is blocked and calls are recorded. False runs no history code. */
+  historyOn = false;
   readonly liveReadDeps: LiveReadResolverDeps;
   constructor(readonly pi: ExtensionAPI) {
     this.liveReadDeps = {
@@ -3779,7 +3809,8 @@ const powershellRule: Rule = {
       audit({ cwd: ctx.cwd, kind: "danger-confirm", tool, decision: "blocked", label: "production unlock", detail: "prod-unlock-self" });
       return block(PROD_UNLOCK_SELF_BLOCK);
     }
-    if (shellHistoryTarget(command, ctx.cwd)) {
+    // CW2: only while Change history is on (off runs no history code at all).
+    if (session.historyOn && shellHistoryTarget(command, ctx.cwd)) {
       audit({ cwd: ctx.cwd, kind: "danger-confirm", tool, decision: "blocked", label: "change history", detail: "history-store" });
       return block(HISTORY_BLOCK);
     }
@@ -3812,9 +3843,10 @@ const fileRule: Rule = {
       audit({ cwd: ctx.cwd, kind: "secret-confirm", tool, decision: "blocked", label: "production unlock", detail: "prod-unlock-self" });
       return block(PROD_UNLOCK_SELF_BLOCK);
     }
-    // CW2: the change history is the person's record; no model read or write
-    // reaches it, by any spelling or link, whether the feature is on or off.
-    if (path && fileHistoryTarget(path, ctx.cwd)) {
+    // CW2: the change history is the person's record; while the feature is on, no
+    // model read or write reaches it, by any spelling or link. Off runs no history
+    // code at all (the tool path is exactly as before the feature).
+    if (session.historyOn && path && fileHistoryTarget(path, ctx.cwd)) {
       audit({ cwd: ctx.cwd, kind: "secret-confirm", tool, decision: "blocked", label: "change history", detail: "history-store" });
       return block(HISTORY_BLOCK);
     }
@@ -4131,9 +4163,10 @@ const shellCommandRule: Rule = {
 const prodUnlockShellRule: Rule = {
   id: "prod-unlock-shell",
   applies: isShell,
-  check: ({ ctx, command }) => {
-    // CW2: the change history folder, by the same narrow rule (coop's own record).
-    if (shellHistoryTarget(command, ctx.cwd)) {
+  check: ({ ctx, command }, session) => {
+    // CW2: the change history folder, by the same narrow rule (coop's own record),
+    // only while Change history is on.
+    if (session.historyOn && shellHistoryTarget(command, ctx.cwd)) {
       audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "blocked", label: "change history", detail: "history-store" });
       return block(HISTORY_BLOCK);
     }
@@ -4483,39 +4516,59 @@ async function enforce(call: Call, session: Session): Promise<Decision> {
 }
 
 // --- Change history (FEATURES-DESIGN CW2) ---------------------------------------
-// After the fact and off the critical path: at tool_call (once the call is
-// allowed) the file's bytes are held by toolCallId; at tool_result the blobs and
-// the line are written after the result has gone back (setImmediate). A failure
-// to record is one notice and an audit row; it never fails or delays the call.
-// Calls the guardrails asked about that are not file edits (a live write, a
-// shell command) get a record-only line with the audit's own label.
+// After the fact and off the critical path. At tool_call (once the call is
+// allowed) the path rules come first (no read at all for a .env, a data extract,
+// live/, backups/, drafts/); otherwise the file's bytes are read ONCE and held by
+// toolCallId. At tool_result the bytes after are read at once, the same way, so a
+// second edit cannot slip in between; only then does the slow work (git
+// check-ignore, blobs, the line) run, after the result has gone back. A lock is
+// never waited for on the tool path: the content is "unreadable" and not kept.
+// A failure to record is an audit row (and one notice per session); it never
+// fails or delays the call. Calls the guardrails asked about that are not file
+// edits (a live write, a shell command) get a record-only line with the audit's
+// own label.
 const HISTORY_PENDING_MAX = 64;
 const HISTORY_WRITES = new Set<Promise<void>>();
-/** Resolves once every recording started so far has finished (tests; /history restore). */
+/** Resolves once every recording started so far has finished (tests; /history restore; shutdown). */
 export function historySettled(): Promise<unknown> {
   return Promise.allSettled([...HISTORY_WRITES]);
 }
+const HISTORY_RESTART = "Change history is on, but this coop started with it off, so /history is not here and nothing is recorded: restart coop to use Change history.";
 class HistoryRecorder {
   on = false;
   readonly pending = new Map<string, any>();
   readonly writes = HISTORY_WRITES;
+  /** /history was registered when this instance loaded (the switch was on then). */
+  registered = false;
   private warned = false;
   constructor(private session: Session, private enabled: () => boolean) { this.readSwitch(); }
+  /** The switch alone; `on` also needs /history registered (as CW1's client_rules). */
+  switchOn(): boolean {
+    try { return this.enabled() && featureEnabled("history"); } catch { return false; }
+  }
   readSwitch(): void {
-    try { this.on = this.enabled() && featureEnabled("history"); } catch { this.on = false; }
+    const sw = this.switchOn();
+    this.on = sw && this.registered;
+    this.session.historyOn = this.on;
   }
   sessionStart(ctx: ExtensionContext): void {
     this.readSwitch();
     this.pending.clear();
     this.warned = false;
+    // Turned on in Settings (or by coop settings) while this coop ran with it off:
+    // nothing is recorded and /history is not here until a restart.
+    if (!this.on && !this.registered && this.switchOn()) notifyQuiet(ctx, HISTORY_RESTART, "info");
     if (!this.on) return;
-    // The 1 GB cap, oldest month folders first; never in the way of the start.
-    setImmediate(() => {
-      try {
-        const removed = enforceCap();
+    clearGitIgnoredCache();
+    // The 1 GB cap, oldest month folders first (never this month); asynchronous,
+    // so it never holds up the start.
+    const job: Promise<void> = enforceCap()
+      .then((removed: any[]) => {
         if (removed.length) notifyQuiet(ctx, `Change history: removed the ${removed.length} oldest month folder(s) (${sizeText(removed.reduce((n: number, m: any) => n + m.bytes, 0))}) to stay under 1 GB.`, "info");
-      } catch (error) { this.failed(ctx, error); }
-    });
+      })
+      .catch((error: unknown) => this.failed(ctx, error))
+      .finally(() => { this.writes.delete(job); });
+    this.writes.add(job);
   }
   call(event: any, ctx: ExtensionContext): void {
     try {
@@ -4527,7 +4580,8 @@ class HistoryRecorder {
         const path = String(event?.input?.path ?? "").replace(/^@/, "");
         if (!path) return;
         const file = resolve(ctx.cwd || ".", path === "~" || /^~[/\\]/.test(path) ? join(coopHomeDir(), path.slice(1)) : path);
-        this.pending.set(id, { kind: "file", file, tool, approval: this.session.callApproval, before: readCapped(file) });
+        const prep = prepareFile(file, { isSecretPath });
+        this.pending.set(id, { kind: "file", file, prep, tool, approval: this.session.callApproval, before: prep.excluded ? null : readNow(prep.full) });
       } else if (this.session.callApproval !== "none-needed") {
         this.pending.set(id, { kind: "call", tool, approval: this.session.callApproval, label: this.session.callLabel || tool, cwd: ctx.cwd });
       }
@@ -4541,10 +4595,15 @@ class HistoryRecorder {
     let sessionId = "";
     try { sessionId = String(ctx?.sessionManager?.getSessionId?.() || ""); } catch { sessionId = ""; }
     const isError = event?.isError === true;
+    // The bytes after, now: the file as this call left it, before any later edit.
+    let after: any = null;
+    if (item.kind === "file" && !item.prep.excluded) {
+      try { after = readNow(item.prep.full); } catch { after = "unreadable"; }
+    }
     const job: Promise<void> = new Promise<void>((done) => setImmediate(done))
       .then(async () => {
-        if (item.kind === "file") await recordFileChange({ ...item, toolCallId: id, session: sessionId, isError, isSecretPath });
-        else recordCallOnly({ cwd: item.cwd, tool: item.tool, toolCallId: id, session: sessionId, approval: item.approval, label: item.label, isError });
+        if (item.kind === "file") await recordFileChange({ ...item, after, toolCallId: id, session: sessionId, isError, isSecretPath });
+        else await recordCallOnly({ cwd: item.cwd, tool: item.tool, toolCallId: id, session: sessionId, approval: item.approval, label: item.label, isError });
       })
       .catch((error) => this.failed(ctx, error))
       .finally(() => { this.writes.delete(job); });
@@ -4555,12 +4614,20 @@ class HistoryRecorder {
     try { audit({ cwd: ctx?.cwd ?? process.cwd(), kind: "change-history", tool: "history", decision: "failed", label: "change history", detail: reason }); } catch { /* best effort */ }
     if (this.warned) return;
     this.warned = true;
-    notifyQuiet(ctx, `change history paused: ${reason}. The edit itself went through; backups are unchanged.`, "warning");
+    notifyQuiet(ctx, `change history could not record a change: ${reason}. The edit itself went through; backups are unchanged. coop keeps trying on each edit; further failures this session go to the audit log only.`, "warning");
   }
 }
 
 function notifyQuiet(ctx: ExtensionContext, message: string, level: "info" | "warning"): void {
   try { if (typeof ctx?.ui?.notify === "function") ctx.ui.notify(message, level); } catch { /* ignore */ }
+}
+
+/** The restore card's diff from `a` to `b`, or what changed that a line diff cannot show. */
+function restoreDiff(a: any, b: any): string {
+  const diff = diffText(a, b);
+  if (diff) return cardDiff(diff);
+  const note = changeNote(a, b);
+  return note ? `(no lines change: only ${note})` : "(no lines change)";
 }
 
 /** The restore card's text: the diff, cut to a size a dialog can show. */
@@ -4569,39 +4636,63 @@ function cardDiff(text: string): string {
   return text.length > max ? `${text.slice(0, max)}\n… (${text.length - max} more characters; the Changes pane's History tab shows it all)` : text;
 }
 
-/** /history (the person's, never the model's): the last 20 changes in this
- *  repository, and /history restore <id>, which always asks, backs the file up
- *  first and records its own line (restore-approved). */
+/** /history's stores: the one named (a folder relative to the session's, the
+ *  Changes pane's repository picker), or every repository the session can see. */
+function historyStores(cwd: string, repoArg: string): { stores: Array<{ repoRoot: string; store: string; rel: string }>; error?: string } {
+  if (!repoArg) return { stores: storesNear(cwd) };
+  const dir = resolve(cwd || ".", repoArg);
+  if (!existsSync(dir)) return { stores: [], error: `no folder ${repoArg} here` };
+  return { stores: [{ ...storeFor(dir), rel: repoArg }] };
+}
+
+/** /history (the person's, never the model's): the last 20 changes, and
+ *  /history restore <id>, which always asks, backs the file up first and records
+ *  its own line (restore-approved). A file's history lives in its own
+ *  repository's store; both take a repository folder (`/history list <repo>`,
+ *  `/history restore <id> <repo>`), and without one they cover the session's
+ *  repository and every repository directly inside its folder. */
 function registerHistoryCommand(pi: ExtensionAPI, session: Session, history: HistoryRecorder): void {
   pi.registerCommand("history", {
-    description: "Change history: coop's last 20 edits in this repository (/history restore <id> puts a file back, with approval and a backup)",
+    description: "Change history: coop's last 20 edits here (/history list [repo]; /history restore <id> [repo] puts a file back, with approval and a backup)",
     handler: async (args: any, ctx: ExtensionContext) => {
       const words = (Array.isArray(args) ? args.join(" ") : String(args || "")).trim().split(/\s+/).filter(Boolean);
       const say = (message: string, level: "info" | "warning" = "info") => notifyQuiet(ctx, message, level);
       if (!history.on) { say("Change history is off for this client (coop settings set history on, then /new)."); return; }
-      const { repoRoot, store } = storeFor(ctx.cwd);
       if (!words.length || words[0] === "list") {
-        say([`Change history for ${repoRoot} (newest first; /history restore <id> puts a file back):`, ...historyLines(readEntries(store))].join("\n"));
+        const { stores, error } = historyStores(ctx.cwd, words.slice(1).join(" "));
+        if (error) { say(`Change history: ${error}.`, "warning"); return; }
+        await Promise.allSettled([...history.writes]);
+        const entries = stores.flatMap((s) => readEntries(s.store).map((e: any) => ({ ...e, target: stores.length > 1 && s.rel ? `${s.rel}/${e.target}` : e.target })))
+          .sort((x: any, y: any) => String(y.ts).localeCompare(String(x.ts))).slice(0, 20);
+        const where = stores.length === 1 ? stores[0].repoRoot : `${stores[0]?.repoRoot ?? ctx.cwd} and ${stores.length - 1} repositor${stores.length === 2 ? "y" : "ies"} inside it`;
+        say([`Change history for ${where} (newest first; /history restore <id> puts a file back):`, ...historyLines(entries)].join("\n"));
         return;
       }
-      if (words[0] !== "restore" || words.length !== 2) { say("Usage: /history [list] | /history restore <id>", "warning"); return; }
+      if (words[0] !== "restore" || words.length < 2) { say("Usage: /history [list [repo]] | /history restore <id> [repo]", "warning"); return; }
       await Promise.allSettled([...history.writes]);
-      const entry = findEntry(store, words[1]);
       const refusal = (why: string) => { say(`Change history: ${why}.`, "warning"); };
-      if (!entry) return refusal(`no change ${words[1]} in this repository's history (/history lists them)`);
+      const { stores, error } = historyStores(ctx.cwd, words.slice(2).join(" "));
+      if (error) return refusal(error);
+      const found = stores.map((s) => ({ ...s, entry: findEntry(s.store, words[1]) })).filter((s) => s.entry);
+      if (!found.length) return refusal(`no change ${words[1]} in this repository's history (/history lists them)`);
+      if (found.length > 1) return refusal(`change ${words[1]} is in more than one repository's history; name it: /history restore ${words[1]} <repo folder>`);
+      const { repoRoot, store, entry } = found[0];
       const file = realPath(resolve(repoRoot, String(entry.target || "")));
       const rel = relative(repoRoot, file);
       if (!rel || rel.startsWith("..") || isAbsolute(rel)) return refusal(`${entry.target} is outside this repository, so coop does not restore it`);
       if (isSecretPath(file) || isSecretPath(String(entry.target)) || fileHistoryTarget(file, repoRoot)) return refusal(`${entry.target} is a secret-looking or protected file, so coop does not restore it`);
-      const current = readCapped(file);
+      const current = await readCapped(file);
       if (current === "large") return refusal(`${entry.target} is over 5 MB now`);
+      if (current === "unreadable") return refusal(`${entry.target} cannot be read now (open in another program?)`);
       const plan = planRestore(store, entry, current);
       if (plan.mode === "refused") return refusal(plan.reason);
       if (plan.mode === "same") { say(`Change history: ${entry.target} already has its content from before change ${entry.id}; nothing to restore.`); return; }
       const label = `restore ${entry.target}`;
       const asked = plan.mode === "conflict"
-        ? `Taking out only change ${entry.id} conflicts with later edits to ${entry.target}:\n${cardDiff(String(plan.merged))}\n\nOverwrite the whole file with its content from before change ${entry.id}, LOSING EVERY LATER EDIT to it?\n${cardDiff(diffText(current, plan.content))}\nA backup of the file as it is now is written first.`
-        : `Restore ${entry.target} to before change ${entry.id} (${String(entry.ts).replace("T", " ").slice(0, 16)}, ${entry.tool})${plan.mode === "merged" ? ", keeping the later edits" : ""}:\n${cardDiff(diffText(current, plan.content))}\nA backup of the file as it is now is written first. Restore it?`;
+        ? `Taking out only change ${entry.id} conflicts with later edits to ${entry.target}:\n${cardDiff(String(plan.merged))}\n\nOverwrite the whole file with its content from before change ${entry.id}, LOSING EVERY LATER EDIT to it?\n${restoreDiff(current, plan.content)}\nA backup of the file as it is now is written first.`
+        : plan.mode === "recreate"
+          ? `${entry.target} was deleted after change ${entry.id}. Put it back as it was before that change (${String(entry.ts).replace("T", " ").slice(0, 16)}, ${entry.tool})?\n${restoreDiff(null, plan.content)}`
+          : `Restore ${entry.target} to before change ${entry.id} (${String(entry.ts).replace("T", " ").slice(0, 16)}, ${entry.tool})${plan.mode === "merged" ? ", keeping the later edits" : ""}:\n${restoreDiff(current, plan.content)}\nA backup of the file as it is now is written first. Restore it?`;
       const refused = await session.ask(ctx, {
         kind: "change-history", tool: "history", label, detail: `${entry.id}:${plan.mode}`,
         title: plan.mode === "conflict" ? "coop change history: overwrite the whole file?" : "coop change history",
@@ -4611,11 +4702,11 @@ function registerHistoryCommand(pi: ExtensionAPI, session: Session, history: His
       });
       if (refused) { say(refused.reason); return; }
       try {
-        const backup = writeRestore(file, plan.content);
+        const backup = await writeRestore(file, plan.content);
         let sessionId = "";
         try { sessionId = String(ctx?.sessionManager?.getSessionId?.() || ""); } catch { sessionId = ""; }
         try { await recordFileChange({ file, tool: "restore", toolCallId: "", session: sessionId, approval: "restore-approved", before: current, isSecretPath }); } catch (error) { history.failed(ctx, error); }
-        say(`Change history: restored ${entry.target} to before change ${entry.id}${plan.mode === "merged" ? " (later edits kept)" : ""}.${backup ? ` Backup: ${backup}` : ""}`);
+        say(`Change history: restored ${entry.target} to before change ${entry.id}${plan.mode === "merged" ? " (later edits kept)" : plan.mode === "recreate" ? " (it had been deleted)" : ""}.${backup ? ` Backup: ${backup}` : ""}`);
       } catch (error) {
         say(`Change history: could not restore ${entry.target} (${String((error as any)?.code || (error as any)?.message || error)}). The file is as it was.`, "warning");
       }
@@ -4653,6 +4744,8 @@ export default function coopGuardrails(pi: ExtensionAPI) {
   pi.on("session_shutdown", async () => {
     session.reset();
     history.pending.clear();
+    // The last edit's line is written before /new or exit goes on.
+    if (history.on) await historySettled();
   });
   // One audit row per codemode script, naming each nested call and its outcome.
   // The asks and blocks inside it were audited one by one as they happened.
@@ -4665,10 +4758,16 @@ export default function coopGuardrails(pi: ExtensionAPI) {
     }
   });
 
-  // Change history (FEATURES-DESIGN CW2), only while the switch is on (read at
-  // load and at each session start: it takes effect after /new).
+  // Change history (FEATURES-DESIGN CW2), only while the switch is on. /history is
+  // registered at load from this reading; a session start re-reads the switch, and
+  // on without /history registered records nothing and says to restart coop (as
+  // CW1's client_rules), so the window never offers a Restore it cannot run.
   const history = new HistoryRecorder(session, enabled);
-  if (history.on) registerHistoryCommand(pi, session, history);
+  if (history.switchOn()) {
+    registerHistoryCommand(pi, session, history);
+    history.registered = true;
+    history.readSwitch();
+  }
 
   // Pi 0.99's built-in MCP registers its tools directly, so the checks need the
   // registry's word on which server a tool belongs to (older Pi: name matching).
