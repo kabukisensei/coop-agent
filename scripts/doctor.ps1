@@ -950,6 +950,14 @@ if ($null -eq $featureList) {
           else { D-Ok $fact }
         }
       }
+      'docs-refresh' {
+        # The last run's one line (scripts\docs-refresh.ps1 writes it with the result).
+        $refresh = Get-CoopDocsRefreshState
+        if ($null -eq $refresh -or -not $refresh.line) { D-Ok 'Daily lineage refresh on: no run yet (it runs 20 minutes after the next sign-in or coop start, once a day)' }
+        elseif ([string]$refresh.result -eq 'ok') { D-Ok "Daily lineage refresh on: $($refresh.line)" }
+        # The line already says where to fix it; the hint is only where each run is logged.
+        else { D-Warn "Daily lineage refresh on: $($refresh.line)" "each run is in $(Join-Path (Join-Path (Get-CoopProfileDir) 'logs') 'docs-refresh.log')" }
+      }
       'sql-source' {
         if (Test-Have 'coop-sqlsc') { D-Ok 'SQL source control on: coop-sqlsc is installed' }
         else { D-Warn 'SQL source control on, but coop-sqlsc is not installed' 'coop update (the coop window package carries it)' }

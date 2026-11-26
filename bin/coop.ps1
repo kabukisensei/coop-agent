@@ -1209,6 +1209,11 @@ function Invoke-LaunchPi {
 
   $piArgs = Build-CoopPiArgs
   $allArgs = @($piArgs + $PassArgs)
+  # The Daily lineage refresh (off by default): scheduled now that the launch
+  # checks are done, 20 minutes out, in a detached waiter (Pi then runs in this
+  # console until it exits). The waiter never gets the launch token or the
+  # first-run marker (scripts\docs-refresh.ps1 Start-CoopDocsRefreshWaiter).
+  [void](Start-CoopDocsRefreshAtLaunch)
   try {
     Invoke-CoopPiProcess -PiArgs $allArgs
   } finally {
@@ -1436,6 +1441,9 @@ function Invoke-CoopDesktop {
     Remove-Item Env:COOP_FABRIC_MCP_TOKEN -ErrorAction SilentlyContinue
     Remove-Item Env:COOP_FIRST_RUN -ErrorAction SilentlyContinue
   }
+  # The Daily lineage refresh (off by default): scheduled now the window is
+  # open, once the token and the launch spec have left this environment.
+  [void](Start-CoopDocsRefreshAtLaunch)
 }
 
 # --- coop web (retired) --------------------------------------------------------

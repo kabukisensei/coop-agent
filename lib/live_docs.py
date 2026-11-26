@@ -20,6 +20,18 @@ part: which databases, under which identity, and how old a snapshot may get.
   not name. With `max_age_days`, a source whose snapshot is younger is skipped
   before anything is resolved or minted.
 - `status`: how old each source's snapshot is; reads files only.
+- `build`: the daily lineage refresh's rebuild (CW6, scripts/docs-refresh.ps1):
+  `live/.gitignore` when missing, then `coop-data-doc build --non-interactive` in
+  the config's folder, exactly as the session-start refresh rebuilds, plus how
+  many files in the config's `output.dir` and `site_dir` it changed (a content
+  hash before and after; nothing else is read or written).
+- `dev_is_prod`: a dev entry that names a production database is refused before
+  anything is resolved or minted (`setup` and `refresh`): the same server and
+  database, workspace and item, or Lakehouse SQL endpoint as any `prod` entry
+  (`sql_targets.prod` or a named set's), or, when the dev entry's own set has
+  no real production entry (a `TODO` template names nothing), a server,
+  database or set name that reads as production (`prod`, `production`, `prd`,
+  `live`) or equals `fabric.environment_names.prod`.
 - What changed in dev: `refresh` compares each new snapshot with the one it
   replaces (the files the previous manifest named, by content hash) and reports
   the objects added, changed and removed since the previous read, in its answer
@@ -38,6 +50,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -61,6 +74,11 @@ DEFAULT_MAX_AGE_DAYS = 7
 # Under the 300 s the coop-tools extension allows this helper.
 SNAPSHOT_TIMEOUT_SECONDS = 240
 SHOW_CONFIG_TIMEOUT_SECONDS = 30
+# The daily refresh's whole run is capped at 20 minutes (scripts/docs-refresh.ps1);
+# the build gets what is left of it, never more than this.
+BUILD_TIMEOUT_SECONDS = 1200
+# The word sqlsc's write check refuses (lib/sqlsc.mjs classifySqlscWrite).
+PRODUCTION_WORD = re.compile(r"(^|[^a-z0-9])(prod|production|prd|live)([^a-z0-9]|$)", re.IGNORECASE)
 LIVE_FOLDER = "live"
 CHANGES_FILE = "dev-changes.md"
 CHANGES_TITLE = "# What changed in dev"
@@ -97,9 +115,15 @@ def find_tool() -> str:
     return ""
 
 
+# No console window for coop-data-doc on Windows: the daily refresh runs this
+# helper with no console, and a console program started from it would open one.
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+
+
 def _child_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
     env.pop(TOKEN_ENV, None)  # only the one snapshot child gets a token
+    env.pop(wmcp.FABRIC_TOKEN_ENV, None)  # the launch identity is this process's alone
     env.update(extra or {})
     return env
 
@@ -125,6 +149,7 @@ def _run_json(
             errors="replace",
             timeout=timeout,
             check=False,
+            creationflags=NO_WINDOW,
         )
     except subprocess.TimeoutExpired:
         return None, -2
@@ -163,6 +188,52 @@ def dev_specs(project: dict[str, Any]) -> list[tuple[str, str]]:
         if entry is not None and entry.state == "ready":
             out.append((f"dev@{name}", name))
     return out
+
+
+def _named(value: str) -> bool:
+    """A real value: not blank and not a `TODO` placeholder (lib/sql_targets.py)."""
+    return bool(value) and not targets_lib._placeholder(value.strip())
+
+
+def _production_entries(parsed: targets_lib.SqlTargets) -> list[tuple[str, targets_lib.SqlTarget]]:
+    """[(set name, entry)] for every `prod` entry that really names something (ready
+    or not): the plain one (set name '') and each named set's. A template entry
+    (`unconfigured`, or only `TODO` placeholders) names nothing."""
+    entries = [("", parsed.targets.get("prod"))] + [(name, entries.get("prod")) for name, entries in sorted(parsed.named.items())]
+    return [
+        (name, e) for name, e in entries
+        if e is not None and e.state != "unconfigured"
+        and any(_named(v) for v in (e.server, e.database, e.workspace_id, e.item_id, e.sql_endpoint_id))
+    ]
+
+
+def dev_is_prod(project: dict[str, Any], spec: str) -> bool:
+    """True when the dev entry `spec` names a production database (see the module
+    docstring). Checked before a token is minted for it."""
+    parsed = targets_lib.parse_sql_targets(project)
+    dev = parsed.resolve(spec)
+    if dev is None:
+        return False
+    same = lambda a, b: _named(a) and _named(b) and a.strip().lower() == b.strip().lower()  # noqa: E731
+    prods = _production_entries(parsed)
+    for _prod_set, prod in prods:
+        if same(dev.server, prod.server) and same(dev.database, prod.database):
+            return True
+        if same(dev.workspace_id, prod.workspace_id) and same(dev.item_id, prod.item_id):
+            return True
+        if same(dev.sql_endpoint_id, prod.sql_endpoint_id):
+            return True
+    _env, set_name = targets_lib.split_target_spec(spec)
+    # Only a real production entry of the dev entry's own set says what production
+    # is for it; another set's, or none, leaves the word and environment_names checks on.
+    if any(prod_set == set_name for prod_set, _prod in prods):
+        return False
+    if PRODUCTION_WORD.search(f"{dev.server} {dev.database} {set_name}"):
+        return True
+    fabric = project.get("fabric") if isinstance(project.get("fabric"), dict) else {}
+    names = fabric.get("environment_names") if isinstance(fabric.get("environment_names"), dict) else {}
+    prod_name = names.get("prod") if isinstance(names.get("prod"), str) else ""
+    return same(dev.database, prod_name) or same(dev.server, prod_name)
 
 
 def _project(cwd: Path) -> tuple[dict[str, Any] | None, Path | None]:
@@ -205,6 +276,9 @@ def setup(*, cwd: Path, config: Any) -> dict[str, Any]:
     repos: dict[str, Any] = {}
     live: dict[str, Any] = {}
     sources: list[dict[str, str]] = []
+    for spec, _set_name in specs:
+        if dev_is_prod(project, spec):
+            return result("dev_is_prod", target=spec)
     for spec, set_name in specs:
         target, server, _token, error = _resolve(spec, cwd)
         if error is not None or target is None:
@@ -314,7 +388,21 @@ def _same(a: str, b: str) -> bool:
     return a.strip().lower() == b.strip().lower()
 
 
-def refresh(*, cwd: Path, config: Any, max_age_days: Any = None, now: datetime | None = None) -> dict[str, Any]:
+def _mint_launch_identity(project: dict[str, Any], project_path: Path | None, spec: str) -> dict[str, Any] | None:
+    """Mint the launch identity for `spec` into this process's environment, as
+    `warehouse_mcp.py launch-token` does for a launch (the audience the entry's
+    kind uses, pinned to the client tenant); None when minted, else the error.
+    Never prompts: an expired sign-in is `auth_required`."""
+    entry = targets_lib.parse_sql_targets(project).resolve(spec)
+    resource = wmcp.FABRIC_RESOURCE if entry is not None and entry.discovered else wmcp.SQL_RESOURCE
+    token, state = wmcp.az_access_token(resource=resource, tenant=wmcp.pinned_tenant(project_path))
+    if state != "ok":
+        return result(state, stage="launch_token")
+    os.environ[wmcp.FABRIC_TOKEN_ENV] = token
+    return None
+
+
+def refresh(*, cwd: Path, config: Any, max_age_days: Any = None, now: datetime | None = None, mint: bool = False) -> dict[str, Any]:
     config_path = _config_path(config, cwd)
     if config_path is None:
         return result("config_unavailable")
@@ -340,13 +428,26 @@ def refresh(*, cwd: Path, config: Any, max_age_days: Any = None, now: datetime |
     if not due:
         return result("ok", sources=rows, taken=0)
 
-    project, _path = _project(cwd)
+    project, project_path = _project(cwd)
     if project is None:
         return result("project_unavailable")
+    if mint and not os.environ.get(wmcp.FABRIC_TOKEN_ENV, ""):
+        # The daily refresh (no coop session, so no launch token): mint the
+        # launch identity here, only now that a ready dev entry that is not
+        # production needs it, named sets included. It stays in this process.
+        usable = [spec for spec, _set_name in dev_specs(project) if not dev_is_prod(project, spec)]
+        if usable:
+            error = _mint_launch_identity(project, project_path, usable[0])
+            if error is not None:
+                return {**error, "sources": rows}
     # resolve each dev target once, only now that something is due
     resolved: list[tuple[str, str, str]] = []  # (host, database, token)
     first_error: dict[str, Any] | None = None
     for spec, _set_name in dev_specs(project):
+        if dev_is_prod(project, spec):
+            # never minted, never read: a source on it is not a dev target
+            first_error = first_error or result("dev_is_prod", target=spec)
+            continue
         target, server, token, error = _resolve(spec, cwd)
         if error is not None or target is None:
             first_error = first_error or error
@@ -397,6 +498,80 @@ def refresh(*, cwd: Path, config: Any, max_age_days: Any = None, now: datetime |
         rows.append(row)
     failed = [row for row in rows if row["state"] not in ("taken", "fresh")]
     return result("ok" if not failed else "partial" if taken else "failed", sources=rows, taken=taken)
+
+
+# --- the daily refresh's rebuild ---------------------------------------------------
+
+
+def _tree_hashes(folders: list[Path]) -> dict[str, str]:
+    """{path: content hash} of every file under the folders (links not followed)."""
+    out: dict[str, str] = {}
+    for folder in folders:
+        if not folder.is_dir():
+            continue
+        for dirpath, dirnames, filenames in os.walk(folder):
+            dirnames[:] = [d for d in dirnames if not os.path.islink(os.path.join(dirpath, d))]
+            for name in filenames:
+                path = os.path.join(dirpath, name)
+                try:
+                    if os.path.islink(path):
+                        continue
+                    with open(path, "rb") as fh:
+                        out[path] = hashlib.sha256(fh.read()).hexdigest()
+                except OSError:
+                    continue
+    return out
+
+
+def build(*, cwd: Path, config: Any, timeout_seconds: Any = None) -> dict[str, Any]:
+    """Rebuild the docs from the snapshots, as the session-start refresh does, and
+    count the files that changed in the config's output folders."""
+    config_path = _config_path(config, cwd)
+    if config_path is None:
+        return result("config_unavailable")
+    if timeout_seconds is not None and (isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, int) or timeout_seconds < 1):
+        return result("input_invalid")
+    if not find_tool():
+        return result("tool_unavailable", tool=TOOL)
+    parsed = _config(config_path)
+    if parsed is None:
+        return result("config_unreadable")
+    output = parsed.get("output") if isinstance(parsed.get("output"), dict) else {}
+    folders = [
+        (config_path.parent / os.path.expanduser(str(output[key]))).resolve()
+        for key in ("dir", "site_dir")
+        if isinstance(output.get(key), str) and output[key]
+    ]
+    live = config_path.parent / LIVE_FOLDER
+    try:
+        # live/ is one teammate's copy of the dev definitions (coop-tools ignoreLiveFolder)
+        if live.is_dir() and not (live / ".gitignore").exists():
+            (live / ".gitignore").write_text("*\n", encoding="utf-8")
+    except OSError:
+        pass
+    before = _tree_hashes(folders)
+    limit = min(BUILD_TIMEOUT_SECONDS, timeout_seconds) if timeout_seconds is not None else BUILD_TIMEOUT_SECONDS
+    try:
+        done = subprocess.run(
+            [find_tool(), "build", "--non-interactive"],
+            cwd=str(config_path.parent),
+            env=_child_env(),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=limit,
+            check=False,
+            creationflags=NO_WINDOW,
+        )
+    except subprocess.TimeoutExpired:
+        return result("tool_timeout")
+    except OSError:
+        return result("tool_unavailable", tool=TOOL)
+    if done.returncode != 0:
+        return result("build_failed")
+    after = _tree_hashes(folders)
+    changed = sum(1 for path in before.keys() | after.keys() if before.get(path) != after.get(path))
+    return result("ok", files_changed=changed)
 
 
 # --- what changed in dev -----------------------------------------------------------
@@ -489,28 +664,41 @@ def record_changes(live_folder: Path, section: str) -> bool:
 def execute(payload: Any, *, cwd: Path | None = None) -> dict[str, Any]:
     """stdin contract for the coop-tools extension:
     {"command": "setup", "config": path} | {"command": "status", "config": path}
-    | {"command": "refresh", "config": path, "max_age_days": int?}."""
-    if not isinstance(payload, dict) or set(payload) - {"command", "config", "max_age_days"}:
+    | {"command": "refresh", "config": path, "max_age_days": int?, "mint": true?}
+    | {"command": "build", "config": path, "timeout_seconds": int?}.
+    `mint` (the daily refresh, scripts/docs-refresh.ps1): with no launch token in
+    the environment, mint one after everything else was checked."""
+    if not isinstance(payload, dict) or set(payload) - {"command", "config", "max_age_days", "timeout_seconds", "mint"}:
         return result("input_invalid")
     here = cwd or Path.cwd()
     command = payload.get("command")
+    if "timeout_seconds" in payload and command != "build":
+        return result("input_invalid")
+    if "mint" in payload and (command != "refresh" or payload["mint"] is not True):
+        return result("input_invalid")
+    if command == "build" and "max_age_days" not in payload:
+        return build(cwd=here, config=payload.get("config"), timeout_seconds=payload.get("timeout_seconds"))
     if command == "setup" and "max_age_days" not in payload:
         return setup(cwd=here, config=payload.get("config"))
     if command == "status" and "max_age_days" not in payload:
         return status(cwd=here, config=payload.get("config"))
     if command == "refresh":
-        return refresh(cwd=here, config=payload.get("config"), max_age_days=payload.get("max_age_days"))
+        return refresh(cwd=here, config=payload.get("config"), max_age_days=payload.get("max_age_days"), mint=payload.get("mint") is True)
     return result("input_invalid")
 
 
 def main(argv: list[str] | None = None) -> int:
     argparse.ArgumentParser(prog="live_docs", description=__doc__.splitlines()[0]).parse_args(argv)
     try:
+        # utf-8-sig: a leading BOM is dropped. Windows PowerShell 5.1's
+        # Process.StandardInput writes one before the request when the console
+        # is UTF-8 (scripts/docs-refresh.ps1 avoids it; this is the second guard).
         try:
-            sys.stdin.reconfigure(encoding="utf-8")
+            sys.stdin.reconfigure(encoding="utf-8-sig")
         except (AttributeError, ValueError):
             pass
-        payload = json.load(sys.stdin)
+        text = sys.stdin.read()
+        payload = json.loads(text[1:] if text.startswith("﻿") else text)
     except (UnicodeDecodeError, json.JSONDecodeError):
         payload = None
     try:

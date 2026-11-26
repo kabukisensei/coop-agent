@@ -16,14 +16,20 @@
 #      (Invoke-CoopAzPreflight), which opens `az login` only when a token cannot
 #      be minted and never prints or logs one; the window's launch then reuses
 #      the result (the .az-ok marker, 30 minutes);
-#   3. opens the coop window on the recorded client folder.
+#   3. opens the coop window on the recorded client folder;
+#   4. with the Daily lineage refresh on (off by default), schedules today's
+#      refresh 20 minutes after this sign-in started, the update wait included
+#      (scripts\docs-refresh.ps1); off, it only looks at the config text.
 # The steps run in this order on purpose: the installer replaces the folder az,
 # Python and Node run from, and any process from it makes the task wait an hour.
 # Each step's outcome goes to <profile>\.coop\logs\sign-in.log. Windows
 # PowerShell 5.1 syntax. The tests dot-source this file for its functions:
-# nothing runs then.
+# nothing runs then. The Run entry passes no parameter; the fixtures pass
+# -PowerShellPath (a stand-in for the built-in powershell.exe) and -NoPause.
 param(
-  [int]$WaitMinutes = 12
+  [int]$WaitMinutes = 12,
+  [string]$PowerShellPath = '',
+  [switch]$NoPause
 )
 
 # Release lookup, version compare and the trimmed log line, shared with the task.
@@ -66,13 +72,27 @@ function Get-CoopSignInClientRoot([string]$ProfileDir) {
   return ''
 }
 
+# The sign-in log's words for Start-CoopDocsRefresh's answer.
+function Get-CoopSignInRefreshLine([string]$Outcome) {
+  switch ($Outcome) {
+    'started' { return 'scheduled 20 minutes after sign-in (it runs in the background)' }
+    'pending' { return 'already scheduled' }
+    'done' { return 'already ran today' }
+    'failed' { return 'could not start the background refresh; the next coop start tries again' }
+  }
+  return $Outcome
+}
+
 # --- one run ----------------------------------------------------------------------
 $script:SignInLog = ''
 function Write-CoopSignInLine([string]$Text) {
   Write-Host "  $Text"
   if ($script:SignInLog) { try { Add-CoopUpdateLogLine $script:SignInLog $Text } catch { } }
 }
-function Get-CoopSignInPowerShell { return (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') }
+function Get-CoopSignInPowerShell {
+  if ($PowerShellPath) { return $PowerShellPath }
+  return (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe')
+}
 # While an update installs, coop's icons lead nowhere for several minutes, so
 # the console says so in its title and, if an older release's Run entry started
 # it minimized, comes up as a normal window (a client VM, 2026-11-09: nothing
@@ -165,12 +185,26 @@ function Invoke-CoopSignIn {
       Start-Process -FilePath $ps -WorkingDirectory $HOME -ArgumentList @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$launcher`"", 'desktop')
     }
     Write-CoopSignInLine 'opened the coop window'
+    # 4. The daily lineage refresh. Off (the default) costs one look at the
+    #    config's text (lib\common.ps1 Start-CoopDocsRefreshAtLaunch makes the
+    #    same check); the starter is loaded only when it may be on.
+    #    Its own try: nothing here may turn a good sign-in into a failed one.
+    try {
+      $settings = Join-Path $profileDir 'config'
+      if ((Test-Path -LiteralPath $settings -PathType Leaf) -and ([System.IO.File]::ReadAllText($settings) -match '"docs_refresh"\s*:\s*true')) {
+        . (Join-Path $PSScriptRoot 'docs-refresh.ps1')
+        $refresh = Start-CoopDocsRefresh -ProfileDir $profileDir -From 'signin' -StartedAt $start -PowerShell $PowerShellPath
+        if ($refresh -ne 'off') { Write-CoopSignInLine "daily lineage refresh: $(Get-CoopSignInRefreshLine $refresh)" }
+      }
+    } catch {
+      Write-CoopSignInLine "daily lineage refresh: not scheduled ($($_.Exception.Message))"
+    }
   } catch {
     Write-CoopSignInLine "stopped: $($_.Exception.Message)"
     $rc = 1
   }
   Write-Host "  log: $($script:SignInLog)"
-  Start-Sleep -Seconds $(if ($rc) { 30 } else { 3 })
+  if (-not $NoPause) { Start-Sleep -Seconds $(if ($rc) { 30 } else { 3 }) }
   return $rc
 }
 

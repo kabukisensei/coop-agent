@@ -2826,6 +2826,36 @@ function Get-CoopEffectiveAgentDir {
   return (Get-CoopPiAgentDir)
 }
 
+# The Daily lineage refresh (FEATURES-DESIGN CW6, off by default): once a launch
+# has started Pi or the window, schedule today's refresh 20 minutes after this
+# coop process started, unless it already ran today or is already waiting
+# (scripts\docs-refresh.ps1 Start-CoopDocsRefresh). Off (the default) costs one
+# look at the config's text (about 5 ms, the cost of any first statement in a
+# PowerShell): the starter is loaded, and the
+# switch read properly, only when the text may say "docs_refresh": true
+# (scripts\sign-in.ps1 makes the same check). Nothing starts and nothing is
+# written while it is off. Never fails a launch.
+function Start-CoopDocsRefreshAtLaunch {
+  try {
+    $config = Get-CoopConfigFile
+    if (-not (Test-Path -LiteralPath $config -PathType Leaf)) { return 'off' }
+    if ([System.IO.File]::ReadAllText($config) -notmatch '"docs_refresh"\s*:\s*true') { return 'off' }
+    . (Join-Path $script:CoopRoot 'scripts\docs-refresh.ps1')
+    $started = Get-Date
+    try { $started = [System.Diagnostics.Process]::GetCurrentProcess().StartTime } catch { }
+    return (Start-CoopDocsRefresh -ProfileDir (Get-CoopProfileDir) -From 'coop' -StartedAt $started)
+  } catch { return 'off' }
+}
+
+# The Daily lineage refresh's last result (~/.coop/docs-refresh/state.json, written
+# by scripts\docs-refresh.ps1): the parsed state, its `line` being what doctor
+# and the next session start show; $null when it never ran or cannot be read.
+function Get-CoopDocsRefreshState {
+  $file = Join-Path (Join-Path (Get-CoopProfileDir) 'docs-refresh') 'state.json'
+  if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { return $null }
+  try { return ([System.IO.File]::ReadAllText($file) | ConvertFrom-Json) } catch { return $null }
+}
+
 # The managed MCP config (mcp-adapter.json in the agent dir Pi loads) carries the
 # Warehouse target of ONE project: the contract above the folder it was generated
 # in. `coop sync` writes it, and every launch rewrites it for the folder coop
