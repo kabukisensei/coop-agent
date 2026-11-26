@@ -63,6 +63,32 @@ try {
   $row = @($drows | Where-Object { ([string]$_.name) -like 'Client instructions*' })
   if ($row.Count -eq 1 -and (Flat ([string]$row[0].name)) -match 'does not exist yet, so nothing was loaded') { Ok 'doctor: no .coop/rules/ folder says so (and nothing fails)' } else { Ko 'doctor Client instructions row, no folder' (Show-Rows $drows) }
 
+  # --- fix round (Neon 11): the folder as node can read it ---------------------------
+  # A PSDrive gives the same shape as a UNC share: (Get-Location).Path is not a
+  # file-system path node can resolve ("cwone:\"), ProviderPath is.
+  New-Item -ItemType Directory -Force -Path (Join-Path $project '.coop\rules') | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $project '.coop\rules\AGENTS.md'), "# Contoso`nUse dim.Customer for customer names.`n", $utf8)
+  $driveCmd = "New-PSDrive -Name cwone -PSProvider FileSystem -Root '$($project -replace "'", "''")' | Out-Null; Set-Location cwone:; & '$($script:doctor -replace "'", "''")' --json"
+  $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+  try { $raw = (& $psExe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command $driveCmd 2>$null | Out-String) } finally { $ErrorActionPreference = $eap }
+  $docLine = @($raw -split "`r?`n" | Where-Object { $_.StartsWith('{"checks"') }) | Select-Object -Last 1
+  $drows = @(); if ($docLine) { $drows = @(($docLine | ConvertFrom-Json).checks | Where-Object { $_.section -ceq 'Features (this client)' }) }
+  $row = @($drows | Where-Object { ([string]$_.name) -like 'Client instructions on:*' })
+  if ($row.Count -eq 1 -and $row[0].status -ceq 'ok') { Ok 'doctor on a PSDrive (a UNC-shaped location): the folder is found through ProviderPath (coverage)' } else { Ko 'doctor Client instructions row on a PSDrive' (Show-Rows $drows) }
+
+  New-PSDrive -Name cwtwo -PSProvider FileSystem -Root $project | Out-Null
+  Push-Location 'cwtwo:\'
+  try { $st = Get-CoopClientRulesStatus '' } finally { Pop-Location; Remove-PSDrive -Name cwtwo -ErrorAction SilentlyContinue }
+  if (-not $st.Error -and ([string]$st.Data.line) -match '^Client instructions: 1 file, ') { Ok 'Get-CoopClientRulesStatus with no folder named: the current location through ProviderPath (coverage)' } else { Ko 'Get-CoopClientRulesStatus on a PSDrive' "$($st.Error) $($st.Data.line)" }
+
+  $spaced = Join-Path $t 'client with spaces'
+  New-Item -ItemType Directory -Force -Path (Join-Path $spaced '.coop\rules') | Out-Null
+  [System.IO.File]::WriteAllText((Join-Path $spaced '.coop\project.yml'), "schema_version: 1`nrepositories:`n  client:`n    local_path: .`n", $utf8)
+  [System.IO.File]::WriteAllText((Join-Path $spaced '.coop\rules\AGENTS.md'), "Use dim.Date.`n", $utf8)
+  $sep = [System.IO.Path]::DirectorySeparatorChar
+  $st = Get-CoopClientRulesStatus ($spaced + $sep)
+  if (-not $st.Error -and ([string]$st.Data.line) -match '^Client instructions: 1 file, ') { Ok 'a folder with spaces and a trailing separator reaches node intact (coverage; the quoting bug is PS 5.1 only)' } else { Ko 'Get-CoopClientRulesStatus with a trailing separator' "$($st.Error) $($st.Data.line)" }
+
   # --- off: doctor says nothing about it -----------------------------------------------
   $r = Run-Coop @('settings', 'set', 'instructions', 'off')
   $drows = @(Get-DoctorRows | Where-Object { $_.section -ceq 'Features (this client)' })

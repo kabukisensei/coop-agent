@@ -216,6 +216,22 @@ echo "→ client instructions (CW1): off is today's behaviour (the 03600165 gold
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/client-instructions-off.test.mjs"
 echo "→ client instructions (CW1) and the guardrails: a real git repository, the commit prompt"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/client-rules-guardrails.test.mjs"
+echo "→ client instructions (CW1) across /new: the installed Pi's own extension loader"
+# The Pi package behind `pi` on PATH (the pinned one, when the caller puts it first).
+PI_PKG=""
+if PI_BIN="$(command -v pi 2>/dev/null)"; then
+  d="$(dirname "$(readlink -f "$PI_BIN" 2>/dev/null || echo "$PI_BIN")")"
+  while [ -n "$d" ] && [ "$d" != "/" ] && [ "$d" != "." ]; do
+    if [ -f "$d/package.json" ] && grep -q '"name": *"@earendil-works/pi-coding-agent"' "$d/package.json"; then PI_PKG="$d"; break; fi
+    d="$(dirname "$d")"
+  done
+fi
+if [ -n "$PI_PKG" ] && [ -f "$PI_PKG/dist/core/extensions/loader.js" ]; then
+  command -v cygpath >/dev/null 2>&1 && PI_PKG="$(cygpath -m "$PI_PKG")"
+  node "$ROOT/tests/client-rules-pi-reload.test.mjs" "$PI_PKG"
+else
+  echo "  - skipped: no installed Pi package behind pi on PATH"
+fi
 echo "→ SQL source control: sql_source tool, sqlsc shell gate (SQ12)"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/sqlsc.test.mjs"
 echo "→ SQL source control commit permissions: shared check, contract repair, /sql-source permissions"
