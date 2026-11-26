@@ -4078,23 +4078,32 @@ function Test-CoopPiCommandLineOwned([string]$CommandLine, [string[]]$Roots) {
   return $false
 }
 
-# Linux/macOS (pwsh 7): the same (ProcessId, CommandLine) rows from Get-Process,
-# which reads /proc. npm links `pi` as a symlink to Pi's cli.js and the kernel
-# keeps the link path in argv (`node ~/.npm-global/bin/pi`), so each of the first
-# few arguments that is a link is replaced by its resolved target; the row then
-# names pi-coding-agent under its npm root as on Windows. $Processes lets a
-# fixture pass fake Get-Process shapes (Id, CommandLine).
+# Linux personal edition (pwsh 7): the same (ProcessId, CommandLine) rows from
+# the processes named node, nodejs (Debian's name) or pi. argv comes from
+# /proc/<pid>/cmdline split on NUL, so a path with spaces stays one argument
+# (Get-Process's CommandLine joins them with spaces). npm links `pi` as a
+# symlink to Pi's cli.js and the kernel keeps the link path in argv
+# (`node --flags ~/.npm-global/bin/pi`), so every absolute argument that is a
+# link is replaced by its resolved target; the row then names pi-coding-agent
+# under its npm root as on Windows. $Processes lets a fixture pass fake
+# Get-Process shapes (Id, and Argv or CommandLine).
 function Get-CoopUnixNodeProcessRows([object[]]$Processes = $null) {
-  if ($null -eq $Processes) { $Processes = @(Get-Process -Name node -ErrorAction SilentlyContinue) }
+  if ($null -eq $Processes) { $Processes = @(Get-Process -Name node, nodejs, pi -ErrorAction SilentlyContinue) }
   $rows = @()
   foreach ($p in $Processes) {
     if ($null -eq $p) { continue }
-    $cmd = [string]$p.CommandLine
-    if (-not $cmd) { continue }
-    $tokens = @($cmd -split '\s+' | Where-Object { $_ })
-    $limit = [Math]::Min($tokens.Count, 3)
-    for ($i = 0; $i -lt $limit; $i++) {
-      $t = $tokens[$i]
+    $tokens = @()
+    if ($p.PSObject.Properties['Argv']) { $tokens = @($p.Argv | Where-Object { $_ }) }
+    else {
+      try {
+        $raw = [System.IO.File]::ReadAllText("/proc/$($p.Id)/cmdline")
+        $tokens = @($raw.Split([char]0) | Where-Object { $_ })
+      } catch { $tokens = @() }
+      if ($tokens.Count -eq 0) { $tokens = @(([string]$p.CommandLine) -split '\s+' | Where-Object { $_ }) }
+    }
+    if ($tokens.Count -eq 0) { continue }
+    for ($i = 0; $i -lt $tokens.Count; $i++) {
+      $t = [string]$tokens[$i]
       if (-not $t.StartsWith('/')) { continue }
       try {
         $item = Get-Item -LiteralPath $t -Force -ErrorAction Stop
