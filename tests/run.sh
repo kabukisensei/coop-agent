@@ -214,6 +214,8 @@ echo "→ client instructions (CW1): the loader, the note and its re-sending, co
 COOP_TEST_DIST="$TMP" node --test --test-reporter=spec "$ROOT/tests/client-rules.test.mjs"
 echo "→ client instructions (CW1), fix round 2: only approved text is loaded (upstream, or the card's ledger)"
 COOP_TEST_DIST="$TMP" node --test --test-reporter=spec "$ROOT/tests/client-rules-approval.test.mjs"
+echo "→ client instructions (CW1), fix round 3: the loader's git runs nothing the repository configures (partial clone, replace refs, links)"
+COOP_TEST_DIST="$TMP" node --test --test-reporter=spec "$ROOT/tests/client-rules-hardening.test.mjs"
 echo "→ client instructions (CW1): off is today's behaviour (the 03600165 golden)"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/client-instructions-off.test.mjs"
 echo "→ client instructions (CW1) and the guardrails: a real git repository, the commit prompt"

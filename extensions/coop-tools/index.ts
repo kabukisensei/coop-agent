@@ -877,6 +877,18 @@ export type CorrectionOutcome =
   | { state: "declined" | "headless" | "off" | "no_root"; why: string }
   | { state: "refused"; why: string };
 
+/** The client repository this session's instructions come from: fixed at session
+ *  start (a .coop/project.yml written later in a subfolder cannot redirect it);
+ *  before any session start, the folder found from `cwd`. */
+let pinnedClientRulesRoot: string | null = null;
+export function pinClientRulesRoot(cwd: string | null): string {
+  pinnedClientRulesRoot = cwd === null ? null : clientRulesRoot(cwd);
+  return pinnedClientRulesRoot || "";
+}
+export function sessionClientRulesRoot(cwd: string): string {
+  return pinnedClientRulesRoot !== null ? pinnedClientRulesRoot : clientRulesRoot(cwd);
+}
+
 /**
  * The "Add this to the client's corrections log? Add / Edit / No" card (No first,
  * the default; dismissing it is No). A line that relaxes a coop rule or holds a
@@ -884,7 +896,7 @@ export type CorrectionOutcome =
  */
 export async function approveCorrection(ctx: any, draft: string, now: Date = new Date(), signal?: AbortSignal): Promise<CorrectionOutcome> {
   if (!clientRulesSwitch()) return { state: "off", why: CLIENT_RULES_OFF };
-  const root = clientRulesRoot(ctx?.cwd || process.cwd());
+  const root = sessionClientRulesRoot(ctx?.cwd || process.cwd());
   if (!root) return { state: "no_root", why: "no .coop/project.yml was found, so there is no client repository to keep corrections in" };
   let text = String(draft ?? "").replace(/\s+/g, " ").trim();
   const refusal = correctionRefusal(text);
@@ -3837,9 +3849,10 @@ export default function coopTools(pi: ExtensionAPI) {
     clientRulesOn = rulesSwitch && clientRulesRegistered;
     if (rulesSwitch && !clientRulesRegistered) notify(ctx, CLIENT_RULES_RESTART, "info");
     if (clientRulesRegistered) syncClientRulesTool(rulesSwitch);
+    pinClientRulesRoot(null);
     if (clientRulesOn) {
       try {
-        const rules = loadClientRules(clientRulesRoot(ctx.cwd));
+        const rules = loadClientRules(pinClientRulesRoot(ctx.cwd));
         notify(ctx, clientRulesLine(rules), "info");
         for (const problem of clientRulesProblems(rules)) notify(ctx, problem, "warning");
       } catch { /* a bad file never blocks a session */ }
@@ -4060,7 +4073,7 @@ export default function coopTools(pi: ExtensionAPI) {
       // as QL1 does for the standards. Off reads nothing.
       if (clientRulesOn) {
         try {
-          const rules = loadClientRules(clientRulesRoot(cwd));
+          const rules = loadClientRules(sessionClientRulesRoot(cwd));
           if (rules.note && !noteInContext(rules, contextNow())) {
             if (message) message.content = `${message.content}\n\n${rules.note}`;
             else message = { customType: "coop-client-instructions", display: false, content: rules.note, details: { files: rules.loaded, hash: rules.hash } };

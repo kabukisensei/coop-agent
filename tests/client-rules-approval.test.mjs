@@ -60,7 +60,9 @@ test("a corrections entry written by the shell is not loaded; one the card appro
   assert.doesNotMatch(r.note, /stg tables/);
   assert.ok(r.note.indexOf("Amounts are in cents") < r.note.indexOf("Dates are UTC"), "newest first");
   const ledger = JSON.parse(readFileSync(approvalsPath(project), "utf8"));
-  assert.equal(ledger.root, realpathSync(project));
+  // The ledger keys the repository by its real path, case-folded on Windows (fix round 3, Neon blocker 4).
+  const fold = (p) => (process.platform === "win32" ? p.toLowerCase() : p);
+  assert.equal(fold(ledger.root), fold(realpathSync(project)));
   assert.deepEqual(ledger.entries.map((e) => [e.id, e.sha256]), [["C-2026-11-26-10", entryDigest(added.entry)]]);
   assert.ok(!approvalsPath(project).startsWith(project), "the ledger lives outside the repository");
 });
