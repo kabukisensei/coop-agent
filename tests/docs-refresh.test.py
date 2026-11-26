@@ -141,6 +141,27 @@ assert ld.dev_is_prod(names, "dev"), "the database is environment_names.prod"
 prodset = project("sql_targets:\n  default_environment: dev\n  dev:\n    kind: azure_sql\n    server: \"a-dev.database.windows.net\"\n    database: A\n  named:\n    prod_copy:\n      dev:\n        kind: azure_sql\n        server: \"b-dev.database.windows.net\"\n        database: B\n")
 assert ld.dev_is_prod(prodset, "dev@prod_copy") and not ld.dev_is_prod(prodset, "dev")
 
+# A template prod entry (TODO placeholders) names nothing: the word and environment_names checks stay on (Neon B3).
+for template in ("  prod:\n    server: TODO\n    database: TODO\n",
+                 "  prod:\n    kind: TODO\n    server: TODO\n    database: TODO\n",
+                 "  prod:\n    kind: azure_sql\n    server: \"TODO.database.windows.net\"\n    database: TODO\n"):
+    word = project((bare % ("contoso-prod.database.windows.net", "ContosoDW")) + template)
+    assert ld.dev_is_prod(word, "dev"), f"a TODO prod entry does not switch the word check off: {template!r}"
+    named_prod = project((bare % ("contoso-dev.database.windows.net", "SalesMain")) + template + "fabric:\n  environment_names:\n    prod: salesmain\n")
+    assert ld.dev_is_prod(named_prod, "dev"), f"a TODO prod entry does not switch environment_names off: {template!r}"
+# Another set's real prod entry does not switch the plain dev's word check off ...
+other_set = project("sql_targets:\n  default_environment: dev\n  dev:\n    kind: azure_sql\n    server: \"contoso-prod.database.windows.net\"\n    database: ContosoDW\n"
+                    "  named:\n    lake:\n      prod:\n        kind: azure_sql\n        server: \"lake.database.windows.net\"\n        database: Lake\n")
+assert ld.dev_is_prod(other_set, "dev"), "only the dev entry's own set's prod switches the word check off"
+# ... nor a named dev's, and the plain prod is not that set's.
+other_set_named = project("sql_targets:\n  default_environment: dev\n  prod:\n    kind: azure_sql\n    server: \"main.database.windows.net\"\n    database: Main\n"
+                          "  named:\n    lake:\n      dev:\n        kind: azure_sql\n        server: \"lake-prd.database.windows.net\"\n        database: Lake\n")
+assert ld.dev_is_prod(other_set_named, "dev@lake"), "a named dev with no prod in its own set keeps the word check"
+# A real prod entry in the same set decides: a dev *_live database beside it is dev.
+same_set = project("sql_targets:\n  default_environment: dev\n  named:\n    lake:\n      dev:\n        kind: azure_sql\n        server: \"lake-dev.database.windows.net\"\n        database: Sales_live\n"
+                   "      prod:\n        kind: azure_sql\n        server: \"lake.database.windows.net\"\n        database: Sales\n")
+assert not ld.dev_is_prod(same_set, "dev@lake")
+
 # setup and refresh refuse it before anything is resolved or minted.
 STUB = '''#!/usr/bin/env python3
 import json, os, sys

@@ -28,9 +28,10 @@ part: which databases, under which identity, and how old a snapshot may get.
 - `dev_is_prod`: a dev entry that names a production database is refused before
   anything is resolved or minted (`setup` and `refresh`): the same server and
   database, workspace and item, or Lakehouse SQL endpoint as any `prod` entry
-  (`sql_targets.prod` or a named set's), or, when no production entry is set,
-  a server, database or set name that reads as production (`prod`,
-  `production`, `prd`, `live`) or equals `fabric.environment_names.prod`.
+  (`sql_targets.prod` or a named set's), or, when the dev entry's own set has
+  no real production entry (a `TODO` template names nothing), a server,
+  database or set name that reads as production (`prod`, `production`, `prd`,
+  `live`) or equals `fabric.environment_names.prod`.
 - What changed in dev: `refresh` compares each new snapshot with the one it
   replaces (the files the previous manifest named, by content hash) and reports
   the objects added, changed and removed since the previous read, in its answer
@@ -182,13 +183,20 @@ def dev_specs(project: dict[str, Any]) -> list[tuple[str, str]]:
     return out
 
 
-def _production_entries(parsed: targets_lib.SqlTargets) -> list[targets_lib.SqlTarget]:
-    """Every `prod` entry that names something (ready or not): the plain one and
-    each named set's."""
-    entries = [parsed.targets.get("prod")] + [entries.get("prod") for _name, entries in sorted(parsed.named.items())]
+def _named(value: str) -> bool:
+    """A real value: not blank and not a `TODO` placeholder (lib/sql_targets.py)."""
+    return bool(value) and not targets_lib._placeholder(value.strip())
+
+
+def _production_entries(parsed: targets_lib.SqlTargets) -> list[tuple[str, targets_lib.SqlTarget]]:
+    """[(set name, entry)] for every `prod` entry that really names something (ready
+    or not): the plain one (set name '') and each named set's. A template entry
+    (`unconfigured`, or only `TODO` placeholders) names nothing."""
+    entries = [("", parsed.targets.get("prod"))] + [(name, entries.get("prod")) for name, entries in sorted(parsed.named.items())]
     return [
-        e for e in entries
-        if e is not None and (e.server or e.database or e.workspace_id or e.item_id or e.sql_endpoint_id)
+        (name, e) for name, e in entries
+        if e is not None and e.state != "unconfigured"
+        and any(_named(v) for v in (e.server, e.database, e.workspace_id, e.item_id, e.sql_endpoint_id))
     ]
 
 
@@ -199,18 +207,20 @@ def dev_is_prod(project: dict[str, Any], spec: str) -> bool:
     dev = parsed.resolve(spec)
     if dev is None:
         return False
-    same = lambda a, b: bool(a) and bool(b) and a.strip().lower() == b.strip().lower()  # noqa: E731
+    same = lambda a, b: _named(a) and _named(b) and a.strip().lower() == b.strip().lower()  # noqa: E731
     prods = _production_entries(parsed)
-    for prod in prods:
+    for _prod_set, prod in prods:
         if same(dev.server, prod.server) and same(dev.database, prod.database):
             return True
         if same(dev.workspace_id, prod.workspace_id) and same(dev.item_id, prod.item_id):
             return True
         if same(dev.sql_endpoint_id, prod.sql_endpoint_id):
             return True
-    if prods:
-        return False
     _env, set_name = targets_lib.split_target_spec(spec)
+    # Only a real production entry of the dev entry's own set says what production
+    # is for it; another set's, or none, leaves the word and environment_names checks on.
+    if any(prod_set == set_name for prod_set, _prod in prods):
+        return False
     if PRODUCTION_WORD.search(f"{dev.server} {dev.database} {set_name}"):
         return True
     fabric = project.get("fabric") if isinstance(project.get("fabric"), dict) else {}
