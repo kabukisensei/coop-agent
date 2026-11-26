@@ -140,15 +140,35 @@ export function extendSelection(anchor, click) {
 }
 
 /**
+ * The span a click makes: extendSelection, and on the removed side a range only
+ * when every line in it is a removed line (two removed lines with an unchanged
+ * line between are not one removed range: that click starts a single comment).
+ */
+export function commentSpan(model, anchor, click, mode = "unified") {
+  const span = extendSelection(anchor, click);
+  if (span.side !== "old" || span.from === span.to) return span;
+  for (let n = span.from; n <= span.to; n += 1) {
+    if (!canComment(model, "old", n, mode)) return extendSelection(null, click);
+  }
+  return span;
+}
+
+/**
  * One side of a diff as line number -> { text, type, hunk }: the new side holds
  * context and added lines (new numbers), the old side context and removed
- * lines (old numbers). Only lines the diff shows (MAX_ROWS) are in it.
+ * lines (old numbers). With mode "unified" or "split", only the lines that mode
+ * draws (MAX_ROWS); with "all", every line of the diff (a comment's context and
+ * its re-anchoring do not depend on which mode drew it, or on the cut).
  */
 export function sideLines(model, side, mode = "unified") {
   const out = new Map();
   const add = (line, hunk) => {
     if (side === "old" ? line.oldNo !== null : line.newNo !== null) out.set(side === "old" ? line.oldNo : line.newNo, { text: line.text, type: line.type, hunk });
   };
+  if (mode === "all") {
+    model.hunks.forEach((h, hunk) => { for (const line of h.lines) add(line, hunk); });
+    return out;
+  }
   for (const row of diffRows(model, mode).rows) {
     if (row.kind === "line") add(row.line, row.hunk);
     else if (row.kind === "ctx") add(row.line, row.hunk);
@@ -166,9 +186,9 @@ export function canComment(model, side, line, mode = "unified") {
   return Boolean(hit && (side === "new" || hit.type === "del"));
 }
 
-/** A comment's lines and the two lines either side ({ text, before, after }), null where the diff shows none. */
+/** A comment's lines and the two lines either side ({ text, before, after }), null where the diff has none. */
 export function commentContext(model, side, from, to) {
-  const lines = sideLines(model, side);
+  const lines = sideLines(model, side, "all");
   const at = (n) => (lines.has(n) ? lines.get(n).text : null);
   const text = [];
   for (let n = from; n <= to; n += 1) text.push(at(n) === null ? "" : at(n));
@@ -193,7 +213,7 @@ export function reanchorComment(comment, model) {
   const text = comment.text || [];
   const before = comment.before || [null, null];
   const after = comment.after || [null, null];
-  const lines = sideLines(model, side);
+  const lines = sideLines(model, side, "all");
   const textOf = (n) => (lines.has(n) ? lines.get(n).text : undefined);
   const moved = { status: "moved", from, to, hunk: -1 };
   if (side === "old") {
@@ -230,6 +250,9 @@ export function reanchorComment(comment, model) {
   if (beforeKnown) {
     for (const q of near) {
       if (!beforeFits(q)) continue;
+      // The lines after follow at once: nothing is left between, so the lines
+      // are gone here (checked below), not edited somewhere further down.
+      if (afterKnown && afterFits(q)) continue;
       let end = -1;
       if (afterKnown) {
         for (let r = q + 1; r <= q + len + 20; r += 1) if (afterFits(r)) { end = r - 1; break; }
@@ -281,8 +304,10 @@ export function reviewPrompt(comments) {
   return [`Review comments on the Changes pane${where}:`, ...comments.map((c, i) => commentLine(c, i + 1)), "Revise under the usual rules; answer each by number."].join("\n");
 }
 
-export function mountChanges(box, options, { coop, cwd, setPrompt, commentsOn: isCommentsOn }) {
-  const state = { files: [], drafts: [], draftsDir: "", selected: "", mode: "unified", query: "", active: 0, matches: [], diff: null, loading: false, repos: [], repo: null, comments: [], anchor: null, model: null, nextComment: 1 };
+export function mountChanges(box, options, { coop, cwd, setPrompt, getPrompt, commentsOn: isCommentsOn }) {
+  // `model` is the parsed diff, parsed once when the diff arrives; `ticket` names
+  // the latest diff request, so a late answer for an earlier one is dropped.
+  const state = { files: [], drafts: [], draftsDir: "", selected: "", mode: "unified", query: "", active: 0, matches: [], diff: null, loading: false, repos: [], repo: null, comments: [], anchor: null, model: null, nextComment: 1, ticket: 0, lastBatch: [], lastPrompt: "" };
   // Diff review comments (CW3): read at every use, so a Settings change applies at once.
   const reviewing = () => { try { return typeof isCommentsOn === "function" && isCommentsOn() === true; } catch { return false; } };
   // Shown only when the open folder holds more than one repository.
@@ -351,19 +376,33 @@ export function mountChanges(box, options, { coop, cwd, setPrompt, commentsOn: i
     return [head, ...items];
   }
 
+  // The diff to show (null: none), parsed once here.
+  function setDiff(diff) {
+    state.diff = diff;
+    const readable = Boolean(diff) && !diff.binary && !diff.tooLarge && !diff.gone && !diff.error;
+    state.model = readable ? diffModel(diff.diff || "") : null;
+  }
+
+  // No diff to show: any answer still on its way is for something else now.
+  function clearDiff() {
+    state.ticket += 1;
+    setDiff(null);
+    renderDiffView();
+  }
+
   function renderDiffView(scroll = false) {
-    if (!state.diff) { fill(diffBox); count.textContent = ""; return; }
+    if (!state.diff) { fill(diffBox); count.textContent = ""; renderReviewBar(); return; }
     const result = state.diff;
     if (result.binary || result.tooLarge || result.gone || result.error) {
       const text = result.error || (result.gone ? "This file is gone." : result.tooLarge ? "This change is too large to show here." : "This is not a text file, so there is no diff to read.");
       fill(diffBox, el("p", { class: "pane-empty", text }));
       count.textContent = "";
+      renderReviewBar();
       return;
     }
-    const model = diffModel(result.diff);
-    if (!model.hunks.length) { fill(diffBox, el("p", { class: "pane-empty", text: "No lines changed: the file was renamed or its permissions changed." })); count.textContent = ""; return; }
+    const model = state.model;
+    if (!model || !model.hunks.length) { fill(diffBox, el("p", { class: "pane-empty", text: "No lines changed: the file was renamed or its permissions changed." })); count.textContent = ""; renderReviewBar(); return; }
     const review = reviewing();
-    state.model = model;
     const { node, matches } = renderDiff(model, { mode: state.mode, query: state.query, active: state.active, comments: review });
     state.matches = matches;
     count.textContent = state.query ? (matches.length ? `${Math.min(state.active + 1, matches.length)} of ${matches.length}` : "No matches") : "";
@@ -373,6 +412,7 @@ export function mountChanges(box, options, { coop, cwd, setPrompt, commentsOn: i
   }
 
   async function select(path) {
+    const ticket = ++state.ticket;
     state.selected = path;
     state.active = 0;
     renderList();
@@ -383,12 +423,13 @@ export function mountChanges(box, options, { coop, cwd, setPrompt, commentsOn: i
       canOpen ? el("button", { type: "button", class: "btn change-open", title: "Edit this file in SSMS, Tabular Editor, Power BI Desktop or your default app (Settings picks the one for DAX)", onclick: () => openInEditor(path) }, icon("file"), " Open in editor") : null);
     fill(diffBox, el("div", { class: "working" }, el("span", { class: "spinner" }), el("span", { text: "Reading the diff" })));
     const result = await coop.changeDiff(path);
-    if (state.selected !== path) return;
-    if (!result.success) { state.diff = { error: result.error || "Could not read the diff." }; renderDiffView(); return; }
-    state.diff = result.data;
-    reanchorFile(path, result.data.diff || "");
-    if (file && file.status === "new" && result.data.diff) {
-      const stats = hunkStats(diffModel(result.data.diff).hunks);
+    // A later request (another file, or the same path in another repository) won.
+    if (ticket !== state.ticket || state.selected !== path) return;
+    if (!result.success) { setDiff({ error: result.error || "Could not read the diff." }); renderDiffView(); return; }
+    setDiff(result.data);
+    reanchorFile(path, result.data.diff || "", state.model);
+    if (file && file.status === "new" && result.data.diff && state.model) {
+      const stats = hunkStats(state.model.hunks);
       file.added = stats.added;
     }
     renderDiffView(true);
@@ -437,8 +478,7 @@ export function mountChanges(box, options, { coop, cwd, setPrompt, commentsOn: i
       state.files = [];
       summary.textContent = "This folder is not in a git repository, so there is nothing to compare. The tool cards in the conversation still show each edit.";
       renderList();
-      state.diff = null;
-      renderDiffView();
+      clearDiff();
       fill(fileHead);
       return;
     }
@@ -449,7 +489,7 @@ export function mountChanges(box, options, { coop, cwd, setPrompt, commentsOn: i
       : data.files.some((f) => f.path === state.selected) ? state.selected : (data.files[0] && data.files[0].path) || "";
     renderList();
     if (target) await select(target);
-    else { state.diff = null; renderDiffView(); fill(fileHead); }
+    else { clearDiff(); fill(fileHead); }
     if (want && target !== want) toast(`${asked} has no changes since the last commit.`, "info");
   }
 
@@ -515,13 +555,27 @@ export function mountChanges(box, options, { coop, cwd, setPrompt, commentsOn: i
   const unsent = () => state.comments.filter((c) => !c.sent);
   const commentWhere = (c) => `${c.from === c.to ? `line ${c.from}` : `lines ${c.from}-${c.to}`} (${c.side === "old" ? "removed" : "new"})`;
 
+  // What "Send to coop" puts in the prompt: the comments not sent yet; while the
+  // prompt it filled last still waits, unsent, in the composer, that batch too
+  // (one more comment before sending joins it); with nothing new, the last batch
+  // again (the person cleared the prompt, or closed the window's composer).
+  function nextBatch() {
+    const fresh = unsent();
+    const last = state.lastBatch.filter((c) => state.comments.includes(c) && c.sent);
+    if (!fresh.length) return last;
+    let waitingInComposer = false;
+    try { waitingInComposer = last.length > 0 && typeof getPrompt === "function" && getPrompt() === state.lastPrompt; } catch { /* unknown: not waiting */ }
+    return waitingInComposer ? [...last, ...fresh] : fresh;
+  }
+
   function renderReviewBar() {
     if (!reviewing() || !state.comments.length) { reviewBar.remove(); return; }
-    const waiting = unsent().length;
+    const fresh = unsent().length;
+    const waiting = nextBatch().length;
     fill(reviewBar,
-      el("span", { class: "review-count", text: `${state.comments.length} review ${state.comments.length === 1 ? "comment" : "comments"}${waiting !== state.comments.length ? ` (${waiting} not sent yet)` : ""}` }),
-      el("button", { type: "button", class: "btn primary", disabled: waiting === 0, title: "Put every comment not sent yet in the prompt as one numbered request; you send it", onclick: sendComments, text: `Send to coop (${waiting} ${waiting === 1 ? "comment" : "comments"})` }),
-      el("button", { type: "button", class: "btn", title: "Remove every comment in this tab", onclick: () => { state.comments = []; state.anchor = null; rerender(); }, text: "Clear" }));
+      el("span", { class: "review-count", text: `${state.comments.length} review ${state.comments.length === 1 ? "comment" : "comments"}${fresh !== state.comments.length ? ` (${fresh} not sent yet)` : ""}` }),
+      el("button", { type: "button", class: "btn primary", disabled: waiting === 0, title: fresh ? "Put every comment not sent yet in the prompt as one numbered request; you send it" : "Put the last batch in the prompt again; you send it", onclick: sendComments, text: `Send to coop (${waiting} ${waiting === 1 ? "comment" : "comments"})` }),
+      el("button", { type: "button", class: "btn", title: "Remove every comment in this tab", onclick: () => { state.comments = []; state.anchor = null; state.lastBatch = []; state.lastPrompt = ""; rerender(); }, text: "Clear" }));
     if (reviewBar.parentNode !== box) box.insertBefore(reviewBar, diffBox);
   }
 
@@ -534,23 +588,29 @@ export function mountChanges(box, options, { coop, cwd, setPrompt, commentsOn: i
   }
 
   function sendComments() {
-    const batch = unsent();
+    const batch = nextBatch();
     if (!batch.length || typeof setPrompt !== "function") return;
-    setPrompt(reviewPrompt(batch));
     batch.forEach((c, i) => { c.sent = true; c.number = i + 1; c.status = ""; });
+    state.lastBatch = batch;
+    state.lastPrompt = reviewPrompt(batch);
+    setPrompt(state.lastPrompt);
     rerender();
   }
 
   // After a revision the pane diffs the file again: each comment finds its place.
-  function reanchorFile(path, diffText) {
+  // Only an unchanged comment takes the fresh lines as its baseline: a changed
+  // one keeps the lines it was written on (so it stays changed through later
+  // revisions, and a removed line coop put back keeps its code), and a moved one
+  // keeps them to be found again.
+  function reanchorFile(path, diffText, parsed) {
     const key = fileKey(path);
     const mine = state.comments.filter((c) => c.key === key && c.diffText !== diffText);
     if (!mine.length) return;
-    const model = diffModel(diffText);
+    const model = parsed || diffModel("");
     for (const c of mine) {
       const found = reanchorComment(c, model);
       Object.assign(c, { from: found.from, to: found.to, hunk: found.hunk, status: found.status, diffText });
-      if (found.status !== "moved") Object.assign(c, commentContext(model, c.side, c.from, c.to));
+      if (found.status === "unchanged") Object.assign(c, commentContext(model, c.side, c.from, c.to));
     }
   }
 
@@ -562,8 +622,7 @@ export function mountChanges(box, options, { coop, cwd, setPrompt, commentsOn: i
   }
 
   function marker(c) {
-    const waiting = unsent();
-    const number = c.sent ? c.number : waiting.indexOf(c) + 1;
+    const number = c.sent ? c.number : nextBatch().indexOf(c) + 1;
     const showStatus = c.status && (c.sent || c.status === "moved");
     return el("div", { class: `review-marker${showStatus ? ` ${c.status}` : ""}${c.sent ? " sent" : ""}`, role: "note", "aria-label": `Review comment ${number}` },
       el("span", { class: "review-num", text: String(number), title: c.sent ? "Sent to coop with this number" : "Its number in the next batch" }),
@@ -605,7 +664,7 @@ export function mountChanges(box, options, { coop, cwd, setPrompt, commentsOn: i
     const hunk = Number(row.getAttribute("data-hunk"));
     if (!canComment(state.model, side, line, state.mode)) return;
     const click = { key: fileKey(), side, hunk, line };
-    const span = event.shiftKey ? extendSelection(state.anchor, click) : extendSelection(null, click);
+    const span = event.shiftKey ? commentSpan(state.model, state.anchor, click, state.mode) : extendSelection(null, click);
     if (!event.shiftKey || span.from === span.to) state.anchor = click;
     openCommentForm(span, row.classList.contains("diff-cell") ? row.parentElement : row);
   }

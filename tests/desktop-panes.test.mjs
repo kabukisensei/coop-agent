@@ -44,7 +44,7 @@ const { listChanges, listDrafts, fileDiff, parseNameStatus, parseNumstat, newFil
 const { readStandards, readSnapshot, readNote, listNotes, knowledgeView, domainView, sourceDomainView, keepArticles, DOMAINS, KNOWLEDGE_LABELS } = await import("../desktop/lib/standards-view.mjs");
 const { loadProject, previewProject, saveProject, settingsFromForm } = await import("../desktop/lib/project-form.mjs");
 const docs = await import("../desktop/lib/docs-setup.mjs");
-const { normalizePath, relativePath, repoForPath, fixLinePrompt, splitPath, commentsOn, reviewPath, extendSelection, canComment, commentContext, reanchorComment, reviewPrompt, COMMENT_STATUS } = await import("../desktop/renderer/pane-changes.mjs");
+const { normalizePath, relativePath, repoForPath, fixLinePrompt, splitPath, commentsOn, reviewPath, extendSelection, canComment, commentContext, reanchorComment, reviewPrompt, sideLines, COMMENT_STATUS } = await import("../desktop/renderer/pane-changes.mjs");
 const { diffModel, diffRows, renderDiff, MAX_ROWS } = await import("../desktop/renderer/diff-view.mjs");
 const editors = await import("../desktop/lib/editors.mjs");
 const { loadSettings } = await import("../desktop/lib/settings.mjs");
@@ -1375,7 +1375,7 @@ await check("review comments: new, removed and range comments make one numbered 
   assert.equal(reviewPrompt([odd]).split("\n")[1], "1. a.sql line 3 (removed) `SELECT 'x', y`: keep", "a removed line names its text like ED1 does");
   assert.match(reviewPrompt([odd, { ...odd, repoLabel: "pbi" }]), /^Review comments on the Changes pane \(repos sql, pbi\):/);
   const pane = readFileSync(join(ROOT, "desktop", "renderer", "pane-changes.mjs"), "utf8");
-  assert.match(pane, /setPrompt\(reviewPrompt\(batch\)\)/, "the batch goes to the composer");
+  assert.match(pane, /state\.lastPrompt = reviewPrompt\(batch\);\n    setPrompt\(state\.lastPrompt\);/, "the batch goes to the composer");
   assert.ok(!/coop\.command\(/.test(pane), "the pane never sends a prompt itself");
   assert.match(pane, /`Send to coop \(\$\{waiting\} \$\{waiting === 1 \? "comment" : "comments"\}\)`/);
 });
@@ -1457,6 +1457,203 @@ await check("review comments: the window wiring (one writer in-process, applies 
   assert.match(app, /window\.dispatchEvent\(new CustomEvent\("coop:features"\)\)/);
   const pane = readFileSync(join(ROOT, "desktop", "renderer", "pane-changes.mjs"), "utf8");
   assert.match(pane, /window\.addEventListener\("coop:features"/, "the pane follows a change at once");
+});
+
+// --- The Changes pane itself, mounted on a small live DOM ---------------------
+// tests/fixtures/fake-dom.mjs: clicks, shift-clicks, the comment form, Send to
+// coop, two revisions in a row, side by side, a live Settings toggle, and a
+// repository switch racing a slow diff. Each diff comes from a fake coop.changes /
+// coop.changeDiff, as the main process would answer.
+const liveDom = await import("./fixtures/fake-dom.mjs");
+const { mountChanges } = await import("../desktop/renderer/pane-changes.mjs");
+const diffOf = (before, after) => textDiff(`${before.join("\n")}\n`, `${after.join("\n")}\n`);
+
+function changesPane({ repos = [{ id: "", label: "w", rel: "" }], files = { "": ["v.sql"] }, diff, on = true } = {}) {
+  const dom = liveDom.installLiveDom();
+  const box = new liveDom.FakeElement("div");
+  dom.body.append(box);
+  const h = {
+    dom, box, on, prompt: "", prompts: [], repo: repos[0].id,
+    // diff for (repo, path): a string, or a function returning a Promise for a slow answer
+    diff: typeof diff === "function" ? diff : () => diff,
+  };
+  const coop = {
+    changes: async (pick) => {
+      if (typeof pick === "string") h.repo = pick;
+      return { success: true, data: { repos, current: h.repo, repo: true, files: (files[h.repo] || []).map((path) => ({ path, status: "modified", added: 1, removed: 1 })), drafts: [], draftsDir: "" } };
+    },
+    changeDiff: async (path) => ({ success: true, data: { diff: await h.diff(h.repo, path) } }),
+    openInEditor: async () => ({ success: true, data: {} }),
+  };
+  h.api = mountChanges(box, {}, { coop, cwd: () => "/w", setPrompt: (text) => { h.prompt = text; h.prompts.push(text); }, getPrompt: () => h.prompt, commentsOn: () => h.on });
+  const q = (sel) => box.querySelector(sel);
+  Object.assign(h, {
+    q,
+    newRow: (n) => q(`[data-line="${n}"]`),
+    oldRow: (n) => q(`[data-old-line="${n}"]`),
+    form: () => q(".review-form"),
+    markers: () => box.querySelectorAll(".review-marker"),
+    bar: () => q(".review-bar"),
+    sendButton: () => { const bar = q(".review-bar"); return bar ? bar.querySelector(".primary") : null; },
+    async comment(row, note, shift = false) {
+      dom.click(row, { shiftKey: shift });
+      const form = q(".review-form");
+      assert.ok(form, "a click opens the comment form");
+      form.querySelector("input").value = note;
+      dom.click(form.querySelector(".primary"));
+    },
+    async refresh() { h.api.refresh(); await dom.settle(); },
+    toggle(value) { h.on = value; dom.window.dispatchEvent(new CustomEvent("coop:features")); },
+  });
+  return h;
+}
+
+await check("review comments (mounted): click, shift-click range, markers, Send fills one prompt and can fill it again", async () => {
+  const v1 = PROCS.slice(); v1[7] = "  SELECT 22"; v1[12] = "  SELECT 33";
+  const h = changesPane({ diff: diffOf(PROCS, v1) });
+  await h.dom.settle();
+  assert.ok(h.newRow(8), "the diff is drawn");
+  await h.comment(h.newRow(8), "why 22?");
+  assert.equal(h.markers().length, 1);
+  assert.match(h.sendButton().textContent, /^Send to coop \(1 comment\)$/);
+  // A shift-click from line 8 to line 9 on the new side: one range comment.
+  h.dom.click(h.newRow(9), { shiftKey: true });
+  assert.equal(h.form().querySelector("input").getAttribute("placeholder"), "Comment on lines 8-9 (new)");
+  h.form().querySelector("input").value = "and the END";
+  h.dom.click(h.form().querySelector(".primary"));
+  assert.equal(h.markers().length, 2);
+  h.dom.click(h.sendButton());
+  assert.equal(h.prompts.length, 1);
+  assert.equal(h.prompts[0], ["Review comments on the Changes pane (repo w):", "1. v.sql line 8 (new) `SELECT 22`: why 22?", "2. v.sql lines 8-9 (new): and the END", "Revise under the usual rules; answer each by number."].join("\n"));
+  // The person closed the prompt without sending: Send fills it again (7.4).
+  assert.equal(h.sendButton().disabled, false, "Send stays available after filling the prompt");
+  h.prompt = "";
+  h.dom.click(h.sendButton());
+  assert.equal(h.prompts.length, 2);
+  assert.equal(h.prompts[1], h.prompts[0], "the same batch, the same numbers");
+  // A comment added while that prompt still waits in the composer joins its batch.
+  await h.comment(h.oldRow(13), "keep SELECT 3");
+  h.dom.click(h.sendButton());
+  assert.match(h.prompts[2], /^1\. v\.sql line 8 \(new\)/m);
+  assert.match(h.prompts[2], /^3\. v\.sql line 13 \(removed\) `SELECT 3`: keep SELECT 3$/m);
+  // Once the person sent it (the composer moved on), the next batch is only what is new.
+  h.prompt = "";
+  await h.comment(h.newRow(7), "fine");
+  h.dom.click(h.sendButton());
+  assert.equal(h.prompts[3].split("\n").length, 3, "one numbered line");
+  assert.match(h.prompts[3], /^1\. v\.sql line 7 \(new\) `BEGIN`: fine$/m);
+});
+
+await check("review comments (mounted): a shift-click over removed lines with an unchanged line between starts a single comment (7.1)", async () => {
+  const h = changesPane({ diff: reviewCases.CASES[0].diff });
+  await h.dom.settle();
+  await h.comment(h.oldRow(2), "keep b");
+  h.dom.click(h.oldRow(4), { shiftKey: true });
+  assert.equal(h.form().querySelector("input").getAttribute("placeholder"), "Comment on line 4 (removed)", "old lines 2 and 4 have an unchanged line 3 between: not a range");
+  // A removed line looks clickable like a new one (7.3).
+  const css = readFileSync(join(ROOT, "desktop", "renderer", "styles", "app.css"), "utf8");
+  assert.match(css, /\.diff-view \[data-old-line\][^{]*\{ cursor: pointer; \}/);
+  assert.match(css, /\.diff-view \[data-old-line\]:hover[^{]*\{ outline:/);
+});
+
+await check("review comments (mounted): a changed comment stays changed through a second revision, and keeps its code (3.1)", async () => {
+  const v1 = PROCS.slice(); v1[7] = "  SELECT 22"; v1[12] = "  SELECT 33";
+  let current = v1;
+  const h = changesPane({ diff: () => diffOf(PROCS, current) });
+  await h.dom.settle();
+  await h.comment(h.newRow(8), "why 22?");
+  await h.comment(h.oldRow(13), "keep SELECT 3");
+  h.dom.click(h.sendButton());
+  // Revision 1: coop edits the commented new line and puts the removed line back.
+  const v2 = PROCS.slice(); v2[7] = "  SELECT 222";
+  current = v2;
+  await h.refresh();
+  const status = () => h.markers().map((m) => m.className);
+  assert.deepEqual(status(), ["review-marker changed sent", "review-marker changed sent"]);
+  // Revision 2: an edit somewhere else (proc c's GO, so old line 13 is context now).
+  const v3 = v2.slice(); v3[14] = "GO -- c";
+  current = v3;
+  await h.refresh();
+  assert.deepEqual(status(), ["review-marker changed sent", "review-marker changed sent"], "still changed, not unchanged or moved");
+  h.prompt = "";
+  for (const m of h.markers()) h.dom.click(m.querySelector(".btn"));
+  h.form().querySelector("input").value = "keep SELECT 3, again";
+  h.dom.click(h.form().querySelector(".primary"));
+  h.dom.click(h.sendButton());
+  assert.match(h.prompts.at(-1), /line 13 \(removed\) `SELECT 3`: keep SELECT 3, again/, "the removed line's code is kept");
+});
+
+await check("review comments (mounted): side by side past the unified cut, a comment keeps its code and its place (3.2)", async () => {
+  const n = 2500;
+  const lines = (tag) => Array.from({ length: n }, (_, i) => `${tag} ${i + 1}`);
+  const big = (first) => [`@@ -1,${n} +1,${n} @@`, ...lines("-old"), `+${first}`, ...lines("+new").slice(1)].join("\n");
+  let current = big("new 1");
+  const h = changesPane({ diff: () => current });
+  await h.dom.settle();
+  assert.equal(h.newRow(2400), null, "unified: line 2400 is past the cut");
+  h.dom.click(h.box.querySelectorAll("button").find((b) => b.textContent === "Side by side"));
+  assert.ok(h.newRow(2400), "side by side draws it");
+  await h.comment(h.newRow(2400), "rename");
+  h.dom.click(h.sendButton());
+  assert.match(h.prompts[0], /^1\. v\.sql line 2400 \(new\) `new 2400`: rename$/m, "the comment carries its line's code");
+  current = big("new 1 changed");
+  await h.refresh();
+  assert.equal(h.markers()[0].className, "review-marker unchanged sent", "re-anchored in place, not moved or gone");
+});
+
+await check("review comments (mounted): Settings turns the feature off and on at once; off is the ED1 click", async () => {
+  const v1 = PROCS.slice(); v1[7] = "  SELECT 22";
+  const h = changesPane({ diff: diffOf(PROCS, v1) });
+  await h.dom.settle();
+  await h.comment(h.newRow(8), "why 22?");
+  assert.equal(h.markers().length, 1);
+  h.toggle(false);
+  assert.equal(h.markers().length, 0, "off: no markers");
+  assert.equal(h.bar(), null, "off: no review bar");
+  assert.equal(h.oldRow(8), null, "off: removed lines carry no control");
+  h.dom.click(h.newRow(8));
+  assert.ok(h.q(".fix-line") && !h.q(".review-form"), "off: a click opens ED1's Fix this line");
+  h.toggle(true);
+  assert.equal(h.markers().length, 1, "on again: the comment is still there");
+});
+
+await check("review comments (mounted): a repository switch while a diff is still loading shows the new repository's diff (7.2)", async () => {
+  let releaseA;
+  let slowA = false;
+  const h = changesPane({
+    repos: [{ id: "a", label: "A", rel: "a" }, { id: "b", label: "B", rel: "b" }],
+    files: { a: ["v.sql"], b: ["v.sql"] },
+    diff: (repo) => {
+      const text = diffOf(["x"], [`from ${repo}`]);
+      if (repo === "a" && slowA) return new Promise((done) => { releaseA = () => done(text); });
+      return text;
+    },
+  });
+  await h.dom.settle();
+  assert.match(h.box.textContent, /from a/);
+  slowA = true;
+  h.dom.click(h.box.querySelectorAll("li.change-file")[0]);
+  await h.dom.settle();
+  const picker = h.q("select");
+  h.dom.fire(picker, "change", { target: { value: "b" } });
+  await h.dom.settle();
+  assert.match(h.box.textContent, /from b/);
+  releaseA();
+  await h.dom.settle();
+  assert.match(h.box.textContent, /from b/, "the late answer for repository a is dropped");
+  assert.doesNotMatch(h.box.textContent, /from a/);
+});
+
+await check("review comments: a deleted commented line is moved or gone, even when END and GO repeat below (3.3)", () => {
+  // Proc c is edited too, so its END and GO are inside the diff, within 20 lines.
+  const v1 = PROCS.slice(); v1[7] = "  SELECT 22"; v1[12] = "  SELECT 33";
+  const m1 = modelOf(PROCS, v1);
+  const comment = { side: "new", from: 8, to: 8, ...commentContext(m1, "new", 8, 8) };
+  assert.deepEqual(comment.after, ["END", "GO"]);
+  const gone = v1.slice(); gone.splice(7, 1);
+  const m2 = modelOf(PROCS, gone);
+  assert.ok([12, 13].every((line) => sideLines(m2, "new").has(line)), "proc c's END and GO are in the new diff");
+  assert.equal(reanchorComment(comment, m2).status, "moved", "not 'changed' over proc c's lines");
 });
 
 rmSync(temp, { recursive: true, force: true });

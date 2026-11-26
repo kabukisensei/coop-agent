@@ -593,8 +593,8 @@ details.standards .pane-links { margin-top: 8px; }
 .change-head { flex: none; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .change-head code { flex: 1 1 auto; min-width: 0; }
 .change-open { flex: none; }
-.diff-view [data-line] { cursor: pointer; }
-.diff-view [data-line]:hover { outline: 1px solid var(--border); outline-offset: -1px; }
+.diff-view [data-line], .diff-view [data-old-line] { cursor: pointer; }
+.diff-view [data-line]:hover, .diff-view [data-old-line]:hover { outline: 1px solid var(--border); outline-offset: -1px; }
 .fix-line { display: flex; gap: 6px; align-items: center; padding: 6px 8px; background: var(--surface-2, var(--surface)); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .fix-line .field { flex: 1 1 auto; min-width: 0; }
 /* Diff review comments (CW3): markers under their lines, the send bar, the commented lines. */
