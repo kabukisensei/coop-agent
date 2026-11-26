@@ -24,6 +24,9 @@ Classification:
   gates, so turning every feature on can never pass the ceiling.
 - Prompt template bodies are NOT counted in fixed total because Pi expands them
   only when invoked; they are reported as on-demand inventory.
+- Client instructions (CW1, `.coop/rules/` in the client's repository) travel in
+  a hidden note with their OWN cap (lib/client-rules.mjs CLIENT_RULES_CAP_CHARS),
+  outside both fixed totals; the report shows that cap as a separate row.
 """
 
 import argparse
@@ -434,6 +437,25 @@ def measure_guardrails(guardrails_path: Path, repo_root: Path) -> dict:
     }
 
 
+CLIENT_RULES_CAP = re.compile(r"^export const CLIENT_RULES_CAP_CHARS = (\d+);", re.M)
+
+
+def measure_client_rules_cap(repo_root: Path) -> dict:
+    """The client instructions' own cap, read from lib/client-rules.mjs (the one
+    place it is set). Outside the fixed totals: the note is a hidden message."""
+    src = repo_root / "lib" / "client-rules.mjs"
+    m = CLIENT_RULES_CAP.search(read_text(src)) if src.is_file() else None
+    chars = int(m.group(1)) if m else 0
+    return {
+        "source": "lib/client-rules.mjs",
+        "cap_chars": chars,
+        "cap_tokens": estimate_tokens(chars),
+        "in_fixed_total": False,
+        "feature": "instructions",
+        "note": "A hidden message sent only while Client instructions is on, capped on its own; not part of either fixed total.",
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Report COOP fixed startup context sizes.",
@@ -481,6 +503,7 @@ def main() -> int:
     skills = measure_skills(skills_dir)
     native_tools = measure_native_tools(extensions_dir)
     extensions = measure_extensions(extensions_dir)
+    client_rules = measure_client_rules_cap(repo_root)
 
     # Fixed total: only always-loaded + advertised metadata that is present at startup.
     # Prompt template bodies are on-demand inventory, not fixed total.
@@ -546,6 +569,7 @@ def main() -> int:
             "entries": extensions["entries"],
             "note": "Extension implementation source is not included in the fixed-total estimate; only tool/command metadata and hidden messages are prompt-visible.",
         },
+        "client_instructions": client_rules,
         "on_demand_inventory": {
             "prompts": {
                 "dir": prompts_dir.relative_to(repo_root).as_posix(),
@@ -592,6 +616,9 @@ def main() -> int:
     print("")
     print("On-demand inventory (not included in fixed total)")
     print(f"  Prompt templates       {prompts['count']:<3} files   {prompts['chars']:,} chars    ~{prompts['estimated_tokens']:,} tokens")
+    print("")
+    print("Own cap (not included in fixed total)")
+    print(f"  client instructions (own cap)  ~{client_rules['cap_tokens']:,} tokens at most   ({client_rules['cap_chars']:,} chars; only while Client instructions is on)")
     print("")
     print("Extensions")
     for e in extensions["entries"]:

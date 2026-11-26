@@ -91,8 +91,8 @@ assert data["estimated_default_off_total_tokens"] == budget.estimate_tokens(data
 assert data["estimated_default_off_total_tokens"] < data["estimated_all_on_total_tokens"] <= 8000, data
 ok(f"two totals: default-off {data['estimated_default_off_total_tokens']} and all-on {data['estimated_all_on_total_tokens']} tokens (the gated one, at most 8000)")
 
-assert [(t["name"], t["feature"]) for t in switched] == [("sql_source", "sql-source")], switched
-ok("sql_source is the one tool behind a switch (sql-source)")
+assert [(t["name"], t["feature"]) for t in switched] == [("sql_source", "sql-source"), ("client_rules", "instructions")], switched
+ok("sql_source (sql-source) and client_rules (instructions) are the tools behind a switch")
 
 features_src = (ROOT / "lib" / "features.mjs").read_text(encoding="utf-8")
 known = set(re.findall(r'\{ key: "([a-z-]+)", label:', features_src))
@@ -107,9 +107,20 @@ ok("every coop:feature marker names a feature from lib/features.mjs")
 assert len(markers) == len(switched), (markers, switched)
 ok("every coop:feature marker in coop-tools counts (none misplaced)")
 
+# Client instructions (CW1): their own cap, a separate row outside both totals.
+cats = data["categories"]
+ci = cats["client_instructions"]
+assert (ci["cap_chars"], ci["cap_tokens"], ci["in_fixed_total"], ci["feature"]) == (8000, 2000, False, "instructions"), ci
+base = cats["guardrails"]["chars"] + cats["profile"]["instruction_chars"] + cats["project_instructions"]["chars"] + cats["skills"]["description_chars"]
+assert data["total_chars"] == base + cats["native_tools"]["schema_chars"], "the totals are the fixed categories only (no client instructions, no slash commands)"
+assert data["default_off_total_chars"] == base + cats["native_tools"]["default_off_schema_chars"]
+ok("client instructions (own cap): 2000 tokens, outside both totals; slash commands (/correct) add nothing")
+
 human = subprocess.run([sys.executable, str(ROOT / "scripts" / "context-budget.py")], cwd=ROOT, capture_output=True, text=True, check=True).stdout
 assert "Estimated fixed total, default-off" in human and "Estimated fixed total, all-on" in human, human
 assert "behind a switch      sql_source (sql-source)" in human, human
+assert "behind a switch      client_rules (instructions)" in human, human
+assert "Own cap (not included in fixed total)" in human and "client instructions (own cap)  ~2,000 tokens at most" in human, human
 ok("the human report prints both totals and the switched tool")
 
 print(f"✓ context-budget split tests passed ({passed})")
