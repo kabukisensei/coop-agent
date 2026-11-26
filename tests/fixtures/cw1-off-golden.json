@@ -1,0 +1,134 @@
+{
+  "note": "coop-tools as a session sees it with Client instructions off; written from the 03600165 bundle by tests/cw1-capture.mjs --write",
+  "sha256": "f605cf808f84935841b045c79d6789cbdc72a7b88c3f6c982e4226efb0c9f32b",
+  "capture": {
+    "tools": [
+      {
+        "name": "sql_impact",
+        "label": "SQL impact (live catalog trace)",
+        "description": "Read-only live impact trace of ONE SQL object on the contract's default dev/test sql_targets entry: three fixed parameterized catalog queries for downstream dependents, upstream references and columns. An unavailable section means the target could not be asked; an empty downstream list means none visible to this principal in this database, never 'could not look'. Accepts only `object`.",
+        "promptSnippet": "Live catalog trace of one SQL object's dependents, references and columns",
+        "promptGuidelines": [
+          "Before planning or editing a live SQL object, call sql_impact with its name, then data_doc lineage for the same object when built docs exist, and report drift between them. Metadata only: use fabric_sql_query for rows."
+        ],
+        "parameters": {}
+      },
+      {
+        "name": "catalog_snapshot",
+        "label": "Catalog snapshot",
+        "description": "Committed dev catalog snapshot: one file per table, view, procedure and function. command=status (default): exists and how old. command=snapshot: read the dev/test catalog read-only (never production) and rewrite the folder to commit.",
+        "promptSnippet": "Committed dev catalog snapshot: status or refresh",
+        "promptGuidelines": [
+          "Read the object's snapshot file before writing SQL; if the snapshot is missing or stale, offer catalog_snapshot (command=\"snapshot\") once."
+        ],
+        "parameters": {}
+      },
+      {
+        "name": "schema_compare",
+        "label": "Schema compare",
+        "description": "Read-only compare of two schemas (sql_targets entries, the snapshot or a repo's .sql files) with an ordered promotion script. Writes report.md and deploy.sql under .coop/schema-compare, never runs them.",
+        "promptSnippet": "Compare dev, prod or repo schemas; ordered promotion script, nothing applied",
+        "promptGuidelines": [
+          "To move SQL changes between environments, call schema_compare first; deploy.sql is the person's to run. Pass only the choices the user names for this run: the project file holds the client's defaults."
+        ],
+        "parameters": {}
+      },
+      {
+        "name": "fabric_sql_query",
+        "label": "Fabric SQL Query (pyodbc fallback)",
+        "description": "Governed pyodbc read of one bounded SELECT against the contract's default sql_targets entry, or the entry `environment` names (dev, test or prod, to compare them, or <env>@<set> for a second engine under sql_targets.named such as dev@serverless), (Azure SQL, Fabric SQL database, Synapse serverless, Fabric Warehouse/Lakehouse), or the canonical Fabric SQL target without sql_targets. When a managed fabric-sqlendpoint MCP tool exists, attempt it first and call fabric_sql_query only after that actual attempt fails (unavailable/missing, authentication, timeout, connection, transport). Never use it for SQL/business/query rejection. Accepts no target, server, credential, or token fields.",
+        "promptSnippet": "Post-MCP-failure pyodbc fallback for one approval-gated bounded Fabric SELECT TOP read",
+        "promptGuidelines": [
+          "With a managed fabric-sqlendpoint MCP server, attempt it first; call fabric_sql_query only after an actual unavailable/authentication/timeout/connection/transport/tool-missing failure, never for SQL/business/query rejection, and never cascade automatically. Direct sql_targets kinds (Azure SQL, Fabric SQL database, Synapse) have no MCP server: fabric_sql_query is the live read route.",
+          "Use only one plain SELECT with a literal TOP bound; mutations, batches, cross-database names, and unbounded reads are rejected before authentication or connection."
+        ],
+        "parameters": {}
+      },
+      {
+        "name": "standards_check",
+        "label": "Standards check (fresh look)",
+        "description": "Read-only second look at files you changed: a separate model request sees only the change and the standards.",
+        "promptSnippet": "Fresh standards check of your change",
+        "promptGuidelines": [
+          "Before presenting a SQL, DAX or model change, call standards_check once with the changed files; fix its findings or state why not."
+        ],
+        "parameters": {}
+      },
+      {
+        "name": "bpa_review",
+        "label": "Tabular Editor BPA",
+        "description": "Run Tabular Editor BPA against semantic-model files using built-in or configured rules and return findings as JSON. Advisory only — never edits model files.",
+        "promptSnippet": "Check semantic models with Tabular Editor BPA (advisory, JSON output)",
+        "promptGuidelines": [
+          "Use bpa_review to check semantic models before proposing or reviewing changes.",
+          "Treat results as advisory; summarize findings by severity."
+        ],
+        "parameters": {}
+      },
+      {
+        "name": "data_doc",
+        "label": "Data Documentation",
+        "description": "Understand and document whatever SQL and/or Power BI source is available with coop-data-doc. Commands: 'scan' (default) writes the lineage graph (graph.json); 'build' also writes per-object Markdown docs and a portal, indexed by manifest.json; 'check' is a CI staleness gate; 'lineage' lists ONE object's upstream inputs, downstream dependents and relationships; 'impact' lists every downstream object that changed source files feed. Any stage of source coverage is valid. Without a coop-data-doc.yml or built graph, proceed without it (an aid, not a gate): never 'scan' or 'build' unasked; name /setup-docs only if the user asks. Outputs are committable; source is never touched.",
+        "promptSnippet": "SQL+Power BI estate: lineage graph, one object's up/downstream, what a change feeds",
+        "promptGuidelines": [
+          "When built lineage docs exist, call data_doc with command='lineage', object='<name>' before changing a SQL object, DAX measure or semantic model. Don't reconstruct lineage by hand; without built docs, sql_impact is the check.",
+          "After editing SQL, DAX or model source files and before presenting the change, call data_doc with command='impact', files=[the changed paths] and report every downstream object it lists.",
+          "Default to 'lineage' and 'impact' (read-only); 'scan' or 'build' only when the user asks. Read the focused per-object Markdown via manifest.json, not the whole tree.",
+          "Without a coop-data-doc.yml or built graph ('no built graph'), proceed without it; no scan, build or /setup-docs unless the user asks."
+        ],
+        "parameters": {}
+      }
+    ],
+    "commands": [
+      {
+        "name": "start",
+        "description": "Open the coop \"Start Here\" menu of common tasks"
+      },
+      {
+        "name": "setup-project",
+        "description": "Set up or edit this folder's .coop/project.yml (interactive wizard)"
+      },
+      {
+        "name": "project-share",
+        "description": "Share .coop/project.yml with the team (commit that one file and push)"
+      },
+      {
+        "name": "project-get",
+        "description": "Get the team's .coop/project.yml from origin (nothing else moves)"
+      },
+      {
+        "name": "setup-docs",
+        "description": "Set up or rebuild coop-data-doc lineage docs for this folder (interactive wizard; `live` reads the dev database, `refresh` reads it again now)"
+      },
+      {
+        "name": "impact",
+        "description": "Show the downstream coop holds for a SQL object this session (/impact [schema.name])"
+      },
+      {
+        "name": "sql-source",
+        "description": "SQL source control (sqlsc) for this Windows user: /sql-source on | off | permissions | (show)"
+      },
+      {
+        "name": "feedback",
+        "description": "Report a bug or send an idea or question to the coop team (you check a redacted preview first)"
+      },
+      {
+        "name": "standards-status",
+        "description": "Show effective standards and independent source states"
+      }
+    ],
+    "notices": [],
+    "turns": [
+      {
+        "message": {
+          "customType": "coop-lineage",
+          "display": false,
+          "content": "An observed lineage graph is available under data-docs: graph.json. Its coverage may be partial or unknown; empty lineage does not prove zero impact. BEFORE analyzing or changing any SQL object, DAX measure, or semantic model, look up its observed up/downstream impact via the data_doc tool (command=\"lineage\", object=\"<name>\"). Use the graph as it is; do not run data_doc build on your own. If the graph looks stale, say so once; the user decides whether to rebuild it.",
+          "details": {
+            "outputDir": "data-docs"
+          }
+        }
+      }
+    ]
+  }
+}
