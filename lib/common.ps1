@@ -2341,7 +2341,10 @@ function Invoke-CoopFeaturesCli {
 # escaped), so no console code page garbles a path in it.
 function Get-CoopClientRulesStatus([string]$Cwd) {
   if (-not (Test-Have 'node')) { return @{ Data = $null; Error = 'Node.js is not on PATH (coop needs it; run coop doctor)' } }
-  if (-not $Cwd) { $Cwd = (Get-Location).Path }
+  if (-not $Cwd) { $Cwd = (Get-Location).ProviderPath }
+  # A trailing backslash before the closing quote PS 5.1 adds around a path with
+  # spaces escapes that quote for node; keep a drive root (C:\) as it is.
+  if ($Cwd.Length -gt 3) { $Cwd = $Cwd.TrimEnd('\', '/') }
   $cli = Join-Path $script:CoopRoot 'lib\client-rules.mjs'
   $eap = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'

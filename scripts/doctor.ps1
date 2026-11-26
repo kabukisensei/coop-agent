@@ -928,11 +928,14 @@ if ($null -eq $featureList) {
       'comments' { D-Ok 'Diff review comments on: the window''s Changes pane collects line comments and sends them as one prompt' }
       'instructions' {
         # The same loader the session uses: what loads, and every line or file left out.
-        $rules = Get-CoopClientRulesStatus (Get-Location).Path
+        # ProviderPath: on a UNC share .Path carries the provider prefix node cannot read.
+        $rules = Get-CoopClientRulesStatus (Get-Location).ProviderPath
         if ($rules.Error) { D-Warn 'Client instructions on, but coop could not check them' $rules.Error }
         else {
           $fact = ([string]$rules.Data.line) -replace '^Client instructions: ', 'Client instructions on: '
-          if (@($rules.Data.problems).Count -gt 0) { D-Warn $fact ((@($rules.Data.problems) | ForEach-Object { [string]$_ }) -join '; ') }
+          # Filtered, so a missing or null problems list is none (in PS 5.1 @($null).Count is 1).
+          $problems = @($rules.Data.problems | Where-Object { $_ } | ForEach-Object { [string]$_ })
+          if ($problems.Count -gt 0) { D-Warn $fact ($problems -join '; ') }
           else { D-Ok $fact }
         }
       }
