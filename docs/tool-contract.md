@@ -458,11 +458,11 @@ and no prompt is asked (the read is dev only, catalog views only, read-only inte
 | Command | What it does |
 | --- | --- |
 | `setup` | Every dev target of the contract (`sql_targets.dev` and each `sql_targets.named.<set>.dev`) becomes a `live_sources` entry (`dev`, `dev_<set>`) with `environment: dev`, pointing at the repo `sql` or `sql_<set>` under `live/`. The host is resolved exactly as a read (`lib/sql_query.py` `resolve_target` and `resolve_connection`) and written through `coop-data-doc config-set`; coop never writes `coop-data-doc.yml` itself. A target that does not resolve as dev is `target_not_dev`. |
-| `refresh` | For each `live_sources` entry that is one of those dev targets (same host, same database), runs `coop-data-doc snapshot <name> --json` with the tenant-pinned token in the child's `COOP_DATA_DOC_ACCESS_TOKEN`. An entry the contract does not name is `not_a_dev_target` and gets no token. With `max_age_days`, a younger snapshot is skipped before anything is resolved or minted. | Before each snapshot the helper hashes the object files the previous manifest names and, after it, reports the objects added, changed and removed since that read (`since`, `changes`, by `schema.name (type)`) and puts the same as a dated section at the top of `live/dev-changes.md` (`changes_file`); a first read has nothing to compare with and gets neither. |
+| `refresh` | For each `live_sources` entry that is one of those dev targets (same host, same database), runs `coop-data-doc snapshot <name> --json` with the tenant-pinned token in the child's `COOP_DATA_DOC_ACCESS_TOKEN`. An entry the contract does not name is `not_a_dev_target` and gets no token. With `max_age_days`, a younger snapshot is skipped before anything is resolved or minted. With `mint: true` (the Daily lineage refresh, below) and no launch token, it mints the launch identity itself once everything else was checked. | Before each snapshot the helper hashes the object files the previous manifest names and, after it, reports the objects added, changed and removed since that read (`since`, `changes`, by `schema.name (type)`) and puts the same as a dated section at the top of `live/dev-changes.md` (`changes_file`); a first read has nothing to compare with and gets neither. |
 | `status` | The age of each source's snapshot from its `.coop-data-doc-snapshot.json`; reads files only. |
 | `build` | The Daily lineage refresh's rebuild (`scripts/docs-refresh.ps1`): writes `live/.gitignore` when missing, runs `coop-data-doc build --non-interactive` in the config's folder (no other command; an optional `timeout_seconds` caps it, `tool_timeout`) and answers `files_changed`, the files in the config's `output.dir` and `site_dir` whose content changed (a hash before and after). `build_failed` when the build exits non-zero. |
 
-`setup` and `refresh` never resolve or mint for a dev entry that names production (`dev_is_prod`): the same server and database, workspace and item, or Lakehouse `sql_endpoint_id` as any `prod` entry (`sql_targets.prod` or a named set's), or, when the contract sets no production entry, a server, database or set name that reads as production (`prod`, `production`, `prd`, `live`, as `lib/sqlsc.mjs` checks) or equals `fabric.environment_names.prod`. `setup` stops with `dev_is_prod`; `refresh` skips that target (a source on it is `not_a_dev_target`) and answers `dev_is_prod` when it was the only one.
+`setup` and `refresh` never resolve or mint for a dev entry that names production (`dev_is_prod`): the same server and database, workspace and item, or Lakehouse `sql_endpoint_id` as any `prod` entry (`sql_targets.prod` or a named set's), or, when the dev entry's own set has no real production entry (a `TODO` template names nothing), a server, database or set name that reads as production (`prod`, `production`, `prd`, `live`, as `lib/sqlsc.mjs` checks) or equals `fabric.environment_names.prod`. `setup` stops with `dev_is_prod`; `refresh` skips that target (a source on it is `not_a_dev_target`) and answers `dev_is_prod` when it was the only one.
 
 `/setup-docs` offers "The live dev database" when the contract has a dev SQL
 target: `setup`, then `refresh`, then the usual wizard (for Power BI and the
@@ -489,16 +489,26 @@ separate feature and is unchanged.
 **The Daily lineage refresh** (Features, `docs-refresh`, off by default) runs the
 same helper once a day without a session: `scripts/docs-refresh.ps1`, started 20
 minutes after Windows sign-in or coop's start (whichever comes first), reads the
-client folder from `~/.coop/client.json`, sets `COOP_PROJECT_YML` to its project
-file, mints the tenant-pinned token with `Get-CoopFabricMcpToken` (no prompt; none
-is `signin_needed`) into the child's `COOP_FABRIC_MCP_TOKEN` only, and sends
-`{"command":"refresh","config":<coop-data-doc.yml>}` then, when something was
-read, `{"command":"build","config":...,"timeout_seconds":<what is left of 20
-minutes>}` on stdin. It runs nothing else (no Pi, no Git, no other SQL helper;
-`tests/docs-refresh.test.py` checks). The result is
-`~/.coop/docs-refresh/state.json` (`day`, `from`, `started`, `finished`,
-`result`, `files_changed`, `objects_changed`, `sources`, and the one `line` doctor
-and the next session start show).
+client folder from `~/.coop/client.json`, gives the child `COOP_PROJECT_YML` (its
+project file) and no `COOP_FABRIC_MCP_TOKEN`, and sends
+`{"command":"refresh","config":<coop-data-doc.yml>,"mint":true}` then, when
+something was read, `{"command":"build","config":...,"timeout_seconds":<what is
+left of 20 minutes>}` on stdin. With `mint` (only `refresh` takes it, only
+`true`) and no launch token in its environment, `live_docs.py` checks the config,
+the tool, the live sources, the project file found from the config's folder and
+its dev targets (`dev_is_prod`) first, then mints the launch identity the way
+`warehouse_mcp.py launch-token` does (the audience of the first ready dev entry
+that is not production, a named set's included, pinned to the client tenant)
+inside its own process; a failed mint is its warning state at `stage:
+"launch_token"` (`auth_required` is the only one the daily line calls an expired
+sign-in). Children never get the launch identity. On timeout the run stops the
+helper with everything under it (`taskkill /T /F` on Windows). It runs nothing
+else (no Pi, no Git, no other SQL helper; `tests/docs-refresh.test.py` checks).
+The result is `~/.coop/docs-refresh/state.json` (`day`, `from`, `started`,
+`finished`, `result`, `detail` (the helper's own answer or the exception, for
+the log), `files_changed`, `objects_changed`, `sources`, and the one `line`
+doctor and the next session start show: what happened and where to fix it, no
+code). `~/.coop/logs/docs-refresh.log` has the line with `[<result>: <detail>]`.
 
 ### `catalog_snapshot` (committed dev catalog snapshot)
 

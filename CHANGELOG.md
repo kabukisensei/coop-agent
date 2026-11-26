@@ -137,27 +137,35 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   during start-up: the sign-in hook schedules it once it has waited for coop's own
   update (that wait counts toward the 20 minutes) and opened the window, and `coop`
   and the window schedule it once Pi or the window is started, unless today's run
-  is done or one is already waiting. No Task Scheduler task: a waiter in the
-  built-in `powershell.exe` (hidden, below normal priority, detached, so closing
-  coop does not stop it) sleeps until the due time, exits if the feature was
+  is done or one is already waiting (never sooner than 2 minutes after it is
+  scheduled, so a long update wait or first-launch setup does not put it in the
+  start-up). No Task Scheduler task: a waiter in the built-in `powershell.exe`
+  (hidden, below normal priority, detached, so closing coop does not stop it; it
+  never inherits the launch's sign-in token, the window's launch spec or the
+  first-run marker) sleeps until the due time, exits if the feature was
   switched off, waits up to 30 minutes past it while a coop update installs (then
   skips the day without claiming it, `update_running`), and claims the day with a
   create-new file, so two coop windows starting at once, or sign-in and coop
-  together, give one run. A computer asleep at the due time runs it on waking; one
+  together, give one run. The waiter records its own process and start time, so
+  a process id reused after a logoff or reboot is not taken for it. A computer asleep at the due time runs it on waking; one
   asleep past midnight runs that day's 20 minutes after waking. The run is a fixed
   script (`scripts/docs-refresh.ps1`), not an agent: no Pi, no model, no Git. It
   reads the client folder from `~/.coop/client.json`, uses that folder's
-  `.coop/project.yml`, mints the tenant-pinned token without a prompt (into the
-  child's environment only) and runs `lib/live_docs.py` (`refresh`, then the new
-  narrow `build`, which also counts the files it changed); Power BI is read from
-  the checked-out folder. The whole run stops after 20 minutes. Dev targets only:
-  a dev target that names a production database is never read (`dev_is_prod`).
-  A missing setup is skipped with a reason code (`no_client`, `no_project`,
-  `no_docs_config`, `no_live_sources`, `no_dev_target`, `dev_is_prod`,
-  `tool_unavailable`), a failure says why (`signin_needed`, `timeout`,
-  `snapshot_failed`, `build_failed`), and a failed run is not retried that day
-  (`/setup-docs refresh` runs it now). Doctor and the next session start show one
-  line: `Docs refreshed 08:21, 3 files changed.` or the reason. Results:
+  `.coop/project.yml` and runs `lib/live_docs.py` (`refresh` with the new `mint`,
+  then the new narrow `build`, which also counts the files it changed); Power BI
+  is read from the checked-out folder. `live_docs.py` checks the docs setup, the
+  tool, the live sources and the dev targets first and only then mints the
+  tenant-pinned sign-in, without a prompt and inside its own process, for a real
+  dev target (a named set's included). The whole run stops after 20 minutes, and
+  a run that hits the cap is stopped with everything it started (coop-data-doc
+  too). Dev targets only: a dev target that names a production database is never
+  read (`dev_is_prod`). A missing setup is skipped and a failure is reported in
+  one plain line that says what happened and where to fix it, in the window's
+  words and then the slash command, for example "There is no dev SQL target. Add
+  a dev SQL target in Project > SQL targets (or /setup-project)."; the code and
+  the reason go to the log. A failed run is not retried that day. Doctor and the
+  next session start show the line: `Docs refreshed 08:21, 3 files changed.` or
+  the reason. Results:
   `~/.coop/docs-refresh/state.json`, `~/.coop/logs/docs-refresh.log` (under 1 MB);
   claim files older than 7 days go. Off, sign-in and coop only read the switch:
   nothing starts and nothing is written.
@@ -170,9 +178,10 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   production entry, one whose server, database or set name reads as production
   (`prod`, `production`, `prd`, `live`) or equals `fabric.environment_names.prod`
   (`dev_is_prod`). This holds for `/setup-docs`, the weekly session-start refresh
-  and the Daily lineage refresh alike. The Warehouse launch token function
-  (`Get-CoopFabricMcpToken`) moved from `bin/coop.ps1` into `lib/common.ps1`,
-  unchanged, so the daily refresh mints it the same way.
+  and the Daily lineage refresh alike. A `prod` entry that is still a `TODO`
+  template names nothing, and only a production entry in the dev entry's own set
+  turns the name checks off. `/setup-docs live` says so in plain words too ("the
+  dev SQL target points at production ... Project > SQL targets").
 - **The secret-text patterns live in `lib/secret-text.mjs`.** `lib/feedback.mjs`
   imports them back in the same order, so feedback reports are redacted exactly as
   before. The client instructions use the same patterns plus private-key headers,
