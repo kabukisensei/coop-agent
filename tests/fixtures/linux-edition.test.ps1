@@ -17,6 +17,8 @@
 #   S3         fab / te fallbacks in PIPX_BIN_DIR, ~/.local/bin, the pipx venv
 #              (Get-CoopPipxVenvsDir), executable files only; Python Fabric
 #              (SSH) as the fallback fab is refused
+#   S5         which pipx runs on Linux: a dead pipx script on PATH is skipped
+#              for the next pipx that answers, else <python> -m pipx
 #   S4         platform words (Get-CoopAccountNoun, Get-CoopCloneInstallCommand)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '_common.ps1')
@@ -62,7 +64,7 @@ function Get-CoopLines([scriptblock]$Block) {
 
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('coop-lx1-' + [System.IO.Path]::GetRandomFileName())
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
-$saved = Save-Env @('PATH', 'HOME', 'PIPX_BIN_DIR', 'PIPX_HOME', 'COOP_PIPX_HOME', 'COOP_DIR', 'COOP_AGENT_DIR', 'PI_CODING_AGENT_DIR', 'COOP_ASSUME_YES', 'COOP_ORIGINAL_PATH')
+$saved = Save-Env @('PATH', 'HOME', 'PIPX_BIN_DIR', 'PIPX_HOME', 'COOP_PIPX_HOME', 'COOP_DIR', 'COOP_AGENT_DIR', 'PI_CODING_AGENT_DIR', 'COOP_ASSUME_YES', 'COOP_ORIGINAL_PATH', 'COOP_PIPX_BIN', 'COOP_TEST_CALLS')
 try {
   # --- SP6 fix 1: pi version probe ----------------------------------------------
   $bin = Join-Path $tmp 'bin'
@@ -215,6 +217,57 @@ try {
     }
     Expect 'after that node process exits, nothing is busy' (Test-CoopPiRunning $null @($npmRoot)) $false
   }
+
+  # --- S5: which pipx coop runs on Linux -------------------------------------------
+  # The CI linux job (run 45754897943): a `pip install --user pipx` script on
+  # PATH whose module was in another HOME's user site died with "No module named
+  # 'pipx'", and coop still ran it. A pipx on PATH counts only if it answers;
+  # else the next one on PATH, else `<python> -m pipx`.
+  $pr = Join-Path $tmp 'pipx-res'
+  $deadDir = Join-Path $pr 'dead'; $aptDir = Join-Path $pr 'apt'; $pyNoDir = Join-Path $pr 'py-no-pipx'; $pyYesDir = Join-Path $pr 'py-pipx'
+  foreach ($d in @($deadDir, $aptDir, $pyNoDir, $pyYesDir)) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
+  $env:COOP_TEST_CALLS = Join-Path $pr 'calls.log'
+  Remove-Item Env:\COOP_PIPX_BIN -ErrorAction SilentlyContinue
+  Write-Shim -Name 'pipx' -Dir $deadDir -Sh @'
+printf '%s\n' "dead $*" >> "$COOP_TEST_CALLS"
+echo "ModuleNotFoundError: No module named 'pipx'" >&2
+exit 1
+'@
+  Write-Shim -Name 'pipx' -Dir $aptDir -Sh @'
+printf '%s\n' "apt $*" >> "$COOP_TEST_CALLS"
+echo 1.4.3
+'@
+  Write-Shim -Name 'python3' -Dir $pyNoDir -Sh @'
+if [ "$1" = "--version" ]; then echo "Python 3.13.1"; exit 0; fi
+echo "/usr/bin/python3: No module named pipx" >&2
+exit 1
+'@
+  Write-Shim -Name 'python3' -Dir $pyYesDir -Sh @'
+if [ "$1" = "--version" ]; then echo "Python 3.12.3"; exit 0; fi
+if [ "$1" = "-m" ] && [ "$2" = "pipx" ]; then shift 2; printf '%s\n' "python3 -m pipx $*" >> "$COOP_TEST_CALLS"; echo 1.19.1; exit 0; fi
+exit 1
+'@
+  $aptPipx = Join-Path $aptDir 'pipx'
+  function Get-PipxCalls { if (Test-Path -LiteralPath $env:COOP_TEST_CALLS) { return [System.IO.File]::ReadAllText($env:COOP_TEST_CALLS) } else { return '' } }
+  $env:PATH = "$pyNoDir$sep$aptDir"
+  $rc = Invoke-CoopPipx @('list')
+  if ($rc -eq 0 -and (Get-PipxCalls).Contains('apt list')) { Ok 'a standalone pipx (apt/pacman) on PATH, python3 without the pipx module: the pipx binary runs' }
+  else { Ko "standalone pipx with a python3 lacking the module: rc=$rc calls=[$(Get-PipxCalls)] failure=$($script:CoopPipxLastFailure)" }
+  $env:PATH = "$deadDir$sep$pyNoDir$sep$aptDir"
+  Expect 'a dead pipx script first on PATH: the working pipx after it is used' ((Get-CoopPipxInvocation) -join ' ') $aptPipx
+  Expect 'a dead pipx script first on PATH: Get-CoopPipxCmd names the working pipx' (Get-CoopPipxCmd) $aptPipx
+  Remove-Item -LiteralPath $env:COOP_TEST_CALLS -ErrorAction SilentlyContinue
+  $rc = Invoke-CoopPipx @('install', 'demo-tool')
+  $calls = Get-PipxCalls
+  if ($rc -eq 0 -and $calls.Contains('apt install demo-tool') -and -not $calls.Contains('dead install')) { Ok 'Invoke-CoopPipx runs the working pipx, not the dead one' }
+  else { Ko "Invoke-CoopPipx with a dead pipx first on PATH: rc=$rc calls=[$calls] failure=$($script:CoopPipxLastFailure)" }
+  $env:PATH = "$deadDir$sep$pyYesDir"
+  Expect 'a dead pipx script on PATH, python3 with the pipx module: <python3> -m pipx' ((Get-CoopPipxInvocation) -join ' ') ((Join-Path $pyYesDir 'python3') + ' -m pipx')
+  $env:PATH = "$deadDir$sep$pyNoDir"
+  Expect 'only a dead pipx and no pipx module: no pipx (the pipx unit installs one)' ((Get-CoopPipxInvocation) -join ' ') ''
+  Expect 'only a dead pipx: Test-CoopPipxAvailable is false' (Test-CoopPipxAvailable) $false
+  $env:PATH = "$bin$sep$($saved['PATH'])"
+  Remove-Item Env:\COOP_TEST_CALLS -ErrorAction SilentlyContinue
 
   # --- S3: fab / te fallbacks ------------------------------------------------------
   $fakeHome = New-SandboxHome (Join-Path $tmp 'home')

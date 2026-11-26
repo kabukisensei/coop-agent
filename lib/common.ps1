@@ -911,8 +911,14 @@ function Get-CoopPipxVenvsDir {
 # Installed version of a pipx-managed distribution from in-venv metadata.
 # The pipx command used for inventory probes. COOP_PIPX_BIN lets callers pin an
 # exact binary — useful when PATH carries shadows/stubs, and in tests.
+# On Linux it is the first `pipx` on PATH that answers (Find-CoopUnixPipx), so a
+# dead pipx script earlier on PATH is not the one probed.
 function Get-CoopPipxCmd {
   if ($env:COOP_PIPX_BIN) { return $env:COOP_PIPX_BIN }
+  if (-not (Test-CoopWindowsHost)) {
+    $unixPipx = Find-CoopUnixPipx
+    if ($unixPipx) { return $unixPipx }
+  }
   return 'pipx'
 }
 
@@ -4295,12 +4301,45 @@ function Test-CoopPythonModulePipx([string]$Python) {
   } catch { return $false } finally { $ErrorActionPreference = $eap }
 }
 
+# Linux: the first `pipx` on PATH that answers `--version`, by full path; ''
+# when none does. A `pipx` script can be on PATH and still be dead: one that
+# `pip install --user pipx` wrote for a Python since upgraded or removed, or for
+# another HOME (the CI linux job, run 45754897943: the script's module lived in
+# the runner's original user site, so every call died with "No module named
+# 'pipx'"). Found on PATH alone, coop reported "pipx present" and every tool
+# install failed. A dead one is skipped so a working pipx after it (apt's
+# /usr/bin/pipx) or `<python> -m pipx` is used instead. Answers are cached per
+# path for the session; a dead one is probed again (the pipx unit may repair it).
+$script:CoopUnixPipxAnswers = @{}
+function Test-CoopUnixPipxAnswers([string]$Path) {
+  if (-not $Path) { return $false }
+  if ($script:CoopUnixPipxAnswers.ContainsKey($Path)) { return $true }
+  $eap = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'Continue'
+    $null = & $Path --version 2>&1
+    if ($LASTEXITCODE -ne 0) { return $false }
+  } catch { return $false } finally { $ErrorActionPreference = $eap }
+  $script:CoopUnixPipxAnswers[$Path] = $true
+  return $true
+}
+function Find-CoopUnixPipx {
+  foreach ($c in @(Get-Command pipx -CommandType Application -All -ErrorAction SilentlyContinue)) {
+    if (Test-CoopUnixPipxAnswers ([string]$c.Source)) { return [string]$c.Source }
+  }
+  return ''
+}
+
 function Get-CoopPipxInvocation {
   if ($env:COOP_PIPX_BIN) {
     if (Get-Command $env:COOP_PIPX_BIN -ErrorAction SilentlyContinue) { return @([string]$env:COOP_PIPX_BIN) }
     return @()
   }
-  if (Get-Command pipx -ErrorAction SilentlyContinue) { return @('pipx') }
+  if (-not (Test-CoopWindowsHost)) {
+    $unixPipx = Find-CoopUnixPipx
+    if ($unixPipx) { return @($unixPipx) }
+  }
+  elseif (Get-Command pipx -ErrorAction SilentlyContinue) { return @('pipx') }
   foreach ($name in @('python3', 'python')) {
     $c = Get-Command $name -ErrorAction SilentlyContinue
     if (-not $c -or ($c.Source -and $c.Source -match '\\WindowsApps\\')) { continue }
