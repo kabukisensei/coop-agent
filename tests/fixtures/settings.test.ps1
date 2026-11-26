@@ -28,7 +28,7 @@ try {
     return @{ Rc = $LASTEXITCODE; Out = $out }
   }
   $rows = @(
-    '  Client instructions     off  instructions  (not in this version yet)',
+    '  Client instructions     off  instructions',
     '  Change history          off  history  (not in this version yet)',
     '  Diff review comments    off  comments',
     '  Daily lineage refresh   off  docs-refresh  (not in this version yet)',
