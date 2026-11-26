@@ -220,6 +220,15 @@ echo "→ client instructions (CW1): off is today's behaviour (the 03600165 gold
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/client-instructions-off.test.mjs"
 echo "→ client instructions (CW1) and the guardrails: a real git repository, the commit prompt"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/client-rules-guardrails.test.mjs"
+echo "→ change history (CW2): the store, real writes through the guardrails, restore, the folder block"
+COOP_TEST_DIST="$TMP" node --test --test-reporter=spec "$ROOT/tests/action-history.test.mjs"
+echo "→ change history (CW2) off: no history code on the tool path (the store module stubbed and counted)"
+# The guardrails with lib/action-history.mjs left as an import, two folders down,
+# so it resolves to the counting stub the test writes at history-stub/lib/.
+mkdir -p "$TMP/history-stub/x/y"
+(cd "$ROOT" && npx -y esbuild "extensions/coop-guardrails/index.ts" --bundle --format=esm --platform=node --packages=external \
+  --external:../../lib/action-history.mjs --outfile="$TMP/history-stub/x/y/coop-guardrails.mjs" >/dev/null 2>&1)
+COOP_TEST_HISTORY_STUB_DIST="$TMP/history-stub" node "$ROOT/tests/action-history-off.test.mjs"
 echo "→ client instructions (CW1) across /new: the installed Pi's own extension loader"
 # The Pi package behind `pi` on PATH (the pinned one, when the caller puts it first).
 PI_PKG=""
@@ -392,6 +401,8 @@ node "$ROOT/tests/desktop.test.mjs"
 node "$ROOT/desktop/scripts/runtime-lock.mjs" check
 echo "→ coop window side pane (D1b2): changes, standards, project form, docs setup"
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/desktop-panes.test.mjs"
+echo "→ change history (CW2) in the window: the Changes pane's History view and its read path"
+node "$ROOT/tests/history-pane.test.mjs"
 echo "→ coop window attachments (D1b2): Office and PDF text, the splash and the vibes"
 node "$ROOT/tests/desktop-attachments.test.mjs"
 echo "→ coop window package (D1c): the package bootstrap, electron-builder config, stage and installer acceptance"
@@ -431,6 +442,9 @@ if [ "${COOP_TEST_EXTENDED:-0}" = "1" ]; then
   echo "→ Fabric request headers and SQL launcher (MCP launch phases: tests/fixtures/fabric-mcp-launch.test.ps1 in run.ps1)"
   node "$ROOT/tests/fabric-request-headers.test.mjs"
   COOP_TEST_DIST="$TMP" node "$ROOT/tests/fabric-sql-launcher.test.mjs"
+
+  echo "→ change history (CW2): per-write overhead over 200 writes (under 10 ms at p95)"
+  COOP_TEST_DIST="$TMP" node "$ROOT/tests/action-history-overhead.test.mjs"
 
   echo "→ coop window: Pi as a real process (dialogs, hang, crash, leftover children)"
   node "$ROOT/tests/desktop-rpc.test.mjs"

@@ -7,7 +7,7 @@ import { createFinder } from "./find.mjs";
 import { renderItem, renderTurn, codeBlock } from "./view.mjs";
 import { parseInput, completions, noticePlace, KEYS } from "./commands.mjs";
 import { registerPane, openPane, togglePane, closePane, currentPane, refreshPane, initPanes } from "./panes.mjs";
-import { commentsOn, mountChanges } from "./pane-changes.mjs";
+import { commentsOn, historyOn, historyRegisteredIn, mountChanges } from "./pane-changes.mjs";
 import { featuresGroup, refreshFeatures } from "./features-settings.mjs";
 import { mountStandards } from "./pane-standards.mjs";
 import { mountProject } from "./pane-project.mjs";
@@ -1651,7 +1651,7 @@ function wire() {
 
 function registerPanes() {
   const deps = { coop, codeBlock };
-  registerPane({ id: "changes", label: "Changes", icon: "diff", description: "Files changed since the last commit", mount: (box, options) => mountChanges(box, options, { ...deps, cwd: () => (app.info ? app.info.cwd : ""), setPrompt, getPrompt: () => prompt().value, commentsOn: () => commentsOn(app.info && app.info.features) }) });
+  registerPane({ id: "changes", label: "Changes", icon: "diff", description: "Files changed since the last commit", mount: (box, options) => mountChanges(box, options, { ...deps, cwd: () => (app.info ? app.info.cwd : ""), setPrompt, getPrompt: () => prompt().value, commentsOn: () => commentsOn(app.info && app.info.features), historyOn: () => historyOn(app.info && app.info.features), historyRegistered: () => historyRegisteredIn(app.commands) }) });
   registerPane({ id: "standards", label: "Standards", icon: "shield", description: "The standards coop applies in this folder", mount: (box, options) => mountStandards(box, options, deps) });
   registerPane({ id: "project", label: "Project", icon: "form", description: "Project settings (.coop/project.yml)", mount: (box, options) => mountProject(box, options, { ...deps, newSession: () => runAction("new") }) });
   registerPane({ id: "docs", label: "Docs", icon: "graph", description: "Lineage docs for this folder (coop-data-doc)", mount: (box, options) => mountDocs(box, options, { ...deps, sendSlash }) });

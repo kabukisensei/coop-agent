@@ -108,10 +108,39 @@ export function fixLinePrompt({ path, line, text, note }) {
 // diffs again it re-anchors each comment. Comments live in this tab's memory
 // only. Off (or an unreadable setting), the pane is ED1 exactly.
 
+/** True only when the window's feature list says feature `key` is on (an
+ *  unreadable list, or anything but a literal true, is off). */
+function featureOnIn(view, key) {
+  if (!view || view.ok === false || !Array.isArray(view.features)) return false;
+  return view.features.some((f) => f && f.key === key && f.on === true);
+}
+
+/** True only when the window's feature list says Change history (CW2) is on. */
+export function historyOn(view) {
+  return featureOnIn(view, "history");
+}
+
+/** What a History row's Restore button puts in the prompt (the person sends it; the
+ *  guardrails ask): the id, and the repository the pane picked (its folder relative
+ *  to the open folder) when it is not the open folder's own, since a file's history
+ *  lives in its own repository's store. */
+export function restorePrompt(id, repoRel = "") {
+  const rel = String(repoRel || "").replace(/[\u0000-\u001f\u007f]/g, "").trim();
+  return `/history restore ${String(id || "").replace(/[^0-9a-f]/gi, "")}${rel ? ` ${rel}` : ""}`;
+}
+
+/** True only when Pi's command list (get_commands) has /history: this coop
+ *  registered it at start. A slash command it lacks would go to the model as a
+ *  plain prompt, so Restore is offered only then. */
+export function historyRegisteredIn(commands) {
+  return Array.isArray(commands) && commands.some((c) => c && c.name === "history");
+}
+
+const APPROVAL_TEXT = { "none-needed": "no approval needed", "asked-once": "you approved it", "session-grant": "a session approval", "production-desk": "approved at the desk (production)", "restore-approved": "a restore you approved" };
+
 /** True only when the window's feature list says Diff review comments is on. */
 export function commentsOn(view) {
-  if (!view || view.ok === false || !Array.isArray(view.features)) return false;
-  return view.features.some((f) => f && f.key === "comments" && f.on === true);
+  return featureOnIn(view, "comments");
 }
 
 /**
@@ -304,12 +333,19 @@ export function reviewPrompt(comments) {
   return [`Review comments on the Changes pane${where}:`, ...comments.map((c, i) => commentLine(c, i + 1)), "Revise under the usual rules; answer each by number."].join("\n");
 }
 
-export function mountChanges(box, options, { coop, cwd, setPrompt, getPrompt, commentsOn: isCommentsOn }) {
+export function mountChanges(box, options, { coop, cwd, setPrompt, getPrompt, commentsOn: isCommentsOn, historyOn: isHistoryOn, historyRegistered: isHistoryRegistered }) {
   // `model` is the parsed diff, parsed once when the diff arrives; `ticket` names
   // the latest diff request, so a late answer for an earlier one is dropped.
   const state = { files: [], drafts: [], draftsDir: "", selected: "", mode: "unified", query: "", active: 0, matches: [], diff: null, loading: false, repos: [], repo: null, comments: [], anchor: null, model: null, nextComment: 1, ticket: 0, lastBatch: [], lastPrompt: "" };
   // Diff review comments (CW3): read at every use, so a Settings change applies at once.
   const reviewing = () => { try { return typeof isCommentsOn === "function" && isCommentsOn() === true; } catch { return false; } };
+  // Change history (CW2): a History view beside "Uncommitted", only while the switch is on.
+  state.view = "changes";
+  state.history = [];
+  const historyEnabled = () => { try { return typeof isHistoryOn === "function" && isHistoryOn() === true; } catch { return false; } };
+  // Restore needs /history in this coop (registered at start, with the switch on then).
+  const historyRunnable = () => { try { return typeof isHistoryRegistered === "function" && isHistoryRegistered() === true; } catch { return false; } };
+  const viewRow = el("div", { class: "pane-toolbar change-views", role: "tablist", "aria-label": "Which changes to show" });
   // Shown only when the open folder holds more than one repository.
   const repoPicker = el("select", { class: "field", "aria-label": "Repository to compare", title: "Which repository's changes to show", onchange: (event) => load("", event.target.value) });
   const repoRow = el("label", { class: "pane-toolbar change-repo", hidden: true }, el("span", { class: "change-repo-label", text: "Repository" }), repoPicker);
@@ -345,7 +381,72 @@ export function mountChanges(box, options, { coop, cwd, setPrompt, getPrompt, co
     modeButton.textContent = state.mode === "split" ? "Unified" : "Side by side";
   }
 
+  // The Uncommitted / History switch: drawn only while Change history is on.
+  function renderViews() {
+    if (!historyEnabled()) {
+      viewRow.remove();
+      if (state.view === "history") { state.view = "changes"; load(""); }
+      return;
+    }
+    const tab = (view, text, title) => el("button", { type: "button", role: "tab", class: `btn${state.view === view ? " active" : ""}`, "aria-selected": state.view === view ? "true" : "false", title, text,
+      onclick: () => { if (state.view === view) return; state.view = view; state.selected = ""; renderViews(); load(""); } });
+    fill(viewRow, tab("changes", "Uncommitted", "Files changed since the last commit"), tab("history", "History", "coop's own edits in this repository, newest first (Change history)"));
+    if (viewRow.parentNode !== box) box.insertBefore(viewRow, box.firstChild);
+  }
+
+  function renderHistoryList() {
+    fill(list, ...state.history.map((entry) => {
+      const key = `history:${entry.id}`;
+      const when = String(entry.ts || "").replace("T", " ").slice(0, 16);
+      const note = entry.kind !== "file" ? "not restorable here" : entry.excluded ? "content not kept" : entry.created ? "created the file" : "";
+      const item = el("li", { class: `change-file history-row${key === state.selected ? " active" : ""}`, role: "option", "aria-selected": key === state.selected ? "true" : "false", tabindex: "0",
+        title: `${when} · ${entry.tool} · ${APPROVAL_TEXT[entry.approval] || entry.approval} · session ${String(entry.session || "").slice(0, 8)}${entry.excluded ? ` · ${entry.excluded}` : ""}` },
+        el("span", { class: "change-status history", text: entry.kind === "file" ? "H" : "·", title: entry.kind === "file" ? "A file coop edited" : "A live change or command (recorded, not restorable here)" }),
+        el("span", { class: "history-when", text: when }),
+        pathLabel(entry.target || entry.tool),
+        el("span", { class: "chip", text: entry.result === "error" ? "failed" : note || entry.tool }));
+      item.addEventListener("click", () => selectHistory(entry.id));
+      item.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectHistory(entry.id); } });
+      return item;
+    }));
+  }
+
+  async function selectHistory(id) {
+    const ticket = ++state.ticket;
+    state.selected = `history:${id}`;
+    state.active = 0;
+    renderHistoryList();
+    const entry = state.history.find((e) => e.id === id);
+    const restorable = Boolean(entry && entry.kind === "file" && !entry.excluded && !entry.created);
+    const repo = state.repos.find((r) => r.id === state.repo);
+    const action = !restorable ? null
+      : historyRunnable() ? el("button", { type: "button", class: "btn change-restore", title: "Put /history restore in the prompt; you send it, and coop asks before it writes (with a backup first)", onclick: () => { if (typeof setPrompt === "function" && historyRunnable()) setPrompt(restorePrompt(id, repo ? repo.rel : "")); } }, "Restore")
+        : el("span", { class: "change-restore-note", text: "Restore needs /history, which this session does not have yet (Change history was turned on after it started): run /new or restart coop" });
+    fill(fileHead, entry ? el("code", { text: `${entry.target} (change ${entry.id}, ${String(entry.ts || "").replace("T", " ").slice(0, 16)})` }) : "", action);
+    fill(diffBox, el("div", { class: "working" }, el("span", { class: "spinner" }), el("span", { text: "Reading the change" })));
+    const result = await coop.historyDiff(id);
+    if (ticket !== state.ticket || state.selected !== `history:${id}`) return;
+    if (!result || !result.success) { setDiff({ error: (result && result.error) || "Could not read that change." }); renderDiffView(); return; }
+    setDiff(result.data);
+    renderDiffView(true);
+  }
+
+  async function loadHistory() {
+    fill(summary, el("span", { class: "spinner" }), el("span", { text: " Reading the change history" }));
+    const result = await coop.history();
+    if (state.view !== "history") return;
+    if (!result || !result.success) { state.history = []; summary.textContent = (result && result.error) || "Could not read the change history."; renderHistoryList(); clearDiff(); fill(fileHead); return; }
+    state.history = result.data.entries || [];
+    const n = state.history.length;
+    summary.textContent = n ? `${n} ${n === 1 ? "change" : "changes"} coop made in this repository, newest first (kept on this computer only)` : "No changes recorded for this repository yet.";
+    const target = state.history.some((e) => `history:${e.id}` === state.selected) ? state.selected.slice(8) : (state.history[0] && state.history[0].id) || "";
+    renderHistoryList();
+    if (target) await selectHistory(target);
+    else { clearDiff(); fill(fileHead); }
+  }
+
   function renderList() {
+    if (state.view === "history") { renderHistoryList(); return; }
     fill(list, ...state.files.map((file) => {
       const item = el("li", { class: `change-file${file.path === state.selected ? " active" : ""}`, role: "option", "aria-selected": file.path === state.selected ? "true" : "false", tabindex: "0", title: file.oldPath ? `${file.oldPath} -> ${file.path}` : file.path },
         el("span", { class: `change-status ${file.status.replace(/\s+/g, "-")}`, text: STATUS_LABEL[file.status] || "M", title: statusTitle(file.status), "aria-label": statusTitle(file.status) }),
@@ -402,7 +503,7 @@ export function mountChanges(box, options, { coop, cwd, setPrompt, getPrompt, co
     }
     const model = state.model;
     if (!model || !model.hunks.length) { fill(diffBox, el("p", { class: "pane-empty", text: "No lines changed: the file was renamed or its permissions changed." })); count.textContent = ""; renderReviewBar(); return; }
-    const review = reviewing();
+    const review = reviewing() && state.view !== "history"; // a recorded change takes no comments
     const { node, matches } = renderDiff(model, { mode: state.mode, query: state.query, active: state.active, comments: review });
     state.matches = matches;
     count.textContent = state.query ? (matches.length ? `${Math.min(state.active + 1, matches.length)} of ${matches.length}` : "No matches") : "";
@@ -453,6 +554,13 @@ export function mountChanges(box, options, { coop, cwd, setPrompt, getPrompt, co
   }
 
   async function loadNow(want, repo) {
+    renderViews();
+    if (state.view === "history") {
+      // The repository picker still chooses whose history to show.
+      if (typeof repo === "string") { const picked = await coop.changes(repo); if (picked && picked.success) { state.repos = picked.data.repos || []; state.repo = picked.data.current; renderRepos(); } }
+      await loadHistory();
+      return;
+    }
     fill(summary, el("span", { class: "spinner" }), el("span", { text: " Reading changes" }));
     const asked = want;
     let pick = typeof repo === "string" ? repo : null;
@@ -536,6 +644,7 @@ export function mountChanges(box, options, { coop, cwd, setPrompt, getPrompt, co
   }
 
   diffBox.addEventListener("click", (event) => {
+    if (state.view === "history") return; // a recorded change is read-only here; Restore acts on it
     if (event.target.closest(".fix-line")) return;
     if (reviewing()) { commentClick(event); return; }
     const selection = window.getSelection ? String(window.getSelection()) : "";
@@ -569,7 +678,7 @@ export function mountChanges(box, options, { coop, cwd, setPrompt, getPrompt, co
   }
 
   function renderReviewBar() {
-    if (!reviewing() || !state.comments.length) { reviewBar.remove(); return; }
+    if (!reviewing() || !state.comments.length || state.view === "history") { reviewBar.remove(); return; }
     const fresh = unsent().length;
     const waiting = nextBatch().length;
     fill(reviewBar,
@@ -706,7 +815,7 @@ export function mountChanges(box, options, { coop, cwd, setPrompt, getPrompt, co
   }
 
   // Settings turned the feature on or off: the diff and the bar follow at once.
-  window.addEventListener("coop:features", () => { if (state.diff) rerender(); else renderReviewBar(); });
+  window.addEventListener("coop:features", () => { renderViews(); if (state.diff) rerender(); else renderReviewBar(); });
 
   function step(direction) {
     if (!state.matches.length) return;

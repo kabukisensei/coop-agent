@@ -86,6 +86,47 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   injected instruction could still put text in front of it, like any file coop
   reads; the coded guardrails are what stop it acting on it. Keep the client
   repository's main branch protected.
+- **Change history** (Settings, Features, or `coop settings set history on`; off by
+  default, takes effect after `/new`, when Pi loads coop's extensions again; a
+  session that finds it switched on without `/history` registered says "restart
+  coop to use Change history" and records nothing). A private log of coop's own file edits, kept
+  on this computer only (`~/.coop/history/<repository>-<hash>/<month>/`: a
+  `log.jsonl` line per change and each file version once, gzipped; no Git, never
+  pushed). Each line names the time, session, tool, file, how the change was
+  approved (no approval needed, asked once, a session approval, at the desk for
+  production, a restore) and whether it failed; a live write or command coop asked
+  you about is recorded without content and marked not restorable here. Recording
+  happens after the edit: the write waits only for the file to be read before and
+  after (once each, never retried; a locked file is recorded without content),
+  about 0.35 ms per write (median; 0.53 ms at p95 over 200 writes, 2.8 ms for a
+  5 MB file), and a failure to record is an audit row and one notice per
+  session, never a failed edit. Secrets
+  and data are never stored: a secret-looking file, text that matches a secret
+  pattern, `.csv` `.tsv` `.parquet` `.xlsx` `.xls` `.pbix` `.bak`, anything under
+  `live/`, `backups/` or `drafts/`, a path `.gitignore` excludes, a binary file or
+  one over 5 MB is recorded without its content (a secret-looking or excluded path
+  is never even read). Each change is kept in its own file's repository's history,
+  so a client folder with several repositories works: `/history` lists the last 20
+  changes across the folder's repositories (`/history list <repo>` for one), and
+  `/history restore <id> [<repo>]` always asks with the diff,
+  writes a backup into the usual backups folder first and records its own line.
+  A file deleted since comes back (with its folder). When the file changed since,
+  only that change is taken out (`git merge-file`; a file that is binary now is
+  refused),
+  keeping later edits; when they overlap it says so and offers, as a separate,
+  plainly worded question, to overwrite the whole file. The window's Changes pane
+  gets a History view beside "Uncommitted": each change's diff, and Restore, which
+  puts `/history restore <id> [<repo>]` in the prompt for you to send, offered only
+  when this coop has `/history` (otherwise it says to restart coop). There is no
+  tool for the model and the history never enters its context: while the feature
+  is on, the guardrails block any model read, write or shell command that reaches
+  the history folder (by any spelling of the home folder, a link or a glob that
+  can match `history`). With it off, no history code runs at all. Retention follows the cleanup setting: month folders whose month ended
+  more than `cleanup.days` ago (45 by default) go whole, and the history stays
+  under 1 GB (the oldest months go first, never the current one, checked at
+  session start without holding it up). A history folder that is itself a link
+  or junction is never measured or cleaned, by the cleanup or the cap; doctor
+  shows the size and warns about such a link. Backups are unchanged.
 
 ### Changed
 - **The secret-text patterns live in `lib/secret-text.mjs`.** `lib/feedback.mjs`
@@ -104,6 +145,8 @@ All notable changes to coop-agent are recorded here. The format loosely follows
   re-running it keeps the feature switches, `sql_source_control` and `cleanup`
   (before: it rebuilt the file from its own answers), and it accepts a config
   another coop writer created without `schema_version`.
+- **The line diff moved to `lib/text-diff.mjs`** so the change history's restore
+  card and the window share it; `desktop/lib/text-diff.mjs` re-exports it.
 - **The context budget reports two totals.** A native tool behind a feature switch
   carries a `// coop:feature <key>` marker; `coop dev context-budget` shows the
   default-off total (what a fresh install sends, now 7,388 tokens) and the all-on
