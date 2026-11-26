@@ -299,6 +299,20 @@ with tempfile.TemporaryDirectory() as tmp:
     del os.environ[ld.wmcp.FABRIC_TOKEN_ENV]
     del os.environ["COOP_PROJECT_YML"]
 
+# --- stdin after a BOM (Windows CI, 2026-11-26) ----------------------------------------------
+# Windows PowerShell 5.1's Process.StandardInput writes a UTF-8 BOM before the
+# request on a UTF-8 console; the real helper, as a process, reads past it (the
+# BOM bytes written here, on every platform). Two BOMs too (a writer's and a
+# request's own), and a plain request still reads.
+import subprocess
+
+with tempfile.TemporaryDirectory() as tmp:
+    request = json.dumps({"command": "status", "config": str(Path(tmp) / "no-such" / "coop-data-doc.yml")}).encode("ascii")
+    for prefix in (b"", b"\xef\xbb\xbf", b"\xef\xbb\xbf\xef\xbb\xbf"):
+        done = subprocess.run([sys.executable, str(ROOT / "lib" / "live_docs.py")], input=prefix + request, capture_output=True, timeout=60, cwd=tmp)
+        answer = json.loads(done.stdout.decode("utf-8"))
+        assert done.returncode == 0 and answer["state"] == "config_unavailable", (prefix, answer, done.stderr)
+
 # --- what the waiter runs (static, beside the process fixtures) ----------------------------
 script = (ROOT / "scripts" / "docs-refresh.ps1").read_text(encoding="utf-8-sig")
 code = "\n".join(line for line in script.splitlines() if not line.lstrip().startswith("#"))
@@ -313,4 +327,4 @@ builder = (ROOT / "lib" / "live_docs.py").read_text(encoding="utf-8")
 build_src = builder[builder.index("def build("): builder.index("# --- what changed in dev")]
 assert re.findall(r"\[find_tool\(\), ([^\]]*)\]", build_src) == ['"build", "--non-interactive"'], "build runs coop-data-doc build only"
 
-print("✓ daily lineage refresh: dev_is_prod (prod entries, named sets, Fabric ids, the word), build (files changed, nothing else run), the waiter runs only live_docs.py")
+print("✓ daily lineage refresh: dev_is_prod (prod entries, named sets, Fabric ids, the word), build (files changed, nothing else run), stdin after a BOM, the waiter runs only live_docs.py")

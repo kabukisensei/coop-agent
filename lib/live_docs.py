@@ -690,11 +690,15 @@ def execute(payload: Any, *, cwd: Path | None = None) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     argparse.ArgumentParser(prog="live_docs", description=__doc__.splitlines()[0]).parse_args(argv)
     try:
+        # utf-8-sig: a leading BOM is dropped. Windows PowerShell 5.1's
+        # Process.StandardInput writes one before the request when the console
+        # is UTF-8 (scripts/docs-refresh.ps1 avoids it; this is the second guard).
         try:
-            sys.stdin.reconfigure(encoding="utf-8")
+            sys.stdin.reconfigure(encoding="utf-8-sig")
         except (AttributeError, ValueError):
             pass
-        payload = json.load(sys.stdin)
+        text = sys.stdin.read()
+        payload = json.loads(text[1:] if text.startswith("﻿") else text)
     except (UnicodeDecodeError, json.JSONDecodeError):
         payload = None
     try:
