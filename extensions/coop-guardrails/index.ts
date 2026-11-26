@@ -61,13 +61,15 @@ const DEFAULT_ALLOWED_GLOBS = [
  *  when they are Markdown or a project glob allows them. A path test only: the
  *  guardrails never open these files. */
 export function isClientRulesPath(file: string): boolean {
-  return /(^|[\\/])\.coop[\\/]rules([\\/]|$)/i.test(file);
+  // Windows drops trailing dots and spaces from a name and reads `name:stream`
+  // as the same file (an alternate data stream): `.coop./rules ./x`, `rules:x`.
+  return /(^|[\\/])\.coop[. ]*[\\/]rules[. ]*([\\/:]|$)/i.test(file);
 }
 
 /** The client's corrections log (`.coop/rules/corrections.md`): it changes only
  *  through the Add / Edit / No card (client_rules add_correction, /correct). */
 export function isClientCorrectionsPath(file: string): boolean {
-  return /(^|[\\/])\.coop[\\/]rules[\\/]corrections\.md$/i.test(file);
+  return /(^|[\\/])\.coop[. ]*[\\/]rules[. ]*[\\/]corrections\.md[. ]*(:[^\\/]*)?$/i.test(file);
 }
 
 /** Where a file tool's write to `p` touches the client's instructions: "corrections"
@@ -76,10 +78,180 @@ export function isClientCorrectionsPath(file: string): boolean {
 export function clientRulesWriteTarget(p: string, cwd: string): "corrections" | "rules" | "" {
   if (!p) return "";
   const chain = [p, ...linkChain(p, cwd)];
-  if (chain.some(isClientCorrectionsPath)) return "corrections";
+  if (chain.some(isClientCorrectionsPath) || chain.some(isClientRulesApprovalsPath)) return "corrections";
   if (chain.some(isClientRulesPath)) return "rules";
+  return hardLinkedClientRule(chain[chain.length - 1] || p, cwd);
+}
+
+/** The approval ledger lib/client-rules.mjs keeps outside the repository
+ *  (<profile dir>/client-rules-approvals/): only the Add / Edit / No card writes it. */
+export function isClientRulesApprovalsPath(file: string): boolean {
+  return /(^|[\\/])client-rules-approvals[. ]*([\\/:]|$)/i.test(file);
+}
+
+const CLIENT_RULE_FILES = ["AGENTS.md", "corrections.md", "tech.md", "structure.md", "product.md"];
+
+/** A hard link to a rules file (fix round 2): the same file (dev + inode) as a
+ *  rules file of a repository above `cwd` or above the file itself. Metadata only
+ *  (stat), never the contents. */
+function hardLinkedClientRule(file: string, cwd: string): "corrections" | "rules" | "" {
+  try {
+    const target = resolve(cwd || ".", file);
+    const st = statSync(target, { bigint: true });
+    if (!st.isFile() || st.nlink < 2n) return "";
+    const seen = new Set<string>();
+    for (const start of [resolve(cwd || "."), dirname(target)]) {
+      for (let dir = start; !seen.has(dir); dir = dirname(dir)) {
+        seen.add(dir);
+        for (const name of CLIENT_RULE_FILES) {
+          try {
+            const other = statSync(join(dir, ".coop", "rules", name), { bigint: true });
+            if (other.ino === st.ino && other.dev === st.dev) return name === "corrections.md" ? "corrections" : "rules";
+          } catch { /* not there */ }
+        }
+        if (dirname(dir) === dir) break;
+      }
+    }
+  } catch { /* missing: nothing to alias */ }
   return "";
 }
+
+/** Programs that only read the files they name (with no output redirection). */
+const READ_ONLY_PROGRAMS = new Set(["cat", "less", "more", "head", "tail", "grep", "egrep", "fgrep", "rg", "wc", "ls", "dir", "stat", "file", "diff", "cmp", "md5sum", "sha1sum", "sha256sum", "type", "get-content", "gc", "select-string", "test", "[", "echo", "printf", "pwd", "realpath", "readlink", "basename", "dirname"]);
+/** Git verbs that leave the working tree's files as they are (the commit gate reads the commits). */
+const GIT_KEEPS_WORKTREE = new Set(["show", "log", "diff", "status", "blame", "ls-files", "ls-tree", "cat-file", "grep", "shortlog", "whatchanged", "check-ignore", "check-attr", "add", "stage", "commit", "rev-parse", "describe", "annotate"]);
+
+/** True when a shell segment has an output redirection outside quotes (`>`, `>>`, `2>`, `&>`). */
+function hasOutputRedirect(segment: string): boolean {
+  let single = false, double = false;
+  for (let i = 0; i < segment.length; i++) {
+    const ch = segment[i];
+    if (ch === "'" && !double && !isEscapedAt(segment, i)) single = !single;
+    else if (ch === '"' && !single && !isEscapedAt(segment, i)) double = !double;
+    else if (ch === ">" && !single && !double && !isEscapedAt(segment, i)) return true;
+  }
+  return false;
+}
+
+/** Does one shell segment only read the files it names? */
+function segmentOnlyReads(segment: string): boolean {
+  if (hasOutputRedirect(segment)) return false;
+  const word = resolveCommandWord(segment);
+  if (!word) return true;
+  if (word.name === "git") {
+    const git = parseGitSegment(segment.trim(), 0);
+    const sub = git?.subcommand || "";
+    if (sub === "reset") return !git!.args.some((a) => ["--hard", "--merge", "--keep"].includes(a));
+    if (sub === "restore") return git!.args.some((a) => a === "--staged" || /^-[A-Za-z]*S[A-Za-z]*$/.test(a)) && !git!.args.some((a) => a === "--worktree" || /^-[A-Za-z]*W[A-Za-z]*$/.test(a));
+    return GIT_KEEPS_WORKTREE.has(sub);
+  }
+  return READ_ONLY_PROGRAMS.has(word.name);
+}
+
+/** What a shell command would change under .coop/rules/ (fix round 2, defence in
+ *  depth: the boundary is what lib/client-rules.mjs loads): "corrections" (the log,
+ *  or the approval ledger), "rules" (any other path there, a glob that may reach it,
+ *  or a `.coop` folder that holds one), with the path as the command names it; null
+ *  when no segment that can write names one. Paths resolve against each segment's
+ *  folder (a literal `cd` carries over), through links and hard links; `--output=`,
+ *  `rev:path` and `@path` forms count (sqlsc / fab `-o` / `--output` included). */
+export function shellClientRulesTarget(cmd: string, cwd: string): { kind: "corrections" | "rules"; path: string } | null {
+  let dir = resolve(cwd || ".");
+  // The corrections log outranks any other rules path: keep looking after a "rules" hit.
+  let found: { kind: "corrections" | "rules"; path: string } | null = null;
+  const hit = (kind: "corrections" | "rules", path: string) => { if (kind === "corrections") return { kind, path }; if (!found) found = { kind, path }; return null; };
+  for (const { segment } of splitShellSegments(cmd)) {
+    const toks = tokenizeArgs(segment.trim()).map((t) => stripGluedQuotes(t));
+    while (toks.length && /^[({]+$/.test(toks[0])) toks.shift();
+    const first = programName((toks[0] || "").replace(/^[({]+/, ""));
+    if ((first === "cd" || first === "pushd") && toks[1] && !SHELL_EXPANDS_OPERAND.test(toks[1]) && !toks[1].startsWith("-")) { dir = resolveDir(toks[1], dir); continue; }
+    if (segmentOnlyReads(segment)) continue;
+    const git = parseGitSegment(segment.trim(), 0);
+    const here = git?.cwdOverride && !SHELL_EXPANDS_OPERAND.test(git.cwdOverride) ? resolveDir(git.cwdOverride, dir) : dir;
+    for (const tok of toks.slice(1)) {
+      // Named anywhere inside the word (a script's string: python -c "open('.coop/rules/x', 'w')").
+      const shortTok = tok.length > 120 ? `${tok.slice(0, 120)}…` : tok;
+      if (/client-rules-approvals/i.test(tok)) return { kind: "corrections" as const, path: shortTok };
+      if (/\.coop[. ]*[\\/]+rules\b/i.test(tok)) { const h = hit(/corrections\.md/i.test(tok) ? "corrections" : "rules", shortTok); if (h) return h; }
+      const t = tok.replace(/^\d*[<>&]+/, "");
+      const views = new Set<string>([t, t.replace(/\\(.)/g, "$1")]);
+      for (const v of [...views]) {
+        const eq = v.indexOf("="); if (eq > 0) views.add(v.slice(eq + 1));
+        const colon = v.indexOf(":"); if (colon > 1) views.add(v.slice(colon + 1));
+        const at = v.lastIndexOf("@"); if (at >= 0) views.add(v.slice(at + 1));
+      }
+      for (const v of views) {
+        if (!v) continue;
+        if (isClientRulesApprovalsPath(v)) return { kind: "corrections" as const, path: v };
+        if (/[*?[]/.test(v) && /\.coop/i.test(v)) { hit("rules", v); continue; }
+        const kind = clientRulesWriteTarget(v, here);
+        if (kind) { const h = hit(kind, v); if (h) return h; continue; }
+        try {
+          const full = resolveDir(v, here);
+          if (/^\.coop[. ]*$/i.test(basename(full)) && existsSync(join(full, "rules"))) hit("rules", v);
+        } catch { /* not a path */ }
+      }
+    }
+  }
+  return found;
+}
+
+/** A git command that rewrites what lib/client-rules.mjs reads as upstream (the
+ *  remote-tracking refs, the origin remote) or git's own files: a label, or null.
+ *  Defence in depth: a local process can always rewrite its own refs; these are
+ *  the plain forms. A push is judged by pushRule. */
+export function upstreamRefRewriteLabel(cmd: string): string | null {
+  for (const { segment } of splitShellSegments(cmd)) {
+    const git = parseGitSegment(segment.trim(), 0);
+    if (!git || !git.subcommand) {
+      if (!segmentOnlyReads(segment) && tokenizeArgs(segment).some((t) => /(^|[\\/])\.git[\\/](refs|packed-refs|config|FETCH_HEAD)/i.test(stripGluedQuotes(t)))) return "a write inside .git (refs or config)";
+      continue;
+    }
+    const sub = git.subcommand;
+    const ops = git.args.filter((a) => !a.startsWith("-"));
+    if (sub === "update-ref") return "git update-ref";
+    if (sub === "symbolic-ref" && (ops.length >= 2 || git.args.some((a) => a === "-d" || a === "--delete"))) return "git symbolic-ref";
+    if (sub === "remote" && ["add", "set-url", "rename", "set-head", "remove", "rm", "set-branches", "prune"].includes((ops[0] || "").toLowerCase())) return `git remote ${ops[0].toLowerCase()}`;
+    if ((sub === "fetch" || sub === "pull") && (ops.slice(1).some((a) => a.includes(":")) || /\s-c\s*["']?(remote|url)\./i.test(` ${segment}`))) return `git ${sub} into a named ref`;
+    if (sub === "config" && ops.some((a) => /^(remote|url)\./i.test(a)) && !git.args.some((a) => /^--(get|get-all|get-regexp|list|show-origin)$/.test(a) || a === "-l")) return "git config of a remote";
+  }
+  return null;
+}
+
+/** Why what precedes a commit in the same command makes the pre-command check
+ *  unable to say what the commit includes (fix round 2), or null. The check reads
+ *  git before the command runs, so a non-git segment (it may write files), index
+ *  plumbing, a git command in another folder, or a pathspec with magic or a glob
+ *  in a literal path all fail closed to a prompt. `cd` and plain reads are fine. */
+export function commitPrecededUnverifiable(cmd: string, commit: ParsedGitCommand, cwd: string): string | null {
+  const commitDir = gitRepoDir(cmd, cwd, commit);
+  const gits = parseGitCommands(cmd);
+  for (const { segment, start } of splitShellSegments(cmd)) {
+    if (start >= commit.segmentStart) break;
+    if (!segment.trim()) continue;
+    const git = gits.find((g) => g.segmentStart >= start && g.segmentStart < start + segment.length);
+    if (!git) {
+      const word = resolveCommandWord(segment);
+      const name = word ? word.name : "";
+      if (["cd", "pushd", "popd", "true", ":"].includes(name)) continue;
+      if (READ_ONLY_PROGRAMS.has(name) && !hasOutputRedirect(segment)) continue;
+      return `${name || "a command"} runs before the commit and may change what it includes`;
+    }
+    const sub = git.subcommand || "";
+    if (gitRepoDir(cmd, cwd, git) !== commitDir) return `git ${sub} runs in another folder before the commit`;
+    if (["update-index", "read-tree", "checkout", "switch", "stash", "merge", "pull", "rebase", "cherry-pick", "revert", "am", "reset", "write-tree", "update-ref", "symbolic-ref", "checkout-index"].includes(sub)) return `git ${sub} changes what the commit takes in a way the guardrail cannot read`;
+    if (sub === "apply" && git.args.some((a) => a === "--index" || a === "--cached" || a === "--3way" || /^-[A-Za-z]*3/.test(a))) return "git apply --index changes the index the guardrail cannot read";
+    if (sub === "restore" && git.args.some((a) => a === "--staged" || /^-[A-Za-z]*S[A-Za-z]*$/.test(a) || a.startsWith("--source") || a === "-s")) return "git restore --staged changes the index the guardrail cannot read";
+    if (["add", "stage", "rm", "mv"].includes(sub)) {
+      const paths = [...git.args.filter((a) => !a.startsWith("-")), ...git.pathspecs];
+      if (paths.some((p) => /^:(?!\/$)/.test(p) || p.includes(":("))) return `git ${sub} uses pathspec magic the guardrail cannot read`;
+      const literal = sub === "rm" || sub === "mv" || git.args.some((a) => a === "--force" || /^-[A-Za-z]*f[A-Za-z]*$/.test(a));
+      if (literal && paths.some((p) => /[*?[\]]/.test(p))) return `git ${sub} names paths by a glob the guardrail cannot read`;
+    }
+  }
+  return null;
+}
+
 
 /** A committed path is allowed only after explicit deny rules have been checked. */
 function isAllowedCommitPath(file: string, allowedGlobs: string[], deniedGlobs: string[]): boolean {
@@ -997,7 +1169,7 @@ export type CommitCheck = { offending: string[]; unverifiable: string | null; no
 
 /** Git verbs that create a commit on the current branch (or, with `--no-commit`
  *  / `--squash`, stage its content), so the source-commit gate reads them all. */
-export const COMMIT_LIKE_SUBCOMMANDS = new Set(["commit", "am", "cherry-pick", "merge", "revert", "commit-tree"]);
+export const COMMIT_LIKE_SUBCOMMANDS = new Set(["commit", "am", "cherry-pick", "merge", "revert", "commit-tree", "pull"]);
 
 export type CommitLikePlan = { kind: "none" } | { kind: "unverifiable"; why: string } | { kind: "refs"; refs: string[] };
 
@@ -1011,6 +1183,8 @@ export type CommitLikePlan = { kind: "none" } | { kind: "unverifiable"; why: str
 export function commitLikePlan(git: ParsedGitCommand): CommitLikePlan {
   const sub = git.subcommand || "";
   if (sub === "am" || sub === "commit-tree") return { kind: "unverifiable", why: `git ${sub} brings in paths the guardrail cannot list` };
+  // A pull fetches first: what it merges is not known before it runs.
+  if (sub === "pull") return git.args.some((a) => a === "--dry-run") ? { kind: "none" } : { kind: "unverifiable", why: "git pull merges commits it has not fetched yet" };
   const merge = sub === "merge";
   const valueShort = merge ? ["m", "F", "s", "X"] : ["m", "X"];
   const valueLong = merge ? ["--message", "--file", "--strategy", "--strategy-option", "--into-name"] : ["--mainline", "--strategy", "--strategy-option"];
@@ -3617,10 +3791,11 @@ const fileRule: Rule = {
     // F2: this client's backups and drafts (<profile dir>/backups, <profile dir>/drafts)
     // are coop's own working folders, never source: a backup of a .env or a draft
     // .sql written there needs no confirmation and no lineage lookup.
-    if (writes && path && isClientWorkPath(path, ctx.cwd)) return ALLOW;
     // CW1: the client's instructions (.coop/rules/) steer coop on every turn. The
-    // corrections log changes only through the Add / Edit / No card; any other
-    // rules file is a person's yes for each write (no session grant, never headless).
+    // corrections log (and its approval ledger) changes only through the Add / Edit
+    // / No card; any other rules file is a person's yes for each write (no session
+    // grant, never headless). Checked before the backups/drafts allowance, so a link
+    // or hard link there to a rules file is still the rules file (fix round 2).
     const rulesTarget = writes && path ? clientRulesWriteTarget(path, ctx.cwd) : "";
     if (rulesTarget === "corrections") {
       audit({ cwd: ctx.cwd, kind: "secret-confirm", tool, decision: "blocked", label: "client corrections log", detail: "client-corrections-write" });
@@ -3635,6 +3810,7 @@ const fileRule: Rule = {
       });
       if (refused) return refused;
     }
+    if (writes && path && !rulesTarget && isClientWorkPath(path, ctx.cwd)) return ALLOW;
     // #367: an innocent-looking link to a secret is the secret.
     const linked = path && !isSecretPath(path) ? secretLinkTarget(path, ctx.cwd) : null;
     if (path && (linked || isSecretPath(path))) {
@@ -4034,10 +4210,14 @@ const gitCommitRule: Rule = {
         });
         if (refused) return refused;
       }
-      // Ask when the target repository cannot be resolved or read (#2), and,
+      // Ask when the target repository cannot be resolved or read (#2), when
+      // what runs before the commit in the same command may change what it
+      // includes (fix round 2: the check reads git before the command runs), and,
       // as before, when a chained `cd` precedes a commit the check found empty.
-      if (unverifiable || (nothing && commitHasLeadingCd(command, git))) {
-        const why = unverifiable ? `\n  (${unverifiable})` : "";
+      const preceded = commitPrecededUnverifiable(command, git, ctx.cwd);
+      if (unverifiable || preceded || (nothing && commitHasLeadingCd(command, git))) {
+        const reason = unverifiable || preceded;
+        const why = reason ? `\n  (${reason})` : "";
         const refused = await session.ask(ctx, {
           kind: "commit-block", tool: "bash", label: "unverifiable git commit", detail: "unverifiable git commit",
           question: `Can't verify what this commit would include:\n  ${git.segment.slice(0, 200)}${why}\nProceed?`,
@@ -4206,6 +4386,126 @@ const desktopReloadRule: Rule = {
   },
 };
 
+// CW1, fix round 2 (defence in depth; the boundary is what lib/client-rules.mjs
+// loads): a shell command that would change .coop/rules/ asks for each call, and
+// one that would change the corrections log or its approval ledger is blocked
+// (they change only through the Add / Edit / No card). A git command that would
+// rewrite what the loader reads as upstream (origin's refs, the origin remote)
+// asks too. Declined or headless, each is blocked.
+const clientRulesShellRule: Rule = {
+  id: "client-rules-shell",
+  applies: isShell,
+  check: async ({ ctx, command }, session) => {
+    const target = shellClientRulesTarget(command, ctx.cwd);
+    if (target && target.kind === "corrections") {
+      audit({ cwd: ctx.cwd, kind: "danger-confirm", tool: "bash", decision: "blocked", label: "client corrections log", detail: "client-corrections-shell" });
+      return block(`coop guardrails: blocked a command that changes ${target.path}. The client's corrections log (.coop/rules/corrections.md) and its approvals change only through the Add / Edit / No card: call the client_rules tool (command add_correction), or ask the user to run /correct.`);
+    }
+    if (target) {
+      const refused = await session.ask(ctx, {
+        kind: "danger-confirm", tool: "bash", label: "client instructions write", detail: target.path,
+        question: `This command changes the client's instructions (.coop/rules/):\n  ${shown(command)}\nThey are loaded only once a person has pushed them to the client's main branch. Run it?`,
+        headless: `coop guardrails: blocked a command that changes the client's instructions (${target.path}); approval is unavailable in headless mode.`,
+        declined: `coop guardrails: blocked a command that changes the client's instructions (${target.path}) (you declined).`,
+      });
+      if (refused) return refused;
+    }
+    const rewrite = upstreamRefRewriteLabel(command);
+    if (rewrite) {
+      const refused = await session.ask(ctx, {
+        kind: "danger-confirm", tool: "bash", label: "upstream ref rewrite", detail: rewrite,
+        question: `This command rewrites the repository's remote branches or remote settings (${rewrite}):\n  ${shown(command)}\ncoop loads the client's instructions from origin's main branch as fetched. Run it?`,
+        headless: `coop guardrails: blocked ${rewrite}; it rewrites the repository's remote branches or settings, and approval is unavailable in headless mode.`,
+        declined: `coop guardrails: blocked ${rewrite} (you declined).`,
+      });
+      if (refused) return refused;
+    }
+    return PASS;
+  },
+};
+
+/** What a `git push` would send to a remote's default branch: for each push that
+ *  targets one (main, master, or what <remote>/HEAD names), the destination, the
+ *  local source and the remote. `--all` / `--mirror` count as every branch, a
+ *  destination under refs/remotes/ (a push into this repository's own tracking
+ *  refs) always counts. A dry run sends nothing. */
+export function pushDefaultTargets(git: ParsedGitCommand, defaults: string[], currentBranch: string, pushTarget: string): { remote: string; src: string; dst: string; why?: string }[] {
+  if (git.subcommand !== "push" || git.args.some((a) => a === "--dry-run" || a === "-n")) return [];
+  const VALUE = new Set(["--repo", "--receive-pack", "--exec", "-o", "--push-option", "--signed", "--force-with-lease"]);
+  const ops: string[] = [];
+  for (let i = 0; i < git.args.length; i++) {
+    const a = git.args[i];
+    if (a.startsWith("-")) { if (VALUE.has(a)) i++; continue; }
+    ops.push(a);
+  }
+  const remote = ops[0] || (pushTarget.includes("/") ? pushTarget.split("/")[0] : "origin");
+  const out: { remote: string; src: string; dst: string; why?: string }[] = [];
+  if (git.args.some((a) => a === "--all" || a === "--mirror" || a === "--branches")) return [{ remote, src: "", dst: "", why: "it pushes every branch" }];
+  const specs = ops.slice(1);
+  if (!specs.length) {
+    const dst = pushTarget ? pushTarget.slice(remote.length + 1) : currentBranch;
+    if (!dst) return []; // not on a branch: a bare push has nothing to send
+    if (defaults.includes(dst)) out.push({ remote, src: "HEAD", dst });
+    return out;
+  }
+  for (const spec of specs) {
+    const bare = spec.replace(/^\+/, "");
+    const colon = bare.indexOf(":");
+    const src = colon >= 0 ? bare.slice(0, colon) : bare;
+    let dst = colon >= 0 ? bare.slice(colon + 1) : bare;
+    if (/^refs\/remotes\//.test(dst)) { out.push({ remote, src: src || "HEAD", dst, why: `it writes ${dst}` }); continue; }
+    if (dst === "HEAD" || dst === "@") dst = currentBranch;
+    dst = dst.replace(/^refs\/heads\//, "");
+    if (SHELL_EXPANDS_OPERAND.test(spec)) { out.push({ remote, src, dst, why: "it names a branch the shell expands" }); continue; }
+    if (defaults.includes(dst)) out.push({ remote, src: src || "HEAD", dst });
+  }
+  return out;
+}
+
+// CW1, fix round 2: coop loads the client's instructions from origin's default
+// branch, so a push that would change .coop/rules/ there is a person's yes, every
+// time (no session grant; declined or headless, blocked). Other pushes are as
+// before (a force or delete push still asks under destructive commands).
+const pushRule: Rule = {
+  id: "push-client-rules",
+  applies: isShell,
+  check: async ({ ctx, command }, session) => {
+    for (const git of parseGitCommands(command).filter((g) => g.subcommand === "push")) {
+      if (git.args.some((a) => a === "--dry-run" || a === "-n")) continue;
+      const repoDir = gitRepoDir(command, ctx.cwd, git);
+      const run = async (args: string[]): Promise<string | null> => {
+        try {
+          const res = await session.pi.exec("git", ["-C", repoDir, "-c", "core.quotepath=false", ...args], { cwd: ctx.cwd });
+          return res && res.code === 0 ? String(res.stdout || "").trim() : null;
+        } catch { return null; }
+      };
+      const ops = git.args.filter((a) => !a.startsWith("-"));
+      const remoteName = ops[0] || "origin";
+      const head = (await run(["symbolic-ref", "-q", "--short", `refs/remotes/${remoteName}/HEAD`])) || "";
+      const defaults = ["main", "master", ...(head ? [head.slice(remoteName.length + 1)] : [])];
+      const current = (await run(["symbolic-ref", "-q", "--short", "HEAD"])) || "";
+      const pushTarget = ops.length ? "" : ((await run(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{push}"])) || "");
+      let why = "";
+      for (const t of pushDefaultTargets(git, defaults, current, pushTarget)) {
+        if (t.why) { why = t.why; break; }
+        const changed = await run(["diff", "--name-only", "--no-renames", `refs/remotes/${t.remote}/${t.dst}`, t.src]);
+        if (changed === null) { why = `git could not list what it changes on ${t.remote}/${t.dst}`; break; }
+        const rules = changed.split("\n").filter((f) => f && isClientRulesPath(f));
+        if (rules.length) { why = `it changes ${rules.slice(0, 4).join(", ")}${rules.length > 4 ? ` (+${rules.length - 4} more)` : ""} on ${t.remote}/${t.dst}`; break; }
+      }
+      if (!why) continue;
+      const refused = await session.ask(ctx, {
+        kind: "danger-confirm", tool: "bash", label: "push of client instructions", detail: why,
+        question: `This push may change the client's instructions on the main branch, which coop loads for everyone on the team:\n  ${git.segment.slice(0, 200)}\n  (${why})\nPush?`,
+        headless: "coop guardrails: blocked a push that may change the client's instructions (.coop/rules/) on the main branch; approval is unavailable in headless mode.",
+        declined: "coop guardrails: blocked a push that may change the client's instructions (.coop/rules/) on the main branch (you declined).",
+      });
+      if (refused) return refused;
+    }
+    return PASS;
+  },
+};
+
 /** The rules, in the order they run. The native rules each own one tool (or, for
  *  `mcp`, every remaining native and MCP tool) and decide it; the shell rules run
  *  in sequence over the one command, each passing a cleared command to the next. */
@@ -4222,9 +4522,11 @@ export const RULES: readonly Rule[] = Object.freeze([
   secretShellRule,
   envDumpRule,
   azureSignInRule,
+  clientRulesShellRule,
   gitCommitRule,
   sqlscShellRule,
   destructiveRule,
+  pushRule,
   fabricWriteRule,
   fabricCicdRule,
   desktopReloadRule,
