@@ -222,6 +222,13 @@ echo "→ client instructions (CW1) and the guardrails: a real git repository, t
 COOP_TEST_DIST="$TMP" node "$ROOT/tests/client-rules-guardrails.test.mjs"
 echo "→ change history (CW2): the store, real writes through the guardrails, restore, the folder block"
 COOP_TEST_DIST="$TMP" node --test --test-reporter=spec "$ROOT/tests/action-history.test.mjs"
+echo "→ change history (CW2) off: no history code on the tool path (the store module stubbed and counted)"
+# The guardrails with lib/action-history.mjs left as an import, two folders down,
+# so it resolves to the counting stub the test writes at history-stub/lib/.
+mkdir -p "$TMP/history-stub/x/y"
+(cd "$ROOT" && npx -y esbuild "extensions/coop-guardrails/index.ts" --bundle --format=esm --platform=node --packages=external \
+  --external:../../lib/action-history.mjs --outfile="$TMP/history-stub/x/y/coop-guardrails.mjs" >/dev/null 2>&1)
+COOP_TEST_HISTORY_STUB_DIST="$TMP/history-stub" node "$ROOT/tests/action-history-off.test.mjs"
 echo "→ client instructions (CW1) across /new: the installed Pi's own extension loader"
 # The Pi package behind `pi` on PATH (the pinned one, when the caller puts it first).
 PI_PKG=""
