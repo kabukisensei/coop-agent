@@ -1,0 +1,58 @@
+{
+  "_note": "ED1 (6e64add8, before Diff review comments): the serialized diff DOM of tests/fixtures/diff-render-cases.mjs CASES and the Fix this line prompts. With review comments off the window must give exactly these.",
+  "renderDiff": {
+    "two hunks, a pair, a removal, an addition, a match / unified": "b402a92b10cd4954d2587f0c9fb1cfe53ad24a25231b056d36e4167b0650a972",
+    "two hunks, a pair, a removal, an addition, a match / split": "0e574aba04da55461ca6b7969844ab8dea3b5a28f13e8091d38f71ff633c84cb",
+    "two hunks, a pair, a removal, an addition, a match / unified select": "98e34f8efdafeac0eb69c29c8093388e6bf87d6bbb20b4972d6418761de8c22a",
+    "two hunks, a pair, a removal, an addition, a match / split end": "f23cf76585be4945319b6005f0bf4241ef25358238e168d7626a5df4604d7985",
+    "past MAX_ROWS (4000) the diff is cut / unified": "bbd48db2eeb4a51af48cd3e74678eaf70014f1edebe20dfffa4479cdea0e35a5",
+    "past MAX_ROWS (4000) the diff is cut / split": "0ea83351d596f74c59369bc7227a456be392b22b31007d3b5648f516fd1496b1"
+  },
+  "fixLinePrompt": [
+    {
+      "input": {
+        "path": "sql/dbo/Views/vw_Sales.sql",
+        "line": 42,
+        "text": "  JOIN stg.Customer c  ON c.Id = s.CustomerId",
+        "note": " use dim.Customer "
+      },
+      "prompt": "Fix sql/dbo/Views/vw_Sales.sql line 42 (`JOIN stg.Customer c ON c.Id = s.CustomerId`): use dim.Customer"
+    },
+    {
+      "input": {
+        "path": "Views/dbo.v.sql",
+        "line": 12,
+        "text": "  INNER JOIN `x`  ON a = b",
+        "note": " make it a LEFT JOIN "
+      },
+      "prompt": "Fix Views/dbo.v.sql line 12 (`INNER JOIN 'x' ON a = b`): make it a LEFT JOIN"
+    },
+    {
+      "input": {
+        "path": "a.sql",
+        "line": 3,
+        "text": "",
+        "note": "drop this"
+      },
+      "prompt": "Fix a.sql line 3: drop this"
+    },
+    {
+      "input": {
+        "path": "dbo.vw_Sales.sql",
+        "line": 0,
+        "text": "x",
+        "note": "check"
+      },
+      "prompt": "Fix dbo.vw_Sales.sql (`x`): check"
+    },
+    {
+      "input": {
+        "path": "long.sql",
+        "line": 7,
+        "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "note": "too long"
+      },
+      "prompt": "Fix long.sql line 7 (`xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`): too long"
+    }
+  ]
+}

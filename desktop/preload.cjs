@@ -41,6 +41,9 @@ contextBridge.exposeInMainWorld("coop", Object.freeze({
   zoom: (step) => ipcRenderer.invoke("coop:zoom", step),
   // Window preferences kept by the main process (notifications, menu bar).
   setPref: (key, value) => ipcRenderer.invoke("coop:pref", String(key || ""), value),
+  // This client's feature switches (~/.coop/config, the Features list).
+  features: () => ipcRenderer.invoke("coop:features"),
+  setFeature: (key, on) => ipcRenderer.invoke("coop:feature-set", String(key || ""), on === true),
   // Panes (D1b2).
   changes: (repo) => ipcRenderer.invoke("coop:changes", typeof repo === "string" ? repo : null),
   changeDiff: (path) => ipcRenderer.invoke("coop:change-diff", String(path || "")),
@@ -96,6 +99,7 @@ contextBridge.exposeInMainWorld("coop", Object.freeze({
   onExit: listen("pi:exit"),
   onNotice: listen("pi:notice"),
   onTheme: listen("coop:theme"),
+  onFeatures: listen("coop:features"),
   onMenu: listen("coop:menu"),
   onDocs: listen("coop:docs"),
   // The phone started, opened, forked or cloned a session (MC9): reload it here.

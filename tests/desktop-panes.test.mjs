@@ -44,7 +44,8 @@ const { listChanges, listDrafts, fileDiff, parseNameStatus, parseNumstat, newFil
 const { readStandards, readSnapshot, readNote, listNotes, knowledgeView, domainView, sourceDomainView, keepArticles, DOMAINS, KNOWLEDGE_LABELS } = await import("../desktop/lib/standards-view.mjs");
 const { loadProject, previewProject, saveProject, settingsFromForm } = await import("../desktop/lib/project-form.mjs");
 const docs = await import("../desktop/lib/docs-setup.mjs");
-const { normalizePath, relativePath, repoForPath, fixLinePrompt, splitPath } = await import("../desktop/renderer/pane-changes.mjs");
+const { normalizePath, relativePath, repoForPath, fixLinePrompt, splitPath, commentsOn, reviewPath, extendSelection, canComment, commentContext, reanchorComment, reviewPrompt, COMMENT_STATUS } = await import("../desktop/renderer/pane-changes.mjs");
+const { diffModel, diffRows, renderDiff, MAX_ROWS } = await import("../desktop/renderer/diff-view.mjs");
 const editors = await import("../desktop/lib/editors.mjs");
 const { loadSettings } = await import("../desktop/lib/settings.mjs");
 const { articleOutline, sourceLine, noteLabel, isKnowledgeId, STATE_LABELS, KNOWLEDGE_STATE_LABELS } = await import("../desktop/renderer/pane-standards.mjs");
@@ -1309,6 +1310,153 @@ await check("changes: Fix this line puts a note in the prompt, never sends it", 
   const view = readFileSync(join(ROOT, "desktop", "renderer", "diff-view.mjs"), "utf8");
   assert.match(view, /"data-line": String\(line\.newNo\)/, "unified rows carry their new line number");
   assert.match(view, /side\(row\.right, "add", row\.right \? row\.right\.newNo : null, true\)/, "side by side: only the new side");
+});
+
+// --- Diff review comments (FEATURES-DESIGN CW3) ------------------------------
+// The renderer's DOM is drawn with a tiny fake document (tests/fixtures/diff-render-cases.mjs);
+// tests/fixtures/ed1-diff-golden.json pins ED1 (6e64add8) for the off state.
+const reviewCases = await import("./fixtures/diff-render-cases.mjs");
+const ed1Golden = JSON.parse(readFileSync(join(ROOT, "tests", "fixtures", "ed1-diff-golden.json"), "utf8"));
+const { unifiedDiff: textDiff } = await import("../desktop/lib/text-diff.mjs");
+const PROCS = ["CREATE PROC a AS", "BEGIN", "  SELECT 1", "END", "GO", "CREATE PROC b AS", "BEGIN", "  SELECT 2", "END", "GO", "CREATE PROC c AS", "BEGIN", "  SELECT 3", "END", "GO"];
+const modelOf = (before, after) => diffModel(textDiff(`${before.join("\n")}\n`, `${after.join("\n")}\n`));
+
+await check("review comments: off (or an unreadable setting) is ED1 byte for byte: the Fix this line prompt and the diff DOM", async () => {
+  for (const view of [undefined, null, {}, { ok: false, features: [{ key: "comments", on: true }] }, { ok: true, features: [] }, { ok: true, features: [{ key: "comments", on: "true" }] }, { ok: true, features: [{ key: "comments", on: false }] }]) {
+    assert.equal(commentsOn(view), false, `off: ${JSON.stringify(view)}`);
+  }
+  assert.equal(commentsOn({ ok: true, features: [{ key: "comments", on: true }] }), true);
+  for (const { input, prompt } of ed1Golden.fixLinePrompt) assert.equal(fixLinePrompt(input), prompt, "the Fix this line prompt is ED1's");
+  assert.deepEqual(await reviewCases.renderAll(join(ROOT, "desktop", "renderer")), ed1Golden.renderDiff, "renderDiff draws ED1's DOM when comments are off");
+  assert.deepEqual(await reviewCases.renderAll(join(ROOT, "desktop", "renderer"), { comments: false }), ed1Golden.renderDiff);
+  // The pane keeps ED1's click path whenever the setting is not on.
+  const pane = readFileSync(join(ROOT, "desktop", "renderer", "pane-changes.mjs"), "utf8");
+  assert.match(pane, /if \(reviewing\(\)\) \{ commentClick\(event\); return; \}\n    const selection = window\.getSelection \? String\(window\.getSelection\(\)\) : "";\n    if \(selection\) return;\n    const row = event\.target\.closest\("\[data-line\]"\);\n    if \(row && diffBox\.contains\(row\)\) openFixForm\(row\);/);
+  assert.match(pane, /if \(event\.shiftKey && reviewing\(\) && event\.target\.closest/, "a shift-click is a range only while comments are on");
+  assert.match(pane, /try \{ return typeof isCommentsOn === "function" && isCommentsOn\(\) === true; \} catch \{ return false; \}/, "a failing read is off");
+});
+
+await check("review comments: on, removed lines carry their old number and every commentable line its hunk", () => {
+  reviewCases.installFakeDom();
+  const model = diffModel(reviewCases.CASES[0].diff);
+  const unified = renderDiff(model, { mode: "unified", comments: true }).node.all();
+  const del = unified.filter((n) => /diff-row del/.test(n.className));
+  assert.deepEqual(del.map((n) => [n.getAttribute("data-old-line"), n.getAttribute("data-hunk"), n.getAttribute("data-line")]), [["2", "0", null], ["4", "0", null]]);
+  const added = unified.filter((n) => /diff-row add/.test(n.className));
+  assert.deepEqual(added.map((n) => [n.getAttribute("data-line"), n.getAttribute("data-hunk")]), [["2", "0"], ["5", "0"], ["41", "1"]]);
+  const split = renderDiff(model, { mode: "split", comments: true }).node.all();
+  assert.deepEqual(split.filter((n) => n.getAttribute("data-old-line")).map((n) => [n.className, n.getAttribute("data-old-line"), n.getAttribute("data-hunk")]), [["diff-cell del", "2", "0"], ["diff-cell del", "4", "0"]], "side by side: only removed cells get the old number");
+  assert.ok(split.filter((n) => /diff-cell ctx/.test(n.className) && n.getAttribute("data-old-line")).length === 0, "an unchanged line is commented on its new side only");
+});
+
+await check("review comments: new, removed and range comments make one numbered prompt (the design's example)", () => {
+  const before = ["CREATE VIEW dbo.vw_Sales AS", ...Array.from({ length: 8 }, (_, i) => `-- note ${i + 2}`), "WHERE s.Date >= '2026-01-01'", "  AND s.Date < '2027-01-01'", "  AND s.Kind = 'S'", "  AND s.Void = 0", "  AND s.Test = 0", ...Array.from({ length: 27 }, (_, i) => `-- more ${i + 15}`), "FROM fact.Sales s", "JOIN dim.Customer c", "GO"];
+  const after = before.filter((_, i) => i < 9 || i > 13);
+  after.splice(after.indexOf("JOIN dim.Customer c"), 1, "JOIN stg.Customer c");
+  const model = modelOf(before, after);
+  const newLine = after.indexOf("JOIN stg.Customer c") + 1;
+  assert.ok(canComment(model, "new", newLine) && canComment(model, "old", 10) && canComment(model, "old", 14));
+  assert.equal(canComment(model, "old", newLine), false, "an unchanged line has no removed-side comment");
+  const path = reviewPath({ rel: "sql", selected: "dbo/Views/vw_Sales.sql" });
+  const range = extendSelection({ key: "k", side: "old", hunk: 0, line: 14 }, { key: "k", side: "old", hunk: 0, line: 10 });
+  assert.deepEqual(range, { side: "old", hunk: 0, from: 10, to: 14 });
+  const comments = [
+    { repoLabel: "sql", path, side: "new", from: newLine, to: newLine, ...commentContext(model, "new", newLine, newLine), note: " use dim.Customer " },
+    { repoLabel: "sql", path, side: "old", from: 10, to: 14, ...commentContext(model, "old", 10, 14), note: "keep the date filter" },
+  ];
+  assert.deepEqual(comments[1].text, ["WHERE s.Date >= '2026-01-01'", "  AND s.Date < '2027-01-01'", "  AND s.Kind = 'S'", "  AND s.Void = 0", "  AND s.Test = 0"]);
+  assert.equal(reviewPrompt(comments).replace(` line ${newLine} `, " line 42 "), [
+    "Review comments on the Changes pane (repo sql):",
+    "1. sql/dbo/Views/vw_Sales.sql line 42 (new) `JOIN stg.Customer c`: use dim.Customer",
+    "2. sql/dbo/Views/vw_Sales.sql lines 10-14 (removed): keep the date filter",
+    "Revise under the usual rules; answer each by number.",
+  ].join("\n"));
+  const odd = { repoLabel: "sql", path: "a.sql", side: "old", from: 3, to: 3, text: ["  SELECT `x`,\t y  "], note: "keep" };
+  assert.equal(reviewPrompt([odd]).split("\n")[1], "1. a.sql line 3 (removed) `SELECT 'x', y`: keep", "a removed line names its text like ED1 does");
+  assert.match(reviewPrompt([odd, { ...odd, repoLabel: "pbi" }]), /^Review comments on the Changes pane \(repos sql, pbi\):/);
+  const pane = readFileSync(join(ROOT, "desktop", "renderer", "pane-changes.mjs"), "utf8");
+  assert.match(pane, /setPrompt\(reviewPrompt\(batch\)\)/, "the batch goes to the composer");
+  assert.ok(!/coop\.command\(/.test(pane), "the pane never sends a prompt itself");
+  assert.match(pane, /`Send to coop \(\$\{waiting\} \$\{waiting === 1 \? "comment" : "comments"\}\)`/);
+});
+
+await check("review comments: the repository's rel prefix (a non-root repository) and draft: entries", () => {
+  assert.equal(reviewPath({ rel: "", selected: "dbo/v.sql" }), "dbo/v.sql", "the open folder's own repository: no prefix");
+  assert.equal(reviewPath({ rel: "sql", selected: "dbo/v.sql" }), "sql/dbo/v.sql");
+  assert.equal(reviewPath({ rel: "sql/", selected: "dbo/v.sql" }), "sql/dbo/v.sql");
+  assert.equal(reviewPath({ rel: "../warehouse", selected: "dbo/v.sql" }), "../warehouse/dbo/v.sql", "a project-file repository beside the folder");
+  assert.equal(reviewPath({ rel: "sql", selected: "draft:fix_sales.sql" }), "draft fix_sales.sql", "a draft gets no prefix");
+  assert.equal(reviewPrompt([{ repoLabel: "sql", path: reviewPath({ rel: "sql", selected: "draft:fix.sql" }), side: "new", from: 1, to: 1, text: ["SELECT 1"], note: "ok?" }]).split("\n")[1], "1. draft fix.sql line 1 (new) `SELECT 1`: ok?");
+});
+
+await check("review comments: a shift-click across hunks or sides starts a new single-line comment", () => {
+  const a = { key: "r\0v.sql", side: "new", hunk: 0, line: 5 };
+  assert.deepEqual(extendSelection(a, { ...a, line: 2 }), { side: "new", hunk: 0, from: 2, to: 5 }, "same hunk and side: a range");
+  assert.deepEqual(extendSelection(a, { ...a, hunk: 1, line: 41 }), { side: "new", hunk: 1, from: 41, to: 41 }, "another hunk: a single comment");
+  assert.deepEqual(extendSelection(a, { ...a, side: "old", line: 4 }), { side: "old", hunk: 0, from: 4, to: 4 }, "the other side: a single comment");
+  assert.deepEqual(extendSelection(a, { ...a, key: "r\0w.sql", line: 7 }), { side: "new", hunk: 0, from: 7, to: 7 }, "another file: a single comment");
+  assert.deepEqual(extendSelection(null, a), { side: "new", hunk: 0, from: 5, to: 5 });
+});
+
+await check("review comments: after a revision each comment re-anchors by its line and the two lines either side (repeated END and GO)", () => {
+  const v1 = PROCS.slice(); v1[7] = "  SELECT 22"; v1[12] = "  SELECT 33";
+  const m1 = modelOf(PROCS, v1);
+  // The END of proc b (new line 9); procs a and c end in the same END and GO.
+  const comment = { side: "new", from: 9, to: 9, ...commentContext(m1, "new", 9, 9) };
+  assert.deepEqual(comment.text, ["END"]);
+  const header = ["-- one", "-- two", "-- three"];
+  assert.deepEqual(reanchorComment(comment, modelOf(PROCS, [...header, ...v1])), { status: "unchanged", from: 12, to: 12, hunk: 1 }, "three lines added above: the same END, three lines down");
+  const edited = [...header, ...v1]; edited[11] = "END; -- b";
+  assert.equal(reanchorComment(comment, modelOf(PROCS, edited)).status, "changed", "the commented END itself was edited");
+  assert.equal(reanchorComment(comment, modelOf(PROCS, edited)).from, 12);
+  const neighbour = [...header, ...v1]; neighbour[10] = "  SELECT 222";
+  assert.equal(reanchorComment(comment, modelOf(PROCS, neighbour)).status, "unchanged", "a neighbour edited, the line itself not");
+  const gone = v1.slice(); gone.splice(8, 1);
+  assert.equal(reanchorComment(comment, modelOf(PROCS, gone)).status, "moved", "the commented END removed: not proc c's END");
+  assert.equal(COMMENT_STATUS.moved, "moved or gone, check it");
+  // A removed line: the old side is the last commit.
+  const removed = { side: "old", from: 8, to: 8, ...commentContext(m1, "old", 8, 8) };
+  assert.equal(reanchorComment(removed, m1).status, "unchanged");
+  const restored = PROCS.slice(); restored[12] = "  SELECT 33";
+  assert.equal(reanchorComment(removed, modelOf(PROCS, restored)).status, "changed", "coop put the removed line back");
+  // A range keeps its length when it moves.
+  const span = { side: "new", from: 8, to: 9, ...commentContext(m1, "new", 8, 9) };
+  assert.deepEqual(reanchorComment(span, modelOf(PROCS, [...header, ...v1])), { status: "unchanged", from: 11, to: 12, hunk: 1 });
+});
+
+await check("review comments: past MAX_ROWS the diff is cut and comment controls stop there, with a note", () => {
+  reviewCases.installFakeDom();
+  assert.equal(MAX_ROWS, 4000);
+  const model = diffModel(reviewCases.CASES[1].diff);
+  const { rows, cut } = diffRows(model, "unified");
+  assert.equal(cut, true);
+  assert.equal(rows.length, MAX_ROWS);
+  const last = [...rows].reverse().find((r) => r.kind === "line" && r.line.newNo !== null).line.newNo;
+  assert.equal(canComment(model, "new", last), true, "the last line drawn takes a comment");
+  assert.equal(canComment(model, "new", last + 1), false, "the first line past the cut does not");
+  assert.equal(canComment(model, "new", 4400), false);
+  const on = renderDiff(model, { mode: "unified", comments: true }).node.all();
+  assert.match(on[on.length - 1].textContent, /^Showing the first 4000 lines\. Review comments stop here/);
+  const off = renderDiff(model, { mode: "unified" }).node.all();
+  assert.equal(off[off.length - 1].textContent, "Showing the first 4000 lines.", "off: ED1's note");
+  assert.ok(!on.some((n) => Number(n.getAttribute("data-line")) > last), "no control past the cut");
+});
+
+await check("review comments: the window wiring (one writer in-process, applies at once, nothing written by the pane)", () => {
+  const main = readFileSync(join(ROOT, "desktop", "main.mjs"), "utf8");
+  assert.match(main, /import \{ changedText, featureFor, listFeatures, setFeature \} from "\.\.\/lib\/features\.mjs";/, "main imports the one writer from the bundled coop folder");
+  assert.ok(!/powershell|coop\.ps1.*settings/i.test(main.slice(main.indexOf('handle("coop:feature-set"'), main.indexOf('handle("coop:copy"'))), "no PowerShell start per click");
+  assert.match(main, /broadcast\("coop:features", view\)/, "every tab hears a change at once");
+  assert.match(main, /features: featureView\(state\)/);
+  const preload = readFileSync(join(ROOT, "desktop", "preload.cjs"), "utf8");
+  assert.match(preload, /setFeature: \(key, on\) => ipcRenderer\.invoke\("coop:feature-set", String\(key \|\| ""\), on === true\)/);
+  assert.match(preload, /onFeatures: listen\("coop:features"\)/);
+  const app = readFileSync(join(ROOT, "desktop", "renderer", "app.mjs"), "utf8");
+  assert.match(app, /"Features \(this client\)"/);
+  assert.match(app, /commentsOn: \(\) => commentsOn\(app\.info && app\.info\.features\)/);
+  assert.match(app, /window\.dispatchEvent\(new CustomEvent\("coop:features"\)\)/);
+  const pane = readFileSync(join(ROOT, "desktop", "renderer", "pane-changes.mjs"), "utf8");
+  assert.match(pane, /window\.addEventListener\("coop:features"/, "the pane follows a change at once");
 });
 
 rmSync(temp, { recursive: true, force: true });

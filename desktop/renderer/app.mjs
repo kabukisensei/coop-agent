@@ -7,7 +7,7 @@ import { createFinder } from "./find.mjs";
 import { renderItem, renderTurn, codeBlock } from "./view.mjs";
 import { parseInput, completions, noticePlace, KEYS } from "./commands.mjs";
 import { registerPane, openPane, togglePane, closePane, currentPane, refreshPane, initPanes } from "./panes.mjs";
-import { mountChanges } from "./pane-changes.mjs";
+import { commentsOn, mountChanges } from "./pane-changes.mjs";
 import { mountStandards } from "./pane-standards.mjs";
 import { mountProject } from "./pane-project.mjs";
 import { mountDocs } from "./pane-docs.mjs";
@@ -1345,6 +1345,39 @@ async function cloneSession() {
   if (result.success && !(result.data && result.data.cancelled)) { await refreshAll(); toast("Cloned into a new session.", "info"); }
 }
 
+// When a feature switch takes effect, in the words the Settings row shows.
+function featureWhen(feature) {
+  if (!feature.available) return "Not in this version yet";
+  if (feature.takesEffect === "at once") return "Takes effect at once";
+  return `Takes effect ${feature.takesEffect}`;
+}
+
+// The Features list (FEATURES-DESIGN): this client's switches, the same five rows
+// as `coop settings`, written in the main process through lib/features.mjs.
+function featuresGroup(row) {
+  const view = (app.info && app.info.features) || { ok: false, features: [] };
+  const rows = (view.features || []).map((feature) => {
+    const input = el("input", { type: "checkbox", class: "switch", role: "switch", checked: feature.on === true, disabled: !feature.available || view.ok === false, "aria-label": feature.label });
+    input.addEventListener("change", async () => {
+      const want = input.checked;
+      const result = await coop.setFeature(feature.key, want);
+      if (result && result.success) {
+        app.info.features = result.data;
+        window.dispatchEvent(new CustomEvent("coop:features"));
+        toast(result.data.text, "info");
+      } else {
+        input.checked = !want;
+        toast(`Could not change ${feature.label}: ${(result && result.error) || "unknown error"}`, "warning");
+      }
+    });
+    return row(feature.label, input, `${feature.help}. ${featureWhen(feature)}.`);
+  });
+  return el("div", { class: "settings-group", role: "group", "aria-label": "Features (this client)" },
+    el("h3", { class: "settings-head", text: "Features (this client)" }),
+    view.ok === false ? el("p", { class: "hint", text: view.file ? `${view.file} is not valid JSON, so every feature reads as off and coop leaves the file as it is. Fix or remove it to change these.` : "The feature switches could not be read." } ) : el("p", { class: "hint", text: "All off unless you turn them on. Saved for this Windows user (coop settings in a terminal shows the same list)." }),
+    ...rows);
+}
+
 function settingsPanel() {
   const s = app.state || {};
   const row = (label, control, help) => el("label", { class: "setting" }, el("div", { class: "setting-label" }, el("span", { text: label }), help ? el("span", { class: "hint", text: help }) : null), control);
@@ -1361,6 +1394,7 @@ function settingsPanel() {
     row("DAX opens in", select([["tabular-editor", "Tabular Editor"], ["power-bi", "Power BI Desktop"]], app.info.daxEditor || "tabular-editor", async (v) => { const r = await coop.setPref("daxEditor", v); if (r && r.success) app.info.daxEditor = v; }), "The program the Changes pane's Open in editor uses for a semantic model's files (SQL opens in SSMS)"),
     row("Notify in the background", toggle(app.info.notify !== false, async (v) => { const r = await coop.setPref("notify", v); if (r && r.success) app.info.notify = v; }), "A Windows notification and a taskbar flash when coop finishes or asks while you are elsewhere"),
     row("Menu bar", toggle(app.info.menuBar !== false, async (v) => { const r = await coop.setPref("menuBar", v); if (r && r.success) app.info.menuBar = v; }), "File, Edit, View, Session and Help above the window (Alt shows it when hidden)"),
+    featuresGroup(row),
     el("p", { class: "hint", text: "Pi's other settings (default model, scoped models, terminal display) are in the terminal's /settings." }));
   openModal({ title: "Settings", body, wide: true, buttons: [{ label: "Open in terminal", onClick: () => { openTerminal("Run /settings there."); } }, { label: "Done", kind: "primary" }] });
 }
@@ -1645,7 +1679,7 @@ function wire() {
 
 function registerPanes() {
   const deps = { coop, codeBlock };
-  registerPane({ id: "changes", label: "Changes", icon: "diff", description: "Files changed since the last commit", mount: (box, options) => mountChanges(box, options, { ...deps, cwd: () => (app.info ? app.info.cwd : ""), setPrompt }) });
+  registerPane({ id: "changes", label: "Changes", icon: "diff", description: "Files changed since the last commit", mount: (box, options) => mountChanges(box, options, { ...deps, cwd: () => (app.info ? app.info.cwd : ""), setPrompt, commentsOn: () => commentsOn(app.info && app.info.features) }) });
   registerPane({ id: "standards", label: "Standards", icon: "shield", description: "The standards coop applies in this folder", mount: (box, options) => mountStandards(box, options, deps) });
   registerPane({ id: "project", label: "Project", icon: "form", description: "Project settings (.coop/project.yml)", mount: (box, options) => mountProject(box, options, { ...deps, newSession: () => runAction("new") }) });
   registerPane({ id: "docs", label: "Docs", icon: "graph", description: "Lineage docs for this folder (coop-data-doc)", mount: (box, options) => mountDocs(box, options, { ...deps, sendSlash }) });
@@ -1659,6 +1693,8 @@ async function boot() {
   coop.onExit(onExit);
   coop.onNotice((notice) => toast(clean(notice.message), notice.level || "info"));
   coop.onTheme((theme) => applyTheme(theme));
+  // Another tab (or window) changed a feature switch: the Changes pane follows at once.
+  coop.onFeatures((view) => { if (app.info) app.info.features = view; window.dispatchEvent(new CustomEvent("coop:features")); });
   coop.onMenu((menu) => { if (menu && typeof menu.action === "string") runAction(menu.action); });
   coop.onRefresh(async (change) => {
     if (change && change.action === "reload") {

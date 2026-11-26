@@ -6,7 +6,7 @@
 // else Windows' app for it), and clicking a line puts a "Fix this line" note
 // in the prompt, so coop makes the edit with its usual backups and approvals.
 import { el, fill, icon, toast } from "./ui.mjs";
-import { diffModel, renderDiff } from "./diff-view.mjs";
+import { diffModel, diffRows, renderDiff } from "./diff-view.mjs";
 import { hunkStats } from "./unified-diff.mjs";
 import { makeResizer } from "./resize.mjs";
 
@@ -98,8 +98,193 @@ export function fixLinePrompt({ path, line, text, note }) {
   return `Fix ${where}${code ? ` (\`${code.replace(/`/g, "'")}\`)` : ""}: ${String(note || "").trim()}`;
 }
 
-export function mountChanges(box, options, { coop, cwd, setPrompt }) {
-  const state = { files: [], drafts: [], draftsDir: "", selected: "", mode: "unified", query: "", active: 0, matches: [], diff: null, loading: false, repos: [], repo: null };
+// --- Diff review comments (FEATURES-DESIGN CW3) ------------------------------
+// With the feature on (Settings, Features; it applies at once), a click on a
+// new line OR a removed line, or a shift-click range inside one hunk and one
+// side, adds a comment marker instead of ED1's single "Fix this line" note.
+// Markers collect (edit, delete) and "Send to coop (N comments)" fills ONE
+// prompt; the person sends it, and coop revises in an ordinary turn under the
+// usual backups, approvals, lineage gate and standards_check. When the pane
+// diffs again it re-anchors each comment. Comments live in this tab's memory
+// only. Off (or an unreadable setting), the pane is ED1 exactly.
+
+/** True only when the window's feature list says Diff review comments is on. */
+export function commentsOn(view) {
+  if (!view || view.ok === false || !Array.isArray(view.features)) return false;
+  return view.features.some((f) => f && f.key === "comments" && f.on === true);
+}
+
+/**
+ * The path a comment names: the repository's `rel` prefix and the path inside
+ * it (a non-root repository reads as from the open folder), or
+ * `draft <name>` for a draft (no prefix).
+ */
+export function reviewPath({ rel = "", selected = "" }) {
+  const key = String(selected || "");
+  if (key.startsWith("draft:")) return `draft ${key.slice(6)}`;
+  const prefix = String(rel || "").replace(/\\/g, "/").replace(/\/+$/, "");
+  return prefix ? `${prefix}/${key}` : key;
+}
+
+/**
+ * A shift-click: a range from the last clicked line when both lie in the same
+ * file, hunk and side; otherwise a new single-line comment at the click.
+ * `anchor` and `click` are { key, side: "new" | "old", hunk, line }.
+ * Returns { side, hunk, from, to }.
+ */
+export function extendSelection(anchor, click) {
+  if (anchor && anchor.key === click.key && anchor.side === click.side && anchor.hunk === click.hunk) {
+    return { side: click.side, hunk: click.hunk, from: Math.min(anchor.line, click.line), to: Math.max(anchor.line, click.line) };
+  }
+  return { side: click.side, hunk: click.hunk, from: click.line, to: click.line };
+}
+
+/**
+ * One side of a diff as line number -> { text, type, hunk }: the new side holds
+ * context and added lines (new numbers), the old side context and removed
+ * lines (old numbers). Only lines the diff shows (MAX_ROWS) are in it.
+ */
+export function sideLines(model, side, mode = "unified") {
+  const out = new Map();
+  const add = (line, hunk) => {
+    if (side === "old" ? line.oldNo !== null : line.newNo !== null) out.set(side === "old" ? line.oldNo : line.newNo, { text: line.text, type: line.type, hunk });
+  };
+  for (const row of diffRows(model, mode).rows) {
+    if (row.kind === "line") add(row.line, row.hunk);
+    else if (row.kind === "ctx") add(row.line, row.hunk);
+    else if (row.kind === "pair") { if (row.left) add(row.left, row.hunk); if (row.right) add(row.right, row.hunk); }
+  }
+  return out;
+}
+
+/**
+ * Whether a line may take a comment: shown (not past the cut) and, on the old
+ * side, a removed line.
+ */
+export function canComment(model, side, line, mode = "unified") {
+  const hit = sideLines(model, side, mode).get(line);
+  return Boolean(hit && (side === "new" || hit.type === "del"));
+}
+
+/** A comment's lines and the two lines either side ({ text, before, after }), null where the diff shows none. */
+export function commentContext(model, side, from, to) {
+  const lines = sideLines(model, side);
+  const at = (n) => (lines.has(n) ? lines.get(n).text : null);
+  const text = [];
+  for (let n = from; n <= to; n += 1) text.push(at(n) === null ? "" : at(n));
+  return { text, before: [at(from - 2), at(from - 1)], after: [at(to + 1), at(to + 2)] };
+}
+
+// How far from its old number a comment's lines may have moved and still count
+// as the same place.
+const NEAR = 40;
+
+/**
+ * Re-anchor a comment ({ side, from, to, text, before, after }) on a fresh diff
+ * model: { status, from, to, hunk }. status is "unchanged" (the same lines,
+ * perhaps shifted), "changed" (the lines around it fit and the lines
+ * themselves were edited) or "moved" ("moved or gone, check it": no single
+ * match near the old number). The two lines either side tell repeated lines
+ * (END, GO, ")") apart.
+ */
+export function reanchorComment(comment, model) {
+  const { side, from, to } = comment;
+  const len = to - from + 1;
+  const text = comment.text || [];
+  const before = comment.before || [null, null];
+  const after = comment.after || [null, null];
+  const lines = sideLines(model, side);
+  const textOf = (n) => (lines.has(n) ? lines.get(n).text : undefined);
+  const moved = { status: "moved", from, to, hunk: -1 };
+  if (side === "old") {
+    // The old side is the last commit: its numbers hold until a commit.
+    let removed = true;
+    for (let i = 0; i < len; i += 1) {
+      const hit = lines.get(from + i);
+      if (hit && hit.text !== text[i]) return moved;
+      if (!hit || hit.type !== "del") removed = false;
+    }
+    const hunk = lines.has(from) ? lines.get(from).hunk : -1;
+    return { status: removed ? "unchanged" : "changed", from, to, hunk };
+  }
+  const textAt = (p) => text.every((t, i) => textOf(p + i) === t);
+  const contextScore = (p, size) => before.filter((t, k) => t !== null && textOf(p - before.length + k) === t).length
+    + after.filter((t, k) => t !== null && textOf(p + size + k) === t).length;
+  const contextSize = before.filter((t) => t !== null).length + after.filter((t) => t !== null).length;
+  const near = [...lines.keys()].filter((p) => Math.abs(p - from) <= NEAR).sort((a, b) => a - b);
+  const exact = near.filter(textAt);
+  const unchanged = (p) => ({ status: "unchanged", from: p, to: p + len - 1, hunk: lines.get(p).hunk });
+  // 1. The same lines with their neighbours (one neighbour may have been edited).
+  const strong = exact.filter((p) => contextScore(p, len) >= Math.max(1, contextSize - 1) || contextSize === 0);
+  if (strong.length === 1) return unchanged(strong[0]);
+  if (strong.length > 1) return moved;
+  // Not there with its neighbours: does the place around it still fit? The lines before
+  // end just above q, the lines after start further down; something lies
+  // between (an empty gap means the lines are gone).
+  const beforeKnown = before.some((t) => t !== null);
+  const afterKnown = after.some((t) => t !== null);
+  if (!beforeKnown && !afterKnown) return exact.length === 1 ? unchanged(exact[0]) : moved;
+  const beforeFits = (q) => before.every((t, k) => t === null || textOf(q - before.length + k) === t);
+  const afterFits = (r) => after.every((t, k) => t === null || textOf(r + k) === t);
+  const fits = [];
+  if (beforeKnown) {
+    for (const q of near) {
+      if (!beforeFits(q)) continue;
+      let end = -1;
+      if (afterKnown) {
+        for (let r = q + 1; r <= q + len + 20; r += 1) if (afterFits(r)) { end = r - 1; break; }
+        if (end < q) continue;
+      } else {
+        end = q;
+        while (end - q + 1 < len && lines.has(end + 1)) end += 1;
+      }
+      fits.push({ q, end });
+    }
+  } else {
+    // Only the lines after are known (the top of the file): they start at r.
+    for (const r of near) {
+      if (!afterFits(r) || !lines.has(r - 1)) continue;
+      let q = r - 1;
+      while (r - q < len && lines.has(q - 1)) q -= 1;
+      fits.push({ q, end: r - 1 });
+    }
+  }
+  // 2. The place around it fits and the lines themselves were edited.
+  if (fits.length === 1 && lines.has(fits[0].q)) return { status: "changed", from: fits[0].q, to: fits[0].end, hunk: lines.get(fits[0].q).hunk };
+  // The lines before and after now meet with nothing between: the lines are gone.
+  if (beforeKnown && afterKnown && near.some((q) => beforeFits(q) && afterFits(q))) return moved;
+  // 3. Its neighbours changed, but the lines are there once.
+  if (!fits.length && exact.length === 1) return unchanged(exact[0]);
+  return moved;
+}
+
+/** The words a marker shows for a status. */
+export const COMMENT_STATUS = { unchanged: "unchanged", changed: "changed", moved: "moved or gone, check it" };
+
+/** One numbered line of the batch prompt. */
+export function commentLine(comment, index) {
+  const removed = comment.side === "old";
+  const where = comment.from === comment.to ? `line ${comment.from}` : `lines ${comment.from}-${comment.to}`;
+  const code = comment.from === comment.to ? String((comment.text || [])[0] || "").replace(/\s+/g, " ").trim().slice(0, 300) : "";
+  const note = String(comment.note || "").replace(/\s+/g, " ").trim();
+  return `${index}. ${comment.path} ${where} (${removed ? "removed" : "new"})${code ? ` \`${code.replace(/`/g, "'")}\`` : ""}: ${note}`;
+}
+
+/**
+ * The one prompt "Send to coop (N comments)" fills: every comment numbered, so
+ * coop answers each by number. `comments` carry { repoLabel, path, side, from,
+ * to, text, note }.
+ */
+export function reviewPrompt(comments) {
+  const repos = [...new Set(comments.map((c) => c.repoLabel).filter(Boolean))];
+  const where = repos.length > 1 ? ` (repos ${repos.join(", ")})` : repos.length ? ` (repo ${repos[0]})` : "";
+  return [`Review comments on the Changes pane${where}:`, ...comments.map((c, i) => commentLine(c, i + 1)), "Revise under the usual rules; answer each by number."].join("\n");
+}
+
+export function mountChanges(box, options, { coop, cwd, setPrompt, commentsOn: isCommentsOn }) {
+  const state = { files: [], drafts: [], draftsDir: "", selected: "", mode: "unified", query: "", active: 0, matches: [], diff: null, loading: false, repos: [], repo: null, comments: [], anchor: null, model: null, nextComment: 1 };
+  // Diff review comments (CW3): read at every use, so a Settings change applies at once.
+  const reviewing = () => { try { return typeof isCommentsOn === "function" && isCommentsOn() === true; } catch { return false; } };
   // Shown only when the open folder holds more than one repository.
   const repoPicker = el("select", { class: "field", "aria-label": "Repository to compare", title: "Which repository's changes to show", onchange: (event) => load("", event.target.value) });
   const repoRow = el("label", { class: "pane-toolbar change-repo", hidden: true }, el("span", { class: "change-repo-label", text: "Repository" }), repoPicker);
@@ -177,10 +362,13 @@ export function mountChanges(box, options, { coop, cwd, setPrompt }) {
     }
     const model = diffModel(result.diff);
     if (!model.hunks.length) { fill(diffBox, el("p", { class: "pane-empty", text: "No lines changed: the file was renamed or its permissions changed." })); count.textContent = ""; return; }
-    const { node, matches } = renderDiff(model, { mode: state.mode, query: state.query, active: state.active });
+    const review = reviewing();
+    state.model = model;
+    const { node, matches } = renderDiff(model, { mode: state.mode, query: state.query, active: state.active, comments: review });
     state.matches = matches;
     count.textContent = state.query ? (matches.length ? `${Math.min(state.active + 1, matches.length)} of ${matches.length}` : "No matches") : "";
     fill(diffBox, node);
+    if (review) decorate(node);
     if (scroll) { const hit = node.querySelector(".hit.active"); if (hit) hit.scrollIntoView({ block: "center" }); }
   }
 
@@ -198,6 +386,7 @@ export function mountChanges(box, options, { coop, cwd, setPrompt }) {
     if (state.selected !== path) return;
     if (!result.success) { state.diff = { error: result.error || "Could not read the diff." }; renderDiffView(); return; }
     state.diff = result.data;
+    reanchorFile(path, result.data.diff || "");
     if (file && file.status === "new" && result.data.diff) {
       const stats = hunkStats(diffModel(result.data.diff).hunks);
       file.added = stats.added;
@@ -308,11 +497,157 @@ export function mountChanges(box, options, { coop, cwd, setPrompt }) {
 
   diffBox.addEventListener("click", (event) => {
     if (event.target.closest(".fix-line")) return;
+    if (reviewing()) { commentClick(event); return; }
     const selection = window.getSelection ? String(window.getSelection()) : "";
     if (selection) return;
     const row = event.target.closest("[data-line]");
     if (row && diffBox.contains(row)) openFixForm(row);
   });
+  // A shift-click makes a range of review comments, not a text selection.
+  diffBox.addEventListener("mousedown", (event) => {
+    if (event.shiftKey && reviewing() && event.target.closest("[data-line], [data-old-line]")) event.preventDefault();
+  });
+
+  // --- Diff review comments (CW3) ----------------------------------------------
+  const reviewBar = el("div", { class: "pane-toolbar review-bar", role: "group", "aria-label": "Review comments" });
+  const fileKey = (path = state.selected) => `${state.repo === null ? "" : state.repo}\u0000${path}`;
+  const currentRepo = () => state.repos.find((r) => r.id === state.repo) || null;
+  const unsent = () => state.comments.filter((c) => !c.sent);
+  const commentWhere = (c) => `${c.from === c.to ? `line ${c.from}` : `lines ${c.from}-${c.to}`} (${c.side === "old" ? "removed" : "new"})`;
+
+  function renderReviewBar() {
+    if (!reviewing() || !state.comments.length) { reviewBar.remove(); return; }
+    const waiting = unsent().length;
+    fill(reviewBar,
+      el("span", { class: "review-count", text: `${state.comments.length} review ${state.comments.length === 1 ? "comment" : "comments"}${waiting !== state.comments.length ? ` (${waiting} not sent yet)` : ""}` }),
+      el("button", { type: "button", class: "btn primary", disabled: waiting === 0, title: "Put every comment not sent yet in the prompt as one numbered request; you send it", onclick: sendComments, text: `Send to coop (${waiting} ${waiting === 1 ? "comment" : "comments"})` }),
+      el("button", { type: "button", class: "btn", title: "Remove every comment in this tab", onclick: () => { state.comments = []; state.anchor = null; rerender(); }, text: "Clear" }));
+    if (reviewBar.parentNode !== box) box.insertBefore(reviewBar, diffBox);
+  }
+
+  // Draw again keeping the diff's scroll position.
+  function rerender() {
+    const top = diffBox.scrollTop;
+    renderDiffView();
+    diffBox.scrollTop = top;
+    renderReviewBar();
+  }
+
+  function sendComments() {
+    const batch = unsent();
+    if (!batch.length || typeof setPrompt !== "function") return;
+    setPrompt(reviewPrompt(batch));
+    batch.forEach((c, i) => { c.sent = true; c.number = i + 1; c.status = ""; });
+    rerender();
+  }
+
+  // After a revision the pane diffs the file again: each comment finds its place.
+  function reanchorFile(path, diffText) {
+    const key = fileKey(path);
+    const mine = state.comments.filter((c) => c.key === key && c.diffText !== diffText);
+    if (!mine.length) return;
+    const model = diffModel(diffText);
+    for (const c of mine) {
+      const found = reanchorComment(c, model);
+      Object.assign(c, { from: found.from, to: found.to, hunk: found.hunk, status: found.status, diffText });
+      if (found.status !== "moved") Object.assign(c, commentContext(model, c.side, c.from, c.to));
+    }
+  }
+
+  function rowFor(node, side, hunk, line) {
+    const attr = side === "old" ? "data-old-line" : "data-line";
+    const cell = (hunk >= 0 && node.querySelector(`[data-hunk="${hunk}"][${attr}="${line}"]`)) || node.querySelector(`[data-hunk][${attr}="${line}"]`);
+    if (!cell) return null;
+    return cell.classList.contains("diff-cell") ? cell.parentElement : cell;
+  }
+
+  function marker(c) {
+    const waiting = unsent();
+    const number = c.sent ? c.number : waiting.indexOf(c) + 1;
+    const showStatus = c.status && (c.sent || c.status === "moved");
+    return el("div", { class: `review-marker${showStatus ? ` ${c.status}` : ""}${c.sent ? " sent" : ""}`, role: "note", "aria-label": `Review comment ${number}` },
+      el("span", { class: "review-num", text: String(number), title: c.sent ? "Sent to coop with this number" : "Its number in the next batch" }),
+      el("span", { class: "review-where", text: commentWhere(c) }),
+      showStatus ? el("span", { class: "chip review-status", text: COMMENT_STATUS[c.status] }) : null,
+      el("span", { class: "review-note", text: c.note }),
+      el("button", { type: "button", class: "btn", text: "Edit", title: "Change this comment", onclick: (event) => { event.stopPropagation(); openCommentForm(c, event.currentTarget.closest(".review-marker")); } }),
+      el("button", { type: "button", class: "btn icon", title: "Delete this comment", "aria-label": "Delete this comment", onclick: (event) => { event.stopPropagation(); state.comments = state.comments.filter((x) => x !== c); rerender(); } }, icon("close")));
+  }
+
+  // Markers under their lines; a comment whose lines are not drawn here (past the
+  // cut, or moved or gone) is listed at the end.
+  function decorate(node) {
+    const key = fileKey();
+    const after = new Map();
+    const loose = [];
+    for (const c of state.comments.filter((x) => x.key === key)) {
+      const row = rowFor(node, c.side, c.hunk, c.to);
+      if (!row || c.status === "moved") { loose.push(c); continue; }
+      for (let n = c.from; n <= c.to; n += 1) { const r = rowFor(node, c.side, c.hunk, n); if (r) r.classList.add("review-commented"); }
+      const m = marker(c);
+      (after.get(row) || row).after(m);
+      after.set(row, m);
+    }
+    if (loose.length) node.append(el("div", { class: "review-loose" }, el("div", { class: "diff-hunk", text: "Review comments not on a line shown here" }), ...loose.map(marker)));
+    renderReviewBar();
+  }
+
+  function commentClick(event) {
+    if (event.target.closest(".review-marker, .review-loose")) return;
+    // Selecting text to copy is not a comment; a shift-click range is.
+    const selection = window.getSelection ? String(window.getSelection()) : "";
+    if (selection && !event.shiftKey) return;
+    if (selection && window.getSelection) window.getSelection().removeAllRanges();
+    const row = event.target.closest("[data-line], [data-old-line]");
+    if (!row || !diffBox.contains(row) || !state.model) return;
+    const side = row.hasAttribute("data-old-line") ? "old" : "new";
+    const line = Number(side === "old" ? row.getAttribute("data-old-line") : row.getAttribute("data-line"));
+    const hunk = Number(row.getAttribute("data-hunk"));
+    if (!canComment(state.model, side, line, state.mode)) return;
+    const click = { key: fileKey(), side, hunk, line };
+    const span = event.shiftKey ? extendSelection(state.anchor, click) : extendSelection(null, click);
+    if (!event.shiftKey || span.from === span.to) state.anchor = click;
+    openCommentForm(span, row.classList.contains("diff-cell") ? row.parentElement : row);
+  }
+
+  // The note for a new comment (`target` is a span) or an existing one (a comment).
+  function openCommentForm(target, after) {
+    const old = diffBox.querySelector(".fix-line");
+    if (old) old.remove();
+    const editing = state.comments.includes(target) ? target : null;
+    const where = commentWhere(target);
+    const input = el("input", { class: "field", type: "text", value: editing ? editing.note : "", placeholder: `Comment on ${where}`, "aria-label": `Comment on ${where}` });
+    const save = () => {
+      const note = input.value.trim();
+      if (!note) { input.focus(); return; }
+      form.remove();
+      if (editing) { editing.note = note; if (editing.sent) { editing.sent = false; editing.status = ""; } }
+      else {
+        const repo = currentRepo();
+        state.comments.push({
+          id: state.nextComment++, key: fileKey(), repoLabel: repo ? repo.label : "",
+          path: reviewPath({ rel: repo ? repo.rel || "" : "", selected: state.selected }),
+          side: target.side, hunk: target.hunk, from: target.from, to: target.to,
+          ...commentContext(state.model, target.side, target.from, target.to),
+          note, sent: false, status: "", diffText: (state.diff && state.diff.diff) || "",
+        });
+      }
+      rerender();
+    };
+    const form = el("div", { class: "fix-line review-form", role: "group", "aria-label": "Review comment" },
+      input,
+      el("button", { type: "button", class: "btn primary", text: editing ? "Save" : "Add comment", title: "Keep it with the others; Send to coop puts them all in the prompt", onclick: save }),
+      el("button", { type: "button", class: "btn icon", title: "Cancel", "aria-label": "Cancel", onclick: () => form.remove() }, icon("close")));
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") { event.preventDefault(); save(); }
+      else if (event.key === "Escape") { event.preventDefault(); form.remove(); }
+    });
+    after.after(form);
+    input.focus();
+  }
+
+  // Settings turned the feature on or off: the diff and the bar follow at once.
+  window.addEventListener("coop:features", () => { if (state.diff) rerender(); else renderReviewBar(); });
 
   function step(direction) {
     if (!state.matches.length) return;

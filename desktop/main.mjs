@@ -46,7 +46,8 @@ import { DeviceStore } from "./lib/companion-devices.mjs";
 import { createCompanionServer, DEFAULT_PORT } from "./lib/companion-server.mjs";
 import { tailnetOrigin } from "./lib/companion-tailscale.mjs";
 import { createPushSender, loadVapid } from "./lib/companion-push.mjs";
-import { draftsDirFor, folderPlaces, profileDir } from "../lib/paths.mjs";
+import { configPath, draftsDirFor, folderPlaces, profileDir } from "../lib/paths.mjs";
+import { changedText, featureFor, listFeatures, setFeature } from "../lib/features.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RENDERER = join(HERE, "renderer");
@@ -266,7 +267,26 @@ function windowInfo(state) {
     vibeSets: vibeSets(vibesDir(REPO)),
     attachLimits: { perMessage: ATTACH_LIMITS.perMessage, images: ATTACH_LIMITS.images, imageBytes: IMAGE_LIMITS.maxImageBytes, imageTotalBytes: IMAGE_LIMITS.maxTotalBytes },
     pdfReady: Boolean(pdfjsDir),
+    // This client's feature switches (the Features list in Settings; the
+    // Changes pane's review comments read theirs from here).
+    features: featureView(state),
   };
+}
+
+// The Features list (FEATURES-DESIGN): this client's switches in ~/.coop/config,
+// read and written in this process through lib/features.mjs, the one writer
+// (`coop settings` runs the same module's CLI); no PowerShell start per click.
+// The window's own settings.json is unchanged.
+function featureFile(state) {
+  return configPath(toolEnv(state));
+}
+function featureView(state) {
+  try {
+    const list = listFeatures({ file: featureFile(state) });
+    return { ok: list.ok, error: list.error, file: list.file, features: list.features };
+  } catch (error) {
+    return { ok: false, error: error && error.message ? error.message : String(error), file: "", features: [] };
+  }
 }
 
 // The terminal rotates a vibe under its splash and on its working line; the
@@ -928,6 +948,19 @@ handle("coop:pref", (state, key, value) => {
   else if (key === "daxEditor") settings = saveSettings(settingsFile, { ...settings, daxEditor: value });
   else return { success: false, error: "unknown preference" };
   return { success: true, data: { notify: settings.notify, menuBar: settings.menuBar, daxEditor: settings.daxEditor } };
+});
+
+handle("coop:features", (state) => ({ success: true, data: featureView(state) }));
+
+// One switch, then every tab hears the new list: Diff review comments applies at
+// once in each tab's Changes pane; the others say when they take effect.
+handle("coop:feature-set", (state, key, on) => {
+  const feature = featureFor(typeof key === "string" ? key : "");
+  if (!feature || typeof on !== "boolean") return { success: false, error: "unknown feature" };
+  setFeature(feature.key, on, { file: featureFile(state) });
+  const view = featureView(state);
+  broadcast("coop:features", view);
+  return { success: true, data: { ...view, text: changedText(feature, on) } };
 });
 
 handle("coop:copy", (state, text) => {
