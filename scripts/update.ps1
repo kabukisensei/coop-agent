@@ -204,7 +204,7 @@ if ((Test-CoopGitCheckout $script:CoopRoot) -and (Test-Have 'git')) {
 } else {
   # A zip/shared-drive copy: Pi + pipx tools above still update, but the repo layer
   # (skills/prompts/guardrails/themes/scripts) is frozen forever — say so loudly.
-  Coop-Warn "this coop-agent is not a git checkout — skills/prompts/guardrails will NEVER update — fix: git clone the repo, then run .\bin\coop.cmd install from the clone (your ~/.coop settings carry over)"
+  Coop-Warn "this coop-agent is not a git checkout — skills/prompts/guardrails will NEVER update — fix: git clone the repo, then run $(Get-CoopCloneInstallCommand) from the clone (your ~/.coop settings carry over)"
 }
 
 # The checkout may have just moved to a newer release: re-read the fleet plan from

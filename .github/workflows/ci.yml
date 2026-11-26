@@ -311,6 +311,161 @@ jobs:
             ${{ runner.temp }}/launch-acceptance.json
           if-no-files-found: ignore
 
+  linux:
+    # The Linux personal edition (master plan row LX1): Windows is the team
+    # platform; Linux under pwsh 7 is a supported personal edition, and this job
+    # is its gate. One implementation: the same scripts, with the Linux-only
+    # branches behind `-not (Test-CoopWindowsHost)`. tests/run.ps1 already runs
+    # under pwsh 7 on Linux in the `tests` job, so this job runs only the real
+    # journey against a throwaway HOME (pipx and npm pointed into it): `coop
+    # install --yes` (which ends with doctor), `coop doctor --json`, `coop
+    # launch-spec --json`, the guardrails through the pinned Pi's own extension
+    # runner, and `coop uninstall --yes`. Exit codes are checked: install and
+    # doctor exit 0, or 1 (doctor's "something required is missing" code) only
+    # when the one red doctor row is the ODBC/pyodbc "Fabric SQL fallback" row
+    # (pyodbc cannot load without unixODBC, and the driver is msodbcsql18: both
+    # need root and Microsoft's apt repository, which coop's Linux install does
+    # not touch, so the job asserts that row instead of installing them) and
+    # install counts at most that one failed step, the Fabric Python runtime.
+    # "6. ODBC Driver 18" and "7. Tabular Editor CLI" must be warnings, never
+    # red. uninstall exits 0. A PowerShell error line anywhere fails the job.
+    name: linux personal edition (pwsh 7)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      COOP_SKIP_AZ: '1'
+      NO_COLOR: '1'
+    steps:
+      # Shallow checkout: doctor's repository rows are ok/warn only, never red.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22.23.5'
+          cache: npm
+          cache-dependency-path: config/release-manifest.json
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: config/release-manifest.json
+      - name: sandbox HOME for the real install
+        run: |
+          sb="$RUNNER_TEMP/coop-linux"
+          mkdir -p "$sb/home" "$sb/npm-global" "$sb/logs"
+          # Keep the npm and pip caches the setup actions restore and save
+          # (they live under the runner's HOME, which changes below).
+          npm_cache=$(npm config get cache)
+          pip_cache=$(python -m pip cache dir)
+          # pipx for the interpreter coop picks (Get-CoopPython: the first
+          # python3 on PATH, setup-python's), installed into the SANDBOX home's
+          # user site. Installed under the runner's HOME (run 45754897943), its
+          # script stayed on PATH but could not import pipx once HOME moved.
+          HOME="$sb/home" PIP_CACHE_DIR="$pip_cache" python3 -m pip install --quiet --user 'pipx==1.19.1'
+          test "$(HOME="$sb/home" python3 -m pipx --version)" = "1.19.1"
+          test "$(HOME="$sb/home" "$sb/home/.local/bin/pipx" --version)" = "1.19.1"
+          {
+            echo "npm_config_cache=$npm_cache"
+            echo "PIP_CACHE_DIR=$pip_cache"
+            echo "HOME=$sb/home"
+            echo "NPM_CONFIG_PREFIX=$sb/npm-global"
+            echo "PIPX_HOME=$sb/home/.local/share/pipx"
+            echo "PIPX_BIN_DIR=$sb/home/.local/bin"
+            echo "COOP_LOGS=$sb/logs"
+          } >> "$GITHUB_ENV"
+          {
+            echo "$sb/npm-global/bin"
+            echo "$sb/home/.local/bin"
+          } >> "$GITHUB_PATH"
+      - name: coop install --yes, doctor --json, launch-spec --json (sandbox HOME)
+        shell: bash
+        run: |
+          set +e
+          bin/coop install --yes > "$COOP_LOGS/install.log" 2>&1; install_rc=$?
+          bin/coop doctor --json > "$COOP_LOGS/doctor.json" 2> "$COOP_LOGS/doctor-json.err"; doctor_rc=$?
+          bin/coop launch-spec --json > "$COOP_LOGS/launch-spec.json" 2> "$COOP_LOGS/launch-spec.err"; spec_rc=$?
+          set -e
+          cat "$COOP_LOGS/install.log"
+          echo "install rc=$install_rc doctor --json rc=$doctor_rc launch-spec rc=$spec_rc"
+          test "$spec_rc" -eq 0 || { cat "$COOP_LOGS/launch-spec.err"; echo "::error::launch-spec --json exited $spec_rc"; exit 1; }
+          test "$(readlink -f "$HOME/.local/bin/coop")" = "$(readlink -f bin/coop)" || { echo "::error::~/.local/bin/coop does not link to this checkout's bin/coop"; exit 1; }
+          (cd "$RUNNER_TEMP" && coop version) || { echo "::error::coop version through PATH failed"; exit 1; }
+          python - "$COOP_LOGS" "$install_rc" "$doctor_rc" <<'PY'
+          import json, os, re, sys
+          logs, install_rc, doctor_rc = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+          bad = 0
+          # PowerShell error lines (ConciseView and NormalView), not the bare word.
+          ps_error = re.compile(r"Exception|Cannot bind|is not recognized|CategoryInfo|InvalidOperation")
+          for name in ("install.log", "doctor-json.err", "launch-spec.err"):
+              for line in open(os.path.join(logs, name), encoding="utf-8", errors="replace"):
+                  if ps_error.search(line):
+                      print(f"::error::{name}: PowerShell error line: {line.rstrip()}"); bad = 1
+          doc = None
+          for line in open(os.path.join(logs, "doctor.json"), encoding="utf-8"):
+              try:
+                  obj = json.loads(line)
+              except ValueError:
+                  continue
+              if isinstance(obj, dict) and "checks" in obj:
+                  doc = obj
+          if doc is None or not doc["checks"]:
+              print("::error::doctor --json printed no checks"); sys.exit(1)
+          fails = [str(c.get("name", "")) for c in doc["checks"] if c.get("status") == "fail"]
+          for name in fails:
+              print(f"doctor fail row: {name}")
+          # The one red row allowed: pyodbc that cannot load (no unixODBC), or
+          # pyodbc that loads without the driver. Not "runtime is unavailable",
+          # "pyodbc missing" or a missing tool: those are install failures.
+          odbc_row = re.compile(r"^Fabric SQL fallback: (pyodbc is installed but unloadable|ODBC Driver 18\+ for SQL Server is missing)$")
+          odbc_only = len(fails) == 1 and bool(odbc_row.match(fails[0]))
+          if fails and not odbc_only:
+              print("::error::doctor has red rows besides the ODBC/pyodbc one"); bad = 1
+          # Linux reality: the ODBC driver and te are warnings, never red.
+          for prefix, allowed in (("6. ODBC Driver 18", ("warn", "ok")), ("7. Tabular Editor CLI", ("warn",))):
+              rows = [c for c in doc["checks"] if str(c.get("name", "")).startswith(prefix)]
+              if len(rows) != 1 or rows[0].get("status") not in allowed:
+                  print(f"::error::doctor row '{prefix}' should be one of {allowed}: {rows}"); bad = 1
+          # doctor exits 1 exactly when a row is red (scripts/doctor.ps1).
+          want_doctor = 1 if fails else 0
+          if doctor_rc != want_doctor:
+              print(f"::error::doctor --json exited {doctor_rc}, expected {want_doctor}"); bad = 1
+          install_text = open(os.path.join(logs, "install.log"), encoding="utf-8", errors="replace").read()
+          m = re.search(r"(\d+) install/sync step\(s\) failed", install_text)
+          failed_steps = int(m.group(1)) if m else 0
+          for line in install_text.splitlines():
+              if "could not install" in line:
+                  print(f"::error::install.log: {line}"); bad = 1
+          if failed_steps == 1 and "failed to converge the Fabric Python runtime" not in install_text:
+              print("::error::the one failed install step is not the Fabric Python runtime (pyodbc)"); bad = 1
+          if install_rc == 0:
+              pass
+          elif install_rc == 1 and odbc_only and failed_steps <= 1 and "Bootstrap finished, but doctor reported problems" in install_text:
+              print("install exited 1 for the ODBC/pyodbc row only")
+          else:
+              print(f"::error::install exited {install_rc} ({failed_steps} failed step(s), doctor fail rows {fails})"); bad = 1
+          spec = json.load(open(os.path.join(logs, "launch-spec.json"), encoding="utf-8"))
+          if "coop-guardrails" not in " ".join(spec.get("args", [])):
+              print("::error::launch-spec does not load coop-guardrails"); bad = 1
+          sys.exit(bad)
+          PY
+      - name: guardrails through Pi's own extension runner (the pinned Pi install put in the sandbox)
+        run: node tests/guardrails-pi-runner.test.mjs "$NPM_CONFIG_PREFIX/lib/node_modules/@earendil-works/pi-coding-agent"
+      - name: coop uninstall --yes (sandbox HOME)
+        run: |
+          set +e
+          bin/coop uninstall --yes > "$COOP_LOGS/uninstall.log" 2>&1; rc=$?
+          set -e
+          cat "$COOP_LOGS/uninstall.log"
+          test "$rc" -eq 0 || { echo "::error::uninstall exited $rc"; exit 1; }
+          if grep -En 'Exception|Cannot bind|is not recognized|CategoryInfo|InvalidOperation' "$COOP_LOGS/uninstall.log"; then echo "::error::uninstall printed a PowerShell error"; exit 1; fi
+          if [ -e "$HOME/.local/bin/coop" ] || [ -L "$HOME/.local/bin/coop" ]; then echo "::error::uninstall left ~/.local/bin/coop"; exit 1; fi
+          if [ -e "$HOME/.coop/agent" ]; then echo "::error::uninstall left ~/.coop/agent"; exit 1; fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: coop-linux-logs
+          path: ${{ runner.temp }}/coop-linux/logs
+          if-no-files-found: ignore
+
   gate:
     # The one stable check name for this workflow. It needs every job above and
     # fails unless each one finished with `success`, so a failed, cancelled or
@@ -319,7 +474,7 @@ jobs:
     # any new ci.yml job to `needs` here.
     name: gate
     if: always()
-    needs: [shell, tests, windows, installer, installer-upgrade]
+    needs: [shell, tests, windows, installer, installer-upgrade, linux]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -330,12 +485,13 @@ jobs:
           TESTS_RESULT: ${{ needs.tests.result }}
           WINDOWS_RESULT: ${{ needs.windows.result }}
           INSTALLER_RESULT: ${{ needs.installer.result }}
+          LINUX_RESULT: ${{ needs.linux.result }}
           UPGRADE_RESULT: ${{ needs.installer-upgrade.result }}
           EVENT: ${{ github.event_name }}
         run: |
           printf '%s\n' "$NEEDS_JSON"
           rc=0
-          for job in "shell=$SHELL_RESULT" "tests=$TESTS_RESULT" "windows=$WINDOWS_RESULT" "installer=$INSTALLER_RESULT"; do
+          for job in "shell=$SHELL_RESULT" "tests=$TESTS_RESULT" "windows=$WINDOWS_RESULT" "installer=$INSTALLER_RESULT" "linux=$LINUX_RESULT"; do
             if [ "${job#*=}" != "success" ]; then echo "::error::gate: ${job%%=*} finished with '${job#*=}'"; rc=1; fi
           done
           case "$UPGRADE_RESULT" in

@@ -597,9 +597,9 @@ $(Coop-Bold)Usage$(Coop-Rst)
                             The team's .coop/project.yml: compare with origin, get it, or share it
                             (share commits that one file and pushes; --force on a non-default branch)
   coop project home [folder]
-                            Show or set this Windows user's client folder (and its project file), where coop opens every time
+                            Show or set this $(Get-CoopAccountNoun)'s client folder (and its project file), where coop opens every time
   coop folders              Show the three places coop uses: this machine, this client, the repository
-  coop startup on|off       Open coop when you sign in to Windows: update, Azure sign-in, then the window
+  coop startup on|off       Open coop when you sign in to Windows: update, Azure sign-in, then the window$(if (-not (Test-CoopWindowsHost)) { ' (Windows only)' })
   coop cleanup [now|days N|off]  Old sessions, backups and drafts: what is there, remove them now, or change the 45-day age
                             (on by default on a machine install; off is remembered)
   coop data-doc [args]      Run coop-data-doc (default: build) and summarize outputs
@@ -985,7 +985,7 @@ function Invoke-CoopPiProcess {
   [void](Set-CoopClientFolderEnv)
   if ($sibling) {
     $searched = Find-CoopSearchedContract (Get-Location).Path
-    if (-not $searched -or ([System.IO.Path]::GetFullPath($searched) -ne [System.IO.Path]::GetFullPath($sibling))) { Coop-Info "project file: $sibling (this Windows user's project file, remembered by coop; change it with: coop project home <folder>)" }
+    if (-not $searched -or ([System.IO.Path]::GetFullPath($searched) -ne [System.IO.Path]::GetFullPath($sibling))) { Coop-Info "project file: $sibling (this $(Get-CoopAccountNoun)'s project file, remembered by coop; change it with: coop project home <folder>)" }
     elseif (-not (Find-CoopGitRoot (Get-Location).Path)) { Coop-Info "project file: $sibling (the repository $(Get-CoopChildRepositoryName $sibling) inside this folder holds it)" }
     else { Coop-Info "project file: $sibling (the client home repository beside this one lists this repository)" }
   } else {

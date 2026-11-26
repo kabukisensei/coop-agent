@@ -698,6 +698,7 @@ print("resume verdict contract OK")
     @{ Name = 'inventory';              Lane = 'extended'; Head = 'truthful inventory (doctor pipx probes / sync postconditions)' },
     @{ Name = 'profile-redirect';       Lane = 'gate';     Head = 'install shortcuts and user PATH follow a redirected profile (isolated install)' },
     @{ Name = 'pi-busy-guard';          Lane = 'gate';     Head = 'install/update busy guard counts only this install''s Pi sessions (#234)' },
+    @{ Name = 'linux-edition';          Lane = 'gate';     Head = 'Linux personal edition (LX1): pi version probe, PATH, child scan, uninstall link, Pi busy guard, fab/te fallbacks, wording' },
     @{ Name = 'extension-tree-lock';    Lane = 'gate';     Head = 'one writer for the extension tree (sync vs. the window''s first launch; the live-holder case runs in the extended lane)' })
   foreach ($fx in $fixtures) {
     if ($fx.Lane -eq 'extended' -and -not $extendedLane) { continue }

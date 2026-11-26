@@ -897,6 +897,10 @@ function Get-CoopPipxVenvsDir {
   } else {
     $candidates += (Join-Path $HOME '.local\pipx')
     $candidates += (Join-Path $HOME '.local/pipx')
+    # pipx 1.3+ on Linux: $XDG_DATA_HOME/pipx (~/.local/share/pipx) when the
+    # legacy ~/.local/pipx is absent.
+    $xdgData = if ($env:XDG_DATA_HOME) { $env:XDG_DATA_HOME } else { Join-Path $HOME '.local/share' }
+    $candidates += (Join-Path $xdgData 'pipx')
   }
   foreach ($c in $candidates) {
     if ($c -and (Test-Path -LiteralPath $c)) { return (Join-Path $c 'venvs') }
@@ -907,8 +911,14 @@ function Get-CoopPipxVenvsDir {
 # Installed version of a pipx-managed distribution from in-venv metadata.
 # The pipx command used for inventory probes. COOP_PIPX_BIN lets callers pin an
 # exact binary — useful when PATH carries shadows/stubs, and in tests.
+# On Linux it is the first `pipx` on PATH that answers (Find-CoopUnixPipx), so a
+# dead pipx script earlier on PATH is not the one probed.
 function Get-CoopPipxCmd {
   if ($env:COOP_PIPX_BIN) { return $env:COOP_PIPX_BIN }
+  if (-not (Test-CoopWindowsHost)) {
+    $unixPipx = Find-CoopUnixPipx
+    if ($unixPipx) { return $unixPipx }
+  }
   return 'pipx'
 }
 
@@ -1689,6 +1699,14 @@ function Get-CoopExtInstalledVersion([string]$AgentDir, [string]$Name) {
   return ''
 }
 
+# Linux personal edition: the user's PATH as it was when coop started, before
+# any coop prepend below (or in bin/coop.ps1 and install). An environment
+# variable, so a nested script (install run from coop, Invoke-CoopScript) sees
+# the first process's value; install's "not on your PATH" warning tests it.
+if (-not ($IsWindows -or $env:OS -eq 'Windows_NT') -and $null -eq $env:COOP_ORIGINAL_PATH) {
+  $env:COOP_ORIGINAL_PATH = [string]$env:PATH
+}
+
 # Ensure user tool bins (pipx, Azure CLI) are on PATH in-process
 $script:PathSep = [System.IO.Path]::PathSeparator
 $pipxBin = Join-Path $HOME '.local\bin'
@@ -2402,6 +2420,95 @@ function Get-CoopCleanupTargets {
 function Get-CoopLargeBackupBytes { return [long]50MB }
 
 function Test-CoopWindowsHost { return [bool]($IsWindows -or $env:OS -eq 'Windows_NT') }
+
+# User-facing platform words. Windows keeps its exact wording ('Windows user',
+# `.\bin\coop.cmd install`); the Linux personal edition (pwsh 7) names its own
+# account and the bash forwarder instead.
+function Get-CoopAccountNoun {
+  if (Test-CoopWindowsHost) { return 'Windows user' }
+  return 'Linux user'
+}
+function Get-CoopCloneInstallCommand {
+  if (Test-CoopWindowsHost) { return '.\bin\coop.cmd install' }
+  return 'bin/coop install'
+}
+
+# Put $Dir first on this process's PATH unless it is already there (the Linux
+# personal edition's PATH handling; the Windows code keeps its own ';' copies).
+# No trailing separator when PATH is empty: on Linux an empty entry means '.'.
+function Add-CoopPathFront([string]$Dir) {
+  if (-not $Dir) { return }
+  $sep = [System.IO.Path]::PathSeparator
+  $current = [string]$env:PATH
+  if (@($current.Split($sep)) -contains $Dir) { return }
+  if ($current) { $env:PATH = "$Dir$sep$current" } else { $env:PATH = $Dir }
+}
+
+# Test-Path for the contract and checkout probes over folders coop did not make.
+# On Linux an unreadable folder (/tmp/systemd-private-*) makes Test-Path print
+# "Access to the path ... is denied"; there it answers $false quietly. Windows
+# keeps Test-Path exactly as it was (the caller's error preference).
+function Test-CoopPathQuiet {
+  param([string]$LiteralPath, [string]$PathType = 'Any')
+  if (Test-CoopWindowsHost) { return (Test-Path -LiteralPath $LiteralPath -PathType $PathType) }
+  return (Test-Path -LiteralPath $LiteralPath -PathType $PathType -ErrorAction SilentlyContinue)
+}
+
+# Linux personal edition: install links ~/.local/bin/coop to this clone's
+# bin/coop (the bash forwarder) and uninstall removes it. A link is ours only
+# when it resolves to this clone's bin/coop; a link to another tool's (or
+# another clone's) bin/coop, or a regular file, is never replaced or removed.
+function Get-CoopUnixLauncherPath([string]$HomeDir = $HOME) {
+  return (Join-Path (Join-Path $HomeDir '.local/bin') 'coop')
+}
+function Test-CoopUnixLauncherOwned([string]$Path, [string]$Root = $script:CoopRoot) {
+  $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+  if (-not $item -or $item.LinkType -ne 'SymbolicLink') { return $false }
+  $ours = [System.IO.Path]::GetFullPath((Join-Path $Root 'bin/coop'))
+  $target = ''
+  try { $t = $item.ResolveLinkTarget($true); if ($t) { $target = $t.FullName } } catch { $target = '' }
+  if (-not $target) { return $false }
+  if ($target -eq $ours) { return $true }
+  # A folder link on either path (a clone reached through a linked folder):
+  # compare the fully resolved paths.
+  if ((Test-Have 'realpath') -and (Test-Path -LiteralPath $target)) {
+    $a = [string](& realpath -e -- $target 2>$null | Select-Object -First 1)
+    $b = [string](& realpath -e -- $ours 2>$null | Select-Object -First 1)
+    if ($a -and $a -eq $b) { return $true }
+  }
+  return $false
+}
+
+# Install step 6 on Linux: link ~/.local/bin/coop to this clone's bin/coop
+# (never over a foreign link or a regular file), then warn when ~/.local/bin was
+# not on the PATH the user started coop with ($OriginalPath, by default
+# COOP_ORIGINAL_PATH): coop prepends it for its own run, so the current PATH
+# cannot tell. $InstallCmd is the re-run command the hints name.
+function Install-CoopUnixLauncher {
+  param([string]$Root = $script:CoopRoot, [string]$HomeDir = $HOME, [string]$OriginalPath = $env:COOP_ORIGINAL_PATH, [string]$InstallCmd = 'bin/coop install')
+  $localBin = Join-Path $HomeDir '.local/bin'
+  New-Item -ItemType Directory -Force -Path $localBin | Out-Null
+  $launcher = Get-CoopUnixLauncherPath $HomeDir
+  $shimTarget = Join-Path $Root 'bin/coop'
+  $item = Get-Item -LiteralPath $launcher -Force -ErrorAction SilentlyContinue
+  if ($item -and $item.LinkType -eq 'SymbolicLink') {
+    if (Test-CoopUnixLauncherOwned $launcher $Root) { Coop-Ok 'coop already linked' }
+    else { Coop-Warn "$launcher links to $($item.Target), not this coop-agent clone; leaving it alone" "remove it, then re-run: $InstallCmd" }
+  } elseif ($item) {
+    Coop-Warn "$launcher exists and is not a link; leaving it alone" "remove it, then re-run: $InstallCmd"
+  } else {
+    try {
+      New-Item -ItemType SymbolicLink -Path $launcher -Target $shimTarget -ErrorAction Stop | Out-Null
+      Coop-Ok "linked $launcher -> $shimTarget"
+    } catch { Coop-Warn "could not link $launcher`: $($_.Exception.Message)" }
+  }
+  $sep = [System.IO.Path]::PathSeparator
+  $entries = @($OriginalPath.Split($sep) | ForEach-Object { $_.TrimEnd('/') })
+  if ($entries -notcontains $localBin.TrimEnd('/')) {
+    Add-CoopPathFront $localBin
+    Coop-Warn "$localBin is not on your PATH" 'add it in your shell profile (pipx ensurepath does this), then open a new terminal'
+  }
+}
 
 # The folders a launch in $StartDir looks in for a stray NUL file: the launch
 # folder, the repository, the project file's folder, the client folder and the
@@ -3844,7 +3951,21 @@ function Invoke-CoopRepoFollowRelease {
 # The Pi agent's own semver, e.g. '0.80.2' (from `pi --version`). '' if unknown.
 function Get-CoopPiVersion {
   if (-not (Test-Have 'pi')) { return '' }
+  if (-not (Test-CoopWindowsHost)) {
+    # Linux personal edition: an older pi prints --version on stderr, and Node
+    # may print a warning line (ExperimentalWarning, ...) on stderr before it.
+    # Read every line of both streams; the first semver wins, stdout first.
+    $out = @(); $errs = @()
+    foreach ($line in @(& pi --version 2>&1)) {
+      if ($line -is [System.Management.Automation.ErrorRecord]) { $errs += [string]$line } else { $out += [string]$line }
+    }
+    $raw = ''
+    foreach ($line in @($out + $errs)) {
+      if ([regex]::IsMatch($line, '\d+\.\d+\.\d+')) { $raw = $line; break }
+    }
+  } else {
   $raw = (& pi --version 2>$null | Select-Object -First 1)
+  }
   $m = [regex]::Match([string]$raw, '\d+\.\d+\.\d+')
   if ($m.Success) { return $m.Value } else { return '' }
 }
@@ -3977,6 +4098,46 @@ function Test-CoopPiCommandLineOwned([string]$CommandLine, [string[]]$Roots) {
   return $false
 }
 
+# Linux personal edition (pwsh 7): the same (ProcessId, CommandLine) rows from
+# the processes named node, nodejs (Debian's name) or pi. argv comes from
+# /proc/<pid>/cmdline split on NUL, so a path with spaces stays one argument
+# (Get-Process's CommandLine joins them with spaces). npm links `pi` as a
+# symlink to Pi's cli.js and the kernel keeps the link path in argv
+# (`node --flags ~/.npm-global/bin/pi`), so every absolute argument that is a
+# link is replaced by its resolved target; the row then names pi-coding-agent
+# under its npm root as on Windows. $Processes lets a fixture pass fake
+# Get-Process shapes (Id, and Argv or CommandLine).
+function Get-CoopUnixNodeProcessRows([object[]]$Processes = $null) {
+  if ($null -eq $Processes) { $Processes = @(Get-Process -Name node, nodejs, pi -ErrorAction SilentlyContinue) }
+  $rows = @()
+  foreach ($p in $Processes) {
+    if ($null -eq $p) { continue }
+    $tokens = @()
+    if ($p.PSObject.Properties['Argv']) { $tokens = @($p.Argv | Where-Object { $_ }) }
+    else {
+      try {
+        $raw = [System.IO.File]::ReadAllText("/proc/$($p.Id)/cmdline")
+        $tokens = @($raw.Split([char]0) | Where-Object { $_ })
+      } catch { $tokens = @() }
+      if ($tokens.Count -eq 0) { $tokens = @(([string]$p.CommandLine) -split '\s+' | Where-Object { $_ }) }
+    }
+    if ($tokens.Count -eq 0) { continue }
+    for ($i = 0; $i -lt $tokens.Count; $i++) {
+      $t = [string]$tokens[$i]
+      if (-not $t.StartsWith('/')) { continue }
+      try {
+        $item = Get-Item -LiteralPath $t -Force -ErrorAction Stop
+        if ($item.LinkType -eq 'SymbolicLink') {
+          $target = $item.ResolveLinkTarget($true)
+          if ($target) { $tokens[$i] = $target.FullName }
+        }
+      } catch { }
+    }
+    $rows += (New-Object PSObject -Property @{ ProcessId = $p.Id; CommandLine = ($tokens -join ' ') })
+  }
+  return $rows
+}
+
 # A coop/pi session of THIS install is open: a node.exe (not this process) whose
 # command line Test-CoopPiCommandLineOwned accepts. $Rows / $Roots let a fixture
 # pass fake process rows (ProcessId, CommandLine) and roots; by default the rows
@@ -3984,6 +4145,7 @@ function Test-CoopPiCommandLineOwned([string]$CommandLine, [string[]]$Roots) {
 function Test-CoopPiRunning([object[]]$Rows = $null, [string[]]$Roots = $null) {
   if ($null -eq $Roots) { $Roots = @(Get-CoopNpmGlobalRoots) }
   try {
+    if ($null -eq $Rows -and -not (Test-CoopWindowsHost)) { $Rows = @(Get-CoopUnixNodeProcessRows) }
     if ($null -eq $Rows) { $Rows = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue) }
     foreach ($p in $Rows) {
       if ($null -eq $p) { continue }
@@ -3992,6 +4154,25 @@ function Test-CoopPiRunning([object[]]$Rows = $null, [string[]]$Roots = $null) {
     }
   } catch { }
   return $false
+}
+
+# Linux personal edition: a tool that is installed but not on PATH yet (a new
+# shell picks it up): the first executable <dir>/<Name> in PIPX_BIN_DIR,
+# <HomeDir>/.local/bin and the pipx venv's own bin dir (<Get-CoopPipxVenvsDir>/
+# <Venv>/bin). '' when none exists. A file without an execute bit does not
+# count. Windows keeps its .exe lookups at each call site.
+function Get-CoopUnixToolFallback([string]$Name, [string]$Venv = '', [string]$HomeDir = $HOME) {
+  $dirs = @()
+  if ($env:PIPX_BIN_DIR) { $dirs += $env:PIPX_BIN_DIR }
+  $dirs += (Join-Path $HomeDir '.local/bin')
+  if ($Venv) { $dirs += (Join-Path (Join-Path (Get-CoopPipxVenvsDir) $Venv) 'bin') }
+  foreach ($d in $dirs) {
+    $f = Join-Path $d $Name
+    if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { continue }
+    $item = Get-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue
+    if ($item -and ([int]$item.UnixFileMode -band 73)) { return $f }   # 73 = 0o111, any execute bit
+  }
+  return ''
 }
 
 # The busy guard install and update share: clear leftover staging dirs, then say
@@ -4003,7 +4184,11 @@ function Test-CoopPiConvergeAllowed([string]$Command = 'coop update') {
   if (-not (Test-Have 'pi')) { return $true }
   Remove-CoopPiStagingDirs
   if (-not (Test-CoopPiRunning)) { return $true }
+  if (-not (Test-CoopWindowsHost)) {
+    Coop-Warn 'a coop/pi session appears to be running — skipping the in-place Pi convergence (replacing the agent files under a running session can break it mid-turn and leave a `.pi-coding-agent-*` staging dir).'
+  } else {
   Coop-Warn 'a coop/pi session appears to be running — skipping the in-place Pi convergence (Windows locks open files, which can corrupt the agent install and leave a `.pi-coding-agent-*` staging dir).'
+  }
   Coop-Say  "      Close all coop/pi windows, then re-run: $Command"
   return $false
 }
@@ -4116,12 +4301,45 @@ function Test-CoopPythonModulePipx([string]$Python) {
   } catch { return $false } finally { $ErrorActionPreference = $eap }
 }
 
+# Linux: the first `pipx` on PATH that answers `--version`, by full path; ''
+# when none does. A `pipx` script can be on PATH and still be dead: one that
+# `pip install --user pipx` wrote for a Python since upgraded or removed, or for
+# another HOME (the CI linux job, run 45754897943: the script's module lived in
+# the runner's original user site, so every call died with "No module named
+# 'pipx'"). Found on PATH alone, coop reported "pipx present" and every tool
+# install failed. A dead one is skipped so a working pipx after it (apt's
+# /usr/bin/pipx) or `<python> -m pipx` is used instead. Answers are cached per
+# path for the session; a dead one is probed again (the pipx unit may repair it).
+$script:CoopUnixPipxAnswers = @{}
+function Test-CoopUnixPipxAnswers([string]$Path) {
+  if (-not $Path) { return $false }
+  if ($script:CoopUnixPipxAnswers.ContainsKey($Path)) { return $true }
+  $eap = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = 'Continue'
+    $null = & $Path --version 2>&1
+    if ($LASTEXITCODE -ne 0) { return $false }
+  } catch { return $false } finally { $ErrorActionPreference = $eap }
+  $script:CoopUnixPipxAnswers[$Path] = $true
+  return $true
+}
+function Find-CoopUnixPipx {
+  foreach ($c in @(Get-Command pipx -CommandType Application -All -ErrorAction SilentlyContinue)) {
+    if (Test-CoopUnixPipxAnswers ([string]$c.Source)) { return [string]$c.Source }
+  }
+  return ''
+}
+
 function Get-CoopPipxInvocation {
   if ($env:COOP_PIPX_BIN) {
     if (Get-Command $env:COOP_PIPX_BIN -ErrorAction SilentlyContinue) { return @([string]$env:COOP_PIPX_BIN) }
     return @()
   }
-  if (Get-Command pipx -ErrorAction SilentlyContinue) { return @('pipx') }
+  if (-not (Test-CoopWindowsHost)) {
+    $unixPipx = Find-CoopUnixPipx
+    if ($unixPipx) { return @($unixPipx) }
+  }
+  elseif (Get-Command pipx -ErrorAction SilentlyContinue) { return @('pipx') }
   foreach ($name in @('python3', 'python')) {
     $c = Get-Command $name -ErrorAction SilentlyContinue
     if (-not $c -or ($c.Source -and $c.Source -match '\\WindowsApps\\')) { continue }
@@ -4433,6 +4651,18 @@ function Invoke-CoopFabricCliConverge {
     $v = (& $localFab --version 2>$null | Select-Object -First 1)
     return (Coop-UnitResult $true "Microsoft Fabric CLI ready ($v)")
   }
+  if (-not (Test-CoopWindowsHost)) {
+    # Linux: pipx links `fab` (no .exe) into PIPX_BIN_DIR, ~/.local/bin by default.
+    $localFab = Get-CoopUnixToolFallback 'fab' $Package
+    if ($localFab) {
+      $fv = ((& $localFab --version 2>&1) -join ' ')
+      if ($fv -match '(?i)paramiko|invoke') {
+        return (Coop-UnitResult $false "'$localFab' is Python Fabric (SSH), not Microsoft Fabric CLI — put the ms-fabric-cli bin dir first on PATH, then: fab --version")
+      }
+      $v = (& $localFab --version 2>$null | Select-Object -First 1)
+      return (Coop-UnitResult $true "Microsoft Fabric CLI ready ($v)")
+    }
+  }
   return (Coop-UnitResult $false "$Package installed but 'fab' not on PATH yet — open a new shell")
 }
 
@@ -4645,7 +4875,7 @@ function Find-CoopProjectYml {
   $dir = $StartDir
   while ($dir) {
     $candidate = Join-Path $dir '.coop\project.yml'
-    if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+    if (Test-CoopPathQuiet -LiteralPath $candidate -PathType Leaf) { return $candidate }
     $parent = Split-Path -Parent $dir
     if ($parent -eq $dir -or -not $parent) { break }
     $dir = $parent
@@ -4771,8 +5001,8 @@ function Get-CoopContractLocalPaths {
 function Test-CoopCheckout {
   param([string]$Dir)
   if (-not $Dir) { return $false }
-  return (Test-Path -LiteralPath (Join-Path $Dir 'bin\coop.ps1') -PathType Leaf) -and
-         (Test-Path -LiteralPath (Join-Path $Dir 'lib\common.ps1') -PathType Leaf)
+  return (Test-CoopPathQuiet -LiteralPath (Join-Path $Dir 'bin\coop.ps1') -PathType Leaf) -and
+         (Test-CoopPathQuiet -LiteralPath (Join-Path $Dir 'lib\common.ps1') -PathType Leaf)
 }
 
 # C1: the client home repository beside the repository holding $StartDir, when
@@ -4789,7 +5019,7 @@ function Find-CoopSiblingContract {
     if ($child.FullName -eq $gitRoot) { continue }
     if (Test-CoopCheckout $child.FullName) { continue }
     $contract = Join-Path $child.FullName '.coop\project.yml'
-    if (-not (Test-Path -LiteralPath $contract -PathType Leaf)) { continue }
+    if (-not (Test-CoopPathQuiet -LiteralPath $contract -PathType Leaf)) { continue }
     foreach ($rel in (Get-CoopContractLocalPaths $contract)) {
       $expanded = $rel
       if ($expanded -match '^~([\\/]|$)') { $expanded = (Join-Path $HOME $expanded.Substring(1).TrimStart('\', '/')) }
@@ -4806,7 +5036,7 @@ function Find-CoopContractAbove {
   $dir = $StartDir
   while ($dir) {
     $candidate = Join-Path $dir '.coop\project.yml'
-    if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+    if (Test-CoopPathQuiet -LiteralPath $candidate -PathType Leaf) { return $candidate }
     $parent = Split-Path -Parent $dir
     if ($parent -eq $dir -or -not $parent) { break }
     $dir = $parent
@@ -4824,19 +5054,21 @@ function Find-CoopContractAbove {
 function Get-CoopChildContracts {
   param([string]$StartDir = (Get-Location).Path)
   $found = @()
+  # Unreadable children (/tmp/systemd-private-* on Linux) are skipped quietly
+  # (Test-CoopPathQuiet; Windows keeps Test-Path as it was).
   foreach ($child in (Get-ChildItem -LiteralPath $StartDir -Directory -ErrorAction SilentlyContinue | Where-Object { -not $_.Name.StartsWith('.') } | Sort-Object Name)) {
-    if (Test-Path -LiteralPath (Join-Path $child.FullName '.git')) {
+    if (Test-CoopPathQuiet -LiteralPath (Join-Path $child.FullName '.git')) {
       if (Test-CoopCheckout $child.FullName) { continue }
       $contract = Join-Path $child.FullName '.coop\project.yml'
-      if (Test-Path -LiteralPath $contract -PathType Leaf) { $found += $contract }
+      if (Test-CoopPathQuiet -LiteralPath $contract -PathType Leaf) { $found += $contract }
       continue
     }
     if (@('appdata', 'node_modules') -contains $child.Name.ToLowerInvariant()) { continue }
     foreach ($inner in (Get-ChildItem -LiteralPath $child.FullName -Directory -ErrorAction SilentlyContinue | Where-Object { -not $_.Name.StartsWith('.') } | Sort-Object Name)) {
-      if (-not (Test-Path -LiteralPath (Join-Path $inner.FullName '.git'))) { continue }
+      if (-not (Test-CoopPathQuiet -LiteralPath (Join-Path $inner.FullName '.git'))) { continue }
       if (Test-CoopCheckout $inner.FullName) { continue }
       $contract = Join-Path $inner.FullName '.coop\project.yml'
-      if (Test-Path -LiteralPath $contract -PathType Leaf) { $found += $contract }
+      if (Test-CoopPathQuiet -LiteralPath $contract -PathType Leaf) { $found += $contract }
     }
   }
   return $found
@@ -5137,10 +5369,10 @@ function Get-CoopContractRootProposal {
   $gitRoot = ''
   while ($dir) {
     $candidate = Join-Path $dir '.coop\project.yml'
-    if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+    if (Test-CoopPathQuiet -LiteralPath $candidate -PathType Leaf) {
       return @{ Kind = 'existing'; Root = $dir; Path = $candidate; Repos = @(); Sibling = $false }
     }
-    if (-not $gitRoot -and (Test-Path -LiteralPath (Join-Path $dir '.git'))) { $gitRoot = $dir }
+    if (-not $gitRoot -and (Test-CoopPathQuiet -LiteralPath (Join-Path $dir '.git'))) { $gitRoot = $dir }
     $parent = Split-Path -Parent $dir
     if ($parent -eq $dir -or -not $parent) { break }
     $dir = $parent
@@ -5157,7 +5389,7 @@ function Get-CoopContractRootProposal {
     $parent = Split-Path -Parent $gitRoot
     if ($parent -and $parent -ne $gitRoot) {
       $repos = @(Get-ChildItem -LiteralPath $parent -Directory -ErrorAction SilentlyContinue |
-        Where-Object { -not $_.Name.StartsWith('.') -and (Test-Path -LiteralPath (Join-Path $_.FullName '.git')) -and -not (Test-CoopCheckout $_.FullName) } |
+        Where-Object { -not $_.Name.StartsWith('.') -and (Test-CoopPathQuiet -LiteralPath (Join-Path $_.FullName '.git')) -and -not (Test-CoopCheckout $_.FullName) } |
         Sort-Object Name | ForEach-Object { $_.Name })
       if ($repos.Count -ge 2 -and $repos -contains (Split-Path -Leaf $gitRoot)) {
         $slug = Get-CoopClientSlug $Client
@@ -5171,7 +5403,7 @@ function Get-CoopContractRootProposal {
   # Opened in the folder that holds the client's repositories (itself in no
   # repository): the same home repository beside them, never the folder.
   $inside = @(Get-ChildItem -LiteralPath $start -Directory -ErrorAction SilentlyContinue |
-    Where-Object { -not $_.Name.StartsWith('.') -and (Test-Path -LiteralPath (Join-Path $_.FullName '.git')) -and -not (Test-CoopCheckout $_.FullName) } |
+    Where-Object { -not $_.Name.StartsWith('.') -and (Test-CoopPathQuiet -LiteralPath (Join-Path $_.FullName '.git')) -and -not (Test-CoopCheckout $_.FullName) } |
     Sort-Object Name | ForEach-Object { $_.Name })
   if ($inside.Count -ge 2 -and @(Get-CoopChildContracts $start).Count -eq 0) {
     $slug = Get-CoopClientSlug $Client
@@ -5244,7 +5476,7 @@ function Test-CoopOnboardingMissing {
 # The launch line for an incomplete profile, naming what is missing: with the
 # machine profile (P1) supplying the name, only this user's settings are.
 function Get-CoopOnboardingMissingMessage {
-  $what = if (Test-CoopUserProfileMissing) { 'user.json or config missing' } else { 'config missing: client platform and settings for this Windows user' }
+  $what = if (Test-CoopUserProfileMissing) { 'user.json or config missing' } else { "config missing: client platform and settings for this $(Get-CoopAccountNoun)" }
   return "COOP onboarding is incomplete ($what). Run: coop onboard"
 }
 

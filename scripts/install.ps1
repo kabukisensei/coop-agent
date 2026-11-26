@@ -35,6 +35,17 @@ function Install-Unit {
 # dirs are usually not on PATH until a new shell — which is why a one-pass install
 # would otherwise "skip" later steps). Best-effort; never fatal.
 function Add-CoopUserPaths {
+  if (-not (Test-CoopWindowsHost)) {
+    # Linux personal edition: pipx's bin dir, then Python's posix_user scripts
+    # dir (where `pip install --user pipx` puts pipx), through Add-CoopPathFront.
+    if ($env:PIPX_BIN_DIR) { Add-CoopPathFront $env:PIPX_BIN_DIR } else { Add-CoopPathFront (Join-Path $HOME '.local/bin') }
+    $py = Get-CoopPython
+    if ($py) {
+      $scripts = [string](& $py -c "import sysconfig; print(sysconfig.get_path('scripts', 'posix_user'))" 2>$null | Where-Object { ([string]$_).Trim() } | Select-Object -First 1)
+      Add-CoopPathFront $scripts.Trim()
+    }
+    return
+  }
   # pipx creates ~\.local\bin only when it installs the FIRST tool (steps 3/4), so
   # it may not exist yet here — prepend it unconditionally (a not-yet-existing PATH
   # entry is harmless and goes live once the dir appears). The pipx launcher itself
@@ -53,6 +64,12 @@ function Add-CoopUserPaths {
 }
 function Add-CoopNpmPath {
   if (-not (Test-Have 'npm')) { return }
+  if (-not (Test-CoopWindowsHost)) {
+    # Linux personal edition: npm's global bins live in <prefix>/bin.
+    $prefix = ([string](& npm prefix -g 2>$null | Where-Object { ([string]$_).Trim() } | Select-Object -First 1)).Trim()
+    if ($prefix -and (Test-Path -LiteralPath (Join-Path $prefix 'bin'))) { Add-CoopPathFront (Join-Path $prefix 'bin') }
+    return
+  }
   $prefix = (& npm prefix -g 2>$null)
   if ($prefix) {
     foreach ($d in @($prefix, (Join-Path $prefix 'bin'))) {   # win: shims in prefix; unix: prefix/bin
@@ -106,6 +123,7 @@ $env:PI_CODING_AGENT_DIR = Get-CoopPiAgentDir
 New-Item -ItemType Directory -Force -Path $env:PI_CODING_AGENT_DIR | Out-Null
 
 $OS = 'Windows'
+if (-not (Test-CoopWindowsHost)) { $OS = 'Linux' }   # the Linux personal edition: the banner names it
 
 # Overall-bar denominator: the install ITEMS we attempt (pipx + pi + each coop
 # tool + Power BI/Fabric authoring tools, plus Fabric unless --no-fabric). The
@@ -223,6 +241,10 @@ if (Test-CoopBundledRuntime) {
   # the window's shortcut is the way back in, not a clone's Install coop.cmd.
   $installCmd = "& `"$(Join-Path $script:CoopRoot 'bin\coop.cmd')`" install"
   $rerunHint = 'start the coop window again (its shortcut), which runs this setup once more'
+} elseif (-not (Test-Have 'coop') -and -not (Test-CoopWindowsHost)) {
+  # Linux personal edition: no Install coop.cmd; the clone's bash forwarder.
+  $installCmd = "`"$(Join-Path $script:CoopRoot 'bin/coop')`" install"
+  $rerunHint = "run: $installCmd"
 } elseif (-not (Test-Have 'coop')) {
   $installCmd = "& `"$(Join-Path $script:CoopRoot 'bin\coop.cmd')`" install"
   $rerunHint = "double-click Install coop.cmd again (or run: $installCmd)"
@@ -344,6 +366,14 @@ finally {
 # --- 6. Put `coop` on PATH ---------------------------------------------------
 Coop-Head "6/8  Link 'coop' onto your PATH"
 Set-CoopSetupPhase 6 8 'Putting the coop command on your PATH'
+if (-not (Test-CoopWindowsHost)) {
+  # Linux personal edition: no .cmd launcher, no registry PATH. Link
+  # ~/.local/bin/coop to the bash forwarder (bin/coop follows symlinks), never
+  # over a foreign link or file, and warn when ~/.local/bin was not on the PATH
+  # coop started with (Install-CoopUnixLauncher in lib/common.ps1).
+  $machineLink = $false
+  Install-CoopUnixLauncher -Root $script:CoopRoot -InstallCmd $installCmd
+} else {
 $LOCALBIN = Join-Path $env:LOCALAPPDATA 'coop\bin'
 New-Item -ItemType Directory -Force -Path $LOCALBIN | Out-Null
 # Drop a launcher .cmd that forwards to the repo's coop.cmd shim, so `coop` works
@@ -466,6 +496,8 @@ if (-not $machineLink -and (($env:PATH -split ';') -notcontains $LOCALBIN)) {
     }
   }
 }
+
+}   # SP6 spike: end of the Windows-only launcher/PATH branch
 
 # --- Double-click launcher (Start Menu + Desktop shortcut) -------------------
 # A friendly front door so members who aren't comfortable in a terminal can open

@@ -5,6 +5,34 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 
 ## [Unreleased]
 
+### Added
+- **Linux personal edition (master plan row LX1).** Windows stays the team
+  platform; Linux under PowerShell 7 is now a supported personal edition of
+  the same one PowerShell implementation, gated by a new `linux` CI job
+  (ubuntu-24.04: a real `coop install --yes`, `coop doctor --json`, `coop
+  launch-spec --json` and `coop uninstall --yes` against a sandbox HOME, with
+  their exit codes checked, and the guardrails through the pinned Pi's
+  extension runner). Every change sits behind `-not (Test-CoopWindowsHost)`,
+  so Windows behaves as before. On Linux: the pi version probe reads every
+  line of both streams (an older pi prints its version on stderr, Node may
+  print a warning first); install puts folders on PATH with `:` and no
+  trailing separator, links `~/.local/bin/coop` to the clone's `bin/coop`
+  (never over a foreign link or a file) and warns when `~/.local/bin` was not
+  on the PATH coop started with; the contract and checkout probes skip
+  unreadable folders quietly; `coop uninstall` removes that link (only when it
+  resolves to this clone's `bin/coop`) with no `LOCALAPPDATA` errors; the
+  install and update busy guard sees running Pi sessions (node, nodejs or pi
+  processes, argv from `/proc` with npm's `bin/pi` link resolved); `fab` and
+  `te` are found in `~/.local/bin`, `PIPX_BIN_DIR` and the pipx venv
+  (executable files only, and a Python Fabric `fab` is refused); a `pipx` on
+  PATH counts only if it answers `--version`, so a dead `pip install --user`
+  pipx script (its Python upgraded, or its module in another HOME: the first
+  CI run, where every tool install died with "No module named 'pipx'") is
+  skipped for the next pipx on PATH, else `<python> -m pipx`, else the pipx
+  step installs one; and hints name
+  `bin/coop install` and "this Linux user" instead of `.\bin\coop.cmd` and
+  "this Windows user". New page: `docs/install-linux.md`.
+
 ### Fixed
 - **coop no longer says "Pi launch failed" when Pi started and exited with an
   error.** A Pi that ran and exited non-zero (for example `coop -p` with no

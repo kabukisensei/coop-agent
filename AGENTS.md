@@ -110,12 +110,11 @@ start the next phase on your own).
 
 ### Platform notes
 
-- **Developing this repo** — editing scripts/docs/tests and running the checks
-  below — works on any OS with the prerequisites, including a headless Linux box.
-- **Operating coop on a workstation** — `coop install`, launching `coop`,
-  `coop doctor`, anything needing Pi/pipx/Fabric — is a Windows
-  workstation activity. From a headless box, do not attempt these; report that
-  they need a workstation instead.
+- **Developing this repo** (scripts, docs, tests, the checks below) works on
+  any OS with the prerequisites, including a headless Linux box.
+- **Operating coop** (`coop install`, launching `coop`, `coop doctor`): Windows
+  is the team platform; Linux (pwsh 7) is a supported personal edition, gated
+  by the Linux CI job (`docs/install-linux.md`). Agents: sandbox HOME only.
 - Cross-repo work (see `RELEASE.md`) assumes all coop-* repos are cloned **side
   by side under one parent directory** (on Aaron's Mac: `~/Developer`). If a
   sibling repo is missing, stop and report — don't clone or guess paths.
@@ -196,7 +195,7 @@ delete or re-push a tag, never commit secrets (`.env*`, keys, tokens — see
 
 - **Operational (follow these):** `AGENTS.md`, `CONTRIBUTING.md`, `RELEASE.md`,
   `README.md`, `docs/architecture.md`, `docs/ci.md`, `docs/extending.md`,
-  `docs/guardrails.md`, `docs/install-windows.md`,
+  `docs/guardrails.md`, `docs/install-windows.md`, `docs/install-linux.md`,
   `docs/tool-contract.md`, `docs/troubleshooting.md`.
 - **The one plan (each phase needs an explicit start):** `docs/COOP_MASTER_PLAN.md`.
 - **History (read-only context; never execute their steps):** everything under
