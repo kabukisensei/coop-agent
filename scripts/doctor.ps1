@@ -926,6 +926,16 @@ if ($null -eq $featureList) {
   foreach ($feature in $featuresOn) {
     switch ([string]$feature.key) {
       'comments' { D-Ok 'Diff review comments on: the window''s Changes pane collects line comments and sends them as one prompt' }
+      'instructions' {
+        # The same loader the session uses: what loads, and every line or file left out.
+        $rules = Get-CoopClientRulesStatus (Get-Location).Path
+        if ($rules.Error) { D-Warn 'Client instructions on, but coop could not check them' $rules.Error }
+        else {
+          $fact = ([string]$rules.Data.line) -replace '^Client instructions: ', 'Client instructions on: '
+          if (@($rules.Data.problems).Count -gt 0) { D-Warn $fact ((@($rules.Data.problems) | ForEach-Object { [string]$_ }) -join '; ') }
+          else { D-Ok $fact }
+        }
+      }
       'sql-source' {
         if (Test-Have 'coop-sqlsc') { D-Ok 'SQL source control on: coop-sqlsc is installed' }
         else { D-Warn 'SQL source control on, but coop-sqlsc is not installed' 'coop update (the coop window package carries it)' }
