@@ -35,6 +35,18 @@ function Install-Unit {
 # dirs are usually not on PATH until a new shell — which is why a one-pass install
 # would otherwise "skip" later steps). Best-effort; never fatal.
 function Add-CoopUserPaths {
+  if (-not (Test-CoopWindowsHost)) {
+    # SP6 spike (Linux pwsh): PATH separator is ':' and the user scheme is posix_user.
+    $sep = [System.IO.Path]::PathSeparator
+    $pipxBin = if ($env:PIPX_BIN_DIR) { $env:PIPX_BIN_DIR } else { Join-Path $HOME '.local/bin' }
+    if (($env:PATH -split $sep) -notcontains $pipxBin) { $env:PATH = "$pipxBin$sep$env:PATH" }
+    $py = Get-CoopPython
+    if ($py) {
+      $scripts = (& $py -c "import sysconfig; print(sysconfig.get_path('scripts', 'posix_user'))" 2>$null)
+      if ($scripts -and (($env:PATH -split $sep) -notcontains $scripts)) { $env:PATH = "$scripts$sep$env:PATH" }
+    }
+    return
+  }
   # pipx creates ~\.local\bin only when it installs the FIRST tool (steps 3/4), so
   # it may not exist yet here — prepend it unconditionally (a not-yet-existing PATH
   # entry is harmless and goes live once the dir appears). The pipx launcher itself
@@ -54,6 +66,13 @@ function Add-CoopUserPaths {
 function Add-CoopNpmPath {
   if (-not (Test-Have 'npm')) { return }
   $prefix = (& npm prefix -g 2>$null)
+  if ($prefix -and -not (Test-CoopWindowsHost)) {
+    # SP6 spike (Linux pwsh): npm's global bins live in <prefix>/bin; PATH uses ':'.
+    $sep = [System.IO.Path]::PathSeparator
+    $d = Join-Path $prefix 'bin'
+    if ((Test-Path -LiteralPath $d) -and (($env:PATH -split $sep) -notcontains $d)) { $env:PATH = "$d$sep$env:PATH" }
+    return
+  }
   if ($prefix) {
     foreach ($d in @($prefix, (Join-Path $prefix 'bin'))) {   # win: shims in prefix; unix: prefix/bin
       if ((Test-Path -LiteralPath $d) -and (($env:PATH -split ';') -notcontains $d)) {
@@ -106,6 +125,7 @@ $env:PI_CODING_AGENT_DIR = Get-CoopPiAgentDir
 New-Item -ItemType Directory -Force -Path $env:PI_CODING_AGENT_DIR | Out-Null
 
 $OS = 'Windows'
+if (-not (Test-CoopWindowsHost)) { $OS = $(if ($IsMacOS) { 'macOS' } else { 'Linux' }) }   # SP6 spike: banner names the real platform
 
 # Overall-bar denominator: the install ITEMS we attempt (pipx + pi + each coop
 # tool + Power BI/Fabric authoring tools, plus Fabric unless --no-fabric). The
@@ -344,6 +364,32 @@ finally {
 # --- 6. Put `coop` on PATH ---------------------------------------------------
 Coop-Head "6/8  Link 'coop' onto your PATH"
 Set-CoopSetupPhase 6 8 'Putting the coop command on your PATH'
+if (-not (Test-CoopWindowsHost)) {
+  # SP6 spike (Linux pwsh): no .cmd launcher, no registry PATH. Symlink
+  # ~/.local/bin/coop to the bash forwarder (bin/coop follows symlinks) and
+  # name the shell-profile step when ~/.local/bin is not on PATH yet.
+  $machineLink = $false
+  $LOCALBIN = Join-Path $HOME '.local/bin'
+  New-Item -ItemType Directory -Force -Path $LOCALBIN | Out-Null
+  $launcher = Join-Path $LOCALBIN 'coop'
+  $shimTarget = Join-Path $script:CoopRoot 'bin/coop'
+  $item = Get-Item -LiteralPath $launcher -Force -ErrorAction SilentlyContinue
+  if ($item -and $item.LinkType -eq 'SymbolicLink' -and [string]$item.Target -eq $shimTarget) {
+    Coop-Ok 'coop already linked'
+  } elseif ($item -and $item.LinkType -ne 'SymbolicLink') {
+    Coop-Warn "$launcher exists and is not a link; leaving it alone" "remove it, then re-run: coop install"
+  } else {
+    try {
+      New-Item -ItemType SymbolicLink -Force -Path $launcher -Target $shimTarget -ErrorAction Stop | Out-Null
+      Coop-Ok "linked $launcher -> $shimTarget"
+    } catch { Coop-Warn "could not link $launcher`: $($_.Exception.Message)" }
+  }
+  $sep = [System.IO.Path]::PathSeparator
+  if (($env:PATH -split $sep) -notcontains $LOCALBIN) {
+    $env:PATH = "$LOCALBIN$sep$env:PATH"
+    Coop-Warn "$LOCALBIN is not on your PATH" 'add it in your shell profile (pipx ensurepath does this), then open a new terminal'
+  }
+} else {
 $LOCALBIN = Join-Path $env:LOCALAPPDATA 'coop\bin'
 New-Item -ItemType Directory -Force -Path $LOCALBIN | Out-Null
 # Drop a launcher .cmd that forwards to the repo's coop.cmd shim, so `coop` works
@@ -466,6 +512,8 @@ if (-not $machineLink -and (($env:PATH -split ';') -notcontains $LOCALBIN)) {
     }
   }
 }
+
+}   # SP6 spike: end of the Windows-only launcher/PATH branch
 
 # --- Double-click launcher (Start Menu + Desktop shortcut) -------------------
 # A friendly front door so members who aren't comfortable in a terminal can open
