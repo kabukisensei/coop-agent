@@ -388,13 +388,14 @@ test("the history folder is blocked for model reads, writes, edits and commands,
       return Boolean(r && r.block && /change history/.test(r.reason));
     };
     for (const command of [
-      `cat ${log}`, "cat ~/.coop/history/*/log.jsonl", "cat $HOME/.coop/history", 'cat "${USERPROFILE}/.coop/history"',
+      `cat ${log}`, `python -c "print(open('${log}').read())"`, `python -c "open('~/.coop/history/x')"`, "cat ~/.coop/history/*/log.jsonl", "cat $HOME/.coop/history", 'cat "${USERPROFILE}/.coop/history"',
       "type %USERPROFILE%\\.coop\\history\\x", "ls $COOP_DIR/.coop/hist*", "ls ~/.coop/*", "cd ~/.coop && cat history/a",
       "cat innocent/log.jsonl", "rm -rf ~/.coop/history", "zcat ~/.coop/history/x/2026-11/blobs/a.gz",
     ]) assert.ok(await blockedShell(command), `${command} (${on})`);
     assert.ok(await blockedShell("Get-Content $env:USERPROFILE\\.coop\\history\\x", "powershell"), `powershell (${on})`);
     // Narrow: everything else is today's behaviour.
-    for (const command of ["ls ~/.coop", "cat docs/p.md", "ls ~/*", "git log --oneline -1"]) assert.ok(!(await blockedShell(command)), `${command} is not blocked (${on})`);
+    mkdirSync(join(repo, ".coop"), { recursive: true });
+    for (const command of ["ls ~/.coop", "cat docs/p.md", "ls ~/*", "git log --oneline -1", "cat .coop/history.md", "ls .coop/history", "cat ~/.coop/history-notes.txt"]) assert.ok(!(await blockedShell(command)), `${command} is not blocked (${on})`);
     assert.ok(!(await blockedFile("read", "docs/p.md")), "an ordinary read");
   }
   rmSync(join(repo, "innocent"));

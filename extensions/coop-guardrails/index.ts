@@ -205,7 +205,14 @@ export function shellClientRulesTarget(cmd: string, cwd: string): { kind: "corre
  *  (a literal `cd` carries over, links are followed), or a glob whose literal
  *  start could reach it. A parent folder named on its own is not matched. */
 export function shellHistoryTarget(cmd: string, cwd: string, env: Record<string, string | undefined> = process.env): string | null {
-  if (/\.coop[. ]*[\\/]+history\b/i.test(cmd)) return ".coop/history";
+  // Named inside any word (a script's string): a home spelling then .coop/history,
+  // or the folder's own path. A repository's own `.coop/history.md` is not it.
+  if (/(?:~|\$\{?(?:HOME|USERPROFILE|COOP_DIR)\}?|%(?:HOME|USERPROFILE|COOP_DIR)%|\$env:(?:HOME|USERPROFILE|COOP_DIR))[\\/]+\.coop[. ]*[\\/]+history[. ]*(?![\w.-])/i.test(cmd)) return ".coop/history";
+  const flat = (p: string) => (process.platform === "win32" ? p.toLowerCase() : p).replace(/\\+/g, "/");
+  for (const spelled of new Set([historyRoot(env), realPath(historyRoot(env))])) {
+    const at = flat(cmd).indexOf(flat(spelled));
+    if (at >= 0 && !/[\w.-]/.test(flat(cmd).charAt(at + flat(spelled).length))) return spelled;
+  }
   const home = coopHomeDir();
   const vars: Record<string, string> = { HOME: env.HOME || home, USERPROFILE: env.USERPROFILE || env.HOME || home, COOP_DIR: env.COOP_DIR || "" };
   const expand = (t: string) => t
