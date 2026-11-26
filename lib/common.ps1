@@ -4833,8 +4833,12 @@ function Find-CoopContractAbove {
 function Get-CoopChildContracts {
   param([string]$StartDir = (Get-Location).Path)
   $found = @()
+  # SP6 spike (Linux pwsh): unreadable children (/tmp/systemd-private-*) make
+  # Test-Path print access-denied errors; skip them quietly off Windows only.
+  $probeEa = $ErrorActionPreference
+  if (-not (Test-CoopWindowsHost)) { $probeEa = 'SilentlyContinue' }
   foreach ($child in (Get-ChildItem -LiteralPath $StartDir -Directory -ErrorAction SilentlyContinue | Where-Object { -not $_.Name.StartsWith('.') } | Sort-Object Name)) {
-    if (Test-Path -LiteralPath (Join-Path $child.FullName '.git')) {
+    if (Test-Path -LiteralPath (Join-Path $child.FullName '.git') -ErrorAction $probeEa) {
       if (Test-CoopCheckout $child.FullName) { continue }
       $contract = Join-Path $child.FullName '.coop\project.yml'
       if (Test-Path -LiteralPath $contract -PathType Leaf) { $found += $contract }
@@ -4842,7 +4846,7 @@ function Get-CoopChildContracts {
     }
     if (@('appdata', 'node_modules') -contains $child.Name.ToLowerInvariant()) { continue }
     foreach ($inner in (Get-ChildItem -LiteralPath $child.FullName -Directory -ErrorAction SilentlyContinue | Where-Object { -not $_.Name.StartsWith('.') } | Sort-Object Name)) {
-      if (-not (Test-Path -LiteralPath (Join-Path $inner.FullName '.git'))) { continue }
+      if (-not (Test-Path -LiteralPath (Join-Path $inner.FullName '.git') -ErrorAction $probeEa)) { continue }
       if (Test-CoopCheckout $inner.FullName) { continue }
       $contract = Join-Path $inner.FullName '.coop\project.yml'
       if (Test-Path -LiteralPath $contract -PathType Leaf) { $found += $contract }
