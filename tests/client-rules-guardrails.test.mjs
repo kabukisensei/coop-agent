@@ -89,7 +89,11 @@ const IN_RULES = /[\\/]\.coop[\\/]rules([\\/]|$)/;
 const CONTENT_CALLS = new Set(["readFileSync", "openSync", "readdirSync", "createReadStream", "promises.readFile"]);
 
 let n = 0;
-const t = async (name, fn) => { await fn(); n++; console.log(`  ✓ ${name}`); };
+let failed = 0;
+// Each check runs even when an earlier one failed, so a run names every failure.
+const t = async (name, fn) => {
+  try { await fn(); n++; console.log(`  ✓ ${name}`); } catch (e) { failed++; console.log(`  ✗ ${name}\n    ${String(e && e.message || e).split("\n")[0]}`); }
+};
 
 try {
   await t("a commit of .coop/rules/corrections.md asks; yes lets it through", async () => {
@@ -152,6 +156,127 @@ try {
     unstageAll();
   });
 
+  // --- Fix round (Neon B1): the model's own edit/write on .coop/rules/ ---------------
+  const fileCall = async (tool, path, ctx = ctxUi) => {
+    tracing = true;
+    try { return await handle({ toolName: tool, toolCallId: `c${++calls}`, input: tool === "write" ? { path, content: "x\n" } : { path, oldText: "a", newText: "b" } }, ctx); } finally { tracing = false; }
+  };
+  fs.writeFileSync(join(repo, ".coop", "rules", "corrections.md"), "# Corrections\n");
+  fs.symlinkSync(join(repo, ".coop", "rules", "corrections.md"), join(repo, "notes.md"));
+  fs.symlinkSync(join(repo, ".coop", "rules"), join(repo, "ruledir"));
+  fs.symlinkSync(join(repo, ".coop", "rules", "AGENTS.md"), join(repo, "team.md"));
+
+  await t("edit/write of .coop/rules/corrections.md is blocked, with no card: the log changes only through client_rules or /correct", async () => {
+    for (const tool of ["edit", "write"]) {
+      for (const p of [".coop/rules/corrections.md", join(repo, ".coop", "rules", "corrections.md"), ".COOP/Rules/corrections.md", "./.coop/../.coop/rules/corrections.md"]) {
+        confirms = []; confirmAnswer = true;
+        const r = await fileCall(tool, p);
+        assert.equal(blocked(r), true, `${tool} ${p}`);
+        assert.match(r.reason, /changes only through the Add \/ Edit \/ No card: call the client_rules tool \(command add_correction\), or ask the user to run \/correct/);
+        assert.equal(confirms.length, 0, "no prompt can open it");
+      }
+    }
+    assert.equal(blocked(await fileCall("write", ".coop/rules/corrections.md", ctxHeadless)), true);
+  });
+
+  await t("…and through a link: a file link to it, or a folder link to .coop/rules/", async () => {
+    confirms = []; confirmAnswer = true;
+    for (const p of ["notes.md", "ruledir/corrections.md"]) {
+      const r = await fileCall("write", p);
+      assert.equal(blocked(r), true, p);
+      assert.match(r.reason, /corrections log/);
+    }
+    assert.equal(confirms.length, 0);
+  });
+
+  await t("edit/write of any other .coop/rules/ file asks every call (no session grant); declined or headless is blocked", async () => {
+    confirms = []; confirmAnswer = true;
+    assert.equal(blocked(await fileCall("edit", ".coop/rules/AGENTS.md")), false);
+    assert.equal(blocked(await fileCall("write", ".coop/rules/tech.md")), false);
+    assert.equal(blocked(await fileCall("write", "team.md")), false, "a link to AGENTS.md asks too");
+    assert.equal(blocked(await fileCall("write", "ruledir/AGENTS.md")), false);
+    assert.equal(confirms.length, 4, "asked for each call");
+    assert.match(confirms[0], /changes the client's instructions \(\.coop\/rules\/\), which steer coop on every turn/);
+    confirms = []; confirmAnswer = false;
+    let r = await fileCall("write", ".coop/rules/AGENTS.md");
+    assert.equal(blocked(r), true);
+    assert.match(r.reason, /\(you declined\)/);
+    r = await fileCall("edit", ".coop/rules/AGENTS.md", ctxHeadless);
+    assert.equal(blocked(r), true);
+    assert.match(r.reason, /approval is unavailable in headless mode/);
+    confirms = []; confirmAnswer = true;
+    assert.equal(blocked(await fileCall("write", "docs/notes.md")), false);
+    assert.equal(blocked(await fileCall("read", ".coop/rules/corrections.md")), false, "reading is not gated");
+    assert.equal(confirms.length, 0, "other files and reads do not ask");
+  });
+
+  // --- Fix round (Neon B2): commit-prompt bypasses -------------------------------------
+  const resetHard = () => { git("reset", "-q", "--hard", "HEAD"); };
+
+  await t("git mv out of .coop/rules/ then commit asks (the staged listing names both sides of a rename)", async () => {
+    resetHard();
+    fs.mkdirSync(join(repo, "docs"), { recursive: true });
+    git("mv", ".coop/rules/AGENTS.md", "docs/x.md");
+    confirms = []; confirmAnswer = true;
+    const r = await bash("git commit -m move");
+    assert.equal(blocked(r), false);
+    assert.equal(confirms.length, 1, "one approval card");
+    assert.match(confirms[0], /\.coop\/rules\/AGENTS\.md/);
+    git("mv", "docs/x.md", ".coop/rules/AGENTS.md");
+    resetHard();
+  });
+
+  await t("cd .coop/rules && git rm / git mv / git add -f, then commit: asks (paths made repository-relative)", async () => {
+    for (const cmd of [
+      "cd .coop/rules && git rm AGENTS.md && git commit -m clean",
+      "cd .coop/rules && git mv AGENTS.md ../../gone.md && git commit -m clean",
+      "cd .coop/rules && git add -f new.md && git commit -m add",
+      "git -C .coop/rules rm AGENTS.md && git -C .coop/rules commit -m clean",
+    ]) {
+      confirms = []; confirmAnswer = false;
+      const r = await bash(cmd);
+      assert.equal(blocked(r), true, cmd);
+      assert.equal(confirms.length, 1, `${cmd}: one approval card`);
+      assert.match(confirms[0], /\.coop\/rules\//, cmd);
+    }
+  });
+
+  await t("a non-ASCII name under .coop/rules/ asks and is named as itself (core.quotepath=false)", async () => {
+    stage(".coop/rules/café.md", "# Café\n");
+    confirms = []; confirmAnswer = true;
+    const r = await bash('git commit -m "cafe"');
+    assert.equal(blocked(r), false, JSON.stringify(r));
+    assert.equal(confirms.length, 1);
+    assert.match(confirms[0], /\.coop\/rules\/café\.md/);
+    unstageAll();
+    fs.rmSync(join(repo, ".coop", "rules", "café.md"));
+  });
+
+  await t("a path that IS .coop/rules (a link committed there, no trailing slash) counts", async () => {
+    assert.equal(cg.isClientRulesPath(".coop/rules"), true);
+    assert.equal(cg.isClientRulesPath("sub/.coop/rules"), true);
+    assert.equal(cg.isClientRulesPath(".coop/rulesets/x.md"), false);
+  });
+
+  await t("git add -A, merge and cherry-pick that bring in .coop/rules/ ask (coverage)", async () => {
+    fs.writeFileSync(join(repo, ".coop", "rules", "AGENTS.md"), "# Contoso\nUse dim.Date.\n");
+    confirms = []; confirmAnswer = false;
+    assert.equal(blocked(await bash("git add -A && git commit -m all")), true);
+    resetHard();
+    git("checkout", "-q", "-b", "side");
+    fs.writeFileSync(join(repo, ".coop", "rules", "tech.md"), "# Tech\n");
+    git("add", "--", ".coop/rules/tech.md");
+    git("commit", "-q", "-m", "side rules");
+    git("checkout", "-q", "-");
+    for (const cmd of ["git merge side", "git cherry-pick side"]) {
+      confirms = []; confirmAnswer = false;
+      assert.equal(blocked(await bash(cmd)), true, cmd);
+      assert.equal(confirms.length, 1, cmd);
+      assert.match(confirms[0], /\.coop\/rules\/tech\.md/);
+    }
+    resetHard();
+  });
+
   await t("a project deny glob over .coop/rules/ blocks instead of asking", async () => {
     // The trusted snapshot is per session: start a new one so the edited contract is read.
     fs.writeFileSync(join(repo, ".coop", "project.yml"), "schema_version: 1\nrepositories:\n  client:\n    local_path: .\n    agent_never_commit:\n      - .coop/rules/**\n");
@@ -174,4 +299,5 @@ try {
 } finally {
   try { fs.rmSync(root, { recursive: true, force: true }); } catch { /* Windows may hold a handle a moment */ }
 }
+if (failed) { console.log(`✗ client instructions and the guardrails: ${failed} failed, ${n} passed`); process.exit(1); }
 console.log(`✓ client instructions and the guardrails: ${n} checks`);

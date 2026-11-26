@@ -64,7 +64,11 @@ const pi = {
     // NB: cached diff args ("diff --cached --name-only") contain BOTH substrings, so
     // check --cached first.
     if (bin === "git" && a.includes("diff --cached")) return { stdout: staged, code: 0, stderr: "" };
-    if (bin === "git" && a.includes("--no-renames")) return refFiles === null ? { stdout: "", code: 128, stderr: "fatal: bad revision" } : { stdout: refFiles, code: 0, stderr: "" };
+    // Every listing passes --no-renames (fix round, B2); the ref listing is the one
+    // whose operands are a commit range (no `--` pathspec, not the bare HEAD diff).
+    const afterNoRenames = args.includes("--no-renames") ? args.slice(args.indexOf("--no-renames") + 1) : [];
+    const refListing = a.includes("diff --name-only --no-renames") && afterNoRenames.length > 0 && !afterNoRenames.includes("--") && !(afterNoRenames.length === 1 && afterNoRenames[0] === "HEAD");
+    if (bin === "git" && refListing) return refFiles === null ? { stdout: "", code: 128, stderr: "fatal: bad revision" } : { stdout: refFiles, code: 0, stderr: "" };
     if (bin === "git" && a.includes("diff --name-only")) return { stdout: modified, code: 0, stderr: "" };
     if (bin === "git" && a.includes("ls-files --others")) return { stdout: untracked, code: 0, stderr: "" };
     return { stdout: "", code: 0, stderr: "" };
@@ -3809,7 +3813,7 @@ await t("merge, cherry-pick, revert, am and commit-tree take the never-commit-so
   // Value options are consumed, not read as refs: the message/strategy words never become a diff target.
   execLog.length = 0;
   await pick("git merge -m 'take feat' -s recursive -X theirs feat", { refFiles: "docs/a.md" });
-  const diffs = execLog.filter((e) => e.bin === "git" && e.args.includes("--no-renames")).map((e) => e.args.slice(-1)[0]);
+  const diffs = execLog.filter((e) => e.bin === "git" && e.args.includes("--no-renames") && !e.args.includes("--cached")).map((e) => e.args.slice(-1)[0]);
   assert.deepEqual(diffs, ["HEAD...feat"]);
   // The unit helper.
   assert.deepEqual(cg.commitLikePlan(parseGitCommand("git cherry-pick -x a1 b2")), { kind: "refs", refs: ["a1", "b2"] });

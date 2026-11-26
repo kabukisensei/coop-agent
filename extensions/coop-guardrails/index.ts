@@ -41,7 +41,7 @@ import { DEPLOY_ENVIRONMENTS, SQLSC_BIN, SQLSC_SETUP_FILES, checkUpstream, class
 import { findProjectContract } from "../../lib/standards.mjs";
 import { projectYamlHas, projectYamlKeys, projectYamlList, projectYamlMapping, projectYamlScalar, repositoryNames } from "../../lib/project-contract.mjs";
 import { appendFileSync, existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, parse, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, parse, relative, resolve } from "node:path";
 import { agentDir as coopAgentDir, coopAgentDir as coopIsolatedAgentDir, homeDir as coopHomeDir, personalPiAgentDir, profileDir as coopProfileDir } from "../../lib/paths.mjs";
 import { editGateDecision } from "../../lib/lineage-context.mjs";
 
@@ -61,7 +61,24 @@ const DEFAULT_ALLOWED_GLOBS = [
  *  when they are Markdown or a project glob allows them. A path test only: the
  *  guardrails never open these files. */
 export function isClientRulesPath(file: string): boolean {
-  return /(^|[\\/])\.coop[\\/]rules[\\/]/i.test(file);
+  return /(^|[\\/])\.coop[\\/]rules([\\/]|$)/i.test(file);
+}
+
+/** The client's corrections log (`.coop/rules/corrections.md`): it changes only
+ *  through the Add / Edit / No card (client_rules add_correction, /correct). */
+export function isClientCorrectionsPath(file: string): boolean {
+  return /(^|[\\/])\.coop[\\/]rules[\\/]corrections\.md$/i.test(file);
+}
+
+/** Where a file tool's write to `p` touches the client's instructions: "corrections"
+ *  (the log, never written by edit/write), "rules" (any other .coop/rules/ path,
+ *  asked every call), or "" — the path as written and every link hop (linkChain). */
+export function clientRulesWriteTarget(p: string, cwd: string): "corrections" | "rules" | "" {
+  if (!p) return "";
+  const chain = [p, ...linkChain(p, cwd)];
+  if (chain.some(isClientCorrectionsPath)) return "corrections";
+  if (chain.some(isClientRulesPath)) return "rules";
+  return "";
 }
 
 /** A committed path is allowed only after explicit deny rules have been checked. */
@@ -1016,6 +1033,20 @@ export function commitLikePlan(git: ParsedGitCommand): CommitLikePlan {
   return { kind: "refs", refs };
 }
 
+/** `file`, as a command running in `dir` names it, relative to the repository
+ *  root `top`, with forward slashes (git's own listing form). Links in `dir` are
+ *  resolved first, as git's root is a real path; outside the root it stays absolute. */
+export function repoRelativePath(top: string, dir: string, file: string): string {
+  let base = resolve(dir);
+  try { base = realpathSync.native(base); } catch { /* a missing folder: as written */ }
+  let root = resolve(top);
+  try { root = realpathSync.native(root); } catch { /* as written */ }
+  const abs = resolve(base, file);
+  const rel = relative(root, abs);
+  const out = !rel || rel.startsWith("..") || isAbsolute(rel) ? abs : rel;
+  return out.replace(/\\/g, "/");
+}
+
 async function offendingCommitPaths(pi: ExtensionAPI, cwd: string, cmd: string, parsed: ParsedGitCommand, governance: SessionGovernance): Promise<CommitCheck> {
   const unverifiable = commitTargetUnverifiable(cmd, parsed);
   if (unverifiable) return { offending: [], unverifiable, nothing: true };
@@ -1023,7 +1054,9 @@ async function offendingCommitPaths(pi: ExtensionAPI, cwd: string, cmd: string, 
   const diff = async (extra: string[]): Promise<string[] | null> => {
     let res: { stdout: string; code: number };
     try {
-      res = await pi.exec("git", ["-C", repoDir, ...extra], { cwd });
+      // core.quotepath=false: a non-ASCII name prints as itself, not as a quoted
+      // octal string the path tests below would never match.
+      res = await pi.exec("git", ["-C", repoDir, "-c", "core.quotepath=false", ...extra], { cwd });
     } catch {
       return null; // not a repo / git missing → cannot determine
     }
@@ -1040,7 +1073,9 @@ async function offendingCommitPaths(pi: ExtensionAPI, cwd: string, cmd: string, 
     if (refPlan.kind === "none") return { offending: [], unverifiable: null, nothing: true };
     if (refPlan.kind === "unverifiable") return { offending: [], unverifiable: refPlan.why, nothing: true };
   }
-  const staged = await diff(["diff", "--cached", "--name-only"]);
+  // --no-renames on every listing: a rename lists both sides, so `git mv` out of
+  // .coop/rules/ (or out of a source folder) still names the path it removes.
+  const staged = await diff(["diff", "--cached", "--name-only", "--no-renames"]);
   if (staged === null) return { offending: [], unverifiable: "git could not read the repository this commit targets", nothing: true };
   const files = [...staged];
   if (refPlan && refPlan.kind === "refs") {
@@ -1054,7 +1089,7 @@ async function offendingCommitPaths(pi: ExtensionAPI, cwd: string, cmd: string, 
     }
   }
   if (commitStagesAll(cmd, parsed)) {
-    const modified = await diff(["diff", "--name-only"]); // -a will stage these
+    const modified = await diff(["diff", "--name-only", "--no-renames"]); // -a will stage these
     if (modified) for (const f of modified) if (!files.includes(f)) files.push(f);
   }
   // `git commit <pathspec>` commits the WORKING-TREE content of the named paths,
@@ -1063,8 +1098,8 @@ async function offendingCommitPaths(pi: ExtensionAPI, cwd: string, cmd: string, 
   const pathspecs = explicitCommitPathspecs(cmd, parsed);
   if (pathspecs.length) {
     const named =
-      (await diff(["diff", "--name-only", "HEAD", "--", ...pathspecs])) ??
-      (await diff(["diff", "--name-only", "--", ...pathspecs]));
+      (await diff(["diff", "--name-only", "--no-renames", "HEAD", "--", ...pathspecs])) ??
+      (await diff(["diff", "--name-only", "--no-renames", "--", ...pathspecs]));
     if (named) for (const f of named) if (!files.includes(f)) files.push(f);
   }
   // An earlier `git add` in the SAME command changes the index before the commit
@@ -1078,21 +1113,28 @@ async function offendingCommitPaths(pi: ExtensionAPI, cwd: string, cmd: string, 
       for (const f of list) if (!files.includes(f)) files.push(f);
     };
     if (staging.everything || staging.tracked) {
-      add(await diff(["diff", "--name-only", "HEAD"]), "<every tracked change>");
+      add(await diff(["diff", "--name-only", "--no-renames", "HEAD"]), "<every tracked change>");
       if (staging.everything) add(await diff(["ls-files", "--others", "--exclude-standard", "--full-name"]), "<every untracked file>");
     }
     if (staging.pathspecs.length) {
-      add(await diff(["diff", "--name-only", "HEAD", "--", ...staging.pathspecs]), staging.pathspecs.join(" "));
+      add(await diff(["diff", "--name-only", "--no-renames", "HEAD", "--", ...staging.pathspecs]), staging.pathspecs.join(" "));
       add(await diff(["ls-files", "--others", "--exclude-standard", "--full-name", "--", ...staging.pathspecs]), staging.pathspecs.join(" "));
     }
-    for (const f of staging.literal) if (!files.includes(f)) files.push(f);
   }
-  if (!files.length) return { offending: [], unverifiable: null, nothing: true };
+  // rm / mv / add -f paths are named as the command wrote them, relative to the
+  // folder git runs in (a `cd .coop/rules && git rm AGENTS.md`); they are made
+  // repository-relative below, once git has named the repository root.
+  const literal = staging ? staging.literal : [];
+  if (!files.length && !literal.length) return { offending: [], unverifiable: null, nothing: true };
   // Key the policy on the repository root git reports, not the folder the
   // command happens to run in (#6). A git that cannot name it cannot be trusted.
   const top = await diff(["rev-parse", "--show-toplevel"]);
   if (top === null) return { offending: [], unverifiable: "git could not name the repository this commit targets", nothing: true };
   const policyDir = top[0] ? resolve(top[0]) : repoDir;
+  for (const f of literal) {
+    const rel = repoRelativePath(policyDir, repoDir, f);
+    if (!files.includes(rel)) files.push(rel);
+  }
   const { allowed, denied } = commitPolicy(policyDir, governance);
   // Client instructions ask instead of passing (CW1); one a deny glob names stays blocked.
   const asking = files.filter((f) => isClientRulesPath(f) && !denied.some((g) => matchGlob(f, g)));
@@ -3576,6 +3618,23 @@ const fileRule: Rule = {
     // are coop's own working folders, never source: a backup of a .env or a draft
     // .sql written there needs no confirmation and no lineage lookup.
     if (writes && path && isClientWorkPath(path, ctx.cwd)) return ALLOW;
+    // CW1: the client's instructions (.coop/rules/) steer coop on every turn. The
+    // corrections log changes only through the Add / Edit / No card; any other
+    // rules file is a person's yes for each write (no session grant, never headless).
+    const rulesTarget = writes && path ? clientRulesWriteTarget(path, ctx.cwd) : "";
+    if (rulesTarget === "corrections") {
+      audit({ cwd: ctx.cwd, kind: "secret-confirm", tool, decision: "blocked", label: "client corrections log", detail: "client-corrections-write" });
+      return block(`coop guardrails: blocked ${tool} of ${path}. The client's corrections log (.coop/rules/corrections.md) changes only through the Add / Edit / No card: call the client_rules tool (command add_correction), or ask the user to run /correct.`);
+    }
+    if (rulesTarget === "rules") {
+      const refused = await session.ask(ctx, {
+        kind: "secret-confirm", tool, label: "client instructions write", detail: path,
+        question: `This ${tool} changes the client's instructions (.coop/rules/), which steer coop on every turn and for everyone on the team once shared:\n  ${path}\nAllow this one change?`,
+        headless: `coop guardrails: blocked ${tool} of ${path}; it changes the client's instructions (.coop/rules/), and approval is unavailable in headless mode.`,
+        declined: `coop guardrails: blocked ${tool} of ${path}; it changes the client's instructions (.coop/rules/) (you declined).`,
+      });
+      if (refused) return refused;
+    }
     // #367: an innocent-looking link to a secret is the secret.
     const linked = path && !isSecretPath(path) ? secretLinkTarget(path, ctx.cwd) : null;
     if (path && (linked || isSecretPath(path))) {
