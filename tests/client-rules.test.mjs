@@ -4,7 +4,7 @@
 // its re-sending after compaction or a fork, the client_rules tool's refusals and
 // its Add / Edit / No card, and /correct.
 //   COOP_TEST_DIST=<bundled extensions> node --test tests/client-rules.test.mjs
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { strict as assert } from "node:assert";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -29,6 +29,7 @@ import { redactText } from "../lib/feedback.mjs";
 const dist = process.env.COOP_TEST_DIST;
 const fx = makeFixture();
 useHome(fx.home);
+after(() => { try { rmSync(fx.root, { recursive: true, force: true }); } catch { /* Windows may hold a handle a moment */ } });
 const rulesDir = join(fx.project, ".coop", "rules");
 const config = join(fx.home, ".coop", "config");
 const setSwitch = (on) => writeFileSync(config, JSON.stringify({ schema_version: 1, features: { instructions: on } }));
