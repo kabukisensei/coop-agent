@@ -1689,6 +1689,14 @@ function Get-CoopExtInstalledVersion([string]$AgentDir, [string]$Name) {
   return ''
 }
 
+# Linux personal edition: the user's PATH as it was when coop started, before
+# any coop prepend below (or in bin/coop.ps1 and install). An environment
+# variable, so a nested script (install run from coop, Invoke-CoopScript) sees
+# the first process's value; install's "not on your PATH" warning tests it.
+if (-not ($IsWindows -or $env:OS -eq 'Windows_NT') -and $null -eq $env:COOP_ORIGINAL_PATH) {
+  $env:COOP_ORIGINAL_PATH = [string]$env:PATH
+}
+
 # Ensure user tool bins (pipx, Azure CLI) are on PATH in-process
 $script:PathSep = [System.IO.Path]::PathSeparator
 $pipxBin = Join-Path $HOME '.local\bin'
@@ -2408,12 +2416,22 @@ function Test-CoopWindowsHost { return [bool]($IsWindows -or $env:OS -eq 'Window
 # account and the bash forwarder instead.
 function Get-CoopAccountNoun {
   if (Test-CoopWindowsHost) { return 'Windows user' }
-  if ($IsMacOS) { return 'macOS user' }
   return 'Linux user'
 }
 function Get-CoopCloneInstallCommand {
   if (Test-CoopWindowsHost) { return '.\bin\coop.cmd install' }
   return 'bin/coop install'
+}
+
+# Put $Dir first on this process's PATH unless it is already there (the Linux
+# personal edition's PATH handling; the Windows code keeps its own ';' copies).
+# No trailing separator when PATH is empty: on Linux an empty entry means '.'.
+function Add-CoopPathFront([string]$Dir) {
+  if (-not $Dir) { return }
+  $sep = [System.IO.Path]::PathSeparator
+  $current = [string]$env:PATH
+  if (@($current.Split($sep)) -contains $Dir) { return }
+  if ($current) { $env:PATH = "$Dir$sep$current" } else { $env:PATH = $Dir }
 }
 
 # The folders a launch in $StartDir looks in for a stray NUL file: the launch

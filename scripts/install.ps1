@@ -36,14 +36,13 @@ function Install-Unit {
 # would otherwise "skip" later steps). Best-effort; never fatal.
 function Add-CoopUserPaths {
   if (-not (Test-CoopWindowsHost)) {
-    # SP6 spike (Linux pwsh): PATH separator is ':' and the user scheme is posix_user.
-    $sep = [System.IO.Path]::PathSeparator
-    $pipxBin = if ($env:PIPX_BIN_DIR) { $env:PIPX_BIN_DIR } else { Join-Path $HOME '.local/bin' }
-    if (($env:PATH -split $sep) -notcontains $pipxBin) { $env:PATH = "$pipxBin$sep$env:PATH" }
+    # Linux personal edition: pipx's bin dir, then Python's posix_user scripts
+    # dir (where `pip install --user pipx` puts pipx), through Add-CoopPathFront.
+    if ($env:PIPX_BIN_DIR) { Add-CoopPathFront $env:PIPX_BIN_DIR } else { Add-CoopPathFront (Join-Path $HOME '.local/bin') }
     $py = Get-CoopPython
     if ($py) {
-      $scripts = (& $py -c "import sysconfig; print(sysconfig.get_path('scripts', 'posix_user'))" 2>$null)
-      if ($scripts -and (($env:PATH -split $sep) -notcontains $scripts)) { $env:PATH = "$scripts$sep$env:PATH" }
+      $scripts = [string](& $py -c "import sysconfig; print(sysconfig.get_path('scripts', 'posix_user'))" 2>$null | Where-Object { ([string]$_).Trim() } | Select-Object -First 1)
+      Add-CoopPathFront $scripts.Trim()
     }
     return
   }
@@ -65,14 +64,13 @@ function Add-CoopUserPaths {
 }
 function Add-CoopNpmPath {
   if (-not (Test-Have 'npm')) { return }
-  $prefix = (& npm prefix -g 2>$null)
-  if ($prefix -and -not (Test-CoopWindowsHost)) {
-    # SP6 spike (Linux pwsh): npm's global bins live in <prefix>/bin; PATH uses ':'.
-    $sep = [System.IO.Path]::PathSeparator
-    $d = Join-Path $prefix 'bin'
-    if ((Test-Path -LiteralPath $d) -and (($env:PATH -split $sep) -notcontains $d)) { $env:PATH = "$d$sep$env:PATH" }
+  if (-not (Test-CoopWindowsHost)) {
+    # Linux personal edition: npm's global bins live in <prefix>/bin.
+    $prefix = ([string](& npm prefix -g 2>$null | Where-Object { ([string]$_).Trim() } | Select-Object -First 1)).Trim()
+    if ($prefix -and (Test-Path -LiteralPath (Join-Path $prefix 'bin'))) { Add-CoopPathFront (Join-Path $prefix 'bin') }
     return
   }
+  $prefix = (& npm prefix -g 2>$null)
   if ($prefix) {
     foreach ($d in @($prefix, (Join-Path $prefix 'bin'))) {   # win: shims in prefix; unix: prefix/bin
       if ((Test-Path -LiteralPath $d) -and (($env:PATH -split ';') -notcontains $d)) {
@@ -125,7 +123,7 @@ $env:PI_CODING_AGENT_DIR = Get-CoopPiAgentDir
 New-Item -ItemType Directory -Force -Path $env:PI_CODING_AGENT_DIR | Out-Null
 
 $OS = 'Windows'
-if (-not (Test-CoopWindowsHost)) { $OS = $(if ($IsMacOS) { 'macOS' } else { 'Linux' }) }   # SP6 spike: banner names the real platform
+if (-not (Test-CoopWindowsHost)) { $OS = 'Linux' }   # the Linux personal edition: the banner names it
 
 # Overall-bar denominator: the install ITEMS we attempt (pipx + pi + each coop
 # tool + Power BI/Fabric authoring tools, plus Fabric unless --no-fabric). The
