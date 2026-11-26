@@ -9,7 +9,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync, existsSync, readdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, utimesSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -134,6 +134,61 @@ test("the lock: a held lock makes a writer wait, then give up; a stale one is cl
   assert.equal(lib.setFeature("comments", true, { file, waitMs: 150 }), true, "a lock a dead writer left is removed");
   assert.deepEqual(read(file), { schema_version: 1, a: 1, features: { comments: true } });
   assert.ok(!existsSync(lock));
+});
+
+test("the lock: Windows' EPERM/EACCES/EBUSY on config.lock (DELETE_PENDING, an AV scan) are waited out, not thrown", () => {
+  const file = fresh('{"a":1}');
+  assert.ok(lib.lockFs && typeof lib.lockFs.openSync === "function", "the lock's fs calls are reachable for this test");
+  const real = lib.lockFs.openSync;
+  const codes = ["EPERM", "EACCES", "EBUSY"];
+  let calls = 0;
+  lib.lockFs.openSync = (path, flags, ...rest) => {
+    if (String(path).endsWith("config.lock") && flags === "wx" && calls < codes.length) {
+      const e = new Error(`${codes[calls]}: operation not permitted, open '${path}'`);
+      e.code = codes[calls++];
+      throw e;
+    }
+    return real(path, flags, ...rest);
+  };
+  try {
+    assert.equal(lib.setFeature("comments", true, { file, waitMs: 2000 }), true);
+  } finally {
+    lib.lockFs.openSync = real;
+  }
+  assert.equal(calls, 3, "each transient error was retried");
+  assert.equal(read(file).features.comments, true);
+});
+
+test("the lock: a writer releases only its own lock, and a stale lock is broken by one contender only", () => {
+  const file = fresh('{"a":1}');
+  const lock = join(dirname(file), "config.lock");
+  // A slow write lost its (stale) lock to another writer: it must not remove theirs.
+  lib.updateCoopConfig((d) => { writeFileSync(lock, "another-writer"); d.b = 2; }, { file });
+  assert.ok(existsSync(lock), "another writer's lock is left in place");
+  assert.equal(readFileSync(lock, "utf8"), "another-writer");
+  // A stale lock while someone else is already breaking it (config.lock.break is
+  // fresh): this writer does not remove the lock behind their back; it waits.
+  const old = new Date(Date.now() - 60_000);
+  utimesSync(lock, old, old);
+  const breaker = join(dirname(file), "config.lock.break");
+  writeFileSync(breaker, "breaking");
+  assert.throws(() => lib.setFeature("comments", true, { file, waitMs: 150 }), lib.ConfigBusyError);
+  assert.ok(existsSync(lock), "only the contender holding config.lock.break removes a stale lock");
+  // That breaker died too: its marker ages out and the stale lock is broken.
+  utimesSync(breaker, old, old);
+  assert.equal(lib.setFeature("comments", true, { file, waitMs: 1000 }), true);
+  assert.ok(!existsSync(lock) && !existsSync(breaker));
+  assert.deepEqual(read(file), { schema_version: 1, a: 1, b: 2, features: { comments: true } });
+});
+
+test("the CLI runs when started through another spelling of its path (a link; on Windows letter case or a short name)", () => {
+  const file = fresh('{"a":1}');
+  const linked = join(HOME, `link-${++n}`);
+  symlinkSync(join(ROOT, "lib"), linked, process.platform === "win32" ? "junction" : "dir");
+  const r = spawnSync(process.execPath, [join(linked, "features.mjs"), "set", "comments", "on", "--file", file], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /Diff review comments is on/, "the CLI ran instead of exiting 0 silently");
+  assert.equal(read(file).features.comments, true);
 });
 
 test("two writers at once (the window in-process and the CLI) lose no update", async () => {

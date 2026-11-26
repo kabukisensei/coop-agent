@@ -321,18 +321,24 @@ def _read_token(path: Path) -> str:
         return ""
 
 
-def _break_stale_lock(lock: Path, token: str) -> None:
+def _break_stale_lock(lock: Path, token: str) -> bool:
+    """True when something was removed (try again at once); False when another
+    contender is breaking it (wait as for any held lock)."""
     breaker = lock.with_name(lock.name + ".break")
     if not _create_exclusive(breaker, token):
-        # A breaker that died mid-break: remove its marker, then try again later.
-        if _is_stale(breaker):
-            with contextlib.suppress(OSError):
-                breaker.unlink()
-        return
+        # A breaker that died mid-break: its marker ages out like a lock.
+        if not _is_stale(breaker):
+            return False
+        try:
+            breaker.unlink()
+            return True
+        except OSError:
+            return False
     try:
         if _is_stale(lock):  # still the dead writer's lock, not a new owner's
             with contextlib.suppress(OSError):
                 lock.unlink()
+        return True
     finally:
         with contextlib.suppress(OSError):
             breaker.unlink()
@@ -346,8 +352,7 @@ def config_lock(config: Path = None):
     token = f"{os.getpid()}-{secrets.token_hex(8)}"
     deadline = time.monotonic() + _lock_wait_s()
     while not _create_exclusive(lock, token):
-        if _is_stale(lock):
-            _break_stale_lock(lock, token)
+        if _is_stale(lock) and _break_stale_lock(lock, token):
             continue
         if time.monotonic() >= deadline:
             raise ValueError(f"another coop is changing {config}; try again in a moment")
