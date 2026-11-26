@@ -45,8 +45,8 @@ test("the Features list: five rows, plain labels, CLI keys and stored keys exact
     ["SQL source control", "sql-source", "sql_source_control.enabled", "Check out, script and commit SQL with approval"],
   ]);
   assert.deepEqual(lib.FEATURES.map((f) => f.takesEffect), ["after /new", "after /new", "at once", "at the next sign-in or coop start", "after /new"]);
-  // Built so far: Client instructions (CW1), Change history (CW2), the comments (CW3) and the existing SQL source control switch.
-  assert.deepEqual(lib.FEATURES.filter((f) => f.available).map((f) => f.key), ["instructions", "history", "comments", "sql-source"]);
+  // Built: Client instructions (CW1), Change history (CW2), the comments (CW3), Daily lineage refresh (CW6) and the existing SQL source control switch.
+  assert.deepEqual(lib.FEATURES.filter((f) => f.available).map((f) => f.key), ["instructions", "history", "comments", "docs-refresh", "sql-source"]);
 });
 
 test("absent keys and an absent file are off; only a literal true is on", () => {
