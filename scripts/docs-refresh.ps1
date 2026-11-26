@@ -487,19 +487,48 @@ function Invoke-CoopDocsRefreshHelper {
   foreach ($k in $ChildEnv.Keys) {
     if ([string]$ChildEnv[$k]) { $psi.EnvironmentVariables[$k] = [string]$ChildEnv[$k] } else { $psi.EnvironmentVariables.Remove($k) }
   }
-  $p = [System.Diagnostics.Process]::Start($psi)
+  # No BOM before the request (lib\live_docs.py's json.load rejects one), as the
+  # coop-tools extension sends it (Node writes UTF-8 without one). pwsh 7 takes
+  # StandardInputEncoding. .NET Framework (Windows PowerShell 5.1) has no such
+  # property: its Process.Start wraps stdin in a writer on Console.InputEncoding
+  # and flushes that encoding's preamble at once, so on a UTF-8 console the BOM
+  # is in the pipe before anything is written. For the start only, the console
+  # input encoding becomes UTF-8 without a preamble (same code page; restored).
+  $noBom = New-Object System.Text.UTF8Encoding $false
+  $restoreInput = $null
+  if ($psi.PSObject.Properties['StandardInputEncoding']) {
+    $psi.StandardInputEncoding = $noBom
+  } else {
+    try {
+      $inputEncoding = [Console]::InputEncoding
+      if ($inputEncoding.GetPreamble().Length -gt 0) { [Console]::InputEncoding = $noBom; $restoreInput = $inputEncoding }
+    } catch { $restoreInput = $null }
+  }
+  try {
+    $p = [System.Diagnostics.Process]::Start($psi)
+  } finally {
+    if ($null -ne $restoreInput) { try { [Console]::InputEncoding = $restoreInput } catch { } }
+  }
   try {
     $outRead = $p.StandardOutput.ReadToEndAsync()
     $errRead = $p.StandardError.ReadToEndAsync()
-    $p.StandardInput.Write($json)
+    # The bytes themselves (the request is ASCII): no writer adds anything.
+    $bytes = [System.Text.Encoding]::ASCII.GetBytes($json)
+    $p.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+    $p.StandardInput.BaseStream.Flush()
     $p.StandardInput.Close()
     if (-not $p.WaitForExit([Math]::Max(1, $TimeoutSeconds) * 1000)) {
       # The whole tree: Python's coop-data-doc child too (Neon B2).
       Stop-CoopDocsRefreshTree $p
       return @{ TimedOut = $true; Rc = -1; Data = $null }
     }
-    $p.WaitForExit()
+    # The answer, no longer than 15 s more: a grandchild still holding the pipe
+    # must not hold the run past its cap (it is ended with the tree).
     $data = $null
+    if (-not $outRead.Wait(15000)) {
+      Stop-CoopDocsRefreshTree $p
+      return @{ TimedOut = $false; Rc = $p.ExitCode; Data = $null }
+    }
     try { $data = $outRead.Result | ConvertFrom-Json } catch { $data = $null }
     [void]$errRead
     return @{ TimedOut = $false; Rc = $p.ExitCode; Data = $data }
