@@ -914,7 +914,7 @@ export async function approveCorrection(ctx: any, draft: string, now: Date = new
 
 function correctionText(outcome: CorrectionOutcome): string {
   if (outcome.state === "added") {
-    return `Added ${outcome.id} to .coop/rules/corrections.md. It applies to your sessions from the next message; the team gets it once the file is committed (committing it asks).`;
+    return `Added ${outcome.id} to .coop/rules/corrections.md. It applies to your sessions from the next message; the team gets it once the file is committed and pushed (committing it asks).`;
   }
   return `Not added: ${outcome.why}.`;
 }
