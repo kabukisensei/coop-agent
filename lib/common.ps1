@@ -2434,6 +2434,16 @@ function Add-CoopPathFront([string]$Dir) {
   if ($current) { $env:PATH = "$Dir$sep$current" } else { $env:PATH = $Dir }
 }
 
+# Test-Path for the contract and checkout probes over folders coop did not make.
+# On Linux an unreadable folder (/tmp/systemd-private-*) makes Test-Path print
+# "Access to the path ... is denied"; there it answers $false quietly. Windows
+# keeps Test-Path exactly as it was (the caller's error preference).
+function Test-CoopPathQuiet {
+  param([string]$LiteralPath, [string]$PathType = 'Any')
+  if (Test-CoopWindowsHost) { return (Test-Path -LiteralPath $LiteralPath -PathType $PathType) }
+  return (Test-Path -LiteralPath $LiteralPath -PathType $PathType -ErrorAction SilentlyContinue)
+}
+
 # Linux personal edition: install links ~/.local/bin/coop to this clone's
 # bin/coop (the bash forwarder) and uninstall removes it. A link is ours only
 # when it resolves to this clone's bin/coop; a link to another tool's (or
@@ -4818,7 +4828,7 @@ function Find-CoopProjectYml {
   $dir = $StartDir
   while ($dir) {
     $candidate = Join-Path $dir '.coop\project.yml'
-    if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+    if (Test-CoopPathQuiet -LiteralPath $candidate -PathType Leaf) { return $candidate }
     $parent = Split-Path -Parent $dir
     if ($parent -eq $dir -or -not $parent) { break }
     $dir = $parent
@@ -4944,8 +4954,8 @@ function Get-CoopContractLocalPaths {
 function Test-CoopCheckout {
   param([string]$Dir)
   if (-not $Dir) { return $false }
-  return (Test-Path -LiteralPath (Join-Path $Dir 'bin\coop.ps1') -PathType Leaf) -and
-         (Test-Path -LiteralPath (Join-Path $Dir 'lib\common.ps1') -PathType Leaf)
+  return (Test-CoopPathQuiet -LiteralPath (Join-Path $Dir 'bin\coop.ps1') -PathType Leaf) -and
+         (Test-CoopPathQuiet -LiteralPath (Join-Path $Dir 'lib\common.ps1') -PathType Leaf)
 }
 
 # C1: the client home repository beside the repository holding $StartDir, when
@@ -4962,7 +4972,7 @@ function Find-CoopSiblingContract {
     if ($child.FullName -eq $gitRoot) { continue }
     if (Test-CoopCheckout $child.FullName) { continue }
     $contract = Join-Path $child.FullName '.coop\project.yml'
-    if (-not (Test-Path -LiteralPath $contract -PathType Leaf)) { continue }
+    if (-not (Test-CoopPathQuiet -LiteralPath $contract -PathType Leaf)) { continue }
     foreach ($rel in (Get-CoopContractLocalPaths $contract)) {
       $expanded = $rel
       if ($expanded -match '^~([\\/]|$)') { $expanded = (Join-Path $HOME $expanded.Substring(1).TrimStart('\', '/')) }
@@ -4979,7 +4989,7 @@ function Find-CoopContractAbove {
   $dir = $StartDir
   while ($dir) {
     $candidate = Join-Path $dir '.coop\project.yml'
-    if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+    if (Test-CoopPathQuiet -LiteralPath $candidate -PathType Leaf) { return $candidate }
     $parent = Split-Path -Parent $dir
     if ($parent -eq $dir -or -not $parent) { break }
     $dir = $parent
@@ -4997,23 +5007,21 @@ function Find-CoopContractAbove {
 function Get-CoopChildContracts {
   param([string]$StartDir = (Get-Location).Path)
   $found = @()
-  # SP6 spike (Linux pwsh): unreadable children (/tmp/systemd-private-*) make
-  # Test-Path print access-denied errors; skip them quietly off Windows only.
-  $probeEa = $ErrorActionPreference
-  if (-not (Test-CoopWindowsHost)) { $probeEa = 'SilentlyContinue' }
+  # Unreadable children (/tmp/systemd-private-* on Linux) are skipped quietly
+  # (Test-CoopPathQuiet; Windows keeps Test-Path as it was).
   foreach ($child in (Get-ChildItem -LiteralPath $StartDir -Directory -ErrorAction SilentlyContinue | Where-Object { -not $_.Name.StartsWith('.') } | Sort-Object Name)) {
-    if (Test-Path -LiteralPath (Join-Path $child.FullName '.git') -ErrorAction $probeEa) {
+    if (Test-CoopPathQuiet -LiteralPath (Join-Path $child.FullName '.git')) {
       if (Test-CoopCheckout $child.FullName) { continue }
       $contract = Join-Path $child.FullName '.coop\project.yml'
-      if (Test-Path -LiteralPath $contract -PathType Leaf) { $found += $contract }
+      if (Test-CoopPathQuiet -LiteralPath $contract -PathType Leaf) { $found += $contract }
       continue
     }
     if (@('appdata', 'node_modules') -contains $child.Name.ToLowerInvariant()) { continue }
     foreach ($inner in (Get-ChildItem -LiteralPath $child.FullName -Directory -ErrorAction SilentlyContinue | Where-Object { -not $_.Name.StartsWith('.') } | Sort-Object Name)) {
-      if (-not (Test-Path -LiteralPath (Join-Path $inner.FullName '.git') -ErrorAction $probeEa)) { continue }
+      if (-not (Test-CoopPathQuiet -LiteralPath (Join-Path $inner.FullName '.git'))) { continue }
       if (Test-CoopCheckout $inner.FullName) { continue }
       $contract = Join-Path $inner.FullName '.coop\project.yml'
-      if (Test-Path -LiteralPath $contract -PathType Leaf) { $found += $contract }
+      if (Test-CoopPathQuiet -LiteralPath $contract -PathType Leaf) { $found += $contract }
     }
   }
   return $found
@@ -5314,10 +5322,10 @@ function Get-CoopContractRootProposal {
   $gitRoot = ''
   while ($dir) {
     $candidate = Join-Path $dir '.coop\project.yml'
-    if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+    if (Test-CoopPathQuiet -LiteralPath $candidate -PathType Leaf) {
       return @{ Kind = 'existing'; Root = $dir; Path = $candidate; Repos = @(); Sibling = $false }
     }
-    if (-not $gitRoot -and (Test-Path -LiteralPath (Join-Path $dir '.git'))) { $gitRoot = $dir }
+    if (-not $gitRoot -and (Test-CoopPathQuiet -LiteralPath (Join-Path $dir '.git'))) { $gitRoot = $dir }
     $parent = Split-Path -Parent $dir
     if ($parent -eq $dir -or -not $parent) { break }
     $dir = $parent
@@ -5334,7 +5342,7 @@ function Get-CoopContractRootProposal {
     $parent = Split-Path -Parent $gitRoot
     if ($parent -and $parent -ne $gitRoot) {
       $repos = @(Get-ChildItem -LiteralPath $parent -Directory -ErrorAction SilentlyContinue |
-        Where-Object { -not $_.Name.StartsWith('.') -and (Test-Path -LiteralPath (Join-Path $_.FullName '.git')) -and -not (Test-CoopCheckout $_.FullName) } |
+        Where-Object { -not $_.Name.StartsWith('.') -and (Test-CoopPathQuiet -LiteralPath (Join-Path $_.FullName '.git')) -and -not (Test-CoopCheckout $_.FullName) } |
         Sort-Object Name | ForEach-Object { $_.Name })
       if ($repos.Count -ge 2 -and $repos -contains (Split-Path -Leaf $gitRoot)) {
         $slug = Get-CoopClientSlug $Client
@@ -5348,7 +5356,7 @@ function Get-CoopContractRootProposal {
   # Opened in the folder that holds the client's repositories (itself in no
   # repository): the same home repository beside them, never the folder.
   $inside = @(Get-ChildItem -LiteralPath $start -Directory -ErrorAction SilentlyContinue |
-    Where-Object { -not $_.Name.StartsWith('.') -and (Test-Path -LiteralPath (Join-Path $_.FullName '.git')) -and -not (Test-CoopCheckout $_.FullName) } |
+    Where-Object { -not $_.Name.StartsWith('.') -and (Test-CoopPathQuiet -LiteralPath (Join-Path $_.FullName '.git')) -and -not (Test-CoopCheckout $_.FullName) } |
     Sort-Object Name | ForEach-Object { $_.Name })
   if ($inside.Count -ge 2 -and @(Get-CoopChildContracts $start).Count -eq 0) {
     $slug = Get-CoopClientSlug $Client
