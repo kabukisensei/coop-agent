@@ -56,9 +56,18 @@ const DEFAULT_ALLOWED_GLOBS = [
   "data-docs-site/**",
 ];
 
+/** The client's instructions (FEATURES-DESIGN, CW1): anything under a `.coop/rules/`
+ *  folder. Those files steer coop for the whole team, so committing them asks, even
+ *  when they are Markdown or a project glob allows them. A path test only: the
+ *  guardrails never open these files. */
+export function isClientRulesPath(file: string): boolean {
+  return /(^|[\\/])\.coop[\\/]rules[\\/]/i.test(file);
+}
+
 /** A committed path is allowed only after explicit deny rules have been checked. */
 function isAllowedCommitPath(file: string, allowedGlobs: string[], deniedGlobs: string[]): boolean {
   if (deniedGlobs.some((g) => matchGlob(file, g))) return false;
+  if (isClientRulesPath(file)) return false; // never auto-allowed: the commit asks (gitCommitRule)
   if (/\.(md|markdown)$/i.test(file)) return true; // documentation anywhere, unless denied
   return allowedGlobs.some((g) => matchGlob(file, g));
 }
@@ -967,7 +976,7 @@ export function commitStagesAll(cmd: string, parsed: ParsedGitCommand | null = p
  *  time. Paths are repository-relative (`--full-name`) and the policy is keyed on
  *  the repository's top level, so `cd src && git add .` is judged against the
  *  same root as the staged diff (#6). */
-export type CommitCheck = { offending: string[]; unverifiable: string | null; nothing: boolean };
+export type CommitCheck = { offending: string[]; unverifiable: string | null; nothing: boolean; asking?: string[] };
 
 /** Git verbs that create a commit on the current branch (or, with `--no-commit`
  *  / `--squash`, stage its content), so the source-commit gate reads them all. */
@@ -1085,7 +1094,9 @@ async function offendingCommitPaths(pi: ExtensionAPI, cwd: string, cmd: string, 
   if (top === null) return { offending: [], unverifiable: "git could not name the repository this commit targets", nothing: true };
   const policyDir = top[0] ? resolve(top[0]) : repoDir;
   const { allowed, denied } = commitPolicy(policyDir, governance);
-  return { offending: files.filter((f) => !isAllowedCommitPath(f, allowed, denied)), unverifiable: null, nothing: false };
+  // Client instructions ask instead of passing (CW1); one a deny glob names stays blocked.
+  const asking = files.filter((f) => isClientRulesPath(f) && !denied.some((g) => matchGlob(f, g)));
+  return { offending: files.filter((f) => !asking.includes(f) && !isAllowedCommitPath(f, allowed, denied)), unverifiable: null, nothing: false, asking };
 }
 
 // Fabric's MCP has no server-enforced read-only flag, and this hook can't see
@@ -3944,12 +3955,25 @@ const gitCommitRule: Rule = {
         audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: "blocked", label: hard, detail: hard });
         return block(`coop guardrails: ${hard} is never permitted — ${why}. Let a human run it.`);
       }
-      const { offending, unverifiable, nothing } = await offendingCommitPaths(session.pi, ctx.cwd, command, git, governance);
+      const { offending, unverifiable, nothing, asking = [] } = await offendingCommitPaths(session.pi, ctx.cwd, command, git, governance);
       if (offending.length) {
         const list = offending.slice(0, 8).join(", ");
         const more = offending.length > 8 ? ` (+${offending.length - 8} more)` : "";
         audit({ cwd: ctx.cwd, kind: "commit-block", tool: "bash", decision: "blocked", label: `git ${git.subcommand}`, detail: list });
         return block(`coop guardrails: never commit source. These paths aren't docs/logs/site: ${list}${more}. Unstage them and let a human commit source.`);
+      }
+      // The client's instructions (CW1): they steer coop for the whole team, so
+      // committing them is a person's yes, every time (no session grant).
+      if (asking.length) {
+        const list = asking.slice(0, 8).join(", ");
+        const more = asking.length > 8 ? ` (+${asking.length - 8} more)` : "";
+        const refused = await session.ask(ctx, {
+          kind: "commit-block", tool: "bash", label: "client instructions commit", detail: list,
+          question: `This commit changes the client's instructions, which steer coop for everyone on the team once shared:\n  ${list}${more}\nCommit them?`,
+          headless: "coop guardrails: blocked a commit of the client's instructions (.coop/rules/) because approval is unavailable in headless mode.",
+          declined: "coop guardrails: blocked a commit of the client's instructions (.coop/rules/) (you declined).",
+        });
+        if (refused) return refused;
       }
       // Ask when the target repository cannot be resolved or read (#2), and,
       // as before, when a chained `cd` precedes a commit the check found empty.
