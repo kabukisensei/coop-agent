@@ -266,12 +266,47 @@ with tempfile.TemporaryDirectory() as tmp:
     os.environ[ld.TOOL_ENV] = str(Path(tmp) / "missing")
     assert ld.execute({"command": "build", "config": str(config)}, cwd=root)["state"] == "tool_unavailable"
 
+    # --- mint (the daily refresh, Neon B4): only `refresh` takes it, only `true` ------------------
+    for bad in ({"command": "refresh", "config": str(config), "mint": False}, {"command": "refresh", "config": str(config), "mint": 1},
+                {"command": "build", "config": str(config), "mint": True}, {"command": "setup", "config": str(config), "mint": True}):
+        assert ld.execute(bad, cwd=root)["state"] == "input_invalid", bad
+    # Everything is checked before a mint: a missing tool mints nothing.
+    minted = mock.Mock(side_effect=AssertionError("nothing is minted"))
+    with mock.patch.object(ld.wmcp, "az_access_token", minted):
+        assert ld.execute({"command": "refresh", "config": str(config), "mint": True}, cwd=root)["state"] == "tool_unavailable"
+    os.environ[ld.TOOL_ENV] = str(write_stub(Path(tmp) / "bin"))
+    # ... a production dev target mints nothing either (the project above is dev = prod).
+    os.environ["COOP_PROJECT_YML"] = str(root / ".coop" / "project.yml")
+    with mock.patch.object(ld.wmcp, "az_access_token", minted), no_resolving():
+        assert ld.execute({"command": "refresh", "config": str(config), "mint": True}, cwd=root)["state"] == "dev_is_prod"
+    # A named-set-only dev target mints the SQL audience, pinned to the project's tenant; an expired sign-in stops there.
+    (root / ".coop" / "project.yml").write_text("schema_version: 1\nsql_targets:\n  named:\n    lake:\n      dev:\n        kind: azure_sql\n"
+                                              "        server: \"contoso.database.windows.net\"\n        database: ContosoDW\n", encoding="utf-8")
+    os.environ.pop(ld.wmcp.FABRIC_TOKEN_ENV, None)
+    expired = mock.Mock(return_value=("", "auth_required"))
+    with mock.patch.object(ld.wmcp, "az_access_token", expired), no_resolving():
+        out = ld.execute({"command": "refresh", "config": str(config), "mint": True}, cwd=root)
+    assert out["state"] == "auth_required" and out["stage"] == "launch_token", out
+    assert expired.call_args.kwargs["resource"] == ld.wmcp.SQL_RESOURCE, expired.call_args
+    assert ld.wmcp.FABRIC_TOKEN_ENV not in os.environ
+    # Without mint (the session's own call) nothing is minted here: the launch token is the session's.
+    with mock.patch.object(ld.wmcp, "az_access_token", minted), mock.patch.object(ld, "_resolve", return_value=(None, "", "", ld.result("launch_identity_missing"))):
+        out = ld.execute({"command": "refresh", "config": str(config)}, cwd=root)
+    assert out["state"] == "launch_identity_missing", out
+    # A child never gets the launch identity: only this process holds it.
+    os.environ[ld.wmcp.FABRIC_TOKEN_ENV] = "launch.token.here"
+    assert ld.wmcp.FABRIC_TOKEN_ENV not in ld._child_env() and ld.TOKEN_ENV not in ld._child_env()
+    del os.environ[ld.wmcp.FABRIC_TOKEN_ENV]
+    del os.environ["COOP_PROJECT_YML"]
+
 # --- what the waiter runs (static, beside the process fixtures) ----------------------------
 script = (ROOT / "scripts" / "docs-refresh.ps1").read_text(encoding="utf-8-sig")
 code = "\n".join(line for line in script.splitlines() if not line.lstrip().startswith("#"))
 for word in (r"\bgit\b", r"&\s*pi\b", r"\bpi\s+-", r"sql_query", r"sql_impact", r"sqlsc", r"catalog_snapshot", r"schema_compare", r"Invoke-Expression", r"\biex\b", r"&\s*['\"]?coop-data-doc", r"FileName\s*=\s*['\"]?coop-data-doc"):
     assert not re.search(word, code, re.IGNORECASE), f"docs-refresh.ps1 runs {word}"
 helpers = set(re.findall(r"lib\\\\?([a-z_]+\.py)", code))
+assert "Get-CoopFabricMcpToken" not in code and "COOP_FABRIC_MCP_TOKEN = ''" in code, "the waiter mints no token and passes none on (live_docs.py mints, Neon B4)"
+assert "mint = $true" in code, "the read asks live_docs.py to mint"
 assert helpers == {"live_docs.py"}, helpers
 assert re.findall(r"command\s*=\s*'(\w+)'", code) == ["refresh", "build"], "the run asks live_docs.py for refresh, then build"
 builder = (ROOT / "lib" / "live_docs.py").read_text(encoding="utf-8")
