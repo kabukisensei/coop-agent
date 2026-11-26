@@ -9,20 +9,24 @@ All notable changes to coop-agent are recorded here. The format loosely follows
 - **Linux personal edition (master plan row LX1).** Windows stays the team
   platform; Linux under PowerShell 7 is now a supported personal edition of
   the same one PowerShell implementation, gated by a new `linux` CI job
-  (ubuntu-24.04: the PowerShell suite, a real `coop install --yes`, `coop
-  doctor`, `coop launch-spec --json` and `coop uninstall` against a sandbox
-  HOME, and the guardrails through the pinned Pi's extension runner). Every
-  change sits behind `-not (Test-CoopWindowsHost)`, so Windows behaves as
-  before. On Linux: the pi version probe no longer throws when an older pi
-  prints its version on stderr; install joins PATH with `:` and links
-  `~/.local/bin/coop` to the clone's `bin/coop`; the child-repository scan
-  skips unreadable folders quietly; `coop uninstall` removes that link (and
-  only a link to a coop clone) with no `LOCALAPPDATA` errors; the install and
-  update busy guard sees running Pi sessions (Get-Process, with npm's `bin/pi`
-  link resolved); `fab` and `te` are found in `~/.local/bin`, `PIPX_BIN_DIR`
-  and the pipx venv; and hints name `bin/coop install` and "this Linux user"
-  instead of `.\bin\coop.cmd` and "this Windows user". New page:
-  `docs/install-linux.md`.
+  (ubuntu-24.04: a real `coop install --yes`, `coop doctor --json`, `coop
+  launch-spec --json` and `coop uninstall --yes` against a sandbox HOME, with
+  their exit codes checked, and the guardrails through the pinned Pi's
+  extension runner). Every change sits behind `-not (Test-CoopWindowsHost)`,
+  so Windows behaves as before. On Linux: the pi version probe reads every
+  line of both streams (an older pi prints its version on stderr, Node may
+  print a warning first); install puts folders on PATH with `:` and no
+  trailing separator, links `~/.local/bin/coop` to the clone's `bin/coop`
+  (never over a foreign link or a file) and warns when `~/.local/bin` was not
+  on the PATH coop started with; the contract and checkout probes skip
+  unreadable folders quietly; `coop uninstall` removes that link (only when it
+  resolves to this clone's `bin/coop`) with no `LOCALAPPDATA` errors; the
+  install and update busy guard sees running Pi sessions (node, nodejs or pi
+  processes, argv from `/proc` with npm's `bin/pi` link resolved); `fab` and
+  `te` are found in `~/.local/bin`, `PIPX_BIN_DIR` and the pipx venv
+  (executable files only, and a Python Fabric `fab` is refused); and hints name
+  `bin/coop install` and "this Linux user" instead of `.\bin\coop.cmd` and
+  "this Windows user". New page: `docs/install-linux.md`.
 
 ### Fixed
 - **`coop cleanup now` reports what it really removed** (dev VM, 2026-11-24).

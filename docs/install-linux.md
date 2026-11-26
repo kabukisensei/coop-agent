@@ -69,8 +69,9 @@ git clone https://github.com/kabukisensei/coop-agent.git ~/coop-agent
 ```
 
 The banner names the platform (`[Linux]`). Step 6 links
-`~/.local/bin/coop` to the clone's `bin/coop`; if `~/.local/bin` is not on PATH
-yet, it says so. Then:
+`~/.local/bin/coop` to the clone's `bin/coop`. It never replaces a regular file
+or a link to anything else there; it says so and leaves it. If `~/.local/bin`
+was not on the PATH you started `coop install` from, it says that too. Then:
 
 ```bash
 coop doctor
@@ -84,7 +85,8 @@ Pi and the tools at the release's pins, as on Windows.
 
 `bpa_review` uses the Tabular Editor CLI. Download the Linux build from
 <https://tabulareditor.com/product/features-and-tools/tabular-editor-cli>, put
-the `te` binary in `~/.local/bin` (or anywhere on PATH) and run `te auth login`.
+the `te` binary in `~/.local/bin` (or anywhere on PATH), make it executable
+(`chmod +x`) and run `te auth login`.
 After 2026-12-31 the CLI needs a Tabular Editor license. `coop doctor` finds `te`
 on PATH or in `~/.local/bin`.
 
@@ -116,7 +118,8 @@ These stay on Windows; on Linux coop says so or leaves them out:
 coop uninstall
 ```
 
-It removes the `~/.local/bin/coop` link (only when it points at a coop clone),
+It removes the `~/.local/bin/coop` link (only when it points at this clone's
+`bin/coop`),
 the isolated agent dir and, unless you pass `--keep-tools`, Pi and the pipx
 tools. It never touches the clone, your work repositories or the rest of
 `~/.coop`.
